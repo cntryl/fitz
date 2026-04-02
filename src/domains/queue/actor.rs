@@ -117,6 +117,29 @@ pub struct Inflight {
     token: u64,
     /// Absolute expiration time
     expires_at: Instant,
+    /// Owning live session, if the lease was created through the broker session layer.
+    owner_session_id: Option<u64>,
+    /// Delivery attempt count presented with the current lease.
+    attempts: u32,
+}
+
+/// Point-in-time warm-actor queue counts for admin diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueAdminSnapshot {
+    pub messages_ready: usize,
+    pub messages_leased: usize,
+    pub messages_total: usize,
+    pub oldest_message_age_seconds: u64,
+}
+
+/// Point-in-time live lease snapshot for admin diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueLeaseSnapshot {
+    pub message_id: u64,
+    pub lease_token: u64,
+    pub session_id: Option<u64>,
+    pub expires_at_epoch_ms: u64,
+    pub attempts: usize,
 }
 
 /// Timer event for lease expiration
@@ -1358,6 +1381,58 @@ impl QueueActor {
         self.ready_count
     }
 
+    pub fn admin_snapshot(&self) -> QueueAdminSnapshot {
+        QueueAdminSnapshot {
+            messages_ready: self.ready_count,
+            messages_leased: self.inflight.len(),
+            messages_total: self.ready_count + self.inflight.len() + self.persisted_delayed.len(),
+            // Queue records do not persist enqueue timestamps today, so a warm actor
+            // cannot report an honest oldest age after recovery.
+            oldest_message_age_seconds: 0,
+        }
+    }
+
+    pub fn admin_leases(&self) -> Vec<QueueLeaseSnapshot> {
+        let now_instant = self.clock.now_instant();
+        let now_epoch_ms = self.clock.now_epoch_ms();
+
+        self.inflight
+            .iter()
+            .map(|(id, inflight)| QueueLeaseSnapshot {
+                message_id: id.as_u64(),
+                lease_token: inflight.token,
+                session_id: inflight.owner_session_id,
+                expires_at_epoch_ms: now_epoch_ms.saturating_add(
+                    inflight
+                        .expires_at
+                        .saturating_duration_since(now_instant)
+                        .as_millis() as u64,
+                ),
+                attempts: inflight.attempts as usize,
+            })
+            .collect()
+    }
+
+    /// Drop any live leases owned by a disconnected session and return the
+    /// committed messages to the ready queue. The lease ownership itself is
+    /// ephemeral and is not durably recovered.
+    pub fn cleanup_session_leases(&mut self, session_id: u64) -> usize {
+        let released: Vec<_> = self
+            .inflight
+            .iter()
+            .filter_map(|(id, inflight)| {
+                (inflight.owner_session_id == Some(session_id)).then_some(*id)
+            })
+            .collect();
+
+        for id in released.iter().copied() {
+            self.inflight.remove(&id);
+            self.push_ready(id);
+        }
+
+        released.len()
+    }
+
     pub fn ready_contains(&self, id: MessageId) -> bool {
         let shard = Self::shard_for_id(id);
         let id_u64 = id.as_u64();
@@ -1946,6 +2021,24 @@ impl QueueActor {
         lease_seconds: u64,
         batch_size: Option<usize>,
     ) -> QueueResponse {
+        self.handle_receive_internal(None, lease_seconds, batch_size)
+    }
+
+    pub fn handle_receive_for_session(
+        &mut self,
+        session_id: u64,
+        lease_seconds: u64,
+        batch_size: Option<usize>,
+    ) -> QueueResponse {
+        self.handle_receive_internal(Some(session_id), lease_seconds, batch_size)
+    }
+
+    fn handle_receive_internal(
+        &mut self,
+        owner_session_id: Option<u64>,
+        lease_seconds: u64,
+        batch_size: Option<usize>,
+    ) -> QueueResponse {
         let batch_size = batch_size.unwrap_or(1);
         let now = self.clock.now_instant();
         let lease_duration = Duration::from_secs(lease_seconds);
@@ -1972,7 +2065,15 @@ impl QueueActor {
             let expires_at = now + lease_duration;
 
             // Create inflight entry
-            self.inflight.insert(id, Inflight { token, expires_at });
+            self.inflight.insert(
+                id,
+                Inflight {
+                    token,
+                    expires_at,
+                    owner_session_id,
+                    attempts: attempts + 1,
+                },
+            );
 
             // Schedule expiration timer
             self.timers.push(Reverse(LeaseExpiry { id, expires_at }));

@@ -1,6 +1,13 @@
 use super::Runtime;
 
 impl Runtime {
+    fn refresh_queue_admin_snapshot(&self) {
+        let domains = self.domains.read().clone();
+        if let Some(domains) = domains {
+            domains.queue.refresh_admin_snapshot_if_dirty();
+        }
+    }
+
     fn refresh_rpc_admin_snapshot(&self) {
         let domains = self.domains.read().clone();
         if let Some(domains) = domains {
@@ -45,10 +52,12 @@ impl Runtime {
     }
 
     pub fn queue_list_queues(&self, realm: Option<&str>) -> Vec<crate::api::admin::QueueInfo> {
+        self.refresh_queue_admin_snapshot();
         self.admin_read_model.queues(realm)
     }
 
     pub fn queue_list_leases(&self, realm: Option<&str>) -> Vec<crate::api::admin::QueueLease> {
+        self.refresh_queue_admin_snapshot();
         self.admin_read_model.queue_leases(realm)
     }
 

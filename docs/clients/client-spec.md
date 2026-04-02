@@ -246,8 +246,8 @@ const rpc_call = client.rpcRequest(
 - **Multiple transactions can parallelize**: You can have 2+ transactions to different resources active simultaneously. **BUT:** one transaction (single tx_id) MUST be strictly sequential
 - **Multiple queues can parallelize**: Different queue resources can have parallel requests
 - **RPC exception**: RPC domain uses 16-byte UUID `correlation_id` for per-request correlation, enabling multiple in-flight RPC requests to be matched to responses
-- No server-side implicit state beyond what's in the message
-- Reconnection safe: breaking connection doesn't leave orphaned server state
+- Messages stay self-contained on the wire, but several domains still maintain live broker-local state (for example KV transactions, Queue leases, subscriptions, and pending RPC work)
+- Reconnect creates a new live session; clients MUST re-establish any required session-owned state and MUST NOT assume it survives disconnect
 
 ## Concurrency & Multiplexing Patterns
 
@@ -1949,7 +1949,7 @@ When a single operation generates multiple responses:
 
 **Client Retry Strategy:**
 - **Idempotent operations** (GET, SCAN, READ): SAFE to retry
-- **Non-idempotent operations** (PUT, ENQUEUE, PUBLISH): DO NOT retry
+- **Non-idempotent operations** (PUT, ENQUEUE, RESERVE, PUBLISH): DO NOT retry
   - Retrying may cause duplicate execution
 - Use application-level idempotency tokens if needed; do not rely on RPC `correlation_id` alone for durable deduplication
 
@@ -1998,15 +1998,12 @@ Clients MUST NOT automatically retry operations unless:
 - KV: `GET`, `SCAN`
 - Stream: `READ`, `GET_METADATA`, `LAST`
 - Lease: `QUERY`
-- Queue: `RESERVE` (with caveats; see context-dependent below)
-  Retry behavior: If transport fails after sending request but before receiving response, safe to resend identical request.
-  Broker behavior: MAY return stale data if resource has changed between retries.
   **NOT Idempotent (MUST NOT Retry Automatically):**
   Write operations, control operations, and pub/sub are NOT idempotent:
 - KV: `PUT`, `INSERT`, `DELETE`, `BEGIN`, `COMMIT`, `ROLLBACK`
 - Stream: `APPEND`, `BEGIN`, `COMMIT`, `ROLLBACK`
 - Notice: `PUBLISH`, `SUBSCRIBE`, `UNSUBSCRIBE`
-- Queue: `ENQUEUE`, `COMPLETE`, `EXTEND`, `DELETE`
+- Queue: `ENQUEUE`, `RESERVE`, `EXTEND`, `DELETE`
 - RPC: `REQUEST`, `RESPONSE`, `ACK`
 - Lease: `ACQUIRE`, `RENEW`, `RELEASE`
 - Schedule: `CREATE`, `CANCEL`
@@ -2974,12 +2971,12 @@ Every operation includes route:
 
 #### Semantics
 
-- **Self-Contained Operations**: Every request includes route; no server-side implicit state
+- **Route-Carrying Operations**: Every request includes the full queue route, but the broker still maintains live lease ownership in memory for the running process
 - **At-Least-Once**: Messages delivered until completed; expired leases requeue them
 - **FIFO-ish**: Generally delivered in enqueue order; leasing can cause out-of-order
 - **Visibility Timeout**: Leased messages invisible to other consumers until expiry
 - **Token Binding**: Complete/Extend require both message_id and lease_token
-- **Durability**: All enqueued messages survive broker restart
+- **Durability Split**: Committed queue data survives restart according to the broker's configured write policy; live leases and lease tokens do not
 
 ##### Opaque Server-Generated IDs
 
@@ -2988,7 +2985,8 @@ Every operation includes route:
 - Clients MUST NOT generate, predict, or cache these values
 - Clients MUST treat them as opaque cookies
 - `message_id`: Unique identifier assigned at ENQUEUE time
-- `lease_token`: Fencing token generated at RESERVE time, prevents stale operations
+- `lease_token`: Ephemeral fencing token generated at RESERVE time for one live lease instance only
+- `lease_token` becomes invalid after COMPLETE, lease expiry, disconnect cleanup, or broker restart
 - Sending wrong `message_id` or `lease_token`: ERR_INVALID_TOKEN
 
 ##### RESERVE Long Polling

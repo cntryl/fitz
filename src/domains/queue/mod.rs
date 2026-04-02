@@ -30,8 +30,8 @@
 //!
 //! - **Not strict FIFO**: Multiple competing consumers naturally break FIFO ordering.
 //!   Messages are delivered in ready-queue order, but reserve order is non-deterministic.
-//! - **Minimal data loss**: Uses atomic batch operations (ID allocation + writes commit together).
-//!   Messages may be lost only if batch commit itself fails (unlikely with sync writes).
+//! - **Committed-state durability**: Uses atomic batch operations (ID allocation + writes commit together).
+//!   Success responses are returned only after the configured queue write policy commits.
 //! - **Automatic redelivery**: Lease expiration automatically returns messages (ephemeral leases).
 //!   Crashes automatically trigger redelivery (inflight state not persisted).
 //! - **Fair distribution**: Reserve operations pop from front of ready queue (simple FIFO internally).
@@ -40,9 +40,9 @@
 //! # Intent vs Events
 //!
 //! Queues represent **intent** (work to be done), not events of record.
-//! - Minimal data loss acceptable (batch commits are atomic)
+//! - Committed queue state is durable according to the configured `WriteOptions`
 //! - Producers can regenerate lost work items
-//! - Batch operations use sync() writes for consistency (competing consumers need correctness over peak throughput)
+//! - Inflight leases and lease tokens remain broker-local, in-memory coordination state
 //!
 //! # Key Features
 //!
@@ -55,18 +55,18 @@
 //!
 //! # Route Format
 //!
-//! Queues use hierarchical routes: `queue://{realm}/{area}/{resource}/{operation}`
+//! Queues use hierarchical routes: `queue://{realm}/{area}/{resource}`
 //!
-//! Example: `queue://acme/jobs/email-sender/enqueue`
+//! Example: `queue://acme/jobs/email-sender`
 //!
 //! Queue identity is `(family_id, realm, area, resource)` extracted from the route.
 //!
 //! # Operations
 //!
-//! - **enqueue**: Add message to queue (returns MessageId, atomic batch operation)
+//! - **enqueue**: Add message to queue (returns MessageId after commit)
 //! - **reserve**: Lease one or more messages for processing (fair distribution)
 //! - **extend**: Extend lease expiration for a reserved message
-//! - **complete**: Mark message as processed and delete it
+//! - **complete**: Mark message as processed and delete it after commit
 //!
 //! # Competing Consumer Protocol
 //!

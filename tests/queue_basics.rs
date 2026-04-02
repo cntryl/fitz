@@ -257,14 +257,13 @@ fn should_support_enqueue_operation() {
     //
     // Act
     // Request format:
-    // - operation: "enqueue"
-    // - message_id: Optional unique ID for deduplication
-    // - payload: Message body (Bytes)
+    // - route: queue://{realm}/{area}/{resource}
+    // - body: Message payload (Bytes)
     //
     // Assert
     // Response format:
     // - status: "ok" or error code
-    // - message_id: Assigned or echoed ID
+    // - message_id: Server-assigned opaque ID
 }
 
 #[test]
@@ -320,10 +319,10 @@ fn should_support_complete_operation_with_lease_token() {
 }
 
 #[test]
-fn should_have_message_id_for_deduplication() {
+fn should_return_server_assigned_message_id() {
     // Arrange
-    // - If same message_id sent again during retry, only stored once
-    // - Return same message_id in response
+    // - ENQUEUE assigns a new opaque message_id on success
+    // - Clients use that ID only for later COMPLETE/EXTEND operations
 }
 
 #[test]
@@ -417,8 +416,9 @@ fn should_complete_enqueue_reserve_complete_cycle() {
     // let queue = create_test_queue("acme/messages");
 
     // Act
-    // let enqueue_resp = queue.enqueue(message_id, payload);
+    // let enqueue_resp = queue.enqueue(payload);
     // assert
+    // let message_id = enqueue_resp.message_id;
     // assert
 
     // Step 2: Reserve message
@@ -624,41 +624,42 @@ fn should_reject_complete_without_write_scope() {
 // ============================================================================
 
 #[test]
-fn should_deduplicate_enqueue_by_message_id() {
+fn should_deduplicate_complete_by_message_id_and_lease_token() {
     // Arrange
-    // Same message_id enqueued twice = stored once
+    // COMPLETE is safe to retry only while using the same live lease token
     //
     // Setup:
-    // - Enqueue with message_id="dedup-123"
-    // - Enqueue again with same message_id
+    // - Enqueue a message and reserve it
+    // - COMPLETE succeeds with {message_id, lease_token}
+    // - COMPLETE is retried with the same {message_id, lease_token}
     //
     // Act
     // Behavior:
-    // - Only one copy stored
-    // - Both calls return success with same message_id
+    // - Broker returns the cached COMPLETE response
+    // - Retry does not hit storage a second time
     //
     // Assert
     // Verification:
-    // - Reserve returns exactly 1 message
+    // - Queue stays empty after the retry
 }
 
 #[test]
-fn should_allow_requeue_after_abandoned_lease() {
+fn should_allow_reenqueue_after_abandoned_lease() {
     // Arrange
-    // Enqueue → reserve → abandon → enqueue = allowed
+    // Enqueue -> reserve -> abandon -> enqueue = allowed
     //
     // Setup:
-    // - Enqueue with message_id="msg-1"
+    // - Enqueue a message
     // - Consumer reserves, abandons lease (no extend/complete)
     // - Timeout expires, message returns to queue
-    // - Enqueue same message_id again
+    // - Enqueue another copy of the same logical work item
     //
     // Act
     // Behavior:
     // - Second enqueue stored separately
     //
     // Assert
-    // - Queue now has 2 copies of message_id
+    // - Queue now has 2 independently tracked messages
 }
 
 // ============================================================================

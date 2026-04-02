@@ -350,30 +350,38 @@ Force-removes an active in-memory notice subscription from the current broker in
 **Headers**: `X-Confirm: true`
 **Response**: 200 OK or 404 Not Found
 ### Queue Domain
-#### List Queues with Depths
+Queue admin responses reflect only the current broker's warm in-memory actor state. Committed queue data remains durable in storage, but resource counts and lease rows can disappear after disconnect cleanup, idle actor eviction, or broker restart until traffic rehydrates that queue.
+
+#### List Queue Resources Under An Area
 ```
-GET /admin/queue/queues?realm={realm}
+GET /api/v1/queue/realms/{realm}/areas/{area}/resources
 ```
+
+#### Get Queue Resource Detail
+```
+GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}
+```
+`messages_ready`, `messages_leased`, and `messages_total` are point-in-time warm-actor counts for the running broker only. They are not a durable catalog of every committed queue in storage.
+
 **Response**:
 ```json
 {
-  "queues": [
-    {
-      "realm": "prod",
-      "area": "jobs",
-      "resource": "emails",
-      "messages_ready": 1847,
-      "messages_leased": 67,
-      "messages_total": 1914,
-      "oldest_message_age_seconds": 120
-    }
-  ]
+  "realm": "prod",
+  "area": "jobs",
+  "resource": "emails",
+  "messages_ready": 1847,
+  "messages_leased": 67,
+  "messages_total": 1914,
+  "oldest_message_age_seconds": 0
 }
 ```
-#### List Active Leases
+
+#### List Live Queue Leases For A Resource
 ```
-GET /admin/queue/leases?realm={realm}
+GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/leases
 ```
+`lease_token` and `session_id` describe live in-memory lease ownership only. They are dropped on disconnect cleanup, invalidated on lease expiry, and never survive broker restart.
+
 **Response**:
 ```json
 {
@@ -383,37 +391,14 @@ GET /admin/queue/leases?realm={realm}
       "realm": "prod",
       "area": "jobs",
       "resource": "emails",
-      "lease_token": "tok_xyz789",
-      "session_id": "sess_abc123",
+      "lease_token": "987654321",
+      "session_id": "12345",
       "expires_at": "2026-01-31T10:35:00Z",
       "attempts": 2
     }
   ]
 }
 ```
-#### Queue Statistics
-```
-GET /admin/queue/stats?realm={realm}
-```
-**Response**:
-```json
-{
-  "messages_pending": 1847,
-  "messages_leased": 67,
-  "leases_expired_total": 342,
-  "operations_per_second": {
-    "enqueue": 45,
-    "reserve": 42,
-    "complete": 40
-  }
-}
-```
-#### Force Expire Lease (Admin)
-```
-POST /admin/queue/leases/{lease_id}/expire
-```
-**Headers**: `X-Confirm: true`
-**Response**: 200 OK or 404 Not Found
 ### RPC Domain
 All RPC admin endpoints expose live in-memory state for the current broker instance only. Worker registrations and pending requests disappear on disconnect or broker restart and are not durable recovery queues.
 The broker updates this read model as a coalesced operational snapshot, so very recent subscribe, unsubscribe, timeout, and cleanup events can lag briefly in admin responses. Treat these endpoints as near-live diagnostics, not strongly consistent reads of the hot path.
@@ -626,8 +611,9 @@ POST /admin/sessions/{session_id}/close
 - `GET /api/v1/admin/stream/streams?realm={realm}` - List active streams
 - `GET /api/v1/admin/notice/subscriptions?realm={realm}&route_pattern={pattern}` - List subscriptions
 - `GET /api/v1/admin/notice/routes?realm={realm}` - List routes with subscriber counts
-- `GET /api/v1/admin/queue/queues?realm={realm}` - List queues with depths
-- `GET /api/v1/admin/queue/leases?realm={realm}` - List active queue leases
+- `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}` - Get warm Queue resource detail
+- `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/leases` - List live queue leases for a resource
+  - Queue resource and lease snapshots are current-process only. They can disappear after disconnect cleanup, idle actor eviction, or broker restart until traffic rehydrates the queue.
 - `GET /api/v1/admin/rpc/workers?realm={realm}` - List registered RPC workers
 - `GET /api/v1/admin/rpc/pending?realm={realm}` - List pending RPC requests
 - `GET /api/v1/admin/lease/leases?realm={realm}` - List active in-memory leases
@@ -638,7 +624,6 @@ POST /admin/sessions/{session_id}/close
 **Admin Commands (Admin Auth + X-Confirm Header)**:
 - `POST /api/v1/admin/kv/transactions/{tx_id}/rollback` - Force rollback transaction
 - `POST /api/v1/admin/notice/subscriptions/{subscription_id}/cancel` - Cancel subscription
-- `POST /api/v1/admin/queue/leases/{lease_id}/expire` - Force expire lease
 - `POST /api/v1/admin/rpc/requests/{correlation_id}/cancel` - Cancel RPC request
 - `POST /api/v1/admin/lease/leases/{lease_id}/release` - Force release lease
 - `POST /api/v1/admin/schedule/schedules/{schedule_id}/trigger` - Trigger schedule manually
@@ -1030,7 +1015,7 @@ Start with these essential endpoints:
 ### Phase 2: Domain Visibility
 7. `GET /admin/kv/stats` - KV visibility
 8. `GET /admin/notice/subscriptions` - Notice visibility
-9. `GET /admin/queue/queues` - Queue depths
+9. `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}` - Queue warm-state visibility
 10. `GET /admin/sessions` - Active connections
 ### Phase 3: Admin Commands
-11. Domain-specific commands (rollback, cancel, expire) with `X-Confirm: true`
+11. Domain-specific commands (rollback, cancel, release) with `X-Confirm: true`

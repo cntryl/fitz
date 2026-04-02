@@ -183,7 +183,7 @@ pub struct ReservedMessage {
 pub enum QueueMessage {
     /// Send a message to the queue
     ///
-    /// Route format: `queue://{realm}/{area}/{resource}/send`
+    /// Route format: `queue://{realm}/{area}/{resource}`
     ///
     /// Writes the message body to durable storage and adds it to the ready queue.
     /// If delay_seconds is provided, message won't be visible until delay elapses.
@@ -197,7 +197,7 @@ pub enum QueueMessage {
 
     /// Receive messages for processing
     ///
-    /// Route format: `queue://{realm}/{area}/{resource}/receive`
+    /// Route format: `queue://{realm}/{area}/{resource}`
     ///
     /// Pops up to `batch_size` messages from the ready queue, creates leases,
     /// and returns them with bodies loaded from storage.
@@ -222,7 +222,7 @@ pub enum QueueMessage {
 
     /// Extend message lease
     ///
-    /// Route format: `queue://{realm}/{area}/{resource}/extend`
+    /// Route format: `queue://{realm}/{area}/{resource}`
     ///
     /// Extends the expiration time for a reserved message.
     /// Requires valid token. Fails if token mismatches or lease expired.
@@ -236,7 +236,7 @@ pub enum QueueMessage {
 
     /// Acknowledge message processing
     ///
-    /// Route format: `queue://{realm}/{area}/{resource}/ack`
+    /// Route format: `queue://{realm}/{area}/{resource}`
     ///
     /// Marks message as successfully processed and acknowledges delivery.
     /// Removes inflight entry and deletes durable record.

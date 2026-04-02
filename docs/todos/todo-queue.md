@@ -34,11 +34,11 @@ Define a TDD-driven implementation plan for the following server correction work
 
 ## Concrete Tasks
 
-- [ ] Document exactly what survives restart: committed messages yes, inflight leases and tokens no.
-- [ ] Align idempotency and retry markers with the failure model actually promised.
-- [ ] Add idle eviction for cold per-queue actors in the boot sink.
-- [ ] Review comments and docs that overstate synchronous commit semantics when buffered writes are used.
-- [ ] Keep recovery paths fast when index metadata is present and well-validated when it is not.
+- [x] Document exactly what survives restart: committed messages yes, inflight leases and tokens no.
+- [x] Align idempotency and retry markers with the failure model actually promised.
+- [x] Add idle eviction for cold per-queue actors in the boot sink.
+- [x] Review comments and docs that overstate synchronous commit semantics when buffered writes are used.
+- [x] Keep recovery paths fast when index metadata is present and well-validated when it is not.
 
 ## Non-Goals
 
@@ -48,10 +48,10 @@ Define a TDD-driven implementation plan for the following server correction work
 
 ## Verification
 
-- [ ] Prove ack/delete success is only reported after durable commit.
-- [ ] Prove restart recovers committed messages and indexes.
-- [ ] Prove inflight tokens are treated as ephemeral across reconnect or restart.
-- [ ] Prove idle actor eviction does not lose committed queue state.
+- [x] Prove ack/delete success is only reported after durable commit.
+- [x] Prove restart recovers committed messages and indexes.
+- [x] Prove inflight tokens are treated as ephemeral across reconnect or restart.
+- [x] Prove idle actor eviction does not lose committed queue state.
 
 ## Files To Touch First
 

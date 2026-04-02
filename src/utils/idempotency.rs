@@ -10,7 +10,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Idempotency {
     /// Safe to retry unconditionally (read-only or state-neutral).
-    /// Examples: GET, SCAN, READ, LAST, QUERY, RESERVE.
+    /// Examples: GET, SCAN, READ, LAST, QUERY.
     Idempotent,
     /// Unsafe to retry (modifies state, has side effects).
     /// Examples: PUT, INSERT, DELETE, APPEND, BEGIN, COMMIT, PUBLISH, ENQUEUE.
@@ -185,14 +185,12 @@ fn classify_notice(msg_type: u16) -> Idempotency {
 
 fn classify_queue(msg_type: u16) -> Idempotency {
     match msg_type {
-        // RESERVE is idempotent
-        202 => Idempotency::Idempotent,
         // COMPLETE is context-dependent
         204 => Idempotency::ContextDependent {
             dedup_key: "message_id+token",
         },
-        // ENQUEUE, EXTEND are non-idempotent
-        200 | 201 | 203 => Idempotency::NonIdempotent,
+        // ENQUEUE, RESERVE, EXTEND are non-idempotent
+        200 | 201 | 202 | 203 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
     }
 }
@@ -227,8 +225,8 @@ fn classify_schedule(msg_type: u16) -> Idempotency {
 
 /// Global deduplication store shared across all domains and sessions
 ///
-/// This store caches responses for context-dependent queue operations with a 5-minute TTL.
-/// It is not part of the RPC domain contract.
+/// This store caches responses for token-scoped Queue COMPLETE deduplication with a
+/// 5-minute TTL. It is not part of the RPC domain contract.
 static GLOBAL_DEDUP_STORE: Lazy<Arc<DedupStore>> = Lazy::new(|| {
     Arc::new(DedupStore::new(Duration::from_secs(300))) // 5 minute TTL
 });

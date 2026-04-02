@@ -72,6 +72,12 @@ pub struct KvResourceDetail {
     pub transactions_active: usize,
 }
 
+/// Point-in-time Queue resource detail for the current broker process.
+///
+/// Counts reflect only the queue actor state currently warm in memory on this
+/// broker. They are refreshed from live actors, can disappear after idle
+/// eviction or broker restart, and do not represent a durable inventory of all
+/// committed queues.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueResourceDetail {
     pub realm: String,
@@ -377,11 +383,19 @@ pub struct NoticeRouteInfo {
     pub publishes_per_minute: f64,
 }
 
+/// Collection of point-in-time Queue resource snapshots for the current broker
+/// process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueuesList {
     pub queues: Vec<QueueInfo>,
 }
 
+/// Warm in-memory Queue snapshot for a single resource on the current broker
+/// process.
+///
+/// Committed queue data remains in storage, but these counts only reflect the
+/// current live actor state. A cold queue can be absent here until traffic
+/// rehydrates it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueInfo {
     pub realm: String,
@@ -393,11 +407,18 @@ pub struct QueueInfo {
     pub oldest_message_age_seconds: u64,
 }
 
+/// Collection of live in-memory Queue lease snapshots for the current broker
+/// process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueLeasesList {
     pub leases: Vec<QueueLease>,
 }
 
+/// Live in-memory Queue lease for the current broker process.
+///
+/// Lease ownership, lease tokens, and `session_id` are broker-local runtime
+/// state only. They disappear on disconnect cleanup, idle actor eviction, or
+/// broker restart and are not durably recoverable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueLease {
     pub message_id: u64,
@@ -580,15 +601,47 @@ impl NoticeRouteInfo {
 }
 
 impl QueueInfo {
-    pub(crate) fn snapshot(realm: &str, area: &str, resource: &str) -> Self {
+    pub(crate) fn snapshot(
+        realm: &str,
+        area: &str,
+        resource: &str,
+        messages_ready: usize,
+        messages_leased: usize,
+        messages_total: usize,
+        oldest_message_age_seconds: u64,
+    ) -> Self {
         Self {
             realm: realm.to_string(),
             area: area.to_string(),
             resource: resource.to_string(),
-            messages_ready: 0,
-            messages_leased: 0,
-            messages_total: 0,
-            oldest_message_age_seconds: 0,
+            messages_ready,
+            messages_leased,
+            messages_total,
+            oldest_message_age_seconds,
+        }
+    }
+}
+
+impl QueueLease {
+    pub(crate) fn snapshot(
+        message_id: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        lease_token: u64,
+        session_id: Option<u64>,
+        expires_at: &str,
+        attempts: usize,
+    ) -> Self {
+        Self {
+            message_id,
+            realm: realm.to_string(),
+            area: area.to_string(),
+            resource: resource.to_string(),
+            lease_token: lease_token.to_string(),
+            session_id: session_id.map(|id| id.to_string()).unwrap_or_default(),
+            expires_at: expires_at.to_string(),
+            attempts,
         }
     }
 }
@@ -1153,7 +1206,7 @@ mod tests {
     #[test]
     fn should_collect_resource_refs_given_resource_items() {
         // Arrange
-        let items = vec![QueueInfo::snapshot("acme", "billing", "invoices")];
+        let items = vec![QueueInfo::snapshot("acme", "billing", "invoices", 0, 0, 0, 0)];
 
         // Act
         let resources = collect_resource_refs(items);

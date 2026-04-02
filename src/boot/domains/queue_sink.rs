@@ -2,11 +2,12 @@ use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::observability as obs;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
+use chrono::{TimeZone, Utc};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Queue subscription (for availability notifications)
 struct QueueSubscription {
@@ -34,6 +35,13 @@ impl RoutedSubscription for QueueSubscription {
     }
 }
 
+struct WarmQueueActor {
+    actor: Arc<Mutex<crate::domains::queue::QueueActor>>,
+    last_used: Instant,
+}
+
+const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_secs(5 * 60);
+
 /// Queue domain sink with per-queue QueueActor instances
 ///
 /// This sink:
@@ -42,15 +50,14 @@ impl RoutedSubscription for QueueSubscription {
 /// - Dispatches to the correct actor based on route
 /// - Returns responses
 /// - Tracks subscriptions for availability notifications (empty->non-empty transitions)
+/// - Exposes only warm in-memory queue/admin state for the current broker process
 pub struct QueueDomainSink {
     /// Midge storage engine
     store: Arc<cntryl_midge::Engine>,
     /// Commit policy for queue persistence on this runtime.
     queue_write_options: cntryl_midge::WriteOptions,
     /// Per-queue actors keyed by QueueKey
-    actors: Mutex<
-        HashMap<crate::domains::queue::QueueKey, Arc<Mutex<crate::domains::queue::QueueActor>>>,
-    >,
+    actors: Mutex<HashMap<crate::domains::queue::QueueKey, WarmQueueActor>>,
     /// Per-family subscription state for queue availability notifications
     families: Mutex<HashMap<u64, RoutedSubscriptionSet<QueueSubscription>>>,
     /// Monotonic subscription ID counter
@@ -60,6 +67,7 @@ pub struct QueueDomainSink {
     /// Router for routing response envelopes back
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    admin_snapshot_dirty: AtomicBool,
     active: AtomicBool,
 }
 
@@ -79,6 +87,7 @@ impl QueueDomainSink {
             subscription_count: AtomicUsize::new(0),
             router,
             admin_read_model,
+            admin_snapshot_dirty: AtomicBool::new(false),
             active: AtomicBool::new(true),
         }
     }
@@ -107,9 +116,13 @@ impl QueueDomainSink {
     ) -> (Arc<Mutex<crate::domains::queue::QueueActor>>, bool) {
         use std::collections::hash_map::Entry;
 
+        let now = Instant::now();
         let mut actors = self.actors.lock();
         match actors.entry(key.clone()) {
-            Entry::Occupied(entry) => (entry.get().clone(), false),
+            Entry::Occupied(mut entry) => {
+                entry.get_mut().last_used = now;
+                (entry.get().actor.clone(), false)
+            }
             Entry::Vacant(entry) => {
                 let actor = Arc::new(Mutex::new(
                     crate::domains::queue::QueueActor::new_with_write_options(
@@ -121,20 +134,117 @@ impl QueueDomainSink {
                         self.queue_write_options,
                     ),
                 ));
-                entry.insert(actor.clone());
+                entry.insert(WarmQueueActor {
+                    actor: actor.clone(),
+                    last_used: now,
+                });
                 (actor, true)
             }
         }
     }
 
+    fn mark_admin_snapshot_dirty(&self) {
+        self.admin_snapshot_dirty.store(true, Ordering::Relaxed);
+    }
+
+    pub fn refresh_admin_snapshot_if_dirty(&self) {
+        self.sweep_idle_actors();
+        if self.admin_snapshot_dirty.swap(false, Ordering::AcqRel) {
+            self.sync_admin_snapshot();
+        }
+    }
+
     fn sync_admin_snapshot(&self) {
-        let queues = self
-            .actors
-            .lock()
-            .keys()
-            .map(|key| crate::api::admin::QueueInfo::snapshot(&key.realm, &key.area, &key.resource))
-            .collect();
+        let actors = self.actors.lock();
+        let mut queues = Vec::with_capacity(actors.len());
+        let mut leases = Vec::new();
+
+        for (key, warm_actor) in actors.iter() {
+            let actor = warm_actor.actor.lock();
+            let snapshot = actor.admin_snapshot();
+            queues.push(crate::api::admin::QueueInfo::snapshot(
+                &key.realm,
+                &key.area,
+                &key.resource,
+                snapshot.messages_ready,
+                snapshot.messages_leased,
+                snapshot.messages_total,
+                snapshot.oldest_message_age_seconds,
+            ));
+            for lease in actor.admin_leases() {
+                let expires_at = Utc
+                    .timestamp_millis_opt(lease.expires_at_epoch_ms as i64)
+                    .single()
+                    .map(|timestamp| timestamp.to_rfc3339())
+                    .unwrap_or_default();
+                leases.push(crate::api::admin::QueueLease::snapshot(
+                    lease.message_id,
+                    &key.realm,
+                    &key.area,
+                    &key.resource,
+                    lease.lease_token,
+                    lease.session_id,
+                    &expires_at,
+                    lease.attempts,
+                ));
+            }
+        }
+
+        queues.sort_by(|left, right| {
+            (&left.realm, &left.area, &left.resource).cmp(&(&right.realm, &right.area, &right.resource))
+        });
+        leases.sort_by(|left, right| {
+            (
+                &left.realm,
+                &left.area,
+                &left.resource,
+                left.message_id,
+                &left.session_id,
+            )
+                .cmp(&(
+                    &right.realm,
+                    &right.area,
+                    &right.resource,
+                    right.message_id,
+                    &right.session_id,
+                ))
+        });
+
         self.admin_read_model.replace_queues(queues);
+        self.admin_read_model.replace_queue_leases(leases);
+    }
+
+    fn sweep_idle_actors(&self) {
+        self.sweep_idle_actors_at(Instant::now());
+    }
+
+    fn sweep_idle_actors_at(&self, now: Instant) {
+        let mut changed = false;
+        let mut actors = self.actors.lock();
+
+        actors.retain(|_, warm_actor| {
+            let mut actor = warm_actor.actor.lock();
+            let ready_before = actor.ready_len();
+            let leases_before = actor.inflight.len();
+            actor.process_due_work();
+            let ready_after = actor.ready_len();
+            let leases_after = actor.inflight.len();
+            if ready_before != ready_after || leases_before != leases_after {
+                changed = true;
+            }
+
+            let idle_for = now.saturating_duration_since(warm_actor.last_used);
+            let should_keep = idle_for < QUEUE_ACTOR_IDLE_TTL || !actor.inflight.is_empty();
+            if !should_keep {
+                changed = true;
+            }
+            should_keep
+        });
+
+        drop(actors);
+        if changed {
+            self.mark_admin_snapshot_dirty();
+        }
     }
 
     /// Handle a DomainPublishEvent from queue actors.
@@ -238,6 +348,27 @@ impl QueueDomainSink {
         );
     }
 
+    /// Drop all live queue leases owned by the disconnected session and return
+    /// those committed messages to the ready queue. Lease ownership is
+    /// broker-local runtime state only.
+    pub fn cleanup_session(&self, session_id: u64) {
+        self.unsubscribe_all(session_id);
+
+        let mut released_any = false;
+        let mut actors = self.actors.lock();
+        for warm_actor in actors.values_mut() {
+            let mut actor = warm_actor.actor.lock();
+            if actor.cleanup_session_leases(session_id) > 0 {
+                released_any = true;
+            }
+        }
+        drop(actors);
+
+        if released_any {
+            self.mark_admin_snapshot_dirty();
+        }
+    }
+
     /// Get the total number of active queue subscriptions (for stats).
     pub fn subscription_count(&self) -> usize {
         self.subscription_count.load(Ordering::Relaxed)
@@ -245,14 +376,17 @@ impl QueueDomainSink {
 
     pub fn pending_message_count(&self) -> usize {
         let actors = self.actors.lock();
-        actors.values().map(|actor| actor.lock().ready_len()).sum()
+        actors
+            .values()
+            .map(|warm_actor| warm_actor.actor.lock().ready_len())
+            .sum()
     }
 
     pub fn active_lease_count(&self) -> usize {
         let actors = self.actors.lock();
         actors
             .values()
-            .map(|actor| actor.lock().inflight.len())
+            .map(|warm_actor| warm_actor.actor.lock().inflight.len())
             .sum()
     }
 }
@@ -268,7 +402,7 @@ impl MailboxSink for QueueDomainSink {
         }
 
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.unsubscribe_all(cleanup.session_id);
+            self.cleanup_session(cleanup.session_id);
             return Ok(());
         }
 
@@ -387,9 +521,11 @@ impl MailboxSink for QueueDomainSink {
             "Parsed Queue message successfully"
         );
 
+        self.sweep_idle_actors();
+
         use crate::domains::queue::protocol::QueueMessage;
 
-        let (response, availability_notify_route, should_sync_admin_snapshot) = match queue_msg {
+        let (response, availability_notify_route, should_mark_admin_snapshot_dirty) = match queue_msg {
             QueueMessage::Send {
                 family_id,
                 route,
@@ -423,7 +559,8 @@ impl MailboxSink for QueueDomainSink {
                 } else {
                     None
                 };
-                (resp, notify_route, created_actor)
+                let _ = created_actor;
+                (resp, notify_route, true)
             }
             QueueMessage::Receive {
                 family_id,
@@ -442,12 +579,14 @@ impl MailboxSink for QueueDomainSink {
                 let mut actor = actor_handle.lock();
                 let actor_exec_start = Instant::now();
                 actor.process_due_work();
-                let response = actor.handle_receive(lease_seconds, batch_size);
+                let response =
+                    actor.handle_receive_for_session(frame_ctx.session_id, lease_seconds, batch_size);
                 crate::boot::observability::histogram_observe_us(
                     obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
                     actor_exec_start.elapsed().as_micros() as u64,
                 );
-                (response, None, created_actor)
+                let _ = created_actor;
+                (response, None, true)
             }
             QueueMessage::Extend {
                 family_id,
@@ -471,7 +610,8 @@ impl MailboxSink for QueueDomainSink {
                     obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
                     actor_exec_start.elapsed().as_micros() as u64,
                 );
-                (response, None, created_actor)
+                let _ = created_actor;
+                (response, None, true)
             }
             QueueMessage::Ack {
                 family_id,
@@ -494,7 +634,8 @@ impl MailboxSink for QueueDomainSink {
                     obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
                     actor_exec_start.elapsed().as_micros() as u64,
                 );
-                (response, None, created_actor)
+                let _ = created_actor;
+                (response, None, true)
             }
             QueueMessage::LeaseExpired { .. } => (
                 crate::domains::queue::QueueResponse::Error {
@@ -597,8 +738,8 @@ impl MailboxSink for QueueDomainSink {
                 )
             }
         };
-        if should_sync_admin_snapshot {
-            self.sync_admin_snapshot();
+        if should_mark_admin_snapshot_dirty {
+            self.mark_admin_snapshot_dirty();
         }
 
         if let Some(notify_route) = availability_notify_route
@@ -683,6 +824,34 @@ mod tests {
         payload.put_u32(body.len() as u32);
         payload.put_slice(body);
         Bytes::from(payload)
+    }
+
+    fn encode_queue_reserve(route: &str, lease_seconds: u64, batch_size: u32) -> Bytes {
+        let mut payload = Vec::new();
+        payload.put_u32(route.len() as u32);
+        payload.put_slice(route.as_bytes());
+        payload.put_u64(lease_seconds);
+        payload.put_u8(1);
+        payload.put_u32(batch_size);
+        payload.put_u8(0);
+        Bytes::from(payload)
+    }
+
+    fn receive_response_message_count(frame: &FrameContext) -> u32 {
+        assert_eq!(frame.payload[0], 0, "expected success status");
+        u32::from_be_bytes(
+            frame.payload[1..5]
+                .try_into()
+                .expect("receive payload should include count"),
+        )
+    }
+
+    fn force_actor_idle(sink: &QueueDomainSink, queue_route: &str, family: RouteFamily) {
+        let key = crate::domains::queue::QueueKey::from_route(family, &Route::new(queue_route))
+            .expect("queue key");
+        let mut actors = sink.actors.lock();
+        let warm_actor = actors.get_mut(&key).expect("warm queue actor");
+        warm_actor.last_used = Instant::now() - QUEUE_ACTOR_IDLE_TTL - Duration::from_secs(1);
     }
 
     fn drain_mailbox(mailbox: &Mailbox) {
@@ -1006,5 +1175,309 @@ mod tests {
         assert_eq!(notified_payload.as_ref(), b"{}");
         assert!(notify_decoder.is_complete());
         assert!(subscriber_mailbox.receiver().try_recv().is_err());
+    }
+
+    #[test]
+    fn should_refresh_queue_admin_snapshot_with_live_counts_and_leases() {
+        let family = RouteFamily::new(1);
+        let sender_session_id = 7;
+        let worker_session_id = 8;
+        let queue_route = "queue://acme/jobs/emails";
+        let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+        let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let worker_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+        let sender_mailbox = Arc::new(Mailbox::new(8));
+        let worker_mailbox = Arc::new(Mailbox::new(8));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        router.register(sender_address.clone(), sender_mailbox.clone());
+        router.register(worker_address.clone(), worker_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = QueueDomainSink::new(
+            store,
+            router,
+            admin_read_model.clone(),
+            cntryl_midge::WriteOptions::buffered(),
+        );
+
+        sink.deliver(Envelope::from_route(
+            sender_address,
+            queue_address.clone(),
+            FrameContext::new(
+                sender_session_id,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send(queue_route, b"email"),
+                family,
+            ),
+        ))
+        .expect("enqueue queue message");
+        let _send_ack = sender_mailbox
+            .receiver()
+            .try_recv()
+            .expect("enqueue response");
+
+        sink.deliver(Envelope::from_route(
+            worker_address,
+            queue_address,
+            FrameContext::new(
+                worker_session_id,
+                ChannelId::Pub,
+                MessageType::new(202),
+                encode_queue_reserve(queue_route, 30, 1),
+                family,
+            ),
+        ))
+        .expect("reserve queue message");
+        let reserve_envelope = worker_mailbox
+            .receiver()
+            .try_recv()
+            .expect("reserve response");
+        let reserve_frame = reserve_envelope
+            .into_payload::<FrameContext>()
+            .expect("reserve response frame");
+        assert_eq!(reserve_frame.msg_type.as_u16(), 202);
+        assert_eq!(receive_response_message_count(&reserve_frame), 1);
+
+        sink.refresh_admin_snapshot_if_dirty();
+
+        let queues = admin_read_model.queues(None);
+        assert_eq!(queues.len(), 1);
+        assert_eq!(queues[0].realm, "acme");
+        assert_eq!(queues[0].area, "jobs");
+        assert_eq!(queues[0].resource, "emails");
+        assert_eq!(queues[0].messages_ready, 0);
+        assert_eq!(queues[0].messages_leased, 1);
+        assert_eq!(queues[0].messages_total, 1);
+
+        let leases = admin_read_model.queue_leases(None);
+        assert_eq!(leases.len(), 1);
+        assert_eq!(leases[0].realm, "acme");
+        assert_eq!(leases[0].area, "jobs");
+        assert_eq!(leases[0].resource, "emails");
+        assert_eq!(leases[0].message_id, 1);
+        assert_eq!(leases[0].session_id, worker_session_id.to_string());
+        assert_eq!(leases[0].attempts, 1);
+        assert!(!leases[0].expires_at.is_empty());
+    }
+
+    #[test]
+    fn should_cleanup_queue_leases_for_disconnected_session() {
+        let family = RouteFamily::new(1);
+        let sender_session_id = 7;
+        let worker_session_id = 8;
+        let queue_route = "queue://acme/jobs/emails";
+        let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+        let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let worker_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+        let sender_mailbox = Arc::new(Mailbox::new(8));
+        let worker_mailbox = Arc::new(Mailbox::new(8));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        router.register(sender_address.clone(), sender_mailbox.clone());
+        router.register(worker_address.clone(), worker_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = QueueDomainSink::new(
+            store,
+            router,
+            admin_read_model.clone(),
+            cntryl_midge::WriteOptions::buffered(),
+        );
+
+        sink.deliver(Envelope::from_route(
+            sender_address,
+            queue_address.clone(),
+            FrameContext::new(
+                sender_session_id,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send(queue_route, b"email"),
+                family,
+            ),
+        ))
+        .expect("enqueue queue message");
+        let _send_ack = sender_mailbox
+            .receiver()
+            .try_recv()
+            .expect("enqueue response");
+
+        sink.deliver(Envelope::from_route(
+            worker_address,
+            queue_address.clone(),
+            FrameContext::new(
+                worker_session_id,
+                ChannelId::Pub,
+                MessageType::new(202),
+                encode_queue_reserve(queue_route, 30, 1),
+                family,
+            ),
+        ))
+        .expect("reserve queue message");
+        let _reserve_ack = worker_mailbox
+            .receiver()
+            .try_recv()
+            .expect("reserve response");
+
+        sink.refresh_admin_snapshot_if_dirty();
+        assert_eq!(admin_read_model.queue_leases(None).len(), 1);
+
+        sink.deliver(Envelope::new(
+            RouteAddress::new(family, Route::new("queue://cleanup")),
+            crate::runtime::SessionCleanup {
+                session_id: worker_session_id,
+            },
+        ))
+        .expect("cleanup queue session");
+
+        sink.refresh_admin_snapshot_if_dirty();
+
+        let queues = admin_read_model.queues(None);
+        assert_eq!(queues.len(), 1);
+        assert_eq!(queues[0].messages_ready, 1);
+        assert_eq!(queues[0].messages_leased, 0);
+        assert_eq!(queues[0].messages_total, 1);
+        assert!(admin_read_model.queue_leases(None).is_empty());
+    }
+
+    #[test]
+    fn should_evict_idle_queue_actor_without_losing_committed_state() {
+        let family = RouteFamily::new(1);
+        let sender_session_id = 7;
+        let worker_session_id = 8;
+        let queue_route = "queue://acme/jobs/emails";
+        let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+        let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let worker_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+        let sender_mailbox = Arc::new(Mailbox::new(8));
+        let worker_mailbox = Arc::new(Mailbox::new(8));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        router.register(sender_address.clone(), sender_mailbox.clone());
+        router.register(worker_address.clone(), worker_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = QueueDomainSink::new(
+            store,
+            router,
+            admin_read_model.clone(),
+            cntryl_midge::WriteOptions::buffered(),
+        );
+
+        sink.deliver(Envelope::from_route(
+            sender_address,
+            queue_address.clone(),
+            FrameContext::new(
+                sender_session_id,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send(queue_route, b"email"),
+                family,
+            ),
+        ))
+        .expect("enqueue queue message");
+        let _send_ack = sender_mailbox
+            .receiver()
+            .try_recv()
+            .expect("enqueue response");
+        assert_eq!(sink.actors.lock().len(), 1);
+
+        force_actor_idle(&sink, queue_route, family);
+        sink.refresh_admin_snapshot_if_dirty();
+        assert!(sink.actors.lock().is_empty(), "idle actor should be evicted");
+        assert!(
+            admin_read_model.queues(None).is_empty(),
+            "cold queue should disappear from warm admin snapshot"
+        );
+
+        sink.deliver(Envelope::from_route(
+            worker_address,
+            queue_address,
+            FrameContext::new(
+                worker_session_id,
+                ChannelId::Pub,
+                MessageType::new(202),
+                encode_queue_reserve(queue_route, 30, 1),
+                family,
+            ),
+        ))
+        .expect("reserve queue message after eviction");
+        let reserve_envelope = worker_mailbox
+            .receiver()
+            .try_recv()
+            .expect("reserve response after eviction");
+        let reserve_frame = reserve_envelope
+            .into_payload::<FrameContext>()
+            .expect("reserve response frame after eviction");
+        assert_eq!(receive_response_message_count(&reserve_frame), 1);
+
+        sink.refresh_admin_snapshot_if_dirty();
+        assert_eq!(sink.actors.lock().len(), 1);
+        assert_eq!(admin_read_model.queues(None)[0].messages_leased, 1);
+    }
+
+    #[test]
+    fn should_not_evict_idle_queue_actor_with_live_leases() {
+        let family = RouteFamily::new(1);
+        let sender_session_id = 7;
+        let worker_session_id = 8;
+        let queue_route = "queue://acme/jobs/emails";
+        let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+        let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let worker_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+        let sender_mailbox = Arc::new(Mailbox::new(8));
+        let worker_mailbox = Arc::new(Mailbox::new(8));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        router.register(sender_address.clone(), sender_mailbox.clone());
+        router.register(worker_address.clone(), worker_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = QueueDomainSink::new(
+            store,
+            router,
+            admin_read_model,
+            cntryl_midge::WriteOptions::buffered(),
+        );
+
+        sink.deliver(Envelope::from_route(
+            sender_address,
+            queue_address.clone(),
+            FrameContext::new(
+                sender_session_id,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send(queue_route, b"email"),
+                family,
+            ),
+        ))
+        .expect("enqueue queue message");
+        let _send_ack = sender_mailbox
+            .receiver()
+            .try_recv()
+            .expect("enqueue response");
+
+        sink.deliver(Envelope::from_route(
+            worker_address,
+            queue_address,
+            FrameContext::new(
+                worker_session_id,
+                ChannelId::Pub,
+                MessageType::new(202),
+                encode_queue_reserve(queue_route, 30, 1),
+                family,
+            ),
+        ))
+        .expect("reserve queue message");
+        let _reserve_ack = worker_mailbox
+            .receiver()
+            .try_recv()
+            .expect("reserve response");
+
+        force_actor_idle(&sink, queue_route, family);
+        sink.refresh_admin_snapshot_if_dirty();
+
+        assert_eq!(
+            sink.actors.lock().len(),
+            1,
+            "actors with live leases must stay warm until the lease is gone"
+        );
     }
 }

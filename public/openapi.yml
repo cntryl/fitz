@@ -345,6 +345,7 @@ paths:
     get:
       tags: [Queue]
       summary: Get queue resource
+      description: Point-in-time warm-actor Queue detail for the current broker process. Counts are refreshed from live in-memory queue actors only and can disappear after idle eviction or broker restart until traffic rehydrates that queue.
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/RealmPath"
@@ -361,6 +362,7 @@ paths:
     get:
       tags: [Queue]
       summary: List queue leases for a resource
+      description: Live in-memory Queue leases for the current broker process only. Lease ownership, tokens, and session IDs disappear on disconnect cleanup, idle actor eviction, or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/RealmPath"
@@ -1055,6 +1057,7 @@ components:
 
     QueueResourceDetail:
       type: object
+      description: Point-in-time Queue resource detail for the current broker process. Counts describe only the queue actor state currently warm in memory and do not represent a durable inventory of every committed queue in storage.
       required:
         [realm, area, resource, messages_ready, messages_leased, messages_total, oldest_message_age_seconds]
       properties:
@@ -1164,6 +1167,7 @@ components:
 
     QueueLease:
       type: object
+      description: Live in-memory Queue lease for the current broker process only. `lease_token` and `session_id` belong to one active lease instance and are dropped on disconnect cleanup, idle actor eviction, or broker restart.
       properties:
         message_id: { type: integer }
         realm: { type: string }
