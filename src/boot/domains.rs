@@ -130,6 +130,7 @@ pub fn setup(
         admin_read_model.clone(),
     ));
     router.register_domain_pattern("lease", lease_sink.clone() as Arc<dyn MailboxSink>);
+    lease_sink.start_timeout_loop();
     tracing::info!("Registered Lease domain (ephemeral, in-memory lease://* across all route families)");
 
     let schedule_sink = Arc::new(ScheduleDomainSink::new(

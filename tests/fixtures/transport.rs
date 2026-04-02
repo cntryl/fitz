@@ -170,7 +170,7 @@ impl HasFixtureClient for WsLeaseConnector {
 }
 
 #[async_trait::async_trait]
-pub trait LeaseConnector: TestConnectorClient + Sized {
+pub trait LeaseConnector: FrameReceivingConnector + Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
 
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
@@ -210,6 +210,29 @@ pub fn build_lease_acquire_immediate(route: &str, owner_id: &str, ttl_secs: i32)
 
     // Wait seconds (u32, 0 for immediate)
     buf.put_u32(0);
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(400, &buf);
+    builder.build()
+}
+
+/// Build LEASE ACQUIRE frame (msg_type 400) with waiting.
+pub fn build_lease_acquire_with_wait(
+    route: &str,
+    owner_id: &str,
+    ttl_secs: i32,
+    wait_seconds: u32,
+) -> Vec<u8> {
+    let mut buf = Vec::new();
+
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    buf.put_u32(owner_id.len() as u32);
+    buf.put_slice(owner_id.as_bytes());
+
+    buf.put_u64(ttl_secs as u64);
+    buf.put_u32(wait_seconds);
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(400, &buf);
@@ -261,6 +284,25 @@ pub fn build_lease_release(route: &str, owner_id: &str, token: u64) -> Vec<u8> {
     builder.build()
 }
 
+/// Build LEASE QUERY frame (msg_type 403)
+pub fn build_lease_query(route: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(403, &buf);
+    builder.build()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaseStatusPayload {
+    pub has_holder: bool,
+    pub owner_id: Option<String>,
+    pub expires_in_secs: Option<u64>,
+    pub pending_waiters: u32,
+}
+
 /// Parse LEASE response: (msg_type: u8, status: u8, data: Vec<u8>)
 pub fn parse_lease_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
@@ -294,6 +336,57 @@ pub fn parse_lease_token_response(data: &[u8]) -> Result<u64, String> {
         data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9],
     ];
     Ok(u64::from_be_bytes(bytes))
+}
+
+pub fn parse_lease_acquire_response_type(data: &[u8]) -> Result<u8, String> {
+    if data.len() < 2 {
+        return Err("Acquire response too short".to_string());
+    }
+
+    if data[0] != 0 {
+        return Err("Lease operation failed".to_string());
+    }
+
+    Ok(data[1])
+}
+
+pub fn parse_lease_error_message(data: &[u8]) -> Result<String, String> {
+    let mut decoder = fitz::protocol::payload_codec::PayloadDecoder::new(data);
+    let status = decoder.get_u8()?;
+    if status == 0 {
+        return Err("Lease operation succeeded".to_string());
+    }
+
+    decoder.get_string()
+}
+
+pub fn parse_lease_status_payload(data: &[u8]) -> Result<LeaseStatusPayload, String> {
+    let mut decoder = fitz::protocol::payload_codec::PayloadDecoder::new(data);
+    let status = decoder.get_u8()?;
+    if status != 0 {
+        return Err("Lease operation failed".to_string());
+    }
+
+    let has_holder = decoder.get_u8()? != 0;
+    if !has_holder {
+        let pending_waiters = decoder.get_u32()?;
+        return Ok(LeaseStatusPayload {
+            has_holder: false,
+            owner_id: None,
+            expires_in_secs: None,
+            pending_waiters,
+        });
+    }
+
+    let owner_id = decoder.get_string()?;
+    let expires_in_secs = decoder.get_u64()?;
+    let pending_waiters = decoder.get_u32()?;
+    Ok(LeaseStatusPayload {
+        has_holder: true,
+        owner_id: Some(owner_id),
+        expires_in_secs: Some(expires_in_secs),
+        pending_waiters,
+    })
 }
 
 // ============================================================================
