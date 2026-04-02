@@ -11,8 +11,7 @@ async fn commit_stream_record_with_offset<C>(
     route: &str,
     expected_offset: u64,
     body: &[u8],
-)
-where
+) where
     C: StreamConnector,
 {
     let begin_response = client

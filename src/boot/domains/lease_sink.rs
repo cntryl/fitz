@@ -168,7 +168,11 @@ impl LeaseDomainSink {
             .remove_lease(&key.realm, &key.area, &key.resource);
     }
 
-    fn track_session_lease(&self, session_id: u64, key: &crate::domains::lease::protocol::LeaseKey) {
+    fn track_session_lease(
+        &self,
+        session_id: u64,
+        key: &crate::domains::lease::protocol::LeaseKey,
+    ) {
         self.session_leases
             .lock()
             .entry(session_id)
@@ -237,7 +241,8 @@ impl LeaseDomainSink {
         waiter: &PendingAcquire,
         response: &crate::domains::lease::protocol::LeaseResponse,
     ) {
-        let mut payload_encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(128);
+        let mut payload_encoder =
+            crate::protocol::payload_codec::PayloadEncoder::with_capacity(128);
         let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
             &mut payload_encoder,
             response,
@@ -334,7 +339,10 @@ impl LeaseDomainSink {
 
         for waiter in expired_waiters {
             self.untrack_session_waiter(waiter.session_id, key, waiter.queued_token);
-            self.send_waiter_response(&waiter, &crate::domains::lease::protocol::LeaseResponse::Timeout);
+            self.send_waiter_response(
+                &waiter,
+                &crate::domains::lease::protocol::LeaseResponse::Timeout,
+            );
         }
     }
 
@@ -432,7 +440,10 @@ impl LeaseDomainSink {
 
         for (key, waiter) in expired_waiters {
             self.untrack_session_waiter(waiter.session_id, &key, waiter.queued_token);
-            self.send_waiter_response(&waiter, &crate::domains::lease::protocol::LeaseResponse::Timeout);
+            self.send_waiter_response(
+                &waiter,
+                &crate::domains::lease::protocol::LeaseResponse::Timeout,
+            );
         }
 
         let expired_leases = {
@@ -644,7 +655,8 @@ impl LeaseDomainSink {
 
                     let mut pending_acquires = self.pending_acquires.lock();
                     if let Some(queue) = pending_acquires.get(&key) {
-                        if let Some(existing) = queue.iter().find(|waiter| waiter.owner_id == owner_id)
+                        if let Some(existing) =
+                            queue.iter().find(|waiter| waiter.owner_id == owner_id)
                         {
                             return LeaseResponse::AlreadyQueued {
                                 fencing_token: existing.queued_token,
@@ -962,7 +974,9 @@ impl MailboxSink for LeaseDomainSink {
                     .entry(family_id_u64)
                     .or_insert_with(RoutedSubscriptionSet::new);
 
-                if let Some(existing) = family_state.find_existing_id(frame_ctx.session_id, pattern.as_str()) {
+                if let Some(existing) =
+                    family_state.find_existing_id(frame_ctx.session_id, pattern.as_str())
+                {
                     let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
                         &mut payload_encoder,
                         &LeaseResponse::SubscribeOk {
@@ -1178,8 +1192,11 @@ mod tests {
             .expect("subscribe ack envelope");
         assert_eq!(sink.lease_count(), 1);
         assert_eq!(sink.subscription_count(), 1);
-            assert_eq!(admin_read_model.leases(None).len(), 1);
-            assert_eq!(admin_read_model.leases(None)[0].owner_session_id, "session:7");
+        assert_eq!(admin_read_model.leases(None).len(), 1);
+        assert_eq!(
+            admin_read_model.leases(None)[0].owner_session_id,
+            "session:7"
+        );
         drain_mailbox(&subscriber_mailbox);
 
         // Act

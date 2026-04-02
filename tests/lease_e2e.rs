@@ -242,7 +242,10 @@ where
         .await
         .expect("reacquire after disconnect");
     let (_msg_type, reacquire_status, _data) = parse_lease_response(&reacquire_response);
-    assert_eq!(reacquire_status, 0, "Expected reacquire success after disconnect");
+    assert_eq!(
+        reacquire_status, 0,
+        "Expected reacquire success after disconnect"
+    );
 }
 
 async fn should_lose_all_leases_on_broker_restart<C>()
@@ -431,10 +434,9 @@ where
     let status_payload = parse_lease_status_payload(&query_data).expect("status payload");
     assert!(status_payload.has_holder, "Expected held lease status");
     assert!(
-        status_payload
-            .owner_id
-            .as_deref()
-            .is_some_and(|owner_id| owner_id.starts_with("session:") && owner_id.ends_with(":owner1")),
+        status_payload.owner_id.as_deref().is_some_and(
+            |owner_id| owner_id.starts_with("session:") && owner_id.ends_with(":owner1")
+        ),
         "Expected query to report the current session-scoped owner"
     );
     assert_eq!(

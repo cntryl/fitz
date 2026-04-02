@@ -172,7 +172,9 @@ impl AdminReadModel {
     }
 
     pub fn upsert_lease(&self, lease: LeaseInfo) {
-        self.leases.write().insert(lease_identity_for(&lease), lease);
+        self.leases
+            .write()
+            .insert(lease_identity_for(&lease), lease);
     }
 
     pub fn remove_lease(&self, realm: &str, area: &str, resource: &str) {

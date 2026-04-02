@@ -28,8 +28,8 @@ use fixtures::transport::{
     parse_rpc_request_delivery, parse_rpc_response, parse_rpc_response_delivery,
 };
 use parking_lot::Mutex;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -545,7 +545,10 @@ fn should_forward_worker_not_found_error_given_rpc_session_cleanup() {
         .expect("worker request delivery");
     let delivered_request = parse_rpc_request_delivery(&encode_captured_frame(delivered_request))
         .expect("parse worker request delivery");
-    assert_eq!(forwarded_error.correlation_id, delivered_request.correlation_id);
+    assert_eq!(
+        forwarded_error.correlation_id,
+        delivered_request.correlation_id
+    );
 }
 
 #[tokio::test]
@@ -608,9 +611,18 @@ async fn should_reject_late_worker_response_after_timeout_given_rpc_sink() {
     let (timeout_code, timeout_message) =
         fitz::protocol::rpc_codec::decode_error_body(&timeout_response.body)
             .expect("decode timeout error");
-    assert_eq!(timeout_code, fitz::protocol::error_codes::rpc::ERR_RPC_TIMEOUT);
-    assert_eq!(timeout_message, "Worker did not reply within timeout period");
-    assert_eq!(timeout_response.correlation_id, delivered_request.correlation_id);
+    assert_eq!(
+        timeout_code,
+        fitz::protocol::error_codes::rpc::ERR_RPC_TIMEOUT
+    );
+    assert_eq!(
+        timeout_message,
+        "Worker did not reply within timeout period"
+    );
+    assert_eq!(
+        timeout_response.correlation_id,
+        delivered_request.correlation_id
+    );
 
     let worker_frames = worker_sink.snapshot();
     assert_eq!(worker_frames.len(), 3);
@@ -619,9 +631,18 @@ async fn should_reject_late_worker_response_after_timeout_given_rpc_sink() {
     let (orphan_code, orphan_message) =
         fitz::protocol::rpc_codec::decode_error_body(&orphan_response.body)
             .expect("decode orphan error");
-    assert_eq!(orphan_code, fitz::protocol::error_codes::rpc::ERR_CORRELATION_NOT_FOUND);
-    assert_eq!(orphan_message, "Correlation ID not found (orphaned response)");
-    assert_eq!(orphan_response.correlation_id, delivered_request.correlation_id);
+    assert_eq!(
+        orphan_code,
+        fitz::protocol::error_codes::rpc::ERR_CORRELATION_NOT_FOUND
+    );
+    assert_eq!(
+        orphan_message,
+        "Correlation ID not found (orphaned response)"
+    );
+    assert_eq!(
+        orphan_response.correlation_id,
+        delivered_request.correlation_id
+    );
 
     sink.stop();
 }

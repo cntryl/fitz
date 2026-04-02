@@ -418,7 +418,9 @@ fn should_reset_fencing_tokens_when_actor_is_recreated() {
         ttl_secs: 60,
         wait_seconds: 0,
     };
-    let first_response = first_actor.handle_message(first_acquire, &mut first_ctx).unwrap();
+    let first_response = first_actor
+        .handle_message(first_acquire, &mut first_ctx)
+        .unwrap();
 
     let first_token = match first_response {
         LeaseResponse::Acquired { fencing_token } => fencing_token,
@@ -436,7 +438,9 @@ fn should_reset_fencing_tokens_when_actor_is_recreated() {
         ttl_secs: 60,
         wait_seconds: 0,
     };
-    let second_response = second_actor.handle_message(second_acquire, &mut second_ctx).unwrap();
+    let second_response = second_actor
+        .handle_message(second_acquire, &mut second_ctx)
+        .unwrap();
 
     // Assert
     let second_token = match second_response {

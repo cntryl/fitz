@@ -664,7 +664,10 @@ async fn exercise_pending_request_loss_after_broker_restart_tcp() {
     let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
     assert_eq!(status, 0);
 
-    let delivered_request = worker.recv_frame(2000).await.expect("fresh request delivery");
+    let delivered_request = worker
+        .recv_frame(2000)
+        .await
+        .expect("fresh request delivery");
     let delivered_request =
         parse_rpc_request_delivery(&delivered_request).expect("parse request delivery");
     assert_eq!(delivered_request.body.as_slice(), b"user-456");
@@ -748,7 +751,10 @@ async fn exercise_pending_request_loss_after_broker_restart_ws() {
     let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
     assert_eq!(status, 0);
 
-    let delivered_request = worker.recv_frame(2000).await.expect("fresh request delivery");
+    let delivered_request = worker
+        .recv_frame(2000)
+        .await
+        .expect("fresh request delivery");
     let delivered_request =
         parse_rpc_request_delivery(&delivered_request).expect("parse request delivery");
     assert_eq!(delivered_request.body.as_slice(), b"user-456");
