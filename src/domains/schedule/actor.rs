@@ -854,6 +854,60 @@ mod tests {
     }
 
     #[test]
+    fn should_skip_missed_execution_given_overdue_schedule_on_preload() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        let store = ScheduleStore::new(db.clone());
+        let route = "schedule://acme/jobs/skip/run";
+        let payload = Bytes::from_static(b"payload");
+        let now = Instant::now();
+        let overdue_at = now.checked_sub(Duration::from_secs(120)).unwrap();
+        let overdue_ms = ScheduleActor::instant_to_ms_at(overdue_at, now);
+
+        store
+            .insert(
+                1,
+                ScheduleInsert {
+                    route,
+                    cron: "* * * * *",
+                    payload: &payload,
+                    next_fire_ms: overdue_ms,
+                    previous_fire_ms: None,
+                },
+                cntryl_midge::WriteOptions::buffered(),
+            )
+            .expect("insert overdue schedule");
+
+        let mut actor = ScheduleActor::try_new_at(
+            RouteFamily::new(1),
+            db,
+            cntryl_midge::WriteOptions::buffered(),
+            now,
+        )
+        .expect("load actor");
+        actor.last_scan_time = now
+            .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+            .unwrap();
+
+        // Act
+        let fired = actor.scan_and_fire_at(now);
+
+        // Assert
+        assert!(
+            fired.is_empty(),
+            "overdue schedules should normalize forward instead of replaying missed executions"
+        );
+        assert!(
+            actor
+                .schedules
+                .get(route)
+                .expect("schedule")
+                .next_fire_time
+                > now
+        );
+    }
+
+    #[test]
     fn should_not_advance_in_memory_or_fire_when_reschedule_persist_fails() {
         // Arrange
         let mut actor = make_actor();
@@ -924,6 +978,70 @@ mod tests {
         assert_eq!(
             actor.schedules.get(route).expect("schedule").next_fire_ms,
             current_fire_ms
+        );
+    }
+
+    #[test]
+    fn should_not_fire_deleted_schedule_given_stale_ready_heap_entry() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/cancel/run";
+        actor
+            .create_schedule(
+                route.to_string(),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"payload"),
+            )
+            .expect("create schedule");
+        actor.bench_prepare_scan(1);
+        actor
+            .delete_schedule(route.to_string())
+            .expect("delete schedule");
+
+        let now = Instant::now();
+        actor.last_scan_time = now
+            .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+            .unwrap();
+
+        // Act
+        let fired = actor.scan_and_fire_at(now);
+
+        // Assert
+        assert!(
+            fired.is_empty(),
+            "deleted schedules should not ghost-fire from stale heap entries"
+        );
+        assert_eq!(actor.schedule_count(), 0);
+    }
+
+    #[test]
+    fn should_not_fire_twice_given_repeated_scan_within_dedup_window() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/dedup/run";
+        actor
+            .create_schedule(
+                route.to_string(),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"payload"),
+            )
+            .expect("create schedule");
+        actor.bench_prepare_scan(1);
+
+        let now = Instant::now();
+        actor.last_scan_time = now
+            .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+            .unwrap();
+
+        // Act
+        let first = actor.scan_and_fire_at(now);
+        let second = actor.scan_and_fire_at(now.checked_add(Duration::from_millis(1)).unwrap());
+
+        // Assert
+        assert_eq!(first.len(), 1, "first due scan should emit one fire");
+        assert!(
+            second.is_empty(),
+            "repeated scans inside the dedup window should not emit a duplicate fire"
         );
     }
 }

@@ -6,7 +6,8 @@ use bytes::Bytes;
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage};
+use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
+use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 
@@ -22,10 +23,14 @@ fn create_test_actor() -> ScheduleActor {
     )
 }
 
+fn build_route(index: usize) -> String {
+    let route = format!("schedule://acme/jobs/task{:06}/run", index);
+    validate_concrete_schedule_route(&route).expect("valid schedule benchmark route");
+    route
+}
+
 fn precompute_data(count: usize) -> (Vec<String>, Vec<String>, Vec<Bytes>) {
-    let routes = (0..count)
-        .map(|i| format!("schedule://acme/jobs/task{:06}", i))
-        .collect();
+    let routes = (0..count).map(build_route).collect();
     let crons = (0..count)
         .map(|i| {
             let patterns = ["* * * * *", "0 * * * *", "0 0 * * *", "0 2 1 * *"];
@@ -45,11 +50,16 @@ fn populate_actor(
     payloads: &[Bytes],
 ) {
     for i in 0..routes.len() {
-        actor.handle(ScheduleMessage::Create {
+        let response = actor.handle(ScheduleMessage::Create {
             route: routes[i].clone(),
             cron: crons[i].clone(),
             payload: payloads[i].clone(),
         });
+        assert!(
+            matches!(response, ScheduleResponse::Ok),
+            "schedule bench setup create should succeed for {}",
+            routes[i]
+        );
     }
 }
 
