@@ -1,5 +1,8 @@
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
+use crate::domains::stream::{StreamRecord, StreamStore};
+use crate::domains::stream::store::EventPayload;
 use crate::protocol::frame_context::FrameContext;
+use crate::protocol::payload_codec::PayloadEncoder;
 use crate::runtime::routing::route_triplet;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
@@ -7,7 +10,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-/// Subscription entry for stream change notifications
 struct StreamSubscription {
     pattern: crate::runtime::matcher::Pattern,
     session_id: u64,
@@ -29,29 +31,14 @@ impl RoutedSubscription for StreamSubscription {
     }
 }
 
-/// Per-route next offset and session tracking for expected_offset enforcement
-#[derive(Clone)]
-struct PendingStreamRecord {
-    body: bytes::Bytes,
-}
-
 struct PendingStreamSession {
     route: String,
     initial_next_offset: u64,
-    records: Vec<PendingStreamRecord>,
-}
-
-#[derive(Clone)]
-struct CommittedStreamRecord {
-    offset: u64,
-    body: bytes::Bytes,
+    appended_count: usize,
 }
 
 struct StreamRouteState {
     next_offset: u64,
-    records: Vec<CommittedStreamRecord>,
-    last_data: Vec<u8>,
-    metadata_data: Vec<u8>,
 }
 
 struct StreamWriteState {
@@ -61,18 +48,8 @@ struct StreamWriteState {
     next_realm_offsets: HashMap<String, u64>,
 }
 
-/// Stream domain sink: append-only streaming operations with subscription tracking
-///
-/// Supports dual-path delivery:
-/// - PATH 1: `DomainPublishEvent` from stream actors (subscription matching + fanout)
-/// - PATH 2: `FrameContext` from client wire frames (BEGIN/APPEND/COMMIT/READ/SUBSCRIBE/UNSUBSCRIBE)
-///
-/// Enforces expected_offset at Begin: rejects with concurrency error when client's
-/// expected_offset does not match the stream's next offset for that route.
 pub struct StreamDomainSink {
-    #[allow(dead_code)]
-    store: Arc<cntryl_midge::Engine>,
-    next_session_id: AtomicU64,
+    store: Arc<StreamStore>,
     write_state: Mutex<StreamWriteState>,
     families: Mutex<HashMap<u64, RoutedSubscriptionSet<StreamSubscription>>>,
     next_sub_id: AtomicU64,
@@ -88,8 +65,7 @@ impl StreamDomainSink {
         admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     ) -> Self {
         Self {
-            store,
-            next_session_id: AtomicU64::new(1),
+            store: Arc::new(StreamStore::new(store)),
             write_state: Mutex::new(StreamWriteState {
                 routes: HashMap::new(),
                 sessions: HashMap::new(),
@@ -135,7 +111,7 @@ impl StreamDomainSink {
     }
 
     fn encode_stream_read_data(
-        records: &[CommittedStreamRecord],
+        records: &[StreamRecord],
         from_offset: u64,
         limit: u64,
         max_bytes: Option<usize>,
@@ -143,7 +119,10 @@ impl StreamDomainSink {
         let mut selected = Vec::new();
         let mut total_bytes = 0usize;
 
-        for record in records.iter().filter(|record| record.offset >= from_offset) {
+        for record in records
+            .iter()
+            .filter(|record| record.resource_offset >= from_offset)
+        {
             if selected.len() >= limit as usize {
                 break;
             }
@@ -159,18 +138,18 @@ impl StreamDomainSink {
             selected.push(record);
         }
 
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        let mut encoder = PayloadEncoder::new();
         encoder.put_u32(selected.len() as u32);
         for record in selected {
-            encoder.put_u64(record.offset);
+            encoder.put_u64(record.resource_offset);
             encoder.put_bytes(record.body.as_ref());
         }
         encoder.finish()
     }
 
-    fn encode_stream_last_data(record: &CommittedStreamRecord) -> Vec<u8> {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
-        encoder.put_u64(record.offset);
+    fn encode_stream_last_data(record: &StreamRecord) -> Vec<u8> {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_u64(record.resource_offset);
         encoder.put_bytes(record.body.as_ref());
         encoder.finish()
     }
@@ -238,11 +217,299 @@ impl StreamDomainSink {
     }
 
     fn encode_stream_metadata_summary(first_offset: u64, last_offset: u64, count: u64) -> Vec<u8> {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        let mut encoder = PayloadEncoder::new();
         encoder.put_u64(first_offset);
         encoder.put_u64(last_offset);
         encoder.put_u64(count);
         encoder.finish()
+    }
+
+    fn stream_error_response(
+        error: impl Into<String>,
+    ) -> crate::protocol::stream_codec::StreamResponse {
+        crate::protocol::stream_codec::StreamResponse::Error(error.into())
+    }
+
+    fn route_parts(
+        route: &crate::runtime::routing::Route,
+    ) -> Result<crate::runtime::routing::RouteTriplet<'_>, String> {
+        route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())
+    }
+
+    fn current_next_offset(&self, family_id: u64, route: &str) -> Result<u64, String> {
+        let state = self.write_state.lock();
+        if let Some(route_state) = state.routes.get(route) {
+            return Ok(route_state.next_offset);
+        }
+        drop(state);
+
+        let parts = route_triplet(route).ok_or_else(|| "invalid stream route".to_string())?;
+        self.store
+            .get_next_resource_offset(family_id, parts.realm, parts.area, parts.resource)
+    }
+
+    fn revert_commit_offsets(&self, route: &str, batch_size: usize) {
+        if let Some(parts) = route_triplet(route) {
+            let mut state = self.write_state.lock();
+            let realm = parts.realm.to_string();
+            let area_key = (realm.clone(), parts.area.to_string());
+
+            if let Some(next_area_offset) = state.next_area_offsets.get_mut(&area_key) {
+                *next_area_offset = next_area_offset.saturating_sub(batch_size as u64);
+            }
+            if let Some(next_realm_offset) = state.next_realm_offsets.get_mut(&realm) {
+                *next_realm_offset = next_realm_offset.saturating_sub(batch_size as u64);
+            }
+        }
+    }
+
+    fn encode_read_response_data(
+        &self,
+        family_id: u64,
+        route: &crate::runtime::routing::Route,
+        from_offset: u64,
+        limit: u64,
+        max_bytes: Option<usize>,
+    ) -> Result<Vec<u8>, String> {
+        let parts = Self::route_parts(route)?;
+
+        if limit == 0 {
+            let mut encoder = PayloadEncoder::new();
+            encoder.put_u32(0);
+            return Ok(encoder.finish());
+        }
+
+        let records = if parts.area == "*" && parts.resource == "*" {
+            self.store
+                .read_realm(family_id, parts.realm, from_offset, limit, max_bytes)?
+                .0
+        } else if parts.resource == "*" {
+            self.store
+                .read_area(
+                    family_id,
+                    parts.realm,
+                    parts.area,
+                    from_offset,
+                    limit,
+                    max_bytes,
+                )?
+                .0
+        } else {
+            self.store
+                .read_resource(&crate::domains::stream::store::ReadResourceParams {
+                    family: family_id,
+                    realm: parts.realm,
+                    area: parts.area,
+                    resource: parts.resource,
+                    from_offset,
+                    limit,
+                    max_bytes,
+                })?
+                .0
+        };
+
+        Ok(Self::encode_stream_read_data(&records, from_offset, limit, max_bytes))
+    }
+
+    fn encode_last_response_data(
+        &self,
+        family_id: u64,
+        route: &crate::runtime::routing::Route,
+    ) -> Result<Vec<u8>, String> {
+        let parts = Self::route_parts(route)?;
+        if parts.area == "*" || parts.resource == "*" {
+            return Ok(Vec::new());
+        }
+
+        let record = self
+            .store
+            .peek_resource(family_id, parts.realm, parts.area, parts.resource)?;
+
+        Ok(record
+            .as_ref()
+            .map(Self::encode_stream_last_data)
+            .unwrap_or_default())
+    }
+
+    fn encode_metadata_response_data(
+        &self,
+        family_id: u64,
+        route: &crate::runtime::routing::Route,
+    ) -> Result<Vec<u8>, String> {
+        let parts = Self::route_parts(route)?;
+        if parts.area == "*" || parts.resource == "*" {
+            return Ok(Vec::new());
+        }
+
+        let next_offset = self
+            .store
+            .get_next_resource_offset(family_id, parts.realm, parts.area, parts.resource)?;
+        if next_offset == 0 {
+            return Ok(Vec::new());
+        }
+
+        Ok(Self::encode_stream_metadata_summary(
+            0,
+            next_offset.saturating_sub(1),
+            next_offset,
+        ))
+    }
+
+    fn begin_stream_session(
+        &self,
+        family_id: u64,
+        route: &crate::runtime::routing::Route,
+        expected_offset: u64,
+        ingest_metadata: Option<crate::domains::stream::protocol::IngestMetadata>,
+    ) -> Result<u64, String> {
+        let route_key = route.as_str().to_string();
+        let parts = Self::route_parts(route)?;
+        let current_next_offset = self.current_next_offset(family_id, &route_key)?;
+        if expected_offset != current_next_offset {
+            return Err("concurrency conflict".to_string());
+        }
+
+        let session_id = self.store.begin_session(
+            family_id,
+            parts.realm,
+            parts.area,
+            parts.resource,
+            ingest_metadata,
+        )?;
+
+        let mut state = self.write_state.lock();
+        state
+            .routes
+            .entry(route_key.clone())
+            .or_insert(StreamRouteState {
+                next_offset: current_next_offset,
+            });
+        state.sessions.insert(
+            session_id,
+            PendingStreamSession {
+                route: route_key,
+                initial_next_offset: current_next_offset,
+                appended_count: 0,
+            },
+        );
+
+        Ok(session_id)
+    }
+
+    fn append_stream_session(
+        &self,
+        family_id: u64,
+        session_id: u64,
+        body: bytes::Bytes,
+        metadata: Option<bytes::Bytes>,
+    ) -> Result<Vec<u8>, String> {
+        let mut state = self.write_state.lock();
+        let session = state
+            .sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| "session not found".to_string())?;
+        let assigned_offset = session.initial_next_offset + session.appended_count as u64;
+
+        self.store.append_to_session(
+            family_id,
+            &session_id,
+            EventPayload { body, metadata },
+        )?;
+
+        session.appended_count += 1;
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_u64(assigned_offset);
+        Ok(encoder.finish())
+    }
+
+    fn commit_stream_session(
+        &self,
+        family_id: u64,
+        session_id: u64,
+        mode: crate::domains::stream::protocol::StreamWriteMode,
+    ) -> Result<Option<(crate::runtime::routing::Route, bytes::Bytes)>, String> {
+        let pending_session = {
+            let mut state = self.write_state.lock();
+            state
+                .sessions
+                .remove(&session_id)
+                .ok_or_else(|| "session not found".to_string())?
+        };
+
+        if pending_session.appended_count == 0 {
+            self.write_state
+                .lock()
+                .sessions
+                .insert(session_id, pending_session);
+            return Err("empty batch".to_string());
+        }
+
+        let route_key = pending_session.route.clone();
+        let batch_size = pending_session.appended_count;
+        let first_offset = match self.current_next_offset(family_id, &route_key) {
+            Ok(offset) => offset,
+            Err(error) => {
+                self.write_state
+                    .lock()
+                    .sessions
+                    .insert(session_id, pending_session);
+                return Err(error);
+            }
+        };
+
+        let (first_area_offset, _, first_realm_offset, _) = {
+            let mut state = self.write_state.lock();
+            Self::allocate_commit_offsets(&mut state, &route_key, first_offset, batch_size)
+        };
+
+        match self.store.commit_session(
+            family_id,
+            &session_id,
+            first_offset,
+            first_area_offset,
+            first_realm_offset,
+            mode,
+        ) {
+            Ok(response) => {
+                let next_offset = response.last_resource_offset.saturating_add(1);
+                self.write_state
+                    .lock()
+                    .routes
+                    .entry(route_key.clone())
+                    .and_modify(|route_state| route_state.next_offset = next_offset)
+                    .or_insert(StreamRouteState { next_offset });
+
+                let payload = Self::encode_stream_commit_notify_payload(
+                    response.first_resource_offset,
+                    response.last_resource_offset,
+                    response.first_area_offset,
+                    response.last_area_offset,
+                    response.first_realm_offset,
+                    response.last_realm_offset,
+                    response.batch_size,
+                );
+                Ok(Some((crate::runtime::routing::Route::new(route_key), payload)))
+            }
+            Err(error) => {
+                self.revert_commit_offsets(&route_key, batch_size);
+                self.write_state
+                    .lock()
+                    .sessions
+                    .insert(session_id, pending_session);
+                Err(error)
+            }
+        }
+    }
+
+    fn rollback_stream_session(&self, session_id: u64) -> Result<(), String> {
+        let has_session = self.write_state.lock().sessions.contains_key(&session_id);
+        if !has_session {
+            return Err("session not found".to_string());
+        }
+
+        self.store.abort_session(&session_id)?;
+        self.write_state.lock().sessions.remove(&session_id);
+        Ok(())
     }
 
     fn handle_domain_publish(
@@ -258,8 +525,7 @@ impl StreamDomainSink {
         );
         let families = self.families.lock();
         if let Some(state) = families.get(&family_id) {
-            let mut payload_encoder =
-                crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+            let mut payload_encoder = PayloadEncoder::with_capacity(256);
             tracing::info!(
                 domain = "stream",
                 family_id = family_id,
@@ -301,7 +567,7 @@ impl StreamDomainSink {
         &self,
         subscription: &StreamSubscription,
         event: &crate::runtime::DomainPublishEvent,
-        payload_encoder: &mut crate::protocol::payload_codec::PayloadEncoder,
+        payload_encoder: &mut PayloadEncoder,
     ) {
         let notify_payload = crate::protocol::stream_codec::encode_notify_into(
             payload_encoder,
@@ -392,8 +658,7 @@ impl MailboxSink for StreamDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
-        let mut payload_encoder =
-            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        let mut payload_encoder = PayloadEncoder::with_capacity(256);
 
         let stream_msg = match crate::protocol::stream_codec::parse_request(
             &frame_ctx,
@@ -432,244 +697,123 @@ impl MailboxSink for StreamDomainSink {
 
         let (response, commit_notify, should_sync_admin_snapshot) = match stream_msg {
             StreamMessage::Begin {
+                family_id,
                 route,
                 expected_offset,
-                ingest_metadata: _,
+                ingest_metadata,
                 ..
-            } => {
-                let route_key = route.as_str().to_string();
-                let mut state = self.write_state.lock();
-                let current_next_offset = state
-                    .routes
-                    .get(&route_key)
-                    .map_or(0, |route_state| route_state.next_offset);
-                if expected_offset != current_next_offset {
-                    return {
-                        drop(state);
-                        let response_bytes = crate::protocol::stream_codec::encode_response_into(
-                            &mut payload_encoder,
-                            &StreamResponse::Error("concurrency conflict".to_string()),
-                        );
-                        let response_ctx = FrameContext::new(
-                            frame_ctx.session_id,
-                            frame_ctx.channel_id,
-                            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
-                            bytes::Bytes::from(response_bytes),
-                            frame_ctx.route_family,
-                        );
-                        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-                            let _ = self.router.route(response_envelope);
-                        }
-                        Ok(())
-                    };
-                }
-                let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
-                state
-                    .routes
-                    .entry(route_key.clone())
-                    .or_insert_with(|| StreamRouteState {
-                        next_offset: 0,
-                        records: Vec::new(),
-                        last_data: Vec::new(),
-                        metadata_data: Vec::new(),
-                    });
-                state.sessions.insert(
-                    session_id,
-                    PendingStreamSession {
-                        route: route_key,
-                        initial_next_offset: current_next_offset,
-                        records: Vec::new(),
-                    },
-                );
-                (
+            } => match self.begin_stream_session(
+                family_id.as_u64(),
+                &route,
+                expected_offset,
+                ingest_metadata,
+            ) {
+                Ok(session_id) => (
                     StreamResponse::Ok {
                         session_id: Some(session_id),
                         data: vec![],
                     },
                     None,
                     true,
-                )
-            }
+                ),
+                Err(error) => (Self::stream_error_response(error), None, false),
+            },
             StreamMessage::Append {
                 session_id,
                 body,
-                metadata: _,
-            } => {
-                let mut state = self.write_state.lock();
-                let maybe_offset = state.sessions.get_mut(&session_id).map(|session| {
-                    let assigned_offset =
-                        session.initial_next_offset + session.records.len() as u64;
-                    session.records.push(PendingStreamRecord { body });
-                    assigned_offset
-                });
-
-                let data = if let Some(offset) = maybe_offset {
-                    let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
-                    encoder.put_u64(offset);
-                    encoder.finish()
-                } else {
-                    Vec::new()
-                };
-
-                (
+                metadata,
+            } => match self.append_stream_session(
+                frame_ctx.route_family.as_u64(),
+                session_id,
+                body,
+                metadata,
+            ) {
+                Ok(data) => (
                     StreamResponse::Ok {
                         session_id: None,
                         data,
                     },
                     None,
                     false,
-                )
-            }
-            StreamMessage::Commit { session_id, .. } => {
-                let mut state = self.write_state.lock();
-                let commit_notify = state.sessions.remove(&session_id).map(|session| {
-                    let batch_size = session.records.len();
-                    let route_key = session.route.clone();
-                    let route_state =
-                        state
-                            .routes
-                            .entry(route_key.clone())
-                            .or_insert_with(|| StreamRouteState {
-                                next_offset: 0,
-                                records: Vec::new(),
-                                last_data: Vec::new(),
-                                metadata_data: Vec::new(),
-                            });
-                    let first_offset = route_state.next_offset;
-                    let mut committed = Vec::with_capacity(batch_size);
-                    let mut current_offset = route_state.next_offset;
-                    for record in session.records {
-                        committed.push(CommittedStreamRecord {
-                            offset: current_offset,
-                            body: record.body,
-                        });
-                        current_offset += 1;
-                    }
-
-                    route_state.next_offset = current_offset;
-                    if !committed.is_empty() {
-                        let last_record = committed.last().cloned();
-                        route_state.records.extend(committed);
-                        let first_record_offset = route_state
-                            .records
-                            .first()
-                            .map(|record| record.offset)
-                            .unwrap_or(0);
-                        let total_records = route_state.records.len() as u64;
-                        if let Some(last_record) = last_record {
-                            route_state.last_data = Self::encode_stream_last_data(&last_record);
-                            route_state.metadata_data = Self::encode_stream_metadata_summary(
-                                first_record_offset,
-                                last_record.offset,
-                                total_records,
-                            );
-                        }
-                    }
-
-                    let last_offset = current_offset.saturating_sub(1);
-                    let (
-                        first_area_offset,
-                        last_area_offset,
-                        first_realm_offset,
-                        last_realm_offset,
-                    ) = Self::allocate_commit_offsets(
-                        &mut state,
-                        &route_key,
-                        first_offset,
-                        batch_size,
-                    );
-                    let payload = Self::encode_stream_commit_notify_payload(
-                        first_offset,
-                        last_offset,
-                        first_area_offset,
-                        last_area_offset,
-                        first_realm_offset,
-                        last_realm_offset,
-                        batch_size,
-                    );
-                    (crate::runtime::routing::Route::new(route_key), payload)
-                });
-                (
-                    StreamResponse::Ok {
-                        session_id: None,
-                        data: vec![],
-                    },
-                    commit_notify,
-                    true,
-                )
+                ),
+                Err(error) => (Self::stream_error_response(error), None, false),
+            },
+            StreamMessage::Commit { session_id, mode } => {
+                match self.commit_stream_session(frame_ctx.route_family.as_u64(), session_id, mode)
+                {
+                    Ok(commit_notify) => (
+                        StreamResponse::Ok {
+                            session_id: None,
+                            data: vec![],
+                        },
+                        commit_notify,
+                        true,
+                    ),
+                    Err(error) => (Self::stream_error_response(error), None, false),
+                }
             }
             StreamMessage::Rollback { session_id, .. } => {
-                let mut state = self.write_state.lock();
-                state.sessions.remove(&session_id);
-                (
-                    StreamResponse::Ok {
-                        session_id: None,
-                        data: vec![],
-                    },
-                    None,
-                    true,
-                )
+                match self.rollback_stream_session(session_id) {
+                    Ok(()) => (
+                        StreamResponse::Ok {
+                            session_id: None,
+                            data: vec![],
+                        },
+                        None,
+                        true,
+                    ),
+                    Err(error) => (Self::stream_error_response(error), None, false),
+                }
             }
             StreamMessage::Read {
+                family_id,
                 route,
                 from_offset,
                 limit,
                 max_bytes,
                 ..
-            } => {
-                let state = self.write_state.lock();
-                let data = state
-                    .routes
-                    .get(route.as_str())
-                    .map(|route_state| {
-                        Self::encode_stream_read_data(
-                            &route_state.records,
-                            from_offset,
-                            limit,
-                            max_bytes,
-                        )
-                    })
-                    .unwrap_or_default();
-                (
+            } => match self.encode_read_response_data(
+                family_id.as_u64(),
+                &route,
+                from_offset,
+                limit,
+                max_bytes,
+            ) {
+                Ok(data) => (
                     StreamResponse::Ok {
                         session_id: None,
                         data,
                     },
                     None,
                     false,
-                )
+                ),
+                Err(error) => (Self::stream_error_response(error), None, false),
+            },
+            StreamMessage::Last { family_id, route, .. } => {
+                match self.encode_last_response_data(family_id.as_u64(), &route) {
+                    Ok(data) => (
+                        StreamResponse::Ok {
+                            session_id: None,
+                            data,
+                        },
+                        None,
+                        false,
+                    ),
+                    Err(error) => (Self::stream_error_response(error), None, false),
+                }
             }
-            StreamMessage::Last { route, .. } => {
-                let state = self.write_state.lock();
-                let data = state
-                    .routes
-                    .get(route.as_str())
-                    .map(|route_state| route_state.last_data.clone())
-                    .unwrap_or_default();
-                (
-                    StreamResponse::Ok {
-                        session_id: None,
-                        data,
-                    },
-                    None,
-                    false,
-                )
-            }
-            StreamMessage::GetMetadata { route, .. } => {
-                let state = self.write_state.lock();
-                let data = state
-                    .routes
-                    .get(route.as_str())
-                    .map(|route_state| route_state.metadata_data.clone())
-                    .unwrap_or_default();
-                (
-                    StreamResponse::Ok {
-                        session_id: None,
-                        data,
-                    },
-                    None,
-                    false,
-                )
+            StreamMessage::GetMetadata { family_id, route, .. } => {
+                match self.encode_metadata_response_data(family_id.as_u64(), &route) {
+                    Ok(data) => (
+                        StreamResponse::Ok {
+                            session_id: None,
+                            data,
+                        },
+                        None,
+                        false,
+                    ),
+                    Err(error) => (Self::stream_error_response(error), None, false),
+                }
             }
             StreamMessage::Subscribe {
                 family_id,
@@ -777,8 +921,7 @@ impl MailboxSink for StreamDomainSink {
                 route_family = frame_ctx.route_family.id(),
                 "Stream: commit triggered availability notification - CALLING handle_domain_publish"
             );
-            let event =
-                crate::runtime::DomainPublishEvent::new(frame_ctx.route_family, route, payload);
+            let event = crate::runtime::DomainPublishEvent::new(frame_ctx.route_family, route, payload);
             if let Err(e) = self.handle_domain_publish(&event) {
                 tracing::warn!(domain = "stream", error = ?e, "Stream: handle_domain_publish FAILED");
             } else {
@@ -862,6 +1005,94 @@ mod tests {
 
     fn drain_mailbox(mailbox: &Mailbox) {
         while mailbox.receiver().try_recv().is_ok() {}
+    }
+
+    fn commit_record_through_stream_sink(
+        store: Arc<cntryl_midge::Engine>,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        body: &[u8],
+    ) {
+        let family = RouteFamily::new(1);
+        let requester_session_id = 7;
+        let route = format!("stream://{}/{}/{}", realm, area, resource);
+        let stream_address = RouteAddress::new(family, Route::new(route.clone()));
+        let requester_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let router = Arc::new(Router::new());
+        let requester_mailbox = Arc::new(Mailbox::new(8));
+        router.register(requester_address.clone(), requester_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = StreamDomainSink::new(store, router, admin_read_model);
+
+        sink.deliver(Envelope::from_route(
+            requester_address.clone(),
+            stream_address.clone(),
+            FrameContext::new(
+                requester_session_id,
+                ChannelId::Sub,
+                MessageType::new(600),
+                encode_stream_begin(&route, 0),
+                family,
+            ),
+        ))
+        .expect("begin stream session");
+        let begin_envelope = requester_mailbox
+            .receiver()
+            .try_recv()
+            .expect("begin ack envelope");
+        let begin_frame = begin_envelope
+            .into_payload::<FrameContext>()
+            .expect("begin ack frame");
+        let (stream_session_id, begin_data) = decode_stream_ok_response(&begin_frame.payload);
+        let stream_session_id = stream_session_id.expect("stream session id present");
+        assert!(begin_data.is_empty());
+
+        sink.deliver(Envelope::from_route(
+            requester_address.clone(),
+            stream_address.clone(),
+            FrameContext::new(
+                requester_session_id,
+                ChannelId::Sub,
+                MessageType::new(601),
+                encode_stream_append(stream_session_id, body),
+                family,
+            ),
+        ))
+        .expect("append stream record");
+        let append_envelope = requester_mailbox
+            .receiver()
+            .try_recv()
+            .expect("append ack envelope");
+        let append_frame = append_envelope
+            .into_payload::<FrameContext>()
+            .expect("append ack frame");
+        let (append_session_id, append_data) = decode_stream_ok_response(&append_frame.payload);
+        assert!(append_session_id.is_none());
+        assert_eq!(append_data.len(), 8);
+
+        sink.deliver(Envelope::from_route(
+            requester_address,
+            stream_address,
+            FrameContext::new(
+                requester_session_id,
+                ChannelId::Sub,
+                MessageType::new(602),
+                encode_stream_commit(stream_session_id),
+                family,
+            ),
+        ))
+        .expect("commit stream session");
+        let commit_envelope = requester_mailbox
+            .receiver()
+            .try_recv()
+            .expect("commit ack envelope");
+        let commit_frame = commit_envelope
+            .into_payload::<FrameContext>()
+            .expect("commit ack frame");
+        let (commit_session_id, commit_data) = decode_stream_ok_response(&commit_frame.payload);
+        assert!(commit_session_id.is_none());
+        assert!(commit_data.is_empty());
     }
 
     #[test]
@@ -1318,5 +1549,46 @@ mod tests {
         assert_eq!(second.3, 2);
         assert_eq!(third.2, 3);
         assert_eq!(third.3, 3);
+    }
+
+    #[test]
+    fn should_write_committed_stream_record_to_midge_when_stream_sink_commits() {
+        // Arrange
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        commit_record_through_stream_sink(store.clone(), "acme", "app", "events", b"alpha");
+        let durable_store = crate::domains::stream::StreamStore::new(store);
+
+        // Act
+        let (records, _cursor) = durable_store
+            .read_resource(&crate::domains::stream::store::ReadResourceParams {
+                family: 1,
+                realm: "acme",
+                area: "app",
+                resource: "events",
+                from_offset: 0,
+                limit: 10,
+                max_bytes: None,
+            })
+            .expect("read persisted stream records");
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].body, Bytes::from_static(b"alpha"));
+    }
+
+    #[test]
+    fn should_persist_stream_next_offset_to_midge_when_stream_sink_commits() {
+        // Arrange
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        commit_record_through_stream_sink(store.clone(), "acme", "app", "events", b"alpha");
+        let durable_store = crate::domains::stream::StreamStore::new(store);
+
+        // Act
+        let next_offset = durable_store
+            .get_next_resource_offset(1, "acme", "app", "events")
+            .expect("read next stream offset");
+
+        // Assert
+        assert_eq!(next_offset, 1);
     }
 }

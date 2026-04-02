@@ -96,7 +96,7 @@ impl ScheduleActor {
                             next_fire_time: next_fire,
                             next_fire_ms,
                             storage_key: ScheduleStore::encode_key(next_fire_ms, &route),
-                            index_key: Vec::new(),
+                            index_key: ScheduleStore::encode_index_key(&route),
                             list_index,
                         };
                         actor.schedules.insert(route.clone(), def);
@@ -226,7 +226,7 @@ impl ScheduleActor {
             next_fire_time: next_fire,
             next_fire_ms,
             storage_key,
-            index_key: Vec::new(),
+            index_key: ScheduleStore::encode_index_key(&route),
             list_index,
         };
 
@@ -337,7 +337,7 @@ impl ScheduleActor {
                 next_fire_time: entry.next_fire_time,
                 next_fire_ms: entry.next_fire_ms,
                 storage_key: ScheduleStore::encode_key(entry.next_fire_ms, &entry.route),
-                index_key: Vec::new(),
+                index_key: ScheduleStore::encode_index_key(&entry.route),
                 list_index,
             };
 

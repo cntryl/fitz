@@ -118,7 +118,7 @@ class KvTransaction:
 1. **Wire Protocol Compliance**: Every message includes full context (tx_id + route)
 2. **User Ergonomics**: Users don't repeat `route` in every call
 3. **Stateless Operations**: Server doesn't track implicit state; each message is self-contained
-4. **Reconnection Safety**: If connection drops mid-transaction, no server-side cleanup needed
+4. **Disconnect Safety**: If connection drops mid-transaction, the broker cleans up session-scoped state and the client can reconnect and start fresh
 5. **Language Idiomatic**: Feels natural in each language (Python context managers, Rust Drop trait, Go defer)
 
 ### Anti-Pattern: Implicit State
@@ -975,7 +975,7 @@ Clients SHOULD:
 - Discard pending requests on abrupt close
   Clients MUST:
 - Assume connection is closed if transport layer signals close
-- Reconnect if resubscription or state restoration is needed
+- Reconnect and explicitly rebuild any required session-scoped state
 
 ## Authentication & Security
 

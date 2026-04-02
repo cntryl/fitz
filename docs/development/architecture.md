@@ -71,6 +71,15 @@ Sync TLV Encoder
 Async WebSocket Writer
 ```
 This design eliminates async scheduling jitter from the hot path.
+### Critical Invariant: Ephemeral Sessions
+> **Fitz sessions are ephemeral. The broker never restores session state after disconnect. Clients are responsible for rebuilding all state including subscriptions, transactions, workers, leases, and stream resume position.**
+
+This is a hard Fitz rule:
+- Session state exists only for the lifetime of the active connection.
+- Disconnect immediately destroys session-owned state.
+- Reconnect always creates a new session identity.
+- Recovery is client-driven, explicit, and deterministic.
+
 ## Layer Responsibilities
 ### Layer 1: Transport
 **Files:** `src/api/tcp.rs`, `src/api/ws.rs`
@@ -110,6 +119,7 @@ This design eliminates async scheduling jitter from the hot path.
 On successful CONNECT:
 - Create session with extracted JWT claims
 - Track subscriptions, transactions, worker registrations per session
+- Treat all tracked state as ephemeral process-local state
 - Ready to accept domain requests
 On disconnect (graceful or abrupt):
 - Immediately clean up:
@@ -123,7 +133,39 @@ On disconnect (graceful or abrupt):
 On reconnect with new CONNECT:
 - Create new session (new session ID)
 - Old session ID is discarded
-- Client MUST explicitly re-subscribe, re-begin, re-register if needed
+- Client MUST explicitly rebuild any needed state
+### Session Recovery Model
+**Rules:**
+- Sessions are destroyed on disconnect.
+- No server-side session recovery exists.
+- No subscription persistence exists.
+- No transaction persistence exists.
+- No worker registration persistence exists.
+- No lease ownership persistence exists beyond normal lease expiry or explicit reacquire.
+
+**Client requirements:**
+- Clients **MUST** re-authenticate after reconnect.
+- Clients **MUST** re-subscribe after reconnect.
+- Clients **MUST** reopen transactions if needed.
+- Clients **MUST** re-register RPC workers after reconnect.
+- Clients **MUST** reacquire leases after reconnect when the workflow still requires ownership.
+- Clients **SHOULD** track stream offsets locally and resume from the last known offset.
+- Clients **SHOULD** implement reconnect backoff.
+- Clients **MAY** cache subscription and worker registration configuration for fast rebuild.
+
+**Reconnect sequence guidance:**
+```text
+CONNECT
+AUTH
+SUBSCRIBE (all)
+REGISTER (workers)
+RESUME (streams)
+READY
+```
+
+**Performance expectation:**
+Rebuilding state after reconnect must be fast and deterministic. Fitz must keep subscription registration, worker registration, and stream resume paths cheap enough that client-driven rebuild remains practical.
+
 **Constraints:**
 - Do NOT implement domain business logic
 - Do NOT block on external async operations
@@ -667,7 +709,8 @@ async fn test_kv_begin_get_commit() {
 - [ ] Isolation works (realm/area partitioning)
 - [ ] Permissions enforced (JWT claims)
 - [ ] Backpressure handled (queue limits)
-- [ ] Reconnection restores state (subscriptions, etc.)
+- [ ] Disconnect destroys session state immediately
+- [ ] Clients can rebuild required state deterministically after reconnect
 ## Performance & Tuning
 ### Sync-Core Benefits
 1. **Predictable latency** - No async scheduling jitter

@@ -200,7 +200,7 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-CONN-005 (T1)** The client MUST support configurable automatic reconnection on network-level disconnects (not auth failures). Reconnect MUST use exponential backoff with configurable base delay, multiplier, and maximum attempts.
 
-**REQ-CONN-006 (T1)** On reconnect, all active subscriptions (Notice, RPC, Stream, Lease, Schedule, Queue) MUST be automatically re-established before the client enters AUTHENTICATED state. The application MUST NOT be required to manually re-subscribe.
+**REQ-CONN-006 (T1)** On reconnect, the client MUST treat all broker-side session state as lost. Subscriptions, worker registrations, leases, and stream resume positions MUST be explicitly re-established against the new session before the client reports them as active again. The client MAY replay cached configuration automatically, but that replay is client-side rebuild, not server-side restoration.
 
 **REQ-CONN-007 (T1)** In-flight KV transactions and Stream sessions that were open at the time of disconnect MUST be cancelled and their pending `context.Context` values resolved with an error. They MUST NOT silently stall.
 
@@ -361,7 +361,7 @@ These targets apply to a loopback connection (broker and client on the same mach
 
 **REQ-TEST-008 (T1)** Integration tests for error paths MUST exist for each domain: unauthorized operation (expected error code), invalid input (e.g., inverted KV range, invalid cron), and transaction/session invalidation after disconnect.
 
-**REQ-TEST-009 (T1)** The reconnect flow MUST have an integration test: client subscribes → broker is restarted (or connection dropped) → client reconnects → subscriptions are re-established → notifications resume.
+**REQ-TEST-009 (T1)** The reconnect flow MUST have an integration test: client subscribes → broker is restarted (or connection dropped) → client reconnects → client reissues the subscription against the new session → notifications resume. The test MUST verify the old session was not recovered implicitly.
 
 **REQ-TEST-010 (T1)** The conformance test suite (from `cross-language-conformance-suite.yaml`) MUST be implemented and MUST achieve **100% P0 pass rate** across all four CI combinations (TCP × anonymous, TCP × valid_jwt, WebSocket × anonymous, WebSocket × valid_jwt).
 
@@ -462,7 +462,7 @@ Use this table to grade a specific client implementation. For each row, mark:
 | REQ-CONN-003 | T0 | Lifecycle | Close() cleans up transport and goroutines |
 | REQ-CONN-004 | T0 | Lifecycle | Post-close domain calls return error, not panic |
 | REQ-CONN-005 | T1 | Lifecycle | Auto-reconnect with exponential backoff |
-| REQ-CONN-006 | T1 | Lifecycle | Subscriptions auto-re-established on reconnect |
+| REQ-CONN-006 | T1 | Lifecycle | Reconnect treats session state as lost and rebuilds it explicitly |
 | REQ-CONN-007 | T1 | Lifecycle | Disconnect cancels in-flight KV/Stream ops |
 | REQ-CONN-008 | T1 | Lifecycle | Connect timeout configurable |
 | REQ-CONN-009 | T1 | Lifecycle | Connection state queryable without blocking |

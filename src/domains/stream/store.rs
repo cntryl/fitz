@@ -193,13 +193,15 @@ impl StreamStore {
         first_realm_offset: u64,
         mode: StreamWriteMode,
     ) -> Result<CommitResponse, String> {
-        let session = self
-            .sessions
-            .lock()
-            .remove(session_id)
-            .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?;
+        let session = {
+            let mut sessions = self.sessions.lock();
+            sessions
+                .remove(session_id)
+                .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?
+        };
 
         if session.event_count == 0 {
+            self.sessions.lock().insert(*session_id, session);
             return Err("ERR_EMPTY_BATCH".to_string());
         }
 
@@ -209,6 +211,7 @@ impl StreamStore {
             area,
             resource,
             staged_events,
+            total_bytes,
             ingest_metadata,
             ..
         } = session;
@@ -218,12 +221,29 @@ impl StreamStore {
             .unwrap()
             .as_millis() as u64;
 
-        let mut txn = self
+        let mut txn = match self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+        {
+            Ok(txn) => txn,
+            Err(e) => {
+                self.sessions.lock().insert(
+                    *session_id,
+                    AppendSession {
+                        realm,
+                        area,
+                        resource,
+                        staged_events,
+                        event_count: batch_size,
+                        total_bytes,
+                        ingest_metadata,
+                    },
+                );
+                return Err(format!("begin_tx failed: {:?}", e));
+            }
+        };
 
-        for (i, event) in staged_events.into_iter().enumerate() {
+        for (i, event) in staged_events.iter().enumerate() {
             let resource_offset = first_resource_offset + i as u64;
             let area_offset = first_area_offset + i as u64;
             let realm_offset = first_realm_offset + i as u64;
@@ -283,8 +303,21 @@ impl StreamStore {
             StreamWriteMode::Sync => cntryl_midge::WriteOptions::sync(),
             StreamWriteMode::Buffered => cntryl_midge::WriteOptions::buffered(),
         };
-        txn.commit(opts)
-            .map_err(|e| format!("midge commit error: {:?}", e))?;
+        if let Err(e) = txn.commit(opts) {
+            self.sessions.lock().insert(
+                *session_id,
+                AppendSession {
+                    realm,
+                    area,
+                    resource,
+                    staged_events,
+                    event_count: batch_size,
+                    total_bytes,
+                    ingest_metadata,
+                },
+            );
+            return Err(format!("midge commit error: {:?}", e));
+        }
 
         Ok(CommitResponse {
             first_resource_offset,

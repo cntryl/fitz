@@ -8,6 +8,65 @@ use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
 
+fn write_committed_value_for_family(actor: &mut KvActor, family: RouteFamily, value: &'static [u8]) {
+    let begin = actor.handle(KvMessage::Begin {
+        route_family: family,
+        realm: "tenant".to_string(),
+        area: "kv".to_string(),
+        resource: "shared".to_string(),
+        mode: TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    });
+    let tx_id = match begin {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Begin failed"),
+    };
+
+    let put = actor.handle(KvMessage::Put {
+        tx_id,
+        route_family: family,
+        resource: "shared".to_string(),
+        key: Bytes::from_static(b"same-key"),
+        value: Bytes::from_static(value),
+    });
+    assert!(matches!(put, KvResponse::PutOk));
+
+    let commit = actor.handle(KvMessage::Commit { tx_id });
+    assert!(matches!(commit, KvResponse::CommitOk));
+}
+
+fn read_committed_value_for_family(actor: &mut KvActor, family: RouteFamily) -> Bytes {
+    let begin = actor.handle(KvMessage::Begin {
+        route_family: family,
+        realm: "tenant".to_string(),
+        area: "kv".to_string(),
+        resource: "shared".to_string(),
+        mode: TxMode::ReadOnly,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    });
+    let tx_id = match begin {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        _ => panic!("Begin failed"),
+    };
+
+    let response = actor.handle(KvMessage::Get {
+        tx_id,
+        route_family: family,
+        resource: "shared".to_string(),
+        key: Bytes::from_static(b"same-key"),
+    });
+
+    actor.handle(KvMessage::Rollback { tx_id });
+
+    match response {
+        KvResponse::GetResult {
+            found: true,
+            value: Some(value),
+        } => value,
+        other => panic!("Expected stored value, got {:?}", other),
+    }
+}
+
 #[test]
 fn should_show_committed_value_before_restart() {
     // Arrange
@@ -193,6 +252,42 @@ fn should_restore_committed_kv_value_on_engine_restart() {
     }
 
     actor2.handle(KvMessage::Rollback { tx_id: tx2 });
+}
+
+#[test]
+fn should_return_family_one_value_given_same_key_in_multiple_route_families() {
+    // Arrange
+    let store = create_test_engine_with_cfs(vec![1, 2]);
+    let mut actor = KvActor::new(store);
+    let family_one = RouteFamily::new(1);
+    let family_two = RouteFamily::new(2);
+
+    write_committed_value_for_family(&mut actor, family_one, b"family-1");
+    write_committed_value_for_family(&mut actor, family_two, b"family-2");
+
+    // Act
+    let value = read_committed_value_for_family(&mut actor, family_one);
+
+    // Assert
+    assert_eq!(value, Bytes::from_static(b"family-1"));
+}
+
+#[test]
+fn should_return_family_two_value_given_same_key_in_multiple_route_families() {
+    // Arrange
+    let store = create_test_engine_with_cfs(vec![1, 2]);
+    let mut actor = KvActor::new(store);
+    let family_one = RouteFamily::new(1);
+    let family_two = RouteFamily::new(2);
+
+    write_committed_value_for_family(&mut actor, family_one, b"family-1");
+    write_committed_value_for_family(&mut actor, family_two, b"family-2");
+
+    // Act
+    let value = read_committed_value_for_family(&mut actor, family_two);
+
+    // Assert
+    assert_eq!(value, Bytes::from_static(b"family-2"));
 }
 
 // --- append the scale test here ---

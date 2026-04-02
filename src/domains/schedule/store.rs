@@ -176,6 +176,8 @@ impl ScheduleStore {
 
         txn.put(key.clone(), value, Some(ttl.as_millis() as u64))
             .map_err(|e| format!("put failed: {:?}", e))?;
+        txn.put(Self::encode_index_key(schedule.route), key.clone(), None)
+            .map_err(|e| format!("put index failed: {:?}", e))?;
 
         txn.commit(write_options)
             .map_err(|e| format!("commit failed: {:?}", e))?;
@@ -222,6 +224,8 @@ impl ScheduleStore {
 
             txn.put(key.clone(), value, Some(ttl.as_millis() as u64))
                 .map_err(|e| format!("put failed: {:?}", e))?;
+            txn.put(Self::encode_index_key(route), key.clone(), None)
+                .map_err(|e| format!("put index failed: {:?}", e))?;
         }
 
         txn.commit(write_options)
@@ -392,5 +396,111 @@ impl ScheduleStore {
         }
 
         Ok(all)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testkit::create_test_engine_with_cfs;
+
+    fn make_store() -> (ScheduleStore, Arc<cntryl_midge::Engine>) {
+        let db = create_test_engine_with_cfs(vec![1]);
+        (ScheduleStore::new(db.clone()), db)
+    }
+
+    fn read_raw_value(
+        db: &Arc<cntryl_midge::Engine>,
+        cf_id: u64,
+        key: &[u8],
+    ) -> Option<Vec<u8>> {
+        let txn = db
+            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .expect("begin read tx");
+
+        txn.get(key)
+            .expect("read raw key")
+            .map(|value| value.to_vec())
+    }
+
+    #[test]
+    fn should_write_route_index_when_inserting_schedule() {
+        // Arrange
+        let (store, db) = make_store();
+        let route = "schedule://acme/jobs/backup/run";
+        let payload = Bytes::from_static(b"payload");
+        let next_fire_time = Instant::now() + Duration::from_secs(300);
+        let next_fire_ms = 1_700_000_001_000_u64;
+        let expected_main_key = ScheduleStore::encode_key(next_fire_ms, route);
+
+        // Act
+        let stored_key = store
+            .insert(
+                1,
+                ScheduleInsert {
+                    route,
+                    cron: "* * * * *",
+                    payload: &payload,
+                    next_fire_time,
+                    next_fire_ms,
+                    previous_fire_ms: None,
+                    previous_storage_key: None,
+                    index_key: None,
+                },
+                WriteOptions::buffered(),
+            )
+            .expect("insert schedule");
+
+        // Assert
+        let index_key = ScheduleStore::encode_index_key(route);
+        let index_value = read_raw_value(&db, 1, &index_key);
+        assert_eq!(stored_key, expected_main_key);
+        assert_eq!(index_value.as_deref(), Some(expected_main_key.as_slice()));
+    }
+
+    #[test]
+    fn should_write_route_indexes_when_inserting_schedule_batch() {
+        // Arrange
+        let (store, db) = make_store();
+        let first_route = "schedule://acme/jobs/backup/run".to_string();
+        let second_route = "schedule://acme/jobs/report/run".to_string();
+        let first_next_fire_time = Instant::now() + Duration::from_secs(300);
+        let second_next_fire_time = Instant::now() + Duration::from_secs(600);
+        let first_next_fire_ms = 1_700_000_002_000_u64;
+        let second_next_fire_ms = 1_700_000_003_000_u64;
+        let items = vec![
+            (
+                first_route.clone(),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"first"),
+                first_next_fire_time,
+                first_next_fire_ms,
+                None,
+            ),
+            (
+                second_route.clone(),
+                "*/5 * * * *".to_string(),
+                Bytes::from_static(b"second"),
+                second_next_fire_time,
+                second_next_fire_ms,
+                None,
+            ),
+        ];
+
+        // Act
+        store
+            .insert_batch(1, &items, WriteOptions::buffered())
+            .expect("insert schedule batch");
+
+        // Assert
+        let actual_indexes = vec![
+            read_raw_value(&db, 1, &ScheduleStore::encode_index_key(&first_route)),
+            read_raw_value(&db, 1, &ScheduleStore::encode_index_key(&second_route)),
+        ];
+        let expected_indexes = vec![
+            Some(ScheduleStore::encode_key(first_next_fire_ms, &first_route)),
+            Some(ScheduleStore::encode_key(second_next_fire_ms, &second_route)),
+        ];
+        assert_eq!(actual_indexes, expected_indexes);
     }
 }

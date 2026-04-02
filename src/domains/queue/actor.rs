@@ -61,6 +61,11 @@ use crate::runtime::routing::RouteFamily;
 
 use super::protocol::{MessageId, QueueKey, QueueMessage, QueueResponse, ReservedMessage};
 
+#[cfg(test)]
+std::thread_local! {
+    static FAIL_NEXT_ACK_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 
 /// Durable queue record (persisted to Midge)
@@ -1589,6 +1594,33 @@ impl QueueActor {
         Ok((body, record.attempts))
     }
 
+    fn commit_ack_transaction(
+        txn: cntryl_midge::Transaction,
+        write_options: cntryl_midge::WriteOptions,
+    ) -> Result<(), String> {
+        #[cfg(test)]
+        {
+            let should_fail = FAIL_NEXT_ACK_COMMIT.with(|cell| {
+                let should_fail = cell.get();
+                if should_fail {
+                    cell.set(false);
+                }
+                should_fail
+            });
+
+            if should_fail {
+                return Err("Injected queue ack commit failure".to_string());
+            }
+        }
+
+        txn.commit(write_options).map_err(|e| format!("{:?}", e))
+    }
+
+    #[cfg(test)]
+    fn fail_next_ack_commit_for_tests() {
+        FAIL_NEXT_ACK_COMMIT.with(|cell| cell.set(true));
+    }
+
     /// Handle send operation
     pub fn handle_send(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
         // Track empty state before send for notification
@@ -2085,9 +2117,6 @@ impl QueueActor {
             return response;
         }
 
-        // Remove inflight entry
-        self.inflight.remove(&id);
-
         let (stored_record, stored_layout) = if let Some(record) = self.records.get(&id).cloned() {
             (
                 Some(record),
@@ -2116,31 +2145,27 @@ impl QueueActor {
             self.min_persisted_delayed_visibility_ms()
         };
 
-        // Remove cached record (storage is durable source of truth)
-        self.evict_cached_record(id);
-        self.evict_cached_body(id);
-
         let cf_id = self.queue_key.family.id();
         let header_key = self.cached_header_key(id);
         let body_key = self.cached_body_key(id);
         let legacy_key = self.cached_legacy_message_key(id);
 
-        match self
+        let commit_result = match self
             .store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
         {
-            Ok(mut txn) => {
-                let delete_result = Self::delete_record_for_layout(
-                    &mut txn,
-                    stored_layout,
-                    header_key,
-                    body_key,
-                    legacy_key,
-                );
-
-                if let Err(e) = delete_result {
+            Ok(mut txn) => match Self::delete_record_for_layout(
+                &mut txn,
+                stored_layout,
+                header_key,
+                body_key,
+                legacy_key,
+            ) {
+                Err(e) => {
                     eprintln!("WARN: Failed to delete message {} in txn: {:?}", id, e);
-                } else {
+                    Err(format!("Failed to delete message {} in txn: {:?}", id, e))
+                }
+                Ok(()) => {
                     let mut index_update_failed = false;
                     if let Some((shard, mutation)) = persisted_ready_mutation {
                         let ready_result = match mutation {
@@ -2224,22 +2249,34 @@ impl QueueActor {
                         };
                     }
 
-                    // Use buffered writes for throughput (queues represent intent, not events of record)
-                    if let Err(e) = txn.commit(self.commit_write_options) {
-                        eprintln!(
-                            "WARN: Failed to commit delete txn for message {}: {:?}",
-                            id, e
-                        );
-                    } else {
-                        if let Some((shard, mutation)) = persisted_ready_mutation {
-                            self.apply_ready_index_mutation(shard, mutation);
+                    match Self::commit_ack_transaction(txn, self.commit_write_options) {
+                        Ok(()) => {
+                            if let Some((shard, mutation)) = persisted_ready_mutation {
+                                self.apply_ready_index_mutation(shard, mutation);
+                            }
+                            self.remove_persisted_delayed(id);
+                            Ok(())
                         }
-                        self.remove_persisted_delayed(id);
+                        Err(e) => {
+                            eprintln!(
+                                "WARN: Failed to commit delete txn for message {}: {}",
+                                id, e
+                            );
+                            Err(format!("Failed to commit delete txn for message {}: {}", id, e))
+                        }
                     }
                 }
-            }
-            Err(e) => eprintln!("WARN: Failed to begin tx to delete message {}: {:?}", id, e),
+            },
+            Err(e) => Err(format!("Failed to begin tx to delete message {}: {:?}", id, e)),
+        };
+
+        if let Err(message) = commit_result {
+            return QueueResponse::Error { message };
         }
+
+        self.inflight.remove(&id);
+        self.evict_cached_record(id);
+        self.evict_cached_body(id);
 
         let response = QueueResponse::Acked;
 
@@ -3965,6 +4002,41 @@ pub mod tests {
         // Assert
         assert_eq!(response, QueueResponse::Acked);
         assert_eq!(actor.inflight.len(), 0);
+    }
+
+    #[test]
+    fn should_return_error_when_ack_commit_fails() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-ack-commit-failure");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::global_dedup_store(),
+        );
+
+        let sent = actor.handle_send(Bytes::from("test message"), None);
+        let id = match sent {
+            QueueResponse::Sent { id } => id,
+            _ => panic!("Expected Sent response"),
+        };
+        let reserved = match actor.handle_receive(30, Some(1)) {
+            QueueResponse::Received { messages } => messages,
+            _ => panic!("Expected Received response"),
+        };
+        let token = reserved[0].token;
+        QueueActor::fail_next_ack_commit_for_tests();
+
+        // Act
+        let response = actor.handle_ack(id, token);
+
+        // Assert
+        assert!(matches!(response, QueueResponse::Error { .. }));
     }
 
     #[test]
