@@ -1494,6 +1494,7 @@ This section documents the **canonical operations** for each of the seven Fitz d
 **Constraints:**
 - Token MUST match to extend or release (prevents cross-holder mutations)
 - Expiry is lazy (expires when next operation touches resource)
+- Disconnect cleanup and broker restart both clear lease ownership; clients MUST reacquire if they still need exclusivity
 - Atomic compare-and-swap via token (no blindupdate)
 
 ---
@@ -3949,6 +3950,7 @@ elif response.type == "Fenced":
 - Clients MUST treat as cookie (no prediction, caching, or reuse)
 - Generated fresh at ACQUIRE time
 - Changes on each successful RENEW
+- Restart resets the token lineage; tokens are not durable or cluster-wide
 - Validated by server on RENEW/RELEASE; mismatch → `Fenced` error
 
 **Use Case Example:**

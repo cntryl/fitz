@@ -485,10 +485,14 @@ POST /admin/rpc/requests/{correlation_id}/cancel
 **Headers**: `X-Confirm: true`
 **Response**: 200 OK or 404 Not Found
 ### Lease Domain
+All Lease admin responses reflect live in-memory state for the current broker process only. Lease ownership disappears on disconnect cleanup or broker restart, and `fencing_token` values are process-local rather than durable or cross-node identifiers.
+
 #### List Active Leases
 ```
 GET /admin/lease/leases?realm={realm}
 ```
+`acquired_at` and `expires_at` describe the current in-memory lease window only. `fencing_token` is valid only within the running broker process and resets after restart.
+
 **Response**:
 ```json
 {
@@ -510,6 +514,8 @@ GET /admin/lease/leases?realm={realm}
 ```
 GET /admin/lease/stats?realm={realm}
 ```
+These values are point-in-time in-memory counts for the running broker process and should not be interpreted as durable recovery state.
+
 **Response**:
 ```json
 {
@@ -523,6 +529,8 @@ GET /admin/lease/stats?realm={realm}
 ```
 POST /admin/lease/leases/{lease_id}/release
 ```
+Force-releases an active in-memory lease on the current broker instance only. This endpoint does not recover or revoke durable state, and it has no effect after the owning session has already disconnected or the broker has restarted.
+
 **Headers**: `X-Confirm: true`
 **Response**: 200 OK or 404 Not Found
 ### Schedule Domain

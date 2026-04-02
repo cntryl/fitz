@@ -500,7 +500,10 @@ where
 
     // Act
     let response = reconnect
-        .request(&build_kv_put(tx_id, route, b"stale-key", b"stale-value"), 2000)
+        .request(
+            &build_kv_put(tx_id, route, b"stale-key", b"stale-value"),
+            2000,
+        )
         .await
         .expect("stale put response");
 

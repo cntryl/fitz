@@ -43,7 +43,7 @@ Layer 4: DOMAINS (100% Sync Business Logic)
 ├─ Notice (pub/sub, wildcard matching)
 ├─ Stream (append-only, watermarks)
 ├─ RPC (request/response, correlation)
-├─ Lease (distributed locking)
+├─ Lease (in-memory coordination)
 └─ Schedule (delayed/recurring tasks)
 Layer 5: STORAGE (Persistent Backend)
 └─ Midge LSM (key-value durability)
@@ -177,11 +177,11 @@ Rebuilding state after reconnect must be fast and deterministic. Fitz must keep 
 **Responsibility:** Message routing, subscription indexing, actor scheduling.
 **Components:**
 #### Router
-Lock-free pub/sub with DashMap:
+Current routing uses exact-address dispatch plus domain-owned subscription indexes. The bullets below are conceptual only; for Notice, the authoritative live state is the broker-local in-memory index in `NoticeDomainSink`, which is cleared on disconnect or broker restart.
 - **Subscriptions:** `{realm} → {area} → {resource} → [subscribers]`
-- **Pattern matching:** Wildcard `*` (one segment) and `**` (any depth)
-- **Fanout:** Single publish reaches all matched subscriptions
-- **Ordering:** Delivered in subscription order per path
+- **Pattern matching:** `NoticeDomainSink` matches wildcard subscriptions from its in-memory index
+- **Fanout:** Single publish reaches all currently connected matching subscriptions
+- **Ordering:** Publish order is preserved per subscriber within the running broker process
 #### Actor Mailbox
 Per-domain inbox (MPSC channel):
 - Receives incoming messages
@@ -469,8 +469,18 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
     enc.finish()
 }
 ```
-### Notice Domain (Pub/Sub) Example
-**File:** `src/domains/notice/mod.rs`
+### Notice Domain (Pub/Sub)
+**Current files:** `src/boot/domains/notice_sink.rs`, `src/domains/notice/mod.rs`
+
+Current Notice behavior is intentionally ephemeral:
+- `NoticeDomainSink` keeps subscription indexes entirely in memory for the current broker process
+- Subscriptions are session-scoped and are removed on disconnect cleanup
+- Broker restart clears all Notice subscriptions; clients must re-subscribe
+- Admin views describe only current in-memory subscriptions and route counters
+- Wildcard subscriptions are capped per session to keep matcher cost bounded
+- `NoticeRouteActor` remains a focused sync actor and test model for matching and fanout invariants
+
+**Historical sketch (outdated shape, not the current implementation):**
 ```rust
 pub struct NoticeActor {
     subscriptions: Vec<Subscription>, // Pattern → Subscribers

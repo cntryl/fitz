@@ -3,8 +3,9 @@
 - Classification: Ephemeral.
 - Goal: Make it explicit that this is an in-memory coordination primitive, not a durable lease service.
 - Primary outcome: honest single-process lease semantics with cleanup and restart-loss tests.
+- Status: Complete.
 
-Define a TDD-driven implementation plan for the following server correction work.
+Lease close-out completed with the following correction work verified.
 
 ### Important context:
 
@@ -33,11 +34,11 @@ Define a TDD-driven implementation plan for the following server correction work
 
 ## Concrete Tasks
 
-- [ ] Audit docs and comments for any durable or distributed lease claims and remove them.
-- [ ] Add tests proving leases disappear on restart and that this is expected.
-- [ ] Add tests proving disconnect cleanup releases session-owned lease state as intended.
-- [ ] Align the boot sink and actor wording around ephemeral semantics.
-- [ ] Decide whether fencing tokens are only meaningful within one running process and document that clearly.
+- [x] Audit docs and comments for any durable or distributed lease claims and remove them.
+- [x] Add tests proving leases disappear on restart and that this is expected.
+- [x] Add tests proving disconnect cleanup releases session-owned lease state as intended.
+- [x] Align the boot sink and actor wording around ephemeral semantics.
+- [x] Decide whether fencing tokens are only meaningful within one running process and document that clearly.
 
 ## Non-Goals
 
@@ -47,9 +48,9 @@ Define a TDD-driven implementation plan for the following server correction work
 
 ## Verification
 
-- [ ] Restart tests show lease state is lost.
-- [ ] Disconnect tests show session-owned leases are cleaned up.
-- [ ] Docs and admin wording no longer imply durable recovery.
+- [x] Restart tests show lease state is lost.
+- [x] Disconnect tests show session-owned leases are cleaned up.
+- [x] Docs and admin wording no longer imply durable recovery.
 
 ## Files To Touch First
 

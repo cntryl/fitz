@@ -6,10 +6,14 @@
 //! - Fencing token (monotonically increasing within the process)
 //! - Expiration time (TTL-based)
 //!
+//! This actor models single-broker coordination only. Restart clears lease
+//! ownership and resets fencing-token lineage, so neither state nor tokens are
+//! meaningful across processes or nodes.
+//!
 //! # Invariants
 //!
 //! 1. **Exclusive ownership**: At most one owner per lease at any time
-//! 2. **Monotonic tokens**: Fencing tokens never decrease within a running process
+//! 2. **Monotonic tokens**: Fencing tokens never decrease within a running process, but restart resets the lineage
 //! 3. **Expiration semantics**: Lease with expiry <= now() is expired and can be taken
 //! 4. **Idempotency**: Same operation by same owner produces same result
 //!
@@ -91,8 +95,9 @@ impl LeaseState {
 /// Lease actor managing a collection of leases
 ///
 /// Each lease actor is responsible for a shard of the lease namespace within
-/// the current broker instance. In a multi-actor deployment, leases are
-/// partitioned across actors by (family_id, route) tuple.
+/// the current broker process. In a multi-actor deployment, leases are
+/// partitioned across actors by `(family_id, route)` tuple inside that same
+/// process; this is not a durable or cross-node lease service.
 ///
 /// # State
 ///

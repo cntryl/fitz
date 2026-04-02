@@ -2,7 +2,7 @@
 //!
 //! # Architecture
 //!
-//! - **NoticeDomainSink** (`src/boot/domains/notice_sink.rs`): Live production handler that keeps subscription state in memory
+//! - **NoticeDomainSink** (`src/boot/domains/notice_sink.rs`): Live production handler that keeps broker-local subscription state in memory for the current process
 //! - **NoticeRouteActor** ([actor]): Sync actor model used for core matching and focused unit tests
 //! - **SessionActor**: Enforces authentication/authorization before forwarding notice messages
 //! - Subscriptions are session-scoped and cleaned up on disconnect
@@ -11,6 +11,7 @@
 //!
 //! - **Fire-and-forget**: Publish acknowledgement only means the broker accepted the request, not that any subscriber received it
 //! - **Best-effort**: Messages are delivered only to subscribers alive at publish time
+//! - **Broker-local**: Subscription IDs and admin views describe only the running broker process
 //! - **Non-durable**: No replay, restart recovery, or persisted subscriber state
 //! - **Session-scoped**: Subscriptions vanish on disconnect, and clients must re-subscribe after reconnect or broker restart
 //! - **Isolated**: All messaging is scoped to `(RouteFamilyId, route)` pairs

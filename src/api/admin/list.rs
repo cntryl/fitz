@@ -94,6 +94,11 @@ pub struct StreamResourceDetail {
     pub sessions_active: usize,
 }
 
+/// Live in-memory Lease resource detail for the current broker process.
+///
+/// `active_leases` counts only leases currently tracked in memory for this
+/// resource. The count drops on disconnect cleanup, resets after broker
+/// restart, and does not imply durable recovery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeaseResourceDetail {
     pub realm: String,
@@ -113,6 +118,11 @@ pub struct ScheduleResourceDetail {
     pub executions_total: u64,
 }
 
+/// Live in-memory Notice resource detail for the current broker process.
+///
+/// `subscriptions_active` counts only currently active subscriptions matching
+/// this resource. The count drops on disconnect cleanup, resets after broker
+/// restart, and does not imply durable or replayable pub/sub state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoticeResourceDetail {
     pub realm: String,
@@ -323,16 +333,25 @@ pub struct StreamInfo {
     pub sessions_active: usize,
 }
 
+/// Collection of live in-memory Notice subscriptions for the current broker
+/// process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoticeSubscriptionsList {
     pub subscriptions: Vec<NoticeSubscription>,
 }
 
+/// Collection of live in-memory Notice route counters for the current broker
+/// process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoticeRoutesList {
     pub routes: Vec<NoticeRouteInfo>,
 }
 
+/// Session-scoped Notice subscription snapshot for the current broker process.
+///
+/// The subscription exists only in memory, disappears when the owning session
+/// disconnects or the broker restarts, and is not durably recoverable or
+/// replayable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoticeSubscription {
     pub subscription_id: u64,
@@ -343,6 +362,10 @@ pub struct NoticeSubscription {
     pub notifications_received: u64,
 }
 
+/// Live Notice route activity for the current broker process only.
+///
+/// Subscriber counts and publish counters describe the running process
+/// lifetime and do not represent durable history or replay state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoticeRouteInfo {
     pub route: String,
@@ -413,11 +436,18 @@ pub struct RpcPendingRequest {
     pub worker_session_id: Option<String>,
 }
 
+/// Collection of live in-memory Lease snapshots for the current broker
+/// process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeasesList {
     pub leases: Vec<LeaseInfo>,
 }
 
+/// Session-scoped active Lease snapshot for the current broker process.
+///
+/// Lease ownership exists only in memory, disappears on disconnect cleanup or
+/// broker restart, and is not durably recoverable. `fencing_token` is
+/// process-local and resets when the broker process restarts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeaseInfo {
     pub realm: String,

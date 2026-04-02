@@ -10,8 +10,10 @@ use std::sync::Arc;
 
 fn reopen_local_bench_store(temp_path: &std::path::Path) -> Arc<cntryl_midge::Engine> {
     Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::local(temp_path.to_string_lossy().as_ref()).build())
-            .expect("reopen engine"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::local(temp_path.to_string_lossy().as_ref()).build(),
+        )
+        .expect("reopen engine"),
     )
 }
 
@@ -326,7 +328,10 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
             found: false,
             value: None,
         } => {}
-        other => panic!("Expected uncommitted value to be lost after restart, got {:?}", other),
+        other => panic!(
+            "Expected uncommitted value to be lost after restart, got {:?}",
+            other
+        ),
     }
 
     let rollback = actor2.handle(KvMessage::Rollback { tx_id: tx2 });

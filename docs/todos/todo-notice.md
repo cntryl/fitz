@@ -3,8 +3,9 @@
 - Classification: Ephemeral.
 - Goal: Make reconnect and restart loss explicit and keep subscription state bounded.
 - Primary outcome: honest pub/sub semantics with strong cleanup tests.
+- Status: Complete.
 
-Define a TDD-driven implementation plan for the following server correction work.
+Notice close-out completed with the following correction work verified.
 
 ### Important context:
 
@@ -33,11 +34,11 @@ Define a TDD-driven implementation plan for the following server correction work
 
 ## Concrete Tasks
 
-- [ ] Audit docs and comments for any wording that implies durable subscriptions or replay.
-- [ ] Add tests proving subscriptions are lost on disconnect and restart.
-- [ ] Keep session cleanup coverage strong for subscription removal.
-- [ ] Review wildcard subscription cost and add guardrails or explicit limits if needed.
-- [ ] Ensure admin surfaces describe current in-memory state only.
+- [x] Audit docs and comments for any wording that implies durable subscriptions or replay.
+- [x] Add tests proving subscriptions are lost on disconnect and restart.
+- [x] Keep session cleanup coverage strong for subscription removal.
+- [x] Review wildcard subscription cost and add guardrails or explicit limits if needed.
+- [x] Ensure admin surfaces describe current in-memory state only.
 
 ## Non-Goals
 
@@ -47,9 +48,9 @@ Define a TDD-driven implementation plan for the following server correction work
 
 ## Verification
 
-- [ ] Disconnect tests prove subscriptions are removed.
-- [ ] Restart tests prove clients must re-subscribe.
-- [ ] Docs and admin wording reflect in-memory-only semantics.
+- [x] Disconnect tests prove subscriptions are removed.
+- [x] Restart tests prove clients must re-subscribe.
+- [x] Docs and admin wording reflect in-memory-only semantics.
 
 ## Files To Touch First
 

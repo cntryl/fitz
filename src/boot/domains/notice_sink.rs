@@ -1,3 +1,9 @@
+//! Live notice domain sink for the current broker process.
+//!
+//! Notice subscriptions are broker-local in-memory state only. They are
+//! session-scoped, cleaned up on disconnect, and are never replayed or
+//! restored after broker restart.
+
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::routing::route_triplet;
@@ -9,6 +15,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+/// Per-session wildcard cap used to keep the in-memory matcher bounded.
 const MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION: usize = 128;
 type NoticeDeliveryTargets = SmallVec<[NoticeDeliveryTarget; 8]>;
 
@@ -50,6 +57,11 @@ impl From<&NoticeSubscription> for NoticeDeliveryTarget {
     }
 }
 
+/// Live notice pub/sub state for the current broker process.
+///
+/// This sink owns the authoritative in-memory subscription index used for
+/// delivery and admin snapshots. State disappears on session cleanup or broker
+/// restart and is never durably recovered or replayed.
 pub struct NoticeDomainSink {
     families: Mutex<HashMap<u64, RoutedSubscriptionSet<NoticeSubscription>>>,
     next_sub_id: AtomicU64,
@@ -78,6 +90,8 @@ impl NoticeDomainSink {
         self.active.store(false, Ordering::Relaxed);
     }
 
+    /// Rebuild the admin read model from the current in-memory subscription
+    /// state only.
     fn sync_admin_snapshot(&self) {
         let families = self.families.lock();
         let created_at = Utc::now().to_rfc3339();

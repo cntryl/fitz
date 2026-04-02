@@ -535,6 +535,7 @@ paths:
     get:
       tags: [Lease]
       summary: Get lease resource
+      description: Live broker-local lease resource detail. `active_leases` counts only the current in-memory leases for this resource on the running broker process and resets on disconnect cleanup or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/RealmPath"
@@ -1079,6 +1080,7 @@ components:
 
     LeaseResourceDetail:
       type: object
+      description: Point-in-time live in-memory Lease state for a single resource on the current broker process. Counts reset on disconnect cleanup or broker restart and do not imply durable recovery.
       required: [realm, area, resource, active_leases]
       properties:
         realm: { type: string }

@@ -238,7 +238,10 @@ impl RpcRouteState {
     }
 
     fn record_completion(&mut self, session_id: u64, latency_us: u64) -> bool {
-        if let Some(worker) = self.workers.iter_mut().find(|worker| worker.session_id == session_id)
+        if let Some(worker) = self
+            .workers
+            .iter_mut()
+            .find(|worker| worker.session_id == session_id)
         {
             worker.record_completion(latency_us);
             return true;
@@ -1302,7 +1305,8 @@ impl MailboxSink for RpcDomainSink {
                     if removed_pending {
                         let completion_latency_us =
                             caller_info.submitted_at_instant.elapsed().as_micros() as u64;
-                        if let Some(route_state) = state.route_state(caller_info.worker_addr.route())
+                        if let Some(route_state) =
+                            state.route_state(caller_info.worker_addr.route())
                         {
                             route_state.record_completion(
                                 caller_info.worker_session_id,
@@ -1730,14 +1734,16 @@ mod tests {
 
         {
             let mut state = sink.state.lock();
-            state.ensure_route_state(&route).register_worker(RpcWorker::with_stats(
-                request_addr.clone(),
-                worker_inbox_addr.clone(),
-                42,
-                "2026-03-14T11:59:00Z",
-                0,
-                0,
-            ));
+            state
+                .ensure_route_state(&route)
+                .register_worker(RpcWorker::with_stats(
+                    request_addr.clone(),
+                    worker_inbox_addr.clone(),
+                    42,
+                    "2026-03-14T11:59:00Z",
+                    0,
+                    0,
+                ));
             let correlation_id = response.correlation_id;
             state.pending.track_pending(
                 correlation_id,

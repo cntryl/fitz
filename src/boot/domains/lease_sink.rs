@@ -1,8 +1,11 @@
-//! Lease domain sink for ephemeral in-memory coordination
+//! Lease domain sink for ephemeral in-memory coordination on the current broker
+//! process.
 //!
-//! The boot path mirrors the lease actor's live state into the admin read model.
-//! Lease state is expected to vanish on broker restart, and disconnect cleanup
-//! removes any session-owned leases immediately.
+//! The boot path mirrors the current process lease state into the admin read
+//! model. Lease ownership, wait queues, and subscriptions are expected to
+//! vanish on broker restart, and disconnect cleanup removes any session-owned
+//! lease state immediately. Fencing tokens are process-local and must not be
+//! interpreted as durable or cross-node identifiers.
 
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
@@ -58,6 +61,12 @@ struct LeaseAcquireRequest {
     route_family: crate::runtime::routing::RouteFamily,
 }
 
+/// Live lease coordination state for the current broker process only.
+///
+/// This sink is the production in-memory implementation of Lease semantics.
+/// It is intentionally single-broker and non-durable: disconnect cleanup
+/// releases session-owned state, restart clears ownership and waiters, and
+/// fencing tokens reset with the process.
 pub struct LeaseDomainSink {
     leases: Mutex<HashMap<crate::domains::lease::protocol::LeaseKey, SinkLeaseState>>,
     session_leases: Mutex<HashMap<u64, HashSet<crate::domains::lease::protocol::LeaseKey>>>,
@@ -592,7 +601,10 @@ impl LeaseDomainSink {
         self.next_token.fetch_add(1, Ordering::Relaxed)
     }
 
-    fn handle_acquire(&self, request: LeaseAcquireRequest) -> crate::domains::lease::protocol::LeaseResponse {
+    fn handle_acquire(
+        &self,
+        request: LeaseAcquireRequest,
+    ) -> crate::domains::lease::protocol::LeaseResponse {
         use crate::domains::lease::protocol::LeaseResponse;
 
         let LeaseAcquireRequest {
