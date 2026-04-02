@@ -269,7 +269,9 @@ async fn should_keep_notice_subscriptions_independent_from_stream_reads_tcp() {
         .expect("notice subscribe");
 
     // Create stream session
-    let begin_frame = build_stream_begin("stream://test/stream/data/write", 0);
+    let stream_write_route = "stream://test/stream/data/write";
+    let stream_read_route = "stream://test/stream/data";
+    let begin_frame = build_stream_begin(stream_write_route, 0);
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -282,7 +284,7 @@ async fn should_keep_notice_subscriptions_independent_from_stream_reads_tcp() {
         .send_and_receive(&append_frame, 2000)
         .await
         .expect("stream append");
-    let read_frame = build_stream_read("stream-data", 0);
+    let read_frame = build_stream_read(stream_read_route, 0);
     let read_response = stream_client
         .send_and_receive(&read_frame, 2000)
         .await
@@ -319,7 +321,9 @@ async fn should_keep_notice_subscriptions_independent_from_stream_reads_ws() {
         .expect("notice subscribe");
 
     // Create stream session
-    let begin_frame = build_stream_begin("stream://test/stream/data/write", 0);
+    let stream_write_route = "stream://test/stream/data/write";
+    let stream_read_route = "stream://test/stream/data";
+    let begin_frame = build_stream_begin(stream_write_route, 0);
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -332,7 +336,7 @@ async fn should_keep_notice_subscriptions_independent_from_stream_reads_ws() {
         .send_and_receive(&append_frame, 2000)
         .await
         .expect("stream append");
-    let read_frame = build_stream_read("stream-data", 0);
+    let read_frame = build_stream_read(stream_read_route, 0);
     let read_response = stream_client
         .send_and_receive(&read_frame, 2000)
         .await

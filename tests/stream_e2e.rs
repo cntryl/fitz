@@ -6,12 +6,17 @@ use fitz::testkit::TestServer;
 use fixtures::define_transport_tests;
 use fixtures::transport::*;
 
-async fn commit_stream_record<C>(client: &mut C, route: &str, body: &[u8])
+async fn commit_stream_record_with_offset<C>(
+    client: &mut C,
+    route: &str,
+    expected_offset: u64,
+    body: &[u8],
+)
 where
     C: StreamConnector,
 {
     let begin_response = client
-        .send_and_receive(&build_stream_begin(route, 0), 2000)
+        .send_and_receive(&build_stream_begin(route, expected_offset), 2000)
         .await
         .expect("begin stream");
     let (_msg_type, status, data) = parse_stream_response(&begin_response);
@@ -33,6 +38,13 @@ where
     assert_eq!(status, 0, "Expected success for stream commit");
 }
 
+async fn commit_stream_record<C>(client: &mut C, route: &str, body: &[u8])
+where
+    C: StreamConnector,
+{
+    commit_stream_record_with_offset(client, route, 0, body).await;
+}
+
 // Generic test helper for appending to stream
 async fn should_append_data_to_stream<C>(server: &TestServer)
 where
@@ -40,14 +52,10 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
-    let frame = build_stream_append_simple("stream://test/events/audit", b"event-001");
+    let route = "stream://test/events/audit";
 
     // Act
-    let response = client.send_and_receive(&frame, 2000).await.expect("send");
-
-    // Assert
-    let (_msg_type, status, _data) = parse_stream_response(&response);
-    assert_eq!(status, 0, "Expected success for stream append");
+    commit_stream_record(&mut client, route, b"event-001").await;
 }
 
 // Generic test helper for reading from stream
@@ -57,15 +65,12 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/logs/main";
     let test_data = b"stream-record-1";
-    let append_frame = build_stream_append_simple("stream://test/logs", test_data);
-    let _ = client
-        .send_and_receive(&append_frame, 2000)
-        .await
-        .expect("append");
+    commit_stream_record(&mut client, route, test_data).await;
 
     // Act
-    let read_frame = build_stream_read("stream://test/logs", 0);
+    let read_frame = build_stream_read(route, 0);
     let response = client
         .send_and_receive(&read_frame, 2000)
         .await
@@ -83,20 +88,13 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
-    let frame1 = build_stream_append_simple("stream://test/ordered", b"first");
-    let frame2 = build_stream_append_simple("stream://test/ordered", b"second");
+    let route = "stream://test/ordered/main";
 
     // Act
-    let _ = client
-        .send_and_receive(&frame1, 2000)
-        .await
-        .expect("append 1");
-    let _ = client
-        .send_and_receive(&frame2, 2000)
-        .await
-        .expect("append 2");
+    commit_stream_record_with_offset(&mut client, route, 0, b"first").await;
+    commit_stream_record_with_offset(&mut client, route, 1, b"second").await;
 
-    let read_frame = build_stream_read("stream://test/ordered", 0);
+    let read_frame = build_stream_read(route, 0);
     let response = client
         .send_and_receive(&read_frame, 2000)
         .await
@@ -114,7 +112,7 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
-    let frame = build_stream_read("stream://test/sparse", 999999);
+    let frame = build_stream_read("stream://test/sparse/main", 999999);
 
     // Act
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
@@ -132,18 +130,12 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/fifo/main";
 
     // Act - Append 5 events
     for i in 1..=5 {
         let data = format!("event-{}", i).into_bytes();
-        let frame = build_stream_append_simple("stream://test/fifo", &data);
-        let response = client
-            .send_and_receive(&frame, 2000)
-            .await
-            .unwrap_or_else(|_| panic!("append {}", i));
-
-        let (_msg_type, status, _data) = parse_stream_response(&response);
-        assert_eq!(status, 0, "Append {} should succeed", i);
+        commit_stream_record_with_offset(&mut client, route, (i - 1) as u64, &data).await;
     }
 
     // Assert - Order should be preserved (can't directly verify without GET support for sequence, but test ensures no errors)
@@ -156,15 +148,11 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/large/main";
     let large_data = vec![b'D'; 60_000]; // Within u16 TLV length limit (65535)
-    let frame = build_stream_append_simple("stream://test/large", &large_data);
 
     // Act
-    let response = client.send_and_receive(&frame, 3000).await.expect("send");
-
-    // Assert
-    let (_msg_type, status, _data) = parse_stream_response(&response);
-    assert_eq!(status, 0, "Should handle large payload");
+    commit_stream_record(&mut client, route, &large_data).await;
 }
 
 // Generic test helper for concurrent appends from multiple clients
@@ -175,26 +163,11 @@ where
     // Arrange
     let mut client1 = C::connect(server).await.expect("connect 1");
     let mut client2 = C::connect(server).await.expect("connect 2");
+    let route = "stream://test/concurrent/main";
 
     // Act - Both clients append
-    let frame1 = build_stream_append_simple("stream://test/concurrent", b"client-1-event");
-    let response1 = client1
-        .send_and_receive(&frame1, 2000)
-        .await
-        .expect("append 1");
-
-    let frame2 = build_stream_append_simple("stream://test/concurrent", b"client-2-event");
-    let response2 = client2
-        .send_and_receive(&frame2, 2000)
-        .await
-        .expect("append 2");
-
-    // Assert
-    let (_msg_type, status1, _data) = parse_stream_response(&response1);
-    let (_msg_type, status2, _data) = parse_stream_response(&response2);
-
-    assert_eq!(status1, 0, "Client 1 append should succeed");
-    assert_eq!(status2, 0, "Client 2 append should succeed");
+    commit_stream_record_with_offset(&mut client1, route, 0, b"client-1-event").await;
+    commit_stream_record_with_offset(&mut client2, route, 1, b"client-2-event").await;
 }
 
 // Generic test helper for multiple sequential read operations
@@ -204,16 +177,13 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/sequential/main";
 
     // First, append some data
-    let append_frame = build_stream_append_simple("stream://test/sequential", b"event-data");
-    let _ = client
-        .send_and_receive(&append_frame, 2000)
-        .await
-        .expect("append");
+    commit_stream_record(&mut client, route, b"event-data").await;
 
     // Act - Sequential reads
-    let read1_frame = build_stream_read("stream://test/sequential", 0);
+    let read1_frame = build_stream_read(route, 0);
     let response1 = client
         .send_and_receive(&read1_frame, 2000)
         .await
@@ -223,7 +193,7 @@ where
     assert_eq!(status1, 0);
 
     // Act - Read again with different offset
-    let read2_frame = build_stream_read("stream://test/sequential", 0);
+    let read2_frame = build_stream_read(route, 0);
     let response2 = client
         .send_and_receive(&read2_frame, 2000)
         .await
@@ -233,7 +203,7 @@ where
     assert_eq!(status2, 0);
 
     // Act - Third read
-    let read3_frame = build_stream_read("stream://test/sequential", 0);
+    let read3_frame = build_stream_read(route, 0);
     let response3 = client
         .send_and_receive(&read3_frame, 2000)
         .await
@@ -251,23 +221,17 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
+    let route1 = "stream://test/app/stream1";
+    let route2 = "stream://test/app/stream2";
 
     // Act - Append to stream 1
-    let frame1 = build_stream_append_simple("stream://test/stream1", b"data-1");
-    let _ = client
-        .send_and_receive(&frame1, 2000)
-        .await
-        .expect("append 1");
+    commit_stream_record(&mut client, route1, b"data-1").await;
 
     // Act - Append to stream 2
-    let frame2 = build_stream_append_simple("stream://test/stream2", b"data-2");
-    let _ = client
-        .send_and_receive(&frame2, 2000)
-        .await
-        .expect("append 2");
+    commit_stream_record(&mut client, route2, b"data-2").await;
 
     // Act - Read from stream 1
-    let read_frame = build_stream_read("stream://test/stream1", 0);
+    let read_frame = build_stream_read(route1, 0);
     let response = client
         .send_and_receive(&read_frame, 2000)
         .await
