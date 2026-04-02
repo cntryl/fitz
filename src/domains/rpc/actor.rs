@@ -15,15 +15,16 @@
 //! # Lease Mechanism
 //!
 //! Each request assigned to a worker gets a lease with expiration time.
-//! If the worker doesn't respond before expiration, the request is re-enqueued
-//! and assigned to another worker.
+//! If the worker doesn't respond before expiration, the route actor can only
+//! release the lease and surface timeout semantics inside the current process.
+//! There is no durable retry or restart recovery in this actor.
 //!
 //! # Invariants
 //!
 //! 1. **FIFO ordering**: Requests are dispatched in arrival order
 //! 2. **Round-robin**: Workers receive requests in rotation
 //! 3. **Bounded queue**: Backpressure when queue is full
-//! 4. **No durability**: All state is ephemeral
+//! 4. **No durability**: Worker registrations, queue state, and leases are ephemeral
 //! 5. **Lease enforcement**: Workers must respond before lease expiry
 //! 6. **Correlation tracking**: Maps correlation_id → worker for proper cleanup
 
@@ -395,8 +396,9 @@ impl RpcRouteActor {
 
     /// Send error to client inbox
     fn send_error(&self, _error: RpcError) {
-        // NOTE: ReplyInboxActor integration pending - errors currently dropped
-        // See: https://github.com/cntryl/fitz/issues/track-response-routing
+        // NOTE: This actor is a semantics reference used in tests and benchmarks.
+        // Production RPC reply and error forwarding happens in RpcDomainSink,
+        // which still treats all worker and pending-request state as ephemeral.
     }
 
     /// Try to dispatch pending requests to available workers

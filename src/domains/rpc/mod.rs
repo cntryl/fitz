@@ -21,13 +21,16 @@
 //! - **FIFO ordering**: Requests dispatched in arrival order per route
 //! - **Bounded queue**: Backpressure when queue reaches capacity (default: 1000)
 //! - **Streaming support**: Workers can send multi-chunk responses with sequence numbers
-//! - **Non-durable**: All state is in-memory (no persistence for ultra-low latency)
+//! - **Explicitly ephemeral**: Worker registrations and pending requests live only in memory
+//! - **Restart loss**: Broker restart drops workers, pending requests, and reply routing state
+//! - **Reconnect contract**: Workers must re-register and callers must retry lost work at the application layer
 //!
 //! # Worker Model
 //!
 //! Workers register with specific routes (no wildcards). Each worker can handle
 //! `max_concurrent` requests (default: 1). The actor maintains in-flight tracking
-//! and assigns new requests only to available workers.
+//! and assigns new requests only to available workers. Disconnect or broker
+//! restart clears the worker pool; there is no durable worker recovery.
 //!
 //! # Route Format
 //!

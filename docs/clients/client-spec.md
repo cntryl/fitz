@@ -382,6 +382,8 @@ await Promise.all([task_leases, event_leases]);  // ✅ Different queues, parall
 
 RPC is the **only domain with true per-request multiplexing via correlation IDs**. Multiple RPC requests can be in flight simultaneously on the same channel, and responses are matched by UUID.
 
+RPC is also explicitly ephemeral. Worker registrations and pending requests are live in-memory state for the current broker process only. If a worker disconnects or the broker restarts, registrations disappear, in-flight requests are lost, and clients must re-register workers and retry any required work at the application layer.
+
 ```javascript
 // Multiple RPC calls in flight, responses matched by correlation_id
 const rpc1 = client.rpcRequest("rpc://prod/app/svc", reply_route, uuid1, payload1);
@@ -943,11 +945,13 @@ Clients MUST:
 - All active stream sessions are aborted
 - All held leases are released
 - All RPC worker registrations are cleared
+- All pending RPC requests are discarded
 - Queued notifications are discarded
   **State NOT Restored On Reconnect:**
   On reconnect with new CONNECT:
 - New session ID issued (previous session ID is invalid)
 - Previous subscriptions, transactions, and worker registrations are NOT recovered
+- Previous pending RPC requests are NOT durably recovered or replayed
 - Client MUST explicitly re-subscribe, re-begin, or re-register if needed
 
 ### 4. Send Domain Requests
@@ -959,6 +963,7 @@ After successful CONNECT, client may send domain-specific requests.
 - **Clients MAY send multiple in-flight requests on different channels (domains).** Each domain (KV, RPC, Notice, etc.) is routed to its own logical channel by the broker. This allows concurrent operations across different domains on the same connection.
 - **Within a single domain**: Follow request/response sequencing unless the domain explicitly supports per-request correlation IDs (currently only RPC). Sending multiple requests of the same type without waiting for responses is undefined behavior.
 - **RPC domain is special**: RPC REQUEST includes an explicit 16-byte UUID `correlation_id` that clients generate. This allows true request/response matching for multiple in-flight RPC requests.
+- **RPC registrations are session-scoped**: A worker reconnecting after disconnect or broker restart MUST send `Subscribe` again before it will receive new requests.
 - **Out-of-band messages**: Asynchronous deliveries (e.g., Notice NOTIFY, RPC RESPONSE streaming) arrive without correlation IDs to requests; clients MUST handle them separately.
 - **Order guarantees**: Responses are delivered in the order requests were sent (per domain/channel).
 
@@ -1536,6 +1541,8 @@ This section documents the **canonical operations** for each of the seven Fitz d
 - Multiple RPC requests MAY be in flight simultaneously (true multiplexing via correlation_id)
 - Workers register on listening route and receive DELIVER (async push)
 - Callers specify reply inbox route for responses
+- Worker registrations and pending requests are process-local and are not recovered after broker restart
+- A worker reconnecting after disconnect or restart MUST send `Subscribe` again before it can receive new requests
 
 ---
 
