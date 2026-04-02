@@ -1,8 +1,8 @@
 //! Stream domain basic tests for the store-authoritative runtime path.
 
 use bytes::Bytes;
-use fitz::domains::stream::session::SessionActor;
 use fitz::domains::stream::protocol::StreamWriteMode;
+use fitz::domains::stream::session::SessionActor;
 use fitz::domains::stream::store::StreamStore;
 use fitz::domains::stream::{StreamActor, StreamMessage};
 use fitz::runtime::actor::Context;
@@ -298,7 +298,9 @@ fn should_abort_append_session_on_owner_cleanup() {
     assert_eq!(actor.cleanup_session(77), Some(555));
     assert!(!actor.has_active_session());
     assert_eq!(
-        actor.rollback_session(555).expect_err("stale session should be gone"),
+        actor
+            .rollback_session(555)
+            .expect_err("stale session should be gone"),
         "session not found"
     );
 }

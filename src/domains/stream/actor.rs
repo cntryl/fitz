@@ -12,7 +12,7 @@ use super::protocol::{
     IngestMetadata, PeekResponse, ReadResponse, StreamError, StreamMessage, StreamResponse,
     StreamWriteMode, MAX_EVENT_SIZE,
 };
-use super::store::{EventPayload, StreamStore};
+use super::store::{CommitRecordsParams, EventPayload, StreamStore};
 
 #[derive(Debug, Clone)]
 struct ActiveAppendSession {
@@ -90,7 +90,9 @@ impl StreamActor {
     }
 
     pub fn active_session_owner(&self) -> Option<u64> {
-        self.active_session.as_ref().map(|session| session.owner_session_id)
+        self.active_session
+            .as_ref()
+            .map(|session| session.owner_session_id)
     }
 
     pub fn begin_append_session(
@@ -168,16 +170,16 @@ impl StreamActor {
             return Err("empty batch".to_string());
         }
 
-        let response = match self.store.commit_records(
-            self.family_id.as_u64(),
-            &self.realm,
-            &self.area,
-            &self.resource,
-            session.expected_offset,
-            &session.staged_events,
-            session.ingest_metadata.clone(),
+        let response = match self.store.commit_records(CommitRecordsParams {
+            family: self.family_id.as_u64(),
+            realm: &self.realm,
+            area: &self.area,
+            resource: &self.resource,
+            expected_resource_next_offset: session.expected_offset,
+            events: &session.staged_events,
+            ingest_metadata: session.ingest_metadata.clone(),
             mode,
-        ) {
+        }) {
             Ok(response) => response,
             Err(error) => {
                 self.active_session = Some(session);
@@ -214,9 +216,10 @@ impl StreamActor {
 
     pub fn cleanup_session(&mut self, owner_session_id: u64) -> Option<u64> {
         match self.active_session.as_ref() {
-            Some(session) if session.owner_session_id == owner_session_id => {
-                self.active_session.take().map(|session| session.stream_session_id)
-            }
+            Some(session) if session.owner_session_id == owner_session_id => self
+                .active_session
+                .take()
+                .map(|session| session.stream_session_id),
             _ => None,
         }
     }
@@ -257,14 +260,12 @@ impl StreamActor {
             return Ok(PeekResponse { record: None });
         }
 
-        let record = self
-            .store
-            .peek_resource(
-                self.family_id.as_u64(),
-                &self.realm,
-                &self.area,
-                &self.resource,
-            )?;
+        let record = self.store.peek_resource(
+            self.family_id.as_u64(),
+            &self.realm,
+            &self.area,
+            &self.resource,
+        )?;
         Ok(PeekResponse { record })
     }
 
@@ -291,10 +292,14 @@ impl Actor for StreamActor {
             } => {
                 let stream_session_id = self.next_local_session_id;
                 self.next_local_session_id = self.next_local_session_id.saturating_add(1);
-                match self.begin_append_session(0, stream_session_id, expected_offset, ingest_metadata)
-                {
-                Ok(session_id) => StreamResponse::BeginOk(BeginSessionResponse { session_id }),
-                Err(error) => StreamResponse::Error(Self::map_error(&error)),
+                match self.begin_append_session(
+                    0,
+                    stream_session_id,
+                    expected_offset,
+                    ingest_metadata,
+                ) {
+                    Ok(session_id) => StreamResponse::BeginOk(BeginSessionResponse { session_id }),
+                    Err(error) => StreamResponse::Error(Self::map_error(&error)),
                 }
             }
             StreamMessage::Append {
@@ -305,10 +310,12 @@ impl Actor for StreamActor {
                 Ok(_) => StreamResponse::AppendOk(AppendResponse { success: true }),
                 Err(error) => StreamResponse::Error(Self::map_error(&error)),
             },
-            StreamMessage::Commit { session_id, mode } => match self.commit_session(session_id, mode) {
-                Ok(response) => StreamResponse::CommitOk(response),
-                Err(error) => StreamResponse::Error(Self::map_error(&error)),
-            },
+            StreamMessage::Commit { session_id, mode } => {
+                match self.commit_session(session_id, mode) {
+                    Ok(response) => StreamResponse::CommitOk(response),
+                    Err(error) => StreamResponse::Error(Self::map_error(&error)),
+                }
+            }
             StreamMessage::Rollback { session_id } => match self.rollback_session(session_id) {
                 Ok(()) => StreamResponse::CommitOk(CommitSessionResponse {
                     first_resource_offset: 0,

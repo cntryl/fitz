@@ -18,6 +18,7 @@ use super::store::StreamStore;
 /// - Mint realm offset leases for AreaActors
 /// - Track area watermarks
 /// - Calculate realm watermark (minimum of all area watermarks)
+#[allow(dead_code)]
 pub struct RealmActor {
     #[allow(dead_code)]
     family_id: RouteFamily,
@@ -45,6 +46,7 @@ pub struct RealmActor {
     pending_publish: Option<DomainPublishEvent>,
 }
 
+#[allow(dead_code)]
 impl RealmActor {
     const NOTICE_DEBOUNCE_MS: u64 = 25;
 

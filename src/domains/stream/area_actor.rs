@@ -60,6 +60,7 @@ pub struct AreaActor {
 impl AreaActor {
     const NOTICE_DEBOUNCE_MS: u64 = 25;
 
+    #[allow(dead_code)]
     pub fn new(
         family_id: RouteFamily,
         realm: String,
@@ -250,6 +251,7 @@ impl AreaActor {
     }
 
     /// Get current watermark (for testing)
+    #[allow(dead_code)]
     pub fn watermark(&self) -> u64 {
         self.area_watermark
     }

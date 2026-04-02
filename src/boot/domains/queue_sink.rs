@@ -178,20 +178,26 @@ impl QueueDomainSink {
                     .map(|timestamp| timestamp.to_rfc3339())
                     .unwrap_or_default();
                 leases.push(crate::api::admin::QueueLease::snapshot(
-                    lease.message_id,
-                    &key.realm,
-                    &key.area,
-                    &key.resource,
-                    lease.lease_token,
-                    lease.session_id,
-                    &expires_at,
-                    lease.attempts,
+                    crate::api::admin::QueueLeaseSnapshot {
+                        message_id: lease.message_id,
+                        realm: &key.realm,
+                        area: &key.area,
+                        resource: &key.resource,
+                        lease_token: lease.lease_token,
+                        session_id: lease.session_id,
+                        expires_at: &expires_at,
+                        attempts: lease.attempts,
+                    },
                 ));
             }
         }
 
         queues.sort_by(|left, right| {
-            (&left.realm, &left.area, &left.resource).cmp(&(&right.realm, &right.area, &right.resource))
+            (&left.realm, &left.area, &left.resource).cmp(&(
+                &right.realm,
+                &right.area,
+                &right.resource,
+            ))
         });
         leases.sort_by(|left, right| {
             (
@@ -525,219 +531,223 @@ impl MailboxSink for QueueDomainSink {
 
         use crate::domains::queue::protocol::QueueMessage;
 
-        let (response, availability_notify_route, should_mark_admin_snapshot_dirty) = match queue_msg {
-            QueueMessage::Send {
-                family_id,
-                route,
-                body,
-                delay_seconds,
-            } => {
-                let key = Self::queue_key_for_route(family_id, &route);
-                let actor_lock_start = Instant::now();
-                let (actor_handle, created_actor) = self.get_or_create_actor(key);
-                crate::boot::observability::histogram_observe_us(
-                    obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-                    actor_lock_start.elapsed().as_micros() as u64,
-                );
-                let mut actor = actor_handle.lock();
-                let actor_exec_start = Instant::now();
-                actor.process_due_work();
-                let resp = actor.handle_send(body, delay_seconds);
-                crate::boot::observability::histogram_observe_us(
-                    obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-                    actor_exec_start.elapsed().as_micros() as u64,
-                );
-                let notify_route = if actor.take_needs_notify_availability() {
-                    tracing::info!(
-                        domain = "queue",
-                        session = frame_ctx.session_id,
-                        route = %route,
-                        family_id = %family_id,
-                        "Queue: SEND triggered availability notification"
+        let (response, availability_notify_route, should_mark_admin_snapshot_dirty) =
+            match queue_msg {
+                QueueMessage::Send {
+                    family_id,
+                    route,
+                    body,
+                    delay_seconds,
+                } => {
+                    let key = Self::queue_key_for_route(family_id, &route);
+                    let actor_lock_start = Instant::now();
+                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+                        actor_lock_start.elapsed().as_micros() as u64,
                     );
-                    Some(route)
-                } else {
-                    None
-                };
-                let _ = created_actor;
-                (resp, notify_route, true)
-            }
-            QueueMessage::Receive {
-                family_id,
-                route,
-                lease_seconds,
-                batch_size,
-                ..
-            } => {
-                let key = Self::queue_key_for_route(family_id, &route);
-                let actor_lock_start = Instant::now();
-                let (actor_handle, created_actor) = self.get_or_create_actor(key);
-                crate::boot::observability::histogram_observe_us(
-                    obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-                    actor_lock_start.elapsed().as_micros() as u64,
-                );
-                let mut actor = actor_handle.lock();
-                let actor_exec_start = Instant::now();
-                actor.process_due_work();
-                let response =
-                    actor.handle_receive_for_session(frame_ctx.session_id, lease_seconds, batch_size);
-                crate::boot::observability::histogram_observe_us(
-                    obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-                    actor_exec_start.elapsed().as_micros() as u64,
-                );
-                let _ = created_actor;
-                (response, None, true)
-            }
-            QueueMessage::Extend {
-                family_id,
-                route,
-                id,
-                token,
-                lease_seconds,
-            } => {
-                let key = Self::queue_key_for_route(family_id, &route);
-                let actor_lock_start = Instant::now();
-                let (actor_handle, created_actor) = self.get_or_create_actor(key);
-                crate::boot::observability::histogram_observe_us(
-                    obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-                    actor_lock_start.elapsed().as_micros() as u64,
-                );
-                let mut actor = actor_handle.lock();
-                let actor_exec_start = Instant::now();
-                actor.process_due_work();
-                let response = actor.handle_extend(id, token, lease_seconds);
-                crate::boot::observability::histogram_observe_us(
-                    obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-                    actor_exec_start.elapsed().as_micros() as u64,
-                );
-                let _ = created_actor;
-                (response, None, true)
-            }
-            QueueMessage::Ack {
-                family_id,
-                route,
-                id,
-                token,
-            } => {
-                let key = Self::queue_key_for_route(family_id, &route);
-                let actor_lock_start = Instant::now();
-                let (actor_handle, created_actor) = self.get_or_create_actor(key);
-                crate::boot::observability::histogram_observe_us(
-                    obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-                    actor_lock_start.elapsed().as_micros() as u64,
-                );
-                let mut actor = actor_handle.lock();
-                let actor_exec_start = Instant::now();
-                actor.process_due_work();
-                let response = actor.handle_ack(id, token);
-                crate::boot::observability::histogram_observe_us(
-                    obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-                    actor_exec_start.elapsed().as_micros() as u64,
-                );
-                let _ = created_actor;
-                (response, None, true)
-            }
-            QueueMessage::LeaseExpired { .. } => (
-                crate::domains::queue::QueueResponse::Error {
-                    message: "LeaseExpired is an internal message".to_string(),
-                },
-                None,
-                false,
-            ),
-            QueueMessage::Subscribe {
-                family_id,
-                pattern,
-                session_id,
-                subscriber,
-            } => {
-                let fam_id = family_id.as_u64();
-
-                let mut families = self.families.lock();
-                let state = families
-                    .entry(fam_id)
-                    .or_insert_with(RoutedSubscriptionSet::new);
-
-                let existing_sub_id = state.find_existing_id(session_id, pattern.as_str());
-
-                let sub_id = if let Some(id) = existing_sub_id {
-                    tracing::debug!(
-                        domain = "queue",
-                        session = session_id,
-                        subscription_id = id,
-                        pattern = pattern.as_str(),
-                        "Queue subscription already exists (idempotent)"
+                    let mut actor = actor_handle.lock();
+                    let actor_exec_start = Instant::now();
+                    actor.process_due_work();
+                    let resp = actor.handle_send(body, delay_seconds);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+                        actor_exec_start.elapsed().as_micros() as u64,
                     );
-                    id
-                } else {
-                    let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                    state.insert(
-                        family_id,
-                        QueueSubscription {
-                            pattern: crate::runtime::matcher::Pattern::new(pattern.as_str()),
-                            session_id,
-                            subscription_id: new_id,
-                            subscriber,
-                        },
+                    let notify_route = if actor.take_needs_notify_availability() {
+                        tracing::info!(
+                            domain = "queue",
+                            session = frame_ctx.session_id,
+                            route = %route,
+                            family_id = %family_id,
+                            "Queue: SEND triggered availability notification"
+                        );
+                        Some(route)
+                    } else {
+                        None
+                    };
+                    let _ = created_actor;
+                    (resp, notify_route, true)
+                }
+                QueueMessage::Receive {
+                    family_id,
+                    route,
+                    lease_seconds,
+                    batch_size,
+                    ..
+                } => {
+                    let key = Self::queue_key_for_route(family_id, &route);
+                    let actor_lock_start = Instant::now();
+                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+                        actor_lock_start.elapsed().as_micros() as u64,
                     );
-
-                    tracing::debug!(
-                        domain = "queue",
-                        session = session_id,
-                        subscription_id = new_id,
-                        pattern = pattern.as_str(),
-                        "Queue subscription added"
+                    let mut actor = actor_handle.lock();
+                    let actor_exec_start = Instant::now();
+                    actor.process_due_work();
+                    let response = actor.handle_receive_for_session(
+                        frame_ctx.session_id,
+                        lease_seconds,
+                        batch_size,
                     );
-                    self.subscription_count.fetch_add(1, Ordering::Relaxed);
-                    new_id
-                };
-
-                (
-                    crate::domains::queue::QueueResponse::SubscribeOk {
-                        subscription_id: sub_id,
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+                        actor_exec_start.elapsed().as_micros() as u64,
+                    );
+                    let _ = created_actor;
+                    (response, None, true)
+                }
+                QueueMessage::Extend {
+                    family_id,
+                    route,
+                    id,
+                    token,
+                    lease_seconds,
+                } => {
+                    let key = Self::queue_key_for_route(family_id, &route);
+                    let actor_lock_start = Instant::now();
+                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+                        actor_lock_start.elapsed().as_micros() as u64,
+                    );
+                    let mut actor = actor_handle.lock();
+                    let actor_exec_start = Instant::now();
+                    actor.process_due_work();
+                    let response = actor.handle_extend(id, token, lease_seconds);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+                        actor_exec_start.elapsed().as_micros() as u64,
+                    );
+                    let _ = created_actor;
+                    (response, None, true)
+                }
+                QueueMessage::Ack {
+                    family_id,
+                    route,
+                    id,
+                    token,
+                } => {
+                    let key = Self::queue_key_for_route(family_id, &route);
+                    let actor_lock_start = Instant::now();
+                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+                        actor_lock_start.elapsed().as_micros() as u64,
+                    );
+                    let mut actor = actor_handle.lock();
+                    let actor_exec_start = Instant::now();
+                    actor.process_due_work();
+                    let response = actor.handle_ack(id, token);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+                        actor_exec_start.elapsed().as_micros() as u64,
+                    );
+                    let _ = created_actor;
+                    (response, None, true)
+                }
+                QueueMessage::LeaseExpired { .. } => (
+                    crate::domains::queue::QueueResponse::Error {
+                        message: "LeaseExpired is an internal message".to_string(),
                     },
                     None,
                     false,
-                )
-            }
-            QueueMessage::Unsubscribe {
-                family_id,
-                pattern,
-                session_id,
-                ..
-            } => {
-                let fam_id = family_id.as_u64();
-                let mut families = self.families.lock();
-                if let Some(state) = families.get_mut(&fam_id) {
-                    let removed_count =
-                        state.remove_session_pattern(family_id, session_id, pattern.as_str());
-                    if removed_count > 0 {
-                        self.subscription_count
-                            .fetch_sub(removed_count, Ordering::Relaxed);
-                    }
+                ),
+                QueueMessage::Subscribe {
+                    family_id,
+                    pattern,
+                    session_id,
+                    subscriber,
+                } => {
+                    let fam_id = family_id.as_u64();
+
+                    let mut families = self.families.lock();
+                    let state = families
+                        .entry(fam_id)
+                        .or_insert_with(RoutedSubscriptionSet::new);
+
+                    let existing_sub_id = state.find_existing_id(session_id, pattern.as_str());
+
+                    let sub_id = if let Some(id) = existing_sub_id {
+                        tracing::debug!(
+                            domain = "queue",
+                            session = session_id,
+                            subscription_id = id,
+                            pattern = pattern.as_str(),
+                            "Queue subscription already exists (idempotent)"
+                        );
+                        id
+                    } else {
+                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                        state.insert(
+                            family_id,
+                            QueueSubscription {
+                                pattern: crate::runtime::matcher::Pattern::new(pattern.as_str()),
+                                session_id,
+                                subscription_id: new_id,
+                                subscriber,
+                            },
+                        );
+
+                        tracing::debug!(
+                            domain = "queue",
+                            session = session_id,
+                            subscription_id = new_id,
+                            pattern = pattern.as_str(),
+                            "Queue subscription added"
+                        );
+                        self.subscription_count.fetch_add(1, Ordering::Relaxed);
+                        new_id
+                    };
+
+                    (
+                        crate::domains::queue::QueueResponse::SubscribeOk {
+                            subscription_id: sub_id,
+                        },
+                        None,
+                        false,
+                    )
                 }
+                QueueMessage::Unsubscribe {
+                    family_id,
+                    pattern,
+                    session_id,
+                    ..
+                } => {
+                    let fam_id = family_id.as_u64();
+                    let mut families = self.families.lock();
+                    if let Some(state) = families.get_mut(&fam_id) {
+                        let removed_count =
+                            state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                        if removed_count > 0 {
+                            self.subscription_count
+                                .fetch_sub(removed_count, Ordering::Relaxed);
+                        }
+                    }
 
-                tracing::debug!(
-                    domain = "queue",
-                    session = session_id,
-                    pattern = pattern.as_str(),
-                    "Queue subscription removed"
-                );
+                    tracing::debug!(
+                        domain = "queue",
+                        session = session_id,
+                        pattern = pattern.as_str(),
+                        "Queue subscription removed"
+                    );
 
-                (
-                    crate::domains::queue::QueueResponse::UnsubscribeOk,
-                    None,
-                    false,
-                )
-            }
-            QueueMessage::UnsubscribeAll { session_id, .. } => {
-                self.unsubscribe_all(session_id);
-                (
-                    crate::domains::queue::QueueResponse::UnsubscribeOk,
-                    None,
-                    false,
-                )
-            }
-        };
+                    (
+                        crate::domains::queue::QueueResponse::UnsubscribeOk,
+                        None,
+                        false,
+                    )
+                }
+                QueueMessage::UnsubscribeAll { session_id, .. } => {
+                    self.unsubscribe_all(session_id);
+                    (
+                        crate::domains::queue::QueueResponse::UnsubscribeOk,
+                        None,
+                        false,
+                    )
+                }
+            };
         if should_mark_admin_snapshot_dirty {
             self.mark_admin_snapshot_dirty();
         }
@@ -1382,7 +1392,10 @@ mod tests {
 
         force_actor_idle(&sink, queue_route, family);
         sink.refresh_admin_snapshot_if_dirty();
-        assert!(sink.actors.lock().is_empty(), "idle actor should be evicted");
+        assert!(
+            sink.actors.lock().is_empty(),
+            "idle actor should be evicted"
+        );
         assert!(
             admin_read_model.queues(None).is_empty(),
             "cold queue should disappear from warm admin snapshot"

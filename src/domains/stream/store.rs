@@ -10,8 +10,8 @@ use super::storage::{
     decode_area_offset_from_key, decode_realm_offset_from_key, encode_area_counter_key,
     encode_area_key, encode_offset_counter_key, encode_realm_counter_key, encode_realm_key,
     encode_resource_key, encode_resource_meta_key, encode_watermark_key, AreaCounterValue,
-    AreaValue, OffsetCounterValue, RealmCounterValue, RealmValue, ResourceMetaValue,
-    ResourceValue, WatermarkValue,
+    AreaValue, OffsetCounterValue, RealmCounterValue, RealmValue, ResourceMetaValue, ResourceValue,
+    WatermarkValue,
 };
 
 #[derive(Debug, Clone)]
@@ -58,6 +58,18 @@ pub struct ReadResourceParams<'a> {
     pub from_offset: u64,
     pub limit: u64,
     pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommitRecordsParams<'a> {
+    pub family: u64,
+    pub realm: &'a str,
+    pub area: &'a str,
+    pub resource: &'a str,
+    pub expected_resource_next_offset: u64,
+    pub events: &'a [EventPayload],
+    pub ingest_metadata: Option<IngestMetadata>,
+    pub mode: StreamWriteMode,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -175,7 +187,8 @@ impl StreamStore {
             .ok_or_else(|| "missing stream resource in key".to_string())?;
 
         Ok((
-            String::from_utf8(realm.to_vec()).map_err(|_| "invalid stream realm key".to_string())?,
+            String::from_utf8(realm.to_vec())
+                .map_err(|_| "invalid stream realm key".to_string())?,
             String::from_utf8(area.to_vec()).map_err(|_| "invalid stream area key".to_string())?,
             String::from_utf8(resource.to_vec())
                 .map_err(|_| "invalid stream resource key".to_string())?,
@@ -323,7 +336,11 @@ impl StreamStore {
         }
     }
 
-    fn load_realm_next_offset_snapshot(&self, family: u64, realm: &str) -> Result<(u64, bool), String> {
+    fn load_realm_next_offset_snapshot(
+        &self,
+        family: u64,
+        realm: &str,
+    ) -> Result<(u64, bool), String> {
         let key = encode_realm_counter_key(realm);
         let txn = self
             .db
@@ -338,15 +355,19 @@ impl StreamStore {
 
     pub fn commit_records(
         &self,
-        family: u64,
-        realm: &str,
-        area: &str,
-        resource: &str,
-        expected_resource_next_offset: u64,
-        events: &[EventPayload],
-        ingest_metadata: Option<IngestMetadata>,
-        mode: StreamWriteMode,
+        params: CommitRecordsParams<'_>,
     ) -> Result<CommitResponse, String> {
+        let CommitRecordsParams {
+            family,
+            realm,
+            area,
+            resource,
+            expected_resource_next_offset,
+            events,
+            ingest_metadata,
+            mode,
+        } = params;
+
         if events.is_empty() {
             return Err("ERR_EMPTY_BATCH".to_string());
         }
@@ -576,7 +597,11 @@ impl StreamStore {
 
         let mut values = records.into_values().collect::<Vec<_>>();
         values.sort_by(|left, right| {
-            (&left.realm, &left.area, &left.resource).cmp(&(&right.realm, &right.area, &right.resource))
+            (&left.realm, &left.area, &left.resource).cmp(&(
+                &right.realm,
+                &right.area,
+                &right.resource,
+            ))
         });
         Ok(values)
     }
@@ -1267,7 +1292,9 @@ impl StreamStore {
                 let value = WatermarkValue::decode(&bytes);
                 Ok(value.watermark)
             }
-            None => Ok(self.scan_next_area_offset(family, realm, area)?.saturating_sub(1)),
+            None => Ok(self
+                .scan_next_area_offset(family, realm, area)?
+                .saturating_sub(1)),
         }
     }
 
@@ -1307,7 +1334,9 @@ impl StreamStore {
                 let value = WatermarkValue::decode(&bytes);
                 Ok(value.watermark)
             }
-            None => Ok(self.scan_next_realm_offset(family, realm)?.saturating_sub(1)),
+            None => Ok(self
+                .scan_next_realm_offset(family, realm)?
+                .saturating_sub(1)),
         }
     }
 

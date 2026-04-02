@@ -30,7 +30,6 @@ struct StoreInsertCase {
     store: ScheduleStore,
     routes: Vec<String>,
     payloads: Vec<Bytes>,
-    next_fire_time: Instant,
     next_fire_ms: u64,
     cron: String,
 }
@@ -85,7 +84,6 @@ fn create_store_insert_case(fixtures: &ScheduleCreateFixtures) -> StoreInsertCas
         routes: fixtures.routes[..CREATE_BATCH_SIZE].to_vec(),
         payloads: fixtures.payloads[..CREATE_BATCH_SIZE].to_vec(),
         next_fire_ms: instant_to_epoch_ms(next_fire_time),
-        next_fire_time,
         cron: fixtures.hourly_cron.clone(),
     }
 }
@@ -158,11 +156,8 @@ fn bench_schedule_create_breakdown(c: &mut Criterion) {
                                     route: &case.routes[index],
                                     cron: &case.cron,
                                     payload: &case.payloads[index],
-                                    next_fire_time: case.next_fire_time,
                                     next_fire_ms: case.next_fire_ms,
                                     previous_fire_ms: None,
-                                    previous_storage_key: None,
-                                    index_key: None,
                                 },
                                 cntryl_midge::WriteOptions::buffered(),
                             )
@@ -184,7 +179,6 @@ fn bench_schedule_create_breakdown(c: &mut Criterion) {
                             case.routes[index].clone(),
                             case.cron.clone(),
                             case.payloads[index].clone(),
-                            case.next_fire_time,
                             case.next_fire_ms,
                             None,
                         )

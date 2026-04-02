@@ -43,12 +43,7 @@ pub struct TestServer {
 impl TestServer {
     /// Start a test server with auth disabled (backward compatible)
     pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
-        Self::start_with_options(
-            false,
-            None,
-            crate::boot::runtime::StorageMode::Memory,
-        )
-        .await
+        Self::start_with_options(false, None, crate::boot::runtime::StorageMode::Memory).await
     }
 
     pub async fn start_with_rpc_timeout(

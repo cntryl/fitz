@@ -4,11 +4,11 @@
 mod fixtures;
 use bytes::Bytes;
 use fitz::domains::stream::protocol::StreamWriteMode;
-use fitz::domains::stream::StreamActor;
 use fitz::domains::stream::store::StreamStore;
+use fitz::domains::stream::StreamActor;
 use fitz::protocol::payload_codec::PayloadDecoder;
-use fitz::testkit::TestServer;
 use fitz::runtime::routing::RouteFamily;
+use fitz::testkit::TestServer;
 use fixtures::define_transport_tests;
 use fixtures::transport::*;
 use std::sync::Arc;
@@ -21,7 +21,10 @@ fn decode_stream_ok_data(payload: &[u8]) -> Vec<u8> {
     assert_eq!(status, 0, "expected stream success payload");
     let _session_id = dec.get_optional_u64().expect("stream response session id");
     let data = dec.get_bytes().expect("stream response data");
-    assert!(dec.is_complete(), "expected complete stream response payload");
+    assert!(
+        dec.is_complete(),
+        "expected complete stream response payload"
+    );
     data.to_vec()
 }
 
@@ -386,14 +389,19 @@ where
         .await
         .expect("wait for disconnect cleanup");
 
-    let mut client = C::connect(server).await.expect("connect replacement client");
+    let mut client = C::connect(server)
+        .await
+        .expect("connect replacement client");
 
     let stale_commit_response = client
         .send_and_receive(&build_stream_commit(session_id), 2000)
         .await
         .expect("send stale commit");
     let (_msg_type, status, _data) = parse_stream_response(&stale_commit_response);
-    assert_ne!(status, 0, "stale stream session should be gone after disconnect");
+    assert_ne!(
+        status, 0,
+        "stale stream session should be gone after disconnect"
+    );
 
     commit_stream_record(&mut client, route, b"committed").await;
 
@@ -462,7 +470,9 @@ async fn should_preserve_monotonic_stream_resource_offsets_after_restart() {
     drop(engine);
     wait_for_stream_storage_release().await;
 
-    let engine = open_local_stream_engine(db_path).await.expect("reopen local stream engine");
+    let engine = open_local_stream_engine(db_path)
+        .await
+        .expect("reopen local stream engine");
     let store = Arc::new(StreamStore::new(engine));
     let mut actor = make_stream_actor(store, "test", "events", "orders");
     actor.begin_append_session(10, 101, 1, None).unwrap();
@@ -471,8 +481,14 @@ async fn should_preserve_monotonic_stream_resource_offsets_after_restart() {
         .unwrap();
     actor.commit_session(101, StreamWriteMode::Sync).unwrap();
 
-    let records = actor.read(0, 10, None).expect("read restarted stream").records;
-    let resource_offsets: Vec<u64> = records.iter().map(|record| record.resource_offset).collect();
+    let records = actor
+        .read(0, 10, None)
+        .expect("read restarted stream")
+        .records;
+    let resource_offsets: Vec<u64> = records
+        .iter()
+        .map(|record| record.resource_offset)
+        .collect();
     let bodies: Vec<Vec<u8>> = records.iter().map(|record| record.body.to_vec()).collect();
     assert_eq!(resource_offsets, vec![0, 1]);
     assert_eq!(bodies, vec![b"one".to_vec(), b"two".to_vec()]);

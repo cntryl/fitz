@@ -6,21 +6,34 @@ use fitz::domains::stream::storage::{
     encode_area_key, encode_offset_counter_key, encode_realm_key, encode_resource_key, AreaValue,
     OffsetCounterValue, RealmValue, ResourceValue,
 };
-use fitz::domains::stream::store::{EventPayload, StreamStore};
+use fitz::domains::stream::store::{CommitRecordsParams, EventPayload, StreamStore};
 use fitz::testkit::create_test_engine_with_cfs;
+
+struct LegacyRecordRef<'a> {
+    realm: &'a str,
+    area: &'a str,
+    resource: &'a str,
+    resource_offset: u64,
+    area_offset: u64,
+    realm_offset: u64,
+}
 
 fn write_legacy_record(
     engine: &cntryl_midge::Engine,
     family: u32,
-    realm: &str,
-    area: &str,
-    resource: &str,
-    resource_offset: u64,
-    area_offset: u64,
-    realm_offset: u64,
+    record: LegacyRecordRef<'_>,
     body: &[u8],
 ) {
     use cntryl_midge::{TransactionMode, WriteOptions};
+
+    let LegacyRecordRef {
+        realm,
+        area,
+        resource,
+        resource_offset,
+        area_offset,
+        realm_offset,
+    } = record;
 
     let mut tx = engine
         .begin_tx(family, TransactionMode::ReadWrite)
@@ -92,12 +105,30 @@ fn write_legacy_record(
 
 #[test]
 fn should_list_stream_metadata_from_legacy_resource_counters() {
+    // Arrange
     let engine = create_test_engine_with_cfs(vec![1]);
-    write_legacy_record(&engine, 1, "test", "events", "orders", 0, 0, 0, b"legacy");
+    write_legacy_record(
+        &engine,
+        1,
+        LegacyRecordRef {
+            realm: "test",
+            area: "events",
+            resource: "orders",
+            resource_offset: 0,
+            area_offset: 0,
+            realm_offset: 0,
+        },
+        b"legacy",
+    );
 
     let store = StreamStore::new(engine);
-    let records = store.list_resource_metadata(1).expect("list legacy metadata");
 
+    // Act
+    let records = store
+        .list_resource_metadata(1)
+        .expect("list legacy metadata");
+
+    // Assert
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].realm, "test");
     assert_eq!(records[0].area, "events");
@@ -107,28 +138,56 @@ fn should_list_stream_metadata_from_legacy_resource_counters() {
 }
 
 #[test]
-fn should_backfill_stream_area_and_realm_counters_from_legacy_indexes_on_commit() {
+fn should_backfill_stream_counters_from_legacy_indexes_on_commit() {
+    // Arrange
     let engine = create_test_engine_with_cfs(vec![1]);
-    write_legacy_record(&engine, 1, "test", "events", "orders", 0, 0, 0, b"one");
-    write_legacy_record(&engine, 1, "test", "events", "audits", 0, 1, 1, b"two");
+    write_legacy_record(
+        &engine,
+        1,
+        LegacyRecordRef {
+            realm: "test",
+            area: "events",
+            resource: "orders",
+            resource_offset: 0,
+            area_offset: 0,
+            realm_offset: 0,
+        },
+        b"one",
+    );
+    write_legacy_record(
+        &engine,
+        1,
+        LegacyRecordRef {
+            realm: "test",
+            area: "events",
+            resource: "audits",
+            resource_offset: 0,
+            area_offset: 1,
+            realm_offset: 1,
+        },
+        b"two",
+    );
 
     let store = StreamStore::new(engine);
+
+    // Act
     let response = store
-        .commit_records(
-            1,
-            "test",
-            "events",
-            "orders",
-            1,
-            &[EventPayload {
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "orders",
+            expected_resource_next_offset: 1,
+            events: &[EventPayload {
                 body: Bytes::from_static(b"three"),
                 metadata: None,
             }],
-            None,
-            StreamWriteMode::Sync,
-        )
+            ingest_metadata: None,
+            mode: StreamWriteMode::Sync,
+        })
         .expect("commit should backfill counters");
 
+    // Assert
     assert_eq!(response.first_resource_offset, 1);
     assert_eq!(response.first_area_offset, 2);
     assert_eq!(response.first_realm_offset, 2);
@@ -145,7 +204,9 @@ fn should_backfill_stream_area_and_realm_counters_from_legacy_indexes_on_commit(
         2
     );
     assert_eq!(
-        store.get_realm_watermark(1, "test").expect("realm watermark"),
+        store
+            .get_realm_watermark(1, "test")
+            .expect("realm watermark"),
         2
     );
 
@@ -172,10 +233,25 @@ fn should_backfill_stream_area_and_realm_counters_from_legacy_indexes_on_commit(
 
 #[test]
 fn should_return_empty_success_when_reading_past_committed_stream_watermark() {
+    // Arrange
     let engine = create_test_engine_with_cfs(vec![1]);
-    write_legacy_record(&engine, 1, "test", "events", "orders", 0, 0, 0, b"one");
+    write_legacy_record(
+        &engine,
+        1,
+        LegacyRecordRef {
+            realm: "test",
+            area: "events",
+            resource: "orders",
+            resource_offset: 0,
+            area_offset: 0,
+            realm_offset: 0,
+        },
+        b"one",
+    );
 
     let store = StreamStore::new(engine);
+
+    // Act
     let area_records = store
         .read_area(1, "test", "events", 99, 10, None)
         .expect("read past area watermark")
@@ -185,6 +261,7 @@ fn should_return_empty_success_when_reading_past_committed_stream_watermark() {
         .expect("read past realm watermark")
         .0;
 
+    // Assert
     assert!(area_records.is_empty());
     assert!(realm_records.is_empty());
 }

@@ -26,8 +26,9 @@
 //! 3. **Bounded queue**: Backpressure when queue is full
 //! 4. **No durability**: Worker registrations, queue state, and leases are ephemeral
 //! 5. **Lease enforcement**: Workers must respond before lease expiry
-//! Correlation IDs are used only to match live in-flight responses in this
-//! process; they are not durable deduplication or replay tokens.
+//!
+//!    Correlation IDs are used only to match live in-flight responses in this
+//!    process; they are not durable deduplication or replay tokens.
 //! 6. **Correlation tracking**: Maps correlation_id → worker for proper cleanup
 
 use super::errors::RpcError;

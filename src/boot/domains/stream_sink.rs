@@ -91,7 +91,8 @@ impl StreamDomainSink {
         family_id: RouteFamily,
         route: &Route,
     ) -> Result<StreamActorKey, String> {
-        let parts = route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
+        let parts =
+            route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
         Ok(StreamActorKey {
             family_id: family_id.as_u64(),
             realm: parts.realm.to_string(),
@@ -286,7 +287,9 @@ impl StreamDomainSink {
         encoder.finish()
     }
 
-    fn stream_error_response(error: impl Into<String>) -> crate::protocol::stream_codec::StreamResponse {
+    fn stream_error_response(
+        error: impl Into<String>,
+    ) -> crate::protocol::stream_codec::StreamResponse {
         crate::protocol::stream_codec::StreamResponse::Error(error.into())
     }
 
@@ -304,10 +307,17 @@ impl StreamDomainSink {
             return Ok(encoder.finish());
         }
 
-        let parts = route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
+        let parts =
+            route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
         let records = if parts.area == "*" && parts.resource == "*" {
             self.stream_store
-                .read_realm(family_id.as_u64(), parts.realm, from_offset, limit, max_bytes)?
+                .read_realm(
+                    family_id.as_u64(),
+                    parts.realm,
+                    from_offset,
+                    limit,
+                    max_bytes,
+                )?
                 .0
         } else if parts.resource == "*" {
             self.stream_store
@@ -340,7 +350,8 @@ impl StreamDomainSink {
         family_id: RouteFamily,
         route: &Route,
     ) -> Result<Vec<u8>, String> {
-        let parts = route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
+        let parts =
+            route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
         if parts.area == "*" || parts.resource == "*" {
             return Ok(Vec::new());
         }
@@ -362,7 +373,8 @@ impl StreamDomainSink {
         family_id: RouteFamily,
         route: &Route,
     ) -> Result<Vec<u8>, String> {
-        let parts = route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
+        let parts =
+            route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
         if parts.area == "*" || parts.resource == "*" {
             return Ok(Vec::new());
         }
@@ -690,23 +702,22 @@ impl MailboxSink for StreamDomainSink {
                     .entry(family_id.as_u64())
                     .or_insert_with(RoutedSubscriptionSet::new);
 
-                let subscription_id = if let Some(id) =
-                    state.find_existing_id(session_id, pattern.as_str())
-                {
-                    id
-                } else {
-                    let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                    state.insert(
-                        family_id,
-                        StreamSubscription {
-                            pattern: crate::runtime::matcher::Pattern::new(pattern.as_str()),
-                            session_id,
-                            subscription_id: new_id,
-                            subscriber,
-                        },
-                    );
-                    new_id
-                };
+                let subscription_id =
+                    if let Some(id) = state.find_existing_id(session_id, pattern.as_str()) {
+                        id
+                    } else {
+                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                        state.insert(
+                            family_id,
+                            StreamSubscription {
+                                pattern: crate::runtime::matcher::Pattern::new(pattern.as_str()),
+                                session_id,
+                                subscription_id: new_id,
+                                subscriber,
+                            },
+                        );
+                        new_id
+                    };
 
                 (
                     StreamResponse::Ok {
@@ -766,7 +777,8 @@ impl MailboxSink for StreamDomainSink {
         }
 
         if let Some((route, payload)) = commit_notify {
-            let event = crate::runtime::DomainPublishEvent::new(frame_ctx.route_family, route, payload);
+            let event =
+                crate::runtime::DomainPublishEvent::new(frame_ctx.route_family, route, payload);
             let _ = self.handle_domain_publish(&event);
         }
 

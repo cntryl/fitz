@@ -190,7 +190,7 @@ fn classify_queue(msg_type: u16) -> Idempotency {
             dedup_key: "message_id+token",
         },
         // ENQUEUE, RESERVE, EXTEND are non-idempotent
-        200 | 201 | 202 | 203 => Idempotency::NonIdempotent,
+        200..=203 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
     }
 }

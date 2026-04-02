@@ -450,6 +450,17 @@ pub struct QueueLease {
     pub attempts: usize,
 }
 
+pub(crate) struct QueueLeaseSnapshot<'a> {
+    pub(crate) message_id: u64,
+    pub(crate) realm: &'a str,
+    pub(crate) area: &'a str,
+    pub(crate) resource: &'a str,
+    pub(crate) lease_token: u64,
+    pub(crate) session_id: Option<u64>,
+    pub(crate) expires_at: &'a str,
+    pub(crate) attempts: usize,
+}
+
 /// Collection of live in-memory RPC worker snapshots for the current broker
 /// process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -649,16 +660,18 @@ impl QueueInfo {
 }
 
 impl QueueLease {
-    pub(crate) fn snapshot(
-        message_id: u64,
-        realm: &str,
-        area: &str,
-        resource: &str,
-        lease_token: u64,
-        session_id: Option<u64>,
-        expires_at: &str,
-        attempts: usize,
-    ) -> Self {
+    pub(crate) fn snapshot(snapshot: QueueLeaseSnapshot<'_>) -> Self {
+        let QueueLeaseSnapshot {
+            message_id,
+            realm,
+            area,
+            resource,
+            lease_token,
+            session_id,
+            expires_at,
+            attempts,
+        } = snapshot;
+
         Self {
             message_id,
             realm: realm.to_string(),
@@ -1232,7 +1245,9 @@ mod tests {
     #[test]
     fn should_collect_resource_refs_given_resource_items() {
         // Arrange
-        let items = vec![QueueInfo::snapshot("acme", "billing", "invoices", 0, 0, 0, 0)];
+        let items = vec![QueueInfo::snapshot(
+            "acme", "billing", "invoices", 0, 0, 0, 0,
+        )];
 
         // Act
         let resources = collect_resource_refs(items);

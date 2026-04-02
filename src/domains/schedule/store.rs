@@ -172,8 +172,8 @@ impl ScheduleStore {
 
         let cron = String::from_utf8(value[cron_start..cron_end].to_vec())
             .map_err(|e| format!("Invalid cron encoding: {}", e))?;
-        let payload_len = u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap())
-            as usize;
+        let payload_len =
+            u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap()) as usize;
         let payload_start = cron_end + 4;
         let payload_end = payload_start + payload_len;
         if value.len() != payload_end {
@@ -306,9 +306,7 @@ impl ScheduleStore {
         let mut imported_definitions = Vec::<PersistedSchedule>::new();
 
         let definition_rows = read_tx
-            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(
-                DEFINITION_PREFIX,
-            )))
+            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(DEFINITION_PREFIX)))
             .map_err(|e| format!("scan definitions failed: {:?}", e))?
             .collect_all();
         for (key, value) in definition_rows {
@@ -334,14 +332,15 @@ impl ScheduleStore {
         }
 
         let legacy_rows = read_tx
-            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(
-                LEGACY_PREFIX,
-            )))
+            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(LEGACY_PREFIX)))
             .map_err(|e| format!("scan legacy schedule rows failed: {:?}", e))?
             .collect_all();
 
         for (key, value) in &legacy_rows {
-            match (Self::decode_legacy_key(key), Self::decode_legacy_value(value)) {
+            match (
+                Self::decode_legacy_key(key),
+                Self::decode_legacy_value(value),
+            ) {
                 (Ok((next_fire_ms, route)), Ok((cron, payload))) => {
                     if schedules.contains_key(&route) {
                         continue;
@@ -354,10 +353,7 @@ impl ScheduleStore {
                         next_fire_ms,
                     };
                     imported_definitions.push(persisted.clone());
-                    schedules.insert(
-                        route.clone(),
-                        persisted,
-                    );
+                    schedules.insert(route.clone(), persisted);
                 }
                 (Err(error), _) | (_, Err(error)) => {
                     tracing::warn!("Failed to decode legacy schedule row: {}", error);
@@ -370,9 +366,7 @@ impl ScheduleStore {
             .map_err(|e| format!("scan due index failed: {:?}", e))?
             .collect_all();
         let legacy_index_rows = read_tx
-            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(
-                LEGACY_INDEX_PREFIX,
-            )))
+            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(LEGACY_INDEX_PREFIX)))
             .map_err(|e| format!("scan legacy schedule index failed: {:?}", e))?
             .collect_all();
         drop(read_tx);
@@ -563,13 +557,7 @@ mod tests {
             key.extend_from_slice(route.as_bytes());
             key
         };
-        put_raw(
-            &db,
-            1,
-            legacy_due_key,
-            b"*/5 * * * *|legacy".to_vec(),
-        )
-        .expect("write legacy row");
+        put_raw(&db, 1, legacy_due_key, b"*/5 * * * *|legacy".to_vec()).expect("write legacy row");
         put_raw(
             &db,
             1,

@@ -112,7 +112,9 @@ impl ScheduleActor {
 
     fn preload_from_store_at(&mut self, now: Instant) -> Result<(), String> {
         let now_ms = Self::instant_to_ms_at(now, now);
-        let entries = self.store.load_all(self.family.as_u64(), self.write_options)?;
+        let entries = self
+            .store
+            .load_all(self.family.as_u64(), self.write_options)?;
         let mut normalization_batch = Vec::new();
 
         for PersistedSchedule {
@@ -144,12 +146,15 @@ impl ScheduleActor {
                                 Some(next_fire_ms),
                             )
                         } else {
-                            (Self::ms_to_instant_at(next_fire_ms, now), next_fire_ms, None)
+                            (
+                                Self::ms_to_instant_at(next_fire_ms, now),
+                                next_fire_ms,
+                                None,
+                            )
                         };
 
                     let _ = previous_fire_ms;
-                    let list_index =
-                        self.push_list_entry(route.as_str(), cron.as_str(), &payload);
+                    let list_index = self.push_list_entry(route.as_str(), cron.as_str(), &payload);
                     let def = ScheduleDef {
                         route: route.clone(),
                         cron,
@@ -620,9 +625,9 @@ impl ScheduleActor {
             })
             .collect();
 
-        if let Err(error) = self
-            .store
-            .insert_batch(self.family.as_u64(), &store_items, self.write_options)
+        if let Err(error) =
+            self.store
+                .insert_batch(self.family.as_u64(), &store_items, self.write_options)
         {
             warn!("Failed to persist schedule reschedule batch: {}", error);
             for item in to_reschedule {
@@ -858,11 +863,7 @@ mod tests {
             .expect("create schedule");
         actor.bench_prepare_scan(1);
 
-        let before = actor
-            .schedules
-            .get(route)
-            .expect("schedule")
-            .next_fire_ms;
+        let before = actor.schedules.get(route).expect("schedule").next_fire_ms;
 
         actor.store.fail_next_commit_for_tests();
         let fired = actor.scan_and_fire();
@@ -889,10 +890,8 @@ mod tests {
 
         let now = Instant::now();
         let stale_fire_ms = ScheduleActor::instant_to_ms_at(now, now).saturating_sub(1);
-        let current_fire_ms = ScheduleActor::instant_to_ms_at(
-            now.checked_add(Duration::from_secs(60)).unwrap(),
-            now,
-        );
+        let current_fire_ms =
+            ScheduleActor::instant_to_ms_at(now.checked_add(Duration::from_secs(60)).unwrap(), now);
 
         {
             let schedule = actor.schedules.get_mut(route).expect("schedule");
