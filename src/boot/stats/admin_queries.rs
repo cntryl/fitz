@@ -1,6 +1,13 @@
 use super::Runtime;
 
 impl Runtime {
+    fn refresh_rpc_admin_snapshot(&self) {
+        let domains = self.domains.read().clone();
+        if let Some(domains) = domains {
+            domains.rpc.refresh_admin_snapshot_if_dirty();
+        }
+    }
+
     fn refresh_notice_admin_snapshot(&self) {
         let domains = self.domains.read().clone();
         if let Some(domains) = domains {
@@ -46,6 +53,7 @@ impl Runtime {
     }
 
     pub fn rpc_list_workers(&self, realm: Option<&str>) -> Vec<crate::api::admin::RpcWorker> {
+        self.refresh_rpc_admin_snapshot();
         self.admin_read_model.rpc_workers(realm)
     }
 
@@ -53,6 +61,7 @@ impl Runtime {
         &self,
         realm: Option<&str>,
     ) -> Vec<crate::api::admin::RpcPendingRequest> {
+        self.refresh_rpc_admin_snapshot();
         self.admin_read_model.rpc_pending(realm)
     }
 

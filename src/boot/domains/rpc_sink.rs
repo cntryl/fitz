@@ -61,15 +61,129 @@ struct RpcWorker {
     addr: RouteAddress,
     inbox_addr: RouteAddress,
     session_id: u64,
+    registered_at: String,
+    requests_handled: u64,
+    total_latency_us: u64,
+}
+
+impl RpcWorker {
+    fn new(addr: RouteAddress, inbox_addr: RouteAddress, session_id: u64) -> Self {
+        Self {
+            addr,
+            inbox_addr,
+            session_id,
+            registered_at: Utc::now().to_rfc3339(),
+            requests_handled: 0,
+            total_latency_us: 0,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_stats(
+        addr: RouteAddress,
+        inbox_addr: RouteAddress,
+        session_id: u64,
+        registered_at: impl Into<String>,
+        requests_handled: u64,
+        total_latency_us: u64,
+    ) -> Self {
+        Self {
+            addr,
+            inbox_addr,
+            session_id,
+            registered_at: registered_at.into(),
+            requests_handled,
+            total_latency_us,
+        }
+    }
+
+    fn record_completion(&mut self, latency_us: u64) {
+        self.requests_handled = self.requests_handled.saturating_add(1);
+        self.total_latency_us = self.total_latency_us.saturating_add(latency_us);
+    }
+
+    fn average_latency_ms(&self) -> f64 {
+        if self.requests_handled == 0 {
+            return 0.0;
+        }
+
+        self.total_latency_us as f64 / 1000.0 / self.requests_handled as f64
+    }
 }
 
 #[derive(Clone)]
 struct RpcPendingRequest {
+    route: Route,
     caller_session_id: u64,
     caller_inbox_addr: Option<RouteAddress>,
     worker_addr: RouteAddress,
     worker_session_id: u64,
+    submitted_at: String,
+    submitted_at_instant: Instant,
     expires_at: Instant,
+}
+
+struct RpcPendingRequestInit {
+    route: Route,
+    caller_session_id: u64,
+    caller_inbox_addr: RouteAddress,
+    worker_addr: RouteAddress,
+    worker_session_id: u64,
+    submitted_at: String,
+    submitted_at_instant: Instant,
+    expires_at: Instant,
+}
+
+impl RpcPendingRequest {
+    fn new(init: RpcPendingRequestInit) -> Self {
+        let RpcPendingRequestInit {
+            route,
+            caller_session_id,
+            caller_inbox_addr,
+            worker_addr,
+            worker_session_id,
+            submitted_at,
+            submitted_at_instant,
+            expires_at,
+        } = init;
+
+        Self {
+            route,
+            caller_session_id,
+            caller_inbox_addr: Some(caller_inbox_addr),
+            worker_addr,
+            worker_session_id,
+            submitted_at,
+            submitted_at_instant,
+            expires_at,
+        }
+    }
+
+    fn from_dispatch(
+        req: &crate::domains::rpc::protocol::RpcRequest,
+        caller_session_id: u64,
+        caller_inbox_addr: RouteAddress,
+        worker_addr: RouteAddress,
+        worker_session_id: u64,
+        expires_at: Instant,
+    ) -> Self {
+        let submitted_at_instant = Instant::now();
+        Self::new(RpcPendingRequestInit {
+            route: req.route.clone(),
+            caller_session_id,
+            caller_inbox_addr,
+            worker_addr,
+            worker_session_id,
+            submitted_at: Utc::now().to_rfc3339(),
+            submitted_at_instant,
+            expires_at,
+        })
+    }
+
+    fn age_seconds(&self, now: Instant) -> u64 {
+        now.saturating_duration_since(self.submitted_at_instant)
+            .as_secs()
+    }
 }
 
 struct RpcPendingErrorDelivery {
@@ -121,6 +235,16 @@ impl RpcRouteState {
 
     fn register_worker(&mut self, worker: RpcWorker) {
         self.workers.push(worker);
+    }
+
+    fn record_completion(&mut self, session_id: u64, latency_us: u64) -> bool {
+        if let Some(worker) = self.workers.iter_mut().find(|worker| worker.session_id == session_id)
+        {
+            worker.record_completion(latency_us);
+            return true;
+        }
+
+        false
     }
 
     fn unregister_worker(&mut self, worker_addr: &RouteAddress, session_id: u64) {
@@ -176,25 +300,9 @@ impl RpcPendingTable {
         }
     }
 
-    fn track_pending(
-        &mut self,
-        correlation_id: uuid::Uuid,
-        caller_session_id: u64,
-        caller_inbox_addr: RouteAddress,
-        worker_addr: RouteAddress,
-        worker_session_id: u64,
-        expires_at: Instant,
-    ) -> usize {
-        self.pending.insert(
-            correlation_id,
-            RpcPendingRequest {
-                caller_session_id,
-                caller_inbox_addr: Some(caller_inbox_addr),
-                worker_addr,
-                worker_session_id,
-                expires_at,
-            },
-        );
+    fn track_pending(&mut self, correlation_id: uuid::Uuid, pending: RpcPendingRequest) -> usize {
+        let expires_at = pending.expires_at;
+        self.pending.insert(correlation_id, pending);
         self.expirations.push(ExpiringPendingRequest {
             expires_at,
             correlation_id,
@@ -759,7 +867,7 @@ impl RpcDomainSink {
     /// unsubscribe, timeout, or cleanup mutations by up to the current sync interval.
     fn sync_admin_snapshot(&self) {
         let state = self.state.lock();
-        let captured_at = Utc::now().to_rfc3339();
+        let snapshot_now = Instant::now();
         let workers = state
             .routes
             .iter()
@@ -773,7 +881,9 @@ impl RpcDomainSink {
                                 worker.session_id,
                                 parts.realm,
                                 route.as_str(),
-                                &captured_at,
+                                &worker.registered_at,
+                                worker.requests_handled,
+                                worker.average_latency_ms(),
                             )
                         })
                     })
@@ -787,8 +897,10 @@ impl RpcDomainSink {
             .map(|(correlation_id, pending)| {
                 crate::api::admin::RpcPendingRequest::snapshot(
                     correlation_id.to_string(),
-                    pending.caller_session_id,
-                    &captured_at,
+                    pending.route.as_str(),
+                    &pending.submitted_at,
+                    pending.age_seconds(snapshot_now),
+                    Some(pending.worker_session_id.to_string()),
                 )
             })
             .collect();
@@ -807,6 +919,10 @@ impl RpcDomainSink {
 
     pub fn pending_request_count(&self) -> usize {
         self.state.lock().pending.len()
+    }
+
+    pub fn refresh_admin_snapshot_if_dirty(&self) {
+        self.maybe_sync_admin_snapshot(false);
     }
 
     /// Mark the admin snapshot dirty and opportunistically refresh the coalesced view.
@@ -926,11 +1042,11 @@ impl MailboxSink for RpcDomainSink {
                 });
                 let mut state = self.state.lock();
                 let route_state = state.ensure_route_state(worker_addr.route());
-                route_state.register_worker(RpcWorker {
-                    addr: worker_addr.clone(),
-                    inbox_addr: worker_inbox_addr,
-                    session_id: frame_ctx.session_id,
-                });
+                route_state.register_worker(RpcWorker::new(
+                    worker_addr.clone(),
+                    worker_inbox_addr,
+                    frame_ctx.session_id,
+                ));
                 tracing::debug!(
                     domain = "rpc",
                     worker = worker_addr.route().as_str(),
@@ -1025,14 +1141,18 @@ impl MailboxSink for RpcDomainSink {
                     worker_selection_us = worker_selection_start.elapsed().as_micros() as u64;
 
                     if let Some(worker) = selected_worker {
+                        let expires_at = Instant::now() + self.request_timeout;
                         let pending_track_start = Instant::now();
                         let pending_len = state.pending.track_pending(
                             req.correlation_id,
-                            frame_ctx.session_id,
-                            caller_inbox_addr,
-                            worker.addr.clone(),
-                            worker.session_id,
-                            Instant::now() + self.request_timeout,
+                            RpcPendingRequest::from_dispatch(
+                                &req,
+                                frame_ctx.session_id,
+                                caller_inbox_addr,
+                                worker.addr.clone(),
+                                worker.session_id,
+                                expires_at,
+                            ),
                         ) as u64;
                         let pending_track_us = pending_track_start.elapsed().as_micros() as u64;
                         let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
@@ -1180,6 +1300,15 @@ impl MailboxSink for RpcDomainSink {
                 if let Some((caller_info, pending_len, removed_pending)) = caller_info {
                     let pending_lookup_us = pending_route_lookup_us;
                     if removed_pending {
+                        let completion_latency_us =
+                            caller_info.submitted_at_instant.elapsed().as_micros() as u64;
+                        if let Some(route_state) = state.route_state(caller_info.worker_addr.route())
+                        {
+                            route_state.record_completion(
+                                caller_info.worker_session_id,
+                                completion_latency_us,
+                            );
+                        }
                         self.histogram_observe_us("rpc_pending_route_remove_us", pending_lookup_us);
                         self.histogram_observe_us("rpc_pending_untrack_us", pending_lookup_us);
                         self.gauge_set("rpc_pending_requests", pending_len as u64);
@@ -1391,6 +1520,37 @@ mod tests {
         frames: Arc<parking_lot::Mutex<Vec<FrameContext>>>,
     }
 
+    fn test_rpc_worker(family: RouteFamily, route: &Route, session_id: u64) -> RpcWorker {
+        RpcWorker::with_stats(
+            RouteAddress::new(family, route.clone()),
+            session_inbox_address(family, session_id),
+            session_id,
+            "2026-03-14T12:00:00Z",
+            0,
+            0,
+        )
+    }
+
+    fn test_pending_request(
+        family: RouteFamily,
+        route: &Route,
+        caller_session_id: u64,
+        worker_session_id: u64,
+        expires_at: Instant,
+    ) -> RpcPendingRequest {
+        let submitted_at_instant = Instant::now();
+        RpcPendingRequest::new(RpcPendingRequestInit {
+            route: route.clone(),
+            caller_session_id,
+            caller_inbox_addr: session_inbox_address(family, caller_session_id),
+            worker_addr: RouteAddress::new(family, route.clone()),
+            worker_session_id,
+            submitted_at: "2026-03-14T12:00:00Z".to_string(),
+            submitted_at_instant,
+            expires_at,
+        })
+    }
+
     impl MailboxSink for CaptureRpcFrameSink {
         fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
             if let Some(ctx) = envelope.payload::<FrameContext>() {
@@ -1423,16 +1583,8 @@ mod tests {
         let family = RouteFamily::new(1);
         let route = Route::new("rpc://bench/system/resource/operation");
         let mut route_state = RpcRouteState::new();
-        route_state.register_worker(RpcWorker {
-            addr: RouteAddress::new(family, route.clone()),
-            inbox_addr: session_inbox_address(family, 10),
-            session_id: 10,
-        });
-        route_state.register_worker(RpcWorker {
-            addr: RouteAddress::new(family, route),
-            inbox_addr: session_inbox_address(family, 11),
-            session_id: 11,
-        });
+        route_state.register_worker(test_rpc_worker(family, &route, 10));
+        route_state.register_worker(test_rpc_worker(family, &route, 11));
 
         // Act
         let first = route_state.select_worker().map(|worker| worker.session_id);
@@ -1450,11 +1602,9 @@ mod tests {
         let route = Route::new("rpc://bench/system/resource/operation");
         let duplicate_route = Route::new("rpc://bench/system/resource/operation");
         let mut state = RpcState::new();
-        state.ensure_route_state(&route).register_worker(RpcWorker {
-            addr: RouteAddress::new(family, route),
-            inbox_addr: session_inbox_address(family, 10),
-            session_id: 10,
-        });
+        state
+            .ensure_route_state(&route)
+            .register_worker(test_rpc_worker(family, &route, 10));
 
         // Act
         let worker_count = state.ensure_route_state(&duplicate_route).worker_count();
@@ -1489,6 +1639,149 @@ mod tests {
     }
 
     #[test]
+    fn should_snapshot_live_pending_request_details_given_rpc_admin_snapshot() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = RpcDomainSink::new(router, admin_read_model.clone());
+        let family = RouteFamily::new(1);
+        let route = Route::new("rpc://prod/api/users/get");
+        let correlation_id = uuid::Uuid::new_v4();
+
+        {
+            let mut state = sink.state.lock();
+            state
+                .ensure_route_state(&route)
+                .register_worker(test_rpc_worker(family, &route, 42));
+            state.pending.track_pending(
+                correlation_id,
+                RpcPendingRequest::new(RpcPendingRequestInit {
+                    route: route.clone(),
+                    caller_session_id: 7,
+                    caller_inbox_addr: session_inbox_address(family, 7),
+                    worker_addr: RouteAddress::new(family, route.clone()),
+                    worker_session_id: 42,
+                    submitted_at: "2026-03-14T12:00:00Z".to_string(),
+                    submitted_at_instant: Instant::now() - Duration::from_secs(9),
+                    expires_at: Instant::now() + Duration::from_secs(30),
+                }),
+            );
+        }
+
+        // Act
+        sink.sync_admin_snapshot();
+        let pending = admin_read_model.rpc_pending(Some("prod"));
+
+        // Assert
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].correlation_id, correlation_id.to_string());
+        assert_eq!(pending[0].route, route.as_str());
+        assert_eq!(pending[0].submitted_at, "2026-03-14T12:00:00Z");
+        assert_eq!(pending[0].worker_session_id.as_deref(), Some("42"));
+        assert!(pending[0].age_seconds >= 9);
+    }
+
+    #[test]
+    fn should_snapshot_live_worker_metrics_after_terminal_response_given_rpc_admin_snapshot() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone()));
+        let family = RouteFamily::new(1);
+        let route = Route::new("rpc://prod/api/users/get");
+        let request_addr = RouteAddress::new(family, route.clone());
+        let caller_addr = session_inbox_address(family, 7);
+        let worker_inbox_addr = session_inbox_address(family, 42);
+        let response_payload = crate::protocol::rpc_codec::encode_response_message(
+            &crate::domains::rpc::protocol::RpcResponse::single(
+                uuid::Uuid::new_v4(),
+                bytes::Bytes::from_static(b"ok"),
+            ),
+        );
+        let response = match crate::protocol::rpc_codec::parse_request(
+            &FrameContext::new(
+                42,
+                crate::protocol::frame::ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(303),
+                bytes::Bytes::from(response_payload.clone()),
+                family,
+            ),
+            &response_payload,
+            family,
+        )
+        .expect("parse rpc response")
+        {
+            crate::domains::rpc::protocol::RpcMessage::Response(response) => response,
+            other => panic!("expected rpc response, found {other:?}"),
+        };
+
+        router.register(
+            caller_addr.clone(),
+            Arc::new(CaptureRpcFrameSink {
+                frames: Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new())),
+            }) as Arc<dyn MailboxSink>,
+        );
+        router.register(
+            worker_inbox_addr.clone(),
+            Arc::new(CaptureRpcFrameSink {
+                frames: Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new())),
+            }) as Arc<dyn MailboxSink>,
+        );
+
+        {
+            let mut state = sink.state.lock();
+            state.ensure_route_state(&route).register_worker(RpcWorker::with_stats(
+                request_addr.clone(),
+                worker_inbox_addr.clone(),
+                42,
+                "2026-03-14T11:59:00Z",
+                0,
+                0,
+            ));
+            let correlation_id = response.correlation_id;
+            state.pending.track_pending(
+                correlation_id,
+                RpcPendingRequest::new(RpcPendingRequestInit {
+                    route: route.clone(),
+                    caller_session_id: 7,
+                    caller_inbox_addr: caller_addr.clone(),
+                    worker_addr: request_addr.clone(),
+                    worker_session_id: 42,
+                    submitted_at: "2026-03-14T12:00:00Z".to_string(),
+                    submitted_at_instant: Instant::now() - Duration::from_millis(50),
+                    expires_at: Instant::now() + Duration::from_secs(30),
+                }),
+            );
+        }
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            worker_inbox_addr,
+            request_addr,
+            FrameContext::new(
+                42,
+                crate::protocol::frame::ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(303),
+                bytes::Bytes::from(response_payload),
+                family,
+            ),
+        ))
+        .expect("deliver terminal response");
+        sink.sync_admin_snapshot();
+        let workers = admin_read_model.rpc_workers(Some("prod"));
+        let pending = admin_read_model.rpc_pending(Some("prod"));
+
+        // Assert
+        assert_eq!(workers.len(), 1);
+        assert_eq!(workers[0].session_id, "42");
+        assert_eq!(workers[0].route, route.as_str());
+        assert_eq!(workers[0].registered_at, "2026-03-14T11:59:00Z");
+        assert_eq!(workers[0].requests_handled, 1);
+        assert!(workers[0].average_latency_ms >= 50.0);
+        assert!(pending.is_empty());
+    }
+
+    #[test]
     fn should_accumulate_cleanup_counters_given_rpc_session_cleanup() {
         // Arrange
         let family = RouteFamily::new(1);
@@ -1505,49 +1798,49 @@ mod tests {
             let mut state = sink.state.lock();
             state
                 .ensure_route_state(&worker_route_a)
-                .register_worker(RpcWorker {
-                    addr: RouteAddress::new(family, worker_route_a.clone()),
-                    inbox_addr: session_inbox_address(family, 42),
-                    session_id: 42,
-                });
+                .register_worker(test_rpc_worker(family, &worker_route_a, 42));
             state
                 .ensure_route_state(&worker_route_b)
-                .register_worker(RpcWorker {
-                    addr: RouteAddress::new(family, worker_route_b.clone()),
-                    inbox_addr: session_inbox_address(family, 42),
-                    session_id: 42,
-                });
+                .register_worker(test_rpc_worker(family, &worker_route_b, 42));
             state.pending.track_pending(
                 uuid::Uuid::new_v4(),
-                90,
-                session_inbox_address(family, 90),
-                RouteAddress::new(family, worker_route_a),
-                42,
-                Instant::now() + Duration::from_secs(30),
+                test_pending_request(
+                    family,
+                    &worker_route_a,
+                    90,
+                    42,
+                    Instant::now() + Duration::from_secs(30),
+                ),
             );
             state.pending.track_pending(
                 uuid::Uuid::new_v4(),
-                91,
-                session_inbox_address(family, 91),
-                RouteAddress::new(family, worker_route_b),
-                42,
-                Instant::now() + Duration::from_secs(30),
+                test_pending_request(
+                    family,
+                    &worker_route_b,
+                    91,
+                    42,
+                    Instant::now() + Duration::from_secs(30),
+                ),
             );
             state.pending.track_pending(
                 uuid::Uuid::new_v4(),
-                42,
-                session_inbox_address(family, 42),
-                RouteAddress::new(family, external_route_a),
-                7,
-                Instant::now() + Duration::from_secs(30),
+                test_pending_request(
+                    family,
+                    &external_route_a,
+                    42,
+                    7,
+                    Instant::now() + Duration::from_secs(30),
+                ),
             );
             state.pending.track_pending(
                 uuid::Uuid::new_v4(),
-                42,
-                session_inbox_address(family, 42),
-                RouteAddress::new(family, external_route_b),
-                8,
-                Instant::now() + Duration::from_secs(30),
+                test_pending_request(
+                    family,
+                    &external_route_b,
+                    42,
+                    8,
+                    Instant::now() + Duration::from_secs(30),
+                ),
             );
         }
 
@@ -1581,41 +1874,39 @@ mod tests {
             let mut state = sink.state.lock();
             state
                 .ensure_route_state(&removed_route)
-                .register_worker(RpcWorker {
-                    addr: removed_addr.clone(),
-                    inbox_addr: session_inbox_address(family, 42),
-                    session_id: 42,
-                });
+                .register_worker(test_rpc_worker(family, &removed_route, 42));
             state
                 .ensure_route_state(&retained_route)
-                .register_worker(RpcWorker {
-                    addr: RouteAddress::new(family, retained_route.clone()),
-                    inbox_addr: session_inbox_address(family, 42),
-                    session_id: 42,
-                });
+                .register_worker(test_rpc_worker(family, &retained_route, 42));
             state.pending.track_pending(
                 uuid::Uuid::new_v4(),
-                90,
-                session_inbox_address(family, 90),
-                removed_addr.clone(),
-                42,
-                Instant::now() + Duration::from_secs(30),
+                test_pending_request(
+                    family,
+                    &removed_route,
+                    90,
+                    42,
+                    Instant::now() + Duration::from_secs(30),
+                ),
             );
             state.pending.track_pending(
                 uuid::Uuid::new_v4(),
-                91,
-                session_inbox_address(family, 91),
-                removed_addr.clone(),
-                42,
-                Instant::now() + Duration::from_secs(30),
+                test_pending_request(
+                    family,
+                    &removed_route,
+                    91,
+                    42,
+                    Instant::now() + Duration::from_secs(30),
+                ),
             );
             state.pending.track_pending(
                 uuid::Uuid::new_v4(),
-                92,
-                session_inbox_address(family, 92),
-                RouteAddress::new(family, retained_route),
-                42,
-                Instant::now() + Duration::from_secs(30),
+                test_pending_request(
+                    family,
+                    &retained_route,
+                    92,
+                    42,
+                    Instant::now() + Duration::from_secs(30),
+                ),
             );
         }
 
@@ -1655,19 +1946,35 @@ mod tests {
             let mut state = sink.state.lock();
             state.pending.track_pending(
                 uuid::Uuid::new_v4(),
-                1,
-                caller_one,
-                RouteAddress::new(family, Route::new("rpc://bench/system/resource/a")),
-                42,
-                Instant::now() + Duration::from_millis(5),
+                RpcPendingRequest::new(RpcPendingRequestInit {
+                    route: Route::new("rpc://bench/system/resource/a"),
+                    caller_session_id: 1,
+                    caller_inbox_addr: caller_one,
+                    worker_addr: RouteAddress::new(
+                        family,
+                        Route::new("rpc://bench/system/resource/a"),
+                    ),
+                    worker_session_id: 42,
+                    submitted_at: "2026-03-14T12:00:00Z".to_string(),
+                    submitted_at_instant: Instant::now(),
+                    expires_at: Instant::now() + Duration::from_millis(5),
+                }),
             );
             state.pending.track_pending(
                 uuid::Uuid::new_v4(),
-                2,
-                caller_two,
-                RouteAddress::new(family, Route::new("rpc://bench/system/resource/b")),
-                43,
-                Instant::now() + Duration::from_millis(5),
+                RpcPendingRequest::new(RpcPendingRequestInit {
+                    route: Route::new("rpc://bench/system/resource/b"),
+                    caller_session_id: 2,
+                    caller_inbox_addr: caller_two,
+                    worker_addr: RouteAddress::new(
+                        family,
+                        Route::new("rpc://bench/system/resource/b"),
+                    ),
+                    worker_session_id: 43,
+                    submitted_at: "2026-03-14T12:00:00Z".to_string(),
+                    submitted_at_instant: Instant::now(),
+                    expires_at: Instant::now() + Duration::from_millis(5),
+                }),
             );
         }
 
@@ -1709,11 +2016,7 @@ mod tests {
             let mut state = sink.state.lock();
             state
                 .ensure_route_state(&request_route)
-                .register_worker(RpcWorker {
-                    addr: request_addr.clone(),
-                    inbox_addr: worker_source,
-                    session_id: 42,
-                });
+                .register_worker(test_rpc_worker(family, &request_route, 42));
         }
         let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
         let (request_msg_type, request_payload) =
@@ -1781,11 +2084,7 @@ mod tests {
             let mut state = sink.state.lock();
             state
                 .ensure_route_state(&request_route)
-                .register_worker(RpcWorker {
-                    addr: request_addr.clone(),
-                    inbox_addr: worker_source,
-                    session_id: 42,
-                });
+                .register_worker(test_rpc_worker(family, &request_route, 42));
         }
         let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
         let (request_msg_type, request_payload) =
@@ -1846,19 +2145,17 @@ mod tests {
             let mut state = sink.state.lock();
             state
                 .ensure_route_state(&request_route)
-                .register_worker(RpcWorker {
-                    addr: RouteAddress::new(family, request_route.clone()),
-                    inbox_addr: session_inbox_address(family, 42),
-                    session_id: 42,
-                });
+                .register_worker(test_rpc_worker(family, &request_route, 42));
             for _ in 0..RPC_MAX_PENDING_REQUESTS {
                 state.pending.track_pending(
                     uuid::Uuid::new_v4(),
-                    7,
-                    session_inbox_address(family, 7),
-                    RouteAddress::new(family, request_route.clone()),
-                    42,
-                    Instant::now() + Duration::from_secs(30),
+                    test_pending_request(
+                        family,
+                        &request_route,
+                        7,
+                        42,
+                        Instant::now() + Duration::from_secs(30),
+                    ),
                 );
             }
         }
@@ -1910,11 +2207,7 @@ mod tests {
             let mut state = sink.state.lock();
             state
                 .ensure_route_state(&request_route)
-                .register_worker(RpcWorker {
-                    addr: request_addr.clone(),
-                    inbox_addr: session_inbox_address(family, 42),
-                    session_id: 42,
-                });
+                .register_worker(test_rpc_worker(family, &request_route, 42));
         }
         let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
         let (request_msg_type, request_payload) =
@@ -1972,11 +2265,14 @@ mod tests {
             let mut state = sink.state.lock();
             state
                 .ensure_route_state(&request_route)
-                .register_worker(RpcWorker {
-                    addr: request_addr.clone(),
-                    inbox_addr: worker_source.clone(),
-                    session_id: 42,
-                });
+                .register_worker(RpcWorker::with_stats(
+                    request_addr.clone(),
+                    worker_source.clone(),
+                    42,
+                    "2026-03-14T12:00:00Z",
+                    0,
+                    0,
+                ));
         }
         let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
         let (request_msg_type, request_payload) =
@@ -2039,19 +2335,22 @@ mod tests {
         let caller_inbox_addr = session_inbox_address(family, 7);
         let mut state = RpcState::new();
         let route = Route::new("rpc://bench/system/resource/operation");
-        state.ensure_route_state(&route).register_worker(RpcWorker {
-            addr: RouteAddress::new(family, route.clone()),
-            inbox_addr: session_inbox_address(family, 42),
-            session_id: 42,
-        });
+        state
+            .ensure_route_state(&route)
+            .register_worker(test_rpc_worker(family, &route, 42));
         let detached_correlation_id = uuid::Uuid::new_v4();
         state.pending.track_pending(
             detached_correlation_id,
-            7,
-            caller_inbox_addr.clone(),
-            RouteAddress::new(family, route.clone()),
-            42,
-            Instant::now() + Duration::from_secs(30),
+            RpcPendingRequest::new(RpcPendingRequestInit {
+                route: route.clone(),
+                caller_session_id: 7,
+                caller_inbox_addr: caller_inbox_addr.clone(),
+                worker_addr: RouteAddress::new(family, route.clone()),
+                worker_session_id: 42,
+                submitted_at: "2026-03-14T12:00:00Z".to_string(),
+                submitted_at_instant: Instant::now(),
+                expires_at: Instant::now() + Duration::from_secs(30),
+            }),
         );
 
         // Act
@@ -2084,11 +2383,9 @@ mod tests {
         let family = RouteFamily::new(1);
         let mut state = RpcState::new();
         let route = Route::new("rpc://bench/system/resource/operation");
-        state.ensure_route_state(&route).register_worker(RpcWorker {
-            addr: RouteAddress::new(family, route.clone()),
-            inbox_addr: session_inbox_address(family, 42),
-            session_id: 42,
-        });
+        state
+            .ensure_route_state(&route)
+            .register_worker(test_rpc_worker(family, &route, 42));
 
         // Act
         let worker_cleanup = state.cleanup_session(42);
@@ -2109,11 +2406,13 @@ mod tests {
         let worker_route = Route::new("rpc://bench/system/resource/operation");
         state.pending.track_pending(
             uuid::Uuid::new_v4(),
-            99,
-            session_inbox_address(family, 99),
-            RouteAddress::new(family, worker_route),
-            42,
-            Instant::now() + Duration::from_secs(30),
+            test_pending_request(
+                family,
+                &worker_route,
+                99,
+                42,
+                Instant::now() + Duration::from_secs(30),
+            ),
         );
 
         // Act
@@ -2141,33 +2440,29 @@ mod tests {
 
         state
             .ensure_route_state(&removed_route)
-            .register_worker(RpcWorker {
-                addr: removed_worker_addr.clone(),
-                inbox_addr: session_inbox_address(family, 42),
-                session_id: 42,
-            });
+            .register_worker(test_rpc_worker(family, &removed_route, 42));
         state
             .ensure_route_state(&retained_route)
-            .register_worker(RpcWorker {
-                addr: retained_worker_addr.clone(),
-                inbox_addr: session_inbox_address(family, 42),
-                session_id: 42,
-            });
+            .register_worker(test_rpc_worker(family, &retained_route, 42));
         state.pending.track_pending(
             removed_correlation_id,
-            99,
-            session_inbox_address(family, 99),
-            removed_worker_addr.clone(),
-            42,
-            Instant::now() + Duration::from_secs(30),
+            test_pending_request(
+                family,
+                &removed_route,
+                99,
+                42,
+                Instant::now() + Duration::from_secs(30),
+            ),
         );
         state.pending.track_pending(
             retained_correlation_id,
-            100,
-            session_inbox_address(family, 100),
-            retained_worker_addr.clone(),
-            42,
-            Instant::now() + Duration::from_secs(30),
+            test_pending_request(
+                family,
+                &retained_route,
+                100,
+                42,
+                Instant::now() + Duration::from_secs(30),
+            ),
         );
 
         // Act
@@ -2224,11 +2519,14 @@ mod tests {
             let mut state = sink.state.lock();
             state
                 .ensure_route_state(&request_route)
-                .register_worker(RpcWorker {
-                    addr: request_addr.clone(),
-                    inbox_addr: worker_source.clone(),
-                    session_id: 42,
-                });
+                .register_worker(RpcWorker::with_stats(
+                    request_addr.clone(),
+                    worker_source.clone(),
+                    42,
+                    "2026-03-14T12:00:00Z",
+                    0,
+                    0,
+                ));
         }
         let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
         let (request_msg_type, request_payload) =
@@ -2319,18 +2617,24 @@ mod tests {
             let mut state = sink.state.lock();
             state
                 .ensure_route_state(&removed_route)
-                .register_worker(RpcWorker {
-                    addr: removed_addr.clone(),
-                    inbox_addr: worker_source.clone(),
-                    session_id: 42,
-                });
+                .register_worker(RpcWorker::with_stats(
+                    removed_addr.clone(),
+                    worker_source.clone(),
+                    42,
+                    "2026-03-14T12:00:00Z",
+                    0,
+                    0,
+                ));
             state
                 .ensure_route_state(&retained_route)
-                .register_worker(RpcWorker {
-                    addr: retained_addr.clone(),
-                    inbox_addr: worker_source.clone(),
-                    session_id: 42,
-                });
+                .register_worker(RpcWorker::with_stats(
+                    retained_addr.clone(),
+                    worker_source.clone(),
+                    42,
+                    "2026-03-14T12:00:00Z",
+                    0,
+                    0,
+                ));
         }
         let unsubscribe_payload = {
             let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
@@ -2441,11 +2745,7 @@ mod tests {
             let mut state = sink.state.lock();
             state
                 .ensure_route_state(&request_route)
-                .register_worker(RpcWorker {
-                    addr: request_addr.clone(),
-                    inbox_addr: worker_source,
-                    session_id: 42,
-                });
+                .register_worker(test_rpc_worker(family, &request_route, 42));
         }
         let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
         let (request_msg_type, request_payload) =
@@ -2525,11 +2825,14 @@ mod tests {
             let mut state = sink.state.lock();
             state
                 .ensure_route_state(&request_route)
-                .register_worker(RpcWorker {
-                    addr: request_addr.clone(),
-                    inbox_addr: worker_source.clone(),
-                    session_id: 42,
-                });
+                .register_worker(RpcWorker::with_stats(
+                    request_addr.clone(),
+                    worker_source.clone(),
+                    42,
+                    "2026-03-14T12:00:00Z",
+                    0,
+                    0,
+                ));
         }
         let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
         let (request_msg_type, request_payload) =
@@ -2614,11 +2917,14 @@ mod tests {
             let mut state = sink.state.lock();
             state
                 .ensure_route_state(&request_route)
-                .register_worker(RpcWorker {
-                    addr: request_addr.clone(),
-                    inbox_addr: worker_source.clone(),
-                    session_id: 42,
-                });
+                .register_worker(RpcWorker::with_stats(
+                    request_addr.clone(),
+                    worker_source.clone(),
+                    42,
+                    "2026-03-14T12:00:00Z",
+                    0,
+                    0,
+                ));
         }
         let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
         let (request_msg_type, request_payload) =
@@ -2695,11 +3001,16 @@ mod tests {
         let mut pending = RpcPendingTable::new();
         let pending_len = pending.track_pending(
             correlation_id,
-            42,
-            caller_inbox_addr.clone(),
-            worker_addr.clone(),
-            77,
-            Instant::now() + Duration::from_secs(30),
+            RpcPendingRequest::new(RpcPendingRequestInit {
+                route: worker_addr.route().clone(),
+                caller_session_id: 42,
+                caller_inbox_addr: caller_inbox_addr.clone(),
+                worker_addr: worker_addr.clone(),
+                worker_session_id: 77,
+                submitted_at: "2026-03-14T12:00:00Z".to_string(),
+                submitted_at_instant: Instant::now(),
+                expires_at: Instant::now() + Duration::from_secs(30),
+            }),
         );
 
         // Act
@@ -2729,11 +3040,16 @@ mod tests {
         let mut pending = RpcPendingTable::new();
         let pending_len = pending.track_pending(
             correlation_id,
-            84,
-            caller_inbox_addr.clone(),
-            worker_addr.clone(),
-            99,
-            Instant::now() + Duration::from_secs(30),
+            RpcPendingRequest::new(RpcPendingRequestInit {
+                route: worker_addr.route().clone(),
+                caller_session_id: 84,
+                caller_inbox_addr: caller_inbox_addr.clone(),
+                worker_addr: worker_addr.clone(),
+                worker_session_id: 99,
+                submitted_at: "2026-03-14T12:00:00Z".to_string(),
+                submitted_at_instant: Instant::now(),
+                expires_at: Instant::now() + Duration::from_secs(30),
+            }),
         );
 
         // Act

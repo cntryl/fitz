@@ -543,14 +543,21 @@ impl QueueInfo {
 }
 
 impl RpcWorker {
-    pub(crate) fn snapshot(session_id: u64, realm: &str, route: &str, registered_at: &str) -> Self {
+    pub(crate) fn snapshot(
+        session_id: u64,
+        realm: &str,
+        route: &str,
+        registered_at: &str,
+        requests_handled: u64,
+        average_latency_ms: f64,
+    ) -> Self {
         Self {
             session_id: session_id.to_string(),
             realm: realm.to_string(),
             route: route.to_string(),
             registered_at: registered_at.to_string(),
-            requests_handled: 0,
-            average_latency_ms: 0.0,
+            requests_handled,
+            average_latency_ms,
         }
     }
 }
@@ -558,15 +565,17 @@ impl RpcWorker {
 impl RpcPendingRequest {
     pub(crate) fn snapshot(
         correlation_id: String,
-        caller_session_id: u64,
+        route: &str,
         submitted_at: &str,
+        age_seconds: u64,
+        worker_session_id: Option<String>,
     ) -> Self {
         Self {
             correlation_id,
-            route: format!("rpc://pending/session/{caller_session_id}"),
+            route: route.to_string(),
             submitted_at: submitted_at.to_string(),
-            age_seconds: 0,
-            worker_session_id: None,
+            age_seconds,
+            worker_session_id,
         }
     }
 }
@@ -977,7 +986,7 @@ pub fn rpc_operation_detail(runtime: &Runtime, path: &RpcOperationPath<'_>) -> R
     let requests_pending = runtime
         .rpc_list_pending(Some(path.realm))
         .into_iter()
-        .filter(|request| request.route.contains(path.operation))
+        .filter(|request| matches_operation_route(&request.route, path))
         .count();
     RpcOperationDetail::from_counts(path, workers_registered, requests_pending)
 }

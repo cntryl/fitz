@@ -209,12 +209,8 @@ fn classify_lease(msg_type: u16) -> Idempotency {
 
 fn classify_rpc(msg_type: u16) -> Idempotency {
     match msg_type {
-        // REQUEST is context-dependent
-        302 => Idempotency::ContextDependent {
-            dedup_key: "correlation_id",
-        },
-        // CANCEL is non-idempotent
-        303 => Idempotency::NonIdempotent,
+        // RPC operations are process-local and must not imply durable replay or deduplication.
+        300..=304 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
     }
 }
@@ -231,16 +227,15 @@ fn classify_schedule(msg_type: u16) -> Idempotency {
 
 /// Global deduplication store shared across all domains and sessions
 ///
-/// This store caches responses for context-dependent operations (Queue COMPLETE, RPC REQUEST)
-/// with a 5-minute TTL. This prevents duplicate processing when clients retry due to network
-/// failures or timeouts.
+/// This store caches responses for context-dependent queue operations with a 5-minute TTL.
+/// It is not part of the RPC domain contract.
 static GLOBAL_DEDUP_STORE: Lazy<Arc<DedupStore>> = Lazy::new(|| {
     Arc::new(DedupStore::new(Duration::from_secs(300))) // 5 minute TTL
 });
 
 /// Get a reference to the global deduplication store
 ///
-/// This should be passed to all QueueActor and RpcActor instances.
+/// This should be passed to queue actors that support context-dependent deduplication.
 pub fn global_dedup_store() -> Arc<DedupStore> {
     GLOBAL_DEDUP_STORE.clone()
 }

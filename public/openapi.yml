@@ -867,7 +867,7 @@ paths:
         - $ref: "#/components/parameters/OperationPath"
       responses:
         "200":
-          description: RPC workers
+          description: Live in-memory RPC workers for the current broker process. Registrations disappear on disconnect or broker restart.
           content:
             application/json:
               schema:
@@ -881,7 +881,7 @@ paths:
         - $ref: "#/components/parameters/RealmQuery"
       responses:
         "200":
-          description: Pending RPC requests
+          description: Live in-memory pending RPC requests for the current broker process. A restart clears this list immediately.
           content:
             application/json:
               schema:
@@ -1124,6 +1124,7 @@ components:
 
     RpcOperationDetail:
       type: object
+      description: Point-in-time live in-memory RPC state for a single operation on the current broker process. Counts reset on broker restart and do not represent durable backlog or recovery state.
       required: [realm, area, resource, operation, workers_registered, requests_pending]
       properties:
         realm: { type: string }
@@ -1206,13 +1207,26 @@ components:
 
     RpcWorker:
       type: object
+      description: Live in-memory RPC worker registration for the current broker process. Workers must re-register after disconnect or broker restart.
       properties:
-        session_id: { type: string }
-        realm: { type: string }
-        route: { type: string }
-        registered_at: { type: string }
-        requests_handled: { type: integer }
-        average_latency_ms: { type: number }
+        session_id:
+          type: string
+          description: Broker-local worker session identifier for the active registration.
+        realm:
+          type: string
+          description: Realm extracted from the registered RPC route.
+        route:
+          type: string
+          description: Exact RPC operation route currently handled by this live worker registration.
+        registered_at:
+          type: string
+          description: Timestamp when this live worker registration was created. Resets after disconnect or broker restart.
+        requests_handled:
+          type: integer
+          description: Number of terminal RPC requests completed by this live worker registration in the current broker process.
+        average_latency_ms:
+          type: number
+          description: Average end-to-end latency for terminal RPC requests completed by this live worker registration in the current broker process.
     RpcWorkersList:
       type: object
       required: [workers]
@@ -1224,13 +1238,23 @@ components:
 
     RpcPendingRequest:
       type: object
+      description: Live in-memory pending RPC request tracked by the current broker process only. Pending requests disappear on timeout, cleanup, or broker restart.
       properties:
-        correlation_id: { type: string }
-        route: { type: string }
-        submitted_at: { type: string }
-        age_seconds: { type: integer }
+        correlation_id:
+          type: string
+          description: Correlation identifier for the live in-memory request.
+        route:
+          type: string
+          description: Exact RPC operation route for the currently pending request.
+        submitted_at:
+          type: string
+          description: Timestamp when the current broker process accepted and tracked the request in memory.
+        age_seconds:
+          type: integer
+          description: Approximate wall-clock age of the current in-memory pending request.
         worker_session_id:
           type: [string, "null"]
+          description: Broker-local worker session currently assigned to the pending request when one is known.
     RpcPendingList:
       type: object
       required: [requests]

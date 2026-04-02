@@ -4,7 +4,7 @@ use argon2::{
     password_hash::{rand_core::OsRng, SaltString},
     Argon2, PasswordHasher,
 };
-use fitz::api::admin::{KvTransaction, NoticeSubscription, RpcWorker};
+use fitz::api::admin::{KvTransaction, NoticeSubscription, RpcPendingRequest, RpcWorker};
 use fitz::boot::Runtime;
 use fitz::runtime::Router;
 use hyper::header::{COOKIE, SET_COOKIE};
@@ -63,6 +63,13 @@ fn seed_snapshot_data(runtime: &Arc<Runtime>) {
         registered_at: "2026-03-14T12:00:00Z".to_string(),
         requests_handled: 12,
         average_latency_ms: 4.5,
+    }]);
+    read_model.replace_rpc_pending(vec![RpcPendingRequest {
+        correlation_id: "corr-abc-123".to_string(),
+        route: "rpc://prod/api/users/get".to_string(),
+        submitted_at: "2026-03-14T12:00:07Z".to_string(),
+        age_seconds: 7,
+        worker_session_id: Some("9001".to_string()),
     }]);
 }
 
@@ -315,6 +322,87 @@ async fn should_return_rpc_workers_under_operation() {
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload = String::from_utf8(body.to_vec()).unwrap();
     assert!(payload.contains(r#""session_id":"9001""#));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_rpc_pending_requests() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_snapshot_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/rpc/pending?realm=prod")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload = String::from_utf8(body.to_vec()).unwrap();
+    assert!(payload.contains(r#""correlation_id":"corr-abc-123""#));
+    assert!(payload.contains(r#""route":"rpc://prod/api/users/get""#));
+    assert!(payload.contains(r#""worker_session_id":"9001""#));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_exact_rpc_operation_detail_counts() {
+    // Arrange
+    let runtime = test_runtime();
+    let read_model = runtime.admin_read_model();
+    read_model.replace_rpc_workers(vec![RpcWorker {
+        session_id: "9001".to_string(),
+        realm: "prod".to_string(),
+        route: "rpc://prod/api/users/get".to_string(),
+        registered_at: "2026-03-14T12:00:00Z".to_string(),
+        requests_handled: 12,
+        average_latency_ms: 4.5,
+    }]);
+    read_model.replace_rpc_pending(vec![
+        RpcPendingRequest {
+            correlation_id: "corr-get".to_string(),
+            route: "rpc://prod/api/users/get".to_string(),
+            submitted_at: "2026-03-14T12:00:07Z".to_string(),
+            age_seconds: 7,
+            worker_session_id: Some("9001".to_string()),
+        },
+        RpcPendingRequest {
+            correlation_id: "corr-get-details".to_string(),
+            route: "rpc://prod/api/users/get-details".to_string(),
+            submitted_at: "2026-03-14T12:00:08Z".to_string(),
+            age_seconds: 8,
+            worker_session_id: Some("9002".to_string()),
+        },
+    ]);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/rpc/realms/prod/areas/api/resources/users/operations/get")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload = String::from_utf8(body.to_vec()).unwrap();
+    assert!(payload.contains(r#""workers_registered":1"#));
+    assert!(payload.contains(r#""requests_pending":1"#));
 }
 
 #[tokio::test]
