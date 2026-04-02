@@ -615,7 +615,8 @@ POST /admin/sessions/{session_id}/close
 - `GET /api/v1/admin/queue/leases?realm={realm}` - List active queue leases
 - `GET /api/v1/admin/rpc/workers?realm={realm}` - List registered RPC workers
 - `GET /api/v1/admin/rpc/pending?realm={realm}` - List pending RPC requests
-- `GET /api/v1/admin/lease/leases?realm={realm}` - List active leases
+- `GET /api/v1/admin/lease/leases?realm={realm}` - List active in-memory leases
+  - Lease snapshots are live only. They disappear on disconnect cleanup and are not restored after broker restart.
 - `GET /api/v1/admin/schedule/schedules?realm={realm}` - List schedules
 - `GET /api/v1/admin/sessions?realm={realm}` - List active sessions
 ### 🚧 To Be Implemented

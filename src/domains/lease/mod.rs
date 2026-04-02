@@ -1,15 +1,18 @@
-//! Lease domain: distributed locking with fencing tokens
+//! Lease domain: ephemeral in-memory coordination
 //!
-//! Provides exclusive locks with time-to-live (TTL) and monotonically increasing
-//! fencing tokens for ordering guarantees in distributed systems.
+//! Leases are a single-broker coordination primitive with TTL-based ownership
+//! and fencing tokens for ordering inside one running process. They are not a
+//! durable or distributed lease service, and state is expected to disappear on
+//! broker restart or session disconnect.
 //!
-//! # Key Features
+//! # Contract
 //!
-//! - **Exclusive ownership**: Only one owner per lease at a time
-//! - **Fencing tokens**: Monotonically increasing tokens prevent split-brain scenarios
-//! - **TTL-based expiration**: Leases automatically expire after their time-to-live
-//! - **Idempotent operations**: Safe to retry all operations
-//! - **Non-durable**: In-memory only, no persistence (by design for performance)
+//! - **Exclusive ownership**: one owner per lease within the running broker
+//! - **Fencing tokens**: process-local monotonic tokens used only while the
+//!   broker instance is alive
+//! - **TTL-based expiration**: leases expire when their local TTL elapses
+//! - **Session cleanup**: disconnect removes session-owned lease state
+//! - **No recovery**: restart-loss is expected and must remain visible in tests
 //!
 //! # Route Format
 //!
@@ -19,19 +22,11 @@
 //!
 //! Lease identity is `(family_id, realm, area, resource)` extracted from the route.
 //!
-//! # Fencing Token Protocol
+//! # Fencing Token Scope
 //!
-//! Each acquisition returns a token. Clients must include this in subsequent operations:
-//!
-//! ```text
-//! 1. Client A: Acquire("lock") → token=1
-//! 2. Client A: Renew("lock", token=1) → OK
-//! 3. Client A crashes, lease expires
-//! 4. Client B: Acquire("lock") → token=2
-//! 5. Client A: Renew("lock", token=1) → Fenced(current=2)
-//! ```
-//!
-//! Client A learns it no longer holds the lease and must stop work.
+//! Each acquisition returns a token that is only meaningful inside the current
+//! broker process. A restart resets the token lineage, so clients must not treat
+//! tokens as cluster-wide or durable identifiers.
 
 pub mod actor;
 pub mod guard;

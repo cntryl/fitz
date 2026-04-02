@@ -1,6 +1,6 @@
-//! Lease domain codec - distributed lock operations
+//! Lease domain codec - ephemeral lock operations
 //!
-//! Encodes/decodes TLV messages for the lease domain.
+//! Encodes/decodes TLV messages for the lease domain inside one running broker.
 //! Supports Acquire, Extend, Release, Query operations.
 //!
 //! Wire format follows CLIENT_SPEC: ACQUIRE success includes response_type
@@ -10,6 +10,8 @@
 //!
 //! `route_family` is a server-internal concept supplied by the session layer
 //! — it never appears on the wire.
+//!
+//! Lease fencing tokens are process-local; a restart resets the token lineage.
 
 use crate::domains::lease::protocol::{LeaseMessage, LeaseResponse as DomainLeaseResponse};
 use crate::protocol::frame_context::FrameContext;

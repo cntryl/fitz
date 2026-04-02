@@ -1471,9 +1471,9 @@ This section documents the **canonical operations** for each of the seven Fitz d
 
 ---
 
-### Lease Domain (Distributed Locks)
+### Lease Domain (Ephemeral In-Memory Coordination)
 
-**Purpose:** Distributed mutual exclusion with TTL-based leases.
+**Purpose:** In-memory mutual exclusion with TTL-based leases inside one broker process.
 
 **Canonical Operations:**
 
@@ -3528,13 +3528,13 @@ The Transaction object stores the route internally and includes it in every wire
 - rollback discards all changes
 - scan returns lexicographically ordered pairs
 
-### Lease Domain (Exclusive Coordination with Queueing)
+### Lease Domain (Ephemeral Exclusive Coordination with Queueing)
 
-**Purpose:** In-memory exclusive leases for distributed locking with optional FIFO queue-based acquisition, fencing tokens for linearizability, and configurable wait timeouts.
+**Purpose:** In-memory exclusive leases for single-broker coordination with optional FIFO queue-based acquisition, process-local fencing tokens, and configurable wait timeouts.
 
 **Key Concepts:**
 - **Lease**: A scarce resource identified by route (lease://realm/area/resource)
-- **Fencing Token (`u64`)**: Server-generated opaque value preventing stale commands
+- **Fencing Token (`u64`)**: Server-generated opaque value that is only meaningful within the current broker process
 - **Owner ID**: String identifier for the holder
 - **TTL (Time-to-Live)**: Server-enforced expiration in seconds
 - **Queueing**: Optional FIFO wait for availability with timeout
@@ -4567,7 +4567,7 @@ These items are **not standardized** and may require broker-specific implementat
 **Session-scoped behavior:**
 - Transactions (KV, Stream): Breaking connection triggers auto-rollback
 - Subscriptions (Notice, RPC): Breaking connection drops all subscriptions
-- Leases: In-memory only, survive until TTL expiry (not connection-bound)
+- Leases: In-memory only; lost on disconnect or broker restart
 
 #### Serialization Formats (Domain-Specific)
 

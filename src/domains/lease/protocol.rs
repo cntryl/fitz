@@ -1,6 +1,7 @@
 //! Lease protocol message types and responses
 //!
-//! Defines the message types for lease operations:
+//! Defines the message types for ephemeral lease operations inside one broker
+//! process:
 //! - **Acquire**: Request exclusive ownership
 //! - **Extend**: Extend lease expiration
 //! - **Release**: Relinquish ownership
@@ -132,8 +133,8 @@ impl LeaseError {
 
 /// Lease domain messages
 ///
-/// All lease operations are asynchronous and return responses via
-/// the actor messaging system.
+/// All lease operations are handled synchronously by the actor and return
+/// responses through the actor messaging system.
 #[derive(Debug, Clone)]
 pub enum LeaseMessage {
     /// Acquire a lease

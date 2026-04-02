@@ -1,3 +1,9 @@
+//! Lease domain sink for ephemeral in-memory coordination
+//!
+//! The boot path mirrors the lease actor's live state into the admin read model.
+//! Lease state is expected to vanish on broker restart, and disconnect cleanup
+//! removes any session-owned leases immediately.
+
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
@@ -14,6 +20,7 @@ struct SinkLeaseState {
 
 pub struct LeaseDomainSink {
     leases: Mutex<HashMap<crate::domains::lease::protocol::LeaseKey, SinkLeaseState>>,
+    /// Process-local fencing token counter; resets on broker restart.
     next_token: AtomicU64,
     router: Arc<Router>,
     active: AtomicBool,

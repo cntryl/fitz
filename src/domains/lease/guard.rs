@@ -1,6 +1,7 @@
-//! Lease handle and guard for coordinated execution
+//! Lease handle and guard for ephemeral in-memory coordination
 //!
-//! Provides wrappers for holding acquired leases and validating them before critical work.
+//! Provides wrappers for holding acquired leases and validating them before
+//! critical work inside the current broker process.
 //!
 //! # Components
 //!
@@ -68,6 +69,9 @@ impl std::error::Error for LeaseError {}
 ///
 /// Represents exclusive ownership of a lease with a fencing token.
 /// The handle tracks expiration time and provides validation.
+///
+/// Handles are only meaningful within the broker process that created them;
+/// after restart, the token lineage resets and old handles become stale.
 ///
 /// # Lifecycle
 ///

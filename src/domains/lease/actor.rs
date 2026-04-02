@@ -1,15 +1,15 @@
-//! LeaseActor: manages lease state and enforces invariants
+//! LeaseActor: manages ephemeral lease state inside one broker process
 //!
 //! Each lease has:
 //! - Identity: (realm, area, resource) from route
 //! - Current owner
-//! - Fencing token (monotonically increasing)
+//! - Fencing token (monotonically increasing within the process)
 //! - Expiration time (TTL-based)
 //!
 //! # Invariants
 //!
 //! 1. **Exclusive ownership**: At most one owner per lease at any time
-//! 2. **Monotonic tokens**: Fencing tokens never decrease
+//! 2. **Monotonic tokens**: Fencing tokens never decrease within a running process
 //! 3. **Expiration semantics**: Lease with expiry <= now() is expired and can be taken
 //! 4. **Idempotency**: Same operation by same owner produces same result
 //!
@@ -90,9 +90,9 @@ impl LeaseState {
 
 /// Lease actor managing a collection of leases
 ///
-/// Each lease actor is responsible for a shard of the lease namespace.
-/// In a multi-actor deployment, leases are partitioned across actors
-/// by (family_id, route) tuple (e.g., consistent hashing).
+/// Each lease actor is responsible for a shard of the lease namespace within
+/// the current broker instance. In a multi-actor deployment, leases are
+/// partitioned across actors by (family_id, route) tuple.
 ///
 /// # State
 ///
@@ -100,19 +100,10 @@ impl LeaseState {
 /// - `leases`: Map of (RouteFamily, Route) → LeaseState
 /// - `pending_acquires`: Map of LeaseKey → VecDeque of waiting acquirers (FIFO queue)
 /// - `timer_to_waiter`: Map of TimerId → (LeaseKey) for validating stale timers
-/// - `next_token`: Global token counter (monotonic)
+/// - `next_token`: Process-local token counter (resets on restart)
 /// - `clock`: Time source for expiration checks
 /// - `max_wait_seconds`: Maximum wait time allowed (capped to prevent DoS)
 /// - `max_queue_depth`: Maximum pending acquirers per lease (capped to prevent memory bloat)
-///
-/// # Persistence Hooks (Future)
-///
-/// When persistence is added, each state mutation will write to a log:
-/// - `LeaseAcquired { key, owner_id, token, expiry }`
-/// - `LeaseRenewed { key, token, new_expiry }`
-/// - `LeaseReleased { key, token }`
-///
-/// On recovery, replay the log to reconstruct state.
 pub struct LeaseActor {
     /// Route family this actor serves (for validation)
     family: crate::runtime::routing::RouteFamily,
@@ -126,7 +117,7 @@ pub struct LeaseActor {
     /// Map of TimerId to LeaseKey for timer validation
     timer_to_waiter: HashMap<TimerId, LeaseKey>,
 
-    /// Next fencing token to issue (monotonic counter)
+    /// Next fencing token to issue within the current process
     next_token: u64,
 
     /// Clock for time-based operations

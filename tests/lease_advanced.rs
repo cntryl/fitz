@@ -404,6 +404,49 @@ fn should_allow_release_with_valid_token() {
     }
 }
 
+#[test]
+fn should_reset_fencing_tokens_when_actor_is_recreated() {
+    // Arrange
+    let (mut first_actor, mut first_ctx) = create_test_actor();
+    let first_route = route("lease://test/app/restart-token-a");
+    let fam = family();
+
+    let first_acquire = LeaseMessage::Acquire {
+        family_id: fam,
+        route: first_route.clone(),
+        owner_id: "holder-a".to_string(),
+        ttl_secs: 60,
+        wait_seconds: 0,
+    };
+    let first_response = first_actor.handle_message(first_acquire, &mut first_ctx).unwrap();
+
+    let first_token = match first_response {
+        LeaseResponse::Acquired { fencing_token } => fencing_token,
+        _ => panic!("Expected Acquired for first actor"),
+    };
+
+    let (mut second_actor, mut second_ctx) = create_test_actor();
+    let second_route = route("lease://test/app/restart-token-b");
+
+    // Act
+    let second_acquire = LeaseMessage::Acquire {
+        family_id: fam,
+        route: second_route.clone(),
+        owner_id: "holder-b".to_string(),
+        ttl_secs: 60,
+        wait_seconds: 0,
+    };
+    let second_response = second_actor.handle_message(second_acquire, &mut second_ctx).unwrap();
+
+    // Assert
+    let second_token = match second_response {
+        LeaseResponse::Acquired { fencing_token } => fencing_token,
+        _ => panic!("Expected Acquired for recreated actor"),
+    };
+    assert_eq!(first_token, 1);
+    assert_eq!(second_token, 1);
+}
+
 // ===== Timers & timeout coordination =====
 
 #[test]

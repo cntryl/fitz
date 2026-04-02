@@ -206,6 +206,88 @@ where
     assert_eq!(status3, 0, "Should allow multiple sequential leases");
 }
 
+async fn should_remove_session_owned_leases_when_client_disconnects<C>(server: &TestServer)
+where
+    C: LeaseConnector,
+{
+    // Arrange
+    let route = "lease://test/locks/disconnect";
+    let mut client = C::connect(server).await.expect("connect");
+
+    let acquire_frame = build_lease_acquire_immediate(route, "owner1", 30);
+    let acquire_response = client
+        .send_and_receive(&acquire_frame, 2000)
+        .await
+        .expect("acquire before disconnect");
+    let (_msg_type, status, _data) = parse_lease_response(&acquire_response);
+    assert_eq!(status, 0, "Expected acquire success before disconnect");
+
+    // Act
+    drop(client);
+    server
+        .wait_for_session_count(0)
+        .await
+        .expect("disconnect cleanup");
+
+    // Assert
+    assert!(
+        server.runtime.lease_list_leases(None).is_empty(),
+        "Lease admin snapshot should reflect disconnect cleanup"
+    );
+
+    let mut reconnect = C::connect(server).await.expect("reconnect");
+    let reacquire_frame = build_lease_acquire_immediate(route, "owner2", 30);
+    let reacquire_response = reconnect
+        .send_and_receive(&reacquire_frame, 2000)
+        .await
+        .expect("reacquire after disconnect");
+    let (_msg_type, reacquire_status, _data) = parse_lease_response(&reacquire_response);
+    assert_eq!(reacquire_status, 0, "Expected reacquire success after disconnect");
+}
+
+async fn should_lose_all_leases_on_broker_restart<C>()
+where
+    C: LeaseConnector,
+{
+    // Arrange
+    let route = "lease://test/locks/restart";
+
+    {
+        let server = TestServer::start().await.expect("start first server");
+        let mut client = C::connect(&server).await.expect("connect before restart");
+
+        let acquire_frame = build_lease_acquire_immediate(route, "owner1", 30);
+        let acquire_response = client
+            .send_and_receive(&acquire_frame, 2000)
+            .await
+            .expect("acquire before restart");
+        let (_msg_type, status, data) = parse_lease_response(&acquire_response);
+        assert_eq!(status, 0, "Expected acquire success before restart");
+        assert!(parse_lease_token_response(&data).expect("token before restart") > 0);
+    }
+
+    let restarted_server = TestServer::start().await.expect("start restarted server");
+    assert!(
+        restarted_server.runtime.lease_list_leases(None).is_empty(),
+        "Lease admin snapshot should be empty after broker restart"
+    );
+
+    // Act
+    let mut challenger = C::connect(&restarted_server)
+        .await
+        .expect("connect after restart");
+    let reacquire_frame = build_lease_acquire_immediate(route, "owner2", 30);
+    let reacquire_response = challenger
+        .send_and_receive(&reacquire_frame, 2000)
+        .await
+        .expect("reacquire after restart");
+
+    // Assert
+    let (_msg_type, status, data) = parse_lease_response(&reacquire_response);
+    assert_eq!(status, 0, "Expected reacquire success after restart");
+    assert!(parse_lease_token_response(&data).expect("token after restart") > 0);
+}
+
 // ===== TCP TESTS =====
 
 #[tokio::test]
@@ -250,6 +332,17 @@ async fn should_handle_multiple_sequential_leases_tcp() {
     should_handle_multiple_sequential_leases::<TcpLeaseConnector>(&server).await;
 }
 
+#[tokio::test]
+async fn should_remove_session_owned_leases_when_client_disconnects_tcp() {
+    let server = TestServer::start().await.expect("start");
+    should_remove_session_owned_leases_when_client_disconnects::<TcpLeaseConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_lose_all_leases_on_broker_restart_tcp() {
+    should_lose_all_leases_on_broker_restart::<TcpLeaseConnector>().await;
+}
+
 // ===== WEBSOCKET TESTS =====
 
 #[tokio::test]
@@ -292,4 +385,15 @@ async fn should_prevent_renew_with_invalid_token_ws() {
 async fn should_handle_multiple_sequential_leases_ws() {
     let server = TestServer::start().await.expect("start");
     should_handle_multiple_sequential_leases::<WsLeaseConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_remove_session_owned_leases_when_client_disconnects_ws() {
+    let server = TestServer::start().await.expect("start");
+    should_remove_session_owned_leases_when_client_disconnects::<WsLeaseConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_lose_all_leases_on_broker_restart_ws() {
+    should_lose_all_leases_on_broker_restart::<WsLeaseConnector>().await;
 }
