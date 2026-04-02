@@ -2,9 +2,9 @@
 mod characterization_support;
 
 use characterization_support::{
-    compute_stats, detect_cliff, delta_per_unit, measure_idle_ws_connection_cost,
-    parse_bench_args, parse_counts, stable_working_set_bytes, write_report, ClientRun,
-    DomainReport, ProductionReport, ScalingPoint,
+    compute_stats, delta_per_unit, detect_cliff, measure_idle_ws_connection_cost, parse_bench_args,
+    parse_counts, stable_working_set_bytes, write_report, ClientRun, DomainReport,
+    ProductionReport, ScalingPoint,
 };
 use fitz::benchkit::{
     build_lease_acquire_immediate, build_lease_release, parse_lease_response,
@@ -32,7 +32,10 @@ fn measure_lease(
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut client = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
 
     let started = Instant::now();
@@ -41,17 +44,19 @@ fn measure_lease(
     let mut single_errors = 0usize;
     while Instant::now() < deadline {
         let op_start = Instant::now();
-        let acquire = runtime.block_on(
-            client.request(&build_lease_acquire_immediate(route, owner, 30), RESPONSE_TIMEOUT_MS),
-        );
+        let acquire = runtime.block_on(client.request(
+            &build_lease_acquire_immediate(route, owner, 30),
+            RESPONSE_TIMEOUT_MS,
+        ));
         match acquire {
             Ok(response) => {
                 let (_, _, data) = parse_lease_response(&response);
                 match parse_lease_token_response(&data) {
                     Ok(token) => {
-                        let release = runtime.block_on(
-                            client.request(&build_lease_release(route, owner, token), RESPONSE_TIMEOUT_MS),
-                        );
+                        let release = runtime.block_on(client.request(
+                            &build_lease_release(route, owner, token),
+                            RESPONSE_TIMEOUT_MS,
+                        ));
                         if release.is_ok() {
                             single_latencies.push(op_start.elapsed().as_micros() as u64);
                         } else {
@@ -83,7 +88,10 @@ fn measure_lease(
         for _ in 0..count {
             clients.push(
                 runtime
-                    .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+                    .block_on(TestWebSocketClient::connect(&format!(
+                        "ws://{}",
+                        server.ws_addr
+                    )))
                     .map_err(|error| error.to_string())?,
             );
         }
@@ -99,7 +107,10 @@ fn measure_lease(
                 while Instant::now() < deadline {
                     let op_start = Instant::now();
                     let acquire = client
-                        .request(&build_lease_acquire_immediate(&route, &owner, 30), RESPONSE_TIMEOUT_MS)
+                        .request(
+                            &build_lease_acquire_immediate(&route, &owner, 30),
+                            RESPONSE_TIMEOUT_MS,
+                        )
                         .await;
                     match acquire {
                         Ok(response) => {
@@ -107,7 +118,10 @@ fn measure_lease(
                             match parse_lease_token_response(&data) {
                                 Ok(token) => {
                                     if client
-                                        .request(&build_lease_release(&route, &owner, token), RESPONSE_TIMEOUT_MS)
+                                        .request(
+                                            &build_lease_release(&route, &owner, token),
+                                            RESPONSE_TIMEOUT_MS,
+                                        )
                                         .await
                                         .is_ok()
                                     {
@@ -154,7 +168,10 @@ fn measure_lease(
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut client = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     thread::sleep(Duration::from_millis(100));
     let before = stable_working_set_bytes()?;
@@ -162,7 +179,10 @@ fn measure_lease(
         let route = format!("lease://characterization/lease/memory-{index}");
         let owner = format!("owner-memory-{index}");
         let response = runtime
-            .block_on(client.request(&build_lease_acquire_immediate(&route, &owner, 30), RESPONSE_TIMEOUT_MS))
+            .block_on(client.request(
+                &build_lease_acquire_immediate(&route, &owner, 30),
+                RESPONSE_TIMEOUT_MS,
+            ))
             .map_err(|error| error.to_string())?;
         let _ = parse_lease_token_response(&parse_lease_response(&response).2)?;
     }

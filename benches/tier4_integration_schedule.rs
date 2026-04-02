@@ -93,7 +93,9 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
     ctx.tag("batch_size", "single_create");
 
     let frame_ring: Vec<Vec<u8>> = (0..TRANSPORT_FRAME_RING_SIZE)
-        .map(|index| build_schedule_create(&valid_schedule_route("tcp", index), "0 * * * *", b"payload"))
+        .map(|index| {
+            build_schedule_create(&valid_schedule_route("tcp", index), "0 * * * *", b"payload")
+        })
         .collect();
 
     let runtime = shared_bench_runtime();
@@ -128,7 +130,9 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
     ctx.tag("batch_size", "single_create");
 
     let frame_ring: Vec<Vec<u8>> = (0..TRANSPORT_FRAME_RING_SIZE)
-        .map(|index| build_schedule_create(&valid_schedule_route("ws", index), "0 * * * *", b"payload"))
+        .map(|index| {
+            build_schedule_create(&valid_schedule_route("ws", index), "0 * * * *", b"payload")
+        })
         .collect();
 
     let runtime = shared_bench_runtime();
@@ -254,18 +258,15 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
 
     // Warmup each client once outside measurement to reduce connection/setup skew.
     let _warmup: Vec<_> = runtime.block_on(futures::future::join_all(
-        clients
-            .iter()
-            .enumerate()
-            .map(|(client_index, arc)| {
-                let arc = arc.clone();
-                let frame = frame_rings[client_index][0].clone();
-                async move {
-                    let mut c = arc.lock().await;
-                    let response = c.request(&frame, 2000).await.expect("warmup create");
-                    ensure_schedule_ok(&response).expect("warmup create should succeed");
-                }
-            }),
+        clients.iter().enumerate().map(|(client_index, arc)| {
+            let arc = arc.clone();
+            let frame = frame_rings[client_index][0].clone();
+            async move {
+                let mut c = arc.lock().await;
+                let response = c.request(&frame, 2000).await.expect("warmup create");
+                ensure_schedule_ok(&response).expect("warmup create should succeed");
+            }
+        }),
     ));
 
     let next_indices = Arc::new(std::sync::Mutex::new(vec![1usize; clients.len()]));

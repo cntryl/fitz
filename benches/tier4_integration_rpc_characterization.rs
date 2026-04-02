@@ -2,9 +2,9 @@
 mod characterization_support;
 
 use characterization_support::{
-    compute_stats, detect_cliff, delta_per_unit, measure_idle_ws_connection_cost,
-    parse_bench_args, parse_counts, stable_working_set_bytes, write_report, ClientRun,
-    DomainReport, ProductionReport, ScalingPoint,
+    compute_stats, delta_per_unit, detect_cliff, measure_idle_ws_connection_cost, parse_bench_args,
+    parse_counts, stable_working_set_bytes, write_report, ClientRun, DomainReport,
+    ProductionReport, ScalingPoint,
 };
 use fitz::benchkit::{
     build_rpc_request, build_rpc_response_frame, build_rpc_subscribe, shared_bench_runtime,
@@ -76,7 +76,11 @@ fn try_parse_rpc_worker_response_frame(frame: &[u8], family: RouteFamily) -> Opt
     }
 }
 
-fn build_network_request_frame(route: &str, payload: &[u8], family: RouteFamily) -> NetworkRequestFrame {
+fn build_network_request_frame(
+    route: &str,
+    payload: &[u8],
+    family: RouteFamily,
+) -> NetworkRequestFrame {
     let frame = build_rpc_request(route, payload);
     let request = try_parse_rpc_request_frame(&frame, family).expect("rpc request frame");
     NetworkRequestFrame {
@@ -200,7 +204,10 @@ fn measure_rpc(
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut worker = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     runtime
         .block_on(worker.send_frame(&subscribe_frame))
@@ -208,9 +215,13 @@ fn measure_rpc(
     let _ = runtime.block_on(worker.recv_frame(RESPONSE_TIMEOUT_MS));
     let worker_handles = spawn_rpc_ws_workers(vec![worker], family, true);
     let mut requester = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
-    let request_ring = build_network_request_frame_ring(service_route, b"ping", family, UNIQUE_FRAME_RING);
+    let request_ring =
+        build_network_request_frame_ring(service_route, b"ping", family, UNIQUE_FRAME_RING);
 
     let started = Instant::now();
     let deadline = started + single_duration;
@@ -221,7 +232,11 @@ fn measure_rpc(
         let request_frame = &request_ring[next_index];
         next_index = (next_index + 1) % request_ring.len();
         let op_start = Instant::now();
-        match runtime.block_on(request_until_worker_response_ws(&mut requester, request_frame, family)) {
+        match runtime.block_on(request_until_worker_response_ws(
+            &mut requester,
+            request_frame,
+            family,
+        )) {
             Ok(()) => single_latencies.push(op_start.elapsed().as_micros() as u64),
             Err(_) => single_errors += 1,
         }
@@ -247,7 +262,10 @@ fn measure_rpc(
         let worker_clients: Vec<TestWebSocketClient> = (0..RPC_SCALING_WORKER_COUNT)
             .map(|_| {
                 let mut worker = runtime
-                    .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+                    .block_on(TestWebSocketClient::connect(&format!(
+                        "ws://{}",
+                        server.ws_addr
+                    )))
                     .map_err(|error| error.to_string())?;
                 runtime
                     .block_on(worker.send_frame(&subscribe_frame))
@@ -263,7 +281,10 @@ fn measure_rpc(
         for _ in 0..count {
             requesters.push(
                 runtime
-                    .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+                    .block_on(TestWebSocketClient::connect(&format!(
+                        "ws://{}",
+                        server.ws_addr
+                    )))
                     .map_err(|error| error.to_string())?,
             );
             rings.push(build_network_request_frame_ring(
@@ -276,11 +297,9 @@ fn measure_rpc(
 
         let started = Instant::now();
         let deadline = started + scaling_duration;
-        let results = runtime.block_on(join_all(
-            requesters
-                .into_iter()
-                .zip(rings.into_iter())
-                .map(|(mut requester, request_ring)| async move {
+        let results =
+            runtime.block_on(join_all(requesters.into_iter().zip(rings.into_iter()).map(
+                |(mut requester, request_ring)| async move {
                     let mut latencies = Vec::new();
                     let mut errors = 0usize;
                     let mut next_index = 0usize;
@@ -288,7 +307,13 @@ fn measure_rpc(
                         let request_frame = &request_ring[next_index];
                         next_index = (next_index + 1) % request_ring.len();
                         let op_start = Instant::now();
-                        match request_until_worker_response_ws(&mut requester, request_frame, family).await {
+                        match request_until_worker_response_ws(
+                            &mut requester,
+                            request_frame,
+                            family,
+                        )
+                        .await
+                        {
                             Ok(()) => latencies.push(op_start.elapsed().as_micros() as u64),
                             Err(_) => errors += 1,
                         }
@@ -298,8 +323,8 @@ fn measure_rpc(
                         latencies_us: latencies,
                         errors,
                     }
-                }),
-        ));
+                },
+            )));
         for handle in worker_handles {
             handle.abort();
         }
@@ -319,10 +344,15 @@ fn measure_rpc(
     }
 
     let server = runtime
-        .block_on(TestServer::start_with_rpc_timeout(Duration::from_secs(RPC_PENDING_TIMEOUT_SECS)))
+        .block_on(TestServer::start_with_rpc_timeout(Duration::from_secs(
+            RPC_PENDING_TIMEOUT_SECS,
+        )))
         .map_err(|error| error.to_string())?;
     let mut worker = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     runtime
         .block_on(worker.send_frame(&subscribe_frame))
@@ -330,9 +360,13 @@ fn measure_rpc(
     let _ = runtime.block_on(worker.recv_frame(RESPONSE_TIMEOUT_MS));
     let worker_handles = spawn_rpc_ws_workers(vec![worker], family, false);
     let mut requester = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
-    let request_ring = build_network_request_frame_ring(service_route, b"pending", family, resource_samples);
+    let request_ring =
+        build_network_request_frame_ring(service_route, b"pending", family, resource_samples);
     thread::sleep(Duration::from_millis(100));
     let before = stable_working_set_bytes()?;
     for request in &request_ring {

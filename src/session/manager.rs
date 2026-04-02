@@ -372,7 +372,9 @@ impl RuntimeIngress {
         self.session_inbox_routes
             .get(&session_id)
             .map(|entry| entry.value().clone())
-            .unwrap_or_else(|| crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")))
+            .unwrap_or_else(|| {
+                crate::runtime::routing::Route::new(format!("inbox://session/{session_id}"))
+            })
     }
 
     fn domain_dispatch_for_msg_type(
@@ -381,9 +383,7 @@ impl RuntimeIngress {
         let mt = msg_type.as_u16();
 
         match mt {
-            100 | 101 | 102 | 104 | 105 | 106 | 107 => {
-                Ok(Some(("kv", crate::auth::Access::Write)))
-            }
+            100 | 101 | 102 | 104 | 105 | 106 | 107 => Ok(Some(("kv", crate::auth::Access::Write))),
             103 | 108 => Ok(Some(("kv", crate::auth::Access::Read))),
             200..=204 => Ok(Some(("queue", crate::auth::Access::Write))),
             205..=299 => Ok(Some(("queue", crate::auth::Access::Read))),
@@ -645,22 +645,28 @@ impl Ingress for RuntimeIngress {
         if let Some(router) = &self.router {
             match Self::domain_dispatch_for_msg_type(msg_type) {
                 Err(reason) => {
-                    warn!(session_id = session_id, msg_type = msg_type.as_u16(), reason = reason, "Ingress: client sent server-to-client-only message type");
+                    warn!(
+                        session_id = session_id,
+                        msg_type = msg_type.as_u16(),
+                        reason = reason,
+                        "Ingress: client sent server-to-client-only message type"
+                    );
                     return IngressDecision::Close(reason.to_string());
                 }
                 Ok(Some((domain, access))) => {
-                debug!(
-                    session_id = session_id,
-                    msg_type = msg_type.as_u16(),
-                    domain = domain,
-                    "Ingress: resolved domain for msg_type"
-                );
+                    debug!(
+                        session_id = session_id,
+                        msg_type = msg_type.as_u16(),
+                        domain = domain,
+                        "Ingress: resolved domain for msg_type"
+                    );
                     let payload_ref = message_payload.as_ref().unwrap();
                     // Attempt to derive a fine-grained route from the payload for better authorization.
                     let auth_route_start = Instant::now();
                     let auth_routes = if domain == "schedule" && msg_type.as_u16() == 706 {
-                        match crate::protocol::schedule_codec::extract_batch_auth_routes(payload_ref)
-                        {
+                        match crate::protocol::schedule_codec::extract_batch_auth_routes(
+                            payload_ref,
+                        ) {
                             Ok(routes) => Some(
                                 routes
                                     .into_iter()
@@ -683,7 +689,9 @@ impl Ingress for RuntimeIngress {
                     let auth_route = if auth_routes.is_none() {
                         match self.derive_auth_route_for_frame(msg_type, payload_ref) {
                             Ok(Some(r)) => Some(r),
-                            Ok(None) => Some(Cow::Borrowed(Self::wildcard_route_for_domain(domain))),
+                            Ok(None) => {
+                                Some(Cow::Borrowed(Self::wildcard_route_for_domain(domain)))
+                            }
                             Err(e) => {
                                 warn!(session_id = session_id, error = %e, domain = domain, "Ingress: failed to derive route for authorization");
                                 return IngressDecision::Close(format!(

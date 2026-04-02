@@ -308,7 +308,10 @@ pub fn measure_idle_ws_connection_cost(
     for _ in 0..sample_count {
         clients.push(
             runtime
-                .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+                .block_on(TestWebSocketClient::connect(&format!(
+                    "ws://{}",
+                    server.ws_addr
+                )))
                 .map_err(|error| error.to_string())?,
         );
     }
@@ -409,9 +412,8 @@ fn render_scenario_markdown(
         output.push_str("### Single Client\n\n");
     }
 
-    output.push_str(
-        "| unit | ops_per_s | p50_us | p95_us | p99_us | mean_us | max_us | errors |\n",
-    );
+    output
+        .push_str("| unit | ops_per_s | p50_us | p95_us | p99_us | mean_us | max_us | errors |\n");
     output.push_str("|---|---:|---:|---:|---:|---:|---:|---:|\n");
     output.push_str(&format!(
         "| {} | {:.0} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} | {} |\n\n",

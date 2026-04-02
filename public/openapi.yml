@@ -1175,13 +1175,26 @@ components:
 
     NoticeSubscription:
       type: object
+      description: Live in-memory Notice subscription state for the current broker process. Subscriptions are session-scoped and are removed on disconnect or broker restart.
       properties:
-        subscription_id: { type: integer }
-        session_id: { type: string }
-        realm: { type: string }
-        pattern: { type: string }
-        created_at: { type: string }
-        notifications_received: { type: integer }
+        subscription_id:
+          type: integer
+          description: Broker-local identifier for the currently active in-memory subscription.
+        session_id:
+          type: string
+          description: Owning live session identifier. The subscription disappears when this session disconnects.
+        realm:
+          type: string
+          description: Realm extracted from the current subscription pattern.
+        pattern:
+          type: string
+          description: Exact route or wildcard pattern tracked in memory for the active session.
+        created_at:
+          type: string
+          description: Timestamp when this live in-memory subscription was created. Resets after reconnect or broker restart.
+        notifications_received:
+          type: integer
+          description: Live counter of notifications delivered to this current in-memory subscription. Not durable and resets after reconnect or broker restart.
     NoticeSubscriptionsList:
       type: object
       required: [subscriptions]

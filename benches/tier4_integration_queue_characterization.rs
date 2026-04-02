@@ -2,9 +2,9 @@
 mod characterization_support;
 
 use characterization_support::{
-    compute_stats, detect_cliff, delta_per_unit, measure_idle_ws_connection_cost,
-    parse_bench_args, parse_counts, stable_working_set_bytes, write_report, ClientRun,
-    DomainReport, ProductionReport, ScalingPoint,
+    compute_stats, delta_per_unit, detect_cliff, measure_idle_ws_connection_cost, parse_bench_args,
+    parse_counts, stable_working_set_bytes, write_report, ClientRun, DomainReport,
+    ProductionReport, ScalingPoint,
 };
 use fitz::benchkit::{build_queue_enqueue, parse_queue_response, shared_bench_runtime};
 use fitz::testkit::{TestServer, TestWebSocketClient};
@@ -29,7 +29,10 @@ fn measure_queue(
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut client = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     let started = Instant::now();
     let deadline = started + single_duration;
@@ -45,7 +48,13 @@ fn measure_queue(
             Err(_) => single_errors += 1,
         }
     }
-    let single_client_ws = compute_stats("enqueue", started.elapsed(), single_latencies, 1, single_errors);
+    let single_client_ws = compute_stats(
+        "enqueue",
+        started.elapsed(),
+        single_latencies,
+        1,
+        single_errors,
+    );
     let _ = runtime.block_on(client.close());
     drop(server);
 
@@ -58,7 +67,10 @@ fn measure_queue(
         for _ in 0..count {
             clients.push(
                 runtime
-                    .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+                    .block_on(TestWebSocketClient::connect(&format!(
+                        "ws://{}",
+                        server.ws_addr
+                    )))
                     .map_err(|error| error.to_string())?,
             );
         }
@@ -107,7 +119,10 @@ fn measure_queue(
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut client = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     thread::sleep(Duration::from_millis(100));
     let before = stable_working_set_bytes()?;

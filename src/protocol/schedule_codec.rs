@@ -271,8 +271,8 @@ pub fn encode_notify_into(
 #[cfg(test)]
 mod tests {
     use super::{encode_notify, encode_response, extract_batch_auth_routes};
-    use crate::protocol::payload_codec::PayloadEncoder;
     use crate::domains::schedule::ScheduleResponse;
+    use crate::protocol::payload_codec::PayloadEncoder;
 
     #[test]
     fn should_encode_subscribe_response_with_subscription_id() {

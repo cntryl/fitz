@@ -30,6 +30,16 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
         self.subscriptions.len()
     }
 
+    pub(crate) fn wildcard_subscription_count_for_session(&self, session_id: u64) -> usize {
+        self.subscriptions
+            .values()
+            .filter(|subscription| {
+                subscription.session_id() == session_id
+                    && subscription.pattern().route().contains('*')
+            })
+            .count()
+    }
+
     pub(crate) fn values(&self) -> impl Iterator<Item = &T> {
         self.subscriptions.values()
     }

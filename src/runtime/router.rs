@@ -252,8 +252,7 @@ impl Router {
             Ok(()) => {
                 debug!(destination = %dest, "Router: envelope delivered successfully");
 
-                if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics)
-                {
+                if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
                     metrics.histogram_observe_us(
                         obs::METRIC_ROUTE_MATCH_LATENCY,
                         start.elapsed().as_micros() as u64,
@@ -265,8 +264,7 @@ impl Router {
             Err(e) => {
                 warn!(destination = %dest, error = %e, "Router: delivery failed");
 
-                if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics)
-                {
+                if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
                     metrics.counter_inc(obs::METRIC_DELIVERY_FAILURES);
                 }
 

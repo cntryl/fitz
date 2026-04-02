@@ -63,9 +63,7 @@ pub enum ScheduleMessage {
         payload: Bytes,
     },
     /// Create or update multiple schedules atomically.
-    CreateBatch {
-        entries: Vec<ScheduleCreateEntry>,
-    },
+    CreateBatch { entries: Vec<ScheduleCreateEntry> },
     /// Cancel an existing schedule by route
     Cancel { route: String },
     /// List all schedules (supports pagination)
@@ -393,7 +391,11 @@ impl CronSchedule {
     }
 }
 
-fn instant_from_epoch_seconds(candidate_secs: u64, now_sys: std::time::SystemTime, now_instant: Instant) -> Instant {
+fn instant_from_epoch_seconds(
+    candidate_secs: u64,
+    now_sys: std::time::SystemTime,
+    now_instant: Instant,
+) -> Instant {
     let candidate_sys = std::time::UNIX_EPOCH + std::time::Duration::from_secs(candidate_secs);
     let duration_from_now_sys = candidate_sys
         .duration_since(now_sys)

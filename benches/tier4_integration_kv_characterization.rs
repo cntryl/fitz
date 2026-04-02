@@ -2,9 +2,9 @@
 mod characterization_support;
 
 use characterization_support::{
-    compute_stats, detect_cliff, delta_per_unit, measure_idle_ws_connection_cost,
-    parse_bench_args, parse_counts, stable_working_set_bytes, write_report, ClientRun,
-    DomainReport, ProductionReport, ScalingPoint,
+    compute_stats, delta_per_unit, detect_cliff, measure_idle_ws_connection_cost, parse_bench_args,
+    parse_counts, stable_working_set_bytes, write_report, ClientRun, DomainReport,
+    ProductionReport, ScalingPoint,
 };
 use fitz::benchkit::{
     build_kv_begin, build_kv_put, build_kv_rollback, parse_kv_response, parse_kv_tx_id,
@@ -53,7 +53,10 @@ fn measure_kv(
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut client = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
 
     let started = Instant::now();
@@ -86,29 +89,34 @@ fn measure_kv(
         for _ in 0..count {
             clients.push(
                 runtime
-                    .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+                    .block_on(TestWebSocketClient::connect(&format!(
+                        "ws://{}",
+                        server.ws_addr
+                    )))
                     .map_err(|error| error.to_string())?,
             );
         }
 
         let start = Instant::now();
         let deadline = start + scaling_duration;
-        let results = runtime.block_on(join_all(clients.into_iter().map(|mut ws_client| async move {
-            let mut latencies = Vec::new();
-            let mut errors = 0usize;
-            while Instant::now() < deadline {
-                let op_start = Instant::now();
-                match kv_sequence(&mut ws_client, route).await {
-                    Ok(()) => latencies.push(op_start.elapsed().as_micros() as u64),
-                    Err(_) => errors += 1,
+        let results = runtime.block_on(join_all(clients.into_iter().map(
+            |mut ws_client| async move {
+                let mut latencies = Vec::new();
+                let mut errors = 0usize;
+                while Instant::now() < deadline {
+                    let op_start = Instant::now();
+                    match kv_sequence(&mut ws_client, route).await {
+                        Ok(()) => latencies.push(op_start.elapsed().as_micros() as u64),
+                        Err(_) => errors += 1,
+                    }
                 }
-            }
-            let _ = ws_client.close().await;
-            ClientRun {
-                latencies_us: latencies,
-                errors,
-            }
-        })));
+                let _ = ws_client.close().await;
+                ClientRun {
+                    latencies_us: latencies,
+                    errors,
+                }
+            },
+        )));
 
         let elapsed = start.elapsed();
         let mut latencies = Vec::new();
@@ -130,7 +138,10 @@ fn measure_kv(
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut client = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     thread::sleep(Duration::from_millis(100));
     let before = stable_working_set_bytes()?;

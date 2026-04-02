@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+const MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION: usize = 128;
+
 struct NoticeSubscription {
     pattern: crate::runtime::matcher::Pattern,
     session_id: u64,
@@ -161,6 +163,17 @@ impl NoticeDomainSink {
             .map(|state| state.subscription_count())
             .sum()
     }
+
+    fn wildcard_subscription_limit_reached(
+        &self,
+        state: &RoutedSubscriptionSet<NoticeSubscription>,
+        session_id: u64,
+        pattern: &str,
+    ) -> bool {
+        pattern.contains('*')
+            && state.wildcard_subscription_count_for_session(session_id)
+                >= MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION
+    }
 }
 
 impl MailboxSink for NoticeDomainSink {
@@ -270,7 +283,7 @@ impl MailboxSink for NoticeDomainSink {
                 } else {
                     let existing_sub_id =
                         state.find_existing_id(sub_msg.session_id.0, sub_msg.pattern.as_str());
-                    let sub_id = if let Some(id) = existing_sub_id {
+                    let response = if let Some(id) = existing_sub_id {
                         tracing::debug!(
                             domain = "notice",
                             session = sub_msg.session_id.0,
@@ -278,7 +291,24 @@ impl MailboxSink for NoticeDomainSink {
                             pattern = sub_msg.pattern.as_str(),
                             "Notice subscription already exists (idempotent)"
                         );
-                        id
+                        NoticeResponse::Ok {
+                            subscription_id: Some(id),
+                        }
+                    } else if self.wildcard_subscription_limit_reached(
+                        state,
+                        sub_msg.session_id.0,
+                        sub_msg.pattern.as_str(),
+                    ) {
+                        tracing::warn!(
+                            domain = "notice",
+                            session = sub_msg.session_id.0,
+                            pattern = sub_msg.pattern.as_str(),
+                            limit = MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION,
+                            "Rejected wildcard notice subscription because session limit was exceeded"
+                        );
+                        NoticeResponse::Error(format!(
+                            "wildcard subscription limit exceeded ({MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION} per session)"
+                        ))
                     } else {
                         let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
                         state.insert(
@@ -300,15 +330,14 @@ impl MailboxSink for NoticeDomainSink {
                             pattern = sub_msg.pattern.as_str(),
                             "Notice subscription added"
                         );
-                        new_id
+                        NoticeResponse::Ok {
+                            subscription_id: Some(new_id),
+                        }
                     };
 
-                    (
-                        Some(NoticeResponse::Ok {
-                            subscription_id: Some(sub_id),
-                        }),
-                        true,
-                    )
+                    let should_sync_admin_snapshot = matches!(response, NoticeResponse::Ok { .. });
+
+                    (Some(response), should_sync_admin_snapshot)
                 }
             }
             NotificationMessage::Unsubscribe(unsub_msg) => {
@@ -382,6 +411,7 @@ impl MailboxSink for NoticeDomainSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::admin::{NoticeRouteInfo, NoticeSubscription as AdminNoticeSubscription};
     use crate::protocol::frame::ChannelId;
     use crate::protocol::frame_context::FrameContext;
     use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
@@ -406,6 +436,113 @@ mod tests {
 
     fn drain_mailbox(mailbox: &Mailbox) {
         while mailbox.receiver().try_recv().is_ok() {}
+    }
+
+    struct NoticeResponsePayload {
+        status: u8,
+        subscription_id: Option<u64>,
+        error: Option<String>,
+    }
+
+    fn decode_notice_response(mailbox: &Mailbox) -> NoticeResponsePayload {
+        let response_envelope = mailbox
+            .receiver()
+            .try_recv()
+            .expect("notice response envelope");
+        let response_frame = response_envelope
+            .into_payload::<FrameContext>()
+            .expect("notice response frame");
+        let mut decoder = PayloadDecoder::new(&response_frame.payload);
+        let status = decoder.get_u8().expect("notice response status");
+
+        if status == 0 {
+            let subscription_id = decoder
+                .get_optional_u64()
+                .expect("notice response subscription id");
+            assert!(decoder.is_complete());
+            NoticeResponsePayload {
+                status,
+                subscription_id,
+                error: None,
+            }
+        } else {
+            let error = decoder.get_string().expect("notice response error");
+            assert!(decoder.is_complete());
+            NoticeResponsePayload {
+                status,
+                subscription_id: None,
+                error: Some(error),
+            }
+        }
+    }
+
+    fn subscribe_notice_pattern(
+        sink: &NoticeDomainSink,
+        subscriber_address: &RouteAddress,
+        notice_address: &RouteAddress,
+        session_id: u64,
+        pattern: &str,
+        family: RouteFamily,
+    ) {
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            notice_address.clone(),
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(501),
+                encode_notice_subscribe(pattern),
+                family,
+            ),
+        ))
+        .expect("subscribe notice pattern");
+    }
+
+    fn unsubscribe_notice_pattern(
+        sink: &NoticeDomainSink,
+        subscriber_address: &RouteAddress,
+        notice_address: &RouteAddress,
+        session_id: u64,
+        pattern: &str,
+        family: RouteFamily,
+    ) {
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            notice_address.clone(),
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(502),
+                encode_notice_subscribe(pattern),
+                family,
+            ),
+        ))
+        .expect("unsubscribe notice pattern");
+    }
+
+    fn assert_notice_admin_subscriptions(
+        actual: &[AdminNoticeSubscription],
+        expected_patterns: &[&str],
+    ) {
+        let mut actual_patterns: Vec<&str> =
+            actual.iter().map(|entry| entry.pattern.as_str()).collect();
+        actual_patterns.sort_unstable();
+
+        let mut expected_patterns = expected_patterns.to_vec();
+        expected_patterns.sort_unstable();
+
+        assert_eq!(actual_patterns, expected_patterns);
+    }
+
+    fn assert_notice_admin_routes(actual: &[NoticeRouteInfo], expected_routes: &[&str]) {
+        let mut actual_routes: Vec<&str> =
+            actual.iter().map(|entry| entry.route.as_str()).collect();
+        actual_routes.sort_unstable();
+
+        let mut expected_routes = expected_routes.to_vec();
+        expected_routes.sort_unstable();
+
+        assert_eq!(actual_routes, expected_routes);
     }
 
     #[test]
@@ -451,20 +588,9 @@ mod tests {
             ),
         ))
         .expect("subscribe notice route");
-        let subscribe_envelope = subscriber_mailbox
-            .receiver()
-            .try_recv()
-            .expect("subscribe ack envelope");
-        let subscribe_frame = subscribe_envelope
-            .into_payload::<FrameContext>()
-            .expect("subscribe ack frame");
-        let mut subscribe_decoder = PayloadDecoder::new(&subscribe_frame.payload);
-        let subscribe_status = subscribe_decoder.get_u8().expect("subscribe status");
-        assert_eq!(subscribe_status, 0);
-        let _subscription_id = subscribe_decoder
-            .get_optional_u64()
-            .expect("subscription id");
-        assert!(subscribe_decoder.is_complete());
+        let subscribe_response = decode_notice_response(&subscriber_mailbox);
+        assert_eq!(subscribe_response.status, 0);
+        assert!(subscribe_response.subscription_id.is_some());
 
         // Act
         sink.deliver(Envelope::new(
@@ -506,6 +632,57 @@ mod tests {
             .expect("publish subscription id");
         assert!(publish_subscription_id.is_none());
         assert!(publish_decoder.is_complete());
+    }
+
+    #[test]
+    fn should_clear_notice_admin_snapshot_given_session_cleanup_with_mixed_subscriptions() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let exact_route = "notice://acme/app/events";
+        let wildcard_route = "notice://acme/app/*";
+        let notice_address = RouteAddress::new(family, Route::new(exact_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            exact_route,
+            family,
+        );
+        let exact_response = decode_notice_response(&subscriber_mailbox);
+        assert_eq!(exact_response.status, 0);
+
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            wildcard_route,
+            family,
+        );
+        let wildcard_response = decode_notice_response(&subscriber_mailbox);
+        assert_eq!(wildcard_response.status, 0);
+
+        let before_subscriptions = admin_read_model.notice_subscriptions(None, None);
+        let before_routes = admin_read_model.notice_routes(None);
+        assert_notice_admin_subscriptions(&before_subscriptions, &[exact_route, wildcard_route]);
+        assert_notice_admin_routes(&before_routes, &[exact_route, wildcard_route]);
+
+        // Act
+        sink.unsubscribe_all_for_session(session_id);
+
+        // Assert
+        assert_eq!(sink.subscription_count(), 0);
+        assert!(admin_read_model.notice_subscriptions(None, None).is_empty());
+        assert!(admin_read_model.notice_routes(None).is_empty());
     }
 
     #[test]
@@ -676,5 +853,183 @@ mod tests {
         assert!(retained_publish_subscription_id.is_none());
         assert!(retained_publish_decoder.is_complete());
         assert!(subscriber_mailbox.receiver().try_recv().is_err());
+    }
+
+    #[test]
+    fn should_retain_notice_admin_snapshot_entry_given_unsubscribe_of_sibling_pattern() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let removed_route = "notice://acme/app/events";
+        let retained_route = "notice://acme/app/audits";
+        let notice_address = RouteAddress::new(family, Route::new(removed_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            removed_route,
+            family,
+        );
+        let removed_response = decode_notice_response(&subscriber_mailbox);
+        assert_eq!(removed_response.status, 0);
+
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            retained_route,
+            family,
+        );
+        let retained_response = decode_notice_response(&subscriber_mailbox);
+        assert_eq!(retained_response.status, 0);
+
+        // Act
+        unsubscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            removed_route,
+            family,
+        );
+        let unsubscribe_response = decode_notice_response(&subscriber_mailbox);
+
+        // Assert
+        assert_eq!(unsubscribe_response.status, 0);
+        assert_eq!(sink.subscription_count(), 1);
+
+        let subscriptions = admin_read_model.notice_subscriptions(None, None);
+        let routes = admin_read_model.notice_routes(None);
+        assert_notice_admin_subscriptions(&subscriptions, &[retained_route]);
+        assert_notice_admin_routes(&routes, &[retained_route]);
+    }
+
+    #[test]
+    fn should_reject_wildcard_subscription_when_session_limit_is_exceeded() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let notice_address = RouteAddress::new(family, Route::new("notice://acme/app/events"));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION + 4));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+
+        for pattern_index in 0..MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION {
+            let pattern = format!("notice://acme/app/{pattern_index}/*");
+            subscribe_notice_pattern(
+                &sink,
+                &subscriber_address,
+                &notice_address,
+                session_id,
+                &pattern,
+                family,
+            );
+            let response = decode_notice_response(&subscriber_mailbox);
+            assert_eq!(response.status, 0);
+        }
+
+        let overflow_pattern = "notice://acme/app/overflow/*";
+
+        // Act
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            overflow_pattern,
+            family,
+        );
+        let overflow_response = decode_notice_response(&subscriber_mailbox);
+
+        // Assert
+        assert_eq!(overflow_response.status, 1);
+        assert_eq!(
+            overflow_response.error.as_deref(),
+            Some("wildcard subscription limit exceeded (128 per session)")
+        );
+        assert_eq!(
+            sink.subscription_count(),
+            MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION
+        );
+        assert_eq!(
+            admin_read_model.notice_subscriptions(None, None).len(),
+            MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION
+        );
+    }
+
+    #[test]
+    fn should_return_existing_subscription_id_given_idempotent_wildcard_subscribe_at_limit() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let duplicated_pattern = "notice://acme/app/dupe/*";
+        let notice_address = RouteAddress::new(family, Route::new("notice://acme/app/events"));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION + 5));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let sink =
+            NoticeDomainSink::new(router, crate::api::admin::read_model::AdminReadModel::new());
+
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            duplicated_pattern,
+            family,
+        );
+        let first_response = decode_notice_response(&subscriber_mailbox);
+        let first_subscription_id = first_response
+            .subscription_id
+            .expect("first subscription id");
+
+        for pattern_index in 1..MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION {
+            let pattern = format!("notice://acme/app/{pattern_index}/*");
+            subscribe_notice_pattern(
+                &sink,
+                &subscriber_address,
+                &notice_address,
+                session_id,
+                &pattern,
+                family,
+            );
+            let response = decode_notice_response(&subscriber_mailbox);
+            assert_eq!(response.status, 0);
+        }
+
+        // Act
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            duplicated_pattern,
+            family,
+        );
+        let duplicate_response = decode_notice_response(&subscriber_mailbox);
+
+        // Assert
+        assert_eq!(duplicate_response.status, 0);
+        assert_eq!(
+            duplicate_response.subscription_id,
+            Some(first_subscription_id)
+        );
+        assert_eq!(
+            sink.subscription_count(),
+            MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION
+        );
     }
 }

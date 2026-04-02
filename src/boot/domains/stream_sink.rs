@@ -1,6 +1,6 @@
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
-use crate::domains::stream::{StreamRecord, StreamStore};
 use crate::domains::stream::store::EventPayload;
+use crate::domains::stream::{StreamRecord, StreamStore};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::PayloadEncoder;
 use crate::runtime::routing::route_triplet;
@@ -308,7 +308,12 @@ impl StreamDomainSink {
                 .0
         };
 
-        Ok(Self::encode_stream_read_data(&records, from_offset, limit, max_bytes))
+        Ok(Self::encode_stream_read_data(
+            &records,
+            from_offset,
+            limit,
+            max_bytes,
+        ))
     }
 
     fn encode_last_response_data(
@@ -321,9 +326,9 @@ impl StreamDomainSink {
             return Ok(Vec::new());
         }
 
-        let record = self
-            .store
-            .peek_resource(family_id, parts.realm, parts.area, parts.resource)?;
+        let record =
+            self.store
+                .peek_resource(family_id, parts.realm, parts.area, parts.resource)?;
 
         Ok(record
             .as_ref()
@@ -341,9 +346,12 @@ impl StreamDomainSink {
             return Ok(Vec::new());
         }
 
-        let next_offset = self
-            .store
-            .get_next_resource_offset(family_id, parts.realm, parts.area, parts.resource)?;
+        let next_offset = self.store.get_next_resource_offset(
+            family_id,
+            parts.realm,
+            parts.area,
+            parts.resource,
+        )?;
         if next_offset == 0 {
             return Ok(Vec::new());
         }
@@ -410,11 +418,8 @@ impl StreamDomainSink {
             .ok_or_else(|| "session not found".to_string())?;
         let assigned_offset = session.initial_next_offset + session.appended_count as u64;
 
-        self.store.append_to_session(
-            family_id,
-            &session_id,
-            EventPayload { body, metadata },
-        )?;
+        self.store
+            .append_to_session(family_id, &session_id, EventPayload { body, metadata })?;
 
         session.appended_count += 1;
         let mut encoder = PayloadEncoder::new();
@@ -488,7 +493,10 @@ impl StreamDomainSink {
                     response.last_realm_offset,
                     response.batch_size,
                 );
-                Ok(Some((crate::runtime::routing::Route::new(route_key), payload)))
+                Ok(Some((
+                    crate::runtime::routing::Route::new(route_key),
+                    payload,
+                )))
             }
             Err(error) => {
                 self.revert_commit_offsets(&route_key, batch_size);
@@ -789,32 +797,32 @@ impl MailboxSink for StreamDomainSink {
                 ),
                 Err(error) => (Self::stream_error_response(error), None, false),
             },
-            StreamMessage::Last { family_id, route, .. } => {
-                match self.encode_last_response_data(family_id.as_u64(), &route) {
-                    Ok(data) => (
-                        StreamResponse::Ok {
-                            session_id: None,
-                            data,
-                        },
-                        None,
-                        false,
-                    ),
-                    Err(error) => (Self::stream_error_response(error), None, false),
-                }
-            }
-            StreamMessage::GetMetadata { family_id, route, .. } => {
-                match self.encode_metadata_response_data(family_id.as_u64(), &route) {
-                    Ok(data) => (
-                        StreamResponse::Ok {
-                            session_id: None,
-                            data,
-                        },
-                        None,
-                        false,
-                    ),
-                    Err(error) => (Self::stream_error_response(error), None, false),
-                }
-            }
+            StreamMessage::Last {
+                family_id, route, ..
+            } => match self.encode_last_response_data(family_id.as_u64(), &route) {
+                Ok(data) => (
+                    StreamResponse::Ok {
+                        session_id: None,
+                        data,
+                    },
+                    None,
+                    false,
+                ),
+                Err(error) => (Self::stream_error_response(error), None, false),
+            },
+            StreamMessage::GetMetadata {
+                family_id, route, ..
+            } => match self.encode_metadata_response_data(family_id.as_u64(), &route) {
+                Ok(data) => (
+                    StreamResponse::Ok {
+                        session_id: None,
+                        data,
+                    },
+                    None,
+                    false,
+                ),
+                Err(error) => (Self::stream_error_response(error), None, false),
+            },
             StreamMessage::Subscribe {
                 family_id,
                 pattern,
@@ -921,7 +929,8 @@ impl MailboxSink for StreamDomainSink {
                 route_family = frame_ctx.route_family.id(),
                 "Stream: commit triggered availability notification - CALLING handle_domain_publish"
             );
-            let event = crate::runtime::DomainPublishEvent::new(frame_ctx.route_family, route, payload);
+            let event =
+                crate::runtime::DomainPublishEvent::new(frame_ctx.route_family, route, payload);
             if let Err(e) = self.handle_domain_publish(&event) {
                 tracing::warn!(domain = "stream", error = ?e, "Stream: handle_domain_publish FAILED");
             } else {

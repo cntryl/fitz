@@ -2262,12 +2262,18 @@ impl QueueActor {
                                 "WARN: Failed to commit delete txn for message {}: {}",
                                 id, e
                             );
-                            Err(format!("Failed to commit delete txn for message {}: {}", id, e))
+                            Err(format!(
+                                "Failed to commit delete txn for message {}: {}",
+                                id, e
+                            ))
                         }
                     }
                 }
             },
-            Err(e) => Err(format!("Failed to begin tx to delete message {}: {:?}", id, e)),
+            Err(e) => Err(format!(
+                "Failed to begin tx to delete message {}: {:?}",
+                id, e
+            )),
         };
 
         if let Err(message) = commit_result {

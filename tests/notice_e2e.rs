@@ -307,7 +307,10 @@ where
 
     let mut publisher = C::connect(server).await.expect("connect publisher");
     let publish_response = publisher
-        .send_and_receive(&build_notice_publish(route, "test-realm", b"after-disconnect"), 2000)
+        .send_and_receive(
+            &build_notice_publish(route, "test-realm", b"after-disconnect"),
+            2000,
+        )
         .await
         .expect("publish after disconnect");
 
@@ -345,7 +348,10 @@ where
         wait_for_notice_subscription_count(&server, 1).await;
 
         let publish_response = publisher
-            .send_and_receive(&build_notice_publish(route, "test-realm", b"before-restart"), 2000)
+            .send_and_receive(
+                &build_notice_publish(route, "test-realm", b"before-restart"),
+                2000,
+            )
             .await
             .expect("publish before restart");
         let (_msg_type, status, _data) = parse_notice_response(&publish_response);
@@ -372,7 +378,10 @@ where
     wait_for_notice_subscription_count(&restarted_server, 0).await;
 
     let publish_response = publisher
-        .send_and_receive(&build_notice_publish(route, "test-realm", b"after-restart"), 2000)
+        .send_and_receive(
+            &build_notice_publish(route, "test-realm", b"after-restart"),
+            2000,
+        )
         .await
         .expect("publish after restart");
     let (_msg_type, status, _data) = parse_notice_response(&publish_response);

@@ -1,7 +1,6 @@
 use crate::domains::schedule::protocol::{
-    parse_concrete_schedule_route, validate_concrete_schedule_route, CronSchedule, ScheduleDef,
-    ScheduleCreateEntry, ScheduleListEntry,
-    ScheduleMessage, ScheduleResponse,
+    parse_concrete_schedule_route, validate_concrete_schedule_route, CronSchedule,
+    ScheduleCreateEntry, ScheduleDef, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
 };
 use crate::domains::schedule::store::{ScheduleInsert, ScheduleStore};
 use crate::prelude::Actor;
@@ -210,7 +209,10 @@ impl ScheduleActor {
                     .schedules
                     .get(&route)
                     .map(|existing| existing.storage_key.clone()),
-                index_key: self.schedules.get(&route).map(|existing| existing.index_key.clone()),
+                index_key: self
+                    .schedules
+                    .get(&route)
+                    .map(|existing| existing.index_key.clone()),
             },
             self.write_options,
         )?;
@@ -241,10 +243,7 @@ impl ScheduleActor {
     /// Create or update multiple schedules in one persisted batch.
     ///
     /// Returns the number of schedules that changed in storage and memory.
-    pub fn create_schedules(
-        &mut self,
-        entries: Vec<ScheduleCreateEntry>,
-    ) -> Result<usize, String> {
+    pub fn create_schedules(&mut self, entries: Vec<ScheduleCreateEntry>) -> Result<usize, String> {
         if entries.is_empty() {
             return Err("schedule batch must not be empty".to_string());
         }
@@ -264,20 +263,22 @@ impl ScheduleActor {
 
             validate_concrete_schedule_route(&entry.route)?;
 
-            let (previous_fire_ms, previous_list_index, should_skip) = match self
-                .schedules
-                .get(&entry.route)
-            {
-                Some(existing)
-                    if existing.cron == entry.cron
-                        && existing.payload == entry.payload
-                        && existing.next_fire_time > now =>
-                {
-                    (Some(existing.next_fire_ms), Some(existing.list_index), true)
-                }
-                Some(existing) => (Some(existing.next_fire_ms), Some(existing.list_index), false),
-                None => (None, None, false),
-            };
+            let (previous_fire_ms, previous_list_index, should_skip) =
+                match self.schedules.get(&entry.route) {
+                    Some(existing)
+                        if existing.cron == entry.cron
+                            && existing.payload == entry.payload
+                            && existing.next_fire_time > now =>
+                    {
+                        (Some(existing.next_fire_ms), Some(existing.list_index), true)
+                    }
+                    Some(existing) => (
+                        Some(existing.next_fire_ms),
+                        Some(existing.list_index),
+                        false,
+                    ),
+                    None => (None, None, false),
+                };
 
             if should_skip {
                 continue;
@@ -527,8 +528,7 @@ impl ScheduleActor {
         let now_ms = Self::instant_to_ms(now);
         let mut fired = Vec::new();
         // Reuse single vec for persistence: (route, cron, payload, next_fire, next_fire_ms, previous_fire_ms)
-        let mut to_reschedule: Vec<(String, String, Bytes, Instant, u64, Option<u64>)> =
-            Vec::new();
+        let mut to_reschedule: Vec<(String, String, Bytes, Instant, u64, Option<u64>)> = Vec::new();
         let mut heap_popped = Vec::new();
 
         // Peek the heap for schedules ready to fire (fire_ms <= now_ms)

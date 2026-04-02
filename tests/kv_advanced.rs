@@ -8,7 +8,11 @@ use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
 
-fn write_committed_value_for_family(actor: &mut KvActor, family: RouteFamily, value: &'static [u8]) {
+fn write_committed_value_for_family(
+    actor: &mut KvActor,
+    family: RouteFamily,
+    value: &'static [u8],
+) {
     let begin = actor.handle(KvMessage::Begin {
         route_family: family,
         realm: "tenant".to_string(),

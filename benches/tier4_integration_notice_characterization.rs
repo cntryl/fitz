@@ -2,9 +2,9 @@
 mod characterization_support;
 
 use characterization_support::{
-    compute_stats, detect_cliff, delta_per_unit, measure_idle_ws_connection_cost,
-    parse_bench_args, parse_counts, stable_working_set_bytes, write_report, DomainReport,
-    ProductionReport, ScalingPoint,
+    compute_stats, delta_per_unit, detect_cliff, measure_idle_ws_connection_cost, parse_bench_args,
+    parse_counts, stable_working_set_bytes, write_report, DomainReport, ProductionReport,
+    ScalingPoint,
 };
 use fitz::benchkit::{
     build_notice_publish, build_notice_subscribe, parse_notice_response, shared_bench_runtime,
@@ -33,10 +33,16 @@ fn measure_notice(
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut subscriber = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     let mut publisher = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     runtime
         .block_on(subscriber.request(&subscribe_frame, RESPONSE_TIMEOUT_MS))
@@ -78,20 +84,28 @@ fn measure_notice(
         let subscribers: Vec<Arc<Mutex<TestWebSocketClient>>> = (0..count)
             .map(|_| {
                 let client = runtime
-                    .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+                    .block_on(TestWebSocketClient::connect(&format!(
+                        "ws://{}",
+                        server.ws_addr
+                    )))
                     .map_err(|error| error.to_string())?;
                 Ok(Arc::new(Mutex::new(client)))
             })
             .collect::<Result<_, String>>()?;
         let mut publisher = runtime
-            .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+            .block_on(TestWebSocketClient::connect(&format!(
+                "ws://{}",
+                server.ws_addr
+            )))
             .map_err(|error| error.to_string())?;
         runtime.block_on(join_all(subscribers.iter().map(|client| {
             let client = client.clone();
             let subscribe_frame = subscribe_frame.clone();
             async move {
                 let mut subscriber = client.lock().await;
-                let _ = subscriber.request(&subscribe_frame, RESPONSE_TIMEOUT_MS).await;
+                let _ = subscriber
+                    .request(&subscribe_frame, RESPONSE_TIMEOUT_MS)
+                    .await;
             }
         })));
 
@@ -152,10 +166,15 @@ fn measure_notice(
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut client = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     let subscribe_ring: Vec<Vec<u8>> = (0..resource_samples)
-        .map(|index| build_notice_subscribe(&format!("notice://characterization/notice/sub/{index}")))
+        .map(|index| {
+            build_notice_subscribe(&format!("notice://characterization/notice/sub/{index}"))
+        })
         .collect();
     thread::sleep(Duration::from_millis(100));
     let before = stable_working_set_bytes()?;
@@ -179,7 +198,9 @@ fn measure_notice(
         additional_scenarios: Vec::new(),
         resource_memory,
         idle_connection_bytes_per_client: idle_connection_cost,
-        notes: vec!["notice scaling varies subscriber count while keeping one publisher".to_string()],
+        notes: vec![
+            "notice scaling varies subscriber count while keeping one publisher".to_string(),
+        ],
     })
 }
 

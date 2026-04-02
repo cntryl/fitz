@@ -362,39 +362,33 @@ impl MailboxSink for ScheduleDomainSink {
                     route,
                     cron,
                     payload,
-                } => {
-                    match actor.create_schedule(route, cron, payload) {
-                        Ok(changed) => {
-                            if changed {
-                                schedule_snapshot_dirty = true;
-                            }
-                            ScheduleResponse::Ok
+                } => match actor.create_schedule(route, cron, payload) {
+                    Ok(changed) => {
+                        if changed {
+                            schedule_snapshot_dirty = true;
                         }
-                        Err(e) => ScheduleResponse::Error(e),
+                        ScheduleResponse::Ok
                     }
-                }
-                ScheduleMessage::CreateBatch { entries } => {
-                    match actor.create_schedules(entries) {
-                        Ok(changed) => {
-                            if changed > 0 {
-                                schedule_snapshot_dirty = true;
-                            }
-                            ScheduleResponse::Ok
+                    Err(e) => ScheduleResponse::Error(e),
+                },
+                ScheduleMessage::CreateBatch { entries } => match actor.create_schedules(entries) {
+                    Ok(changed) => {
+                        if changed > 0 {
+                            schedule_snapshot_dirty = true;
                         }
-                        Err(e) => ScheduleResponse::Error(e),
+                        ScheduleResponse::Ok
                     }
-                }
-                ScheduleMessage::Cancel { route } => {
-                    match actor.delete_schedule(route) {
-                        Ok(removed) => {
-                            if removed {
-                                schedule_snapshot_dirty = true;
-                            }
-                            ScheduleResponse::Ok
+                    Err(e) => ScheduleResponse::Error(e),
+                },
+                ScheduleMessage::Cancel { route } => match actor.delete_schedule(route) {
+                    Ok(removed) => {
+                        if removed {
+                            schedule_snapshot_dirty = true;
                         }
-                        Err(e) => ScheduleResponse::Error(e),
+                        ScheduleResponse::Ok
                     }
-                }
+                    Err(e) => ScheduleResponse::Error(e),
+                },
                 ScheduleMessage::List { offset, limit } => {
                     let (entries, total_count) = actor.list_entries(offset, limit);
 

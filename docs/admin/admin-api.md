@@ -286,10 +286,14 @@ GET /admin/stream/stats?realm={realm}
 }
 ```
 ### Notice Domain
+All Notice admin responses reflect live in-memory broker state only. Notice subscriptions are session-scoped, disappear on disconnect, and are not restored after broker restart.
+
 #### List Active Subscriptions
 ```
 GET /admin/notice/subscriptions?realm={realm}&route_pattern={pattern}
 ```
+`created_at` is the time the current in-memory subscription was created. `notifications_received` is a live delivery counter for the current in-memory subscription and resets when the client reconnects or the broker restarts.
+
 **Response**:
 ```json
 {
@@ -309,6 +313,8 @@ GET /admin/notice/subscriptions?realm={realm}&route_pattern={pattern}
 ```
 GET /admin/notice/routes?realm={realm}
 ```
+`publishes_total` and `publishes_per_minute` describe live broker-observed activity for the current process lifetime. They are not durable replay or history counters.
+
 **Response**:
 ```json
 {
@@ -326,6 +332,8 @@ GET /admin/notice/routes?realm={realm}
 ```
 GET /admin/notice/stats?realm={realm}
 ```
+These values are point-in-time in-memory statistics for the running broker instance.
+
 **Response**:
 ```json
 {
@@ -340,6 +348,8 @@ GET /admin/notice/stats?realm={realm}
 ```
 POST /admin/notice/subscriptions/{subscription_id}/cancel
 ```
+Force-removes an active in-memory notice subscription from the current broker instance. This endpoint does not cancel durable state and has no effect after the owning session disconnects.
+
 **Headers**: `X-Confirm: true`
 **Response**: 200 OK or 404 Not Found
 ### Queue Domain

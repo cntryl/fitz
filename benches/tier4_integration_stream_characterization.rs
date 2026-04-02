@@ -2,9 +2,9 @@
 mod characterization_support;
 
 use characterization_support::{
-    compute_stats, detect_cliff, delta_per_unit, measure_idle_ws_connection_cost,
-    parse_bench_args, parse_counts, stable_working_set_bytes, write_report, ClientRun,
-    DomainReport, ProductionReport, ScalingPoint,
+    compute_stats, delta_per_unit, detect_cliff, measure_idle_ws_connection_cost, parse_bench_args,
+    parse_counts, stable_working_set_bytes, write_report, ClientRun, DomainReport,
+    ProductionReport, ScalingPoint,
 };
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, parse_stream_response, parse_stream_session_id,
@@ -40,7 +40,10 @@ fn measure_stream(
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut client = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     let session_id = runtime.block_on(open_stream_session(&mut client, route))?;
     let append_frame = build_stream_append(session_id, b"event");
@@ -56,7 +59,13 @@ fn measure_stream(
             Err(_) => single_errors += 1,
         }
     }
-    let single_client_ws = compute_stats("append", started.elapsed(), single_latencies, 1, single_errors);
+    let single_client_ws = compute_stats(
+        "append",
+        started.elapsed(),
+        single_latencies,
+        1,
+        single_errors,
+    );
     let _ = runtime.block_on(client.close());
     drop(server);
 
@@ -70,7 +79,10 @@ fn measure_stream(
         for index in 0..count {
             let route = format!("stream://characterization/stream/{index}/append");
             let mut ws_client = runtime
-                .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+                .block_on(TestWebSocketClient::connect(&format!(
+                    "ws://{}",
+                    server.ws_addr
+                )))
                 .map_err(|error| error.to_string())?;
             let session_id = runtime.block_on(open_stream_session(&mut ws_client, &route))?;
             append_frames.push(build_stream_append(session_id, b"event"));
@@ -80,10 +92,8 @@ fn measure_stream(
         let start = Instant::now();
         let deadline = start + scaling_duration;
         let results = runtime.block_on(join_all(
-            clients
-                .into_iter()
-                .zip(append_frames.into_iter())
-                .map(|(mut ws_client, append_frame)| async move {
+            clients.into_iter().zip(append_frames.into_iter()).map(
+                |(mut ws_client, append_frame)| async move {
                     let mut latencies = Vec::new();
                     let mut errors = 0usize;
                     while Instant::now() < deadline {
@@ -98,7 +108,8 @@ fn measure_stream(
                         latencies_us: latencies,
                         errors,
                     }
-                }),
+                },
+            ),
         ));
 
         let elapsed = start.elapsed();
@@ -120,7 +131,10 @@ fn measure_stream(
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut client = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     thread::sleep(Duration::from_millis(100));
     let before = stable_working_set_bytes()?;
@@ -140,10 +154,16 @@ fn measure_stream(
             .block_on(TestServer::start())
             .map_err(|error| error.to_string())?;
         let mut first = runtime
-            .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+            .block_on(TestWebSocketClient::connect(&format!(
+                "ws://{}",
+                server.ws_addr
+            )))
             .map_err(|error| error.to_string())?;
         let mut second = runtime
-            .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+            .block_on(TestWebSocketClient::connect(&format!(
+                "ws://{}",
+                server.ws_addr
+            )))
             .map_err(|error| error.to_string())?;
         let route = "stream://characterization/stream/hot/append";
         let _ = runtime.block_on(open_stream_session(&mut first, route))?;
@@ -153,7 +173,10 @@ fn measure_stream(
         let (_, status, _) = parse_stream_response(&second_response);
         let _ = runtime.block_on(first.close());
         let _ = runtime.block_on(second.close());
-        format!("second writer on same route returned status {} in verification run", status)
+        format!(
+            "second writer on same route returned status {} in verification run",
+            status
+        )
     };
 
     Ok(DomainReport {

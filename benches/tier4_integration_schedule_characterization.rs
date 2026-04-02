@@ -2,9 +2,9 @@
 mod characterization_support;
 
 use characterization_support::{
-    compute_stats, detect_cliff, delta_per_unit, measure_idle_ws_connection_cost,
-    parse_bench_args, parse_counts, stable_working_set_bytes, write_report, ClientRun,
-    DomainReport, ProductionReport, ScalingPoint, ScenarioReport,
+    compute_stats, delta_per_unit, detect_cliff, measure_idle_ws_connection_cost, parse_bench_args,
+    parse_counts, stable_working_set_bytes, write_report, ClientRun, DomainReport,
+    ProductionReport, ScalingPoint, ScenarioReport,
 };
 use fitz::benchkit::{
     build_schedule_create, build_schedule_create_batch, ensure_schedule_ok, shared_bench_runtime,
@@ -38,7 +38,10 @@ where
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut client = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     let started = Instant::now();
     let deadline = started + single_duration;
@@ -80,7 +83,10 @@ where
         for client_index in 0..count {
             clients.push(
                 runtime
-                    .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+                    .block_on(TestWebSocketClient::connect(&format!(
+                        "ws://{}",
+                        server.ws_addr
+                    )))
                     .map_err(|error| error.to_string())?,
             );
             rings.push(
@@ -92,36 +98,33 @@ where
 
         let started = Instant::now();
         let deadline = started + scaling_duration;
-        let results = runtime.block_on(join_all(
-            clients
-                .into_iter()
-                .zip(rings.into_iter())
-                .map(|(mut client, ring)| async move {
-                    let mut next_index = 0usize;
-                    let mut latencies = Vec::new();
-                    let mut errors = 0usize;
-                    while Instant::now() < deadline {
-                        let frame = &ring[next_index];
-                        next_index = (next_index + 1) % ring.len();
-                        let op_start = Instant::now();
-                        match client.request(frame, RESPONSE_TIMEOUT_MS).await {
-                            Ok(response) => {
-                                if ensure_schedule_ok(&response).is_ok() {
-                                    latencies.push(op_start.elapsed().as_micros() as u64);
-                                } else {
-                                    errors += 1;
-                                }
+        let results = runtime.block_on(join_all(clients.into_iter().zip(rings.into_iter()).map(
+            |(mut client, ring)| async move {
+                let mut next_index = 0usize;
+                let mut latencies = Vec::new();
+                let mut errors = 0usize;
+                while Instant::now() < deadline {
+                    let frame = &ring[next_index];
+                    next_index = (next_index + 1) % ring.len();
+                    let op_start = Instant::now();
+                    match client.request(frame, RESPONSE_TIMEOUT_MS).await {
+                        Ok(response) => {
+                            if ensure_schedule_ok(&response).is_ok() {
+                                latencies.push(op_start.elapsed().as_micros() as u64);
+                            } else {
+                                errors += 1;
                             }
-                            Err(_) => errors += 1,
                         }
+                        Err(_) => errors += 1,
                     }
-                    let _ = client.close().await;
-                    ClientRun {
-                        latencies_us: latencies,
-                        errors,
-                    }
-                }),
-        ));
+                }
+                let _ = client.close().await;
+                ClientRun {
+                    latencies_us: latencies,
+                    errors,
+                }
+            },
+        )));
 
         let mut latencies = Vec::new();
         let mut errors = 0usize;
@@ -199,7 +202,10 @@ fn measure_schedule(
         .block_on(TestServer::start())
         .map_err(|error| error.to_string())?;
     let mut client = runtime
-        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
         .map_err(|error| error.to_string())?;
     let resource_ring: Vec<Vec<u8>> = (0..resource_samples)
         .map(|index| {

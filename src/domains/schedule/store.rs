@@ -409,11 +409,7 @@ mod tests {
         (ScheduleStore::new(db.clone()), db)
     }
 
-    fn read_raw_value(
-        db: &Arc<cntryl_midge::Engine>,
-        cf_id: u64,
-        key: &[u8],
-    ) -> Option<Vec<u8>> {
+    fn read_raw_value(db: &Arc<cntryl_midge::Engine>, cf_id: u64, key: &[u8]) -> Option<Vec<u8>> {
         let txn = db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
             .expect("begin read tx");
@@ -499,7 +495,10 @@ mod tests {
         ];
         let expected_indexes = vec![
             Some(ScheduleStore::encode_key(first_next_fire_ms, &first_route)),
-            Some(ScheduleStore::encode_key(second_next_fire_ms, &second_route)),
+            Some(ScheduleStore::encode_key(
+                second_next_fire_ms,
+                &second_route,
+            )),
         ];
         assert_eq!(actual_indexes, expected_indexes);
     }

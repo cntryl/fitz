@@ -125,10 +125,7 @@ impl WebSocketHandler {
                                     "WS backpressure exceeded, closing session"
                                 );
                                 self.ingress
-                                    .on_close(
-                                        self.session_id,
-                                        CloseReason::Error(reason.clone()),
-                                    )
+                                    .on_close(self.session_id, CloseReason::Error(reason.clone()))
                                     .await;
                                 return Err(reason);
                             }
@@ -139,10 +136,7 @@ impl WebSocketHandler {
                                     "WS channel closed during backpressure retry"
                                 );
                                 self.ingress
-                                    .on_close(
-                                        self.session_id,
-                                        CloseReason::Error(reason.clone()),
-                                    )
+                                    .on_close(self.session_id, CloseReason::Error(reason.clone()))
                                     .await;
                                 return Err(reason);
                             }
@@ -150,7 +144,10 @@ impl WebSocketHandler {
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
                         let reason = "failed to send frame: channel closed".to_string();
-                        error!(session_id = self.session_id, "WS failed to send frame to channel");
+                        error!(
+                            session_id = self.session_id,
+                            "WS failed to send frame to channel"
+                        );
                         self.ingress
                             .on_close(self.session_id, CloseReason::Error(reason.clone()))
                             .await;

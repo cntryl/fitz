@@ -2,8 +2,8 @@
 //! Tests both TCP and WebSocket transports
 
 mod fixtures;
-use fitz::testkit::TestServer;
 use fitz::protocol::payload_codec::PayloadDecoder;
+use fitz::testkit::TestServer;
 use fixtures::define_transport_tests;
 use fixtures::transport::*;
 
@@ -159,9 +159,21 @@ where
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
     let entries = [
-        ("schedule://test/jobs/batch-1/run", "0 0 * * *", &b"backup"[..]),
-        ("schedule://test/jobs/batch-2/run", "15 6 * * *", &b"report"[..]),
-        ("schedule://test/jobs/batch-3/run", "0 * * * *", &b"sync"[..]),
+        (
+            "schedule://test/jobs/batch-1/run",
+            "0 0 * * *",
+            &b"backup"[..],
+        ),
+        (
+            "schedule://test/jobs/batch-2/run",
+            "15 6 * * *",
+            &b"report"[..],
+        ),
+        (
+            "schedule://test/jobs/batch-3/run",
+            "0 * * * *",
+            &b"sync"[..],
+        ),
     ];
     let create_frame = build_schedule_create_batch(&entries);
 
@@ -177,7 +189,10 @@ where
 
     // Assert
     let (_msg_type, create_status, _data) = parse_schedule_response(&create_response);
-    assert_eq!(create_status, 0, "Expected success for schedule batch create");
+    assert_eq!(
+        create_status, 0,
+        "Expected success for schedule batch create"
+    );
 
     let (_msg_type, list_status, list_payload) = parse_schedule_response(&list_response);
     assert_eq!(list_status, 0, "Expected success for schedule list");
