@@ -1,7 +1,7 @@
 use crate::runtime::matcher::Pattern;
 use crate::runtime::routing::{Route, RouteFamily};
 use crate::runtime::{DomainPublishEvent, SubscriptionId, SubscriptionIndex};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub(crate) trait RoutedSubscription {
     fn pattern(&self) -> &Pattern;
@@ -11,6 +11,9 @@ pub(crate) trait RoutedSubscription {
 
 pub(crate) struct RoutedSubscriptionSet<T> {
     subscriptions: HashMap<u64, T>,
+    session_patterns: HashMap<u64, HashMap<String, u64>>,
+    session_subscription_ids: HashMap<u64, HashSet<u64>>,
+    wildcard_subscription_counts: HashMap<u64, usize>,
     index: SubscriptionIndex,
     exact_routes: HashMap<String, Vec<u64>>,
     wildcard_subscription_count: usize,
@@ -20,6 +23,9 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
     pub(crate) fn new() -> Self {
         Self {
             subscriptions: HashMap::new(),
+            session_patterns: HashMap::new(),
+            session_subscription_ids: HashMap::new(),
+            wildcard_subscription_counts: HashMap::new(),
             index: SubscriptionIndex::new(),
             exact_routes: HashMap::new(),
             wildcard_subscription_count: 0,
@@ -31,13 +37,10 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
     }
 
     pub(crate) fn wildcard_subscription_count_for_session(&self, session_id: u64) -> usize {
-        self.subscriptions
-            .values()
-            .filter(|subscription| {
-                subscription.session_id() == session_id
-                    && subscription.pattern().route().contains('*')
-            })
-            .count()
+        self.wildcard_subscription_counts
+            .get(&session_id)
+            .copied()
+            .unwrap_or(0)
     }
 
     pub(crate) fn values(&self) -> impl Iterator<Item = &T> {
@@ -45,23 +48,34 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
     }
 
     pub(crate) fn find_existing_id(&self, session_id: u64, pattern: &str) -> Option<u64> {
-        self.subscriptions
-            .values()
-            .find(|subscription| {
-                subscription.session_id() == session_id && subscription.pattern().route() == pattern
-            })
-            .map(RoutedSubscription::subscription_id)
+        self.session_patterns
+            .get(&session_id)
+            .and_then(|patterns| patterns.get(pattern).copied())
     }
 
     pub(crate) fn insert(&mut self, family_id: RouteFamily, subscription: T) {
         let subscription_id = subscription.subscription_id();
+        let session_id = subscription.session_id();
         let pattern = subscription.pattern().route();
+
+        self.session_patterns
+            .entry(session_id)
+            .or_default()
+            .insert(pattern.to_string(), subscription_id);
+        self.session_subscription_ids
+            .entry(session_id)
+            .or_default()
+            .insert(subscription_id);
 
         if pattern.contains('*') {
             let route = Route::from_ref(pattern);
             self.index
                 .insert(family_id, &route, SubscriptionId(subscription_id));
             self.wildcard_subscription_count += 1;
+            *self
+                .wildcard_subscription_counts
+                .entry(session_id)
+                .or_insert(0) += 1;
         } else {
             self.exact_routes
                 .entry(pattern.to_string())
@@ -78,15 +92,25 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
         session_id: u64,
         pattern: &str,
     ) -> usize {
-        self.remove_matching(family_id, |subscription| {
-            subscription.session_id() == session_id && subscription.pattern().route() == pattern
-        })
+        let Some(subscription_id) = self.find_existing_id(session_id, pattern) else {
+            return 0;
+        };
+
+        self.remove_subscription(family_id, subscription_id);
+        1
     }
 
     pub(crate) fn remove_session(&mut self, family_id: RouteFamily, session_id: u64) -> usize {
-        self.remove_matching(family_id, |subscription| {
-            subscription.session_id() == session_id
-        })
+        let Some(subscription_ids) = self.session_subscription_ids.remove(&session_id) else {
+            return 0;
+        };
+
+        let removed_ids: Vec<u64> = subscription_ids.into_iter().collect();
+        for subscription_id in &removed_ids {
+            self.remove_subscription(family_id, *subscription_id);
+        }
+
+        removed_ids.len()
     }
 
     pub(crate) fn remove_subscription_for_session(
@@ -141,25 +165,32 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
         matched
     }
 
-    fn remove_matching(&mut self, family_id: RouteFamily, matches: impl Fn(&T) -> bool) -> usize {
-        let removed_ids: Vec<u64> = self
-            .subscriptions
-            .iter()
-            .filter_map(|(subscription_id, subscription)| {
-                matches(subscription).then_some(*subscription_id)
-            })
-            .collect();
-
-        for subscription_id in &removed_ids {
-            self.remove_subscription(family_id, *subscription_id);
-        }
-
-        removed_ids.len()
-    }
-
     fn remove_subscription(&mut self, family_id: RouteFamily, subscription_id: u64) {
         if let Some(subscription) = self.subscriptions.remove(&subscription_id) {
+            let session_id = subscription.session_id();
             let pattern = subscription.pattern().route();
+
+            let session_patterns_empty = if let Some(patterns) = self.session_patterns.get_mut(&session_id) {
+                patterns.remove(pattern);
+                patterns.is_empty()
+            } else {
+                false
+            };
+            if session_patterns_empty {
+                self.session_patterns.remove(&session_id);
+            }
+
+            let session_subscriptions_empty = if let Some(subscription_ids) =
+                self.session_subscription_ids.get_mut(&session_id)
+            {
+                subscription_ids.remove(&subscription_id);
+                subscription_ids.is_empty()
+            } else {
+                false
+            };
+            if session_subscriptions_empty {
+                self.session_subscription_ids.remove(&session_id);
+            }
 
             if pattern.contains('*') {
                 let route = Route::from_ref(pattern);
@@ -167,6 +198,18 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
                     .remove(family_id, &route, SubscriptionId(subscription_id));
                 self.wildcard_subscription_count =
                     self.wildcard_subscription_count.saturating_sub(1);
+
+                let wildcard_count_empty = if let Some(count) =
+                    self.wildcard_subscription_counts.get_mut(&session_id)
+                {
+                    *count = count.saturating_sub(1);
+                    *count == 0
+                } else {
+                    false
+                };
+                if wildcard_count_empty {
+                    self.wildcard_subscription_counts.remove(&session_id);
+                }
             } else {
                 let is_empty = if let Some(route_ids) = self.exact_routes.get_mut(pattern) {
                     route_ids.retain(|id| *id != subscription_id);

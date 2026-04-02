@@ -7,7 +7,7 @@ use characterization_support::{
     ScalingPoint,
 };
 use fitz::benchkit::{
-    build_notice_publish, build_notice_subscribe, parse_notice_response, shared_bench_runtime,
+    build_notice_publish, build_notice_subscribe, parse_notice_delivery, shared_bench_runtime,
 };
 use fitz::testkit::{TestServer, TestWebSocketClient};
 use futures::future::join_all;
@@ -54,12 +54,11 @@ fn measure_notice(
     let mut single_errors = 0usize;
     while Instant::now() < deadline {
         let op_start = Instant::now();
-        let publish = runtime.block_on(publisher.request(&publish_frame, RESPONSE_TIMEOUT_MS));
+        let publish = runtime.block_on(publisher.send_frame(&publish_frame));
         let notification = runtime.block_on(subscriber.recv_frame(RESPONSE_TIMEOUT_MS));
         match (publish, notification) {
-            (Ok(ack), Ok(notification)) => {
-                let _ = parse_notice_response(&ack);
-                let _ = parse_notice_response(&notification);
+            (Ok(()), Ok(notification)) => {
+                let _ = parse_notice_delivery(&notification);
                 single_latencies.push(op_start.elapsed().as_micros() as u64);
             }
             _ => single_errors += 1,
@@ -115,7 +114,7 @@ fn measure_notice(
         let mut errors = 0usize;
         while Instant::now() < deadline {
             let op_start = Instant::now();
-            let publish = runtime.block_on(publisher.request(&publish_frame, RESPONSE_TIMEOUT_MS));
+            let publish = runtime.block_on(publisher.send_frame(&publish_frame));
             let notifications = runtime.block_on(join_all(subscribers.iter().map(|client| {
                 let client = client.clone();
                 async move {
@@ -126,12 +125,9 @@ fn measure_notice(
 
             let delivered = notifications.iter().all(|result| result.is_ok());
             let publish_ok = publish.is_ok();
-            if let Ok(ref ack) = publish {
-                let _ = parse_notice_response(ack);
-            }
             if publish_ok && delivered {
                 for notification in notifications.into_iter().flatten() {
-                    let _ = parse_notice_response(&notification);
+                    let _ = parse_notice_delivery(&notification);
                 }
                 latencies.push(op_start.elapsed().as_micros() as u64);
             } else {

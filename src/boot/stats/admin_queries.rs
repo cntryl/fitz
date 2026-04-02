@@ -1,6 +1,13 @@
 use super::Runtime;
 
 impl Runtime {
+    fn refresh_notice_admin_snapshot(&self) {
+        let domains = self.domains.read().clone();
+        if let Some(domains) = domains {
+            domains.notice.refresh_admin_snapshot_if_dirty();
+        }
+    }
+
     pub fn kv_list_transactions(
         &self,
         realm: Option<&str>,
@@ -17,6 +24,7 @@ impl Runtime {
         realm: Option<&str>,
         route_pattern: Option<&str>,
     ) -> Vec<crate::api::admin::NoticeSubscription> {
+        self.refresh_notice_admin_snapshot();
         self.admin_read_model
             .notice_subscriptions(realm, route_pattern)
     }
@@ -25,6 +33,7 @@ impl Runtime {
         &self,
         realm: Option<&str>,
     ) -> Vec<crate::api::admin::NoticeRouteInfo> {
+        self.refresh_notice_admin_snapshot();
         self.admin_read_model.notice_routes(realm)
     }
 

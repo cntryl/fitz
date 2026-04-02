@@ -114,6 +114,16 @@ pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
     builder.build()
 }
 
+/// Build NOTICE UNSUBSCRIBE frame (msg_type 502)
+pub fn build_notice_unsubscribe(subscription_id: u64) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u64(subscription_id);
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(502, &buf);
+    builder.build()
+}
+
 /// Build QUEUE SUBSCRIBE frame (msg_type 207)
 pub fn build_queue_subscribe(route_pattern: &str) -> Vec<u8> {
     // Wire format: [string pattern]
@@ -141,6 +151,52 @@ pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     }
 
     (0, 1, Vec::new())
+}
+
+pub fn parse_notice_subscription_id(data: &[u8]) -> Result<Option<u64>, String> {
+    use crate::protocol::payload_codec::PayloadDecoder;
+
+    let mut decoder = PayloadDecoder::new(data);
+    let subscription_id = decoder.get_optional_u64()?;
+    if !decoder.is_complete() {
+        return Err("Trailing data in notice subscription response".to_string());
+    }
+
+    Ok(subscription_id)
+}
+
+pub struct NoticeDelivery {
+    pub msg_type: u16,
+    pub subscription_id: u64,
+    pub route: String,
+    pub body: Vec<u8>,
+}
+
+pub fn parse_notice_delivery(frame: &[u8]) -> Result<NoticeDelivery, String> {
+    use crate::protocol::payload_codec::PayloadDecoder;
+
+    let mut parser = TlvFrameParser::new(frame);
+    let (msg_type, payload) = parser
+        .next_field_ref()
+        .ok_or_else(|| "Missing notice delivery frame".to_string())?;
+    if msg_type != 504 {
+        return Err(format!("Unexpected notice delivery msg_type: {}", msg_type));
+    }
+
+    let mut dec = PayloadDecoder::new(payload);
+    let subscription_id = dec.get_u64()?;
+    let route = dec.get_string()?;
+    let body = dec.get_bytes()?.to_vec();
+    if !dec.is_complete() {
+        return Err("Trailing data in notice delivery".to_string());
+    }
+
+    Ok(NoticeDelivery {
+        msg_type,
+        subscription_id,
+        route,
+        body,
+    })
 }
 
 /// Build QUEUE ENQUEUE frame (msg_type 200)

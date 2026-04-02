@@ -36,6 +36,7 @@ pub struct NoticeDomainSink {
     next_sub_id: AtomicU64,
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    admin_snapshot_dirty: AtomicBool,
     active: AtomicBool,
 }
 
@@ -49,6 +50,7 @@ impl NoticeDomainSink {
             next_sub_id: AtomicU64::new(1),
             router,
             admin_read_model,
+            admin_snapshot_dirty: AtomicBool::new(false),
             active: AtomicBool::new(true),
         }
     }
@@ -88,6 +90,16 @@ impl NoticeDomainSink {
                 })
                 .collect(),
         );
+    }
+
+    fn mark_admin_snapshot_dirty(&self) {
+        self.admin_snapshot_dirty.store(true, Ordering::Relaxed);
+    }
+
+    pub fn refresh_admin_snapshot_if_dirty(&self) {
+        if self.admin_snapshot_dirty.swap(false, Ordering::AcqRel) {
+            self.sync_admin_snapshot();
+        }
     }
 
     fn fan_out_notice_event(
@@ -139,10 +151,11 @@ impl NoticeDomainSink {
         Ok(())
     }
 
-    pub fn unsubscribe_all_for_session(&self, session_id: u64) {
+    pub fn unsubscribe_all_for_session(&self, session_id: u64) -> usize {
         let mut families = self.families.lock();
+        let mut removed = 0;
         for (family_id, state) in families.iter_mut() {
-            state.remove_session(
+            removed += state.remove_session(
                 crate::runtime::routing::RouteFamily::new(*family_id),
                 session_id,
             );
@@ -153,7 +166,10 @@ impl NoticeDomainSink {
             "All notice subscriptions removed for session (disconnect cleanup)"
         );
         drop(families);
-        self.sync_admin_snapshot();
+        if removed > 0 {
+            self.mark_admin_snapshot_dirty();
+        }
+        removed
     }
 
     pub fn subscription_count(&self) -> usize {
@@ -278,7 +294,7 @@ impl MailboxSink for NoticeDomainSink {
                 } else {
                     let existing_sub_id =
                         state.find_existing_id(sub_msg.session_id.0, sub_msg.pattern.as_str());
-                    let response = if let Some(id) = existing_sub_id {
+                    let (response, state_changed) = if let Some(id) = existing_sub_id {
                         tracing::debug!(
                             domain = "notice",
                             session = sub_msg.session_id.0,
@@ -286,9 +302,12 @@ impl MailboxSink for NoticeDomainSink {
                             pattern = sub_msg.pattern.as_str(),
                             "Notice subscription already exists (idempotent)"
                         );
-                        NoticeResponse::SubscribeOk {
-                            subscription_id: id,
-                        }
+                        (
+                            NoticeResponse::SubscribeOk {
+                                subscription_id: id,
+                            },
+                            false,
+                        )
                     } else if self.wildcard_subscription_limit_reached(
                         state,
                         sub_msg.session_id.0,
@@ -301,9 +320,12 @@ impl MailboxSink for NoticeDomainSink {
                             limit = MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION,
                             "Rejected wildcard notice subscription because session limit was exceeded"
                         );
-                        NoticeResponse::Error(format!(
-                            "wildcard subscription limit exceeded ({MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION} per session)"
-                        ))
+                        (
+                            NoticeResponse::Error(format!(
+                                "wildcard subscription limit exceeded ({MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION} per session)"
+                            )),
+                            false,
+                        )
                     } else {
                         let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
                         state.insert(
@@ -325,13 +347,15 @@ impl MailboxSink for NoticeDomainSink {
                             pattern = sub_msg.pattern.as_str(),
                             "Notice subscription added"
                         );
-                        NoticeResponse::SubscribeOk {
-                            subscription_id: new_id,
-                        }
+                        (
+                            NoticeResponse::SubscribeOk {
+                                subscription_id: new_id,
+                            },
+                            true,
+                        )
                     };
 
-                    let should_sync_admin_snapshot =
-                        matches!(response, NoticeResponse::SubscribeOk { .. });
+                    let should_sync_admin_snapshot = state_changed;
 
                     (Some(response), should_sync_admin_snapshot)
                 }
@@ -339,29 +363,31 @@ impl MailboxSink for NoticeDomainSink {
             NotificationMessage::Unsubscribe(unsub_msg) => {
                 let family_id = unsub_msg.family_id.as_u64();
                 let mut families = self.families.lock();
-                if let Some(state) = families.get_mut(&family_id) {
+                let removed = if let Some(state) = families.get_mut(&family_id) {
                     state.remove_subscription_for_session(
                         unsub_msg.family_id,
                         unsub_msg.session_id.0,
                         unsub_msg.subscription_id,
-                    );
-                }
-                (Some(NoticeResponse::Ok), true)
+                    )
+                } else {
+                    false
+                };
+                (Some(NoticeResponse::Ok), removed)
             }
             NotificationMessage::UnsubscribeAll(unsub_all) => {
                 let session_id = unsub_all.session_id.0;
-                self.unsubscribe_all_for_session(session_id);
+                let removed = self.unsubscribe_all_for_session(session_id);
                 tracing::debug!(
                     domain = "notice",
                     session = session_id,
                     "All subscriptions removed for session"
                 );
-                (Some(NoticeResponse::Ok), true)
+                (Some(NoticeResponse::Ok), removed > 0)
             }
             NotificationMessage::Deliver(_) => (Some(NoticeResponse::Ok), false),
         };
         if should_sync_admin_snapshot {
-            self.sync_admin_snapshot();
+            self.mark_admin_snapshot_dirty();
         }
 
         if let Some(response) = response_opt {
@@ -539,6 +565,10 @@ mod tests {
         assert_eq!(actual_routes, expected_routes);
     }
 
+    fn refresh_notice_admin_snapshot(sink: &NoticeDomainSink) {
+        sink.refresh_admin_snapshot_if_dirty();
+    }
+
     #[test]
     fn should_create_notice_domain_sink() {
         // Arrange
@@ -650,6 +680,8 @@ mod tests {
         let wildcard_response = decode_notice_response(&subscriber_mailbox);
         assert_eq!(wildcard_response.status, 0);
 
+        refresh_notice_admin_snapshot(&sink);
+
         let before_subscriptions = admin_read_model.notice_subscriptions(None, None);
         let before_routes = admin_read_model.notice_routes(None);
         assert_notice_admin_subscriptions(&before_subscriptions, &[exact_route, wildcard_route]);
@@ -660,6 +692,7 @@ mod tests {
 
         // Assert
         assert_eq!(sink.subscription_count(), 0);
+        refresh_notice_admin_snapshot(&sink);
         assert!(admin_read_model.notice_subscriptions(None, None).is_empty());
         assert!(admin_read_model.notice_routes(None).is_empty());
     }
@@ -839,6 +872,8 @@ mod tests {
         assert_eq!(unsubscribe_response.status, 0);
         assert_eq!(sink.subscription_count(), 1);
 
+        refresh_notice_admin_snapshot(&sink);
+
         let subscriptions = admin_read_model.notice_subscriptions(None, None);
         let routes = admin_read_model.notice_routes(None);
         assert_notice_admin_subscriptions(&subscriptions, &[retained_route]);
@@ -895,6 +930,7 @@ mod tests {
             sink.subscription_count(),
             MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION
         );
+        refresh_notice_admin_snapshot(&sink);
         assert_eq!(
             admin_read_model.notice_subscriptions(None, None).len(),
             MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION

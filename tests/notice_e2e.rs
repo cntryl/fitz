@@ -16,11 +16,7 @@ async fn wait_for_notice_subscription_count(server: &TestServer, expected: usize
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let live_count = server.runtime.notice_subscriptions_active();
-            let admin_count = server
-                .runtime
-                .admin_read_model()
-                .notice_subscriptions(None, None)
-                .len();
+            let admin_count = server.runtime.notice_list_subscriptions(None, None).len();
 
             if live_count == expected && admin_count == expected {
                 return;
@@ -351,11 +347,7 @@ where
         .expect("publish after disconnect");
     assert_eq!(server.runtime.notice_subscriptions_active(), 0);
     assert!(
-        server
-            .runtime
-            .admin_read_model()
-            .notice_subscriptions(None, None)
-            .is_empty(),
+        server.runtime.notice_list_subscriptions(None, None).is_empty(),
         "Admin notice snapshot should reflect disconnect cleanup"
     );
 }
