@@ -239,41 +239,6 @@ name = "tier4_integration_stream"
 harness = false
 path = "benches/tier4_integration_stream.rs"
 
-[[bench]]
-name = "tier4_integration_kv_characterization"
-harness = false
-path = "benches/tier4_integration_kv_characterization.rs"
-
-[[bench]]
-name = "tier4_integration_stream_characterization"
-harness = false
-path = "benches/tier4_integration_stream_characterization.rs"
-
-[[bench]]
-name = "tier4_integration_queue_characterization"
-harness = false
-path = "benches/tier4_integration_queue_characterization.rs"
-
-[[bench]]
-name = "tier4_integration_notice_characterization"
-harness = false
-path = "benches/tier4_integration_notice_characterization.rs"
-
-[[bench]]
-name = "tier4_integration_rpc_characterization"
-harness = false
-path = "benches/tier4_integration_rpc_characterization.rs"
-
-[[bench]]
-name = "tier4_integration_lease_characterization"
-harness = false
-path = "benches/tier4_integration_lease_characterization.rs"
-
-[[bench]]
-name = "tier4_integration_schedule_characterization"
-harness = false
-path = "benches/tier4_integration_schedule_characterization.rs"
-
 [features]
 # Feature flag to skip admin snapshot syncing in RPC domain for benchmarking
 # Helps identify if snapshot overhead is the dominant bottleneck in scaling collapse

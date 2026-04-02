@@ -46,6 +46,18 @@ struct PendingAcquireRef {
     queued_token: u64,
 }
 
+struct LeaseAcquireRequest {
+    key: crate::domains::lease::protocol::LeaseKey,
+    owner_session_id: u64,
+    owner_id: String,
+    ttl_secs: u64,
+    wait_seconds: u32,
+    reply_source: crate::runtime::routing::RouteAddress,
+    reply_destination: Option<crate::runtime::routing::RouteAddress>,
+    channel_id: crate::protocol::frame::ChannelId,
+    route_family: crate::runtime::routing::RouteFamily,
+}
+
 pub struct LeaseDomainSink {
     leases: Mutex<HashMap<crate::domains::lease::protocol::LeaseKey, SinkLeaseState>>,
     session_leases: Mutex<HashMap<u64, HashSet<crate::domains::lease::protocol::LeaseKey>>>,
@@ -580,19 +592,20 @@ impl LeaseDomainSink {
         self.next_token.fetch_add(1, Ordering::Relaxed)
     }
 
-    fn handle_acquire(
-        &self,
-        key: crate::domains::lease::protocol::LeaseKey,
-        owner_session_id: u64,
-        owner_id: String,
-        ttl_secs: u64,
-        wait_seconds: u32,
-        reply_source: crate::runtime::routing::RouteAddress,
-        reply_destination: Option<crate::runtime::routing::RouteAddress>,
-        channel_id: crate::protocol::frame::ChannelId,
-        route_family: crate::runtime::routing::RouteFamily,
-    ) -> crate::domains::lease::protocol::LeaseResponse {
+    fn handle_acquire(&self, request: LeaseAcquireRequest) -> crate::domains::lease::protocol::LeaseResponse {
         use crate::domains::lease::protocol::LeaseResponse;
+
+        let LeaseAcquireRequest {
+            key,
+            owner_session_id,
+            owner_id,
+            ttl_secs,
+            wait_seconds,
+            reply_source,
+            reply_destination,
+            channel_id,
+            route_family,
+        } = request;
 
         let now = Instant::now();
         let ttl = Duration::from_secs(ttl_secs);
@@ -903,17 +916,17 @@ impl MailboxSink for LeaseDomainSink {
                 ttl_secs,
                 wait_seconds,
             } => match LeaseKey::from_route(family_id, &route) {
-                Some(key) => self.handle_acquire(
+                Some(key) => self.handle_acquire(LeaseAcquireRequest {
                     key,
-                    frame_ctx.session_id,
-                    effective_owner(owner_id),
+                    owner_session_id: frame_ctx.session_id,
+                    owner_id: effective_owner(owner_id),
                     ttl_secs,
                     wait_seconds,
-                    envelope.destination().clone(),
-                    envelope.source().cloned(),
-                    frame_ctx.channel_id,
-                    frame_ctx.route_family,
-                ),
+                    reply_source: envelope.destination().clone(),
+                    reply_destination: envelope.source().cloned(),
+                    channel_id: frame_ctx.channel_id,
+                    route_family: frame_ctx.route_family,
+                }),
                 None => LeaseResponse::NotFound,
             },
             LeaseMessage::Extend {
