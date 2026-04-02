@@ -392,7 +392,8 @@ impl RuntimeIngress {
             400..=402 => Ok(Some(("lease", crate::auth::Access::Write))),
             403 => Ok(Some(("lease", crate::auth::Access::Read))),
             404..=499 => Ok(Some(("lease", crate::auth::Access::Write))),
-            500..=504 => Ok(Some(("notice", crate::auth::Access::Write))),
+            500..=503 => Ok(Some(("notice", crate::auth::Access::Write))),
+            504 => Err("invalid message type: 504 is server-to-client only"),
             505..=599 => Ok(Some(("notice", crate::auth::Access::Read))),
             600..=603 => Ok(Some(("stream", crate::auth::Access::Write))),
             604..=608 => Ok(Some(("stream", crate::auth::Access::Read))),
@@ -402,6 +403,10 @@ impl RuntimeIngress {
             705 => Err("invalid message type: 705 is server-to-client only"),
             _ => Ok(None),
         }
+    }
+
+    fn skips_route_authorization(msg_type: crate::protocol::tlv::MessageType) -> bool {
+        matches!(msg_type.as_u16(), 502 | 503)
     }
 
     fn derive_auth_route_for_frame<'a>(
@@ -689,6 +694,7 @@ impl Ingress for RuntimeIngress {
                     let auth_route = if auth_routes.is_none() {
                         match self.derive_auth_route_for_frame(msg_type, payload_ref) {
                             Ok(Some(r)) => Some(r),
+                            Ok(None) if Self::skips_route_authorization(msg_type) => None,
                             Ok(None) => {
                                 Some(Cow::Borrowed(Self::wildcard_route_for_domain(domain)))
                             }
@@ -719,7 +725,7 @@ impl Ingress for RuntimeIngress {
                             .as_ref()
                             .and_then(|routes| routes.first().map(|route| route.as_ref()))
                             .or_else(|| auth_route.as_ref().map(|route| route.as_ref()))
-                            .unwrap_or(Self::wildcard_route_for_domain(domain));
+                            .unwrap_or("<session-owned>");
                         let auth_target_count =
                             auth_routes.as_ref().map(|routes| routes.len()).unwrap_or(1);
 
@@ -747,15 +753,11 @@ impl Ingress for RuntimeIngress {
                                         .unwrap_or(Self::wildcard_route_for_domain(domain)),
                                     auth_routes.len(),
                                 )
+                            } else if let Some(auth_route) = auth_route.as_ref() {
+                                let auth_route = auth_route.as_ref();
+                                (actor_ref.authorize_route(auth_route, access), auth_route, 1)
                             } else {
-                                let auth_route = auth_route
-                                    .as_ref()
-                                    .expect("single-route auth target must exist");
-                                (
-                                    actor_ref.authorize_route(auth_route.as_ref(), access),
-                                    auth_route.as_ref(),
-                                    1,
-                                )
+                                (true, "<session-owned>", 0)
                             };
 
                         // Record latency

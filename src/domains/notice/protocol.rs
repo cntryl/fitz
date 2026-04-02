@@ -18,7 +18,7 @@ pub enum NotificationMessage {
     Publish(PublishMessage),
     /// Subscribe to messages matching a pattern (from SessionActor)
     Subscribe(SubscribeMessage),
-    /// Unsubscribe from a pattern (from SessionActor)
+    /// Unsubscribe from a subscription ID (from SessionActor)
     Unsubscribe(UnsubscribeMessage),
     /// Unsubscribe all subscriptions for a session (called on disconnect)
     UnsubscribeAll(UnsubscribeAllMessage),
@@ -79,33 +79,25 @@ impl SubscribeMessage {
     }
 }
 
-/// Unsubscribe from a pattern
+/// Unsubscribe from a subscription
 ///
 /// Sent from SessionActor to NoticeRouteActor.
 #[derive(Debug, Clone)]
 pub struct UnsubscribeMessage {
     /// Route family for isolation
     pub family_id: RouteFamily,
-    /// Pattern being unsubscribed from
-    pub pattern: Route,
+    /// Subscription being unsubscribed
+    pub subscription_id: u64,
     /// Session being unsubscribed
     pub session_id: SessionId,
-    /// Address to remove
-    pub subscriber: RouteAddress,
 }
 
 impl UnsubscribeMessage {
-    pub fn new(
-        family_id: RouteFamily,
-        pattern: Route,
-        session_id: SessionId,
-        subscriber: RouteAddress,
-    ) -> Self {
+    pub fn new(family_id: RouteFamily, subscription_id: u64, session_id: SessionId) -> Self {
         Self {
             family_id,
-            pattern,
+            subscription_id,
             session_id,
-            subscriber,
         }
     }
 }

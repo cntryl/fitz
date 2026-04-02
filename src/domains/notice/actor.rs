@@ -107,20 +107,16 @@ impl NoticeRouteActor {
 
     /// Unsubscribe from a specific pattern
     fn handle_unsubscribe(&mut self, msg: UnsubscribeMessage) {
-        // Find and remove all subscriptions matching this session + subscriber + pattern
-        let to_remove: Vec<SubscriptionId> = self
-            .subscriptions
-            .iter()
-            .filter(|(_, (sess_id, addr, pattern, _))| {
-                *sess_id == msg.session_id && addr == &msg.subscriber && pattern == &msg.pattern
-            })
-            .map(|(&id, _)| id)
-            .collect();
+        let subscription_id = SubscriptionId(msg.subscription_id);
 
-        for id in to_remove {
-            // remove from index using the pattern
-            self.index.remove(self.family_id, &msg.pattern, id);
-            self.subscriptions.remove(&id);
+        if let Some((session_id, _subscriber, pattern, _)) =
+            self.subscriptions.get(&subscription_id)
+        {
+            if *session_id == msg.session_id {
+                let pattern = pattern.clone();
+                self.index.remove(self.family_id, &pattern, subscription_id);
+                self.subscriptions.remove(&subscription_id);
+            }
         }
     }
 
@@ -386,12 +382,7 @@ mod tests {
         );
 
         // Act
-        let unsubscribe = UnsubscribeMessage::new(
-            test_family(),
-            pattern.clone(),
-            test_session_id(1),
-            subscriber.clone(),
-        );
+        let unsubscribe = UnsubscribeMessage::new(test_family(), 1, test_session_id(1));
         actor.handle_unsubscribe(unsubscribe.clone());
         actor.handle_unsubscribe(unsubscribe); // Second time should be safe
 
@@ -664,15 +655,9 @@ mod tests {
     fn should_be_noop_when_unsubscribing_nonexistent_pattern() {
         // Arrange
         let mut actor = NoticeRouteActor::new(test_family());
-        let subscriber = test_address("session/ghost");
 
-        // Act — unsubscribe a pattern that was never subscribed
-        let unsubscribe = UnsubscribeMessage::new(
-            test_family(),
-            test_route("notify://realm/ghost/*"),
-            test_session_id(1),
-            subscriber,
-        );
+        // Act — unsubscribe an id that was never subscribed
+        let unsubscribe = UnsubscribeMessage::new(test_family(), 999, test_session_id(1));
         actor.handle_unsubscribe(unsubscribe);
 
         // Assert — actor remains empty, no panic

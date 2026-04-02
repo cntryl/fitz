@@ -379,12 +379,11 @@ pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
 }
 
 /// Build NOTICE UNSUBSCRIBE frame (msg_type 502)
-pub fn build_notice_unsubscribe(route_pattern: &str) -> Vec<u8> {
+pub fn build_notice_unsubscribe(subscription_id: u64) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
-    buf.put_u32(route_pattern.len() as u32);
-    buf.put_slice(route_pattern.as_bytes());
+    buf.put_u64(subscription_id);
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(502, &buf);

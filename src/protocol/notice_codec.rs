@@ -19,8 +19,10 @@ use crate::session::SessionId;
 /// Response from notice operations
 #[derive(Debug, Clone)]
 pub enum NoticeResponse {
-    /// Operation succeeded with optional subscription ID
-    Ok { subscription_id: Option<u64> },
+    /// Operation succeeded with no response payload
+    Ok,
+    /// Subscribe succeeded and returns a subscription ID
+    SubscribeOk { subscription_id: u64 },
     /// Operation failed with error message
     Error(String),
 }
@@ -42,11 +44,10 @@ pub fn parse_request(
         500 => parse_publish(&mut dec, route_family).map(NotificationMessage::Publish),
         501 => parse_subscribe(&mut dec, route_family, session_id, subscriber)
             .map(NotificationMessage::Subscribe),
-        502 => parse_unsubscribe(&mut dec, route_family, session_id, subscriber)
+        502 => parse_unsubscribe(&mut dec, route_family, session_id)
             .map(NotificationMessage::Unsubscribe),
-        503 => {
-            parse_unsubscribe_all(session_id, subscriber).map(NotificationMessage::UnsubscribeAll)
-        }
+        503 => parse_unsubscribe_all(&mut dec, session_id, subscriber)
+            .map(NotificationMessage::UnsubscribeAll),
         504 => parse_deliver(&mut dec).map(NotificationMessage::Deliver),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
@@ -65,14 +66,26 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             }
             Ok(Some(route))
         }
-        501 | 502 => {
+        501 => {
             let pattern = dec.get_string_ref()?;
             if !dec.is_complete() {
                 return Err("Trailing data in message".to_string());
             }
             Ok(Some(pattern))
         }
-        503 => Ok(None),
+        502 => {
+            dec.get_u64()?;
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(None)
+        }
+        503 => {
+            if !dec.is_complete() {
+                return Err("Trailing data in message".to_string());
+            }
+            Ok(None)
+        }
         504 => {
             dec.get_u64()?;
             let route = dec.get_string_ref()?;
@@ -97,9 +110,12 @@ pub fn encode_response_into(response: &NoticeResponse, enc: &mut PayloadEncoder)
     enc.clear();
 
     match response {
-        NoticeResponse::Ok { subscription_id } => {
+        NoticeResponse::Ok => {
             enc.put_u8(0); // success flag
-            enc.put_optional_u64(*subscription_id);
+        }
+        NoticeResponse::SubscribeOk { subscription_id } => {
+            enc.put_u8(0); // success flag
+            enc.put_optional_u64(Some(*subscription_id));
         }
         NoticeResponse::Error(e) => {
             enc.put_u8(1); // error flag
@@ -154,15 +170,13 @@ fn parse_subscribe(
     })
 }
 
-/// Wire format: `[string pattern]`
+/// Wire format: `[u64 subscription_id]`
 fn parse_unsubscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
     session_id: SessionId,
-    subscriber: RouteAddress,
 ) -> Result<UnsubscribeMessage, String> {
-    let pattern_str = dec.get_string()?;
-    let pattern = Route::new(pattern_str);
+    let subscription_id = dec.get_u64()?;
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -170,17 +184,21 @@ fn parse_unsubscribe(
 
     Ok(UnsubscribeMessage {
         family_id: route_family,
-        pattern,
+        subscription_id,
         session_id,
-        subscriber,
     })
 }
 
 /// Wire format: `(empty)` — all fields are server-supplied
 fn parse_unsubscribe_all(
+    dec: &mut PayloadDecoder,
     session_id: SessionId,
     subscriber: RouteAddress,
 ) -> Result<UnsubscribeAllMessage, String> {
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
     Ok(UnsubscribeAllMessage {
         session_id,
         subscriber,
@@ -213,6 +231,7 @@ pub fn encode_notify_into(
 }
 
 fn parse_deliver(dec: &mut PayloadDecoder) -> Result<DeliverMessage, String> {
+    let _subscription_id = dec.get_u64()?;
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
     let payload = dec.get_bytes()?;

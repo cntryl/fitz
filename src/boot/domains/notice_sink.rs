@@ -255,12 +255,7 @@ impl MailboxSink for NoticeDomainSink {
                     );
                     self.fan_out_notice_event(state, &event, &mut payload_encoder);
                 }
-                (
-                    Some(NoticeResponse::Ok {
-                        subscription_id: None,
-                    }),
-                    false,
-                )
+                (None, false)
             }
             NotificationMessage::Subscribe(sub_msg) => {
                 let family_id = sub_msg.family_id.as_u64();
@@ -291,8 +286,8 @@ impl MailboxSink for NoticeDomainSink {
                             pattern = sub_msg.pattern.as_str(),
                             "Notice subscription already exists (idempotent)"
                         );
-                        NoticeResponse::Ok {
-                            subscription_id: Some(id),
+                        NoticeResponse::SubscribeOk {
+                            subscription_id: id,
                         }
                     } else if self.wildcard_subscription_limit_reached(
                         state,
@@ -330,12 +325,13 @@ impl MailboxSink for NoticeDomainSink {
                             pattern = sub_msg.pattern.as_str(),
                             "Notice subscription added"
                         );
-                        NoticeResponse::Ok {
-                            subscription_id: Some(new_id),
+                        NoticeResponse::SubscribeOk {
+                            subscription_id: new_id,
                         }
                     };
 
-                    let should_sync_admin_snapshot = matches!(response, NoticeResponse::Ok { .. });
+                    let should_sync_admin_snapshot =
+                        matches!(response, NoticeResponse::SubscribeOk { .. });
 
                     (Some(response), should_sync_admin_snapshot)
                 }
@@ -344,18 +340,13 @@ impl MailboxSink for NoticeDomainSink {
                 let family_id = unsub_msg.family_id.as_u64();
                 let mut families = self.families.lock();
                 if let Some(state) = families.get_mut(&family_id) {
-                    state.remove_session_pattern(
+                    state.remove_subscription_for_session(
                         unsub_msg.family_id,
                         unsub_msg.session_id.0,
-                        unsub_msg.pattern.as_str(),
+                        unsub_msg.subscription_id,
                     );
                 }
-                (
-                    Some(NoticeResponse::Ok {
-                        subscription_id: None,
-                    }),
-                    true,
-                )
+                (Some(NoticeResponse::Ok), true)
             }
             NotificationMessage::UnsubscribeAll(unsub_all) => {
                 let session_id = unsub_all.session_id.0;
@@ -365,19 +356,9 @@ impl MailboxSink for NoticeDomainSink {
                     session = session_id,
                     "All subscriptions removed for session"
                 );
-                (
-                    Some(NoticeResponse::Ok {
-                        subscription_id: None,
-                    }),
-                    true,
-                )
+                (Some(NoticeResponse::Ok), true)
             }
-            NotificationMessage::Deliver(_) => (
-                Some(NoticeResponse::Ok {
-                    subscription_id: None,
-                }),
-                false,
-            ),
+            NotificationMessage::Deliver(_) => (Some(NoticeResponse::Ok), false),
         };
         if should_sync_admin_snapshot {
             self.sync_admin_snapshot();
@@ -434,6 +415,12 @@ mod tests {
         Bytes::from(encoder.finish())
     }
 
+    fn encode_notice_unsubscribe(subscription_id: u64) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_u64(subscription_id);
+        Bytes::from(encoder.finish())
+    }
+
     fn drain_mailbox(mailbox: &Mailbox) {
         while mailbox.receiver().try_recv().is_ok() {}
     }
@@ -456,9 +443,16 @@ mod tests {
         let status = decoder.get_u8().expect("notice response status");
 
         if status == 0 {
-            let subscription_id = decoder
-                .get_optional_u64()
-                .expect("notice response subscription id");
+            let subscription_id = if decoder.remaining() > 0 {
+                Some(
+                    decoder
+                        .get_optional_u64()
+                        .expect("notice response subscription id")
+                        .expect("notice response subscription id value"),
+                )
+            } else {
+                None
+            };
             assert!(decoder.is_complete());
             NoticeResponsePayload {
                 status,
@@ -503,7 +497,7 @@ mod tests {
         subscriber_address: &RouteAddress,
         notice_address: &RouteAddress,
         session_id: u64,
-        pattern: &str,
+        subscription_id: u64,
         family: RouteFamily,
     ) {
         sink.deliver(Envelope::from_route(
@@ -513,7 +507,7 @@ mod tests {
                 session_id,
                 ChannelId::Sub,
                 MessageType::new(502),
-                encode_notice_subscribe(pattern),
+                encode_notice_unsubscribe(subscription_id),
                 family,
             ),
         ))
@@ -616,22 +610,7 @@ mod tests {
         // Assert
         assert_eq!(sink.subscription_count(), 0);
         assert!(subscriber_mailbox.receiver().try_recv().is_err());
-
-        let publish_envelope = publisher_mailbox
-            .receiver()
-            .try_recv()
-            .expect("publish ack envelope");
-        let publish_frame = publish_envelope
-            .into_payload::<FrameContext>()
-            .expect("publish ack frame");
-        let mut publish_decoder = PayloadDecoder::new(&publish_frame.payload);
-        let publish_status = publish_decoder.get_u8().expect("publish status");
-        assert_eq!(publish_status, 0);
-        let publish_subscription_id = publish_decoder
-            .get_optional_u64()
-            .expect("publish subscription id");
-        assert!(publish_subscription_id.is_none());
-        assert!(publish_decoder.is_complete());
+        assert!(publisher_mailbox.receiver().try_recv().is_err());
     }
 
     #[test]
@@ -716,10 +695,10 @@ mod tests {
             ),
         ))
         .expect("subscribe removed notice route");
-        let _removed_subscribe_ack = subscriber_mailbox
-            .receiver()
-            .try_recv()
-            .expect("removed subscribe ack envelope");
+        let removed_subscribe_response = decode_notice_response(&subscriber_mailbox);
+        let removed_subscription_id = removed_subscribe_response
+            .subscription_id
+            .expect("removed subscribe subscription id");
 
         sink.deliver(Envelope::from_route(
             subscriber_address.clone(),
@@ -733,10 +712,7 @@ mod tests {
             ),
         ))
         .expect("subscribe retained notice route");
-        let _retained_subscribe_ack = subscriber_mailbox
-            .receiver()
-            .try_recv()
-            .expect("retained subscribe ack envelope");
+        let _retained_subscribe_response = decode_notice_response(&subscriber_mailbox);
         assert_eq!(sink.subscription_count(), 2);
         drain_mailbox(&subscriber_mailbox);
         drain_mailbox(&publisher_mailbox);
@@ -749,25 +725,14 @@ mod tests {
                 subscriber_session_id,
                 ChannelId::Sub,
                 MessageType::new(502),
-                encode_notice_subscribe(removed_route),
+                encode_notice_unsubscribe(removed_subscription_id),
                 family,
             ),
         ))
         .expect("unsubscribe removed notice route");
-        let unsubscribe_envelope = subscriber_mailbox
-            .receiver()
-            .try_recv()
-            .expect("unsubscribe ack envelope");
-        let unsubscribe_frame = unsubscribe_envelope
-            .into_payload::<FrameContext>()
-            .expect("unsubscribe ack frame");
-        let mut unsubscribe_decoder = PayloadDecoder::new(&unsubscribe_frame.payload);
-        assert_eq!(unsubscribe_decoder.get_u8().expect("unsubscribe status"), 0);
-        let unsubscribe_subscription_id = unsubscribe_decoder
-            .get_optional_u64()
-            .expect("unsubscribe subscription id");
-        assert!(unsubscribe_subscription_id.is_none());
-        assert!(unsubscribe_decoder.is_complete());
+        let unsubscribe_response = decode_notice_response(&subscriber_mailbox);
+        assert_eq!(unsubscribe_response.status, 0);
+        assert!(unsubscribe_response.subscription_id.is_none());
         assert_eq!(sink.subscription_count(), 1);
 
         sink.deliver(Envelope::from_route(
@@ -782,25 +747,7 @@ mod tests {
             ),
         ))
         .expect("publish removed notice event");
-        let removed_publish_envelope = publisher_mailbox
-            .receiver()
-            .try_recv()
-            .expect("removed publish ack envelope");
-        let removed_publish_frame = removed_publish_envelope
-            .into_payload::<FrameContext>()
-            .expect("removed publish ack frame");
-        let mut removed_publish_decoder = PayloadDecoder::new(&removed_publish_frame.payload);
-        assert_eq!(
-            removed_publish_decoder
-                .get_u8()
-                .expect("removed publish status"),
-            0
-        );
-        let removed_publish_subscription_id = removed_publish_decoder
-            .get_optional_u64()
-            .expect("removed publish subscription id");
-        assert!(removed_publish_subscription_id.is_none());
-        assert!(removed_publish_decoder.is_complete());
+        assert!(publisher_mailbox.receiver().try_recv().is_err());
         assert!(subscriber_mailbox.receiver().try_recv().is_err());
 
         sink.deliver(Envelope::from_route(
@@ -833,25 +780,7 @@ mod tests {
         assert_eq!(notified_payload.as_ref(), b"retained");
         assert!(notify_decoder.is_complete());
 
-        let retained_publish_envelope = publisher_mailbox
-            .receiver()
-            .try_recv()
-            .expect("retained publish ack envelope");
-        let retained_publish_frame = retained_publish_envelope
-            .into_payload::<FrameContext>()
-            .expect("retained publish ack frame");
-        let mut retained_publish_decoder = PayloadDecoder::new(&retained_publish_frame.payload);
-        assert_eq!(
-            retained_publish_decoder
-                .get_u8()
-                .expect("retained publish status"),
-            0
-        );
-        let retained_publish_subscription_id = retained_publish_decoder
-            .get_optional_u64()
-            .expect("retained publish subscription id");
-        assert!(retained_publish_subscription_id.is_none());
-        assert!(retained_publish_decoder.is_complete());
+        assert!(publisher_mailbox.receiver().try_recv().is_err());
         assert!(subscriber_mailbox.receiver().try_recv().is_err());
     }
 
@@ -880,6 +809,9 @@ mod tests {
         );
         let removed_response = decode_notice_response(&subscriber_mailbox);
         assert_eq!(removed_response.status, 0);
+        let removed_subscription_id = removed_response
+            .subscription_id
+            .expect("removed subscription id");
 
         subscribe_notice_pattern(
             &sink,
@@ -898,7 +830,7 @@ mod tests {
             &subscriber_address,
             &notice_address,
             session_id,
-            removed_route,
+            removed_subscription_id,
             family,
         );
         let unsubscribe_response = decode_notice_response(&subscriber_mailbox);

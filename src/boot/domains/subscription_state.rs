@@ -89,6 +89,25 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
         })
     }
 
+    pub(crate) fn remove_subscription_for_session(
+        &mut self,
+        family_id: RouteFamily,
+        session_id: u64,
+        subscription_id: u64,
+    ) -> bool {
+        let matches_session = self
+            .subscriptions
+            .get(&subscription_id)
+            .map(|subscription| subscription.session_id() == session_id)
+            .unwrap_or(false);
+
+        if matches_session {
+            self.remove_subscription(family_id, subscription_id);
+        }
+
+        matches_session
+    }
+
     pub(crate) fn for_each_matching(
         &self,
         event: &DomainPublishEvent,
