@@ -80,7 +80,10 @@ fn spawn_ws_publisher(
                 .await
                 .expect("publish frame");
         }
-        publisher.close().await.expect("close ws publisher gracefully");
+        publisher
+            .close()
+            .await
+            .expect("close ws publisher gracefully");
     });
     (publish_tx, publisher_handle)
 }
@@ -148,7 +151,10 @@ fn spawn_ws_subscriber_counter(
             }
         }
 
-        subscriber.close().await.expect("close ws subscriber gracefully");
+        subscriber
+            .close()
+            .await
+            .expect("close ws subscriber gracefully");
     });
     (stop_tx, subscriber_handle)
 }
@@ -239,13 +245,17 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
             .expect("queue publish frame");
     });
     drop(publish_tx);
-    wait_for_delivery_count(runtime, &delivered, iterations as u64, "tcp notice deliveries");
+    wait_for_delivery_count(
+        runtime,
+        &delivered,
+        iterations as u64,
+        "tcp notice deliveries",
+    );
     stop_tx.send(true).expect("stop tcp subscriber");
-    runtime
-        .block_on(async {
-            publisher_handle.await.expect("publisher task");
-            subscriber_handle.await.expect("subscriber task");
-        });
+    runtime.block_on(async {
+        publisher_handle.await.expect("publisher task");
+        subscriber_handle.await.expect("subscriber task");
+    });
     ctx.set_elements(iterations as u64);
 }
 
@@ -290,13 +300,17 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
             .expect("queue publish frame");
     });
     drop(publish_tx);
-    wait_for_delivery_count(runtime, &delivered, iterations as u64, "ws notice deliveries");
+    wait_for_delivery_count(
+        runtime,
+        &delivered,
+        iterations as u64,
+        "ws notice deliveries",
+    );
     stop_tx.send(true).expect("stop ws subscriber");
-    runtime
-        .block_on(async {
-            publisher_handle.await.expect("publisher task");
-            subscriber_handle.await.expect("subscriber task");
-        });
+    runtime.block_on(async {
+        publisher_handle.await.expect("publisher task");
+        subscriber_handle.await.expect("subscriber task");
+    });
     ctx.set_elements(iterations as u64);
 }
 
@@ -435,13 +449,12 @@ fn should_complete_multiclient_fanout_publish(ctx: &mut StressContext) {
     for stop_tx in subscriber_stops {
         stop_tx.send(true).expect("stop ws subscriber");
     }
-    runtime
-        .block_on(async {
-            publisher_handle.await.expect("publisher task");
-            for handle in subscriber_handles {
-                handle.await.expect("subscriber task");
-            }
-        });
+    runtime.block_on(async {
+        publisher_handle.await.expect("publisher task");
+        for handle in subscriber_handles {
+            handle.await.expect("subscriber task");
+        }
+    });
     ctx.set_elements(10 * iterations as u64);
 }
 

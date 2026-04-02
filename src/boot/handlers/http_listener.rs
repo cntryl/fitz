@@ -82,6 +82,8 @@ async fn handle_http_upgrade(
     use hyper::server::conn::Http;
     use hyper::service::service_fn;
 
+    stream.set_nodelay(true)?;
+
     runtime.increment_connections();
 
     let runtime_clone = runtime.clone();

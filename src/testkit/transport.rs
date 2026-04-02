@@ -13,7 +13,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 use tokio_tungstenite::{
-    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+    client_async,
+    tungstenite::{client::IntoClientRequest, protocol::Message},
+    MaybeTlsStream, WebSocketStream,
 };
 
 static AUTH_ENV_INIT: Once = Once::new();
@@ -337,7 +339,18 @@ pub struct TestWebSocketClient {
 impl TestWebSocketClient {
     /// Connect to a WebSocket server
     pub async fn connect(url: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let (ws_stream, _response) = connect_async(url).await?;
+        let request = url.into_client_request()?;
+        let uri = request.uri();
+        let host = uri.host().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "websocket url missing host",
+            )
+        })?;
+        let port = uri.port_u16().unwrap_or(80);
+        let stream = TcpStream::connect((host, port)).await?;
+        stream.set_nodelay(true)?;
+        let (ws_stream, _response) = client_async(request, MaybeTlsStream::Plain(stream)).await?;
         Ok(Self {
             ws: ws_stream,
             pending_frames: VecDeque::new(),

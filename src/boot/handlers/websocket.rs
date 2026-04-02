@@ -121,6 +121,7 @@ where
                 frame_len = frame.len(),
                 "WS outbound: sending frame to wire"
             );
+
             if let Err(e) = ws_sender.send(Message::Binary(frame)).await {
                 tracing::error!(session_id = ws_session_id, error = %e, "WS outbound send error");
                 break;

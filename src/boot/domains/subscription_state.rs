@@ -183,12 +183,13 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
             let session_id = subscription.session_id();
             let pattern = subscription.pattern().route();
 
-            let session_patterns_empty = if let Some(patterns) = self.session_patterns.get_mut(&session_id) {
-                patterns.remove(pattern);
-                patterns.is_empty()
-            } else {
-                false
-            };
+            let session_patterns_empty =
+                if let Some(patterns) = self.session_patterns.get_mut(&session_id) {
+                    patterns.remove(pattern);
+                    patterns.is_empty()
+                } else {
+                    false
+                };
             if session_patterns_empty {
                 self.session_patterns.remove(&session_id);
             }
@@ -212,14 +213,13 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
                 self.wildcard_subscription_count =
                     self.wildcard_subscription_count.saturating_sub(1);
 
-                let wildcard_count_empty = if let Some(count) =
-                    self.wildcard_subscription_counts.get_mut(&session_id)
-                {
-                    *count = count.saturating_sub(1);
-                    *count == 0
-                } else {
-                    false
-                };
+                let wildcard_count_empty =
+                    if let Some(count) = self.wildcard_subscription_counts.get_mut(&session_id) {
+                        *count = count.saturating_sub(1);
+                        *count == 0
+                    } else {
+                        false
+                    };
                 if wildcard_count_empty {
                     self.wildcard_subscription_counts.remove(&session_id);
                 }

@@ -347,7 +347,10 @@ where
         .expect("publish after disconnect");
     assert_eq!(server.runtime.notice_subscriptions_active(), 0);
     assert!(
-        server.runtime.notice_list_subscriptions(None, None).is_empty(),
+        server
+            .runtime
+            .notice_list_subscriptions(None, None)
+            .is_empty(),
         "Admin notice snapshot should reflect disconnect cleanup"
     );
 }

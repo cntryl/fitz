@@ -7,6 +7,7 @@
 // Each test measures a single operation with all setup/teardown outside the measurement loop.
 // Target: ops/sec via set_elements(count)
 
+use bytes::BufMut;
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
@@ -17,7 +18,6 @@ use fitz::benchkit::{
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
-use bytes::BufMut;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -227,8 +227,11 @@ fn should_complete_wildcard_subscribe_unsubscribe_cycle(ctx: &mut StressContext)
             harness.request(pattern, subscribe_msg_type, subscribe_payload.clone());
         let subscription_id = parse_notice_subscribe_ok(&subscribe_response);
 
-        let unsubscribe_response =
-            harness.request(pattern, 502, encode_notice_unsubscribe_payload(subscription_id));
+        let unsubscribe_response = harness.request(
+            pattern,
+            502,
+            encode_notice_unsubscribe_payload(subscription_id),
+        );
         assert_notice_success(&unsubscribe_response);
     });
     ctx.set_elements(2 * iterations as u64);

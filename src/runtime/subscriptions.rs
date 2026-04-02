@@ -304,11 +304,7 @@ impl SubscriptionIndex {
 
     /// Find all subscriptions matching a raw route string.
     #[inline]
-    pub fn match_all_route_str(
-        &self,
-        family_id: RouteFamily,
-        route: &str,
-    ) -> SubscriptionMatches {
+    pub fn match_all_route_str(&self, family_id: RouteFamily, route: &str) -> SubscriptionMatches {
         self.match_all_route_str_with_capacity(family_id, route, 8)
     }
 

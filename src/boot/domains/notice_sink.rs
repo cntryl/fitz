@@ -121,21 +121,13 @@ impl NoticeDomainSink {
         }
     }
 
-    fn fan_out_notice_event(
-        &self,
-        targets: &NoticeDeliveryTargets,
-        shared_suffix: &bytes::Bytes,
-    ) {
+    fn fan_out_notice_event(&self, targets: &NoticeDeliveryTargets, shared_suffix: &bytes::Bytes) {
         for target in targets {
             self.route_notice_notify(target, shared_suffix);
         }
     }
 
-    fn route_notice_notify(
-        &self,
-        target: &NoticeDeliveryTarget,
-        shared_suffix: &bytes::Bytes,
-    ) {
+    fn route_notice_notify(&self, target: &NoticeDeliveryTarget, shared_suffix: &bytes::Bytes) {
         let notify_payload = crate::protocol::notice_codec::encode_notify_with_shared_suffix(
             target.subscription_id,
             shared_suffix,
@@ -179,12 +171,17 @@ impl NoticeDomainSink {
             return;
         }
 
-        let shared_suffix = crate::protocol::notice_codec::encode_notify_shared_suffix(route, payload);
+        let shared_suffix =
+            crate::protocol::notice_codec::encode_notify_shared_suffix(route, payload);
         self.fan_out_notice_event(&targets, &shared_suffix);
     }
 
     fn publish_event(&self, event: &crate::runtime::DomainPublishEvent) {
-        self.publish_route_payload(event.family_id, event.route.as_str(), event.payload.as_ref());
+        self.publish_route_payload(
+            event.family_id,
+            event.route.as_str(),
+            event.payload.as_ref(),
+        );
     }
 
     fn handle_frame_publish(
