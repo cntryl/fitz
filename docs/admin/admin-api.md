@@ -194,10 +194,36 @@ GET /admin/stats
 ```
 ## Domain-Specific Endpoints
 ### KV Domain
-#### List Active Transactions
+All KV admin responses separate durable committed data from live transaction
+coordination. Committed values persist according to storage commit semantics,
+but open transactions shown here are current-process in-memory state only. They
+disappear on disconnect cleanup or broker restart and do not imply durable
+transaction recovery.
+
+#### Get KV Resource
 ```
-GET /admin/kv/transactions?realm={realm}
+GET /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}
 ```
+`transactions_active` counts only live session-scoped transactions for the
+current broker process. It resets on disconnect cleanup or broker restart.
+
+**Response**:
+```json
+{
+  "realm": "prod",
+  "area": "app",
+  "resource": "users",
+  "transactions_active": 1
+}
+```
+#### List KV Transactions For A Resource
+```
+GET /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/transactions
+```
+`tx_id` is a session-scoped runtime handle for the currently running broker
+process. It is not a durable recovery token, and the listed transactions do not
+survive disconnect or restart.
+
 **Response**:
 ```json
 {
@@ -215,35 +241,6 @@ GET /admin/kv/transactions?realm={realm}
   ]
 }
 ```
-#### KV Statistics
-```
-GET /admin/kv/stats?realm={realm}
-```
-**Response**:
-```json
-{
-  "transactions_active": 23,
-  "transactions_committed_total": 1847392,
-  "transactions_rolled_back_total": 1247,
-  "keys_total": 12847,
-  "keys_by_realm": {
-    "prod": 8456,
-    "staging": 3219,
-    "dev": 1172
-  },
-  "operations_per_second": {
-    "get": 85,
-    "put": 23,
-    "scan": 12
-  }
-}
-```
-#### Force Rollback Transaction (Admin)
-```
-POST /admin/kv/transactions/{tx_id}/rollback
-```
-**Headers**: `X-Confirm: true` (required for safety)
-**Response**: 200 OK or 404 Not Found
 ### Stream Domain
 #### List Active Streams
 ```
@@ -622,8 +619,10 @@ POST /admin/sessions/{session_id}/close
 - `GET /api/v1/admin/rpc/stats` - RPC domain statistics
 - `GET /api/v1/admin/lease/stats` - Lease domain statistics
 - `GET /api/v1/admin/schedule/stats` - Schedule domain statistics
-**List Endpoints (Admin Auth)** - Infrastructure added, domain implementation pending:
-- `GET /api/v1/admin/kv/transactions?realm={realm}` - List active KV transactions
+**List Endpoints (Admin Auth)** - current surface plus remaining follow-up:
+- `GET /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}` - Get live KV resource detail
+- `GET /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/transactions` - List live session-scoped KV transactions for a resource
+  - KV transaction snapshots are current-process only. They disappear on disconnect cleanup and are not restored after broker restart.
 - `GET /api/v1/admin/stream/streams?realm={realm}` - List active streams
 - `GET /api/v1/admin/notice/subscriptions?realm={realm}&route_pattern={pattern}` - List subscriptions
 - `GET /api/v1/admin/notice/routes?realm={realm}` - List routes with subscriber counts
@@ -648,7 +647,7 @@ POST /admin/sessions/{session_id}/close
 - Add `?limit=` and `?offset=` query parameters to list endpoints
 **Domain Integration**:
 - Each domain needs to implement methods to provide list data
-- KV: Track active transactions, expose via admin query
+- KV: Live transaction snapshots are exposed per resource and reflect only active in-memory session-scoped state
 - Stream: Track active streams, expose via admin query
 - Notice: Track subscriptions and routes, expose via admin query
 - Queue: Track queue depths and leases, expose via admin query

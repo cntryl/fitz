@@ -34,11 +34,11 @@ Define a TDD-driven implementation plan for the following server correction work
 
 ## Concrete Tasks
 
-- [ ] Document committed-data durability separately from transaction durability.
-- [ ] Make session-local transaction loss on disconnect explicit in code comments, docs, and tests.
-- [ ] Review admin and API surfaces so they do not imply durable transaction recovery.
-- [ ] Tighten tests around RouteFamily isolation of committed data.
-- [ ] Keep lock and transaction metadata bounded to active sessions only.
+- [x] Document committed-data durability separately from transaction durability.
+- [x] Make session-local transaction loss on disconnect explicit in code comments, docs, and tests.
+- [x] Review admin and API surfaces so they do not imply durable transaction recovery.
+- [x] Tighten tests around RouteFamily isolation of committed data.
+- [x] Keep lock and transaction metadata bounded to active sessions only.
 
 ## Non-Goals
 
@@ -48,10 +48,10 @@ Define a TDD-driven implementation plan for the following server correction work
 
 ## Verification
 
-- [ ] Prove committed values survive restart.
-- [ ] Prove open transactions are lost on disconnect or restart.
-- [ ] Prove RouteFamily isolation for the same logical key across families.
-- [ ] Run KV-focused tests after any semantic cleanup.
+- [x] Prove committed values survive restart.
+- [x] Prove open transactions are lost on disconnect or restart.
+- [x] Prove RouteFamily isolation for the same logical key across families.
+- [x] Run KV-focused tests after any semantic cleanup.
 
 ## Files To Touch First
 

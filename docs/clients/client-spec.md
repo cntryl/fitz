@@ -117,8 +117,8 @@ class KvTransaction:
 
 1. **Wire Protocol Compliance**: Every message includes full context (tx_id + route)
 2. **User Ergonomics**: Users don't repeat `route` in every call
-3. **Stateless Operations**: Server doesn't track implicit state; each message is self-contained
-4. **Disconnect Safety**: If connection drops mid-transaction, the broker cleans up session-scoped state and the client can reconnect and start fresh
+3. **Explicit Routing**: Every message includes full route context, so the wire format never relies on hidden per-connection addressing state
+4. **Disconnect Safety**: If connection drops mid-transaction, the broker cleans up session-scoped state and the client can reconnect and start a new transaction instead of resuming the old `tx_id`
 5. **Language Idiomatic**: Feels natural in each language (Python context managers, Rust Drop trait, Go defer)
 
 ### Anti-Pattern: Implicit State
@@ -1103,7 +1103,9 @@ notice://prod/app/events/publish # Pub/sub publish
 
 ## HTTP-Like Design Principle
 
-Fitz follows an **HTTP-like model** where every operation is self-contained and stateless on the server side:
+Fitz follows an **HTTP-like model** where every operation is explicitly
+addressed on the wire, while domains may still maintain live session-scoped
+state when their contract requires it:
 
 ### Core Analogy
 
@@ -1132,10 +1134,10 @@ Payload: [tx_id][key][value]
    - Queue ENQUEUE: `[route][body][delay]`
    - Stream APPEND: `[session_id][route][body]`
 
-2. **Operations are self-contained** (like HTTP statelessness)
-   - Server doesn't track implicit context beyond session auth
+2. **Operations are explicitly addressed** (like HTTP stateless routing)
+   - Server doesn't track implicit routing context beyond session and domain state
    - Each message has full addressing information
-   - Connection loss doesn't leave orphaned server state
+   - Connection loss doesn't require reconstructing hidden route context, though session-scoped domain state may still be cleaned up
 
 3. **Verbs determine action** (like HTTP GET/POST/PUT/DELETE)
    - MessageType selects operation
@@ -1157,9 +1159,9 @@ Payload: [tx_id][key][value]
 
 **For operations:**
 
-- Debuggable: every message is complete, can be logged/replayed
-- Reconnect-safe: operations don't depend on connection history
-- Scalable: stateless server processing enables horizontal scaling
+- Debuggable: every message carries explicit addressing and can be inspected without hidden route context
+- Explicitly addressed: the wire format does not depend on per-connection route defaults
+- Session-scoped domains still require re-establishing live state after reconnect when the domain contract says that state is ephemeral
 
 ### Comparison
 
@@ -1169,7 +1171,7 @@ Payload: [tx_id][key][value]
 | **Verb**       | GET, POST, PUT, DELETE          | MessageType (100=BEGIN, 104=PUT, etc.) |
 | **Transport**  | TCP + TLS                       | WebSocket or TCP + TLS                 |
 | **Format**     | Text (headers + body)           | Binary (TLV)                           |
-| **State**      | Stateless (cookies for session) | Stateless (JWT for session auth)       |
+| **State**      | Stateless (cookies for session) | Explicit routing; some domains keep live session state |
 | **Operations** | Self-contained requests         | Self-contained requests                |
 
 ## Route Acceptance Criteria (Authoritative)
@@ -1427,7 +1429,9 @@ Each domain occupies an exclusive 100-code block. The broker's mux layer routes 
 
 This section documents the **canonical operations** for each of the seven Fitz domains. These operations define the complete API surface for each domain and MUST be implemented by all conformant clients and brokers.
 
-**Design Principle:** Each domain has a focused, minimal set of operations. Operations are self-contained and stateless (no implicit server-side state beyond session auth).
+**Design Principle:** Each domain has a focused, minimal set of operations.
+Operations are explicitly addressed and avoid implicit routing state, though
+domains may still keep live server-side state where their contract requires it.
 
 ### KV Domain (Key-Value Store)
 
@@ -3514,7 +3518,9 @@ Every transaction operation sends **both tx_id AND route** on the wire:
 - `GET`: `[tx_id][route_len][route][key_len][key]`
 - `COMMIT`: `[tx_id][route_len][route]`
 
-The Transaction object stores the route internally and includes it in every wire message, making operations self-contained and stateless on the server side.
+The Transaction object stores the route internally and includes it in every wire
+message, making each request fully addressable on the wire while the broker
+still maintains live session-scoped transaction state keyed by `tx_id`.
 
 #### Error Codes (1xxx)
 
@@ -4552,7 +4558,7 @@ These items are **not standardized** and may require broker-specific implementat
 - Lost on disconnect (previous session ID becomes invalid)
 - NOT returned to client in standard response (internal only, except where specified per domain)
 
-#### Wire Protocol Philosophy (Stateless Operations)
+#### Wire Protocol Philosophy (Explicit Routing)
 
 **All Fitz operations include full routing context in every message:**
 - KV: Every operation includes `[tx_id][route_len][route]` (not just BEGIN)
@@ -4564,10 +4570,10 @@ These items are **not standardized** and may require broker-specific implementat
 - Schedule: CREATE/CANCEL/LIST include full route
 
 **Why this design:**
-- HTTP-like statelessness: Each message is self-contained and fully addressable
-- Reconnect-safe: No server-side implicit state (beyond session auth)
-- Debuggable: Every message can be logged/replayed without context
-- Scalable: Stateless processing enables horizontal scaling
+- Explicit routing: Each message is self-contained and fully addressable
+- No hidden route defaults: Clients and brokers do not rely on per-connection realm/area/resource state
+- Domain state still exists where required: KV and Stream keep live transaction/session state, and reconnect requires re-establishing that state
+- Debuggable: Every message can be inspected without hidden addressing context
 
 **Client convenience wrappers:**
 - Client implementations MAY provide ergonomic wrapper objects (Transaction, Session, Subscription)
@@ -4598,7 +4604,7 @@ No version negotiation in current protocol. If new verbs are added:
 ### Broker-Specific Behaviors Summary
 
 1. **Session ID exposure**: Notice/Stream payloads include session IDs, but no standard server-to-client notification mechanism yet
-2. **KV/Queue routing**: KV/Queue payloads do not include route; broker derives from envelope/connection context
+2. **KV routing**: KV payloads include route on every operation alongside `tx_id`; the broker still treats `tx_id` as a live session-scoped handle that becomes invalid after disconnect or restart
 3. **Stream response data**: Response data is opaque; serialization format is broker-defined
 4. **Verb code extensions**: New verbs added after current broker release use new wire codes in existing ranges
    Clients SHOULD consult broker documentation for domain-specific behavior.

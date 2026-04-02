@@ -305,8 +305,9 @@ pub struct KvTransactionsList {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Session-scoped active KV transaction snapshot for the current broker process.
 ///
-/// These entries reflect live in-memory transaction state only. They disappear
-/// on disconnect or broker restart and are separate from committed-data
+/// These entries reflect live in-memory transaction state only. `tx_id` is a
+/// runtime handle, not a durable recovery token. Entries disappear on
+/// disconnect or broker restart and are separate from committed-data
 /// durability in the storage engine.
 pub struct KvTransaction {
     pub tx_id: u64,

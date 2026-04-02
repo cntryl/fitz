@@ -1,10 +1,13 @@
-//! KV actor: transaction-scoped key-value operations over Midge
+//! KV actor: durable committed writes with session-scoped transaction state
+//! over Midge.
 //!
 //! # Architecture
 //!
-//! The KV actor maintains per-session transaction state (ActiveKvTx).
-//! All KV operations execute within the context of an active transaction
-//! bound to a single resource (table).
+//! The KV actor maintains per-session, broker-local transaction state
+//! (`ActiveKvTx`). All KV operations execute within the context of an active
+//! transaction bound to a single resource (table). `tx_id` values are runtime
+//! handles for the current session only; reconnect or broker restart requires a
+//! new `begin`.
 //!
 //! # Write Options
 //!
@@ -22,7 +25,7 @@
 //!
 //! 1. All KV ops require an active transaction
 //! 2. Transactions are scoped to a single resource
-//! 3. RouteFamily → ColumnFamily mapping is explicit (no default CF)
+//! 3. RouteFamily -> ColumnFamily mapping is explicit (no default CF)
 //! 4. No buffering, retries, or caching - direct Midge passthrough
 
 use bytes::Bytes;
@@ -39,9 +42,10 @@ use super::protocol::{KvError, KvMessage, KvPair, KvResponse, ScanQuery, TxMode}
 
 /// Active KV transaction state.
 ///
-/// This state is broker-local and in-memory only. Dropping the owning actor or
-/// cleaning up the owning session aborts any uncommitted work and discards the
-/// transaction handle instead of attempting recovery.
+/// This state is broker-local and in-memory only. Dropping the owning actor,
+/// cleaning up the owning session, or restarting the broker aborts any
+/// uncommitted work and discards the transaction handle instead of attempting
+/// recovery.
 pub struct ActiveKvTx {
     /// Realm this transaction is bound to (resolved from auth)
     pub bound_realm: String,

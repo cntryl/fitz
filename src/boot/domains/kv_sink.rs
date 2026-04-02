@@ -1,11 +1,11 @@
 //! KV domain sink for session-scoped transaction dispatch.
 //!
 //! Committed KV writes flow straight to Midge and persist according to the
-//! `WriteOptions` selected when the transaction commits. Active transaction
+//! `WriteOptions` selected when the transaction commits. Active `tx_id`
 //! handles, resource locks, and admin snapshot entries are separate live
 //! in-memory state owned by the current broker process. `cleanup_session`
-//! intentionally discards that state on disconnect, and broker restart clears it
-//! wholesale.
+//! intentionally discards that state on disconnect, and broker restart clears
+//! it wholesale instead of attempting transaction recovery.
 
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
