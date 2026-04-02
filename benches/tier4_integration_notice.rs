@@ -12,16 +12,146 @@ use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_notice_publish, build_notice_subscribe, build_notice_unsubscribe,
-    create_bench_notice_sink, extract_single_tlv_field, parse_notice_delivery,
-    parse_notice_response, parse_notice_subscription_id, register_session_counting_sink,
-    route_frame, shared_bench_runtime,
+    create_bench_notice_sink, extract_single_tlv_field, parse_notice_response,
+    parse_notice_subscription_id, register_session_counting_sink, route_frame,
+    shared_bench_runtime,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::time::Duration;
+use tokio::runtime::Runtime;
+use tokio::sync::{mpsc, watch};
+use tokio::task::JoinHandle;
+
+const PUBLISH_CHANNEL_CAPACITY: usize = 64;
+const DELIVERY_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn wait_for_delivery_count(
+    runtime: &'static Runtime,
+    delivered: &Arc<AtomicU64>,
+    expected: u64,
+    description: &str,
+) {
+    runtime.block_on(async {
+        tokio::time::timeout(DELIVERY_WAIT_TIMEOUT, async {
+            while delivered.load(Ordering::Relaxed) < expected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "timed out waiting for {description}: expected {expected}, observed {}",
+                delivered.load(Ordering::Relaxed)
+            )
+        });
+    });
+}
+
+fn spawn_tcp_publisher(
+    runtime: &'static Runtime,
+    mut publisher: TestClient,
+) -> (mpsc::Sender<Arc<[u8]>>, JoinHandle<()>) {
+    let (publish_tx, mut publish_rx) = mpsc::channel::<Arc<[u8]>>(PUBLISH_CHANNEL_CAPACITY);
+    let publisher_handle = runtime.spawn(async move {
+        while let Some(frame) = publish_rx.recv().await {
+            publisher
+                .send_frame(frame.as_ref())
+                .await
+                .expect("publish frame");
+        }
+    });
+    (publish_tx, publisher_handle)
+}
+
+fn spawn_ws_publisher(
+    runtime: &'static Runtime,
+    mut publisher: TestWebSocketClient,
+) -> (mpsc::Sender<Arc<[u8]>>, JoinHandle<()>) {
+    let (publish_tx, mut publish_rx) = mpsc::channel::<Arc<[u8]>>(PUBLISH_CHANNEL_CAPACITY);
+    let publisher_handle = runtime.spawn(async move {
+        while let Some(frame) = publish_rx.recv().await {
+            publisher
+                .send_frame(frame.as_ref())
+                .await
+                .expect("publish frame");
+        }
+        publisher.close().await.expect("close ws publisher gracefully");
+    });
+    (publish_tx, publisher_handle)
+}
+
+fn spawn_tcp_subscriber_counter(
+    runtime: &'static Runtime,
+    mut subscriber: TestClient,
+    delivered: Arc<AtomicU64>,
+) -> (watch::Sender<bool>, JoinHandle<()>) {
+    let (stop_tx, mut stop_rx) = watch::channel(false);
+    let subscriber_handle = runtime.spawn(async move {
+        loop {
+            tokio::select! {
+                changed = stop_rx.changed() => {
+                    if changed.is_err() || *stop_rx.borrow() {
+                        break;
+                    }
+                }
+                result = subscriber.recv_frame(5000) => {
+                    match result {
+                        Ok(_frame) => {
+                            delivered.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(error) => {
+                            if *stop_rx.borrow() {
+                                break;
+                            }
+                            panic!("publish notification: {error}");
+                        }
+                    }
+                }
+            }
+        }
+    });
+    (stop_tx, subscriber_handle)
+}
+
+fn spawn_ws_subscriber_counter(
+    runtime: &'static Runtime,
+    mut subscriber: TestWebSocketClient,
+    delivered: Arc<AtomicU64>,
+) -> (watch::Sender<bool>, JoinHandle<()>) {
+    let (stop_tx, mut stop_rx) = watch::channel(false);
+    let subscriber_handle = runtime.spawn(async move {
+        loop {
+            tokio::select! {
+                changed = stop_rx.changed() => {
+                    if changed.is_err() || *stop_rx.borrow() {
+                        break;
+                    }
+                }
+                result = subscriber.recv_frame(5000) => {
+                    match result {
+                        Ok(_frame) => {
+                            delivered.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(error) => {
+                            if *stop_rx.borrow() {
+                                break;
+                            }
+                            panic!("publish notification: {error}");
+                        }
+                    }
+                }
+            }
+        }
+
+        subscriber.close().await.expect("close ws subscriber gracefully");
+    });
+    (stop_tx, subscriber_handle)
+}
 
 #[stress_test]
 fn should_complete_direct_publish(ctx: &mut StressContext) {
@@ -83,14 +213,14 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
     ctx.tag("subscriber_count", "1");
 
     let subscribe_frame = build_notice_subscribe("notice://test/events");
-    let publish_frame = build_notice_publish("notice://test/events", b"event");
+    let publish_frame: Arc<[u8]> = build_notice_publish("notice://test/events", b"event").into();
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
     let mut subscriber = runtime
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp subscriber");
-    let mut publisher = runtime
+    let publisher = runtime
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp publisher");
 
@@ -98,16 +228,24 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
         .block_on(subscriber.request(&subscribe_frame, 2000))
         .expect("subscribe response");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        runtime
-            .block_on(publisher.send_frame(&publish_frame))
-            .expect("publish frame");
+    let delivered = Arc::new(AtomicU64::new(0));
+    let (stop_tx, subscriber_handle) =
+        spawn_tcp_subscriber_counter(runtime, subscriber, delivered.clone());
+    let (publish_tx, publisher_handle) = spawn_tcp_publisher(runtime, publisher);
 
-        let notification = runtime
-            .block_on(subscriber.recv_frame(2000))
-            .expect("publish notification");
-        let _ = parse_notice_delivery(&notification);
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        publish_tx
+            .blocking_send(publish_frame.clone())
+            .expect("queue publish frame");
     });
+    drop(publish_tx);
+    wait_for_delivery_count(runtime, &delivered, iterations as u64, "tcp notice deliveries");
+    stop_tx.send(true).expect("stop tcp subscriber");
+    runtime
+        .block_on(async {
+            publisher_handle.await.expect("publisher task");
+            subscriber_handle.await.expect("subscriber task");
+        });
     ctx.set_elements(iterations as u64);
 }
 
@@ -120,7 +258,7 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
     ctx.tag("subscriber_count", "1");
 
     let subscribe_frame = build_notice_subscribe("notice://test/events");
-    let publish_frame = build_notice_publish("notice://test/events", b"event");
+    let publish_frame: Arc<[u8]> = build_notice_publish("notice://test/events", b"event").into();
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -130,7 +268,7 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
             server.ws_addr
         )))
         .expect("connect ws subscriber");
-    let mut publisher = runtime
+    let publisher = runtime
         .block_on(TestWebSocketClient::connect(&format!(
             "ws://{}",
             server.ws_addr
@@ -141,24 +279,25 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
         .block_on(subscriber.request(&subscribe_frame, 2000))
         .expect("subscribe response");
 
+    let delivered = Arc::new(AtomicU64::new(0));
+    let (stop_tx, subscriber_handle) =
+        spawn_ws_subscriber_counter(runtime, subscriber, delivered.clone());
+    let (publish_tx, publisher_handle) = spawn_ws_publisher(runtime, publisher);
+
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        runtime
-            .block_on(publisher.send_frame(&publish_frame))
-            .expect("publish frame");
-
-        let notification = runtime
-            .block_on(subscriber.recv_frame(2000))
-            .expect("publish notification");
-        let _ = parse_notice_delivery(&notification);
+        publish_tx
+            .blocking_send(publish_frame.clone())
+            .expect("queue publish frame");
     });
+    drop(publish_tx);
+    wait_for_delivery_count(runtime, &delivered, iterations as u64, "ws notice deliveries");
+    stop_tx.send(true).expect("stop ws subscriber");
+    runtime
+        .block_on(async {
+            publisher_handle.await.expect("publisher task");
+            subscriber_handle.await.expect("subscriber task");
+        });
     ctx.set_elements(iterations as u64);
-
-    runtime
-        .block_on(publisher.close())
-        .expect("close ws publisher gracefully");
-    runtime
-        .block_on(subscriber.close())
-        .expect("close ws subscriber gracefully");
 }
 
 #[stress_test]
@@ -250,68 +389,60 @@ fn should_complete_multiclient_fanout_publish(ctx: &mut StressContext) {
     ctx.tag("subscriber_count", "10");
 
     let subscribe_frame = build_notice_subscribe("notice://test/events");
-    let publish_frame = build_notice_publish("notice://test/events", b"event");
+    let publish_frame: Arc<[u8]> = build_notice_publish("notice://test/events", b"event").into();
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
-    let subscribers: Vec<Arc<Mutex<TestWebSocketClient>>> = (0..10)
-        .map(|_| {
-            let c = runtime
-                .block_on(TestWebSocketClient::connect(&format!(
-                    "ws://{}",
-                    server.ws_addr
-                )))
-                .expect("connect ws");
-            Arc::new(Mutex::new(c))
-        })
-        .collect();
-
-    let mut publisher = runtime
+    let publisher = runtime
         .block_on(TestWebSocketClient::connect(&format!(
             "ws://{}",
             server.ws_addr
         )))
         .expect("connect ws publisher");
 
-    let sub = subscribe_frame.clone();
-    runtime.block_on(futures::future::join_all(subscribers.iter().map(|arc| {
-        let arc = arc.clone();
-        let f = sub.clone();
-        async move {
-            let mut c = arc.lock().await;
-            c.request(&f, 2000).await.expect("subscribe")
-        }
-    })));
+    let delivered = Arc::new(AtomicU64::new(0));
+    let mut subscriber_stops = Vec::new();
+    let mut subscriber_handles = Vec::new();
+    for _ in 0..10 {
+        let mut subscriber = runtime
+            .block_on(TestWebSocketClient::connect(&format!(
+                "ws://{}",
+                server.ws_addr
+            )))
+            .expect("connect ws subscriber");
+        runtime
+            .block_on(subscriber.request(&subscribe_frame, 2000))
+            .expect("subscribe response");
+        let (stop_tx, handle) = spawn_ws_subscriber_counter(runtime, subscriber, delivered.clone());
+        subscriber_stops.push(stop_tx);
+        subscriber_handles.push(handle);
+    }
+
+    let (publish_tx, publisher_handle) = spawn_ws_publisher(runtime, publisher);
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let publish_frame = publish_frame.clone();
-        runtime
-            .block_on(publisher.send_frame(&publish_frame))
-            .expect("publish frame");
-
-        let _results: Vec<_> =
-            runtime.block_on(futures::future::join_all(subscribers.iter().map(|arc| {
-                let arc = arc.clone();
-                async move {
-                    let mut c = arc.lock().await;
-                    let response = c.recv_frame(2000).await.expect("publish notification");
-                    let _ = parse_notice_delivery(&response);
-                }
-            })));
+        publish_tx
+            .blocking_send(publish_frame.clone())
+            .expect("queue publish frame");
     });
-    ctx.set_elements(10 * iterations as u64);
-
+    drop(publish_tx);
+    wait_for_delivery_count(
+        runtime,
+        &delivered,
+        10 * iterations as u64,
+        "multiclient notice deliveries",
+    );
+    for stop_tx in subscriber_stops {
+        stop_tx.send(true).expect("stop ws subscriber");
+    }
     runtime
-        .block_on(publisher.close())
-        .expect("close ws publisher gracefully");
-    let _closed: Vec<_> =
-        runtime.block_on(futures::future::join_all(subscribers.iter().map(|arc| {
-            let arc = arc.clone();
-            async move {
-                let mut c = arc.lock().await;
-                c.close().await.expect("close ws subscriber gracefully");
+        .block_on(async {
+            publisher_handle.await.expect("publisher task");
+            for handle in subscriber_handles {
+                handle.await.expect("subscriber task");
             }
-        })));
+        });
+    ctx.set_elements(10 * iterations as u64);
 }
 
 stress_main!();
