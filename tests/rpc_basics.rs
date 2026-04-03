@@ -793,6 +793,21 @@ fn should_define_error_code_6004_route_not_registered() {
 }
 
 #[test]
+fn should_define_error_code_6006_rpc_invalid_sequence() {
+    // Arrange
+
+    // Act
+    let code = fitz::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE;
+
+    // Assert
+    assert_eq!(
+        code,
+        6006,
+        "6006 = RPC_INVALID_SEQUENCE"
+    );
+}
+
+#[test]
 fn should_complete_single_request_response_cycle() {
     // Arrange
     let family = RouteFamily::new(1);

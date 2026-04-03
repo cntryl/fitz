@@ -1,7 +1,7 @@
-//! ReplyInboxActor: per-client inbox for ordering and buffering RPC responses
+//! ReplyInboxActor: per-client inbox for strict contiguous RPC responses
 //!
 //! Each client session has a dedicated ReplyInboxActor that:
-//! - Enforces streaming chunk ordering (buffers out-of-order chunks)
+//! - Enforces strict contiguous streaming order
 //! - Handles slow transports without blocking workers
 //! - Drops state when session disconnects
 //! - Forwards responses to transport layer
@@ -10,15 +10,14 @@
 //!
 //! The inbox tracks expected sequence numbers per correlation ID:
 //! - If seq == expected: forward immediately and increment expected
-//! - If seq > expected: buffer until gap is filled
-//! - If seq < expected: drop as duplicate
+//! - If seq != expected: terminate the stream state immediately
 //! - On stream_end: finalize and clear correlation state
 
 use crate::domains::rpc::errors::RpcError;
 use crate::domains::rpc::protocol::RpcResponse;
 use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::RouteFamily;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Tracks streaming state for a single correlation ID
@@ -26,16 +25,11 @@ use uuid::Uuid;
 struct StreamState {
     /// Next expected sequence number
     next_seq: u64,
-    /// Buffered chunks received ahead of time
-    buffer: BTreeMap<u64, RpcResponse>,
 }
 
 impl StreamState {
     fn new() -> Self {
-        Self {
-            next_seq: 0,
-            buffer: BTreeMap::new(),
-        }
+        Self { next_seq: 0 }
     }
 }
 
@@ -59,8 +53,8 @@ pub struct ReplyInboxActor {
     _family: RouteFamily,
     /// Streaming state per correlation ID
     streams: HashMap<Uuid, StreamState>,
-    /// Maximum number of buffered chunks per stream
-    max_buffer_size: usize,
+    /// Number of invalid sequence failures observed by this inbox.
+    invalid_sequence_failures: usize,
 }
 
 impl ReplyInboxActor {
@@ -69,17 +63,13 @@ impl ReplyInboxActor {
         Self {
             _family: family,
             streams: HashMap::with_capacity(64), // Pre-allocate for typical concurrent requests
-            max_buffer_size: 100,                // Default: buffer up to 100 out-of-order chunks
+            invalid_sequence_failures: 0,
         }
     }
 
-    /// Create reply inbox with custom buffer size
-    pub fn with_buffer_size(family: RouteFamily, max_buffer_size: usize) -> Self {
-        Self {
-            _family: family,
-            streams: HashMap::with_capacity(64),
-            max_buffer_size,
-        }
+    /// Create reply inbox with the same strict contiguous semantics.
+    pub fn with_buffer_size(family: RouteFamily, _max_buffer_size: usize) -> Self {
+        Self::new(family)
     }
 
     /// Handle incoming response chunk
@@ -93,11 +83,6 @@ impl ReplyInboxActor {
             .or_insert_with(StreamState::new);
 
         // Check sequence number
-        if response.seq < stream.next_seq {
-            // Duplicate chunk, drop it
-            return;
-        }
-
         if response.seq == stream.next_seq {
             // Expected chunk, forward immediately
             Self::forward_response_static(&response);
@@ -106,50 +91,11 @@ impl ReplyInboxActor {
             // If this completes the stream, clean up
             if response.stream_end {
                 self.streams.remove(&correlation_id);
-                return;
             }
-
-            // Try to flush buffered chunks (no need to drop stream, borrow ends here)
-            self.flush_buffer(&correlation_id);
         } else {
-            // Ahead-of-time chunk, buffer it
-            if stream.buffer.len() >= self.max_buffer_size {
-                // Buffer overflow, disconnect session
-                // NOTE: Transport integration pending - stream silently dropped
-                // See: https://github.com/cntryl/fitz/issues/track-response-routing
-                self.streams.remove(&correlation_id);
-                return;
-            }
-
-            stream.buffer.insert(response.seq, response);
-        }
-    }
-
-    /// Flush buffered chunks that are now in order
-    fn flush_buffer(&mut self, correlation_id: &Uuid) {
-        loop {
-            let should_remove = {
-                let Some(stream) = self.streams.get_mut(correlation_id) else {
-                    break;
-                };
-
-                // Check if next expected chunk is in buffer
-                let Some(response) = stream.buffer.remove(&stream.next_seq) else {
-                    break;
-                };
-
-                Self::forward_response_static(&response);
-                stream.next_seq += 1;
-
-                // Signal if this was the final chunk
-                response.stream_end
-            };
-
-            // Clean up if stream ended
-            if should_remove {
-                self.streams.remove(correlation_id);
-                break;
-            }
+            self.invalid_sequence_failures =
+                self.invalid_sequence_failures.saturating_add(1);
+            self.streams.remove(&correlation_id);
         }
     }
 
@@ -180,12 +126,17 @@ impl ReplyInboxActor {
         self.streams.len()
     }
 
-    /// Get buffered chunk count for a correlation ID
+    /// Get buffered chunk count for a correlation ID.
+    ///
+    /// Strict contiguous delivery does not buffer chunks.
     pub fn buffered_count(&self, correlation_id: &Uuid) -> usize {
-        self.streams
-            .get(correlation_id)
-            .map(|s| s.buffer.len())
-            .unwrap_or(0)
+        let _ = correlation_id;
+        0
+    }
+
+    /// Get number of invalid sequence failures observed by this inbox.
+    pub fn invalid_sequence_failures(&self) -> usize {
+        self.invalid_sequence_failures
     }
 }
 
@@ -249,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn should_buffer_out_of_order_chunks() {
+    fn should_fail_out_of_order_chunks() {
         // Arrange
         let mut inbox = create_inbox();
         let router = std::sync::Arc::new(crate::runtime::router::Router::new());
@@ -261,12 +212,13 @@ mod tests {
         inbox.handle_response(create_response(correlation_id, 2, false), &mut ctx);
 
         // Assert
-        assert_eq!(inbox.active_streams(), 1);
-        assert_eq!(inbox.buffered_count(&correlation_id), 1);
+        assert_eq!(inbox.active_streams(), 0);
+        assert_eq!(inbox.buffered_count(&correlation_id), 0);
+        assert_eq!(inbox.invalid_sequence_failures(), 1);
     }
 
     #[test]
-    fn should_flush_buffer_when_gap_filled() {
+    fn should_fail_when_gap_appears_mid_stream() {
         // Arrange
         let mut inbox = create_inbox();
         let router = std::sync::Arc::new(crate::runtime::router::Router::new());
@@ -274,17 +226,18 @@ mod tests {
         let mut ctx = Context::new(addr, router);
         let correlation_id = Uuid::new_v4();
 
-        // Act - receive out of order, then fill gap
-        inbox.handle_response(create_response(correlation_id, 2, false), &mut ctx);
+        // Act
         inbox.handle_response(create_response(correlation_id, 0, false), &mut ctx);
-        inbox.handle_response(create_response(correlation_id, 1, false), &mut ctx);
+        inbox.handle_response(create_response(correlation_id, 2, false), &mut ctx);
 
-        // Assert - seq 2 should have been flushed when we filled the gap
+        // Assert
+        assert_eq!(inbox.active_streams(), 0);
         assert_eq!(inbox.buffered_count(&correlation_id), 0);
+        assert_eq!(inbox.invalid_sequence_failures(), 1);
     }
 
     #[test]
-    fn should_drop_duplicate_chunks() {
+    fn should_fail_duplicate_chunks() {
         // Arrange
         let mut inbox = create_inbox();
         let router = std::sync::Arc::new(crate::runtime::router::Router::new());
@@ -296,7 +249,8 @@ mod tests {
         inbox.handle_response(create_response(correlation_id, 0, false), &mut ctx);
         inbox.handle_response(create_response(correlation_id, 0, false), &mut ctx);
 
-        // Assert - duplicate dropped, only expecting seq 1 now
-        assert_eq!(inbox.active_streams(), 1);
+        // Assert
+        assert_eq!(inbox.active_streams(), 0);
+        assert_eq!(inbox.invalid_sequence_failures(), 1);
     }
 }

@@ -3,8 +3,8 @@
 //! Advanced RPC scenarios covering:
 //! - Lease management and tracking
 //! - Fault tolerance and timeout handling
-//! - Streaming response ordering and buffering
-//! - Gap detection and duplicate handling
+//! - Strict contiguous streaming response ordering
+//! - Gap detection and duplicate failure handling
 
 mod fixtures;
 
@@ -692,7 +692,7 @@ fn should_handle_in_order_streaming_chunks() {
 }
 
 #[test]
-fn should_buffer_out_of_order_chunks() {
+fn should_fail_out_of_order_chunks() {
     // Arrange
     let mut inbox = create_inbox();
     let mut ctx = create_inbox_context();
@@ -701,49 +701,36 @@ fn should_buffer_out_of_order_chunks() {
     // Act
     inbox.receive(
         InboxMessage::Response(create_response(correlation_id, 2, false)),
-        &mut ctx,
-    );
-    inbox.receive(
-        InboxMessage::Response(create_response(correlation_id, 3, false)),
         &mut ctx,
     );
 
     // Assert
-    assert_eq!(inbox.active_streams(), 1);
-    assert_eq!(inbox.buffered_count(&correlation_id), 2);
+    assert_eq!(inbox.active_streams(), 0);
+    assert_eq!(inbox.buffered_count(&correlation_id), 0);
+    assert_eq!(inbox.invalid_sequence_failures(), 1);
 }
 
 #[test]
-fn should_flush_buffer_when_gap_filled() {
+fn should_fail_when_gap_appears_mid_stream() {
     // Arrange
     let mut inbox = create_inbox();
     let mut ctx = create_inbox_context();
     let correlation_id = Uuid::new_v4();
 
     // Act
-    inbox.receive(
-        InboxMessage::Response(create_response(correlation_id, 3, false)),
-        &mut ctx,
-    );
-    inbox.receive(
-        InboxMessage::Response(create_response(correlation_id, 2, false)),
-        &mut ctx,
-    );
-    assert_eq!(inbox.buffered_count(&correlation_id), 2);
-
     inbox.receive(
         InboxMessage::Response(create_response(correlation_id, 0, false)),
         &mut ctx,
     );
-    assert_eq!(inbox.buffered_count(&correlation_id), 2); // Still buffered
-
     inbox.receive(
-        InboxMessage::Response(create_response(correlation_id, 1, false)),
+        InboxMessage::Response(create_response(correlation_id, 2, false)),
         &mut ctx,
     );
 
     // Assert
+    assert_eq!(inbox.active_streams(), 0);
     assert_eq!(inbox.buffered_count(&correlation_id), 0);
+    assert_eq!(inbox.invalid_sequence_failures(), 1);
 }
 
 #[test]
@@ -770,7 +757,7 @@ fn should_cleanup_stream_when_final_chunk_received() {
 }
 
 #[test]
-fn should_cleanup_when_buffered_final_chunk_flushed() {
+fn should_fail_when_final_chunk_arrives_before_gap_is_closed() {
     // Arrange
     let mut inbox = create_inbox();
     let mut ctx = create_inbox_context();
@@ -781,19 +768,11 @@ fn should_cleanup_when_buffered_final_chunk_flushed() {
         InboxMessage::Response(create_response(correlation_id, 2, true)),
         &mut ctx,
     );
-    assert_eq!(inbox.active_streams(), 1);
-
-    inbox.receive(
-        InboxMessage::Response(create_response(correlation_id, 0, false)),
-        &mut ctx,
-    );
-    inbox.receive(
-        InboxMessage::Response(create_response(correlation_id, 1, false)),
-        &mut ctx,
-    );
 
     // Assert
     assert_eq!(inbox.active_streams(), 0);
+    assert_eq!(inbox.buffered_count(&correlation_id), 0);
+    assert_eq!(inbox.invalid_sequence_failures(), 1);
 }
 
 #[test]
@@ -812,13 +791,10 @@ fn should_drop_duplicate_chunks() {
         InboxMessage::Response(create_response(correlation_id, 0, false)),
         &mut ctx,
     );
-    inbox.receive(
-        InboxMessage::Response(create_response(correlation_id, 1, true)),
-        &mut ctx,
-    );
 
     // Assert
     assert_eq!(inbox.active_streams(), 0);
+    assert_eq!(inbox.invalid_sequence_failures(), 1);
 }
 
 #[test]
@@ -873,22 +849,21 @@ fn should_isolate_streams_by_correlation_id() {
 }
 
 #[test]
-fn should_handle_buffer_overflow_by_disconnecting() {
+fn should_preserve_strict_sequence_contract_with_custom_buffer_size() {
     // Arrange
     let mut inbox = ReplyInboxActor::with_buffer_size(RouteFamily::new(1), 5);
     let mut ctx = create_inbox_context();
     let correlation_id = Uuid::new_v4();
 
     // Act
-    for seq in 1..=6 {
-        inbox.receive(
-            InboxMessage::Response(create_response(correlation_id, seq, false)),
-            &mut ctx,
-        );
-    }
+    inbox.receive(
+        InboxMessage::Response(create_response(correlation_id, 5, false)),
+        &mut ctx,
+    );
 
     // Assert
     assert_eq!(inbox.active_streams(), 0);
+    assert_eq!(inbox.invalid_sequence_failures(), 1);
 }
 
 #[test]
@@ -912,7 +887,7 @@ fn should_cleanup_stream_on_explicit_cleanup_message() {
 }
 
 #[test]
-fn should_handle_large_sequence_gaps() {
+fn should_fail_large_sequence_gaps() {
     // Arrange
     let mut inbox = create_inbox();
     let mut ctx = create_inbox_context();
@@ -923,12 +898,9 @@ fn should_handle_large_sequence_gaps() {
         InboxMessage::Response(create_response(correlation_id, 100, false)),
         &mut ctx,
     );
-    inbox.receive(
-        InboxMessage::Response(create_response(correlation_id, 0, false)),
-        &mut ctx,
-    );
 
     // Assert
-    assert_eq!(inbox.active_streams(), 1);
-    assert_eq!(inbox.buffered_count(&correlation_id), 1);
+    assert_eq!(inbox.active_streams(), 0);
+    assert_eq!(inbox.buffered_count(&correlation_id), 0);
+    assert_eq!(inbox.invalid_sequence_failures(), 1);
 }

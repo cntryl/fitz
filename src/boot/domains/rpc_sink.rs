@@ -18,6 +18,8 @@ const RPC_BACKPRESSURE_ERROR: &str = "RPC backpressure: too many pending request
 const RPC_NO_WORKERS_ERROR: &str = "No workers registered for route";
 const RPC_WORKER_NOT_FOUND_ERROR: &str = "Worker disconnected or unregistered";
 const RPC_CORRELATION_NOT_FOUND_ERROR: &str = "Correlation ID not found (orphaned response)";
+const RPC_INVALID_SEQUENCE_ERROR: &str =
+    "RPC response sequence must start at seq=0 and advance contiguously";
 const RPC_TIMEOUT_ERROR: &str = "Worker did not reply within timeout period";
 // RPC remains broker-local and in-memory. Worker registrations and pending
 // requests disappear on disconnect cleanup or broker restart; this bound keeps
@@ -114,13 +116,14 @@ impl RpcWorker {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct RpcPendingRequest {
     route: Route,
     caller_session_id: u64,
     caller_inbox_addr: Option<RouteAddress>,
     worker_addr: RouteAddress,
     worker_session_id: u64,
+    next_expected_seq: u64,
     submitted_at: String,
     submitted_at_instant: Instant,
     expires_at: Instant,
@@ -156,6 +159,7 @@ impl RpcPendingRequest {
             caller_inbox_addr: Some(caller_inbox_addr),
             worker_addr,
             worker_session_id,
+            next_expected_seq: 0,
             submitted_at,
             submitted_at_instant,
             expires_at,
@@ -298,6 +302,21 @@ struct RpcPendingTable {
     expirations: BinaryHeap<ExpiringPendingRequest>,
 }
 
+#[derive(Debug)]
+enum RpcPendingResponseDisposition {
+    Missing,
+    Forward {
+        pending: RpcPendingRequest,
+        pending_len: usize,
+        removed_pending: bool,
+    },
+    InvalidSequence {
+        pending: RpcPendingRequest,
+        pending_len: usize,
+        expected_seq: u64,
+    },
+}
+
 impl RpcPendingTable {
     fn new() -> Self {
         Self {
@@ -319,15 +338,57 @@ impl RpcPendingTable {
     fn pending_for_response(
         &mut self,
         correlation_id: &uuid::Uuid,
+        seq: u64,
         stream_end: bool,
-    ) -> Option<(RpcPendingRequest, usize, bool)> {
-        let pending = self.pending.get(correlation_id).cloned()?;
-        if stream_end {
-            self.pending.remove(correlation_id);
-            return Some((pending, self.pending.len(), true));
+    ) -> RpcPendingResponseDisposition {
+        let Some(expected_seq) = self
+            .pending
+            .get(correlation_id)
+            .map(|pending| pending.next_expected_seq)
+        else {
+            return RpcPendingResponseDisposition::Missing;
+        };
+
+        if seq != expected_seq {
+            let pending = self
+                .pending
+                .remove(correlation_id)
+                .expect("tracked pending request for invalid sequence");
+            return RpcPendingResponseDisposition::InvalidSequence {
+                pending,
+                pending_len: self.pending.len(),
+                expected_seq,
+            };
         }
 
-        Some((pending, self.pending.len(), false))
+        if stream_end {
+            let pending = self
+                .pending
+                .remove(correlation_id)
+                .expect("tracked pending request for terminal response");
+            return RpcPendingResponseDisposition::Forward {
+                pending,
+                pending_len: self.pending.len(),
+                removed_pending: true,
+            };
+        }
+
+        let tracked = {
+            let pending = self
+                .pending
+                .get_mut(correlation_id)
+                .expect("tracked pending request for non-terminal response");
+            let tracked = pending.clone();
+            pending.next_expected_seq = pending.next_expected_seq.saturating_add(1);
+            tracked
+        };
+        let pending_len = self.pending.len();
+
+        RpcPendingResponseDisposition::Forward {
+            pending: tracked,
+            pending_len,
+            removed_pending: false,
+        }
     }
 
     fn remove_pending(&mut self, correlation_id: &uuid::Uuid) -> Option<usize> {
@@ -1302,142 +1363,217 @@ impl MailboxSink for RpcDomainSink {
                 let pending_route_lookup_start = Instant::now();
                 let caller_info = state
                     .pending
-                    .pending_for_response(&resp.correlation_id, resp.stream_end);
+                    .pending_for_response(&resp.correlation_id, resp.seq, resp.stream_end);
                 let pending_route_lookup_us =
                     pending_route_lookup_start.elapsed().as_micros() as u64;
                 let mut state_changed = false;
 
-                if let Some((caller_info, pending_len, removed_pending)) = caller_info {
-                    let pending_lookup_us = pending_route_lookup_us;
-                    if removed_pending {
-                        let completion_latency_us =
-                            caller_info.submitted_at_instant.elapsed().as_micros() as u64;
-                        if let Some(route_state) =
-                            state.route_state(caller_info.worker_addr.route())
-                        {
-                            route_state.record_completion(
-                                caller_info.worker_session_id,
-                                completion_latency_us,
+                match caller_info {
+                    RpcPendingResponseDisposition::Forward {
+                        pending: caller_info,
+                        pending_len,
+                        removed_pending,
+                    } => {
+                        let pending_lookup_us = pending_route_lookup_us;
+                        if removed_pending {
+                            let completion_latency_us =
+                                caller_info.submitted_at_instant.elapsed().as_micros() as u64;
+                            if let Some(route_state) =
+                                state.route_state(caller_info.worker_addr.route())
+                            {
+                                route_state.record_completion(
+                                    caller_info.worker_session_id,
+                                    completion_latency_us,
+                                );
+                            }
+                            self.histogram_observe_us(
+                                "rpc_pending_route_remove_us",
+                                pending_lookup_us,
                             );
+                            self.histogram_observe_us("rpc_pending_untrack_us", pending_lookup_us);
+                            self.gauge_set("rpc_pending_requests", pending_len as u64);
+                            state_changed = true;
                         }
-                        self.histogram_observe_us("rpc_pending_route_remove_us", pending_lookup_us);
-                        self.histogram_observe_us("rpc_pending_untrack_us", pending_lookup_us);
-                        self.gauge_set("rpc_pending_requests", pending_len as u64);
-                        state_changed = true;
-                    }
 
-                    let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
-                    drop(state);
+                        let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
+                        drop(state);
 
-                    self.histogram_observe_us(
-                        "rpc_pending_route_lookup_us",
-                        pending_route_lookup_us,
-                    );
-                    self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
-                    self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
-
-                    let response_forward_start = Instant::now();
-                    let encoded_response = crate::protocol::rpc_codec::encode_response_message_into(
-                        &resp,
-                        &mut payload_encoder,
-                    );
-                    if let Some(caller_inbox_addr) = caller_info.caller_inbox_addr.as_ref() {
-                        let forward_ctx = FrameContext::new(
-                            caller_info.caller_session_id,
-                            frame_ctx.channel_id,
-                            crate::protocol::tlv::MessageType::new(303),
-                            bytes::Bytes::from(encoded_response),
-                            *caller_inbox_addr.family(),
+                        self.histogram_observe_us(
+                            "rpc_pending_route_lookup_us",
+                            pending_route_lookup_us,
                         );
-                        let forward_envelope =
-                            Envelope::new(caller_inbox_addr.clone(), forward_ctx);
-                        if let Err(e) = self.router.route(forward_envelope) {
-                            self.counter_inc("rpc_response_forward_errors_total");
+                        self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
+                        self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
+
+                        let response_forward_start = Instant::now();
+                        let encoded_response = crate::protocol::rpc_codec::encode_response_message_into(
+                            &resp,
+                            &mut payload_encoder,
+                        );
+                        if let Some(caller_inbox_addr) = caller_info.caller_inbox_addr.as_ref() {
+                            let forward_ctx = FrameContext::new(
+                                caller_info.caller_session_id,
+                                frame_ctx.channel_id,
+                                crate::protocol::tlv::MessageType::new(303),
+                                bytes::Bytes::from(encoded_response),
+                                *caller_inbox_addr.family(),
+                            );
+                            let forward_envelope =
+                                Envelope::new(caller_inbox_addr.clone(), forward_ctx);
+                            if let Err(e) = self.router.route(forward_envelope) {
+                                self.counter_inc("rpc_response_forward_errors_total");
+                                tracing::warn!(
+                                    domain = "rpc",
+                                    correlation_id = %resp.correlation_id,
+                                    error = ?e,
+                                    "Failed to forward response to requester"
+                                );
+                            }
+                        } else {
+                            self.counter_inc("rpc_responses_dropped_closed_caller_total");
+                        }
+                        self.histogram_observe_elapsed_us(
+                            "rpc_response_forward_us",
+                            response_forward_start,
+                        );
+
+                        let ack_forward_start = Instant::now();
+                        let ack_payload = crate::protocol::rpc_codec::encode_ack_into(
+                            &resp.correlation_id,
+                            &mut payload_encoder,
+                        );
+                        let ack_ctx = FrameContext::new(
+                            frame_ctx.session_id,
+                            frame_ctx.channel_id,
+                            crate::protocol::tlv::MessageType::new(304),
+                            bytes::Bytes::from(ack_payload),
+                            RouteFamily::from_u32(envelope.destination().family().id()),
+                        );
+                        let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
+                            session_inbox_address(
+                                *envelope.destination().family(),
+                                frame_ctx.session_id,
+                            )
+                        });
+                        let ack_envelope = Envelope::new(worker_inbox_addr, ack_ctx);
+                        if let Err(e) = self.router.route(ack_envelope) {
+                            self.counter_inc("rpc_ack_forward_errors_total");
                             tracing::warn!(
                                 domain = "rpc",
                                 correlation_id = %resp.correlation_id,
                                 error = ?e,
-                                "Failed to forward response to requester"
+                                "Failed to send ACK to worker"
                             );
+                        } else {
+                            self.counter_inc("rpc_worker_acks_total");
                         }
-                    } else {
-                        self.counter_inc("rpc_responses_dropped_closed_caller_total");
-                    }
-                    self.histogram_observe_elapsed_us(
-                        "rpc_response_forward_us",
-                        response_forward_start,
-                    );
+                        self.histogram_observe_elapsed_us("rpc_ack_forward_us", ack_forward_start);
 
-                    let ack_forward_start = Instant::now();
-                    let ack_payload = crate::protocol::rpc_codec::encode_ack_into(
-                        &resp.correlation_id,
-                        &mut payload_encoder,
-                    );
-                    let ack_ctx = FrameContext::new(
-                        frame_ctx.session_id,
-                        frame_ctx.channel_id,
-                        crate::protocol::tlv::MessageType::new(304),
-                        bytes::Bytes::from(ack_payload),
-                        RouteFamily::from_u32(envelope.destination().family().id()),
-                    );
-                    let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
-                        session_inbox_address(
-                            *envelope.destination().family(),
-                            frame_ctx.session_id,
-                        )
-                    });
-                    let ack_envelope = Envelope::new(worker_inbox_addr, ack_ctx);
-                    if let Err(e) = self.router.route(ack_envelope) {
-                        self.counter_inc("rpc_ack_forward_errors_total");
+                        tracing::debug!(
+                            domain = "rpc",
+                            correlation_id = %resp.correlation_id,
+                            stream_end = resp.stream_end,
+                            "Response forwarded to requester and ACK sent to worker"
+                        );
+                    }
+                    RpcPendingResponseDisposition::InvalidSequence {
+                        pending: caller_info,
+                        pending_len,
+                        expected_seq,
+                    } => {
+                        let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
+                        drop(state);
+                        self.histogram_observe_us(
+                            "rpc_pending_route_lookup_us",
+                            pending_route_lookup_us,
+                        );
+                        self.histogram_observe_us(
+                            "rpc_pending_route_remove_us",
+                            pending_route_lookup_us,
+                        );
+                        self.histogram_observe_us("rpc_pending_untrack_us", pending_route_lookup_us);
+                        self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
+                        self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
+                        self.gauge_set("rpc_pending_requests", pending_len as u64);
+                        self.counter_inc("rpc_response_invalid_sequence_total");
+                        self.counter_inc("rpc_cleanup_pending_removed_total");
+                        self.schedule_admin_snapshot(false);
+
+                        if let Some(caller_inbox_addr) = caller_info.caller_inbox_addr {
+                            self.forward_pending_error_deliveries(
+                                vec![RpcPendingErrorDelivery {
+                                    correlation_id: resp.correlation_id,
+                                    caller_session_id: caller_info.caller_session_id,
+                                    caller_inbox_addr,
+                                }],
+                                crate::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
+                                RPC_INVALID_SEQUENCE_ERROR,
+                                "rpc_invalid_sequence_errors_forwarded_total",
+                                "rpc_invalid_sequence_errors_dropped_total",
+                            );
+                        } else {
+                            self.counter_inc("rpc_invalid_sequence_errors_dropped_total");
+                        }
+
+                        let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
+                            session_inbox_address(
+                                *envelope.destination().family(),
+                                frame_ctx.session_id,
+                            )
+                        });
+                        self.forward_pending_error_deliveries(
+                            vec![RpcPendingErrorDelivery {
+                                correlation_id: resp.correlation_id,
+                                caller_session_id: frame_ctx.session_id,
+                                caller_inbox_addr: worker_inbox_addr,
+                            }],
+                            crate::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
+                            RPC_INVALID_SEQUENCE_ERROR,
+                            "rpc_worker_protocol_errors_forwarded_total",
+                            "rpc_worker_protocol_errors_dropped_total",
+                        );
+
                         tracing::warn!(
                             domain = "rpc",
                             correlation_id = %resp.correlation_id,
-                            error = ?e,
-                            "Failed to send ACK to worker"
+                            expected_seq,
+                            received_seq = resp.seq,
+                            "Rejected RPC response with invalid sequence"
                         );
-                    } else {
-                        self.counter_inc("rpc_worker_acks_total");
                     }
-                    self.histogram_observe_elapsed_us("rpc_ack_forward_us", ack_forward_start);
-
-                    tracing::debug!(
-                        domain = "rpc",
-                        correlation_id = %resp.correlation_id,
-                        stream_end = resp.stream_end,
-                        "Response forwarded to requester and ACK sent to worker"
-                    );
-                } else {
-                    let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
-                    drop(state);
-                    self.histogram_observe_us(
-                        "rpc_pending_route_lookup_us",
-                        pending_route_lookup_us,
-                    );
-                    self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
-                    self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
-                    self.counter_inc("rpc_responses_missing_pending_total");
-                    let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
-                        session_inbox_address(
-                            *envelope.destination().family(),
-                            frame_ctx.session_id,
-                        )
-                    });
-                    self.forward_pending_error_deliveries(
-                        vec![RpcPendingErrorDelivery {
-                            correlation_id: resp.correlation_id,
-                            caller_session_id: frame_ctx.session_id,
-                            caller_inbox_addr: worker_inbox_addr,
-                        }],
-                        crate::protocol::error_codes::rpc::ERR_CORRELATION_NOT_FOUND,
-                        RPC_CORRELATION_NOT_FOUND_ERROR,
-                        "rpc_correlation_errors_forwarded_total",
-                        "rpc_correlation_errors_dropped_total",
-                    );
-                    tracing::warn!(
-                        domain = "rpc",
-                        correlation_id = %resp.correlation_id,
-                        "No pending request for response"
-                    );
+                    RpcPendingResponseDisposition::Missing => {
+                        let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
+                        drop(state);
+                        self.histogram_observe_us(
+                            "rpc_pending_route_lookup_us",
+                            pending_route_lookup_us,
+                        );
+                        self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
+                        self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
+                        self.counter_inc("rpc_responses_missing_pending_total");
+                        let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
+                            session_inbox_address(
+                                *envelope.destination().family(),
+                                frame_ctx.session_id,
+                            )
+                        });
+                        self.forward_pending_error_deliveries(
+                            vec![RpcPendingErrorDelivery {
+                                correlation_id: resp.correlation_id,
+                                caller_session_id: frame_ctx.session_id,
+                                caller_inbox_addr: worker_inbox_addr,
+                            }],
+                            crate::protocol::error_codes::rpc::ERR_CORRELATION_NOT_FOUND,
+                            RPC_CORRELATION_NOT_FOUND_ERROR,
+                            "rpc_correlation_errors_forwarded_total",
+                            "rpc_correlation_errors_dropped_total",
+                        );
+                        tracing::warn!(
+                            domain = "rpc",
+                            correlation_id = %resp.correlation_id,
+                            "No pending request for response"
+                        );
+                    }
                 }
                 (None, state_changed.then_some(false))
             }
@@ -2374,9 +2510,10 @@ mod tests {
         assert_eq!(caller_cleanup.detached_callers, 1);
         assert_eq!(caller_cleanup.removed_pending, 0);
         assert_eq!(caller_cleanup.pending_len, 1);
-        let (detached_pending, pending_len, removed) = state
+        let detached_pending = state
             .pending
-            .pending_for_response(&detached_correlation_id, false)
+            .pending
+            .get(&detached_correlation_id)
             .expect("detached pending should remain tracked");
         assert_eq!(detached_pending.caller_session_id, 7);
         assert_eq!(detached_pending.caller_inbox_addr, None);
@@ -2385,8 +2522,7 @@ mod tests {
             RouteAddress::new(family, route)
         );
         assert_eq!(detached_pending.worker_session_id, 42);
-        assert_eq!(pending_len, 1);
-        assert!(!removed);
+        assert_eq!(state.pending.len(), 1);
         assert_eq!(state.route_count(), 1);
     }
 
@@ -2491,19 +2627,16 @@ mod tests {
             removed_correlation_id
         );
         assert!(
-            state
-                .pending
-                .pending_for_response(&removed_correlation_id, false)
-                .is_none(),
+            !state.pending.pending.contains_key(&removed_correlation_id),
             "removed worker pending should no longer be tracked"
         );
-        let (retained_pending, pending_len, removed) = state
+        let retained_pending = state
             .pending
-            .pending_for_response(&retained_correlation_id, false)
+            .pending
+            .get(&retained_correlation_id)
             .expect("retained worker pending should remain tracked");
         assert_eq!(retained_pending.worker_addr, retained_worker_addr);
-        assert_eq!(pending_len, 1);
-        assert!(!removed);
+        assert_eq!(state.pending.len(), 1);
         assert_eq!(state.route_count(), 1);
     }
 
@@ -3027,18 +3160,26 @@ mod tests {
         );
 
         // Act
-        let result = pending.pending_for_response(&correlation_id, true);
+        let result = pending.pending_for_response(&correlation_id, 0, true);
 
         // Assert
         assert_eq!(pending_len, 1);
-        let (tracked, pending_len, removed) = result.expect("pending request should exist");
-        assert_eq!(tracked.caller_session_id, 42);
-        assert_eq!(tracked.caller_inbox_addr, Some(caller_inbox_addr));
-        assert_eq!(tracked.worker_addr, worker_addr);
-        assert_eq!(tracked.worker_session_id, 77);
-        assert!(removed);
-        assert_eq!(pending_len, 0);
-        assert_eq!(pending.len(), 0);
+        match result {
+            RpcPendingResponseDisposition::Forward {
+                pending: tracked,
+                pending_len,
+                removed_pending,
+            } => {
+                assert_eq!(tracked.caller_session_id, 42);
+                assert_eq!(tracked.caller_inbox_addr, Some(caller_inbox_addr));
+                assert_eq!(tracked.worker_addr, worker_addr);
+                assert_eq!(tracked.worker_session_id, 77);
+                assert!(removed_pending);
+                assert_eq!(pending_len, 0);
+                assert_eq!(pending.len(), 0);
+            }
+            other => panic!("expected terminal response handling, found {other:?}"),
+        }
     }
 
     #[test]
@@ -3066,17 +3207,301 @@ mod tests {
         );
 
         // Act
-        let result = pending.pending_for_response(&correlation_id, false);
+        let result = pending.pending_for_response(&correlation_id, 0, false);
 
         // Assert
         assert_eq!(pending_len, 1);
-        let (tracked, pending_len, removed) = result.expect("pending request should exist");
-        assert_eq!(tracked.caller_session_id, 84);
-        assert_eq!(tracked.caller_inbox_addr, Some(caller_inbox_addr));
-        assert_eq!(tracked.worker_addr, worker_addr);
-        assert_eq!(tracked.worker_session_id, 99);
-        assert!(!removed);
-        assert_eq!(pending_len, 1);
-        assert_eq!(pending.len(), 1);
+        match result {
+            RpcPendingResponseDisposition::Forward {
+                pending: tracked,
+                pending_len,
+                removed_pending,
+            } => {
+                assert_eq!(tracked.caller_session_id, 84);
+                assert_eq!(tracked.caller_inbox_addr, Some(caller_inbox_addr));
+                assert_eq!(tracked.worker_addr, worker_addr);
+                assert_eq!(tracked.worker_session_id, 99);
+                assert!(!removed_pending);
+                assert_eq!(pending_len, 1);
+                assert_eq!(pending.len(), 1);
+                assert_eq!(pending.pending[&correlation_id].next_expected_seq, 1);
+            }
+            other => panic!("expected non-terminal response handling, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn should_reject_invalid_response_sequence_given_rpc_pending_table() {
+        // Arrange
+        let correlation_id = uuid::Uuid::new_v4();
+        let caller_inbox_addr = session_inbox_address(RouteFamily::new(11), 21);
+        let worker_addr = RouteAddress::new(
+            RouteFamily::new(11),
+            Route::new("rpc://bench/system/resource/operation"),
+        );
+        let mut pending = RpcPendingTable::new();
+        pending.track_pending(
+            correlation_id,
+            RpcPendingRequest::new(RpcPendingRequestInit {
+                route: worker_addr.route().clone(),
+                caller_session_id: 21,
+                caller_inbox_addr,
+                worker_addr,
+                worker_session_id: 77,
+                submitted_at: "2026-03-14T12:00:00Z".to_string(),
+                submitted_at_instant: Instant::now(),
+                expires_at: Instant::now() + Duration::from_secs(30),
+            }),
+        );
+
+        // Act
+        let result = pending.pending_for_response(&correlation_id, 1, false);
+
+        // Assert
+        match result {
+            RpcPendingResponseDisposition::InvalidSequence {
+                pending: tracked,
+                pending_len,
+                expected_seq,
+            } => {
+                assert_eq!(tracked.caller_session_id, 21);
+                assert_eq!(tracked.worker_session_id, 77);
+                assert_eq!(expected_seq, 0);
+                assert_eq!(pending_len, 0);
+                assert_eq!(pending.len(), 0);
+            }
+            other => panic!("expected invalid sequence handling, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn should_reject_out_of_order_worker_response_given_rpc_sink() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+        let family = RouteFamily::new(1);
+        let request_route = Route::new("rpc://bench/system/resource/operation");
+        let request_addr = RouteAddress::new(family, request_route.clone());
+        let request_source = session_inbox_address(family, 1);
+        let worker_source = session_inbox_address(family, 42);
+        let reply_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let reply_sink = Arc::new(CaptureRpcFrameSink {
+            frames: reply_frames.clone(),
+        });
+        let worker_sink = Arc::new(CaptureRpcFrameSink {
+            frames: worker_frames.clone(),
+        });
+        router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
+        router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
+        {
+            let mut state = sink.state.lock();
+            state
+                .ensure_route_state(&request_route)
+                .register_worker(test_rpc_worker(family, &request_route, 42));
+        }
+        let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
+        let (request_msg_type, request_payload) =
+            crate::benchkit::extract_single_tlv_field(&request_frame);
+        let request_ctx = FrameContext::new(
+            1,
+            crate::protocol::frame::ChannelId::Rpc,
+            crate::protocol::tlv::MessageType::new(request_msg_type),
+            request_payload.clone(),
+            family,
+        );
+        let request =
+            match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
+                .expect("parse rpc request")
+            {
+                crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+                other => panic!("expected rpc request, found {other:?}"),
+            };
+        let invalid_response_payload = crate::protocol::rpc_codec::encode_response_message(
+            &crate::domains::rpc::protocol::RpcResponse::chunk(
+                request.correlation_id,
+                1,
+                bytes::Bytes::from_static(b"gap"),
+                false,
+            ),
+        );
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            request_source,
+            request_addr.clone(),
+            request_ctx,
+        ))
+        .expect("deliver request");
+        sink.deliver(Envelope::from_route(
+            worker_source,
+            request_addr,
+            FrameContext::new(
+                42,
+                crate::protocol::frame::ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(303),
+                bytes::Bytes::from(invalid_response_payload),
+                family,
+            ),
+        ))
+        .expect("deliver invalid response");
+
+        // Assert
+        assert_eq!(sink.pending_request_count(), 0);
+
+        let reply_frames = reply_frames.lock();
+        assert_eq!(reply_frames.len(), 2);
+        assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
+        assert_eq!(reply_frames[1].msg_type.as_u16(), 303);
+        let error_response = parse_forwarded_rpc_response(&reply_frames[1]);
+        assert_eq!(error_response.correlation_id, request.correlation_id);
+        assert_eq!(error_response.seq, 0);
+        assert!(error_response.stream_end);
+        assert_rpc_code_error(
+            error_response.body.as_ref(),
+            crate::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
+            RPC_INVALID_SEQUENCE_ERROR,
+        );
+
+        let worker_frames = worker_frames.lock();
+        assert_eq!(worker_frames.len(), 2);
+        assert_eq!(worker_frames[0].msg_type.as_u16(), 302);
+        assert_eq!(worker_frames[1].msg_type.as_u16(), 303);
+        let worker_error = parse_forwarded_rpc_response(&worker_frames[1]);
+        assert_eq!(worker_error.correlation_id, request.correlation_id);
+        assert!(worker_error.stream_end);
+        assert_rpc_code_error(
+            worker_error.body.as_ref(),
+            crate::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
+            RPC_INVALID_SEQUENCE_ERROR,
+        );
+    }
+
+    #[test]
+    fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+        let family = RouteFamily::new(1);
+        let request_route = Route::new("rpc://bench/system/resource/operation");
+        let request_addr = RouteAddress::new(family, request_route.clone());
+        let request_source = session_inbox_address(family, 1);
+        let worker_source = session_inbox_address(family, 42);
+        let reply_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let reply_sink = Arc::new(CaptureRpcFrameSink {
+            frames: reply_frames.clone(),
+        });
+        let worker_sink = Arc::new(CaptureRpcFrameSink {
+            frames: worker_frames.clone(),
+        });
+        router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
+        router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
+        {
+            let mut state = sink.state.lock();
+            state
+                .ensure_route_state(&request_route)
+                .register_worker(test_rpc_worker(family, &request_route, 42));
+        }
+        let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
+        let (request_msg_type, request_payload) =
+            crate::benchkit::extract_single_tlv_field(&request_frame);
+        let request_ctx = FrameContext::new(
+            1,
+            crate::protocol::frame::ChannelId::Rpc,
+            crate::protocol::tlv::MessageType::new(request_msg_type),
+            request_payload.clone(),
+            family,
+        );
+        let request =
+            match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
+                .expect("parse rpc request")
+            {
+                crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+                other => panic!("expected rpc request, found {other:?}"),
+            };
+        let first_response_payload = crate::protocol::rpc_codec::encode_response_message(
+            &crate::domains::rpc::protocol::RpcResponse::chunk(
+                request.correlation_id,
+                0,
+                bytes::Bytes::from_static(b"part-0"),
+                false,
+            ),
+        );
+        let duplicate_response_payload = crate::protocol::rpc_codec::encode_response_message(
+            &crate::domains::rpc::protocol::RpcResponse::chunk(
+                request.correlation_id,
+                0,
+                bytes::Bytes::from_static(b"part-0-again"),
+                false,
+            ),
+        );
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            request_source,
+            request_addr.clone(),
+            request_ctx,
+        ))
+        .expect("deliver request");
+        sink.deliver(Envelope::from_route(
+            worker_source.clone(),
+            request_addr.clone(),
+            FrameContext::new(
+                42,
+                crate::protocol::frame::ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(303),
+                bytes::Bytes::from(first_response_payload),
+                family,
+            ),
+        ))
+        .expect("deliver first response chunk");
+        sink.deliver(Envelope::from_route(
+            worker_source,
+            request_addr,
+            FrameContext::new(
+                42,
+                crate::protocol::frame::ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(303),
+                bytes::Bytes::from(duplicate_response_payload),
+                family,
+            ),
+        ))
+        .expect("deliver duplicate response chunk");
+
+        // Assert
+        assert_eq!(sink.pending_request_count(), 0);
+
+        let reply_frames = reply_frames.lock();
+        assert_eq!(reply_frames.len(), 3);
+        assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
+        let first_response = parse_forwarded_rpc_response(&reply_frames[1]);
+        assert_eq!(first_response.correlation_id, request.correlation_id);
+        assert_eq!(first_response.seq, 0);
+        assert!(!first_response.stream_end);
+        let terminal_error = parse_forwarded_rpc_response(&reply_frames[2]);
+        assert_eq!(terminal_error.correlation_id, request.correlation_id);
+        assert!(terminal_error.stream_end);
+        assert_rpc_code_error(
+            terminal_error.body.as_ref(),
+            crate::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
+            RPC_INVALID_SEQUENCE_ERROR,
+        );
+
+        let worker_frames = worker_frames.lock();
+        assert_eq!(worker_frames.len(), 3);
+        assert_eq!(worker_frames[0].msg_type.as_u16(), 302);
+        assert_eq!(worker_frames[1].msg_type.as_u16(), 304);
+        assert_eq!(worker_frames[2].msg_type.as_u16(), 303);
+        let worker_error = parse_forwarded_rpc_response(&worker_frames[2]);
+        assert_eq!(worker_error.correlation_id, request.correlation_id);
+        assert!(worker_error.stream_end);
+        assert_rpc_code_error(
+            worker_error.body.as_ref(),
+            crate::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
+            RPC_INVALID_SEQUENCE_ERROR,
+        );
     }
 }

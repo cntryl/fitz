@@ -15,10 +15,14 @@
 //!
 //! # Streaming Support
 //!
-//! Workers can send multi-chunk responses by setting seq (0-based) and stream_end:
-//! - First chunk: seq=0, stream_end=false
-//! - Middle chunks: seq=N, stream_end=false
-//! - Final chunk: seq=M, stream_end=true
+//! Workers can send multi-chunk responses only if sequence numbers are strict
+//! and contiguous:
+//! - First chunk: seq=0
+//! - Next chunk: seq=previous+1
+//! - Final chunk: stream_end=true on the last contiguous chunk
+//!
+//! Duplicate or out-of-order chunks are terminal protocol failures. Fitz does
+//! not buffer or reorder RPC responses on the broker side.
 
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
@@ -68,20 +72,20 @@ impl RpcRequest {
 /// RPC response from worker back to client
 ///
 /// Workers send responses with the same correlation_id as the request.
-/// For streaming responses, workers send multiple chunks with incrementing
-/// seq numbers and mark the final chunk with stream_end=true.
+/// For streaming responses, workers must send chunks in strict contiguous
+/// sequence order and mark the final chunk with stream_end=true.
 #[derive(Debug, Clone)]
 pub struct RpcResponse {
     /// Correlation ID matching the request (UUID for distributed tracing)
     pub correlation_id: Uuid,
 
-    /// Sequence number for streaming (starts at 0)
+    /// Sequence number for streaming (starts at 0 and must advance contiguously)
     pub seq: u64,
 
     /// Response payload chunk (Bytes for zero-copy)
     pub body: Bytes,
 
-    /// True if this is the final chunk
+    /// True if this chunk completes a successful response
     pub stream_end: bool,
 }
 
@@ -96,7 +100,10 @@ impl RpcResponse {
         }
     }
 
-    /// Create streaming response chunk
+    /// Create streaming response chunk.
+    ///
+    /// Chunks must start at seq=0 and advance contiguously without duplicates
+    /// or gaps.
     pub fn chunk(correlation_id: Uuid, seq: u64, body: Bytes, stream_end: bool) -> Self {
         Self {
             correlation_id,
@@ -138,8 +145,8 @@ pub enum RpcMessage {
 
     /// Worker response to be forwarded to client
     ///
-    /// Contains correlation_id matching the original request. The route actor
-    /// forwards this to the client's reply_route specified in the request.
+    /// Contains correlation_id matching the original request. Responses that do
+    /// not follow strict contiguous sequence order are terminally rejected.
     Response(RpcResponse),
 
     /// Worker acknowledges completion (for cleanup)
