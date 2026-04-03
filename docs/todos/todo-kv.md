@@ -3,6 +3,7 @@
 - Classification: Durable committed data, ephemeral transaction state.
 - Goal: Separate the durable committed-data story from the non-durable transaction story.
 - Primary outcome: no more accidental implication that transactions survive disconnect or restart.
+- Status: Hardening complete. No KV-core performance follow-up is currently open.
 
 Define a TDD-driven implementation plan for the following server correction work.
 
@@ -17,7 +18,7 @@ Define a TDD-driven implementation plan for the following server correction work
 
 - Durable committed data.
 - Open transactions and resource-lock coordination are session-local and process-local today.
-- RouteFamily can remain process-local for now; committed data durability comes from the storage engine.
+- RouteFamily selection can remain a process/deployment concern for now. This pass does not add a separate persisted control-plane service that coordinates family assignment, and committed-data durability still comes from the storage engine.
 
 ## Current Reality
 
@@ -52,6 +53,15 @@ Define a TDD-driven implementation plan for the following server correction work
 - [x] Prove open transactions are lost on disconnect or restart.
 - [x] Prove RouteFamily isolation for the same logical key across families.
 - [x] Run KV-focused tests after any semantic cleanup.
+
+## Benchmark Findings
+
+- 2026-04-03 refreshed tier3 committed-data throughput remained strong across contention shapes: about 3.17M ops/s for the single-family intensive case, about 4.06M ops/s for dual-family interleaving, about 4.62M ops/s for the mixed read/write case, and about 5.00M ops/s for triple-family contention.
+- Tier4 was transport-dominated rather than KV-core dominated: direct begin/put/rollback measured about 1.21M ops/s, encoded direct about 642k ops/s, WebSocket about 20.6k ops/s, TCP about 14.7k ops/s, and multiclient concurrent transactions about 49.5k ops/s.
+
+## Performance Follow-Up
+
+- None from the current snapshot. Any future KV uplift should target session/transport overhead before reopening the KV core or storage model.
 
 ## Files To Touch First
 

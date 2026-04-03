@@ -514,6 +514,9 @@ impl Ingress for RuntimeIngress {
         msg_type: crate::protocol::tlv::MessageType,
         message_payload: Bytes,
     ) -> IngressDecision {
+        let _ingress_latency = crate::boot::observability::ScopedHistogramUs::new(
+            obs::METRIC_INGRESS_FRAME_TOTAL_LATENCY,
+        );
         // Record frame received counter
         if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
             collector.counter_inc(obs::METRIC_FRAMES_RECEIVED);

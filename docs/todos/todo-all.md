@@ -1,10 +1,10 @@
 # TODO - All Domains
 
-- Program status: Complete.
+- Program status: Hardening complete. Benchmark follow-up is tracked separately per domain where needed.
 
 ## Purpose
 
-This file is the top-level execution summary for the completed domain hardening program. Use it as an archival index into the per-domain closure records without re-deriving the scope each time.
+This file is the top-level execution summary for the completed domain hardening program. Use it as an archival index into the per-domain closure records and any post-close benchmark follow-up notes without re-deriving the scope each time.
 
 The per-domain closure records are:
 
@@ -18,8 +18,9 @@ The per-domain closure records are:
 
 ## Working Assumptions
 
-- RouteFamily assignment can remain process-local until a future control-plane implementation exists.
+- RouteFamily assignment can remain process-local in this pass. This means the hardening work does not add a separate persisted control-plane service that coordinates family assignment across brokers; durable domain state must still survive restart without depending on broker-local session memory.
 - Lease, Notice, and RPC are intentionally ephemeral.
+- Crash-safe recovery is not a goal for the ephemeral domains in this program.
 - KV, Queue, Schedule, and Stream are the domains that need durable, restart-safe, bounded-memory behavior.
 - Sessions are ephemeral across the system, so session-owned state is expected to disappear on disconnect unless a domain explicitly persists its own committed state.
 
@@ -142,6 +143,12 @@ This was the decision rule used while the program was active:
 - Start with Notice, Lease, and RPC if you want fast clarity wins.
 - Move to KV and Queue when you want hardening without foundational redesign.
 - Leave Schedule and Stream for dedicated implementation rounds because they are true structural corrections.
+
+## Benchmark Snapshot
+
+- 2026-04-03 full bench coverage completed successfully across the current bench suite, including the tier4 integration benches for every domain, and the aggregate report was regenerated in `target/bench_summary.md`.
+- Current benchmark findings in the individual domain todo files are aligned to that refreshed report.
+- Any open performance work is separate from hardening completion and should be tracked as follow-up, not as unfinished contract cleanup.
 
 ## Program Completion
 

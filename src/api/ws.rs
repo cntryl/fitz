@@ -7,6 +7,7 @@
 //! 4. Handles session lifecycle and backpressure
 
 use crate::api::ingress::IngressConfig;
+use crate::observability as obs;
 use crate::session::{CloseReason, Ingress};
 use bytes::Bytes;
 use std::sync::Arc;
@@ -63,6 +64,9 @@ impl WebSocketHandler {
         match msg {
             // Binary frames: convert to Bytes and forward
             Message::Binary(data) => {
+                let _handoff_latency = crate::boot::observability::ScopedHistogramUs::new(
+                    obs::METRIC_WS_CHANNEL_HANDOFF_LATENCY,
+                );
                 let frame = Bytes::from(data);
                 debug!(
                     session_id = self.session_id,
@@ -105,6 +109,7 @@ impl WebSocketHandler {
                         );
                     }
                     Err(mpsc::error::TrySendError::Full(_)) => {
+                        crate::boot::observability::counter_inc(obs::METRIC_WS_BACKPRESSURE);
                         warn!(
                             session_id = self.session_id,
                             "WS channel full, backpressure - retrying after timeout"

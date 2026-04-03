@@ -3,7 +3,7 @@
 - Classification: Ephemeral.
 - Goal: Make reconnect and restart loss explicit and keep subscription state bounded.
 - Primary outcome: honest pub/sub semantics with strong cleanup tests.
-- Status: Complete.
+- Status: Hardening complete. No performance follow-up is currently open.
 
 Notice close-out completed with the following correction work verified.
 
@@ -45,12 +45,22 @@ Notice close-out completed with the following correction work verified.
 - Durable fanout history.
 - Replay after reconnect.
 - Persistent subscriber state.
+- Crash-safe recovery of subscriptions or missed deliveries.
 
 ## Verification
 
 - [x] Disconnect tests prove subscriptions are removed.
 - [x] Restart tests prove clients must re-subscribe.
 - [x] Docs and admin wording reflect in-memory-only semantics.
+
+## Benchmark Findings
+
+- 2026-04-03 refreshed tier3 results kept the core publish path strong: sustained fanout measured about 1.04M ops/s, single-star fanout scaled from about 1.05M ops/s at 1 subscriber to about 166k at 16, about 44.6k at 64, about 11.7k at 256, and about 3.0k at 1000, while double-star fanout followed the same curve and landed at about 2.1k ops/s at 1000 subscribers.
+- Tier4 remained transport-dominated rather than actor-dominated: direct publish measured about 828k ops/s, WebSocket publish about 84.1k ops/s, TCP publish about 39.9k ops/s, the multiclient fanout publish case about 83.8k ops/s, and the multiclient subscriber-scaling cases ranged from about 36.5k to about 112k publish ops/s across the 1-, 16-, and 64-subscriber runs.
+
+## Performance Follow-Up
+
+- None from the current snapshot. Reopen Notice performance work only if wildcard-heavy 1k+ subscriber fanout becomes a first-class product requirement.
 
 ## Files To Touch First
 

@@ -1,8 +1,10 @@
+use crate::observability as obs;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::router::DeliveryError;
 use crate::runtime::router::MailboxSink;
 
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
@@ -19,6 +21,9 @@ impl SessionOutboundSink {
 
 impl MailboxSink for SessionOutboundSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let _deliver_latency = crate::boot::observability::ScopedHistogramUs::new(
+            obs::METRIC_OUTBOUND_DELIVER_LATENCY,
+        );
         // Expect a FrameContext payload
         if let Some(ctx) = envelope.payload::<FrameContext>() {
             debug!(
@@ -28,7 +33,12 @@ impl MailboxSink for SessionOutboundSink {
                 "Outbound sink: encoding TLV response for session"
             );
             // TLV-encode a single record directly into an exact-sized buffer.
+            let encode_start = Instant::now();
             let bytes = encode_single_tlv_frame(ctx.msg_type, &ctx.payload);
+            crate::boot::observability::histogram_observe_us(
+                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
+                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+            );
 
             trace!(
                 session_id = ctx.session_id,
@@ -37,8 +47,14 @@ impl MailboxSink for SessionOutboundSink {
             );
 
             // Send TLV frame bytes to the outbound channel (sync try_send)
+            let send_start = Instant::now();
             match self.tx.try_send(bytes) {
                 Ok(()) => {
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_OUTBOUND_SEND_LATENCY,
+                        send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                    );
+                    crate::boot::observability::counter_inc(obs::METRIC_FRAMES_SENT);
                     debug!(
                         session_id = ctx.session_id,
                         "Outbound sink: frame sent to transport successfully"
@@ -47,6 +63,11 @@ impl MailboxSink for SessionOutboundSink {
                 }
                 Err(e) => match e {
                     mpsc::error::TrySendError::Full(_) => {
+                        crate::boot::observability::histogram_observe_us(
+                            obs::METRIC_OUTBOUND_SEND_LATENCY,
+                            send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                        );
+                        crate::boot::observability::counter_inc(obs::METRIC_OUTBOUND_BACKPRESSURE);
                         warn!(
                             session_id = ctx.session_id,
                             "Outbound sink: transport channel full (backpressure)"
@@ -57,6 +78,10 @@ impl MailboxSink for SessionOutboundSink {
                         })
                     }
                     mpsc::error::TrySendError::Closed(_) => {
+                        crate::boot::observability::histogram_observe_us(
+                            obs::METRIC_OUTBOUND_SEND_LATENCY,
+                            send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                        );
                         warn!(
                             session_id = ctx.session_id,
                             "Outbound sink: transport channel closed"

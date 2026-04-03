@@ -8,6 +8,7 @@
 //! 4. Handles session lifecycle and backpressure
 
 use crate::api::ingress::IngressConfig;
+use crate::observability as obs;
 use crate::session::manager::Ingress;
 use crate::session::{
     generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind,
@@ -149,6 +150,9 @@ impl TcpHandler {
                 );
 
                 // Forward to runtime with backpressure handling
+                let _handoff_latency = crate::boot::observability::ScopedHistogramUs::new(
+                    obs::METRIC_TCP_CHANNEL_HANDOFF_LATENCY,
+                );
                 match self.tx.try_send((self.session_id, frame.clone())) {
                     Ok(()) => {
                         trace!(
@@ -157,6 +161,7 @@ impl TcpHandler {
                         );
                     }
                     Err(mpsc::error::TrySendError::Full(_)) => {
+                        crate::boot::observability::counter_inc(obs::METRIC_TCP_BACKPRESSURE);
                         warn!(
                             session_id = self.session_id,
                             "TCP channel full, backpressure - retrying after timeout"

@@ -5,6 +5,7 @@
 //! pipeline decodes frames, demuxes them into logical channels, and dispatches
 //! them through the runtime ingress boundary.
 
+use crate::observability as obs;
 use crate::protocol::frame::ChannelId;
 use crate::protocol::mux::{Mux, MuxError, TypeMapping};
 use crate::protocol::tlv::{TlvDecoder, TlvError};
@@ -17,6 +18,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::{debug, error, trace, warn};
 
 /// Unique session identifier
@@ -258,6 +260,8 @@ impl Session {
         frame: Bytes,
         ingress: &dyn Ingress,
     ) -> Result<(), SessionError> {
+        let _frame_latency =
+            crate::boot::observability::ScopedHistogramUs::new(obs::METRIC_SESSION_FRAME_PROCESS_LATENCY);
         debug!(
             session_id = self.info.session_id,
             frame_len = frame.len(),
@@ -269,7 +273,14 @@ impl Session {
 
         loop {
             // Attempt to decode one record from buffer
-            match self.decoder.decode_one_ref(&self.buffer) {
+            let decode_start = Instant::now();
+            let decode_result = self.decoder.decode_one_ref(&self.buffer);
+            crate::boot::observability::histogram_observe_us(
+                obs::METRIC_SESSION_TLV_DECODE_LATENCY,
+                decode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+            );
+
+            match decode_result {
                 Ok((msg_type, slice, consumed)) => {
                     debug!(
                         session_id = self.info.session_id,
@@ -283,7 +294,13 @@ impl Session {
                         msg_type,
                         Bytes::copy_from_slice(slice),
                     );
-                    let message = self.mux.route(record).map_err(|e| {
+                    let mux_start = Instant::now();
+                    let message = self.mux.route(record);
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_SESSION_MUX_ROUTE_LATENCY,
+                        mux_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                    );
+                    let message = message.map_err(|e| {
                         warn!(session_id = self.info.session_id, error = ?e, "Mux routing error");
                         SessionError::Mux(e)
                     })?;
@@ -296,6 +313,7 @@ impl Session {
                         "Session dispatching to ingress.on_frame"
                     );
 
+                    let ingress_start = Instant::now();
                     let decision = ingress
                         .on_frame(
                             self.info.session_id,
@@ -304,6 +322,10 @@ impl Session {
                             message.payload,
                         )
                         .await;
+                    crate::boot::observability::histogram_observe_us(
+                        obs::METRIC_SESSION_INGRESS_HANDOFF_LATENCY,
+                        ingress_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                    );
 
                     self.mux.release(message.channel);
 
@@ -338,6 +360,8 @@ impl Session {
                     break;
                 }
                 Err(e) => {
+                    crate::boot::observability::counter_inc(obs::METRIC_TLV_DECODE_ERRORS);
+                    crate::boot::observability::counter_inc(obs::METRIC_FRAMES_MALFORMED);
                     error!(session_id = self.info.session_id, error = ?e, "Session TLV decode error");
                     return Err(SessionError::Decode(e));
                 }

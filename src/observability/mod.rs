@@ -70,6 +70,9 @@ pub const METRIC_SESSIONS_CLOSED: &str = "fitz_sessions_closed_total";
 pub const METRIC_FRAMES_RECEIVED: &str = "fitz_frames_received_total";
 pub const METRIC_FRAMES_SENT: &str = "fitz_frames_sent_total";
 pub const METRIC_FRAMES_MALFORMED: &str = "fitz_frames_malformed_total";
+pub const METRIC_TCP_BACKPRESSURE: &str = "fitz_tcp_backpressure_total";
+pub const METRIC_WS_BACKPRESSURE: &str = "fitz_ws_backpressure_total";
+pub const METRIC_OUTBOUND_BACKPRESSURE: &str = "fitz_outbound_backpressure_total";
 
 pub const METRIC_TLV_ENCODE_ERRORS: &str = "fitz_tlv_encode_errors_total";
 pub const METRIC_TLV_DECODE_ERRORS: &str = "fitz_tlv_decode_errors_total";
@@ -105,6 +108,17 @@ pub const METRIC_DOMAIN_OPERATION_LATENCY: &str = "fitz_domain_operation_latency
 pub const METRIC_PERMISSION_CHECK_LATENCY: &str = "fitz_permission_check_latency_us";
 pub const METRIC_INGRESS_AUTH_ROUTE_LATENCY: &str = "fitz_ingress_auth_route_latency_us";
 pub const METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY: &str = "fitz_ingress_domain_dispatch_latency_us";
+pub const METRIC_INGRESS_FRAME_TOTAL_LATENCY: &str = "fitz_ingress_frame_total_latency_us";
+pub const METRIC_SESSION_FRAME_PROCESS_LATENCY: &str = "fitz_session_frame_process_latency_us";
+pub const METRIC_SESSION_TLV_DECODE_LATENCY: &str = "fitz_session_tlv_decode_latency_us";
+pub const METRIC_SESSION_MUX_ROUTE_LATENCY: &str = "fitz_session_mux_route_latency_us";
+pub const METRIC_SESSION_INGRESS_HANDOFF_LATENCY: &str =
+    "fitz_session_ingress_handoff_latency_us";
+pub const METRIC_OUTBOUND_DELIVER_LATENCY: &str = "fitz_outbound_deliver_latency_us";
+pub const METRIC_OUTBOUND_ENCODE_LATENCY: &str = "fitz_outbound_encode_latency_us";
+pub const METRIC_OUTBOUND_SEND_LATENCY: &str = "fitz_outbound_send_latency_us";
+pub const METRIC_TCP_CHANNEL_HANDOFF_LATENCY: &str = "fitz_tcp_channel_handoff_latency_us";
+pub const METRIC_WS_CHANNEL_HANDOFF_LATENCY: &str = "fitz_ws_channel_handoff_latency_us";
 pub const METRIC_QUEUE_RECOVERY_INDEX_LOAD_LATENCY: &str =
     "fitz_queue_recovery_index_load_latency_us";
 pub const METRIC_QUEUE_RECOVERY_FALLBACK_SCAN_LATENCY: &str =

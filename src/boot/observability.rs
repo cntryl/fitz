@@ -8,6 +8,7 @@
 use crate::observability::metrics::MetricsCollector;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
+use std::time::Instant;
 use tracing_subscriber::{fmt, prelude::*, util::SubscriberInitExt, EnvFilter};
 
 /// Global metrics collector (initialized once during boot)
@@ -45,6 +46,28 @@ pub fn counter_add(name: &str, amount: u64) {
 /// Set a gauge using the cached global collector.
 pub fn gauge_set(name: &str, value: u64) {
     metrics_ref().gauge_set(name, value);
+}
+
+/// RAII helper that records a histogram in microseconds when dropped.
+pub struct ScopedHistogramUs {
+    name: &'static str,
+    start: Instant,
+}
+
+impl ScopedHistogramUs {
+    pub fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            start: Instant::now(),
+        }
+    }
+}
+
+impl Drop for ScopedHistogramUs {
+    fn drop(&mut self) {
+        let elapsed_us = self.start.elapsed().as_micros().min(u64::MAX as u128) as u64;
+        histogram_observe_us(self.name, elapsed_us);
+    }
 }
 
 /// Try to initialize observability, returning existing collector if already initialized.

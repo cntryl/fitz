@@ -3,6 +3,7 @@
 - Requires real storage changes.
 - TTL-backed primary rows are the wrong foundation for durable recurring schedules.
 - Boot behavior and reschedule failure handling both need structural correction.
+- Status: Hardening complete. Single-create performance follow-up may remain if that path becomes a product requirement.
 
 Define a TDD-driven implementation plan for the following server correction work.
 
@@ -16,7 +17,7 @@ Define a TDD-driven implementation plan for the following server correction work
 ## Classification
 
 - Durable domain.
-- RouteFamily can remain process-local for now; schedule durability must not depend on control-plane persistence.
+- RouteFamily selection can remain a process/deployment concern for now. This pass does not add a separate persisted control-plane service that coordinates family assignment, and schedule durability must not depend on broker-local memory about that choice.
 - Sessions are ephemeral, but persisted schedules must survive broker restart and downtime.
 
 ## Current Reality
@@ -46,7 +47,7 @@ Define a TDD-driven implementation plan for the following server correction work
 
 - Distributed scheduler coordination across multiple brokers.
 - Durable subscriber delivery or durable outbox semantics for schedule notifications.
-- Control-plane persistence for RouteFamily assignment.
+- A separate control-plane service that persists and coordinates RouteFamily assignment across brokers.
 
 ## Verification
 
@@ -54,6 +55,16 @@ Define a TDD-driven implementation plan for the following server correction work
 - [x] Keep the broker down longer than the old grace period and prove recurring schedules survive.
 - [x] Force a persistence failure on reschedule and prove the in-memory actor does not silently advance.
 - [x] Run `cargo test` for schedule-focused tests after the redesign lands.
+
+## Benchmark Findings
+
+- The refreshed report separates hot in-proc schedule operations from durable create cost: tier3 create measured about 1.73M ops/s, cancel about 2.32M ops/s, list(10) about 233M ops/s, scan-and-fire measured about 258k ops/s for 1000 all-ready schedules and about 628k ops/s for 1000 partially ready schedules, while the mixed-workload scenario measured about 1.2k ops/s.
+- The end-to-end create path still looks store-bound rather than transport-bound: the latest tier4 direct/TCP/WebSocket create benches cluster around about 570-622 creates/s, multiclient creates measured about 589 creates/s, and WebSocket batch create remains the throughput escape hatch at about 16.2k creates/s.
+- Current Criterion `scan_and_fire` rows remain noisy/untrustworthy in `target/bench_summary.md`, so they are not strong enough to open new work by themselves.
+
+## Performance Follow-Up
+
+- [ ] If single-schedule create throughput becomes a product requirement, target `ScheduleStore::insert` transaction shape and persistence cost before spending time on transport framing; that same path is the likely bound on the current low mixed-workload result.
 
 ## Files To Touch First
 
