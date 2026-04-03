@@ -75,6 +75,8 @@ pub mod rpc {
     pub const ERR_ROUTE_NOT_REGISTERED: u16 = 6004; // AC-RPC-003: No workers registered for route
     pub const ERR_CORRELATION_NOT_FOUND: u16 = 6005;
     pub const ERR_RPC_INVALID_SEQUENCE: u16 = 6006; // Response chunks must start at seq=0 and advance contiguously
+    pub const ERR_RPC_DUPLICATE_CORRELATION: u16 = 6007; // Caller attempted to reuse a live correlation ID
+    pub const ERR_RPC_WRONG_WORKER: u16 = 6008; // Response or ACK came from a worker that does not own the request
     pub const ERR_UNAUTHORIZED: u16 = 6009; // AC-RPC-007, AC-RPC-008: Permission denied for RPC operation
 }
 

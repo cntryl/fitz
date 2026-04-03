@@ -804,6 +804,18 @@ fn should_define_error_code_6006_rpc_invalid_sequence() {
 }
 
 #[test]
+fn should_define_error_code_6007_rpc_duplicate_correlation() {
+    let code = fitz::protocol::error_codes::rpc::ERR_RPC_DUPLICATE_CORRELATION;
+    assert_eq!(code, 6007, "6007 = RPC_DUPLICATE_CORRELATION");
+}
+
+#[test]
+fn should_define_error_code_6008_rpc_wrong_worker() {
+    let code = fitz::protocol::error_codes::rpc::ERR_RPC_WRONG_WORKER;
+    assert_eq!(code, 6008, "6008 = RPC_WRONG_WORKER");
+}
+
+#[test]
 fn should_complete_single_request_response_cycle() {
     // Arrange
     let family = RouteFamily::new(1);

@@ -18,6 +18,9 @@ const RPC_BACKPRESSURE_ERROR: &str = "RPC backpressure: too many pending request
 const RPC_NO_WORKERS_ERROR: &str = "No workers registered for route";
 const RPC_WORKER_NOT_FOUND_ERROR: &str = "Worker disconnected or unregistered";
 const RPC_CORRELATION_NOT_FOUND_ERROR: &str = "Correlation ID not found (orphaned response)";
+const RPC_DUPLICATE_CORRELATION_ERROR: &str =
+    "Correlation ID already has a live pending request";
+const RPC_WRONG_WORKER_ERROR: &str = "Worker does not own this correlation ID";
 const RPC_INVALID_SEQUENCE_ERROR: &str =
     "RPC response sequence must start at seq=0 and advance contiguously";
 const RPC_TIMEOUT_ERROR: &str = "Worker did not reply within timeout period";
@@ -389,6 +392,16 @@ impl RpcPendingTable {
             pending_len,
             removed_pending: false,
         }
+    }
+
+    fn contains_correlation(&self, correlation_id: &uuid::Uuid) -> bool {
+        self.pending.contains_key(correlation_id)
+    }
+
+    fn worker_session_id(&self, correlation_id: &uuid::Uuid) -> Option<u64> {
+        self.pending
+            .get(correlation_id)
+            .map(|pending| pending.worker_session_id)
     }
 
     fn remove_pending(&mut self, correlation_id: &uuid::Uuid) -> Option<usize> {
@@ -1154,10 +1167,38 @@ impl MailboxSink for RpcDomainSink {
                 let route_registry_lookup_start = Instant::now();
                 let route_registry_lookup_us =
                     route_registry_lookup_start.elapsed().as_micros() as u64;
+                let duplicate_correlation = state.pending.contains_correlation(&req.correlation_id);
                 let route_exists = state.routes.contains_key(&req.route);
                 let mut worker_selection_us = 0_u64;
 
-                if !route_exists {
+                if duplicate_correlation {
+                    let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
+                    drop(state);
+
+                    self.histogram_observe_us(
+                        "rpc_route_registry_lookup_us",
+                        route_registry_lookup_us,
+                    );
+                    self.histogram_observe_us("rpc_dispatch_state_lock_us", state_wait_us);
+                    self.histogram_observe_us("rpc_dispatch_state_wait_us", state_wait_us);
+                    self.histogram_observe_us("rpc_dispatch_state_hold_us", state_hold_us);
+                    self.histogram_observe_us("rpc_worker_selection_us", worker_selection_us);
+                    self.counter_inc("rpc_requests_rejected_duplicate_correlation_total");
+                    tracing::warn!(
+                        domain = "rpc",
+                        correlation_id = %req.correlation_id,
+                        route = req.route.as_str(),
+                        "Rejected request due to duplicate live correlation"
+                    );
+                    (
+                        Some(RpcResponseMsg::CodeError {
+                            code:
+                                crate::protocol::error_codes::rpc::ERR_RPC_DUPLICATE_CORRELATION,
+                            message: RPC_DUPLICATE_CORRELATION_ERROR.to_string(),
+                        }),
+                        None,
+                    )
+                } else if !route_exists {
                     let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
                     drop(state);
 
@@ -1361,16 +1402,62 @@ impl MailboxSink for RpcDomainSink {
                 let state_wait_us = state_wait_start.elapsed().as_micros() as u64;
                 let state_hold_start = Instant::now();
                 let pending_route_lookup_start = Instant::now();
-                let caller_info = state.pending.pending_for_response(
-                    &resp.correlation_id,
-                    resp.seq,
-                    resp.stream_end,
-                );
+                let wrong_worker_owner = state
+                    .pending
+                    .worker_session_id(&resp.correlation_id)
+                    .filter(|owner_session_id| *owner_session_id != frame_ctx.session_id);
+                let caller_info = wrong_worker_owner.is_none().then(|| {
+                    state.pending.pending_for_response(
+                        &resp.correlation_id,
+                        resp.seq,
+                        resp.stream_end,
+                    )
+                });
                 let pending_route_lookup_us =
                     pending_route_lookup_start.elapsed().as_micros() as u64;
                 let mut state_changed = false;
 
-                match caller_info {
+                if let Some(owner_worker_session_id) = wrong_worker_owner {
+                    let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
+                    let pending_len = state.pending.len();
+                    drop(state);
+
+                    self.histogram_observe_us(
+                        "rpc_pending_route_lookup_us",
+                        pending_route_lookup_us,
+                    );
+                    self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
+                    self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
+                    self.counter_inc("rpc_responses_rejected_wrong_worker_total");
+
+                    let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
+                        session_inbox_address(
+                            *envelope.destination().family(),
+                            frame_ctx.session_id,
+                        )
+                    });
+                    self.forward_pending_error_deliveries(
+                        vec![RpcPendingErrorDelivery {
+                            correlation_id: resp.correlation_id,
+                            caller_session_id: frame_ctx.session_id,
+                            caller_inbox_addr: worker_inbox_addr,
+                        }],
+                        crate::protocol::error_codes::rpc::ERR_RPC_WRONG_WORKER,
+                        RPC_WRONG_WORKER_ERROR,
+                        "rpc_worker_ownership_errors_forwarded_total",
+                        "rpc_worker_ownership_errors_dropped_total",
+                    );
+
+                    tracing::warn!(
+                        domain = "rpc",
+                        correlation_id = %resp.correlation_id,
+                        pending_len,
+                        expected_worker_session_id = owner_worker_session_id,
+                        received_worker_session_id = frame_ctx.session_id,
+                        "Rejected RPC response from non-owner worker"
+                    );
+                } else {
+                    match caller_info.expect("caller info should be present when owner matched") {
                     RpcPendingResponseDisposition::Forward {
                         pending: caller_info,
                         pending_len,
@@ -1581,6 +1668,7 @@ impl MailboxSink for RpcDomainSink {
                         );
                     }
                 }
+                }
                 (None, state_changed.then_some(false))
             }
             RpcMessage::Ack { correlation_id } => {
@@ -1588,29 +1676,72 @@ impl MailboxSink for RpcDomainSink {
                 let mut state = self.state.lock();
                 let state_wait_us = state_wait_start.elapsed().as_micros() as u64;
                 let state_hold_start = Instant::now();
-                let pending_route_remove_start = Instant::now();
-                let pending_len = state.pending.remove_pending(&correlation_id);
-                let pending_route_remove_us =
-                    pending_route_remove_start.elapsed().as_micros() as u64;
-                let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
-                drop(state);
+                let wrong_worker_owner = state
+                    .pending
+                    .worker_session_id(&correlation_id)
+                    .filter(|owner_session_id| *owner_session_id != frame_ctx.session_id);
 
-                self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_remove_us);
-                self.histogram_observe_us("rpc_ack_state_wait_us", state_wait_us);
-                self.histogram_observe_us("rpc_ack_state_hold_us", state_hold_us);
-                if let Some(pending_len) = pending_len {
-                    self.histogram_observe_us("rpc_pending_untrack_us", pending_route_remove_us);
-                    self.gauge_set("rpc_pending_requests", pending_len as u64);
-                    self.counter_inc("rpc_cleanup_acks_total");
+                if let Some(owner_worker_session_id) = wrong_worker_owner {
+                    let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
+                    let pending_len = state.pending.len();
+                    drop(state);
+
+                    self.histogram_observe_us("rpc_ack_state_wait_us", state_wait_us);
+                    self.histogram_observe_us("rpc_ack_state_hold_us", state_hold_us);
+                    self.counter_inc("rpc_acks_rejected_wrong_worker_total");
+
+                    let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
+                        session_inbox_address(
+                            *envelope.destination().family(),
+                            frame_ctx.session_id,
+                        )
+                    });
+                    self.forward_pending_error_deliveries(
+                        vec![RpcPendingErrorDelivery {
+                            correlation_id,
+                            caller_session_id: frame_ctx.session_id,
+                            caller_inbox_addr: worker_inbox_addr,
+                        }],
+                        crate::protocol::error_codes::rpc::ERR_RPC_WRONG_WORKER,
+                        RPC_WRONG_WORKER_ERROR,
+                        "rpc_worker_ownership_errors_forwarded_total",
+                        "rpc_worker_ownership_errors_dropped_total",
+                    );
+
+                    tracing::warn!(
+                        domain = "rpc",
+                        correlation_id = %correlation_id,
+                        pending_len,
+                        expected_worker_session_id = owner_worker_session_id,
+                        received_worker_session_id = frame_ctx.session_id,
+                        "Rejected RPC ACK from non-owner worker"
+                    );
+                    (None, None)
                 } else {
-                    self.counter_inc("rpc_cleanup_acks_missing_pending_total");
+                    let pending_route_remove_start = Instant::now();
+                    let pending_len = state.pending.remove_pending(&correlation_id);
+                    let pending_route_remove_us =
+                        pending_route_remove_start.elapsed().as_micros() as u64;
+                    let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
+                    drop(state);
+
+                    self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_remove_us);
+                    self.histogram_observe_us("rpc_ack_state_wait_us", state_wait_us);
+                    self.histogram_observe_us("rpc_ack_state_hold_us", state_hold_us);
+                    if let Some(pending_len) = pending_len {
+                        self.histogram_observe_us("rpc_pending_untrack_us", pending_route_remove_us);
+                        self.gauge_set("rpc_pending_requests", pending_len as u64);
+                        self.counter_inc("rpc_cleanup_acks_total");
+                    } else {
+                        self.counter_inc("rpc_cleanup_acks_missing_pending_total");
+                    }
+                    tracing::debug!(
+                        domain = "rpc",
+                        correlation_id = %correlation_id,
+                        "Request acknowledged and cleaned up"
+                    );
+                    (None, pending_len.is_some().then_some(false))
                 }
-                tracing::debug!(
-                    domain = "rpc",
-                    correlation_id = %correlation_id,
-                    "Request acknowledged and cleaned up"
-                );
-                (None, pending_len.is_some().then_some(false))
             }
             RpcMessage::Deliver(_) => (
                 Some(RpcResponseMsg::Error(
@@ -2344,6 +2475,122 @@ mod tests {
     }
 
     #[test]
+    fn should_reject_duplicate_live_correlation_given_rpc_sink() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+        let family = RouteFamily::new(1);
+        let request_route = Route::new("rpc://bench/system/resource/operation");
+        let request_addr = RouteAddress::new(family, request_route.clone());
+        let caller_one = session_inbox_address(family, 1);
+        let caller_two = session_inbox_address(family, 2);
+        let worker_source = session_inbox_address(family, 42);
+        let caller_one_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let caller_two_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        router.register(
+            caller_one.clone(),
+            Arc::new(CaptureRpcFrameSink {
+                frames: caller_one_frames.clone(),
+            }) as Arc<dyn MailboxSink>,
+        );
+        router.register(
+            caller_two.clone(),
+            Arc::new(CaptureRpcFrameSink {
+                frames: caller_two_frames.clone(),
+            }) as Arc<dyn MailboxSink>,
+        );
+        router.register(
+            worker_source.clone(),
+            Arc::new(CaptureRpcFrameSink {
+                frames: worker_frames.clone(),
+            }) as Arc<dyn MailboxSink>,
+        );
+        {
+            let mut state = sink.state.lock();
+            state
+                .ensure_route_state(&request_route)
+                .register_worker(RpcWorker::with_stats(
+                    request_addr.clone(),
+                    worker_source,
+                    42,
+                    "2026-03-14T12:00:00Z",
+                    0,
+                    0,
+                ));
+        }
+        let correlation_id = uuid::Uuid::new_v4();
+        let mut payload_encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        let caller_one_payload = crate::protocol::rpc_codec::encode_request_into(
+            &crate::domains::rpc::protocol::RpcRequest::new(
+                family,
+                correlation_id,
+                request_route.clone(),
+                Route::new("inbox://session/1/custom"),
+                bytes::Bytes::from_static(b"first"),
+            ),
+            &mut payload_encoder,
+        );
+        let caller_two_payload = crate::protocol::rpc_codec::encode_request_into(
+            &crate::domains::rpc::protocol::RpcRequest::new(
+                family,
+                correlation_id,
+                request_route.clone(),
+                Route::new("inbox://session/2/custom"),
+                bytes::Bytes::from_static(b"second"),
+            ),
+            &mut payload_encoder,
+        );
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            caller_one,
+            request_addr.clone(),
+            FrameContext::new(
+                1,
+                crate::protocol::frame::ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(302),
+                bytes::Bytes::from(caller_one_payload),
+                family,
+            ),
+        ))
+        .expect("deliver first request");
+        sink.deliver(Envelope::from_route(
+            caller_two,
+            request_addr,
+            FrameContext::new(
+                2,
+                crate::protocol::frame::ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(302),
+                bytes::Bytes::from(caller_two_payload),
+                family,
+            ),
+        ))
+        .expect("deliver duplicate request");
+
+        // Assert
+        assert_eq!(sink.pending_request_count(), 1);
+        let caller_one_frames = caller_one_frames.lock();
+        assert_eq!(caller_one_frames.len(), 1);
+        assert_eq!(caller_one_frames[0].msg_type.as_u16(), 302);
+        assert_eq!(caller_one_frames[0].payload[0], 0);
+
+        let caller_two_frames = caller_two_frames.lock();
+        assert_eq!(caller_two_frames.len(), 1);
+        assert_eq!(caller_two_frames[0].msg_type.as_u16(), 302);
+        assert_rpc_code_error(
+            &caller_two_frames[0].payload,
+            crate::protocol::error_codes::rpc::ERR_RPC_DUPLICATE_CORRELATION,
+            RPC_DUPLICATE_CORRELATION_ERROR,
+        );
+
+        let worker_frames = worker_frames.lock();
+        assert_eq!(worker_frames.len(), 1);
+        assert_eq!(worker_frames[0].msg_type.as_u16(), 302);
+    }
+
+    #[test]
     fn should_reject_request_when_worker_disconnects_before_dispatch_given_missing_worker_inbox() {
         // Arrange
         let router = Arc::new(Router::new());
@@ -3041,6 +3288,267 @@ mod tests {
             error_response.body.as_ref(),
             crate::protocol::error_codes::rpc::ERR_CORRELATION_NOT_FOUND,
             RPC_CORRELATION_NOT_FOUND_ERROR,
+        );
+    }
+
+    #[test]
+    fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+        let family = RouteFamily::new(1);
+        let request_route = Route::new("rpc://bench/system/resource/operation");
+        let request_addr = RouteAddress::new(family, request_route.clone());
+        let request_source = session_inbox_address(family, 1);
+        let owner_worker_source = session_inbox_address(family, 42);
+        let non_owner_worker_source = session_inbox_address(family, 43);
+        let reply_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let owner_worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let non_owner_worker_frames =
+            Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        router.register(
+            request_source.clone(),
+            Arc::new(CaptureRpcFrameSink {
+                frames: reply_frames.clone(),
+            }) as Arc<dyn MailboxSink>,
+        );
+        router.register(
+            owner_worker_source.clone(),
+            Arc::new(CaptureRpcFrameSink {
+                frames: owner_worker_frames.clone(),
+            }) as Arc<dyn MailboxSink>,
+        );
+        router.register(
+            non_owner_worker_source.clone(),
+            Arc::new(CaptureRpcFrameSink {
+                frames: non_owner_worker_frames.clone(),
+            }) as Arc<dyn MailboxSink>,
+        );
+        {
+            let mut state = sink.state.lock();
+            state
+                .ensure_route_state(&request_route)
+                .register_worker(RpcWorker::with_stats(
+                    request_addr.clone(),
+                    owner_worker_source.clone(),
+                    42,
+                    "2026-03-14T12:00:00Z",
+                    0,
+                    0,
+                ));
+            state
+                .ensure_route_state(&request_route)
+                .register_worker(RpcWorker::with_stats(
+                    request_addr.clone(),
+                    non_owner_worker_source.clone(),
+                    43,
+                    "2026-03-14T12:00:00Z",
+                    0,
+                    0,
+                ));
+        }
+        let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
+        let (request_msg_type, request_payload) =
+            crate::benchkit::extract_single_tlv_field(&request_frame);
+        let request_ctx = FrameContext::new(
+            1,
+            crate::protocol::frame::ChannelId::Rpc,
+            crate::protocol::tlv::MessageType::new(request_msg_type),
+            request_payload,
+            family,
+        );
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            request_source,
+            request_addr.clone(),
+            request_ctx,
+        ))
+        .expect("deliver request");
+        let owner_request = owner_worker_frames
+            .lock()
+            .first()
+            .cloned()
+            .expect("owner worker request delivery");
+        let owner_request = match crate::protocol::rpc_codec::parse_request(
+            &owner_request,
+            &owner_request.payload,
+            family,
+        )
+        .expect("parse owner worker request")
+        {
+            crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+            other => panic!("expected rpc request, found {other:?}"),
+        };
+        let wrong_response_payload = crate::protocol::rpc_codec::encode_response_message(
+            &crate::domains::rpc::protocol::RpcResponse::single(
+                owner_request.correlation_id,
+                bytes::Bytes::from_static(b"wrong"),
+            ),
+        );
+        sink.deliver(Envelope::from_route(
+            non_owner_worker_source,
+            request_addr,
+            FrameContext::new(
+                43,
+                crate::protocol::frame::ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(303),
+                bytes::Bytes::from(wrong_response_payload),
+                family,
+            ),
+        ))
+        .expect("deliver non-owner response");
+
+        // Assert
+        assert_eq!(sink.pending_request_count(), 1);
+
+        let reply_frames = reply_frames.lock();
+        assert_eq!(reply_frames.len(), 1);
+        assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
+
+        let owner_worker_frames = owner_worker_frames.lock();
+        assert_eq!(owner_worker_frames.len(), 1);
+        assert_eq!(owner_worker_frames[0].msg_type.as_u16(), 302);
+
+        let non_owner_worker_frames = non_owner_worker_frames.lock();
+        assert_eq!(non_owner_worker_frames.len(), 1);
+        assert_eq!(non_owner_worker_frames[0].msg_type.as_u16(), 303);
+        let error_response = parse_forwarded_rpc_response(&non_owner_worker_frames[0]);
+        assert_eq!(error_response.correlation_id, owner_request.correlation_id);
+        assert!(error_response.stream_end);
+        assert_rpc_code_error(
+            error_response.body.as_ref(),
+            crate::protocol::error_codes::rpc::ERR_RPC_WRONG_WORKER,
+            RPC_WRONG_WORKER_ERROR,
+        );
+    }
+
+    #[test]
+    fn should_reject_worker_ack_from_non_owner_session_given_rpc_sink() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+        let family = RouteFamily::new(1);
+        let request_route = Route::new("rpc://bench/system/resource/operation");
+        let request_addr = RouteAddress::new(family, request_route.clone());
+        let request_source = session_inbox_address(family, 1);
+        let owner_worker_source = session_inbox_address(family, 42);
+        let non_owner_worker_source = session_inbox_address(family, 43);
+        let reply_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let owner_worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        let non_owner_worker_frames =
+            Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+        router.register(
+            request_source.clone(),
+            Arc::new(CaptureRpcFrameSink {
+                frames: reply_frames.clone(),
+            }) as Arc<dyn MailboxSink>,
+        );
+        router.register(
+            owner_worker_source.clone(),
+            Arc::new(CaptureRpcFrameSink {
+                frames: owner_worker_frames.clone(),
+            }) as Arc<dyn MailboxSink>,
+        );
+        router.register(
+            non_owner_worker_source.clone(),
+            Arc::new(CaptureRpcFrameSink {
+                frames: non_owner_worker_frames.clone(),
+            }) as Arc<dyn MailboxSink>,
+        );
+        {
+            let mut state = sink.state.lock();
+            state
+                .ensure_route_state(&request_route)
+                .register_worker(RpcWorker::with_stats(
+                    request_addr.clone(),
+                    owner_worker_source.clone(),
+                    42,
+                    "2026-03-14T12:00:00Z",
+                    0,
+                    0,
+                ));
+            state
+                .ensure_route_state(&request_route)
+                .register_worker(RpcWorker::with_stats(
+                    request_addr.clone(),
+                    non_owner_worker_source.clone(),
+                    43,
+                    "2026-03-14T12:00:00Z",
+                    0,
+                    0,
+                ));
+        }
+        let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
+        let (request_msg_type, request_payload) =
+            crate::benchkit::extract_single_tlv_field(&request_frame);
+        let request_ctx = FrameContext::new(
+            1,
+            crate::protocol::frame::ChannelId::Rpc,
+            crate::protocol::tlv::MessageType::new(request_msg_type),
+            request_payload,
+            family,
+        );
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            request_source,
+            request_addr.clone(),
+            request_ctx,
+        ))
+        .expect("deliver request");
+        let owner_request = owner_worker_frames
+            .lock()
+            .first()
+            .cloned()
+            .expect("owner worker request delivery");
+        let owner_request = match crate::protocol::rpc_codec::parse_request(
+            &owner_request,
+            &owner_request.payload,
+            family,
+        )
+        .expect("parse owner worker request")
+        {
+            crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+            other => panic!("expected rpc request, found {other:?}"),
+        };
+        let wrong_ack_payload = crate::protocol::rpc_codec::encode_ack(&owner_request.correlation_id);
+        sink.deliver(Envelope::from_route(
+            non_owner_worker_source,
+            request_addr,
+            FrameContext::new(
+                43,
+                crate::protocol::frame::ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(304),
+                bytes::Bytes::from(wrong_ack_payload),
+                family,
+            ),
+        ))
+        .expect("deliver non-owner ack");
+
+        // Assert
+        assert_eq!(sink.pending_request_count(), 1);
+
+        let reply_frames = reply_frames.lock();
+        assert_eq!(reply_frames.len(), 1);
+        assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
+
+        let owner_worker_frames = owner_worker_frames.lock();
+        assert_eq!(owner_worker_frames.len(), 1);
+        assert_eq!(owner_worker_frames[0].msg_type.as_u16(), 302);
+
+        let non_owner_worker_frames = non_owner_worker_frames.lock();
+        assert_eq!(non_owner_worker_frames.len(), 1);
+        assert_eq!(non_owner_worker_frames[0].msg_type.as_u16(), 303);
+        let error_response = parse_forwarded_rpc_response(&non_owner_worker_frames[0]);
+        assert_eq!(error_response.correlation_id, owner_request.correlation_id);
+        assert!(error_response.stream_end);
+        assert_rpc_code_error(
+            error_response.body.as_ref(),
+            crate::protocol::error_codes::rpc::ERR_RPC_WRONG_WORKER,
+            RPC_WRONG_WORKER_ERROR,
         );
     }
 
