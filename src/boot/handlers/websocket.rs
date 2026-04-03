@@ -90,8 +90,7 @@ where
     );
 
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-    let (outbound_tx, mut outbound_rx) =
-        tokio::sync::mpsc::channel::<Vec<u8>>(config.channel_capacity);
+    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
 
     let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(
         outbound_tx.clone(),
@@ -121,7 +120,7 @@ where
                 frame_len = frame.len(),
                 "WS outbound: sending frame to wire"
             );
-            if let Err(e) = ws_sender.send(Message::Binary(frame)).await {
+            if let Err(e) = ws_sender.send(Message::Binary(frame.to_vec())).await {
                 tracing::error!(session_id = ws_session_id, error = %e, "WS outbound send error");
                 break;
             }

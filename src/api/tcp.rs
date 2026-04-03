@@ -13,7 +13,7 @@ use crate::session::manager::Ingress;
 use crate::session::{
     generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind,
 };
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -134,9 +134,10 @@ impl TcpHandler {
                     break;
                 }
 
-                // Extract frame payload (skip 4-byte length field)
-                let frame = Bytes::copy_from_slice(&buffer[4..4 + len]);
-                buffer.advance(4 + len);
+                // Split the complete length-prefixed record once and slice the
+                // payload directly so the hot path does not clone frame bytes.
+                let record = buffer.split_to(4 + len).freeze();
+                let frame = record.slice(4..);
 
                 debug!(
                     session_id = self.session_id,

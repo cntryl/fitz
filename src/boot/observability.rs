@@ -13,6 +13,7 @@ use tracing_subscriber::{fmt, prelude::*, util::SubscriberInitExt, EnvFilter};
 
 /// Global metrics collector (initialized once during boot)
 static METRICS_COLLECTOR: OnceCell<Arc<MetricsCollector>> = OnceCell::new();
+static HOT_PATH_METRICS_ENABLED: OnceCell<bool> = OnceCell::new();
 
 /// Get the global metrics collector.
 ///
@@ -48,24 +49,61 @@ pub fn gauge_set(name: &str, value: u64) {
     metrics_ref().gauge_set(name, value);
 }
 
+/// Whether extra hot-path attribution metrics are enabled.
+///
+/// Disabled by default because these measurements are expensive enough to distort
+/// benchmark results. Enable explicitly with `FITZ_HOT_PATH_METRICS=true` when
+/// collecting attribution data.
+pub fn hot_path_metrics_enabled() -> bool {
+    *HOT_PATH_METRICS_ENABLED.get_or_init(|| {
+        std::env::var("FITZ_HOT_PATH_METRICS")
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Record a hot-path histogram only when explicit attribution is enabled.
+pub fn hot_path_histogram_observe_us(name: &str, value_us: u64) {
+    if hot_path_metrics_enabled() {
+        histogram_observe_us(name, value_us);
+    }
+}
+
+/// Increment a hot-path counter only when explicit attribution is enabled.
+pub fn hot_path_counter_inc(name: &str) {
+    if hot_path_metrics_enabled() {
+        counter_inc(name);
+    }
+}
+
 /// RAII helper that records a histogram in microseconds when dropped.
 pub struct ScopedHistogramUs {
     name: &'static str,
-    start: Instant,
+    start: Option<Instant>,
 }
 
 impl ScopedHistogramUs {
     pub fn new(name: &'static str) -> Self {
         Self {
             name,
-            start: Instant::now(),
+            start: hot_path_metrics_enabled().then(Instant::now),
         }
     }
 }
 
 impl Drop for ScopedHistogramUs {
     fn drop(&mut self) {
-        let elapsed_us = self.start.elapsed().as_micros().min(u64::MAX as u128) as u64;
+        let Some(start) = self.start else {
+            return;
+        };
+
+        let elapsed_us = start.elapsed().as_micros().min(u64::MAX as u128) as u64;
         histogram_observe_us(self.name, elapsed_us);
     }
 }

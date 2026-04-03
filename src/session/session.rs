@@ -275,13 +275,14 @@ impl Session {
             // Attempt to decode one record from buffer
             let decode_start = Instant::now();
             let decode_result = self.decoder.decode_one_ref(&self.buffer);
-            crate::boot::observability::histogram_observe_us(
+            crate::boot::observability::hot_path_histogram_observe_us(
                 obs::METRIC_SESSION_TLV_DECODE_LATENCY,
                 decode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
             );
 
             match decode_result {
                 Ok((msg_type, slice, consumed)) => {
+                    let payload_offset = consumed.saturating_sub(slice.len());
                     debug!(
                         session_id = self.info.session_id,
                         msg_type = msg_type.as_u16(),
@@ -289,14 +290,18 @@ impl Session {
                         consumed = consumed,
                         "Session decoded TLV record"
                     );
-                    // Build owned record and route it
+                    // Move the decoded record bytes out of the session buffer so the payload can
+                    // be routed as a zero-copy Bytes slice instead of cloning into a new buffer.
+                    // Current transport drivers treat Session::on_frame errors as terminal, so we
+                    // do not need to preserve the consumed bytes for a later retry.
+                    let record_bytes = self.buffer.split_to(consumed).freeze();
                     let record = crate::protocol::tlv::TlvRecord::new(
                         msg_type,
-                        Bytes::copy_from_slice(slice),
+                        record_bytes.slice(payload_offset..consumed),
                     );
                     let mux_start = Instant::now();
                     let message = self.mux.route(record);
-                    crate::boot::observability::histogram_observe_us(
+                    crate::boot::observability::hot_path_histogram_observe_us(
                         obs::METRIC_SESSION_MUX_ROUTE_LATENCY,
                         mux_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
                     );
@@ -322,7 +327,7 @@ impl Session {
                             message.payload,
                         )
                         .await;
-                    crate::boot::observability::histogram_observe_us(
+                    crate::boot::observability::hot_path_histogram_observe_us(
                         obs::METRIC_SESSION_INGRESS_HANDOFF_LATENCY,
                         ingress_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
                     );
@@ -332,13 +337,10 @@ impl Session {
                     match decision {
                         IngressDecision::Accept => {
                             trace!(session_id = self.info.session_id, "Ingress accepted frame");
-                            // consume bytes and continue
-                            let _ = self.buffer.split_to(consumed);
                             continue;
                         }
                         IngressDecision::Backpressure => {
                             warn!(session_id = self.info.session_id, channel = ?message.channel, "Ingress backpressure");
-                            // leave buffer intact (message held by mux) and propagate backpressure
                             return Err(SessionError::Backpressure(message.channel));
                         }
                         IngressDecision::Close(reason) => {

@@ -4,17 +4,18 @@ use crate::runtime::envelope::Envelope;
 use crate::runtime::router::DeliveryError;
 use crate::runtime::router::MailboxSink;
 
+use bytes::{BufMut, Bytes, BytesMut};
 use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
 /// MailboxSink that forwards domain responses to a session's outbound channel
 pub struct SessionOutboundSink {
-    tx: mpsc::Sender<Vec<u8>>,
+    tx: mpsc::Sender<Bytes>,
 }
 
 impl SessionOutboundSink {
-    pub fn new(tx: mpsc::Sender<Vec<u8>>) -> Self {
+    pub fn new(tx: mpsc::Sender<Bytes>) -> Self {
         Self { tx }
     }
 }
@@ -35,7 +36,7 @@ impl MailboxSink for SessionOutboundSink {
             // TLV-encode a single record directly into an exact-sized buffer.
             let encode_start = Instant::now();
             let bytes = encode_single_tlv_frame(ctx.msg_type, &ctx.payload);
-            crate::boot::observability::histogram_observe_us(
+            crate::boot::observability::hot_path_histogram_observe_us(
                 obs::METRIC_OUTBOUND_ENCODE_LATENCY,
                 encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
             );
@@ -50,11 +51,11 @@ impl MailboxSink for SessionOutboundSink {
             let send_start = Instant::now();
             match self.tx.try_send(bytes) {
                 Ok(()) => {
-                    crate::boot::observability::histogram_observe_us(
+                    crate::boot::observability::hot_path_histogram_observe_us(
                         obs::METRIC_OUTBOUND_SEND_LATENCY,
                         send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
                     );
-                    crate::boot::observability::counter_inc(obs::METRIC_FRAMES_SENT);
+                    crate::boot::observability::hot_path_counter_inc(obs::METRIC_FRAMES_SENT);
                     debug!(
                         session_id = ctx.session_id,
                         "Outbound sink: frame sent to transport successfully"
@@ -63,7 +64,7 @@ impl MailboxSink for SessionOutboundSink {
                 }
                 Err(e) => match e {
                     mpsc::error::TrySendError::Full(_) => {
-                        crate::boot::observability::histogram_observe_us(
+                        crate::boot::observability::hot_path_histogram_observe_us(
                             obs::METRIC_OUTBOUND_SEND_LATENCY,
                             send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
                         );
@@ -78,7 +79,7 @@ impl MailboxSink for SessionOutboundSink {
                         })
                     }
                     mpsc::error::TrySendError::Closed(_) => {
-                        crate::boot::observability::histogram_observe_us(
+                        crate::boot::observability::hot_path_histogram_observe_us(
                             obs::METRIC_OUTBOUND_SEND_LATENCY,
                             send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
                         );
@@ -105,7 +106,7 @@ impl MailboxSink for SessionOutboundSink {
     }
 }
 
-fn encode_single_tlv_frame(msg_type: crate::protocol::tlv::MessageType, payload: &[u8]) -> Vec<u8> {
+fn encode_single_tlv_frame(msg_type: crate::protocol::tlv::MessageType, payload: &[u8]) -> Bytes {
     if payload.len() > u16::MAX as usize {
         panic!(
             "TLV value too large: {} bytes (max {})",
@@ -115,17 +116,17 @@ fn encode_single_tlv_frame(msg_type: crate::protocol::tlv::MessageType, payload:
     }
 
     let header_len = msg_type.encoded_type_len() + 2;
-    let mut out = Vec::with_capacity(header_len + payload.len());
+    let mut out = BytesMut::with_capacity(header_len + payload.len());
 
     if msg_type.is_single_byte() {
-        out.push(msg_type.as_u16() as u8);
+        out.put_u8(msg_type.as_u16() as u8);
     } else {
-        out.push(crate::protocol::tlv::MessageType::ESCAPE_MARKER);
+        out.put_u8(crate::protocol::tlv::MessageType::ESCAPE_MARKER);
         out.extend_from_slice(&msg_type.as_u16().to_be_bytes());
     }
 
     let payload_len = payload.len() as u16;
     out.extend_from_slice(&payload_len.to_be_bytes());
     out.extend_from_slice(payload);
-    out
+    out.freeze()
 }

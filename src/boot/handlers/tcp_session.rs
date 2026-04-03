@@ -1,6 +1,7 @@
 use super::record_connection_closed;
 use crate::api::ingress::IngressConfig;
 use crate::session::manager::Ingress;
+use bytes::Bytes;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
@@ -22,8 +23,7 @@ pub(super) async fn handle_tcp_connection(
 
     let session_id = handler.session_id;
 
-    let (outbound_tx, mut outbound_rx) =
-        tokio::sync::mpsc::channel::<Vec<u8>>(config.channel_capacity);
+    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
 
     let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(
         outbound_tx.clone(),
@@ -63,7 +63,7 @@ pub(super) async fn handle_tcp_connection(
                 tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound write error (header)");
                 break;
             }
-            if let Err(e) = write_half.write_all(&frame).await {
+            if let Err(e) = write_half.write_all(frame.as_ref()).await {
                 tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound write error (payload)");
                 break;
             }
