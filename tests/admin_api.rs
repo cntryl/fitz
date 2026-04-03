@@ -4,9 +4,18 @@ use argon2::{
     password_hash::{rand_core::OsRng, SaltString},
     Argon2, PasswordHasher,
 };
-use fitz::api::admin::{KvTransaction, NoticeSubscription, RpcPendingRequest, RpcWorker};
+use bytes::Bytes;
+use fitz::api::admin::{
+    KvTransaction, NoticeSubscription, QueueDeadLetter, QueueInfo, RpcPendingRequest, RpcWorker,
+};
+use fitz::boot::domains::{
+    DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink,
+    RpcDomainSink, ScheduleDomainSink, StreamDomainSink,
+};
 use fitz::boot::Runtime;
+use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
 use fitz::runtime::Router;
+use fitz::runtime::routing::RouteFamily;
 use hyper::header::{COOKIE, SET_COOKIE};
 use hyper::{body, Body, Method, Request, StatusCode};
 use serial_test::serial;
@@ -34,6 +43,75 @@ fn test_runtime() -> Arc<Runtime> {
     configure_admin_auth();
     let router = Arc::new(Router::new());
     Arc::new(Runtime::new(router))
+}
+
+fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::Engine>) {
+    configure_admin_auth();
+    let router = Arc::new(Router::new());
+    let runtime = Arc::new(Runtime::new(router.clone()));
+    let admin_read_model = runtime.admin_read_model();
+    let store = fitz::testkit::create_test_engine_with_cfs(vec![1]);
+
+    let domains = Arc::new(DomainHandles {
+        kv: Arc::new(KvDomainSink::new(
+            store.clone(),
+            router.clone(),
+            admin_read_model.clone(),
+        )),
+        queue: Arc::new(QueueDomainSink::new(
+            store.clone(),
+            router.clone(),
+            admin_read_model.clone(),
+            cntryl_midge::WriteOptions::buffered(),
+        )),
+        notice: Arc::new(NoticeDomainSink::new(router.clone(), admin_read_model.clone())),
+        stream: Arc::new(StreamDomainSink::new(
+            store.clone(),
+            router.clone(),
+            admin_read_model.clone(),
+        )),
+        rpc: Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
+        lease: Arc::new(LeaseDomainSink::new(router.clone(), admin_read_model.clone())),
+        schedule: Arc::new(ScheduleDomainSink::new(
+            store.clone(),
+            router,
+            admin_read_model.clone(),
+        )),
+    });
+
+    runtime.attach_domains(domains);
+    (runtime, store)
+}
+
+fn seed_dead_lettered_queue_message(store: Arc<cntryl_midge::Engine>) -> u64 {
+    let family = RouteFamily::new(1);
+    let queue_key = QueueKey {
+        family,
+        realm: "prod".to_string(),
+        area: "jobs".to_string(),
+        resource: "worker".to_string(),
+    };
+    let mut actor = QueueActor::new(
+        family,
+        queue_key,
+        store,
+        Some(2),
+        fitz::utils::idempotency::global_dedup_store(),
+    );
+    let message_id = match actor.handle_send(Bytes::from_static(b"email"), None) {
+        QueueResponse::Sent { id } => id,
+        other => panic!("Expected Sent response, found {other:?}"),
+    };
+
+    for _ in 0..2 {
+        match actor.handle_receive(0, Some(1)) {
+            QueueResponse::Received { messages } => assert_eq!(messages.len(), 1),
+            other => panic!("Expected Received response, found {other:?}"),
+        }
+        actor.process_expired_timers();
+    }
+
+    message_id.as_u64()
 }
 
 fn seed_snapshot_data(runtime: &Arc<Runtime>) {
@@ -70,6 +148,32 @@ fn seed_snapshot_data(runtime: &Arc<Runtime>) {
         submitted_at: "2026-03-14T12:00:07Z".to_string(),
         age_seconds: 7,
         worker_session_id: Some("9001".to_string()),
+    }]);
+}
+
+fn seed_queue_snapshot_data(runtime: &Arc<Runtime>) {
+    let read_model = runtime.admin_read_model();
+    read_model.replace_queues(vec![QueueInfo {
+        family: 1,
+        realm: "prod".to_string(),
+        area: "jobs".to_string(),
+        resource: "worker".to_string(),
+        messages_ready: 1,
+        messages_delayed: 2,
+        messages_leased: 3,
+        messages_dead_lettered: 4,
+        messages_total: 10,
+        oldest_message_age_seconds: 9,
+    }]);
+    read_model.replace_queue_dead_letters(vec![QueueDeadLetter {
+        message_id: 42,
+        family: 1,
+        realm: "prod".to_string(),
+        area: "jobs".to_string(),
+        resource: "worker".to_string(),
+        dead_lettered_at: "2026-03-14T12:01:00Z".to_string(),
+        attempts: 3,
+        reason: "max_attempts_exceeded".to_string(),
     }]);
 }
 
@@ -278,6 +382,204 @@ async fn should_return_queue_leases_under_resource() {
 
 #[tokio::test]
 #[serial]
+async fn should_return_queue_detail_with_delayed_and_dead_letter_counts() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_queue_snapshot_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload = String::from_utf8(body.to_vec()).unwrap();
+    assert!(payload.contains(r#""messages_ready":1"#));
+    assert!(payload.contains(r#""messages_delayed":2"#));
+    assert!(payload.contains(r#""messages_leased":3"#));
+    assert!(payload.contains(r#""messages_dead_lettered":4"#));
+    assert!(payload.contains(r#""messages_total":10"#));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_queue_dead_letters_under_resource() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_queue_snapshot_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload = String::from_utf8(body.to_vec()).unwrap();
+    assert!(payload.contains(r#""message_id":42"#));
+    assert!(payload.contains(r#""reason":"max_attempts_exceeded""#));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_reject_dead_letter_replay_given_missing_family_query_param() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    let message_id = seed_dead_lettered_queue_message(store);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!(
+            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{}/replay",
+            message_id
+        ))
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_replay_dead_letter_given_family_targeted_admin_request() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    let message_id = seed_dead_lettered_queue_message(store);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let replay_req = Request::builder()
+        .method(Method::POST)
+        .uri(format!(
+            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{}/replay?family=1",
+            message_id
+        ))
+        .header(COOKIE, cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let replay_response = fitz::api::admin::handlers::handle_request(replay_req, runtime.clone())
+        .await
+        .unwrap();
+    let detail_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker?family=1")
+        .header(COOKIE, cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let detail_response = fitz::api::admin::handlers::handle_request(detail_req, runtime.clone())
+        .await
+        .unwrap();
+    let dead_letters_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters?family=1")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+    let dead_letters_response =
+        fitz::api::admin::handlers::handle_request(dead_letters_req, runtime)
+            .await
+            .unwrap();
+
+    // Assert
+    assert_eq!(replay_response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(detail_response.status(), StatusCode::OK);
+    let detail_body = body::to_bytes(detail_response.into_body()).await.unwrap();
+    let detail_payload = String::from_utf8(detail_body.to_vec()).unwrap();
+    assert!(detail_payload.contains(r#""messages_ready":1"#));
+    assert!(detail_payload.contains(r#""messages_dead_lettered":0"#));
+    assert!(detail_payload.contains(r#""messages_total":1"#));
+    assert_eq!(dead_letters_response.status(), StatusCode::OK);
+    let dead_letters_body = body::to_bytes(dead_letters_response.into_body()).await.unwrap();
+    let dead_letters_payload = String::from_utf8(dead_letters_body.to_vec()).unwrap();
+    assert!(dead_letters_payload.contains(r#""messages":[]"#));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_purge_dead_letter_given_family_targeted_admin_request() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    let message_id = seed_dead_lettered_queue_message(store);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let purge_req = Request::builder()
+        .method(Method::DELETE)
+        .uri(format!(
+            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{}?family=1",
+            message_id
+        ))
+        .header(COOKIE, cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let purge_response = fitz::api::admin::handlers::handle_request(purge_req, runtime.clone())
+        .await
+        .unwrap();
+    let detail_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker?family=1")
+        .header(COOKIE, cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let detail_response = fitz::api::admin::handlers::handle_request(detail_req, runtime.clone())
+        .await
+        .unwrap();
+    let dead_letters_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters?family=1")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+    let dead_letters_response =
+        fitz::api::admin::handlers::handle_request(dead_letters_req, runtime)
+            .await
+            .unwrap();
+
+    // Assert
+    assert_eq!(purge_response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(detail_response.status(), StatusCode::OK);
+    let detail_body = body::to_bytes(detail_response.into_body()).await.unwrap();
+    let detail_payload = String::from_utf8(detail_body.to_vec()).unwrap();
+    assert!(detail_payload.contains(r#""messages_ready":0"#));
+    assert!(detail_payload.contains(r#""messages_dead_lettered":0"#));
+    assert!(detail_payload.contains(r#""messages_total":0"#));
+    assert_eq!(dead_letters_response.status(), StatusCode::OK);
+    let dead_letters_body = body::to_bytes(dead_letters_response.into_body()).await.unwrap();
+    let dead_letters_payload = String::from_utf8(dead_letters_body.to_vec()).unwrap();
+    assert!(dead_letters_payload.contains(r#""messages":[]"#));
+}
+
+#[tokio::test]
+#[serial]
 async fn should_return_notice_subscriptions_under_resource() {
     let runtime = test_runtime();
     seed_snapshot_data(&runtime);
@@ -351,6 +653,65 @@ async fn should_return_rpc_pending_requests() {
     assert!(payload.contains(r#""correlation_id":"corr-abc-123""#));
     assert!(payload.contains(r#""route":"rpc://prod/api/users/get""#));
     assert!(payload.contains(r#""worker_session_id":"9001""#));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_queue_domain_stats() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_queue_snapshot_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/queue/stats")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload = String::from_utf8(body.to_vec()).unwrap();
+    assert!(payload.contains(r#""messages_ready":1"#));
+    assert!(payload.contains(r#""messages_delayed":2"#));
+    assert!(payload.contains(r#""messages_pending":3"#));
+    assert!(payload.contains(r#""messages_dead_lettered":4"#));
+    assert!(payload.contains(r#""leases_active":0"#));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_global_stats() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_queue_snapshot_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/stats")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload = String::from_utf8(body.to_vec()).unwrap();
+    assert!(payload.contains(r#""queue":{"#));
+    assert!(payload.contains(r#""messages_dead_lettered":4"#));
 }
 
 #[tokio::test]

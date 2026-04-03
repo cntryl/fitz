@@ -1,4 +1,6 @@
 use super::Runtime;
+use crate::domains::queue::{MessageId, QueueKey};
+use crate::runtime::routing::RouteFamily;
 
 impl Runtime {
     fn refresh_queue_admin_snapshot(&self) {
@@ -74,6 +76,62 @@ impl Runtime {
     pub fn queue_list_leases(&self, realm: Option<&str>) -> Vec<crate::api::admin::QueueLease> {
         self.refresh_queue_admin_snapshot();
         self.admin_read_model.queue_leases(realm)
+    }
+
+    pub fn queue_list_dead_letters(
+        &self,
+        realm: Option<&str>,
+    ) -> Vec<crate::api::admin::QueueDeadLetter> {
+        self.refresh_queue_admin_snapshot();
+        self.admin_read_model.queue_dead_letters(realm)
+    }
+
+    pub fn queue_replay_dead_letter(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        message_id: u64,
+    ) -> Result<bool, String> {
+        let domains = self
+            .domains
+            .read()
+            .clone()
+            .ok_or_else(|| "Queue domain is not initialized".to_string())?;
+        domains.queue.replay_dead_letter(
+            QueueKey {
+                family,
+                realm: realm.to_string(),
+                area: area.to_string(),
+                resource: resource.to_string(),
+            },
+            MessageId::new(message_id),
+        )
+    }
+
+    pub fn queue_purge_dead_letter(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        message_id: u64,
+    ) -> Result<bool, String> {
+        let domains = self
+            .domains
+            .read()
+            .clone()
+            .ok_or_else(|| "Queue domain is not initialized".to_string())?;
+        domains.queue.purge_dead_letter(
+            QueueKey {
+                family,
+                realm: realm.to_string(),
+                area: area.to_string(),
+                resource: resource.to_string(),
+            },
+            MessageId::new(message_id),
+        )
     }
 
     pub fn rpc_list_workers(&self, realm: Option<&str>) -> Vec<crate::api::admin::RpcWorker> {

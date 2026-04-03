@@ -8,6 +8,7 @@ pub mod handlers;
 mod list;
 mod metrics;
 mod probes;
+mod stats;
 pub(crate) mod read_model;
 
 pub use handlers::handle_request;
@@ -51,4 +52,8 @@ pub(crate) fn error_response(status: StatusCode, message: &str) -> Response<Body
 /// Helper to create not found response
 pub(crate) fn not_found() -> Response<Body> {
     error_response(StatusCode::NOT_FOUND, "Not Found")
+}
+
+pub(crate) fn not_implemented() -> Response<Body> {
+    error_response(StatusCode::NOT_IMPLEMENTED, "Not Implemented")
 }

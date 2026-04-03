@@ -2,6 +2,7 @@
 
 use crate::api::admin::auth::{self, AdminPrincipal, AuthFailure, SessionResponse};
 use crate::boot::Runtime;
+use crate::runtime::routing::RouteFamily;
 use hyper::{Body, Method, Request, Response, StatusCode};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -9,6 +10,7 @@ use std::sync::Arc;
 use super::list;
 use super::metrics;
 use super::probes;
+use super::stats;
 
 pub async fn handle_request(
     req: Request<Body>,
@@ -43,11 +45,32 @@ pub async fn handle_request(
             list::list_sessions(runtime, realm).await
         }
 
+        (Method::GET, "/api/v1/stats") => {
+            if let Err(response) = require_admin(&req, &runtime) {
+                return Ok(*response);
+            }
+            stats::handle_global_stats(runtime).await
+        }
+
         (Method::GET, path) if path.starts_with("/api/v1/") => {
             if let Err(response) = require_admin(&req, &runtime) {
                 return Ok(*response);
             }
-            handle_hierarchical_get(path, runtime).await
+            handle_hierarchical_get(req.uri(), runtime).await
+        }
+
+        (Method::POST, path) if path.starts_with("/api/v1/") => {
+            if let Err(response) = require_admin(&req, &runtime) {
+                return Ok(*response);
+            }
+            handle_hierarchical_post(&req, runtime).await
+        }
+
+        (Method::DELETE, path) if path.starts_with("/api/v1/") => {
+            if let Err(response) = require_admin(&req, &runtime) {
+                return Ok(*response);
+            }
+            handle_hierarchical_delete(&req, runtime).await
         }
 
         (Method::GET, _) => serve_spa(path.as_str()).await,
@@ -56,9 +79,10 @@ pub async fn handle_request(
 }
 
 async fn handle_hierarchical_get(
-    path: &str,
+    uri: &hyper::Uri,
     runtime: Arc<Runtime>,
 ) -> Result<Response<Body>, Infallible> {
+    let path = uri.path();
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     if segments.len() < 4 || segments[0] != "api" || segments[1] != "v1" {
         return Ok(super::not_found());
@@ -68,6 +92,7 @@ async fn handle_hierarchical_get(
     let tail = &segments[3..];
 
     match tail {
+        ["stats"] => stats::handle_domain_stats(runtime, scheme).await,
         ["realms"] => handle_realms_collection(scheme, runtime),
         ["realms", realm] => super::json_response(list::RealmDetail {
             realm: (*realm).to_string(),
@@ -81,7 +106,15 @@ async fn handle_hierarchical_get(
             handle_resources_collection(scheme, runtime, realm, area)
         }
         ["realms", realm, "areas", area, "resources", resource] => {
-            handle_resource_detail(scheme, runtime, realm, area, resource)
+            let family = if scheme == "queue" {
+                match parse_optional_queue_family(uri) {
+                    Ok(family) => family,
+                    Err(response) => return Ok(*response),
+                }
+            } else {
+                None
+            };
+            handle_resource_detail(scheme, runtime, realm, area, resource, family)
         }
         ["realms", realm, "areas", area, "resources", resource, "transactions"]
             if scheme == "kv" =>
@@ -97,6 +130,10 @@ async fn handle_hierarchical_get(
             .await
         }
         ["realms", realm, "areas", area, "resources", resource, "leases"] if scheme == "queue" => {
+            let family = match parse_optional_queue_family(uri) {
+                Ok(family) => family,
+                Err(response) => return Ok(*response),
+            };
             list::queue_leases_for_resource(
                 runtime,
                 &list::ResourcePath {
@@ -104,6 +141,25 @@ async fn handle_hierarchical_get(
                     area,
                     resource,
                 },
+                family,
+            )
+            .await
+        }
+        ["realms", realm, "areas", area, "resources", resource, "dead-letters"]
+            if scheme == "queue" =>
+        {
+            let family = match parse_optional_queue_family(uri) {
+                Ok(family) => family,
+                Err(response) => return Ok(*response),
+            };
+            list::queue_dead_letters_for_resource(
+                runtime,
+                &list::ResourcePath {
+                    realm,
+                    area,
+                    resource,
+                },
+                family,
             )
             .await
         }
@@ -164,6 +220,52 @@ async fn handle_hierarchical_get(
     }
 }
 
+async fn handle_hierarchical_post(
+    req: &Request<Body>,
+    runtime: Arc<Runtime>,
+) -> Result<Response<Body>, Infallible> {
+    let path = req.uri().path();
+    let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if segments.len() < 4 || segments[0] != "api" || segments[1] != "v1" {
+        return Ok(super::not_found());
+    }
+
+    let scheme = segments[2];
+    let tail = &segments[3..];
+
+    match tail {
+        ["realms", realm, "areas", area, "resources", resource, "dead-letters", message_id, "replay"]
+            if scheme == "queue" =>
+        {
+            handle_queue_dead_letter_replay(req.uri(), runtime, realm, area, resource, message_id)
+        }
+        _ => Ok(super::not_found()),
+    }
+}
+
+async fn handle_hierarchical_delete(
+    req: &Request<Body>,
+    runtime: Arc<Runtime>,
+) -> Result<Response<Body>, Infallible> {
+    let path = req.uri().path();
+    let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if segments.len() < 4 || segments[0] != "api" || segments[1] != "v1" {
+        return Ok(super::not_found());
+    }
+
+    let scheme = segments[2];
+    let tail = &segments[3..];
+
+    match tail {
+        ["realms", realm, "areas", area, "resources", resource, "dead-letters", message_id]
+            if scheme == "queue" =>
+        {
+            handle_queue_dead_letter_purge(req.uri(), runtime, realm, area, resource, message_id)
+        }
+        _ => Ok(super::not_found()),
+    }
+}
+
 fn handle_realms_collection(
     scheme: &str,
     runtime: Arc<Runtime>,
@@ -197,6 +299,7 @@ fn handle_resource_detail(
     realm: &str,
     area: &str,
     resource: &str,
+    queue_family: Option<u64>,
 ) -> Result<Response<Body>, Infallible> {
     let path = list::ResourcePath {
         realm,
@@ -206,7 +309,7 @@ fn handle_resource_detail(
 
     match scheme {
         "kv" => super::json_response(list::kv_detail(runtime.as_ref(), &path)),
-        "queue" => super::json_response(list::queue_detail(runtime.as_ref(), &path)),
+        "queue" => super::json_response(list::queue_detail(runtime.as_ref(), &path, queue_family)),
         "stream" => super::json_response(list::stream_detail(runtime.as_ref(), &path)),
         "lease" => super::json_response(list::lease_detail(runtime.as_ref(), &path)),
         "schedule" => super::json_response(list::schedule_detail(runtime.as_ref(), &path)),
@@ -303,6 +406,103 @@ fn require_admin(
 
 fn auth_error_response(err: AuthFailure) -> Response<Body> {
     super::error_response(err.status_code(), err.message())
+}
+
+fn parse_optional_queue_family(uri: &hyper::Uri) -> Result<Option<u64>, Box<Response<Body>>> {
+    list::parse_optional_u64_query_param(uri, "family")
+        .map_err(|message| Box::new(super::error_response(StatusCode::BAD_REQUEST, &message)))
+}
+
+fn require_queue_family(uri: &hyper::Uri) -> Result<u64, Box<Response<Body>>> {
+    match parse_optional_queue_family(uri)? {
+        Some(family) => Ok(family),
+        None => Err(Box::new(super::error_response(
+            StatusCode::BAD_REQUEST,
+            "Missing family query parameter",
+        ))),
+    }
+}
+
+fn parse_message_id(value: &str) -> Result<u64, Box<Response<Body>>> {
+    value.parse::<u64>().map_err(|_| {
+        Box::new(super::error_response(
+            StatusCode::BAD_REQUEST,
+            "Invalid message_id path parameter",
+        ))
+    })
+}
+
+fn handle_queue_dead_letter_replay(
+    uri: &hyper::Uri,
+    runtime: Arc<Runtime>,
+    realm: &str,
+    area: &str,
+    resource: &str,
+    message_id: &str,
+) -> Result<Response<Body>, Infallible> {
+    let family = match require_queue_family(uri) {
+        Ok(family) => family,
+        Err(response) => return Ok(*response),
+    };
+    let message_id = match parse_message_id(message_id) {
+        Ok(message_id) => message_id,
+        Err(response) => return Ok(*response),
+    };
+
+    match runtime.queue_replay_dead_letter(
+        RouteFamily::new(family),
+        realm,
+        area,
+        resource,
+        message_id,
+    ) {
+        Ok(true) => Ok(no_content_response()),
+        Ok(false) => Ok(super::not_found()),
+        Err(message) => Ok(super::error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &message,
+        )),
+    }
+}
+
+fn handle_queue_dead_letter_purge(
+    uri: &hyper::Uri,
+    runtime: Arc<Runtime>,
+    realm: &str,
+    area: &str,
+    resource: &str,
+    message_id: &str,
+) -> Result<Response<Body>, Infallible> {
+    let family = match require_queue_family(uri) {
+        Ok(family) => family,
+        Err(response) => return Ok(*response),
+    };
+    let message_id = match parse_message_id(message_id) {
+        Ok(message_id) => message_id,
+        Err(response) => return Ok(*response),
+    };
+
+    match runtime.queue_purge_dead_letter(
+        RouteFamily::new(family),
+        realm,
+        area,
+        resource,
+        message_id,
+    ) {
+        Ok(true) => Ok(no_content_response()),
+        Ok(false) => Ok(super::not_found()),
+        Err(message) => Ok(super::error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &message,
+        )),
+    }
+}
+
+fn no_content_response() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .body(Body::empty())
+        .unwrap()
 }
 
 async fn serve_spa(path: &str) -> Result<Response<Body>, Infallible> {

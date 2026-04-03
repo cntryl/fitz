@@ -1,6 +1,34 @@
 use super::Runtime;
 
 impl Runtime {
+    pub fn queue_messages_ready(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.queue.ready_message_count())
+            .unwrap_or_else(|| {
+                self.admin_read_model
+                    .queues(None)
+                    .into_iter()
+                    .map(|queue| queue.messages_ready)
+                    .sum()
+            })
+    }
+
+    pub fn queue_messages_delayed(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.queue.delayed_message_count())
+            .unwrap_or_else(|| {
+                self.admin_read_model
+                    .queues(None)
+                    .into_iter()
+                    .map(|queue| queue.messages_delayed)
+                    .sum()
+            })
+    }
+
     pub fn kv_transactions_active(&self) -> usize {
         self.domains
             .read()
@@ -30,7 +58,21 @@ impl Runtime {
                 self.admin_read_model
                     .queues(None)
                     .into_iter()
-                    .map(|queue| queue.messages_ready)
+                    .map(|queue| queue.messages_ready + queue.messages_delayed)
+                    .sum()
+            })
+    }
+
+    pub fn queue_messages_dead_lettered(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.queue.dead_letter_count())
+            .unwrap_or_else(|| {
+                self.admin_read_model
+                    .queues(None)
+                    .into_iter()
+                    .map(|queue| queue.messages_dead_lettered)
                     .sum()
             })
     }

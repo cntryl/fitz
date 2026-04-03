@@ -1,6 +1,6 @@
 use crate::api::admin::{
-    KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueInfo, QueueLease,
-    RpcPendingRequest, RpcWorker, ScheduleInfo, SessionInfo, StreamInfo,
+    KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueDeadLetter, QueueInfo,
+    QueueLease, RpcPendingRequest, RpcWorker, ScheduleInfo, SessionInfo, StreamInfo,
 };
 use crate::session::session::SessionInfo as RuntimeSessionInfo;
 use chrono::Utc;
@@ -74,6 +74,7 @@ pub struct AdminReadModel {
     notice_routes: RwLock<Vec<NoticeRouteInfo>>,
     queues: RwLock<Vec<QueueInfo>>,
     queue_leases: RwLock<Vec<QueueLease>>,
+    queue_dead_letters: RwLock<Vec<QueueDeadLetter>>,
     rpc_workers: RwLock<Vec<RpcWorker>>,
     rpc_pending: RwLock<Vec<RpcPendingRequest>>,
     leases: RwLock<BTreeMap<LeaseIdentity, LeaseInfo>>,
@@ -144,6 +145,15 @@ impl AdminReadModel {
     pub fn queue_leases(&self, realm: Option<&str>) -> Vec<QueueLease> {
         let leases = self.queue_leases.read();
         collect_slice_matches(&leases, |item| matches_realm(realm, &item.realm))
+    }
+
+    pub fn replace_queue_dead_letters(&self, messages: Vec<QueueDeadLetter>) {
+        *self.queue_dead_letters.write() = messages;
+    }
+
+    pub fn queue_dead_letters(&self, realm: Option<&str>) -> Vec<QueueDeadLetter> {
+        let messages = self.queue_dead_letters.read();
+        collect_slice_matches(&messages, |item| matches_realm(realm, &item.realm))
     }
 
     pub fn replace_rpc_workers(&self, workers: Vec<RpcWorker>) {

@@ -158,18 +158,24 @@ impl QueueDomainSink {
         let actors = self.actors.lock();
         let mut queues = Vec::with_capacity(actors.len());
         let mut leases = Vec::new();
+        let mut dead_letters = Vec::new();
 
         for (key, warm_actor) in actors.iter() {
             let actor = warm_actor.actor.lock();
             let snapshot = actor.admin_snapshot();
             queues.push(crate::api::admin::QueueInfo::snapshot(
-                &key.realm,
-                &key.area,
-                &key.resource,
-                snapshot.messages_ready,
-                snapshot.messages_leased,
-                snapshot.messages_total,
-                snapshot.oldest_message_age_seconds,
+                crate::api::admin::QueueInfoSnapshot {
+                    family: key.family.as_u64(),
+                    realm: &key.realm,
+                    area: &key.area,
+                    resource: &key.resource,
+                    messages_ready: snapshot.messages_ready,
+                    messages_delayed: snapshot.messages_delayed,
+                    messages_leased: snapshot.messages_leased,
+                    messages_dead_lettered: snapshot.messages_dead_lettered,
+                    messages_total: snapshot.messages_total,
+                    oldest_message_age_seconds: snapshot.oldest_message_age_seconds,
+                },
             ));
             for lease in actor.admin_leases() {
                 let expires_at = Utc
@@ -180,6 +186,7 @@ impl QueueDomainSink {
                 leases.push(crate::api::admin::QueueLease::snapshot(
                     crate::api::admin::QueueLeaseSnapshot {
                         message_id: lease.message_id,
+                        family: key.family.as_u64(),
                         realm: &key.realm,
                         area: &key.area,
                         resource: &key.resource,
@@ -187,6 +194,25 @@ impl QueueDomainSink {
                         session_id: lease.session_id,
                         expires_at: &expires_at,
                         attempts: lease.attempts,
+                    },
+                ));
+            }
+            for dead_letter in actor.admin_dead_letters() {
+                let dead_lettered_at = Utc
+                    .timestamp_millis_opt(dead_letter.dead_lettered_at_epoch_ms as i64)
+                    .single()
+                    .map(|timestamp| timestamp.to_rfc3339())
+                    .unwrap_or_default();
+                dead_letters.push(crate::api::admin::QueueDeadLetter::snapshot(
+                    crate::api::admin::QueueDeadLetterSnapshot {
+                        message_id: dead_letter.message_id,
+                        family: key.family.as_u64(),
+                        realm: &key.realm,
+                        area: &key.area,
+                        resource: &key.resource,
+                        dead_lettered_at: &dead_lettered_at,
+                        attempts: dead_letter.attempts,
+                        reason: dead_letter.reason,
                     },
                 ));
             }
@@ -215,9 +241,26 @@ impl QueueDomainSink {
                     &right.session_id,
                 ))
         });
+        dead_letters.sort_by(|left, right| {
+            (
+                &left.realm,
+                &left.area,
+                &left.resource,
+                &left.dead_lettered_at,
+                left.message_id,
+            )
+                .cmp(&(
+                    &right.realm,
+                    &right.area,
+                    &right.resource,
+                    &right.dead_lettered_at,
+                    right.message_id,
+                ))
+        });
 
         self.admin_read_model.replace_queues(queues);
         self.admin_read_model.replace_queue_leases(leases);
+        self.admin_read_model.replace_queue_dead_letters(dead_letters);
     }
 
     fn sweep_idle_actors(&self) {
@@ -384,7 +427,26 @@ impl QueueDomainSink {
         let actors = self.actors.lock();
         actors
             .values()
-            .map(|warm_actor| warm_actor.actor.lock().ready_len())
+            .map(|warm_actor| {
+                let snapshot = warm_actor.actor.lock().admin_snapshot();
+                snapshot.messages_ready + snapshot.messages_delayed
+            })
+            .sum()
+    }
+
+    pub fn ready_message_count(&self) -> usize {
+        let actors = self.actors.lock();
+        actors
+            .values()
+            .map(|warm_actor| warm_actor.actor.lock().admin_snapshot().messages_ready)
+            .sum()
+    }
+
+    pub fn delayed_message_count(&self) -> usize {
+        let actors = self.actors.lock();
+        actors
+            .values()
+            .map(|warm_actor| warm_actor.actor.lock().admin_snapshot().messages_delayed)
             .sum()
     }
 
@@ -394,6 +456,72 @@ impl QueueDomainSink {
             .values()
             .map(|warm_actor| warm_actor.actor.lock().inflight.len())
             .sum()
+    }
+
+    pub fn dead_letter_count(&self) -> usize {
+        let actors = self.actors.lock();
+        actors
+            .values()
+            .map(|warm_actor| warm_actor.actor.lock().admin_snapshot().messages_dead_lettered)
+            .sum()
+    }
+
+    pub fn replay_dead_letter(
+        &self,
+        key: crate::domains::queue::QueueKey,
+        id: crate::domains::queue::MessageId,
+    ) -> Result<bool, String> {
+        let (actor_handle, created_actor) = self.get_or_create_actor(key.clone());
+        let result = {
+            let mut actor = actor_handle.lock();
+            actor.replay_dead_letter(id)
+        };
+
+        if matches!(result, Ok(true)) {
+            self.mark_admin_snapshot_dirty();
+        }
+
+        if created_actor {
+            let should_remove = {
+                let actor = actor_handle.lock();
+                actor.admin_snapshot().messages_total == 0 && actor.inflight.is_empty()
+            };
+            if should_remove {
+                self.actors.lock().remove(&key);
+                self.mark_admin_snapshot_dirty();
+            }
+        }
+
+        result
+    }
+
+    pub fn purge_dead_letter(
+        &self,
+        key: crate::domains::queue::QueueKey,
+        id: crate::domains::queue::MessageId,
+    ) -> Result<bool, String> {
+        let (actor_handle, created_actor) = self.get_or_create_actor(key.clone());
+        let result = {
+            let mut actor = actor_handle.lock();
+            actor.purge_dead_letter(id)
+        };
+
+        if matches!(result, Ok(true)) {
+            self.mark_admin_snapshot_dirty();
+        }
+
+        if created_actor {
+            let should_remove = {
+                let actor = actor_handle.lock();
+                actor.admin_snapshot().messages_total == 0 && actor.inflight.is_empty()
+            };
+            if should_remove {
+                self.actors.lock().remove(&key);
+                self.mark_admin_snapshot_dirty();
+            }
+        }
+
+        result
     }
 }
 
@@ -836,6 +964,17 @@ mod tests {
         Bytes::from(payload)
     }
 
+    fn encode_queue_send_with_delay(route: &str, body: &[u8], delay_seconds: u64) -> Bytes {
+        let mut payload = Vec::new();
+        payload.put_u32(route.len() as u32);
+        payload.put_slice(route.as_bytes());
+        payload.put_u32(body.len() as u32);
+        payload.put_slice(body);
+        payload.put_u8(1);
+        payload.put_u64(delay_seconds);
+        Bytes::from(payload)
+    }
+
     fn encode_queue_reserve(route: &str, lease_seconds: u64, batch_size: u32) -> Bytes {
         let mut payload = Vec::new();
         payload.put_u32(route.len() as u32);
@@ -1260,7 +1399,9 @@ mod tests {
         assert_eq!(queues[0].area, "jobs");
         assert_eq!(queues[0].resource, "emails");
         assert_eq!(queues[0].messages_ready, 0);
+        assert_eq!(queues[0].messages_delayed, 0);
         assert_eq!(queues[0].messages_leased, 1);
+        assert_eq!(queues[0].messages_dead_lettered, 0);
         assert_eq!(queues[0].messages_total, 1);
 
         let leases = admin_read_model.queue_leases(None);
@@ -1350,9 +1491,60 @@ mod tests {
         let queues = admin_read_model.queues(None);
         assert_eq!(queues.len(), 1);
         assert_eq!(queues[0].messages_ready, 1);
+        assert_eq!(queues[0].messages_delayed, 0);
         assert_eq!(queues[0].messages_leased, 0);
+        assert_eq!(queues[0].messages_dead_lettered, 0);
         assert_eq!(queues[0].messages_total, 1);
         assert!(admin_read_model.queue_leases(None).is_empty());
+    }
+
+    #[test]
+    fn should_include_delayed_messages_in_queue_admin_snapshot() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let sender_session_id = 7;
+        let queue_route = "queue://acme/jobs/emails";
+        let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+        let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let sender_mailbox = Arc::new(Mailbox::new(8));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        router.register(sender_address.clone(), sender_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = QueueDomainSink::new(
+            store,
+            router,
+            admin_read_model.clone(),
+            cntryl_midge::WriteOptions::buffered(),
+        );
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            sender_address,
+            queue_address,
+            FrameContext::new(
+                sender_session_id,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send_with_delay(queue_route, b"email", 60),
+                family,
+            ),
+        ))
+        .expect("enqueue delayed queue message");
+        let _send_ack = sender_mailbox
+            .receiver()
+            .try_recv()
+            .expect("enqueue delayed response");
+        sink.refresh_admin_snapshot_if_dirty();
+
+        // Assert
+        let queues = admin_read_model.queues(None);
+        assert_eq!(queues.len(), 1);
+        assert_eq!(queues[0].messages_ready, 0);
+        assert_eq!(queues[0].messages_delayed, 1);
+        assert_eq!(queues[0].messages_leased, 0);
+        assert_eq!(queues[0].messages_dead_lettered, 0);
+        assert_eq!(queues[0].messages_total, 1);
     }
 
     #[test]

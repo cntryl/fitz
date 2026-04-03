@@ -109,14 +109,13 @@
 //!
 //! When creating a QueueActor with `max_attempts: Some(n)`:
 //! - Each lease expiration increments `attempts`
-//! - When `attempts > max_attempts`:
-//!   - Message is deleted from storage (DLQ'd)
+//! - When `attempts >= max_attempts`:
+//!   - Message transitions into durable DLQ state
+//!   - Header and body remain in storage with DLQ metadata
 //!   - Log message emitted: `DLQ: queue={...} message_id={...} attempts={...}`
 //!   - Message is NOT re-enqueued
-//! - DLQ handling is explicit and external:
-//!   - Monitor logs/metrics for DLQ events
-//!   - External systems emit notices (e.g., `notice://{realm}/{area}/dead`)
-//!   - QueueActor never auto-enqueues to another queue
+//! - QueueActor retains DLQ rows durably and keeps them out of reserve/redelivery
+//! - Higher-level admin, replay, and purge surfaces build on top of this retained state
 //!
 //! When `max_attempts: None` (default):
 //! - Messages retry indefinitely on lease expiration

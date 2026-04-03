@@ -1,13 +1,13 @@
 //! Domain statistics endpoints
 //!
 //! Routes:
-//! - GET /api/v1/admin/stats - Global broker and domain statistics
-//! - GET /api/v1/admin/kv/stats - KV domain statistics
-//! - GET /api/v1/admin/stream/stats - Stream domain statistics
-//! - GET /api/v1/admin/notice/stats - Notice domain statistics
-//! - GET /api/v1/admin/queue/stats - Queue domain statistics
-//! - GET /api/v1/admin/rpc/stats - RPC domain statistics
-//! - GET /api/v1/admin/lease/stats - Lease domain statistics
+//! - GET /api/v1/stats - Global broker and domain statistics
+//! - GET /api/v1/kv/stats - KV domain statistics
+//! - GET /api/v1/stream/stats - Stream domain statistics
+//! - GET /api/v1/notice/stats - Notice domain statistics
+//! - GET /api/v1/queue/stats - Queue domain statistics
+//! - GET /api/v1/rpc/stats - RPC domain statistics
+//! - GET /api/v1/lease/stats - Lease domain statistics
 
 use crate::boot::Runtime;
 use hyper::{Body, Response};
@@ -64,7 +64,10 @@ pub struct NoticeStats {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueStats {
+    pub messages_ready: usize,
+    pub messages_delayed: usize,
     pub messages_pending: usize,
+    pub messages_dead_lettered: usize,
     pub leases_active: usize,
     pub operations_per_second: f64,
 }
@@ -117,7 +120,10 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 publishes_per_second: runtime.notice_publishes_per_second(),
             },
             queue: QueueStats {
+                messages_ready: runtime.queue_messages_ready(),
+                messages_delayed: runtime.queue_messages_delayed(),
                 messages_pending: runtime.queue_messages_pending(),
+                messages_dead_lettered: runtime.queue_messages_dead_lettered(),
                 leases_active: runtime.queue_leases_active(),
                 operations_per_second: runtime.queue_operations_per_second(),
             },
@@ -161,37 +167,43 @@ pub async fn handle_domain_stats(
 
 async fn handle_kv_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     let _ = runtime;
-    Ok(crate::api::admin::not_implemented())
+    Ok(super::not_implemented())
 }
 
 async fn handle_stream_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     let _ = runtime;
-    Ok(crate::api::admin::not_implemented())
+    Ok(super::not_implemented())
 }
 
 async fn handle_notice_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     let _ = runtime;
-    Ok(crate::api::admin::not_implemented())
+    Ok(super::not_implemented())
 }
 
 async fn handle_queue_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
-    let _ = runtime;
-    Ok(crate::api::admin::not_implemented())
+    crate::api::admin::json_response(QueueStats {
+        messages_ready: runtime.queue_messages_ready(),
+        messages_delayed: runtime.queue_messages_delayed(),
+        messages_pending: runtime.queue_messages_pending(),
+        messages_dead_lettered: runtime.queue_messages_dead_lettered(),
+        leases_active: runtime.queue_leases_active(),
+        operations_per_second: runtime.queue_operations_per_second(),
+    })
 }
 
 async fn handle_rpc_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     let _ = runtime;
-    Ok(crate::api::admin::not_implemented())
+    Ok(super::not_implemented())
 }
 
 async fn handle_lease_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     let _ = runtime;
-    Ok(crate::api::admin::not_implemented())
+    Ok(super::not_implemented())
 }
 
 async fn handle_schedule_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     let _ = runtime;
-    Ok(crate::api::admin::not_implemented())
+    Ok(super::not_implemented())
 }
 
 /// Parse realm filter from query string

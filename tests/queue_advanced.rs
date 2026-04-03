@@ -3,12 +3,14 @@
 //! Tests multi-consumer scenarios, crash recovery with in-flight messages,
 //! and atomicity guarantees across process restarts.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 
 use fitz::domains::queue::{
     protocol::{QueueKey, QueueResponse},
+    Clock,
     QueueActor,
 };
 use fitz::runtime::routing::RouteFamily;
@@ -20,6 +22,44 @@ fn unique_queue_key(resource_prefix: &str) -> QueueKey {
         realm: "test".to_string(),
         area: "queue".to_string(),
         resource: format!("{}-{}", resource_prefix, Uuid::new_v4()),
+    }
+}
+
+#[derive(Clone)]
+struct TestClock {
+    state: Arc<Mutex<TestClockState>>,
+}
+
+#[derive(Clone, Copy)]
+struct TestClockState {
+    instant: Instant,
+    epoch_ms: u64,
+}
+
+impl TestClock {
+    fn new() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(TestClockState {
+                instant: Instant::now(),
+                epoch_ms: 1_700_000_000_000,
+            })),
+        }
+    }
+
+    fn advance(&self, duration: Duration) {
+        let mut state = self.state.lock().expect("clock state lock");
+        state.instant += duration;
+        state.epoch_ms = state.epoch_ms.saturating_add(duration.as_millis() as u64);
+    }
+}
+
+impl Clock for TestClock {
+    fn now_instant(&self) -> Instant {
+        self.state.lock().expect("clock state lock").instant
+    }
+
+    fn now_epoch_ms(&self) -> u64 {
+        self.state.lock().expect("clock state lock").epoch_ms
     }
 }
 
@@ -456,7 +496,82 @@ fn should_redelivery_message_on_lease_expiration() {
 /// Test dead letter queue (DLQ) for max attempts threshold
 #[test]
 fn should_dlq_message_after_max_attempts() {
-    // This test requires MockClock to advance time, which is only available in unit tests.
-    // Unit tests in src/domains/queue/actor.rs verify DLQ behavior with MockClock.
-    // This integration test verifies the overall queue mechanics.
+    // Arrange
+    let clock = TestClock::new();
+    let store = Arc::new(
+        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+            .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("crash-dlq");
+
+    let msg_id = {
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            Box::new(clock.clone()),
+            Some(3),
+            fitz::utils::idempotency::global_dedup_store(),
+        );
+
+        let send_response = actor.handle_send(Bytes::from("task"), None);
+        let msg_id = match send_response {
+            QueueResponse::Sent { id } => id,
+            _ => panic!("Expected Sent response"),
+        };
+
+        for expected_attempt in 1..=3 {
+            match actor.handle_receive(30, Some(1)) {
+                QueueResponse::Received { messages } => {
+                    assert_eq!(messages.len(), 1);
+                    assert_eq!(messages[0].attempts, expected_attempt);
+                }
+                _ => panic!("Expected Received response"),
+            }
+
+            clock.advance(Duration::from_secs(31));
+            actor.process_expired_timers();
+        }
+
+        msg_id
+    };
+
+    // Act
+    let mut recovered = QueueActor::with_clock(
+        RouteFamily::new(0),
+        queue_key.clone(),
+        store.clone(),
+        Box::new(clock),
+        Some(3),
+        fitz::utils::idempotency::global_dedup_store(),
+    );
+    let reserve_response = recovered.handle_receive(30, Some(1));
+
+    // Assert
+    match reserve_response {
+        QueueResponse::NotFound => {}
+        QueueResponse::Received { messages } => assert!(messages.is_empty()),
+        _ => panic!("Expected empty queue after retained DLQ transition"),
+    }
+
+    let cf_id = queue_key.family.id();
+    let header_key = format!(
+        "queue:{}:{}:{}:hdr:{}",
+        queue_key.realm,
+        queue_key.area,
+        queue_key.resource,
+        msg_id.as_u64()
+    );
+    let body_key = format!(
+        "queue:{}:{}:{}:body:{}",
+        queue_key.realm,
+        queue_key.area,
+        queue_key.resource,
+        msg_id.as_u64()
+    );
+    let txn = store
+        .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
+        .expect("begin tx");
+    assert!(txn.get(header_key.as_bytes()).expect("read header").is_some());
+    assert!(txn.get(body_key.as_bytes()).expect("read body").is_some());
 }

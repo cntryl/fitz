@@ -315,6 +315,12 @@ export interface NoticeStats {
 
 /** QueueStats schema */
 export interface QueueStats {
+  /** Number of dead-lettered queue messages */
+  messages_dead_lettered: number;
+  /** Number of delayed queue messages */
+  messages_delayed: number;
+  /** Number of ready queue messages */
+  messages_ready: number;
   /** Number of active queue message leases */
   leases_active: number;
   /** Number of messages pending in queues */

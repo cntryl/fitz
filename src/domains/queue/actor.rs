@@ -238,7 +238,9 @@ pub struct Inflight {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QueueAdminSnapshot {
     pub messages_ready: usize,
+    pub messages_delayed: usize,
     pub messages_leased: usize,
+    pub messages_dead_lettered: usize,
     pub messages_total: usize,
     pub oldest_message_age_seconds: u64,
 }
@@ -251,6 +253,15 @@ pub struct QueueLeaseSnapshot {
     pub session_id: Option<u64>,
     pub expires_at_epoch_ms: u64,
     pub attempts: usize,
+}
+
+/// Point-in-time dead-letter snapshot for admin diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueDeadLetterSnapshot {
+    pub message_id: u64,
+    pub dead_lettered_at_epoch_ms: u64,
+    pub attempts: usize,
+    pub reason: &'static str,
 }
 
 /// Timer event for lease expiration
@@ -545,6 +556,9 @@ pub struct QueueActor {
     /// Authoritative delayed index entries keyed by message ID.
     persisted_delayed: FastMap<MessageId, u64>,
 
+    /// Authoritative dead-letter index entries keyed by message ID.
+    persisted_dlq: FastMap<MessageId, u64>,
+
     /// Cached minimum delayed visibility across `persisted_delayed`.
     persisted_next_delayed_visibility_ms: Option<u64>,
 
@@ -709,6 +723,7 @@ impl QueueActor {
             timers: BinaryHeap::new(),
             delayed: BinaryHeap::new(),
             persisted_delayed: HashMap::with_capacity_and_hasher(64, FxBuildHasher::default()),
+            persisted_dlq: HashMap::with_capacity_and_hasher(32, FxBuildHasher::default()),
             persisted_next_delayed_visibility_ms: None,
             index_meta_written: false,
             recovery_path: RecoveryPath::Empty,
@@ -1193,6 +1208,22 @@ impl QueueActor {
         self.persisted_next_delayed_visibility_ms = None;
     }
 
+    fn insert_persisted_dlq(&mut self, id: MessageId, dead_lettered_at_ms: u64) {
+        self.persisted_dlq.insert(id, dead_lettered_at_ms);
+        self.dlq_count = self.persisted_dlq.len();
+    }
+
+    fn remove_persisted_dlq(&mut self, id: MessageId) -> Option<u64> {
+        let removed = self.persisted_dlq.remove(&id);
+        self.dlq_count = self.persisted_dlq.len();
+        removed
+    }
+
+    fn clear_persisted_dlq(&mut self) {
+        self.persisted_dlq.clear();
+        self.dlq_count = 0;
+    }
+
     fn delete_record_for_layout(
         txn: &mut cntryl_midge::Transaction,
         layout: StoredRecordLayout,
@@ -1376,6 +1407,20 @@ impl QueueActor {
         Some((visible_at_ms, MessageId::new(id)))
     }
 
+    fn parse_dlq_index_key(key: &[u8], prefix: &[u8]) -> Option<(u64, MessageId)> {
+        let rest = key.strip_prefix(prefix)?;
+        if rest.len() != (Self::PADDED_U64_WIDTH * 2) + 1 {
+            return None;
+        }
+        if rest[Self::PADDED_U64_WIDTH] != b':' {
+            return None;
+        }
+
+        let dead_lettered_at_ms = Self::parse_padded_u64(&rest[..Self::PADDED_U64_WIDTH])?;
+        let id = Self::parse_padded_u64(&rest[(Self::PADDED_U64_WIDTH + 1)..])?;
+        Some((dead_lettered_at_ms, MessageId::new(id)))
+    }
+
     #[inline]
     fn parse_message_id_from_key(key: &[u8], prefix: &[u8]) -> Option<MessageId> {
         if !key.starts_with(prefix) || key.len() <= prefix.len() {
@@ -1449,6 +1494,7 @@ impl QueueActor {
         }
         self.persisted_ready_count = 0;
         self.clear_persisted_delayed();
+        self.clear_persisted_dlq();
     }
 
     fn push_range_into(shards: &mut [VecDeque<ReadyRange>], shard: usize, range: ReadyRange) {
@@ -1767,8 +1813,13 @@ impl QueueActor {
         let now_epoch_ms = self.clock.now_epoch_ms();
         QueueAdminSnapshot {
             messages_ready: self.ready.len(),
+            messages_delayed: self.persisted_delayed.len(),
             messages_leased: self.inflight.len(),
-            messages_total: self.ready.len() + self.inflight.len() + self.persisted_delayed.len(),
+            messages_dead_lettered: self.persisted_dlq.len(),
+            messages_total: self.ready.len()
+                + self.inflight.len()
+                + self.persisted_delayed.len()
+                + self.persisted_dlq.len(),
             oldest_message_age_seconds: self
                 .oldest_ready_enqueued_at_ms
                 .map(|timestamp| now_epoch_ms.saturating_sub(timestamp) / 1_000)
@@ -1795,6 +1846,59 @@ impl QueueActor {
                 attempts: inflight.attempts as usize,
             })
             .collect()
+    }
+
+    pub fn admin_dead_letters(&self) -> Vec<QueueDeadLetterSnapshot> {
+        let mut dead_letters: Vec<_> = self
+            .persisted_dlq
+            .iter()
+            .map(|(id, &dead_lettered_at_epoch_ms)| {
+                let record = self
+                    .records
+                    .get(id)
+                    .cloned()
+                    .filter(|record| matches!(record.state, QueueState::Dlq))
+                    .or_else(|| {
+                        self.load_record_metadata_from_store(*id)
+                            .ok()
+                            .map(|(record, _)| record)
+                            .filter(|record| matches!(record.state, QueueState::Dlq))
+                    });
+
+                let attempts = record
+                    .as_ref()
+                    .map(|record| record.attempts as usize)
+                    .unwrap_or_default();
+                let dead_lettered_at_epoch_ms = record
+                    .as_ref()
+                    .and_then(|record| record.dead_lettered_at_ms)
+                    .unwrap_or(dead_lettered_at_epoch_ms);
+                let reason = record
+                    .as_ref()
+                    .and_then(|record| record.dlq_reason)
+                    .map(Self::dlq_reason_label)
+                    .unwrap_or("unknown");
+
+                QueueDeadLetterSnapshot {
+                    message_id: id.as_u64(),
+                    dead_lettered_at_epoch_ms,
+                    attempts,
+                    reason,
+                }
+            })
+            .collect();
+
+        dead_letters.sort_by(|left, right| {
+            (left.dead_lettered_at_epoch_ms, left.message_id)
+                .cmp(&(right.dead_lettered_at_epoch_ms, right.message_id))
+        });
+        dead_letters
+    }
+
+    fn dlq_reason_label(reason: DlqReason) -> &'static str {
+        match reason {
+            DlqReason::MaxAttemptsExceeded => "max_attempts_exceeded",
+        }
     }
 
     /// Drop any live leases owned by a disconnected session and return the
@@ -2046,6 +2150,39 @@ impl QueueActor {
         }
     }
 
+    fn load_full_record_for_admin_mutation(
+        &mut self,
+        id: MessageId,
+    ) -> Result<(QueueRecord, StoredRecordLayout), String> {
+        let (record, layout) = if let Some(record) = self.records.get(&id).cloned() {
+            (
+                record,
+                self.record_layouts
+                    .get(&id)
+                    .copied()
+                    .unwrap_or(StoredRecordLayout::EmbeddedHeader),
+            )
+        } else {
+            self.load_record_metadata_from_store(id)?
+        };
+
+        let body = if let Some(body) = record.body.clone() {
+            body
+        } else if let Some(body) = self.body_cache.get(&id).cloned() {
+            body
+        } else {
+            self.load_body_from_store(id)?
+        };
+
+        Ok((
+            QueueRecord {
+                body: Some(body),
+                ..record
+            },
+            layout,
+        ))
+    }
+
     fn observe_histogram_us(metric_name: &str, value_us: u64) {
         crate::boot::observability::histogram_observe_us(metric_name, value_us);
     }
@@ -2114,7 +2251,7 @@ impl QueueActor {
             ready_count: self.ready.len() as u64,
             delayed_count: self.persisted_delayed.len() as u64,
             leased_count: self.inflight.len() as u64,
-            dlq_count: self.dlq_count as u64,
+            dlq_count: self.persisted_dlq.len() as u64,
             oldest_ready_enqueued_at_ms: self.oldest_ready_enqueued_at_ms,
         }
     }
@@ -2937,6 +3074,140 @@ impl QueueActor {
         response
     }
 
+    pub fn replay_dead_letter(&mut self, id: MessageId) -> Result<bool, String> {
+        self.process_due_work();
+
+        let (mut record, record_layout) = match self.load_full_record_for_admin_mutation(id) {
+            Ok(record) => record,
+            Err(_) => return Ok(false),
+        };
+
+        if !matches!(record.state, QueueState::Dlq) {
+            return Ok(false);
+        }
+
+        let dead_lettered_at_ms = record
+            .dead_lettered_at_ms
+            .or_else(|| self.persisted_dlq.get(&id).copied())
+            .unwrap_or(record.first_enqueued_at_ms);
+        let ready_seq = self.next_ready_seq;
+        let (ready_shard, ready_range) = Self::prepare_persisted_ready_append(
+            self.persisted_ready_shards[Self::shard_for_id(id)]
+                .back()
+                .copied(),
+            id,
+        );
+
+        record.state = QueueState::Ready;
+        record.ready_seq = Some(ready_seq);
+        record.attempts = 0;
+        record.visible_at_ms = 0;
+        record.lease_token = None;
+        record.lease_expires_at_ms = None;
+        record.dead_lettered_at_ms = None;
+        record.dlq_reason = None;
+
+        let cf_id = self.queue_key.family.id();
+        let mut txn = self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|e| format!("Failed to begin replay tx for message {}: {:?}", id, e))?;
+
+        self.write_record_as_split(&mut txn, id, &record, Some(record_layout))?;
+        txn.delete(self.dlq_index_key(dead_lettered_at_ms, id))
+            .map_err(|e| format!("Failed to delete queue DLQ index for message {}: {:?}", id, e))?;
+        txn.put(
+            self.ready_range_key(ready_shard, ready_range.next),
+            Self::encode_ready_range_value(ready_range),
+            None,
+        )
+        .map_err(|e| format!("Failed to write queue ready index for message {}: {:?}", id, e))?;
+        txn.put(
+            self.index_meta_key.clone(),
+            Self::encode_index_meta(
+                self.next_id_limit,
+                (self.persisted_ready_count + 1) as u64,
+                self.persisted_delayed.len() as u64,
+                self.min_persisted_delayed_visibility_ms(),
+            ),
+            None,
+        )
+        .map_err(|e| format!("Failed to update queue index meta for message {}: {:?}", id, e))?;
+        txn.commit(self.commit_write_options)
+            .map_err(|e| format!("Failed to commit replay tx for message {}: {:?}", id, e))?;
+
+        self.remove_persisted_dlq(id);
+        self.cache_record_state(id, &record, StoredRecordLayout::SplitHeaderBody);
+        self.push_ready_entry(ready_seq, id);
+        self.next_ready_seq = self.next_ready_seq.saturating_add(1);
+        self.push_persisted_ready(id);
+
+        Ok(true)
+    }
+
+    pub fn purge_dead_letter(&mut self, id: MessageId) -> Result<bool, String> {
+        self.process_due_work();
+
+        let (record, record_layout) = if let Some(record) = self.records.get(&id).cloned() {
+            (
+                record,
+                self.record_layouts
+                    .get(&id)
+                    .copied()
+                    .unwrap_or(StoredRecordLayout::EmbeddedHeader),
+            )
+        } else {
+            match self.load_record_metadata_from_store(id) {
+                Ok(record) => record,
+                Err(_) => return Ok(false),
+            }
+        };
+
+        if !matches!(record.state, QueueState::Dlq) {
+            return Ok(false);
+        }
+
+        let dead_lettered_at_ms = record
+            .dead_lettered_at_ms
+            .or_else(|| self.persisted_dlq.get(&id).copied())
+            .unwrap_or(record.first_enqueued_at_ms);
+        let cf_id = self.queue_key.family.id();
+        let mut txn = self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|e| format!("Failed to begin purge tx for message {}: {:?}", id, e))?;
+
+        Self::delete_record_for_layout(
+            &mut txn,
+            record_layout,
+            self.cached_header_key(id),
+            self.cached_body_key(id),
+            self.cached_legacy_message_key(id),
+        )
+        .map_err(|e| format!("Failed to delete message {} in purge tx: {:?}", id, e))?;
+        txn.delete(self.dlq_index_key(dead_lettered_at_ms, id))
+            .map_err(|e| format!("Failed to delete queue DLQ index for message {}: {:?}", id, e))?;
+        txn.put(
+            self.index_meta_key.clone(),
+            Self::encode_index_meta(
+                self.next_id_limit,
+                self.persisted_ready_count as u64,
+                self.persisted_delayed.len() as u64,
+                self.min_persisted_delayed_visibility_ms(),
+            ),
+            None,
+        )
+        .map_err(|e| format!("Failed to update queue index meta for message {}: {:?}", id, e))?;
+        txn.commit(self.commit_write_options)
+            .map_err(|e| format!("Failed to commit purge tx for message {}: {:?}", id, e))?;
+
+        self.remove_persisted_dlq(id);
+        self.evict_cached_record(id);
+        self.evict_cached_body(id);
+
+        Ok(true)
+    }
+
     /// Handle lease expiration (internal timer event)
     fn handle_lease_expired(&mut self, id: MessageId) {
         // Check if message is still inflight
@@ -2951,6 +3222,7 @@ impl QueueActor {
         if inflight.expires_at > now {
             return; // Lease was extended, ignore this timer
         }
+        let now_epoch_ms = self.clock.now_epoch_ms();
 
         // Remove inflight entry
         self.inflight.remove(&id);
@@ -3023,6 +3295,16 @@ impl QueueActor {
                 };
 
                 if is_dlq {
+                    let prior_visible_at_ms = record.visible_at_ms;
+                    let dead_lettered_at_ms = now_epoch_ms;
+                    record.state = QueueState::Dlq;
+                    record.ready_seq = None;
+                    record.visible_at_ms = 0;
+                    record.lease_token = None;
+                    record.lease_expires_at_ms = None;
+                    record.dead_lettered_at_ms = Some(dead_lettered_at_ms);
+                    record.dlq_reason = Some(DlqReason::MaxAttemptsExceeded);
+
                     let persisted_ready_mutation =
                         Self::plan_ready_index_mutation(&self.persisted_ready_shards, id);
                     let removing_delayed = self.persisted_delayed.contains_key(&id);
@@ -3037,112 +3319,142 @@ impl QueueActor {
                     } else {
                         self.min_persisted_delayed_visibility_ms()
                     };
-                    let delete_result = if has_split_record {
-                        let delete_header = txn.delete(header_key.clone());
-                        if has_body_key {
-                            delete_header.and_then(|_| txn.delete(body_key))
-                        } else {
-                            delete_header
-                        }
+                    let write_result = if matches!(record_layout, StoredRecordLayout::SplitHeaderBody)
+                        && has_body_key
+                    {
+                        txn.put(header_key.clone(), Self::encode_record_header(&record), None)
+                            .map_err(|e| format!("Failed to write DLQ header: {:?}", e))
                     } else {
-                        txn.delete(legacy_key.clone())
-                    };
-
-                    if let Err(e) = delete_result {
-                        eprintln!("WARN: Failed to delete DLQ message {}: {:?}", id, e);
-                    } else {
-                        let mut index_update_failed = false;
-                        if let Some((shard, mutation)) = persisted_ready_mutation {
-                            let ready_result = match mutation {
-                                PersistedReadyMutation::Delete { removed } => {
-                                    txn.delete(self.ready_range_key(shard, removed.next))
+                        if record.body.is_none() {
+                            match self.load_body_from_store(id) {
+                                Ok(body) => record.body = Some(body),
+                                Err(e) => {
+                                    eprintln!(
+                                        "WARN: Failed to load body for DLQ message {}: {}",
+                                        id, e
+                                    );
+                                    return;
                                 }
-                                PersistedReadyMutation::Replace { removed, inserted } => txn
-                                    .delete(self.ready_range_key(shard, removed.next))
-                                    .and_then(|_| {
-                                        txn.put(
-                                            self.ready_range_key(shard, inserted.next),
-                                            Self::encode_ready_range_value(inserted),
-                                            None,
-                                        )
-                                    }),
-                                PersistedReadyMutation::Split {
-                                    removed,
-                                    left,
-                                    right,
-                                } => txn
-                                    .delete(self.ready_range_key(shard, removed.next))
-                                    .and_then(|_| {
-                                        txn.put(
-                                            self.ready_range_key(shard, left.next),
-                                            Self::encode_ready_range_value(left),
-                                            None,
-                                        )
-                                    })
-                                    .and_then(|_| {
-                                        txn.put(
-                                            self.ready_range_key(shard, right.next),
-                                            Self::encode_ready_range_value(right),
-                                            None,
-                                        )
-                                    }),
-                            };
-
-                            if let Err(e) = ready_result {
-                                eprintln!(
-                                    "WARN: Failed to update ready index for DLQ message {}: {:?}",
-                                    id, e
-                                );
-                                index_update_failed = true;
                             }
                         }
 
-                        if let Err(e) = txn.delete(self.delayed_index_key(record.visible_at_ms, id))
-                        {
+                        self.write_record_as_split(&mut txn, id, &record, Some(record_layout))
+                    };
+
+                    if let Err(e) = write_result {
+                        eprintln!("WARN: Failed to persist DLQ message {}: {:?}", id, e);
+                        return;
+                    }
+
+                    let mut index_update_failed = false;
+                    if let Some((shard, mutation)) = persisted_ready_mutation {
+                        let ready_result = match mutation {
+                            PersistedReadyMutation::Delete { removed } => {
+                                txn.delete(self.ready_range_key(shard, removed.next))
+                            }
+                            PersistedReadyMutation::Replace { removed, inserted } => txn
+                                .delete(self.ready_range_key(shard, removed.next))
+                                .and_then(|_| {
+                                    txn.put(
+                                        self.ready_range_key(shard, inserted.next),
+                                        Self::encode_ready_range_value(inserted),
+                                        None,
+                                    )
+                                }),
+                            PersistedReadyMutation::Split {
+                                removed,
+                                left,
+                                right,
+                            } => txn
+                                .delete(self.ready_range_key(shard, removed.next))
+                                .and_then(|_| {
+                                    txn.put(
+                                        self.ready_range_key(shard, left.next),
+                                        Self::encode_ready_range_value(left),
+                                        None,
+                                    )
+                                })
+                                .and_then(|_| {
+                                    txn.put(
+                                        self.ready_range_key(shard, right.next),
+                                        Self::encode_ready_range_value(right),
+                                        None,
+                                    )
+                                }),
+                        };
+
+                        if let Err(e) = ready_result {
+                            eprintln!(
+                                "WARN: Failed to update ready index for DLQ message {}: {:?}",
+                                id, e
+                            );
+                            index_update_failed = true;
+                        }
+                    }
+
+                    if removing_delayed {
+                        if let Err(e) = txn.delete(self.delayed_index_key(prior_visible_at_ms, id)) {
                             eprintln!(
                                 "WARN: Failed to update delayed index for DLQ message {}: {:?}",
                                 id, e
                             );
                             index_update_failed = true;
                         }
-
-                        if let Err(e) = txn.put(
-                            self.index_meta_key.clone(),
-                            Self::encode_index_meta(
-                                self.next_id_limit,
-                                staged_ready_count as u64,
-                                staged_delayed_count as u64,
-                                staged_next_delayed_visibility,
-                            ),
-                            None,
-                        ) {
-                            eprintln!(
-                                "WARN: Failed to update queue index meta for DLQ message {}: {:?}",
-                                id, e
-                            );
-                            index_update_failed = true;
-                        }
-
-                        if index_update_failed {
-                            return;
-                        }
-
-                        let update_start = Instant::now();
-                        if let Err(e) = txn.commit(self.commit_write_options) {
-                            eprintln!("WARN: Failed to commit DLQ delete txn {}: {:?}", id, e);
-                        } else {
-                            Self::observe_elapsed_us(
-                                obs::METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY,
-                                update_start,
-                            );
-                            if let Some((shard, mutation)) = persisted_ready_mutation {
-                                self.apply_ready_index_mutation(shard, mutation);
-                            }
-                            self.remove_persisted_delayed(id);
-                        }
                     }
 
-                    self.evict_cached_record(id);
+                    if let Err(e) = txn.put(
+                        self.dlq_index_key(dead_lettered_at_ms, id),
+                        Vec::new(),
+                        None,
+                    ) {
+                        eprintln!(
+                            "WARN: Failed to write DLQ index for message {}: {:?}",
+                            id, e
+                        );
+                        index_update_failed = true;
+                    }
+
+                    if let Err(e) = txn.put(
+                        self.index_meta_key.clone(),
+                        Self::encode_index_meta(
+                            self.next_id_limit,
+                            staged_ready_count as u64,
+                            staged_delayed_count as u64,
+                            staged_next_delayed_visibility,
+                        ),
+                        None,
+                    ) {
+                        eprintln!(
+                            "WARN: Failed to update queue index meta for DLQ message {}: {:?}",
+                            id, e
+                        );
+                        index_update_failed = true;
+                    }
+
+                    if index_update_failed {
+                        return;
+                    }
+
+                    let update_start = Instant::now();
+                    if let Err(e) = txn.commit(self.commit_write_options) {
+                        eprintln!("WARN: Failed to commit DLQ transition txn {}: {:?}", id, e);
+                        return;
+                    }
+
+                    Self::observe_elapsed_us(
+                        obs::METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY,
+                        update_start,
+                    );
+                    if let Some((shard, mutation)) = persisted_ready_mutation {
+                        self.apply_ready_index_mutation(shard, mutation);
+                    }
+                    self.remove_persisted_delayed(id);
+                    self.insert_persisted_dlq(id, dead_lettered_at_ms);
+                    self.cache_record(
+                        id,
+                        record.metadata_only_from(),
+                        StoredRecordLayout::SplitHeaderBody,
+                    );
                     self.evict_cached_body(id);
 
                     eprintln!(
@@ -3510,6 +3822,8 @@ impl QueueActor {
             cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.ready_index_prefix));
         let delayed_query =
             cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.delayed_index_prefix));
+        let dlq_query =
+            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.dlq_index_prefix));
 
         let mut ready_iter = match txn.scan(&ready_query) {
             Ok(iter) => iter,
@@ -3526,6 +3840,15 @@ impl QueueActor {
                 return IndexRecoveryAttempt::Error {
                     next_id: meta_snapshot.next_id,
                     reason: format!("Failed to scan queue delayed index: {:?}", e),
+                };
+            }
+        };
+        let mut dlq_iter = match txn.scan(&dlq_query) {
+            Ok(iter) => iter,
+            Err(e) => {
+                return IndexRecoveryAttempt::Error {
+                    next_id: meta_snapshot.next_id,
+                    reason: format!("Failed to scan queue DLQ index: {:?}", e),
                 };
             }
         };
@@ -3599,6 +3922,20 @@ impl QueueActor {
             }
         }
 
+        while let Some((key_bytes, _value_bytes)) = dlq_iter.next() {
+            let Some((dead_lettered_at_ms, id)) =
+                Self::parse_dlq_index_key(&key_bytes, &self.dlq_index_prefix)
+            else {
+                return IndexRecoveryAttempt::Error {
+                    next_id: meta_snapshot.next_id,
+                    reason: "Malformed queue DLQ index key".to_string(),
+                };
+            };
+
+            self.insert_persisted_dlq(id, dead_lettered_at_ms);
+            max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
+        }
+
         if self.delayed.is_empty() {
             self.next_delayed_deadline = now_instant + Duration::from_secs(3600);
         }
@@ -3642,6 +3979,8 @@ impl QueueActor {
             cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.ready_index_prefix));
         let delayed_query =
             cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.delayed_index_prefix));
+        let dlq_query =
+            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.dlq_index_prefix));
 
         let mut ready_iter = txn
             .scan(&ready_query)
@@ -3649,8 +3988,12 @@ impl QueueActor {
         let mut delayed_iter = txn
             .scan(&delayed_query)
             .map_err(|e| format!("Failed to scan delayed index for rebuild: {:?}", e))?;
+        let mut dlq_iter = txn
+            .scan(&dlq_query)
+            .map_err(|e| format!("Failed to scan DLQ index for rebuild: {:?}", e))?;
         let mut ready_keys = Vec::new();
         let mut delayed_keys = Vec::new();
+        let mut dlq_keys = Vec::new();
 
         while let Some((key, _)) = ready_iter.next() {
             ready_keys.push(key.to_vec());
@@ -3658,8 +4001,11 @@ impl QueueActor {
         while let Some((key, _)) = delayed_iter.next() {
             delayed_keys.push(key.to_vec());
         }
+        while let Some((key, _)) = dlq_iter.next() {
+            dlq_keys.push(key.to_vec());
+        }
 
-        for key in ready_keys.into_iter().chain(delayed_keys) {
+        for key in ready_keys.into_iter().chain(delayed_keys).chain(dlq_keys) {
             txn.delete(key)
                 .map_err(|e| format!("Failed to delete stale queue index key: {:?}", e))?;
         }
@@ -3678,6 +4024,11 @@ impl QueueActor {
         for (&id, &visible_at_ms) in &self.persisted_delayed {
             txn.put(self.delayed_index_key(visible_at_ms, id), Vec::new(), None)
                 .map_err(|e| format!("Failed to write queue delayed index: {:?}", e))?;
+        }
+
+        for (&id, &dead_lettered_at_ms) in &self.persisted_dlq {
+            txn.put(self.dlq_index_key(dead_lettered_at_ms, id), Vec::new(), None)
+                .map_err(|e| format!("Failed to write queue DLQ index: {:?}", e))?;
         }
 
         txn.put(
@@ -3770,6 +4121,15 @@ impl QueueActor {
             };
 
             max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
+            if matches!(record.state, QueueState::Dlq) {
+                self.insert_persisted_dlq(
+                    id,
+                    record
+                        .dead_lettered_at_ms
+                        .unwrap_or(record.first_enqueued_at_ms),
+                );
+                continue;
+            }
             if record.visible_at_ms <= now_epoch_ms {
                 recovered_ready_ids.push(id);
             } else {
@@ -3804,6 +4164,15 @@ impl QueueActor {
             };
 
             max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
+            if matches!(record.state, QueueState::Dlq) {
+                self.insert_persisted_dlq(
+                    id,
+                    record
+                        .dead_lettered_at_ms
+                        .unwrap_or(record.first_enqueued_at_ms),
+                );
+                continue;
+            }
             if record.visible_at_ms <= now_epoch_ms {
                 recovered_ready_ids.push(id);
             } else {
@@ -3949,6 +4318,7 @@ impl QueueActor {
         self.next_id_limit = next_id;
         if self.ready_len() == 0
             && self.delayed.is_empty()
+            && self.persisted_dlq.is_empty()
             && self.recovery_path == RecoveryPath::IndexHit
         {
             self.recovery_path = RecoveryPath::Empty;
@@ -5186,28 +5556,235 @@ pub mod tests {
             }
         }
 
-        // Assert - After 3rd expiration, attempts = 4, exceeds max_attempts = 3
-        // Message should be deleted (DLQ'd), not re-enqueued
+        // Assert
         assert_eq!(actor.ready_len(), 0);
         assert_eq!(actor.inflight.len(), 0);
+        assert_eq!(actor.dlq_count, 1);
 
-        // Verify message deleted from storage
+        let (record, layout) = actor
+            .load_record_metadata_from_store(msg_id)
+            .expect("dlq record should remain in storage");
+        assert_eq!(layout, StoredRecordLayout::SplitHeaderBody);
+        assert_eq!(record.state, QueueState::Dlq);
+        assert_eq!(record.attempts, 3);
+        assert!(record.dead_lettered_at_ms.is_some());
+        assert_eq!(record.dlq_reason, Some(DlqReason::MaxAttemptsExceeded));
+
         let cf_id = queue_key.family.id();
-        let key = QueueActor::header_key(&queue_key, msg_id);
         let txn = store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
             .expect("begin tx");
-        let result = txn.get(&key).expect("midge get");
-        assert!(
-            result.is_none(),
-            "Message header should be deleted from storage"
+        let header_result = txn
+            .get(&QueueActor::header_key(&queue_key, msg_id))
+            .expect("midge get header");
+        assert!(header_result.is_some(), "DLQ header should remain in storage");
+        let body_result = txn
+            .get(&QueueActor::body_key(&queue_key, msg_id))
+            .expect("midge get body");
+        assert!(body_result.is_some(), "DLQ body should remain in storage");
+    }
+
+    #[test]
+    fn should_not_requeue_dlq_message_after_restart() {
+        // Arrange
+        let clock = MockClock::new();
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
         );
-        let body_key = QueueActor::body_key(&queue_key, msg_id);
-        let body_result = txn.get(&body_key).expect("midge get body");
-        assert!(
-            body_result.is_none(),
-            "Message body should be deleted from storage"
+        let queue_key = unique_queue_key("jobs-dlq-restart");
+        let msg_id = {
+            let mut actor = QueueActor::with_clock(
+                RouteFamily::new(0),
+                queue_key.clone(),
+                store.clone(),
+                Box::new(clock.clone()),
+                Some(2),
+                crate::utils::idempotency::global_dedup_store(),
+            );
+
+            let enqueue_response = actor.handle_send(Bytes::from("test message"), None);
+            let msg_id = match enqueue_response {
+                QueueResponse::Sent { id } => id,
+                _ => panic!("Expected Sent response"),
+            };
+
+            for _ in 0..2 {
+                match actor.handle_receive(30, Some(1)) {
+                    QueueResponse::Received { messages } => assert_eq!(messages.len(), 1),
+                    other => panic!("Expected Received response, found {other:?}"),
+                }
+                clock.advance(Duration::from_secs(31));
+                actor.process_expired_timers();
+            }
+
+            assert_eq!(actor.dlq_count, 1);
+            msg_id
+        };
+
+        // Act
+        let mut recovered = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            Box::new(clock),
+            Some(2),
+            crate::utils::idempotency::global_dedup_store(),
         );
+        let reserve_response = recovered.handle_receive(30, Some(1));
+
+        // Assert
+        assert_eq!(recovered.ready_len(), 0);
+        assert_eq!(recovered.dlq_count, 1);
+        match reserve_response {
+            QueueResponse::NotFound => {}
+            QueueResponse::Received { messages } => assert!(messages.is_empty()),
+            other => panic!("Expected empty queue after restart, found {other:?}"),
+        }
+
+        let (record, layout) = recovered
+            .load_record_metadata_from_store(msg_id)
+            .expect("dlq record should remain in storage after restart");
+        assert_eq!(layout, StoredRecordLayout::SplitHeaderBody);
+        assert_eq!(record.state, QueueState::Dlq);
+    }
+
+    #[test]
+    fn should_report_admin_dead_letters_given_retained_dlq_messages() {
+        // Arrange
+        let clock = MockClock::new();
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-admin-dlq");
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            Some(2),
+            crate::utils::idempotency::global_dedup_store(),
+        );
+        let msg_id = match actor.handle_send(Bytes::from("test message"), None) {
+            QueueResponse::Sent { id } => id,
+            other => panic!("Expected Sent response, found {other:?}"),
+        };
+        for _ in 0..2 {
+            match actor.handle_receive(30, Some(1)) {
+                QueueResponse::Received { messages } => assert_eq!(messages.len(), 1),
+                other => panic!("Expected Received response, found {other:?}"),
+            }
+            clock.advance(Duration::from_secs(31));
+            actor.process_expired_timers();
+        }
+
+        // Act
+        let snapshot = actor.admin_snapshot();
+        let dead_letters = actor.admin_dead_letters();
+
+        // Assert
+        assert_eq!(snapshot.messages_ready, 0);
+        assert_eq!(snapshot.messages_delayed, 0);
+        assert_eq!(snapshot.messages_leased, 0);
+        assert_eq!(snapshot.messages_dead_lettered, 1);
+        assert_eq!(snapshot.messages_total, 1);
+        assert_eq!(dead_letters.len(), 1);
+        assert_eq!(dead_letters[0].message_id, msg_id.as_u64());
+        assert_eq!(dead_letters[0].attempts, 2);
+        assert_eq!(dead_letters[0].reason, "max_attempts_exceeded");
+        assert!(dead_letters[0].dead_lettered_at_epoch_ms > 0);
+    }
+
+    #[test]
+    fn should_replay_dead_letter_given_retained_dlq_message() {
+        // Arrange
+        let clock = MockClock::new();
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-dlq-replay");
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            Some(2),
+            crate::utils::idempotency::global_dedup_store(),
+        );
+        let msg_id = match actor.handle_send(Bytes::from("test message"), None) {
+            QueueResponse::Sent { id } => id,
+            other => panic!("Expected Sent response, found {other:?}"),
+        };
+        for _ in 0..2 {
+            match actor.handle_receive(30, Some(1)) {
+                QueueResponse::Received { messages } => assert_eq!(messages.len(), 1),
+                other => panic!("Expected Received response, found {other:?}"),
+            }
+            clock.advance(Duration::from_secs(31));
+            actor.process_expired_timers();
+        }
+
+        // Act
+        let replayed = actor.replay_dead_letter(msg_id).expect("replay dead letter");
+        let reserve_response = actor.handle_receive(30, Some(1));
+
+        // Assert
+        assert!(replayed);
+        assert_eq!(actor.dlq_count, 0);
+        match reserve_response {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].id, msg_id);
+                assert_eq!(messages[0].attempts, 1);
+            }
+            other => panic!("Expected Received response after replay, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn should_purge_dead_letter_given_retained_dlq_message() {
+        // Arrange
+        let clock = MockClock::new();
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-dlq-purge");
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            Some(2),
+            crate::utils::idempotency::global_dedup_store(),
+        );
+        let msg_id = match actor.handle_send(Bytes::from("test message"), None) {
+            QueueResponse::Sent { id } => id,
+            other => panic!("Expected Sent response, found {other:?}"),
+        };
+        for _ in 0..2 {
+            match actor.handle_receive(30, Some(1)) {
+                QueueResponse::Received { messages } => assert_eq!(messages.len(), 1),
+                other => panic!("Expected Received response, found {other:?}"),
+            }
+            clock.advance(Duration::from_secs(31));
+            actor.process_expired_timers();
+        }
+
+        // Act
+        let purged = actor.purge_dead_letter(msg_id).expect("purge dead letter");
+        let reserve_response = actor.handle_receive(30, Some(1));
+
+        // Assert
+        assert!(purged);
+        assert_eq!(actor.dlq_count, 0);
+        match reserve_response {
+            QueueResponse::NotFound => {}
+            QueueResponse::Received { messages } => assert!(messages.is_empty()),
+            other => panic!("Expected empty queue after purge, found {other:?}"),
+        }
     }
 
     #[test]

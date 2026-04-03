@@ -84,7 +84,9 @@ pub struct QueueResourceDetail {
     pub area: String,
     pub resource: String,
     pub messages_ready: usize,
+    pub messages_delayed: usize,
     pub messages_leased: usize,
+    pub messages_dead_lettered: usize,
     pub messages_total: usize,
     pub oldest_message_age_seconds: u64,
 }
@@ -193,7 +195,9 @@ impl QueueResourceDetail {
             area: item.area,
             resource: item.resource,
             messages_ready: item.messages_ready,
+            messages_delayed: item.messages_delayed,
             messages_leased: item.messages_leased,
+            messages_dead_lettered: item.messages_dead_lettered,
             messages_total: item.messages_total,
             oldest_message_age_seconds: item.oldest_message_age_seconds,
         }
@@ -205,7 +209,9 @@ impl QueueResourceDetail {
             area: path.area.to_string(),
             resource: path.resource.to_string(),
             messages_ready: 0,
+            messages_delayed: 0,
             messages_leased: 0,
+            messages_dead_lettered: 0,
             messages_total: 0,
             oldest_message_age_seconds: 0,
         }
@@ -417,11 +423,14 @@ pub struct QueuesList {
 /// rehydrates it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueInfo {
+    pub family: u64,
     pub realm: String,
     pub area: String,
     pub resource: String,
     pub messages_ready: usize,
+    pub messages_delayed: usize,
     pub messages_leased: usize,
+    pub messages_dead_lettered: usize,
     pub messages_total: usize,
     pub oldest_message_age_seconds: u64,
 }
@@ -433,6 +442,13 @@ pub struct QueueLeasesList {
     pub leases: Vec<QueueLease>,
 }
 
+/// Collection of live in-memory Queue dead-letter snapshots for the current
+/// broker process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueDeadLettersList {
+    pub messages: Vec<QueueDeadLetter>,
+}
+
 /// Live in-memory Queue lease for the current broker process.
 ///
 /// Lease ownership, lease tokens, and `session_id` are broker-local runtime
@@ -441,6 +457,7 @@ pub struct QueueLeasesList {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueLease {
     pub message_id: u64,
+    pub family: u64,
     pub realm: String,
     pub area: String,
     pub resource: String,
@@ -450,8 +467,24 @@ pub struct QueueLease {
     pub attempts: usize,
 }
 
+/// Live in-memory Queue dead-letter snapshot for the current broker process.
+/// Dead-letter rows remain durably stored, but this endpoint only reflects
+/// DLQ rows for queue actors that are currently warm on this broker process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueDeadLetter {
+    pub message_id: u64,
+    pub family: u64,
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub dead_lettered_at: String,
+    pub attempts: usize,
+    pub reason: String,
+}
+
 pub(crate) struct QueueLeaseSnapshot<'a> {
     pub(crate) message_id: u64,
+    pub(crate) family: u64,
     pub(crate) realm: &'a str,
     pub(crate) area: &'a str,
     pub(crate) resource: &'a str,
@@ -459,6 +492,30 @@ pub(crate) struct QueueLeaseSnapshot<'a> {
     pub(crate) session_id: Option<u64>,
     pub(crate) expires_at: &'a str,
     pub(crate) attempts: usize,
+}
+
+pub(crate) struct QueueInfoSnapshot<'a> {
+    pub(crate) family: u64,
+    pub(crate) realm: &'a str,
+    pub(crate) area: &'a str,
+    pub(crate) resource: &'a str,
+    pub(crate) messages_ready: usize,
+    pub(crate) messages_delayed: usize,
+    pub(crate) messages_leased: usize,
+    pub(crate) messages_dead_lettered: usize,
+    pub(crate) messages_total: usize,
+    pub(crate) oldest_message_age_seconds: u64,
+}
+
+pub(crate) struct QueueDeadLetterSnapshot<'a> {
+    pub(crate) message_id: u64,
+    pub(crate) family: u64,
+    pub(crate) realm: &'a str,
+    pub(crate) area: &'a str,
+    pub(crate) resource: &'a str,
+    pub(crate) dead_lettered_at: &'a str,
+    pub(crate) attempts: usize,
+    pub(crate) reason: &'a str,
 }
 
 /// Collection of live in-memory RPC worker snapshots for the current broker
@@ -638,21 +695,29 @@ impl NoticeRouteInfo {
 }
 
 impl QueueInfo {
-    pub(crate) fn snapshot(
-        realm: &str,
-        area: &str,
-        resource: &str,
-        messages_ready: usize,
-        messages_leased: usize,
-        messages_total: usize,
-        oldest_message_age_seconds: u64,
-    ) -> Self {
+    pub(crate) fn snapshot(snapshot: QueueInfoSnapshot<'_>) -> Self {
+        let QueueInfoSnapshot {
+            family,
+            realm,
+            area,
+            resource,
+            messages_ready,
+            messages_delayed,
+            messages_leased,
+            messages_dead_lettered,
+            messages_total,
+            oldest_message_age_seconds,
+        } = snapshot;
+
         Self {
+            family,
             realm: realm.to_string(),
             area: area.to_string(),
             resource: resource.to_string(),
             messages_ready,
+            messages_delayed,
             messages_leased,
+            messages_dead_lettered,
             messages_total,
             oldest_message_age_seconds,
         }
@@ -663,6 +728,7 @@ impl QueueLease {
     pub(crate) fn snapshot(snapshot: QueueLeaseSnapshot<'_>) -> Self {
         let QueueLeaseSnapshot {
             message_id,
+            family,
             realm,
             area,
             resource,
@@ -674,6 +740,7 @@ impl QueueLease {
 
         Self {
             message_id,
+            family,
             realm: realm.to_string(),
             area: area.to_string(),
             resource: resource.to_string(),
@@ -681,6 +748,32 @@ impl QueueLease {
             session_id: session_id.map(|id| id.to_string()).unwrap_or_default(),
             expires_at: expires_at.to_string(),
             attempts,
+        }
+    }
+}
+
+impl QueueDeadLetter {
+    pub(crate) fn snapshot(snapshot: QueueDeadLetterSnapshot<'_>) -> Self {
+        let QueueDeadLetterSnapshot {
+            message_id,
+            family,
+            realm,
+            area,
+            resource,
+            dead_lettered_at,
+            attempts,
+            reason,
+        } = snapshot;
+
+        Self {
+            message_id,
+            family,
+            realm: realm.to_string(),
+            area: area.to_string(),
+            resource: resource.to_string(),
+            dead_lettered_at: dead_lettered_at.to_string(),
+            attempts,
+            reason: reason.to_string(),
         }
     }
 }
@@ -898,6 +991,17 @@ pub fn parse_query_params(uri: &hyper::Uri) -> HashMap<String, String> {
     params
 }
 
+pub fn parse_optional_u64_query_param(uri: &hyper::Uri, key: &str) -> Result<Option<u64>, String> {
+    let params = parse_query_params(uri);
+    match params.get(key) {
+        Some(value) => value
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|_| format!("Invalid {} query parameter", key)),
+        None => Ok(None),
+    }
+}
+
 pub fn collect_realms(resources: &[ResourceRef]) -> RealmCollection {
     RealmCollection {
         realms: collect_distinct_entries(
@@ -1012,13 +1116,33 @@ pub async fn kv_transactions_for_resource(
 pub async fn queue_leases_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
+    family: Option<u64>,
 ) -> Result<Response<Body>, Infallible> {
     let leases = runtime
         .queue_list_leases(Some(path.realm))
         .into_iter()
-        .filter(|lease| path.matches(&lease.realm, &lease.area, &lease.resource))
+        .filter(|lease| {
+            path.matches(&lease.realm, &lease.area, &lease.resource)
+                && family.map(|value| lease.family == value).unwrap_or(true)
+        })
         .collect();
     crate::api::admin::json_response(QueueLeasesList { leases })
+}
+
+pub async fn queue_dead_letters_for_resource(
+    runtime: Arc<Runtime>,
+    path: &ResourcePath<'_>,
+    family: Option<u64>,
+) -> Result<Response<Body>, Infallible> {
+    let messages = runtime
+        .queue_list_dead_letters(Some(path.realm))
+        .into_iter()
+        .filter(|message| {
+            path.matches(&message.realm, &message.area, &message.resource)
+                && family.map(|value| message.family == value).unwrap_or(true)
+        })
+        .collect();
+    crate::api::admin::json_response(QueueDeadLettersList { messages })
 }
 
 pub async fn notice_subscriptions_for_resource(
@@ -1062,15 +1186,41 @@ pub fn kv_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> KvResourceDetail
     KvResourceDetail::from_count(path, transactions)
 }
 
-pub fn queue_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> QueueResourceDetail {
-    let queue = runtime
+pub fn queue_detail(
+    runtime: &Runtime,
+    path: &ResourcePath<'_>,
+    family: Option<u64>,
+) -> QueueResourceDetail {
+    let queues: Vec<_> = runtime
         .queue_list_queues(Some(path.realm))
         .into_iter()
-        .find(|item| path.matches(&item.realm, &item.area, &item.resource));
-    match queue {
-        Some(item) => QueueResourceDetail::from_queue(item),
-        None => QueueResourceDetail::empty(path),
+        .filter(|item| {
+            path.matches(&item.realm, &item.area, &item.resource)
+                && family.map(|value| item.family == value).unwrap_or(true)
+        })
+        .collect();
+
+    if queues.is_empty() {
+        return QueueResourceDetail::empty(path);
     }
+
+    if family.is_some() {
+        return QueueResourceDetail::from_queue(queues.into_iter().next().unwrap());
+    }
+
+    let mut detail = QueueResourceDetail::empty(path);
+    for queue in queues {
+        detail.messages_ready += queue.messages_ready;
+        detail.messages_delayed += queue.messages_delayed;
+        detail.messages_leased += queue.messages_leased;
+        detail.messages_dead_lettered += queue.messages_dead_lettered;
+        detail.messages_total += queue.messages_total;
+        detail.oldest_message_age_seconds = detail
+            .oldest_message_age_seconds
+            .max(queue.oldest_message_age_seconds);
+    }
+
+    detail
 }
 
 pub fn stream_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> StreamResourceDetail {
@@ -1325,9 +1475,18 @@ mod tests {
     #[test]
     fn should_collect_resource_refs_given_resource_items() {
         // Arrange
-        let items = vec![QueueInfo::snapshot(
-            "acme", "billing", "invoices", 0, 0, 0, 0,
-        )];
+        let items = vec![QueueInfo::snapshot(QueueInfoSnapshot {
+            family: 1,
+            realm: "acme",
+            area: "billing",
+            resource: "invoices",
+            messages_ready: 0,
+            messages_delayed: 0,
+            messages_leased: 0,
+            messages_dead_lettered: 0,
+            messages_total: 0,
+            oldest_message_age_seconds: 0,
+        })];
 
         // Act
         let resources = collect_resource_refs(items);

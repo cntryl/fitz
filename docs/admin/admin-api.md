@@ -4,7 +4,7 @@
 **Port**: Same as data plane (default: 8080)  
 **Route Structure**:  
   - `/` - Single Page Application (SPA) static files
-  - `/api/v1/admin/*` - Admin REST API endpoints
+  - `/api/v1/*` - Admin REST API endpoints
   - `/metrics` - Prometheus metrics endpoint
   - `/healthz`, `/readyz`, `/startupz` - Kubernetes health probes
   - `/ws` - WebSocket upgrade for data plane
@@ -13,7 +13,7 @@
   - `/` - No authentication (SPA public access)
   - `/healthz`, `/readyz`, `/startupz` - No authentication (for load balancer health checks)  
   - `/metrics` - **Requires authentication** (JWT or API key)  
-  - `/api/v1/admin/*` - **Requires authentication** (JWT or API key with admin permissions)
+  - `/api/v1/*` - **Requires authentication** (JWT or API key with admin permissions)
 ## Design Principles
 1. **Read-heavy**: Most operations are queries for visibility
 2. **Safe by default**: Dangerous operations (force rollback, cancel) require explicit confirmation
@@ -30,19 +30,19 @@
 /readyz                    → Kubernetes readiness probe
 /startupz                  → Kubernetes startup probe
 /metrics                   → Prometheus metrics (auth required)
-/api/v1/admin/stats        → Global broker statistics (auth required)
-/api/v1/admin/kv/stats     → KV domain statistics (auth required)
-/api/v1/admin/stream/stats → Stream domain statistics (auth required)
-/api/v1/admin/notice/stats → Notice domain statistics (auth required)
-/api/v1/admin/queue/stats  → Queue domain statistics (auth required)
-/api/v1/admin/rpc/stats    → RPC domain statistics (auth required)
-/api/v1/admin/lease/stats  → Lease domain statistics (auth required)
+/api/v1/stats              → Global broker statistics (auth required)
+/api/v1/kv/stats           → KV domain statistics (auth required)
+/api/v1/stream/stats       → Stream domain statistics (auth required)
+/api/v1/notice/stats       → Notice domain statistics (auth required)
+/api/v1/queue/stats        → Queue domain statistics (auth required)
+/api/v1/rpc/stats          → RPC domain statistics (auth required)
+/api/v1/lease/stats        → Lease domain statistics (auth required)
 ```
 **Authentication Rules**:
 - SPA (`/`, `/assets/*`) - Public access
 - Health probes (`/healthz`, `/readyz`, `/startupz`) - Public access (for K8s/load balancers)
 - Metrics (`/metrics`) - Requires JWT Bearer token
-- Admin API (`/api/v1/admin/*`) - Requires JWT Bearer token with admin scope
+- Admin API (`/api/v1/*`) - Requires JWT Bearer token with admin scope
 ## Global Endpoints
 ### Kubernetes Probes
 #### Liveness Probe
@@ -144,7 +144,7 @@ fitz_message_latency_seconds_bucket{le="0.1"} 1847000
 ```
 ### Runtime Stats (Human-Readable)
 ```
-GET /admin/stats
+GET /api/v1/stats
 ```
 **Response**:
 ```json
@@ -355,7 +355,7 @@ Force-removes an active in-memory notice subscription from the current broker in
 **Headers**: `X-Confirm: true`
 **Response**: 200 OK or 404 Not Found
 ### Queue Domain
-Queue admin responses reflect only the current broker's warm in-memory actor state. Committed queue data remains durable in storage, but resource counts and lease rows can disappear after disconnect cleanup, idle actor eviction, or broker restart until traffic rehydrates that queue.
+Queue admin responses reflect only the current broker's warm in-memory actor state unless otherwise noted. Committed queue data remains durable in storage, but warm resource counts and live lease rows can disappear after disconnect cleanup, idle actor eviction, or broker restart until traffic rehydrates that queue.
 
 #### List Queue Resources Under An Area
 ```
@@ -364,9 +364,11 @@ GET /api/v1/queue/realms/{realm}/areas/{area}/resources
 
 #### Get Queue Resource Detail
 ```
-GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}
+GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}?family={family}
 ```
-`messages_ready`, `messages_leased`, and `messages_total` are point-in-time warm-actor counts for the running broker only. They are not a durable catalog of every committed queue in storage.
+`family` is optional on read routes. When omitted, queue detail aggregates warm state across route families that share the same `{realm}/{area}/{resource}` on the current broker. When provided, the response is filtered to that exact queue identity.
+
+`messages_ready`, `messages_delayed`, `messages_leased`, `messages_dead_lettered`, and `messages_total` are point-in-time counts for the current broker only. They are not a durable catalog of every committed queue in storage.
 
 **Response**:
 ```json
@@ -375,16 +377,20 @@ GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}
   "area": "jobs",
   "resource": "emails",
   "messages_ready": 1847,
+  "messages_delayed": 12,
   "messages_leased": 67,
-  "messages_total": 1914,
+  "messages_dead_lettered": 4,
+  "messages_total": 1930,
   "oldest_message_age_seconds": 0
 }
 ```
 
 #### List Live Queue Leases For A Resource
 ```
-GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/leases
+GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/leases?family={family}
 ```
+`family` is optional. When provided, only leases for that exact queue identity are returned.
+
 `lease_token` and `session_id` describe live in-memory lease ownership only. They are dropped on disconnect cleanup, invalidated on lease expiry, and never survive broker restart.
 
 **Response**:
@@ -393,6 +399,7 @@ GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/leases
   "leases": [
     {
       "message_id": 123456,
+      "family": 1,
       "realm": "prod",
       "area": "jobs",
       "resource": "emails",
@@ -404,6 +411,43 @@ GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/leases
   ]
 }
 ```
+
+#### List Queue Dead Letters For A Resource
+```
+GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters?family={family}
+```
+`family` is optional on reads. Dead-letter rows remain durably stored, but this endpoint only exposes DLQ rows for queue actors that are currently warm on this broker.
+
+**Response**:
+```json
+{
+  "messages": [
+    {
+      "message_id": 123456,
+      "family": 1,
+      "realm": "prod",
+      "area": "jobs",
+      "resource": "emails",
+      "dead_lettered_at": "2026-01-31T10:35:00Z",
+      "attempts": 3,
+      "reason": "max_attempts_exceeded"
+    }
+  ]
+}
+```
+
+#### Replay Queue Dead Letter
+```
+POST /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}/replay?family={family}
+```
+`family` is required for destructive queue actions because queue identity includes route family. On success the retained DLQ row is moved back to ready state, its attempts counter resets, and the endpoint returns `204 No Content`.
+
+#### Purge Queue Dead Letter
+```
+DELETE /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}?family={family}
+```
+`family` is required. On success the retained DLQ row is permanently removed from storage and the endpoint returns `204 No Content`.
+
 ### RPC Domain
 All RPC admin endpoints expose live in-memory state for the current broker instance only. Worker registrations and pending requests disappear on disconnect or broker restart and are not durable recovery queues.
 The broker updates this read model as a coalesced operational snapshot, so very recent subscribe, unsubscribe, timeout, and cleanup events can lag briefly in admin responses. Treat these endpoints as near-live diagnostics, not strongly consistent reads of the hot path.
@@ -579,15 +623,15 @@ POST /admin/sessions/{session_id}/close
 **Metrics (Auth Required)**:
 - `GET /metrics` - Prometheus metrics
 **Global Stats (Admin Auth)**:
-- `GET /api/v1/admin/stats` - Global broker and domain statistics
+- `GET /api/v1/stats` - Global broker and domain statistics
 **Domain Stats (Admin Auth)**:
-- `GET /api/v1/admin/kv/stats` - KV domain statistics
-- `GET /api/v1/admin/stream/stats` - Stream domain statistics
-- `GET /api/v1/admin/notice/stats` - Notice domain statistics
-- `GET /api/v1/admin/queue/stats` - Queue domain statistics
-- `GET /api/v1/admin/rpc/stats` - RPC domain statistics
-- `GET /api/v1/admin/lease/stats` - Lease domain statistics
-- `GET /api/v1/admin/schedule/stats` - Schedule domain statistics
+- `GET /api/v1/kv/stats` - KV domain statistics
+- `GET /api/v1/stream/stats` - Stream domain statistics
+- `GET /api/v1/notice/stats` - Notice domain statistics
+- `GET /api/v1/queue/stats` - Queue domain statistics
+- `GET /api/v1/rpc/stats` - RPC domain statistics
+- `GET /api/v1/lease/stats` - Lease domain statistics
+- `GET /api/v1/schedule/stats` - Schedule domain statistics
 **List Endpoints (Admin Auth)** - current surface plus remaining follow-up:
 - `GET /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}` - Get live KV resource detail
 - `GET /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/transactions` - List live session-scoped KV transactions for a resource
@@ -599,7 +643,11 @@ POST /admin/sessions/{session_id}/close
 - `GET /api/v1/admin/notice/routes?realm={realm}` - List routes with subscriber counts
 - `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}` - Get warm Queue resource detail
 - `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/leases` - List live queue leases for a resource
+- `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters` - List retained DLQ rows for a resource
   - Queue resource and lease snapshots are current-process only. They can disappear after disconnect cleanup, idle actor eviction, or broker restart until traffic rehydrates the queue.
+  - Queue detail and list routes accept an optional `family` query parameter. Replay and purge require it.
+- `POST /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}/replay?family={family}` - Replay a retained DLQ row
+- `DELETE /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}?family={family}` - Purge a retained DLQ row
 - `GET /api/v1/admin/rpc/workers?realm={realm}` - List registered RPC workers
 - `GET /api/v1/admin/rpc/pending?realm={realm}` - List pending RPC requests
 - `GET /api/v1/admin/lease/leases?realm={realm}` - List active in-memory leases
