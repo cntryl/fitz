@@ -1,18 +1,20 @@
 # TODO - All Domains
 
+- Program status: Complete.
+
 ## Purpose
 
-This file is the top-level execution summary for domain hardening work. Use it to choose the next domain to work on without re-deriving the scope each time.
+This file is the top-level execution summary for the completed domain hardening program. Use it as an archival index into the per-domain closure records without re-deriving the scope each time.
 
-The per-domain working files are:
+The per-domain closure records are:
 
-- `todo-notice.md`
-- `todo-lease.md`
-- `todo-rpc.md`
-- `todo-kv.md`
-- `todo-queue.md`
-- `todo-schedule.md`
-- `todo-stream.md`
+- [todo-notice.md](todo-notice.md)
+- [todo-lease.md](todo-lease.md)
+- [todo-rpc.md](todo-rpc.md)
+- [todo-kv.md](todo-kv.md)
+- [todo-queue.md](todo-queue.md)
+- [todo-schedule.md](todo-schedule.md)
+- [todo-stream.md](todo-stream.md)
 
 ## Working Assumptions
 
@@ -79,7 +81,7 @@ From easiest to hardest:
 
 ## Recommended Execution Order
 
-If the goal is to knock out the easiest work first and build momentum without opening the hardest redesigns too early, use this order:
+This was the recommended order for completing the hardening work, kept here as historical context:
 
 1. Notice
 2. Lease
@@ -135,12 +137,26 @@ If the goal is to knock out the easiest work first and build momentum without op
 
 ## Decision Rule
 
-Use this simple rule when choosing the next task:
+This was the decision rule used while the program was active:
 
 - Start with Notice, Lease, and RPC if you want fast clarity wins.
 - Move to KV and Queue when you want hardening without foundational redesign.
 - Leave Schedule and Stream for dedicated implementation rounds because they are true structural corrections.
 
-## Next Step
+## Program Completion
 
-Pick the first unchecked domain from the recommended execution order and work from its dedicated `todo-{domain}.md` file until its verification section is complete.
+All seven domain hardening tracks are complete, and their verification sections are signed off in the per-domain closure records.
+
+Use the files below for the detailed implementation and verification history:
+
+- [todo-notice.md](todo-notice.md)
+- [todo-lease.md](todo-lease.md)
+- [todo-rpc.md](todo-rpc.md)
+- [todo-kv.md](todo-kv.md)
+- [todo-queue.md](todo-queue.md)
+- [todo-schedule.md](todo-schedule.md)
+- [todo-stream.md](todo-stream.md)
+
+The working assumptions, ranking, and per-domain summaries above remain useful as historical design context for future follow-on work.
+
+Any deeper future design work should be tracked separately from this completed hardening program.

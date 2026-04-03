@@ -176,7 +176,10 @@ fn regex_sweep_context(
 }
 
 fn scenario_family_without_sweep_token(source: &str, matched: &str, fallback: &str) -> String {
-    let family = source.replacen(matched, "", 1).trim_matches('_').to_string();
+    let family = source
+        .replacen(matched, "", 1)
+        .trim_matches('_')
+        .to_string();
     if family.is_empty() {
         fallback.to_string()
     } else {
@@ -243,12 +246,7 @@ mod tests {
     use crate::benchmark_summary::config::BenchSummaryConfig;
     use crate::benchmark_summary::model::{BenchmarkRecord, MetricDirection};
 
-    fn record(
-        case: &str,
-        scenario: &str,
-        value: f64,
-        tags: &[(&str, &str)],
-    ) -> BenchmarkRecord {
+    fn record(case: &str, scenario: &str, value: f64, tags: &[(&str, &str)]) -> BenchmarkRecord {
         BenchmarkRecord {
             id: format!("stress|{case}|{scenario}"),
             adapter: "stress".to_string(),
@@ -319,7 +317,12 @@ mod tests {
             record("rpc::dispatch_64", "scaling_64_dispatch_only", 1200.0, &[]),
             record("rpc::dispatch_256", "scaling_256_dispatch_only", 900.0, &[]),
             record("rpc::roundtrip_64", "scaling_64_full_roundtrip", 800.0, &[]),
-            record("rpc::roundtrip_256", "scaling_256_full_roundtrip", 600.0, &[]),
+            record(
+                "rpc::roundtrip_256",
+                "scaling_256_full_roundtrip",
+                600.0,
+                &[],
+            ),
         ];
 
         // Act
@@ -345,13 +348,19 @@ mod tests {
                 "rpc::pending_64",
                 "pending_cardinality_steady_state",
                 1200.0,
-                &[("pending_count", "64"), ("measurement_scope", "routed_pending")],
+                &[
+                    ("pending_count", "64"),
+                    ("measurement_scope", "routed_pending"),
+                ],
             ),
             record(
                 "rpc::pending_256",
                 "pending_cardinality_steady_state",
                 900.0,
-                &[("pending_count", "256"), ("measurement_scope", "routed_pending")],
+                &[
+                    ("pending_count", "256"),
+                    ("measurement_scope", "routed_pending"),
+                ],
             ),
         ];
 

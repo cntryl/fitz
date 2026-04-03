@@ -1314,7 +1314,6 @@ fn matches_operation_route(route: &str, path: &RpcOperationPath<'_>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Bytes;
     use crate::boot::domains::{
         DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink,
         RpcDomainSink, ScheduleDomainSink, StreamDomainSink,
@@ -1322,6 +1321,7 @@ mod tests {
     use crate::boot::Runtime;
     use crate::domains::schedule::store::{ScheduleInsert, ScheduleStore};
     use crate::runtime::Router;
+    use bytes::Bytes;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1372,14 +1372,20 @@ mod tests {
                 admin_read_model.clone(),
                 cntryl_midge::WriteOptions::buffered(),
             )),
-            notice: Arc::new(NoticeDomainSink::new(router.clone(), admin_read_model.clone())),
+            notice: Arc::new(NoticeDomainSink::new(
+                router.clone(),
+                admin_read_model.clone(),
+            )),
             stream: Arc::new(StreamDomainSink::new(
                 store.clone(),
                 router.clone(),
                 admin_read_model.clone(),
             )),
             rpc: Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
-            lease: Arc::new(LeaseDomainSink::new(router.clone(), admin_read_model.clone())),
+            lease: Arc::new(LeaseDomainSink::new(
+                router.clone(),
+                admin_read_model.clone(),
+            )),
             schedule: Arc::new(ScheduleDomainSink::new(
                 store,
                 router,

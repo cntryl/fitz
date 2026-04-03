@@ -260,7 +260,8 @@ impl QueueDomainSink {
 
         self.admin_read_model.replace_queues(queues);
         self.admin_read_model.replace_queue_leases(leases);
-        self.admin_read_model.replace_queue_dead_letters(dead_letters);
+        self.admin_read_model
+            .replace_queue_dead_letters(dead_letters);
     }
 
     fn sweep_idle_actors(&self) {
@@ -462,7 +463,13 @@ impl QueueDomainSink {
         let actors = self.actors.lock();
         actors
             .values()
-            .map(|warm_actor| warm_actor.actor.lock().admin_snapshot().messages_dead_lettered)
+            .map(|warm_actor| {
+                warm_actor
+                    .actor
+                    .lock()
+                    .admin_snapshot()
+                    .messages_dead_lettered
+            })
             .sum()
     }
 

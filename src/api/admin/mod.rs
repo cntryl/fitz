@@ -8,8 +8,8 @@ pub mod handlers;
 mod list;
 mod metrics;
 mod probes;
-mod stats;
 pub(crate) mod read_model;
+mod stats;
 
 pub use handlers::handle_request;
 pub use list::*;

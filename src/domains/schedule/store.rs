@@ -203,8 +203,7 @@ impl ScheduleStore {
         last_fire_ms: Option<u64>,
         executions_total: u64,
     ) -> Vec<u8> {
-        let mut value =
-            Vec::with_capacity(1 + 8 + 8 + 8 + 4 + cron.len() + 4 + payload.len());
+        let mut value = Vec::with_capacity(1 + 8 + 8 + 8 + 4 + cron.len() + 4 + payload.len());
         value.push(DEFINITION_VALUE_VERSION_V2);
         value.extend_from_slice(&next_fire_ms.to_be_bytes());
         value.extend_from_slice(&last_fire_ms.unwrap_or(0).to_be_bytes());
@@ -216,7 +215,9 @@ impl ScheduleStore {
         value
     }
 
-    fn decode_definition_value(value: &[u8]) -> Result<(u64, String, Bytes, Option<u64>, u64), String> {
+    fn decode_definition_value(
+        value: &[u8],
+    ) -> Result<(u64, String, Bytes, Option<u64>, u64), String> {
         if value.is_empty() {
             return Err("Schedule definition value too short".to_string());
         }
@@ -469,7 +470,8 @@ impl ScheduleStore {
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
-        let mut definitions = BTreeMap::<String, Option<(u64, String, Bytes, Option<u64>, u64)>>::new();
+        let mut definitions =
+            BTreeMap::<String, Option<(u64, String, Bytes, Option<u64>, u64)>>::new();
 
         for item in items {
             txn.delete(Self::encode_pending_fire_key(item.fire_ms, item.route))
@@ -1086,10 +1088,15 @@ mod tests {
             )
             .expect("ack pending fire");
         let pending = store.load_pending_fires(1).expect("load pending fires");
-        let schedules = store.load_all(1, WriteOptions::buffered()).expect("load schedules");
+        let schedules = store
+            .load_all(1, WriteOptions::buffered())
+            .expect("load schedules");
 
         // Assert
-        assert!(pending.is_empty(), "pending fire should be removed after ack");
+        assert!(
+            pending.is_empty(),
+            "pending fire should be removed after ack"
+        );
         assert_eq!(schedules.len(), 1);
         assert_eq!(schedules[0].last_fire_ms, Some(executed_at_ms));
         assert_eq!(schedules[0].executions_total, 1);

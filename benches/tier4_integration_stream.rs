@@ -152,8 +152,9 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
     ctx.tag("batch_size", "10_clients_1_append_each");
     ctx.tag("client_count", "10");
 
-    let route = "stream://tier4/stream/multi/append";
-    let begin_frame = build_stream_begin(route, 0);
+    let begin_frames: Vec<Vec<u8>> = (0..10)
+        .map(|index| build_stream_begin(&format!("stream://tier4/stream/multi-{index}/append"), 0))
+        .collect();
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -169,10 +170,10 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
         })
         .collect();
 
-    let append_frames: Vec<Vec<u8>> =
-        runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+    let append_frames: Vec<Vec<u8>> = runtime.block_on(futures::future::join_all(
+        clients.iter().zip(begin_frames.iter()).map(|(arc, begin)| {
             let arc = arc.clone();
-            let begin = begin_frame.clone();
+            let begin = begin.clone();
             async move {
                 let mut c = arc.lock().await;
                 let response = c.request(&begin, 2000).await.expect("begin");
@@ -180,7 +181,8 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
                 let session_id = parse_stream_session_id(&data).expect("session_id");
                 build_stream_append(session_id, b"event")
             }
-        })));
+        }),
+    ));
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _results: Vec<_> = runtime.block_on(futures::future::join_all(

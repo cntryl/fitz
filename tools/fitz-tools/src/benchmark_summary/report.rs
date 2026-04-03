@@ -120,12 +120,8 @@ pub fn write_markdown_report(
     write_sweep_section(&mut content, sweeps);
     write_notes_section(&mut content, notes);
 
-    fs::write(&config.markdown_report_file, content).with_context(|| {
-        format!(
-            "failed to write {}",
-            config.markdown_report_file.display()
-        )
-    })?;
+    fs::write(&config.markdown_report_file, content)
+        .with_context(|| format!("failed to write {}", config.markdown_report_file.display()))?;
     Ok(())
 }
 
@@ -150,8 +146,14 @@ fn write_summary_section(content: &mut String, manifest: &BenchmarkManifest) {
             manifest.comparison_summary.improved.to_string(),
             manifest.comparison_summary.regressions.to_string(),
             manifest.comparison_summary.critical.to_string(),
-            manifest.comparison_summary.stability_regressions.to_string(),
-            manifest.comparison_summary.stability_improvements.to_string(),
+            manifest
+                .comparison_summary
+                .stability_regressions
+                .to_string(),
+            manifest
+                .comparison_summary
+                .stability_improvements
+                .to_string(),
             manifest.comparison_summary.new.to_string(),
             manifest.comparison_summary.missing.to_string(),
             manifest.comparison_summary.risk_areas.to_string(),
@@ -184,10 +186,7 @@ fn write_current_results_section(
     for (adapter, suites) in grouped {
         content.push_str(&format!("### {}\n\n", adapter));
         for (suite, suite_records) in suites {
-            content.push_str(&format!(
-                "#### {}\n\n",
-                config.display_suite_label(&suite)
-            ));
+            content.push_str(&format!("#### {}\n\n", config.display_suite_label(&suite)));
             write_table(
                 content,
                 &[
@@ -315,7 +314,9 @@ fn write_delta_section(
         content.push_str("### New Records\n\n");
         write_table(
             content,
-            &["adapter", "suite", "case", "scenario", "metric", "value", "status"],
+            &[
+                "adapter", "suite", "case", "scenario", "metric", "value", "status",
+            ],
             comparison
                 .new_records
                 .iter()
@@ -338,7 +339,9 @@ fn write_delta_section(
         content.push_str("### Missing Records\n\n");
         write_table(
             content,
-            &["adapter", "suite", "case", "scenario", "metric", "value", "status"],
+            &[
+                "adapter", "suite", "case", "scenario", "metric", "value", "status",
+            ],
             comparison
                 .missing_records
                 .iter()
@@ -367,10 +370,7 @@ fn write_sweep_section(content: &mut String, sweeps: &[SweepGroup]) {
 
     for group in sweeps {
         content.push_str(&format!("### {}\n\n", group.title));
-        content.push_str(&format!(
-            "- metric: {} ({})\n\n",
-            group.metric, group.unit
-        ));
+        content.push_str(&format!("- metric: {} ({})\n\n", group.metric, group.unit));
         write_table(
             content,
             &[

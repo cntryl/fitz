@@ -178,7 +178,11 @@ impl BenchSummaryConfig {
                 }),
                 stress: Some(StressAdapterConfig {
                     input_root: root.join("target").join("stress"),
-                    csv_output: Some(root.join("target").join("stress").join("stress_summary.csv")),
+                    csv_output: Some(
+                        root.join("target")
+                            .join("stress")
+                            .join("stress_summary.csv"),
+                    ),
                     min_reasonable_duration_ns: 3e9,
                     max_reasonable_throughput_ops_per_s: 1e9,
                     authoritative_min_runs: 5,
@@ -243,7 +247,11 @@ impl BenchSummaryConfig {
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
-                tag_key_suffixes: vec!["_count".to_string(), "_size".to_string(), "_depth".to_string()],
+                tag_key_suffixes: vec![
+                    "_count".to_string(),
+                    "_size".to_string(),
+                    "_depth".to_string(),
+                ],
                 context_tag_keys: vec![
                     "measurement_scope".to_string(),
                     "match_kind".to_string(),
@@ -254,19 +262,25 @@ impl BenchSummaryConfig {
                 name_patterns: vec![
                     SweepNamePatternConfig {
                         parameter: "concurrency".to_string(),
-                        regex: Regex::new(r"(?P<prefix>scaling|concurrency|clients?)_(?P<value>\d+[a-zA-Z]*)")?,
+                        regex: Regex::new(
+                            r"(?P<prefix>scaling|concurrency|clients?)_(?P<value>\d+[a-zA-Z]*)",
+                        )?,
                         value_capture: "value".to_string(),
                         prefix_capture: Some("prefix".to_string()),
                     },
                     SweepNamePatternConfig {
                         parameter: "subscriber_count".to_string(),
-                        regex: Regex::new(r"(?P<prefix>subscribers?|subscriber_count)_(?P<value>\d+[a-zA-Z]*)")?,
+                        regex: Regex::new(
+                            r"(?P<prefix>subscribers?|subscriber_count)_(?P<value>\d+[a-zA-Z]*)",
+                        )?,
                         value_capture: "value".to_string(),
                         prefix_capture: Some("prefix".to_string()),
                     },
                     SweepNamePatternConfig {
                         parameter: "payload_size".to_string(),
-                        regex: Regex::new(r"(?P<prefix>payload|message|msg)_(?P<value>\d+[a-zA-Z]*)")?,
+                        regex: Regex::new(
+                            r"(?P<prefix>payload|message|msg)_(?P<value>\d+[a-zA-Z]*)",
+                        )?,
                         value_capture: "value".to_string(),
                         prefix_capture: Some("prefix".to_string()),
                     },

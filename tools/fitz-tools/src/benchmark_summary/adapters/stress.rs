@@ -100,7 +100,8 @@ impl BenchmarkAdapter for StressAdapter {
                     Some(0.0)
                 };
                 let stability = classify_stability(rel_stddev, &config.stability_thresholds);
-                let meets_runtime_floor = median_duration_ns >= adapter_config.min_reasonable_duration_ns;
+                let meets_runtime_floor =
+                    median_duration_ns >= adapter_config.min_reasonable_duration_ns;
                 let status = if run_values.len() < adapter_config.authoritative_min_runs {
                     "insufficient_data".to_string()
                 } else if !meets_runtime_floor {
@@ -126,7 +127,10 @@ impl BenchmarkAdapter for StressAdapter {
                 let mut metadata = BTreeMap::new();
                 metadata.insert("name".to_string(), name.clone());
                 metadata.insert("batch_size".to_string(), elements.to_string());
-                metadata.insert("median_duration_ns".to_string(), median_duration_ns.to_string());
+                metadata.insert(
+                    "median_duration_ns".to_string(),
+                    median_duration_ns.to_string(),
+                );
                 metadata.insert("per_op_ns".to_string(), per_op_ns.to_string());
                 metadata.insert("per_op_us".to_string(), (per_op_ns / 1e3).to_string());
                 metadata.insert(
@@ -135,7 +139,11 @@ impl BenchmarkAdapter for StressAdapter {
                 );
                 metadata.insert(
                     "min_run_ns".to_string(),
-                    run_values.iter().copied().fold(f64::INFINITY, f64::min).to_string(),
+                    run_values
+                        .iter()
+                        .copied()
+                        .fold(f64::INFINITY, f64::min)
+                        .to_string(),
                 );
                 metadata.insert(
                     "max_run_ns".to_string(),

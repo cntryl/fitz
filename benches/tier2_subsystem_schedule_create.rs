@@ -7,9 +7,7 @@ use fitz::domains::schedule::actor::ScheduleActor;
 use fitz::domains::schedule::protocol::{
     validate_concrete_schedule_route, CronSchedule, ScheduleCreateEntry,
 };
-use fitz::domains::schedule::store::{
-    ScheduleBatchInsert, ScheduleInsert, ScheduleStore,
-};
+use fitz::domains::schedule::store::{ScheduleBatchInsert, ScheduleInsert, ScheduleStore};
 use fitz::runtime::routing::RouteFamily;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 

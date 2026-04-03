@@ -161,10 +161,12 @@ impl ScheduleDomainSink {
             }
         }
 
-        let mut delivered = HashMap::<crate::runtime::routing::RouteFamily, Vec<(u64, String)>>::new();
+        let mut delivered =
+            HashMap::<crate::runtime::routing::RouteFamily, Vec<(u64, String)>>::new();
         for (family, fire_ms, route, payload) in publishes {
             let route_value = crate::runtime::routing::Route::new(route.clone());
-            let event = crate::runtime::DomainPublishEvent::new(family, route_value.clone(), payload);
+            let event =
+                crate::runtime::DomainPublishEvent::new(family, route_value.clone(), payload);
             let destination = crate::runtime::routing::RouteAddress::new(family, route_value);
             if self.router.route(Envelope::new(destination, event)).is_ok() {
                 delivered.entry(family).or_default().push((fire_ms, route));
@@ -294,7 +296,10 @@ impl ScheduleDomainSink {
 
     pub fn pending_fire_count(&self) -> usize {
         let actors = self.actors.lock();
-        actors.values().map(|actor| actor.pending_fire_count()).sum()
+        actors
+            .values()
+            .map(|actor| actor.pending_fire_count())
+            .sum()
     }
 
     pub fn executions_per_minute(&self) -> f64 {

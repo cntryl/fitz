@@ -15,7 +15,9 @@ use chrono::Utc;
 use serde::Deserialize;
 
 use self::adapters::enabled_adapters;
-use self::classify::{build_comparison_summary, collect_measurement_notes, current_run_authoritative};
+use self::classify::{
+    build_comparison_summary, collect_measurement_notes, current_run_authoritative,
+};
 use self::compare::compare_records;
 use self::config::BenchSummaryConfig;
 use self::model::{BenchmarkManifest, BenchmarkRecord, MetricDirection};
@@ -88,7 +90,10 @@ fn sort_records(records: &mut [BenchmarkRecord]) {
     });
 }
 
-fn write_adapter_csv_artifacts(config: &BenchSummaryConfig, records: &[BenchmarkRecord]) -> Result<()> {
+fn write_adapter_csv_artifacts(
+    config: &BenchSummaryConfig,
+    records: &[BenchmarkRecord],
+) -> Result<()> {
     if let Some(path) = config.criterion_csv_output() {
         let adapter_records: Vec<_> = records
             .iter()
@@ -198,7 +203,14 @@ fn split_benchmark_path(path: &str) -> (String, String) {
     let mut parts = path.split('/');
     let suite = parts.next().unwrap_or("other").to_string();
     let case = parts.collect::<Vec<_>>().join("/");
-    (suite, if case.is_empty() { path.to_string() } else { case })
+    (
+        suite,
+        if case.is_empty() {
+            path.to_string()
+        } else {
+            case
+        },
+    )
 }
 
 fn stress_case_name(name: &str) -> String {
@@ -233,10 +245,7 @@ impl LegacyBaselineManifest {
                 scenario: Some(record.scenario.clone()).filter(|value| !value.is_empty()),
                 metric: record.metric.clone(),
                 unit: infer_metric_unit(&record.metric),
-                value: record
-                    .median_value
-                    .or(record.median_ns)
-                    .unwrap_or_default(),
+                value: record.median_value.or(record.median_ns).unwrap_or_default(),
                 lower_bound: record.min_value,
                 upper_bound: record.max_value,
                 samples: record.runs,
@@ -398,8 +407,8 @@ mod tests {
     fn should_filter_record_when_pattern_matches_metadata() {
         // Arrange
         let mut config = BenchSummaryConfig::for_tests();
-        config.ignored_patterns = vec![regex::Regex::new("schedule_system_scan_and_fire")
-            .expect("valid ignore regex")];
+        config.ignored_patterns =
+            vec![regex::Regex::new("schedule_system_scan_and_fire").expect("valid ignore regex")];
         let mut record = record("record-id");
         record.metadata.insert(
             "raw_benchmark".to_string(),

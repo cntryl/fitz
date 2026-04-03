@@ -93,8 +93,7 @@ impl ReplyInboxActor {
                 self.streams.remove(&correlation_id);
             }
         } else {
-            self.invalid_sequence_failures =
-                self.invalid_sequence_failures.saturating_add(1);
+            self.invalid_sequence_failures = self.invalid_sequence_failures.saturating_add(1);
             self.streams.remove(&correlation_id);
         }
     }

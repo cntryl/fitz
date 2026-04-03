@@ -29,9 +29,11 @@ pub(crate) fn instant_to_epoch_ms_with_reference(
     reference_epoch_ms: u64,
 ) -> u64 {
     if instant >= reference_instant {
-        reference_epoch_ms.saturating_add(instant.duration_since(reference_instant).as_millis() as u64)
+        reference_epoch_ms
+            .saturating_add(instant.duration_since(reference_instant).as_millis() as u64)
     } else {
-        reference_epoch_ms.saturating_sub(reference_instant.duration_since(instant).as_millis() as u64)
+        reference_epoch_ms
+            .saturating_sub(reference_instant.duration_since(instant).as_millis() as u64)
     }
 }
 
@@ -303,11 +305,8 @@ impl CronSchedule {
     pub fn next_fire_time_with_clock(&self, from: Instant, clock: &dyn Clock) -> Instant {
         let reference_instant = clock.now_instant();
         let reference_epoch_ms = clock.now_epoch_ms();
-        let from_epoch_ms = instant_to_epoch_ms_with_reference(
-            from,
-            reference_instant,
-            reference_epoch_ms,
-        );
+        let from_epoch_ms =
+            instant_to_epoch_ms_with_reference(from, reference_instant, reference_epoch_ms);
         let seconds = from_epoch_ms / 1_000;
 
         if let Some(candidate_secs) = self.simple_candidate_seconds(seconds) {
@@ -778,7 +777,10 @@ mod tests {
         let next_fire = cron.next_fire_time_with_clock(clock.now_instant(), &clock);
 
         // Assert
-        assert_eq!(next_fire.duration_since(clock.now_instant()), Duration::from_secs(30 * 60));
+        assert_eq!(
+            next_fire.duration_since(clock.now_instant()),
+            Duration::from_secs(30 * 60)
+        );
     }
 }
 

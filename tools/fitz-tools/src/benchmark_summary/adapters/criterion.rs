@@ -138,7 +138,14 @@ fn split_suite_and_case(path: &str) -> (String, String) {
     let mut parts = path.split('/');
     let suite = parts.next().unwrap_or("other").to_string();
     let case = parts.collect::<Vec<_>>().join("/");
-    (suite, if case.is_empty() { path.to_string() } else { case })
+    (
+        suite,
+        if case.is_empty() {
+            path.to_string()
+        } else {
+            case
+        },
+    )
 }
 
 #[derive(Debug, Deserialize)]

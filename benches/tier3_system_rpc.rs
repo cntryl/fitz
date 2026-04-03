@@ -569,10 +569,7 @@ fn measure_pending_cardinality_steady_state(
                 *worker_session_id,
                 worker_source,
                 ROUTE_STR,
-                build_rpc_response_frame(
-                    current_correlation_id,
-                    b"pending cardinality payload",
-                ),
+                build_rpc_response_frame(current_correlation_id, b"pending cardinality payload"),
             );
             assert_requester_received_worker_responses(requester_inbox.drain(), 1);
 

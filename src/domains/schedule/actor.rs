@@ -329,7 +329,12 @@ impl ScheduleActor {
     ) -> Result<bool, String> {
         validate_concrete_schedule_route(&route)?;
 
-        let (previous_next_fire_ms, previous_list_index, previous_last_fire_ms, previous_executions_total) = self
+        let (
+            previous_next_fire_ms,
+            previous_list_index,
+            previous_last_fire_ms,
+            previous_executions_total,
+        ) = self
             .schedules
             .get(&route)
             .map(|existing| {
@@ -418,28 +423,33 @@ impl ScheduleActor {
 
             validate_concrete_schedule_route(&entry.route)?;
 
-            let (previous_fire_ms, previous_list_index, last_fire_ms, executions_total, should_skip) =
-                match self.schedules.get(&entry.route) {
-                    Some(existing)
-                        if existing.cron == entry.cron && existing.payload == entry.payload =>
-                    {
-                        (
-                            Some(existing.next_fire_ms),
-                            Some(existing.list_index),
-                            existing.last_fire_ms,
-                            existing.executions_total,
-                            true,
-                        )
-                    }
-                    Some(existing) => (
+            let (
+                previous_fire_ms,
+                previous_list_index,
+                last_fire_ms,
+                executions_total,
+                should_skip,
+            ) = match self.schedules.get(&entry.route) {
+                Some(existing)
+                    if existing.cron == entry.cron && existing.payload == entry.payload =>
+                {
+                    (
                         Some(existing.next_fire_ms),
                         Some(existing.list_index),
                         existing.last_fire_ms,
                         existing.executions_total,
-                        false,
-                    ),
-                    None => (None, None, None, 0, false),
-                };
+                        true,
+                    )
+                }
+                Some(existing) => (
+                    Some(existing.next_fire_ms),
+                    Some(existing.list_index),
+                    existing.last_fire_ms,
+                    existing.executions_total,
+                    false,
+                ),
+                None => (None, None, None, 0, false),
+            };
 
             if should_skip {
                 continue;
@@ -470,15 +480,17 @@ impl ScheduleActor {
 
         let store_items: Vec<_> = pending
             .iter()
-            .map(|entry| crate::domains::schedule::store::ScheduleBatchInsert {
-                route: entry.route.clone(),
-                cron: entry.cron.clone(),
-                payload: entry.payload.clone(),
-                next_fire_ms: entry.next_fire_ms,
-                previous_fire_ms: entry.previous_fire_ms,
-                last_fire_ms: entry.last_fire_ms,
-                executions_total: entry.executions_total,
-            })
+            .map(
+                |entry| crate::domains::schedule::store::ScheduleBatchInsert {
+                    route: entry.route.clone(),
+                    cron: entry.cron.clone(),
+                    payload: entry.payload.clone(),
+                    next_fire_ms: entry.next_fire_ms,
+                    previous_fire_ms: entry.previous_fire_ms,
+                    last_fire_ms: entry.last_fire_ms,
+                    executions_total: entry.executions_total,
+                },
+            )
             .collect();
 
         self.store
@@ -731,8 +743,9 @@ impl ScheduleActor {
                 continue;
             }
 
-            let next_fire_time =
-                def.parsed_cron.next_fire_time_with_clock(now, self.clock.as_ref());
+            let next_fire_time = def
+                .parsed_cron
+                .next_fire_time_with_clock(now, self.clock.as_ref());
             let next_fire_ms =
                 Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
             to_reschedule.push(PendingScheduleFire {
@@ -764,9 +777,9 @@ impl ScheduleActor {
             })
             .collect();
 
-        if let Err(error) = self
-            .store
-            .claim_due_batch(self.family.as_u64(), &store_items, self.write_options)
+        if let Err(error) =
+            self.store
+                .claim_due_batch(self.family.as_u64(), &store_items, self.write_options)
         {
             warn!("Failed to persist schedule reschedule batch: {}", error);
             for item in to_reschedule {
@@ -840,11 +853,13 @@ impl ScheduleActor {
         let acknowledged_at_ms = self.clock.now_epoch_ms();
         let store_items: Vec<_> = delivered
             .iter()
-            .map(|(fire_ms, route)| crate::domains::schedule::store::SchedulePendingFireAck {
-                route,
-                fire_ms: *fire_ms,
-                executed_at_ms: acknowledged_at_ms,
-            })
+            .map(
+                |(fire_ms, route)| crate::domains::schedule::store::SchedulePendingFireAck {
+                    route,
+                    fire_ms: *fire_ms,
+                    executed_at_ms: acknowledged_at_ms,
+                },
+            )
             .collect();
 
         self.store
@@ -852,7 +867,11 @@ impl ScheduleActor {
 
         let mut acked = 0;
         for (fire_ms, route) in delivered {
-            if self.pending_fires.remove(&(*fire_ms, route.clone())).is_some() {
+            if self
+                .pending_fires
+                .remove(&(*fire_ms, route.clone()))
+                .is_some()
+            {
                 if let Some(schedule) = self.schedules.get_mut(route) {
                     schedule.last_fire_ms = Some(acknowledged_at_ms);
                     schedule.executions_total = schedule.executions_total.saturating_add(1);
@@ -925,8 +944,8 @@ impl ScheduleActor {
     pub fn bench_prepare_scan(&mut self, ready_count: usize) {
         let now = self.clock.now_instant();
         let ready_limit = ready_count.min(self.list_entries.len());
-        let ready_ms = Self::instant_to_ms_at_with_clock(now, now, self.clock.as_ref())
-            .saturating_sub(1);
+        let ready_ms =
+            Self::instant_to_ms_at_with_clock(now, now, self.clock.as_ref()).saturating_sub(1);
         let not_ready_time = now.checked_add(Duration::from_secs(60)).unwrap_or(now);
         let not_ready_ms =
             Self::instant_to_ms_at_with_clock(not_ready_time, now, self.clock.as_ref());
@@ -981,7 +1000,11 @@ impl ScheduleActor {
         instant_to_epoch_ms_with_reference(instant, anchor, anchor_ms)
     }
 
-    fn ms_to_instant_at_with_clock(timestamp_ms: u64, anchor: Instant, clock: &dyn Clock) -> Instant {
+    fn ms_to_instant_at_with_clock(
+        timestamp_ms: u64,
+        anchor: Instant,
+        clock: &dyn Clock,
+    ) -> Instant {
         let anchor_ms = Self::anchor_epoch_ms_with_clock(anchor, clock);
         epoch_ms_to_instant_with_reference(timestamp_ms, anchor, anchor_ms)
     }
@@ -1186,14 +1209,7 @@ mod tests {
             fired.is_empty(),
             "overdue schedules should normalize forward instead of replaying missed executions"
         );
-        assert!(
-            actor
-                .schedules
-                .get(route)
-                .expect("schedule")
-                .next_fire_time
-                > now
-        );
+        assert!(actor.schedules.get(route).expect("schedule").next_fire_time > now);
     }
 
     #[test]
@@ -1213,16 +1229,14 @@ mod tests {
 
         // Act
         let changed = actor
-            .create_schedule_at(
-                route.clone(),
-                cron,
-                payload,
-                original.next_fire_time,
-            )
+            .create_schedule_at(route.clone(), cron, payload, original.next_fire_time)
             .expect("retry identical create");
 
         // Assert
-        assert!(!changed, "identical retry should remain idempotent at due time");
+        assert!(
+            !changed,
+            "identical retry should remain idempotent at due time"
+        );
         let schedule = actor.schedules.get(&route).expect("schedule");
         assert_eq!(schedule.next_fire_ms, original.next_fire_ms);
         assert_eq!(schedule.next_fire_time, original.next_fire_time);
@@ -1254,7 +1268,10 @@ mod tests {
             .expect("retry identical batch create");
 
         // Assert
-        assert_eq!(changed, 0, "identical batch retry should not rewrite the schedule");
+        assert_eq!(
+            changed, 0,
+            "identical batch retry should not rewrite the schedule"
+        );
         let schedule = actor.schedules.get(&route).expect("schedule");
         assert_eq!(schedule.next_fire_ms, original.next_fire_ms);
         assert_eq!(schedule.next_fire_time, original.next_fire_time);
@@ -1359,7 +1376,10 @@ mod tests {
         // Assert
         assert_eq!(actor.schedule_count(), 1);
         assert_eq!(actor.ready_heap.len(), 1);
-        assert_eq!(actor.schedules.get(&route).expect("schedule").cron, "0 4 * * *");
+        assert_eq!(
+            actor.schedules.get(&route).expect("schedule").cron,
+            "0 4 * * *"
+        );
     }
 
     #[test]
@@ -1521,11 +1541,7 @@ mod tests {
 
         // Act
         let first_fired = actor.scan_and_fire_at(first_scan_at);
-        let next_fire_time = actor
-            .schedules
-            .get(route)
-            .expect("schedule")
-            .next_fire_time;
+        let next_fire_time = actor.schedules.get(route).expect("schedule").next_fire_time;
         actor
             .delete_schedule(route.to_string())
             .expect("delete schedule");
@@ -1535,7 +1551,11 @@ mod tests {
         let second_fired = actor.scan_and_fire_at(next_fire_time);
 
         // Assert
-        assert_eq!(first_fired.len(), 1, "scan should claim the due occurrence once");
+        assert_eq!(
+            first_fired.len(),
+            1,
+            "scan should claim the due occurrence once"
+        );
         assert!(
             second_fired.is_empty(),
             "cancel after the due scan should suppress all future occurrences"
@@ -1680,10 +1700,17 @@ mod tests {
         let second_fired = actor.scan_and_fire();
 
         // Assert
-        assert_eq!(first_fired.len(), 1, "scan should claim the original due occurrence");
+        assert_eq!(
+            first_fired.len(),
+            1,
+            "scan should claim the original due occurrence"
+        );
         assert_eq!(first_fired[0].0, route);
         assert_eq!(first_fired[0].1, original_payload);
-        assert!(changed, "reschedule after the due scan should update future occurrences");
+        assert!(
+            changed,
+            "reschedule after the due scan should update future occurrences"
+        );
         assert!(
             second_fired.is_empty(),
             "rescheduling after the due scan should not create a duplicate fire at the old due boundary"

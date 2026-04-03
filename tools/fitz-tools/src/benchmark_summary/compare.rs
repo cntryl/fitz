@@ -132,8 +132,18 @@ mod tests {
     #[test]
     fn should_compute_positive_directional_delta_when_lower_is_better_metric_improves() {
         // Arrange
-        let baseline = manifest(vec![record("stable-id", "baseline-case", MetricDirection::LowerIsBetter, 100.0)]);
-        let current = vec![record("stable-id", "current-case", MetricDirection::LowerIsBetter, 80.0)];
+        let baseline = manifest(vec![record(
+            "stable-id",
+            "baseline-case",
+            MetricDirection::LowerIsBetter,
+            100.0,
+        )]);
+        let current = vec![record(
+            "stable-id",
+            "current-case",
+            MetricDirection::LowerIsBetter,
+            80.0,
+        )];
 
         // Act
         let comparison = compare_records(&current, Some(&baseline));
@@ -147,8 +157,18 @@ mod tests {
     #[test]
     fn should_compute_positive_directional_delta_when_higher_is_better_metric_improves() {
         // Arrange
-        let baseline = manifest(vec![record("stable-id", "baseline-case", MetricDirection::HigherIsBetter, 100.0)]);
-        let current = vec![record("stable-id", "current-case", MetricDirection::HigherIsBetter, 120.0)];
+        let baseline = manifest(vec![record(
+            "stable-id",
+            "baseline-case",
+            MetricDirection::HigherIsBetter,
+            100.0,
+        )]);
+        let current = vec![record(
+            "stable-id",
+            "current-case",
+            MetricDirection::HigherIsBetter,
+            120.0,
+        )];
 
         // Act
         let comparison = compare_records(&current, Some(&baseline));
@@ -162,8 +182,18 @@ mod tests {
     #[test]
     fn should_match_baseline_by_stable_id_given_current_case_label_changes() {
         // Arrange
-        let baseline = manifest(vec![record("stable-id", "old-case", MetricDirection::LowerIsBetter, 100.0)]);
-        let current = vec![record("stable-id", "renamed-case", MetricDirection::LowerIsBetter, 95.0)];
+        let baseline = manifest(vec![record(
+            "stable-id",
+            "old-case",
+            MetricDirection::LowerIsBetter,
+            100.0,
+        )]);
+        let current = vec![record(
+            "stable-id",
+            "renamed-case",
+            MetricDirection::LowerIsBetter,
+            95.0,
+        )];
 
         // Act
         let comparison = compare_records(&current, Some(&baseline));

@@ -30,6 +30,10 @@ use tokio::task::JoinHandle;
 const PUBLISH_CHANNEL_CAPACITY: usize = 64;
 const DELIVERY_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
+fn is_recv_timeout(error: &dyn std::error::Error) -> bool {
+    error.to_string().contains("timeout waiting for response")
+}
+
 fn wait_for_delivery_count(
     runtime: &'static Runtime,
     delivered: &Arc<AtomicU64>,
@@ -111,6 +115,9 @@ fn spawn_tcp_subscriber_counter(
                             if *stop_rx.borrow() {
                                 break;
                             }
+                            if is_recv_timeout(error.as_ref()) {
+                                continue;
+                            }
                             panic!("publish notification: {error}");
                         }
                     }
@@ -143,6 +150,9 @@ fn spawn_ws_subscriber_counter(
                         Err(error) => {
                             if *stop_rx.borrow() {
                                 break;
+                            }
+                            if is_recv_timeout(error.as_ref()) {
+                                continue;
                             }
                             panic!("publish notification: {error}");
                         }
@@ -417,7 +427,7 @@ fn measure_multiclient_fanout_publish(
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
-    let publisher = runtime
+    let mut publisher = runtime
         .block_on(TestWebSocketClient::connect(&format!(
             "ws://{}",
             server.ws_addr
@@ -441,26 +451,29 @@ fn measure_multiclient_fanout_publish(
         subscriber_stops.push(stop_tx);
         subscriber_handles.push(handle);
     }
-
-    let (publish_tx, publisher_handle) = spawn_ws_publisher(runtime, publisher);
-
+    let mut expected_deliveries = 0_u64;
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        publish_tx
-            .blocking_send(publish_frame.clone())
-            .expect("queue publish frame");
+        runtime
+            .block_on(publisher.send_frame(publish_frame.as_ref()))
+            .expect("publish frame");
+
+        expected_deliveries += subscriber_count as u64;
+        wait_for_delivery_count(
+            runtime,
+            &delivered,
+            expected_deliveries,
+            "multiclient notice deliveries",
+        );
     });
-    drop(publish_tx);
-    wait_for_delivery_count(
-        runtime,
-        &delivered,
-        subscriber_count as u64 * iterations as u64,
-        "multiclient notice deliveries",
-    );
+
     for stop_tx in subscriber_stops {
         stop_tx.send(true).expect("stop ws subscriber");
     }
     runtime.block_on(async {
-        publisher_handle.await.expect("publisher task");
+        publisher
+            .close()
+            .await
+            .expect("close ws publisher gracefully");
         for handle in subscriber_handles {
             handle.await.expect("subscriber task");
         }

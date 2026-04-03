@@ -555,28 +555,26 @@ pub fn parse_stream_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
 /// Parse session_id from STREAM BEGIN response data
 pub fn parse_stream_session_id(data: &[u8]) -> Result<u64, String> {
-    if data.len() < 2 {
-        return Err("Stream response data too short".to_string());
-    }
+    use crate::protocol::payload_codec::PayloadDecoder;
 
-    let status = data[0];
+    let mut decoder = PayloadDecoder::new(data);
+    let status = decoder.get_u8()?;
     if status != 0 {
-        return Err("Stream BEGIN operation failed".to_string());
+        let error = decoder
+            .get_string()
+            .unwrap_or_else(|_| "Stream BEGIN operation failed".to_string());
+        return Err(error);
     }
 
-    let has_session_id = data[1];
-    if has_session_id == 0 {
-        return Err("No session_id in response".to_string());
+    let session_id = decoder
+        .get_optional_u64()?
+        .ok_or_else(|| "No session_id in response".to_string())?;
+    decoder.get_bytes()?;
+    if !decoder.is_complete() {
+        return Err("Trailing data in stream BEGIN response".to_string());
     }
 
-    if data.len() < 10 {
-        return Err("Session ID data incomplete".to_string());
-    }
-
-    let bytes = [
-        data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9],
-    ];
-    Ok(u64::from_be_bytes(bytes))
+    Ok(session_id)
 }
 
 /// Build SCHEDULE CREATE frame (msg_type 700)

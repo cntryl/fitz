@@ -10,8 +10,7 @@ use bytes::Bytes;
 
 use fitz::domains::queue::{
     protocol::{QueueKey, QueueResponse},
-    Clock,
-    QueueActor,
+    Clock, QueueActor,
 };
 use fitz::runtime::routing::RouteFamily;
 use uuid::Uuid;
@@ -572,6 +571,9 @@ fn should_dlq_message_after_max_attempts() {
     let txn = store
         .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
         .expect("begin tx");
-    assert!(txn.get(header_key.as_bytes()).expect("read header").is_some());
+    assert!(txn
+        .get(header_key.as_bytes())
+        .expect("read header")
+        .is_some());
     assert!(txn.get(body_key.as_bytes()).expect("read body").is_some());
 }

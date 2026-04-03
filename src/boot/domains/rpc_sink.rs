@@ -1361,9 +1361,11 @@ impl MailboxSink for RpcDomainSink {
                 let state_wait_us = state_wait_start.elapsed().as_micros() as u64;
                 let state_hold_start = Instant::now();
                 let pending_route_lookup_start = Instant::now();
-                let caller_info = state
-                    .pending
-                    .pending_for_response(&resp.correlation_id, resp.seq, resp.stream_end);
+                let caller_info = state.pending.pending_for_response(
+                    &resp.correlation_id,
+                    resp.seq,
+                    resp.stream_end,
+                );
                 let pending_route_lookup_us =
                     pending_route_lookup_start.elapsed().as_micros() as u64;
                 let mut state_changed = false;
@@ -1406,10 +1408,11 @@ impl MailboxSink for RpcDomainSink {
                         self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
 
                         let response_forward_start = Instant::now();
-                        let encoded_response = crate::protocol::rpc_codec::encode_response_message_into(
-                            &resp,
-                            &mut payload_encoder,
-                        );
+                        let encoded_response =
+                            crate::protocol::rpc_codec::encode_response_message_into(
+                                &resp,
+                                &mut payload_encoder,
+                            );
                         if let Some(caller_inbox_addr) = caller_info.caller_inbox_addr.as_ref() {
                             let forward_ctx = FrameContext::new(
                                 caller_info.caller_session_id,
@@ -1491,7 +1494,10 @@ impl MailboxSink for RpcDomainSink {
                             "rpc_pending_route_remove_us",
                             pending_route_lookup_us,
                         );
-                        self.histogram_observe_us("rpc_pending_untrack_us", pending_route_lookup_us);
+                        self.histogram_observe_us(
+                            "rpc_pending_untrack_us",
+                            pending_route_lookup_us,
+                        );
                         self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
                         self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
                         self.gauge_set("rpc_pending_requests", pending_len as u64);

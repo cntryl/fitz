@@ -9,13 +9,13 @@ use fitz::api::admin::{
     KvTransaction, NoticeSubscription, QueueDeadLetter, QueueInfo, RpcPendingRequest, RpcWorker,
 };
 use fitz::boot::domains::{
-    DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink,
-    RpcDomainSink, ScheduleDomainSink, StreamDomainSink,
+    DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
+    ScheduleDomainSink, StreamDomainSink,
 };
 use fitz::boot::Runtime;
 use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
-use fitz::runtime::Router;
 use fitz::runtime::routing::RouteFamily;
+use fitz::runtime::Router;
 use hyper::header::{COOKIE, SET_COOKIE};
 use hyper::{body, Body, Method, Request, StatusCode};
 use serial_test::serial;
@@ -64,14 +64,20 @@ fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::Engine>) {
             admin_read_model.clone(),
             cntryl_midge::WriteOptions::buffered(),
         )),
-        notice: Arc::new(NoticeDomainSink::new(router.clone(), admin_read_model.clone())),
+        notice: Arc::new(NoticeDomainSink::new(
+            router.clone(),
+            admin_read_model.clone(),
+        )),
         stream: Arc::new(StreamDomainSink::new(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
         )),
         rpc: Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
-        lease: Arc::new(LeaseDomainSink::new(router.clone(), admin_read_model.clone())),
+        lease: Arc::new(LeaseDomainSink::new(
+            router.clone(),
+            admin_read_model.clone(),
+        )),
         schedule: Arc::new(ScheduleDomainSink::new(
             store.clone(),
             router,
@@ -517,7 +523,9 @@ async fn should_replay_dead_letter_given_family_targeted_admin_request() {
     assert!(detail_payload.contains(r#""messages_dead_lettered":0"#));
     assert!(detail_payload.contains(r#""messages_total":1"#));
     assert_eq!(dead_letters_response.status(), StatusCode::OK);
-    let dead_letters_body = body::to_bytes(dead_letters_response.into_body()).await.unwrap();
+    let dead_letters_body = body::to_bytes(dead_letters_response.into_body())
+        .await
+        .unwrap();
     let dead_letters_payload = String::from_utf8(dead_letters_body.to_vec()).unwrap();
     assert!(dead_letters_payload.contains(r#""messages":[]"#));
 }
@@ -573,7 +581,9 @@ async fn should_purge_dead_letter_given_family_targeted_admin_request() {
     assert!(detail_payload.contains(r#""messages_dead_lettered":0"#));
     assert!(detail_payload.contains(r#""messages_total":0"#));
     assert_eq!(dead_letters_response.status(), StatusCode::OK);
-    let dead_letters_body = body::to_bytes(dead_letters_response.into_body()).await.unwrap();
+    let dead_letters_body = body::to_bytes(dead_letters_response.into_body())
+        .await
+        .unwrap();
     let dead_letters_payload = String::from_utf8(dead_letters_body.to_vec()).unwrap();
     assert!(dead_letters_payload.contains(r#""messages":[]"#));
 }

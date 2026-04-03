@@ -139,13 +139,11 @@ pub fn collect_measurement_notes(
         .deltas
         .iter()
         .filter(|item| {
-            item.directional_delta_pct.unwrap_or(0.0)
-                <= -config.thresholds.critical_regression_pct
+            item.directional_delta_pct.unwrap_or(0.0) <= -config.thresholds.critical_regression_pct
         })
         .collect::<Vec<_>>();
     critical_regressions.sort_by(|left, right| {
-        left
-            .directional_delta_pct
+        left.directional_delta_pct
             .unwrap_or_default()
             .partial_cmp(&right.directional_delta_pct.unwrap_or_default())
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -246,7 +244,8 @@ mod tests {
     }
 
     #[test]
-    fn should_classify_run_authoritative_when_all_records_have_authoritative_status_and_stability() {
+    fn should_classify_run_authoritative_when_all_records_have_authoritative_status_and_stability()
+    {
         // Arrange
         let config = BenchSummaryConfig::for_tests();
         let records = vec![record("authoritative", "stable")];
@@ -262,7 +261,10 @@ mod tests {
     fn should_not_classify_run_authoritative_when_any_record_is_not_authoritative() {
         // Arrange
         let config = BenchSummaryConfig::for_tests();
-        let records = vec![record("authoritative", "stable"), record("authoritative", "noisy")];
+        let records = vec![
+            record("authoritative", "stable"),
+            record("authoritative", "noisy"),
+        ];
 
         // Act
         let authoritative = current_run_authoritative(&records, &config);

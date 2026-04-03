@@ -362,7 +362,10 @@ fn assert_rpc_invalid_sequence_error_frame(frame: &[u8], expected_correlation_id
 
     let (code, message) =
         fitz::protocol::rpc_codec::decode_error_body(&response.body).expect("parse rpc error body");
-    assert_eq!(code, fitz::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE);
+    assert_eq!(
+        code,
+        fitz::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE
+    );
     assert_eq!(
         message,
         "RPC response sequence must start at seq=0 and advance contiguously"
@@ -981,10 +984,16 @@ async fn exercise_invalid_sequence_error_after_accept_tcp(server: &TestServer) {
         .await
         .expect("send invalid sequence response");
 
-    let caller_error = caller.recv_frame(2000).await.expect("caller invalid sequence error");
+    let caller_error = caller
+        .recv_frame(2000)
+        .await
+        .expect("caller invalid sequence error");
     assert_rpc_invalid_sequence_error_frame(&caller_error, delivered_request.correlation_id);
 
-    let worker_error = worker.recv_frame(2000).await.expect("worker invalid sequence error");
+    let worker_error = worker
+        .recv_frame(2000)
+        .await
+        .expect("worker invalid sequence error");
     assert_rpc_invalid_sequence_error_frame(&worker_error, delivered_request.correlation_id);
 
     let late_response_frame =
@@ -994,7 +1003,10 @@ async fn exercise_invalid_sequence_error_after_accept_tcp(server: &TestServer) {
         .await
         .expect("send late response after invalid sequence");
 
-    let orphan_error = worker.recv_frame(2000).await.expect("correlation error after cleanup");
+    let orphan_error = worker
+        .recv_frame(2000)
+        .await
+        .expect("correlation error after cleanup");
     assert_rpc_correlation_not_found_error_frame(&orphan_error, delivered_request.correlation_id);
 }
 
@@ -1036,10 +1048,16 @@ async fn exercise_invalid_sequence_error_after_accept_ws(server: &TestServer) {
         .await
         .expect("send invalid sequence response");
 
-    let caller_error = caller.recv_frame(2000).await.expect("caller invalid sequence error");
+    let caller_error = caller
+        .recv_frame(2000)
+        .await
+        .expect("caller invalid sequence error");
     assert_rpc_invalid_sequence_error_frame(&caller_error, delivered_request.correlation_id);
 
-    let worker_error = worker.recv_frame(2000).await.expect("worker invalid sequence error");
+    let worker_error = worker
+        .recv_frame(2000)
+        .await
+        .expect("worker invalid sequence error");
     assert_rpc_invalid_sequence_error_frame(&worker_error, delivered_request.correlation_id);
 
     let late_response_frame =
@@ -1049,7 +1067,10 @@ async fn exercise_invalid_sequence_error_after_accept_ws(server: &TestServer) {
         .await
         .expect("send late response after invalid sequence");
 
-    let orphan_error = worker.recv_frame(2000).await.expect("correlation error after cleanup");
+    let orphan_error = worker
+        .recv_frame(2000)
+        .await
+        .expect("correlation error after cleanup");
     assert_rpc_correlation_not_found_error_frame(&orphan_error, delivered_request.correlation_id);
 
     worker.close().await.expect("close worker");

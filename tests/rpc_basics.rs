@@ -800,11 +800,7 @@ fn should_define_error_code_6006_rpc_invalid_sequence() {
     let code = fitz::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE;
 
     // Assert
-    assert_eq!(
-        code,
-        6006,
-        "6006 = RPC_INVALID_SEQUENCE"
-    );
+    assert_eq!(code, 6006, "6006 = RPC_INVALID_SEQUENCE");
 }
 
 #[test]
