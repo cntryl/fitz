@@ -183,7 +183,10 @@ impl StreamActor {
             Ok(response) => response,
             Err(error) => {
                 self.active_session = Some(session);
-                return Err(error);
+                return Err(match error.as_str() {
+                    "ERR_CONCURRENCY_CONFLICT" => "concurrency conflict".to_string(),
+                    _ => error,
+                });
             }
         };
 

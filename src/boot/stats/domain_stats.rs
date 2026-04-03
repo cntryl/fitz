@@ -130,7 +130,11 @@ impl Runtime {
     }
 
     pub fn schedule_executions_per_minute(&self) -> f64 {
-        0.0
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.executions_per_minute())
+            .unwrap_or(0.0)
     }
 
     pub fn schedule_subscriptions_active(&self) -> usize {
@@ -138,6 +142,14 @@ impl Runtime {
             .read()
             .as_ref()
             .map(|domains| domains.schedule.subscription_count())
+            .unwrap_or(0)
+    }
+
+    pub fn schedule_pending_fires(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.pending_fire_count())
             .unwrap_or(0)
     }
 }

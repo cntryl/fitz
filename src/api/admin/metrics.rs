@@ -194,4 +194,146 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
         runtime.schedule_active()
     ));
     output.push('\n');
+
+    output.push_str("# HELP fitz_schedule_executions_per_minute Successful schedule deliveries over the last minute\n");
+    output.push_str("# TYPE fitz_schedule_executions_per_minute gauge\n");
+    output.push_str(&format!(
+        "fitz_schedule_executions_per_minute {}\n",
+        runtime.schedule_executions_per_minute()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_schedule_subscriptions_active Active schedule subscriptions\n");
+    output.push_str("# TYPE fitz_schedule_subscriptions_active gauge\n");
+    output.push_str(&format!(
+        "fitz_schedule_subscriptions_active {}\n",
+        runtime.schedule_subscriptions_active()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_schedule_pending_fires Durably claimed schedule fires awaiting successful publish acknowledgement\n");
+    output.push_str("# TYPE fitz_schedule_pending_fires gauge\n");
+    output.push_str(&format!(
+        "fitz_schedule_pending_fires {}\n",
+        runtime.schedule_pending_fires()
+    ));
+    output.push('\n');
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use crate::boot::domains::{
+        DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink,
+        RpcDomainSink, ScheduleDomainSink, StreamDomainSink,
+    };
+    use crate::domains::schedule::store::{ScheduleFireClaim, ScheduleInsert, ScheduleStore};
+    use crate::runtime::Router;
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn current_epoch_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_millis() as u64
+    }
+
+    fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let runtime = Arc::new(Runtime::with_admin_read_model(
+            router.clone(),
+            admin_read_model.clone(),
+        ));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let schedule_store = ScheduleStore::new(store.clone());
+        let route = "schedule://acme/jobs/nightly/run";
+        let payload = Bytes::from_static(b"nightly");
+        let now_ms = current_epoch_ms();
+        let claimed_fire_ms = now_ms.saturating_sub(30_000);
+        let next_fire_ms = now_ms.saturating_add(30_000);
+        let last_fire_ms = Some(now_ms.saturating_sub(1_000));
+
+        schedule_store
+            .insert(
+                1,
+                ScheduleInsert {
+                    route,
+                    cron: "* * * * *",
+                    payload: &payload,
+                    next_fire_ms: claimed_fire_ms,
+                    previous_fire_ms: None,
+                    last_fire_ms,
+                    executions_total: 4,
+                },
+                cntryl_midge::WriteOptions::buffered(),
+            )
+            .expect("insert schedule");
+        schedule_store
+            .claim_due_batch(
+                1,
+                &[ScheduleFireClaim {
+                    route,
+                    cron: "* * * * *",
+                    payload: &payload,
+                    next_fire_ms,
+                    previous_fire_ms: claimed_fire_ms,
+                    last_fire_ms,
+                    executions_total: 4,
+                }],
+                cntryl_midge::WriteOptions::buffered(),
+            )
+            .expect("claim due schedule");
+
+        let domains = Arc::new(DomainHandles {
+            kv: Arc::new(KvDomainSink::new(
+                store.clone(),
+                router.clone(),
+                admin_read_model.clone(),
+            )),
+            queue: Arc::new(QueueDomainSink::new(
+                store.clone(),
+                router.clone(),
+                admin_read_model.clone(),
+                cntryl_midge::WriteOptions::buffered(),
+            )),
+            notice: Arc::new(NoticeDomainSink::new(router.clone(), admin_read_model.clone())),
+            stream: Arc::new(StreamDomainSink::new(
+                store.clone(),
+                router.clone(),
+                admin_read_model.clone(),
+            )),
+            rpc: Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
+            lease: Arc::new(LeaseDomainSink::new(router.clone(), admin_read_model.clone())),
+            schedule: Arc::new(ScheduleDomainSink::new(
+                store,
+                router,
+                admin_read_model.clone(),
+            )),
+        });
+
+        domains
+            .schedule
+            .preload_persisted_families()
+            .expect("preload schedules");
+        runtime.attach_domains(domains);
+        runtime
+    }
+
+    #[test]
+    fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
+        // Arrange
+        let runtime = runtime_with_preloaded_schedule_metrics();
+
+        // Act
+        let metrics = generate_prometheus_metrics(runtime);
+
+        // Assert
+        assert!(metrics.contains("fitz_schedule_active 1"));
+        assert!(metrics.contains("fitz_schedule_executions_per_minute 1"));
+        assert!(metrics.contains("fitz_schedule_subscriptions_active 0"));
+        assert!(metrics.contains("fitz_schedule_pending_fires 1"));
+    }
 }

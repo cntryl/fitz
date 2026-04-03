@@ -7,10 +7,13 @@
 //! - Timing and scheduling edge cases
 
 use bytes::Bytes;
-use fitz::domains::schedule::protocol::CronSchedule;
+use chrono::TimeZone;
+use fitz::domains::schedule::protocol::{Clock, CronSchedule};
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 // ========== Helper ==========
 
@@ -20,6 +23,72 @@ fn make_schedule_actor() -> ScheduleActor {
         RouteFamily::new(1),
         store,
         cntryl_midge::WriteOptions::buffered(),
+    )
+}
+
+#[derive(Clone)]
+struct MockClock {
+    state: Arc<Mutex<MockClockState>>,
+}
+
+#[derive(Clone, Copy)]
+struct MockClockState {
+    instant: Instant,
+    epoch_ms: u64,
+}
+
+impl MockClock {
+    fn new(epoch_ms: u64) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(MockClockState {
+                instant: Instant::now(),
+                epoch_ms,
+            })),
+        }
+    }
+
+    fn advance(&self, duration: Duration) {
+        let mut state = self.state.lock().expect("lock mock clock");
+        state.instant += duration;
+        state.epoch_ms = state.epoch_ms.saturating_add(duration.as_millis() as u64);
+    }
+
+    fn advance_epoch(&self, duration: Duration) {
+        let mut state = self.state.lock().expect("lock mock clock");
+        state.epoch_ms = state.epoch_ms.saturating_add(duration.as_millis() as u64);
+    }
+
+    fn rewind_epoch(&self, duration: Duration) {
+        let mut state = self.state.lock().expect("lock mock clock");
+        state.epoch_ms = state.epoch_ms.saturating_sub(duration.as_millis() as u64);
+    }
+}
+
+impl Clock for MockClock {
+    fn now_instant(&self) -> Instant {
+        self.state.lock().expect("lock mock clock").instant
+    }
+
+    fn now_epoch_ms(&self) -> u64 {
+        self.state.lock().expect("lock mock clock").epoch_ms
+    }
+}
+
+fn epoch_ms(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> u64 {
+    chrono::Utc
+        .with_ymd_and_hms(year, month, day, hour, minute, second)
+        .single()
+        .expect("valid datetime")
+        .timestamp_millis() as u64
+}
+
+fn make_schedule_actor_with_clock(clock: Arc<dyn Clock>) -> ScheduleActor {
+    let store = create_test_engine_with_cfs(vec![1, 2, 3]);
+    ScheduleActor::new_with_clock(
+        RouteFamily::new(1),
+        store,
+        cntryl_midge::WriteOptions::buffered(),
+        clock,
     )
 }
 
@@ -203,6 +272,60 @@ fn should_handle_year_end_schedule() {
 
     // Assert
     assert!(next_fire > now);
+}
+
+#[test]
+fn should_skip_missed_occurrences_given_forward_epoch_jump() {
+    // Arrange
+    let clock = Arc::new(MockClock::new(epoch_ms(2026, 3, 31, 5, 58, 30)));
+    let mut actor = make_schedule_actor_with_clock(clock.clone());
+    let response = actor.handle(ScheduleMessage::Create {
+        route: "schedule://acme/system/forward-jump/run".to_string(),
+        cron: "* * * * *".to_string(),
+        payload: Bytes::from("jump"),
+    });
+    assert!(matches!(
+        response,
+        fitz::domains::schedule::ScheduleResponse::Ok
+    ));
+    clock.advance(Duration::from_millis(20));
+    clock.advance_epoch(Duration::from_secs(180));
+
+    // Act
+    let first_fire = actor.scan_and_fire();
+    clock.advance(Duration::from_secs(1));
+    let second_fire = actor.scan_and_fire();
+
+    // Assert
+    assert_eq!(first_fire.len(), 1);
+    assert!(second_fire.is_empty());
+}
+
+#[test]
+fn should_not_fire_given_backward_epoch_jump_before_due_time() {
+    // Arrange
+    let clock = Arc::new(MockClock::new(epoch_ms(2026, 3, 31, 5, 59, 30)));
+    let mut actor = make_schedule_actor_with_clock(clock.clone());
+    let response = actor.handle(ScheduleMessage::Create {
+        route: "schedule://acme/system/backward-jump/run".to_string(),
+        cron: "* * * * *".to_string(),
+        payload: Bytes::from("jump"),
+    });
+    assert!(matches!(
+        response,
+        fitz::domains::schedule::ScheduleResponse::Ok
+    ));
+    clock.advance(Duration::from_millis(20));
+    clock.rewind_epoch(Duration::from_secs(90));
+
+    // Act
+    let before_due = actor.scan_and_fire();
+    clock.advance(Duration::from_secs(121));
+    let after_due = actor.scan_and_fire();
+
+    // Assert
+    assert!(before_due.is_empty());
+    assert_eq!(after_due.len(), 1);
 }
 
 // ========== Schedule Replacement Tests ==========

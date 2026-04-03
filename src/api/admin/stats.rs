@@ -87,6 +87,7 @@ pub struct ScheduleStats {
     pub schedules_active: usize,
     pub executions_per_minute: f64,
     pub subscriptions_active: usize,
+    pub pending_fires: usize,
 }
 
 /// Handle /admin/stats endpoint
@@ -133,6 +134,7 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 schedules_active: runtime.schedule_active(),
                 executions_per_minute: runtime.schedule_executions_per_minute(),
                 subscriptions_active: runtime.schedule_subscriptions_active(),
+                pending_fires: runtime.schedule_pending_fires(),
             },
         },
     };

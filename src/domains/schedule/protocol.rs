@@ -1,7 +1,55 @@
 use crate::runtime::routing::{route_exact_quad, route_scheme, Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+pub trait Clock: Send + Sync {
+    fn now_instant(&self) -> Instant;
+    fn now_epoch_ms(&self) -> u64;
+}
+
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now_instant(&self) -> Instant {
+        Instant::now()
+    }
+
+    fn now_epoch_ms(&self) -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| Duration::from_secs(0))
+            .as_millis() as u64
+    }
+}
+
+pub(crate) fn instant_to_epoch_ms_with_reference(
+    instant: Instant,
+    reference_instant: Instant,
+    reference_epoch_ms: u64,
+) -> u64 {
+    if instant >= reference_instant {
+        reference_epoch_ms.saturating_add(instant.duration_since(reference_instant).as_millis() as u64)
+    } else {
+        reference_epoch_ms.saturating_sub(reference_instant.duration_since(instant).as_millis() as u64)
+    }
+}
+
+pub(crate) fn epoch_ms_to_instant_with_reference(
+    timestamp_ms: u64,
+    reference_instant: Instant,
+    reference_epoch_ms: u64,
+) -> Instant {
+    if timestamp_ms >= reference_epoch_ms {
+        reference_instant
+            .checked_add(Duration::from_millis(timestamp_ms - reference_epoch_ms))
+            .unwrap_or(reference_instant)
+    } else {
+        reference_instant
+            .checked_sub(Duration::from_millis(reference_epoch_ms - timestamp_ms))
+            .unwrap_or(reference_instant)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcreteScheduleRoute {
@@ -140,6 +188,10 @@ pub struct ScheduleDef {
     pub next_fire_time: Instant,
     /// Exact next-fire timestamp stored in the durable definition row
     pub next_fire_ms: u64,
+    /// Last successful schedule delivery timestamp in UNIX epoch milliseconds.
+    pub last_fire_ms: Option<u64>,
+    /// Total successful schedule deliveries recorded for this definition.
+    pub executions_total: u64,
     /// Current index in the actor's mutable LIST backing store.
     pub list_index: usize,
 }
@@ -245,31 +297,21 @@ impl CronSchedule {
 
     /// Calculate next fire time from current time
     pub fn next_fire_time(&self, from: Instant) -> Instant {
-        use std::time::{SystemTime, UNIX_EPOCH};
+        self.next_fire_time_with_clock(from, &SystemClock)
+    }
 
-        // Get current system time as a reference point
-        let now_instant = Instant::now();
-        let now_sys = SystemTime::now();
-
-        // Calculate system time corresponding to 'from' Instant
-        // If 'from' is in the past relative to now_instant, subtract the difference
-        // If 'from' is in the future, add the difference
-        let from_sys = if from <= now_instant {
-            let elapsed = now_instant - from;
-            now_sys - elapsed
-        } else {
-            let ahead = from - now_instant;
-            now_sys + ahead
-        };
-
-        // Get seconds since epoch for from_sys
-        let seconds = from_sys
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+    pub fn next_fire_time_with_clock(&self, from: Instant, clock: &dyn Clock) -> Instant {
+        let reference_instant = clock.now_instant();
+        let reference_epoch_ms = clock.now_epoch_ms();
+        let from_epoch_ms = instant_to_epoch_ms_with_reference(
+            from,
+            reference_instant,
+            reference_epoch_ms,
+        );
+        let seconds = from_epoch_ms / 1_000;
 
         if let Some(candidate_secs) = self.simple_candidate_seconds(seconds) {
-            return instant_from_epoch_seconds(candidate_secs, now_sys, now_instant);
+            return instant_from_epoch_seconds(candidate_secs, from, from_epoch_ms);
         }
 
         // Start from next minute (round up). We then jump between matching
@@ -331,12 +373,12 @@ impl CronSchedule {
                 continue;
             }
 
-            return instant_from_epoch_seconds(candidate_secs, now_sys, now_instant);
+            return instant_from_epoch_seconds(candidate_secs, from, from_epoch_ms);
         }
 
         // Fallback: if no match found in 4 years, return 1 hour from now
         // This should never happen with valid cron expressions
-        from + std::time::Duration::from_secs(3600)
+        from + Duration::from_secs(3600)
     }
 
     fn simple_candidate_seconds(&self, current_secs: u64) -> Option<u64> {
@@ -389,14 +431,14 @@ impl CronSchedule {
 
 fn instant_from_epoch_seconds(
     candidate_secs: u64,
-    now_sys: std::time::SystemTime,
-    now_instant: Instant,
+    anchor_instant: Instant,
+    anchor_epoch_ms: u64,
 ) -> Instant {
-    let candidate_sys = std::time::UNIX_EPOCH + std::time::Duration::from_secs(candidate_secs);
-    let duration_from_now_sys = candidate_sys
-        .duration_since(now_sys)
-        .unwrap_or_else(|_| std::time::Duration::from_secs(0));
-    now_instant + duration_from_now_sys
+    epoch_ms_to_instant_with_reference(
+        candidate_secs.saturating_mul(1_000),
+        anchor_instant,
+        anchor_epoch_ms,
+    )
 }
 
 /// Check if a value matches a cron field
@@ -592,6 +634,22 @@ fn parse_cron_field(field: &str, min: u32, max: u32) -> Result<CronField, String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+
+    struct MockClock {
+        instant: Instant,
+        epoch_ms: u64,
+    }
+
+    impl Clock for MockClock {
+        fn now_instant(&self) -> Instant {
+            self.instant
+        }
+
+        fn now_epoch_ms(&self) -> u64 {
+            self.epoch_ms
+        }
+    }
 
     #[test]
     fn should_parse_simple_cron_expression() {
@@ -633,6 +691,8 @@ mod tests {
             payload,
             next_fire_time: Instant::now(),
             next_fire_ms: 0,
+            last_fire_ms: None,
+            executions_total: 0,
             list_index: 0,
         };
 
@@ -699,6 +759,26 @@ mod tests {
 
         // Assert
         assert_eq!(candidate, Some(86_400 + (6 * 3_600) + (15 * 60)));
+    }
+
+    #[test]
+    fn should_calculate_next_fire_time_given_fixed_utc_clock_reference() {
+        // Arrange
+        let clock = MockClock {
+            instant: Instant::now(),
+            epoch_ms: chrono::Utc
+                .with_ymd_and_hms(2026, 3, 31, 5, 30, 0)
+                .single()
+                .expect("valid datetime")
+                .timestamp_millis() as u64,
+        };
+        let cron = CronSchedule::parse("0 6 * * *").expect("valid cron");
+
+        // Act
+        let next_fire = cron.next_fire_time_with_clock(clock.now_instant(), &clock);
+
+        // Assert
+        assert_eq!(next_fire.duration_since(clock.now_instant()), Duration::from_secs(30 * 60));
     }
 }
 

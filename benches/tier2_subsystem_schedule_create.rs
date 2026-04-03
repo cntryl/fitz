@@ -7,7 +7,9 @@ use fitz::domains::schedule::actor::ScheduleActor;
 use fitz::domains::schedule::protocol::{
     validate_concrete_schedule_route, CronSchedule, ScheduleCreateEntry,
 };
-use fitz::domains::schedule::store::{ScheduleInsert, ScheduleStore};
+use fitz::domains::schedule::store::{
+    ScheduleBatchInsert, ScheduleInsert, ScheduleStore,
+};
 use fitz::runtime::routing::RouteFamily;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -158,6 +160,8 @@ fn bench_schedule_create_breakdown(c: &mut Criterion) {
                                     payload: &case.payloads[index],
                                     next_fire_ms: case.next_fire_ms,
                                     previous_fire_ms: None,
+                                    last_fire_ms: None,
+                                    executions_total: 0,
                                 },
                                 cntryl_midge::WriteOptions::buffered(),
                             )
@@ -174,14 +178,14 @@ fn bench_schedule_create_breakdown(c: &mut Criterion) {
             || create_store_insert_case(&fixtures),
             |case| {
                 let items: Vec<_> = (0..CREATE_BATCH_SIZE)
-                    .map(|index| {
-                        (
-                            case.routes[index].clone(),
-                            case.cron.clone(),
-                            case.payloads[index].clone(),
-                            case.next_fire_ms,
-                            None,
-                        )
+                    .map(|index| ScheduleBatchInsert {
+                        route: case.routes[index].clone(),
+                        cron: case.cron.clone(),
+                        payload: case.payloads[index].clone(),
+                        next_fire_ms: case.next_fire_ms,
+                        previous_fire_ms: None,
+                        last_fire_ms: None,
+                        executions_total: 0,
                     })
                     .collect();
                 case.store

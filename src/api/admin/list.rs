@@ -124,8 +124,8 @@ pub struct LeaseResourceDetail {
 /// boot-loaded schedule definitions.
 ///
 /// `enabled`, `cron`, and `next_run` reflect persisted schedule definitions for
-/// this resource. `executions_total` remains a non-authoritative placeholder
-/// until a separate durable execution-history pass lands.
+/// this resource. `executions_total` reflects persisted successful schedule
+/// deliveries recorded on acknowledgment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleResourceDetail {
     pub realm: String,
@@ -531,8 +531,8 @@ pub struct SchedulesList {
 /// broker process at boot.
 ///
 /// Schedule definitions survive restart and downtime. `last_run` and
-/// `executions_total` are still placeholders in this round; they do not provide
-/// durable execution history.
+/// `executions_total` reflect persisted successful deliveries recorded when a
+/// claimed pending fire is acknowledged after publish.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleInfo {
     pub realm: String,
@@ -1164,6 +1164,86 @@ fn matches_operation_route(route: &str, path: &RpcOperationPath<'_>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
+    use crate::boot::domains::{
+        DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink,
+        RpcDomainSink, ScheduleDomainSink, StreamDomainSink,
+    };
+    use crate::boot::Runtime;
+    use crate::domains::schedule::store::{ScheduleInsert, ScheduleStore};
+    use crate::runtime::Router;
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn current_epoch_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_millis() as u64
+    }
+
+    fn runtime_with_preloaded_schedule() -> Arc<Runtime> {
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let runtime = Arc::new(Runtime::with_admin_read_model(
+            router.clone(),
+            admin_read_model.clone(),
+        ));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let schedule_store = ScheduleStore::new(store.clone());
+        let payload = Bytes::from_static(b"nightly");
+        let now_ms = current_epoch_ms();
+
+        schedule_store
+            .insert(
+                1,
+                ScheduleInsert {
+                    route: "schedule://acme/jobs/invoices/send",
+                    cron: "0 * * * *",
+                    payload: &payload,
+                    next_fire_ms: now_ms.saturating_add(60_000),
+                    previous_fire_ms: None,
+                    last_fire_ms: Some(now_ms.saturating_sub(1_000)),
+                    executions_total: 7,
+                },
+                cntryl_midge::WriteOptions::buffered(),
+            )
+            .expect("insert schedule");
+
+        let domains = Arc::new(DomainHandles {
+            kv: Arc::new(KvDomainSink::new(
+                store.clone(),
+                router.clone(),
+                admin_read_model.clone(),
+            )),
+            queue: Arc::new(QueueDomainSink::new(
+                store.clone(),
+                router.clone(),
+                admin_read_model.clone(),
+                cntryl_midge::WriteOptions::buffered(),
+            )),
+            notice: Arc::new(NoticeDomainSink::new(router.clone(), admin_read_model.clone())),
+            stream: Arc::new(StreamDomainSink::new(
+                store.clone(),
+                router.clone(),
+                admin_read_model.clone(),
+            )),
+            rpc: Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
+            lease: Arc::new(LeaseDomainSink::new(router.clone(), admin_read_model.clone())),
+            schedule: Arc::new(ScheduleDomainSink::new(
+                store,
+                router,
+                admin_read_model.clone(),
+            )),
+        });
+
+        domains
+            .schedule
+            .preload_persisted_families()
+            .expect("preload schedules");
+        runtime.attach_domains(domains);
+        runtime
+    }
 
     #[test]
     fn should_match_resource_ref_given_matching_resource_path() {
@@ -1389,5 +1469,30 @@ mod tests {
         assert_eq!(detail.cron, None);
         assert_eq!(detail.next_run.as_deref(), Some("2026-03-31T01:00:00Z"));
         assert_eq!(detail.executions_total, 5);
+    }
+
+    #[test]
+    fn should_expose_persisted_schedule_execution_state_given_preloaded_runtime() {
+        // Arrange
+        let runtime = runtime_with_preloaded_schedule();
+        let path = ResourcePath {
+            realm: "acme",
+            area: "jobs",
+            resource: "invoices",
+        };
+
+        // Act
+        let schedules = runtime.schedule_list_schedules(Some("acme"));
+        let detail = schedule_detail(runtime.as_ref(), &path);
+
+        // Assert
+        assert_eq!(schedules.len(), 1);
+        assert_eq!(schedules[0].operation, "send");
+        assert!(schedules[0].last_run.is_some());
+        assert_eq!(schedules[0].executions_total, 7);
+        assert!(detail.enabled);
+        assert_eq!(detail.cron.as_deref(), Some("0 * * * *"));
+        assert_eq!(detail.executions_total, 7);
+        assert!(detail.next_run.is_some());
     }
 }

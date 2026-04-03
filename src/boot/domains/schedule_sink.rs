@@ -150,23 +150,46 @@ impl ScheduleDomainSink {
                 if !fired.is_empty() {
                     snapshot_dirty = true;
                 }
-                for (route, payload) in fired {
-                    let route = crate::runtime::routing::Route::new(route);
-                    publishes.push(crate::runtime::DomainPublishEvent::new(
-                        *family, route, payload,
+                for pending_fire in actor.pending_fires_for_delivery() {
+                    publishes.push((
+                        *family,
+                        pending_fire.fire_ms,
+                        pending_fire.route,
+                        pending_fire.payload,
                     ));
                 }
             }
         }
 
-        if snapshot_dirty {
-            self.schedule_admin_snapshot(false);
+        let mut delivered = HashMap::<crate::runtime::routing::RouteFamily, Vec<(u64, String)>>::new();
+        for (family, fire_ms, route, payload) in publishes {
+            let route_value = crate::runtime::routing::Route::new(route.clone());
+            let event = crate::runtime::DomainPublishEvent::new(family, route_value.clone(), payload);
+            let destination = crate::runtime::routing::RouteAddress::new(family, route_value);
+            if self.router.route(Envelope::new(destination, event)).is_ok() {
+                delivered.entry(family).or_default().push((fire_ms, route));
+            }
         }
 
-        for event in publishes {
-            let destination =
-                crate::runtime::routing::RouteAddress::new(event.family_id, event.route.clone());
-            let _ = self.router.route(Envelope::new(destination, event));
+        let had_deliveries = !delivered.is_empty();
+
+        if !delivered.is_empty() {
+            let mut actors = self.actors.lock();
+            for (family, delivered_fires) in delivered {
+                if let Some(actor) = actors.get_mut(&family) {
+                    if let Err(error) = actor.ack_pending_fires(&delivered_fires) {
+                        tracing::warn!(
+                            route_family = family.as_u64(),
+                            error = %error,
+                            "Failed to acknowledge pending schedule fires"
+                        );
+                    }
+                }
+            }
+        }
+
+        if snapshot_dirty || had_deliveries {
+            self.schedule_admin_snapshot(false);
         }
     }
 
@@ -267,6 +290,19 @@ impl ScheduleDomainSink {
     pub fn schedule_count(&self) -> usize {
         let actors = self.actors.lock();
         actors.values().map(|actor| actor.schedule_count()).sum()
+    }
+
+    pub fn pending_fire_count(&self) -> usize {
+        let actors = self.actors.lock();
+        actors.values().map(|actor| actor.pending_fire_count()).sum()
+    }
+
+    pub fn executions_per_minute(&self) -> f64 {
+        let mut actors = self.actors.lock();
+        actors
+            .values_mut()
+            .map(|actor| actor.executions_per_minute())
+            .sum()
     }
 
     fn sync_admin_snapshot(&self) {
@@ -712,6 +748,112 @@ mod tests {
         assert_eq!(notified_subscription_id, subscription_id);
         assert_eq!(notified_payload.as_ref(), b"nightly");
         assert!(notify_decoder.is_complete());
+    }
+
+    #[test]
+    fn should_replay_pending_schedule_notify_after_restart_given_initial_publish_failure() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let schedule_route = "schedule://acme/jobs/replay/run";
+        let schedule_address = RouteAddress::new(family, Route::new(schedule_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let initial_sink = Arc::new(ScheduleDomainSink::new(
+            store.clone(),
+            router.clone(),
+            admin_read_model.clone(),
+        ));
+
+        initial_sink
+            .deliver(Envelope::from_route(
+                subscriber_address.clone(),
+                schedule_address.clone(),
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Sub,
+                    MessageType::new(700),
+                    encode_schedule_create(schedule_route, "* * * * *", b"replay"),
+                    family,
+                ),
+            ))
+            .expect("create schedule");
+
+        {
+            let mut actors = initial_sink.actors.lock();
+            let actor = actors.get_mut(&family).expect("schedule actor");
+            actor.bench_prepare_scan(1);
+        }
+
+        // Act
+        initial_sink.scan_due_schedules();
+
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let restarted_sink = Arc::new(ScheduleDomainSink::new(
+            store,
+            router.clone(),
+            admin_read_model,
+        ));
+        router.register_domain_pattern("schedule", restarted_sink.clone());
+        restarted_sink
+            .preload_persisted_families()
+            .expect("preload persisted families");
+
+        restarted_sink
+            .deliver(Envelope::from_route(
+                subscriber_address.clone(),
+                schedule_address,
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Sub,
+                    MessageType::new(703),
+                    encode_schedule_subscribe(schedule_route),
+                    family,
+                ),
+            ))
+            .expect("subscribe schedule");
+        let subscribe_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("subscribe ack envelope");
+        let subscribe_frame = subscribe_envelope
+            .into_payload::<FrameContext>()
+            .expect("subscribe ack frame");
+        let mut subscribe_decoder = PayloadDecoder::new(&subscribe_frame.payload);
+        let _subscribe_status = subscribe_decoder.get_u8().expect("subscribe status");
+        let subscription_id = subscribe_decoder
+            .get_optional_u64()
+            .expect("subscription id")
+            .expect("subscription id present");
+
+        restarted_sink.scan_due_schedules();
+
+        // Assert
+        let notify_envelope = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("schedule notify envelope");
+        let notify_frame = notify_envelope
+            .into_payload::<FrameContext>()
+            .expect("schedule notify frame");
+        assert_eq!(notify_frame.msg_type.as_u16(), 705);
+
+        let mut notify_decoder = PayloadDecoder::new(&notify_frame.payload);
+        let notified_subscription_id = notify_decoder.get_u64().expect("notify subscription id");
+        let notified_payload = notify_decoder.get_bytes().expect("notify payload");
+
+        assert_eq!(notified_subscription_id, subscription_id);
+        assert_eq!(notified_payload.as_ref(), b"replay");
+        assert!(notify_decoder.is_complete());
+
+        restarted_sink.scan_due_schedules();
+        assert!(
+            subscriber_mailbox.receiver().try_recv().is_err(),
+            "pending fire should be acknowledged after a successful replay"
+        );
     }
 
     #[test]

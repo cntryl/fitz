@@ -76,11 +76,46 @@ type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 struct QueueRecord {
     /// Message body, hydrated lazily for recovered records.
     body: Option<Bytes>,
-    /// Redelivery attempt counter (starts at 0, incremented on redelivery)
+    /// Durable queue state for this message.
+    state: QueueState,
+    /// Monotonic enqueue order for the original message create.
+    enqueue_seq: u64,
+    /// Current ready ordering sequence when the message is in the ready state.
+    ready_seq: Option<u64>,
+    /// Number of delivery attempts (starts at 0, increments on successful lease grant).
     attempts: u32,
-    /// Visibility timestamp (milliseconds since UNIX epoch)
-    /// Message is invisible until this time has passed (absolute, not relative)
+    /// Visibility timestamp (milliseconds since UNIX epoch).
+    ///
+    /// For delayed rows this is the time the message becomes ready. For leased
+    /// rows this is the lease expiry. For ready rows it is 0.
     visible_at_ms: u64,
+    /// When the message was first committed to the queue.
+    first_enqueued_at_ms: u64,
+    /// Last successful lease grant timestamp.
+    last_leased_at_ms: Option<u64>,
+    /// Monotonic lease epoch; increments on every successful lease grant.
+    lease_epoch: u64,
+    /// Current durable lease token, if any.
+    lease_token: Option<u64>,
+    /// Durable lease expiry in UNIX epoch milliseconds, if leased.
+    lease_expires_at_ms: Option<u64>,
+    /// Durable DLQ timestamp.
+    dead_lettered_at_ms: Option<u64>,
+    /// Durable DLQ reason code.
+    dlq_reason: Option<DlqReason>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueueState {
+    Ready = 0,
+    Delayed = 1,
+    Leased = 2,
+    Dlq = 3,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DlqReason {
+    MaxAttemptsExceeded = 1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,20 +127,92 @@ enum StoredRecordLayout {
 
 impl QueueRecord {
     #[inline]
-    fn loaded(body: Bytes, attempts: u32, visible_at_ms: u64) -> Self {
+    #[allow(dead_code)]
+    fn ready(body: Bytes, enqueue_seq: u64, ready_seq: u64, now_epoch_ms: u64) -> Self {
         Self {
             body: Some(body),
-            attempts,
-            visible_at_ms,
+            state: QueueState::Ready,
+            enqueue_seq,
+            ready_seq: Some(ready_seq),
+            attempts: 0,
+            visible_at_ms: 0,
+            first_enqueued_at_ms: now_epoch_ms,
+            last_leased_at_ms: None,
+            lease_epoch: 0,
+            lease_token: None,
+            lease_expires_at_ms: None,
+            dead_lettered_at_ms: None,
+            dlq_reason: None,
         }
     }
 
     #[inline]
-    fn metadata_only(attempts: u32, visible_at_ms: u64) -> Self {
+    #[allow(dead_code)]
+    fn delayed(body: Bytes, enqueue_seq: u64, visible_at_ms: u64, now_epoch_ms: u64) -> Self {
         Self {
-            body: None,
+            body: Some(body),
+            state: QueueState::Delayed,
+            enqueue_seq,
+            ready_seq: None,
+            attempts: 0,
+            visible_at_ms,
+            first_enqueued_at_ms: now_epoch_ms,
+            last_leased_at_ms: None,
+            lease_epoch: 0,
+            lease_token: None,
+            lease_expires_at_ms: None,
+            dead_lettered_at_ms: None,
+            dlq_reason: None,
+        }
+    }
+
+    #[inline]
+    fn loaded_legacy(body: Bytes, attempts: u32, visible_at_ms: u64) -> Self {
+        Self {
+            body: Some(body),
+            state: QueueState::Ready,
+            enqueue_seq: 0,
+            ready_seq: None,
             attempts,
             visible_at_ms,
+            first_enqueued_at_ms: 0,
+            last_leased_at_ms: None,
+            lease_epoch: 0,
+            lease_token: None,
+            lease_expires_at_ms: None,
+            dead_lettered_at_ms: None,
+            dlq_reason: None,
+        }
+    }
+
+    #[inline]
+    fn loaded(body: Bytes, attempts: u32, visible_at_ms: u64) -> Self {
+        Self::loaded_legacy(body, attempts, visible_at_ms)
+    }
+
+    #[inline]
+    fn metadata_only(attempts: u32, visible_at_ms: u64) -> Self {
+        let mut record = Self::loaded_legacy(Bytes::new(), attempts, visible_at_ms);
+        record.body = None;
+        record
+    }
+
+    #[inline]
+    fn metadata_only_from(&self) -> Self {
+        Self {
+            body: None,
+            state: self.state,
+            enqueue_seq: self.enqueue_seq,
+            ready_seq: self.ready_seq,
+            attempts: self.attempts,
+            visible_at_ms: self.visible_at_ms,
+            first_enqueued_at_ms: self.first_enqueued_at_ms,
+            last_leased_at_ms: self.last_leased_at_ms,
+            lease_epoch: self.lease_epoch,
+            lease_token: self.lease_token,
+            lease_expires_at_ms: self.lease_expires_at_ms,
+            dead_lettered_at_ms: self.dead_lettered_at_ms,
+            dlq_reason: self.dlq_reason,
         }
     }
 }
@@ -117,10 +224,14 @@ pub struct Inflight {
     token: u64,
     /// Absolute expiration time
     expires_at: Instant,
+    /// Durable lease expiry in UNIX epoch milliseconds.
+    expires_at_epoch_ms: u64,
     /// Owning live session, if the lease was created through the broker session layer.
     owner_session_id: Option<u64>,
     /// Delivery attempt count presented with the current lease.
     attempts: u32,
+    /// Durable lease epoch for stale-event suppression.
+    lease_epoch: u64,
 }
 
 /// Point-in-time warm-actor queue counts for admin diagnostics.
@@ -147,8 +258,12 @@ pub struct QueueLeaseSnapshot {
 struct LeaseExpiry {
     /// Message ID to re-enqueue
     id: MessageId,
+    /// Lease epoch to detect stale expiry events after extend/reassign.
+    lease_epoch: u64,
     /// Expiration time (for ordering in heap)
     expires_at: Instant,
+    /// Expiration time in UNIX epoch milliseconds.
+    expires_at_ms: u64,
 }
 
 impl Ord for LeaseExpiry {
@@ -169,8 +284,12 @@ impl PartialOrd for LeaseExpiry {
 struct DelayedMessage {
     /// Message ID to make visible
     id: MessageId,
+    /// Original enqueue sequence for deterministic promotion ordering.
+    enqueue_seq: u64,
     /// Visibility time (for ordering in heap)
     visible_at: Instant,
+    /// Visibility time in UNIX epoch milliseconds.
+    visible_at_ms: u64,
 }
 
 impl Ord for DelayedMessage {
@@ -179,8 +298,27 @@ impl Ord for DelayedMessage {
         other
             .visible_at
             .cmp(&self.visible_at)
+            .then_with(|| other.enqueue_seq.cmp(&self.enqueue_seq))
             .then_with(|| other.id.as_u64().cmp(&self.id.as_u64()))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReadyEntry {
+    ready_seq: u64,
+    id: MessageId,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+struct QueueMetaSnapshot {
+    next_id: u64,
+    next_ready_seq: u64,
+    ready_count: u64,
+    delayed_count: u64,
+    leased_count: u64,
+    dlq_count: u64,
+    oldest_ready_enqueued_at_ms: Option<u64>,
 }
 
 impl PartialOrd for DelayedMessage {
@@ -296,6 +434,10 @@ pub struct QueueActor {
     /// Cached Midge metadata key for this queue.
     meta_key: Vec<u8>,
 
+    /// Legacy recovery-index metadata key.
+    #[allow(dead_code)]
+    index_meta_key: Vec<u8>,
+
     /// Cached Midge header-key prefix for this queue.
     header_key_prefix: Vec<u8>,
 
@@ -305,14 +447,23 @@ pub struct QueueActor {
     /// Cached Midge legacy record-key prefix for this queue.
     legacy_message_key_prefix: Vec<u8>,
 
-    /// Cached Midge metadata key for the authoritative recovery index.
-    index_meta_key: Vec<u8>,
-
     /// Cached Midge ready-index prefix for this queue.
     ready_index_prefix: Vec<u8>,
 
     /// Cached Midge delayed-index prefix for this queue.
     delayed_index_prefix: Vec<u8>,
+
+    /// Cached Midge leased-index prefix for this queue.
+    #[allow(dead_code)]
+    lease_index_prefix: Vec<u8>,
+
+    /// Cached Midge dead-letter index prefix for this queue.
+    #[allow(dead_code)]
+    dlq_index_prefix: Vec<u8>,
+
+    /// Cached Midge durable COMPLETE deduplication prefix for this queue.
+    #[allow(dead_code)]
+    ack_dedup_prefix: Vec<u8>,
 
     /// Midge storage handle (for durable persistence)
     store: Arc<cntryl_midge::MidgeEngine>,
@@ -325,24 +476,42 @@ pub struct QueueActor {
     /// Next message ID to allocate (monotonic counter)
     next_id: u64,
 
-    /// Exclusive upper bound of IDs already reserved durably in queue metadata.
-    /// This lets hot enqueue paths skip rewriting metadata on every message.
+    /// Next durable ready ordering sequence.
+    next_ready_seq: u64,
+
+    /// Legacy reserved ID upper bound retained while the actor migrates away
+    /// from the old range-index path.
+    #[allow(dead_code)]
     next_id_limit: u64,
 
-    /// Ready queues: sharded FIFO lists of compressed message-ID ranges.
+    /// Ready queue ordered by durable ready sequence.
+    ready: VecDeque<ReadyEntry>,
+
+    /// Legacy sharded ready queue retained for compile-time compatibility while
+    /// the durable ready-sequence path replaces it.
+    #[allow(dead_code)]
     ready_shards: Vec<VecDeque<ReadyRange>>,
 
-    /// Authoritative persisted ready index: compressed ranges by shard.
+    /// Legacy persisted ready range index retained for compatibility.
+    #[allow(dead_code)]
     persisted_ready_shards: Vec<VecDeque<ReadyRange>>,
 
-    /// Cached total number of persisted ready messages represented by
-    /// `persisted_ready_shards`.
+    /// Legacy persisted ready count retained for compatibility.
+    #[allow(dead_code)]
     persisted_ready_count: usize,
 
     /// Cached total number of ready messages across all shards.
     ready_count: usize,
 
-    /// Round-robin cursor for ready shard selection
+    /// Durable dead-letter count.
+    #[allow(dead_code)]
+    dlq_count: usize,
+
+    /// Oldest ready-message enqueue timestamp.
+    oldest_ready_enqueued_at_ms: Option<u64>,
+
+    /// Legacy round-robin shard cursor retained for compatibility.
+    #[allow(dead_code)]
     next_ready_shard: usize,
 
     /// Bounded in-memory message metadata cache (durable backing is Midge).
@@ -379,10 +548,12 @@ pub struct QueueActor {
     /// Cached minimum delayed visibility across `persisted_delayed`.
     persisted_next_delayed_visibility_ms: Option<u64>,
 
-    /// Whether a valid persisted index marker is already stored for this queue.
+    /// Legacy persisted-index marker retained for compatibility.
+    #[allow(dead_code)]
     index_meta_written: bool,
 
-    /// How the current in-memory state was last recovered.
+    /// Legacy recovery mode retained for compatibility with existing tests.
+    #[allow(dead_code)]
     recovery_path: RecoveryPath,
 
     /// Pending availability notification (debounced)
@@ -416,6 +587,11 @@ impl QueueActor {
     const READY_SHARDS: usize = 8;
     const NOTICE_DEBOUNCE_MS: u64 = 25;
     const ID_RESERVATION_BLOCK: u64 = 256;
+    #[allow(dead_code)]
+    const META_VERSION_V2: u8 = 2;
+    const HEADER_VERSION_V2: u8 = 2;
+    #[allow(dead_code)]
+    const ACK_DEDUP_TTL_MS: u64 = 5 * 60 * 1_000;
     const INDEX_VERSION_V1: u8 = 1;
     const INDEX_VERSION_V2: u8 = 2;
     const INDEX_META_VALID_MARKER: u8 = 1;
@@ -500,21 +676,28 @@ impl QueueActor {
         let mut actor = Self {
             family,
             meta_key: Self::meta_key(&queue_key),
+            index_meta_key: Self::index_meta_key(&queue_key),
             header_key_prefix: Self::header_key_prefix(&queue_key),
             body_key_prefix: Self::body_key_prefix(&queue_key),
             legacy_message_key_prefix: Self::legacy_message_key_prefix(&queue_key),
-            index_meta_key: Self::index_meta_key(&queue_key),
             ready_index_prefix: Self::ready_index_prefix(&queue_key),
             delayed_index_prefix: Self::delayed_index_prefix(&queue_key),
+            lease_index_prefix: Self::lease_index_prefix(&queue_key),
+            dlq_index_prefix: Self::dlq_index_prefix(&queue_key),
+            ack_dedup_prefix: Self::ack_dedup_prefix(&queue_key),
             queue_key,
             store,
             commit_write_options,
             next_id: 1,
+            next_ready_seq: 1,
             next_id_limit: 1,
+            ready: VecDeque::new(),
             ready_shards: (0..Self::READY_SHARDS).map(|_| VecDeque::new()).collect(),
             persisted_ready_shards: (0..Self::READY_SHARDS).map(|_| VecDeque::new()).collect(),
             persisted_ready_count: 0,
             ready_count: 0,
+            dlq_count: 0,
+            oldest_ready_enqueued_at_ms: None,
             next_ready_shard: 0,
             records: HashMap::with_capacity_and_hasher(128, FxBuildHasher::default()),
             record_layouts: HashMap::with_capacity_and_hasher(128, FxBuildHasher::default()),
@@ -660,6 +843,30 @@ impl QueueActor {
         .into_bytes()
     }
 
+    fn lease_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
+        format!(
+            "queue:{}:{}:{}:idx:lease:",
+            queue_key.realm, queue_key.area, queue_key.resource
+        )
+        .into_bytes()
+    }
+
+    fn dlq_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
+        format!(
+            "queue:{}:{}:{}:idx:dlq:",
+            queue_key.realm, queue_key.area, queue_key.resource
+        )
+        .into_bytes()
+    }
+
+    fn ack_dedup_prefix(queue_key: &QueueKey) -> Vec<u8> {
+        format!(
+            "queue:{}:{}:{}:ack:",
+            queue_key.realm, queue_key.area, queue_key.resource
+        )
+        .into_bytes()
+    }
+
     fn legacy_message_key_prefix(queue_key: &QueueKey) -> Vec<u8> {
         format!(
             "queue:{}:{}:{}:msg:{}",
@@ -703,6 +910,35 @@ impl QueueActor {
         Self::cached_id_key(&self.legacy_message_key_prefix, id)
     }
 
+    #[allow(dead_code)]
+    fn ready_entry_index_key_with_prefix(prefix: &[u8], ready_seq: u64, id: MessageId) -> Vec<u8> {
+        let mut key = Vec::with_capacity(prefix.len() + (Self::PADDED_U64_WIDTH * 2) + 1);
+        key.extend_from_slice(prefix);
+        Self::append_padded_u64(&mut key, ready_seq);
+        key.push(b':');
+        Self::append_padded_u64(&mut key, id.as_u64());
+        key
+    }
+
+    #[allow(dead_code)]
+    fn ready_entry_index_key(&self, ready_seq: u64, id: MessageId) -> Vec<u8> {
+        Self::ready_entry_index_key_with_prefix(&self.ready_index_prefix, ready_seq, id)
+    }
+
+    #[allow(dead_code)]
+    fn parse_ready_entry_index_key(key: &[u8], prefix: &[u8]) -> Option<(u64, MessageId)> {
+        let rest = key.strip_prefix(prefix)?;
+        if rest.len() != (Self::PADDED_U64_WIDTH * 2) + 1 {
+            return None;
+        }
+        if rest[Self::PADDED_U64_WIDTH] != b':' {
+            return None;
+        }
+        let ready_seq = Self::parse_padded_u64(&rest[..Self::PADDED_U64_WIDTH])?;
+        let id = Self::parse_padded_u64(&rest[(Self::PADDED_U64_WIDTH + 1)..])?;
+        Some((ready_seq, MessageId::new(id)))
+    }
+
     fn append_padded_u64(buf: &mut Vec<u8>, value: u64) {
         let mut digits = [b'0'; Self::PADDED_U64_WIDTH];
         let mut cursor = Self::PADDED_U64_WIDTH;
@@ -733,6 +969,61 @@ impl QueueActor {
             value = value.checked_mul(10)?.checked_add((byte - b'0') as u64)?;
         }
         Some(value)
+    }
+
+    #[allow(dead_code)]
+    fn encode_meta(meta: QueueMetaSnapshot) -> Vec<u8> {
+        let mut out = Vec::with_capacity(1 + (8 * 7));
+        out.push(Self::META_VERSION_V2);
+        out.extend_from_slice(&meta.next_id.to_le_bytes());
+        out.extend_from_slice(&meta.next_ready_seq.to_le_bytes());
+        out.extend_from_slice(&meta.ready_count.to_le_bytes());
+        out.extend_from_slice(&meta.delayed_count.to_le_bytes());
+        out.extend_from_slice(&meta.leased_count.to_le_bytes());
+        out.extend_from_slice(&meta.dlq_count.to_le_bytes());
+        out.extend_from_slice(
+            &meta
+                .oldest_ready_enqueued_at_ms
+                .unwrap_or(0)
+                .to_le_bytes(),
+        );
+        out
+    }
+
+    fn decode_meta(bytes: &[u8]) -> Option<QueueMetaSnapshot> {
+        if bytes.len() == 8 {
+            let next_id = u64::from_le_bytes(bytes.try_into().ok()?);
+            return Some(QueueMetaSnapshot {
+                next_id,
+                next_ready_seq: next_id,
+                ready_count: 0,
+                delayed_count: 0,
+                leased_count: 0,
+                dlq_count: 0,
+                oldest_ready_enqueued_at_ms: None,
+            });
+        }
+
+        if bytes.first().copied()? != Self::META_VERSION_V2 || bytes.len() < 57 {
+            return None;
+        }
+
+        let next_id = u64::from_le_bytes(bytes[1..9].try_into().ok()?);
+        let next_ready_seq = u64::from_le_bytes(bytes[9..17].try_into().ok()?);
+        let ready_count = u64::from_le_bytes(bytes[17..25].try_into().ok()?);
+        let delayed_count = u64::from_le_bytes(bytes[25..33].try_into().ok()?);
+        let leased_count = u64::from_le_bytes(bytes[33..41].try_into().ok()?);
+        let dlq_count = u64::from_le_bytes(bytes[41..49].try_into().ok()?);
+        let oldest_ready = u64::from_le_bytes(bytes[49..57].try_into().ok()?);
+        Some(QueueMetaSnapshot {
+            next_id,
+            next_ready_seq,
+            ready_count,
+            delayed_count,
+            leased_count,
+            dlq_count,
+            oldest_ready_enqueued_at_ms: (oldest_ready != 0).then_some(oldest_ready),
+        })
     }
 
     fn encode_index_meta(
@@ -813,9 +1104,20 @@ impl QueueActor {
 
     fn decode_next_id(bytes: Option<&[u8]>) -> u64 {
         bytes
-            .and_then(|raw| raw.get(0..8))
-            .map(|slice| u64::from_le_bytes(slice.try_into().unwrap()))
+            .and_then(Self::decode_meta)
+            .map(|meta| meta.next_id)
             .unwrap_or(1)
+    }
+
+    #[allow(dead_code)]
+    fn load_meta_from_store(&self) -> Option<QueueMetaSnapshot> {
+        let cf_id = self.queue_key.family.id();
+        let txn = self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
+            .ok()?;
+        let bytes = txn.get(&self.meta_key).ok()??;
+        Self::decode_meta(bytes.as_ref())
     }
 
     fn load_next_id_from_meta_key(&self) -> u64 {
@@ -990,6 +1292,76 @@ impl QueueActor {
         Self::delayed_index_key_with_prefix(&self.delayed_index_prefix, visible_at_ms, id)
     }
 
+    #[allow(dead_code)]
+    fn delayed_entry_index_key(
+        &self,
+        visible_at_ms: u64,
+        enqueue_seq: u64,
+        id: MessageId,
+    ) -> Vec<u8> {
+        let mut key =
+            Vec::with_capacity(self.delayed_index_prefix.len() + (Self::PADDED_U64_WIDTH * 3) + 2);
+        key.extend_from_slice(&self.delayed_index_prefix);
+        Self::append_padded_u64(&mut key, visible_at_ms);
+        key.push(b':');
+        Self::append_padded_u64(&mut key, enqueue_seq);
+        key.push(b':');
+        Self::append_padded_u64(&mut key, id.as_u64());
+        key
+    }
+
+    #[allow(dead_code)]
+    fn parse_delayed_entry_index_key(key: &[u8], prefix: &[u8]) -> Option<(u64, u64, MessageId)> {
+        let rest = key.strip_prefix(prefix)?;
+        if rest.len() != (Self::PADDED_U64_WIDTH * 3) + 2 {
+            return None;
+        }
+        if rest[Self::PADDED_U64_WIDTH] != b':'
+            || rest[(Self::PADDED_U64_WIDTH * 2) + 1] != b':'
+        {
+            return None;
+        }
+        let visible_at_ms = Self::parse_padded_u64(&rest[..Self::PADDED_U64_WIDTH])?;
+        let enqueue_seq = Self::parse_padded_u64(
+            &rest[(Self::PADDED_U64_WIDTH + 1)..((Self::PADDED_U64_WIDTH * 2) + 1)],
+        )?;
+        let id = Self::parse_padded_u64(&rest[((Self::PADDED_U64_WIDTH * 2) + 2)..])?;
+        Some((visible_at_ms, enqueue_seq, MessageId::new(id)))
+    }
+
+    #[allow(dead_code)]
+    fn lease_index_key(&self, expires_at_ms: u64, lease_epoch: u64, id: MessageId) -> Vec<u8> {
+        let mut key =
+            Vec::with_capacity(self.lease_index_prefix.len() + (Self::PADDED_U64_WIDTH * 3) + 2);
+        key.extend_from_slice(&self.lease_index_prefix);
+        Self::append_padded_u64(&mut key, expires_at_ms);
+        key.push(b':');
+        Self::append_padded_u64(&mut key, lease_epoch);
+        key.push(b':');
+        Self::append_padded_u64(&mut key, id.as_u64());
+        key
+    }
+
+    #[allow(dead_code)]
+    fn dlq_index_key(&self, dead_lettered_at_ms: u64, id: MessageId) -> Vec<u8> {
+        let mut key = Vec::with_capacity(self.dlq_index_prefix.len() + (Self::PADDED_U64_WIDTH * 2) + 1);
+        key.extend_from_slice(&self.dlq_index_prefix);
+        Self::append_padded_u64(&mut key, dead_lettered_at_ms);
+        key.push(b':');
+        Self::append_padded_u64(&mut key, id.as_u64());
+        key
+    }
+
+    #[allow(dead_code)]
+    fn ack_dedup_key(&self, id: MessageId, token: u64) -> Vec<u8> {
+        let mut key = Vec::with_capacity(self.ack_dedup_prefix.len() + (Self::PADDED_U64_WIDTH * 2) + 1);
+        key.extend_from_slice(&self.ack_dedup_prefix);
+        Self::append_padded_u64(&mut key, id.as_u64());
+        key.push(b':');
+        Self::append_padded_u64(&mut key, token);
+        key
+    }
+
     fn parse_delayed_index_key(key: &[u8], prefix: &[u8]) -> Option<(u64, MessageId)> {
         let rest = key.strip_prefix(prefix)?;
         if rest.len() != (Self::PADDED_U64_WIDTH * 2) + 1 {
@@ -1023,10 +1395,20 @@ impl QueueActor {
 
     /// Serialize QueueRecord header to bytes.
     fn encode_record_header(record: &QueueRecord) -> Vec<u8> {
-        // Encoding: [attempts:4][visible_at_ms:8]
-        let mut buf = Vec::with_capacity(12);
+        let mut buf = Vec::with_capacity(79);
+        buf.push(Self::HEADER_VERSION_V2);
+        buf.push(record.state as u8);
+        buf.extend_from_slice(&record.enqueue_seq.to_le_bytes());
+        buf.extend_from_slice(&record.ready_seq.unwrap_or(0).to_le_bytes());
         buf.extend_from_slice(&record.attempts.to_le_bytes());
         buf.extend_from_slice(&record.visible_at_ms.to_le_bytes());
+        buf.extend_from_slice(&record.first_enqueued_at_ms.to_le_bytes());
+        buf.extend_from_slice(&record.last_leased_at_ms.unwrap_or(0).to_le_bytes());
+        buf.extend_from_slice(&record.lease_epoch.to_le_bytes());
+        buf.extend_from_slice(&record.lease_token.unwrap_or(0).to_le_bytes());
+        buf.extend_from_slice(&record.lease_expires_at_ms.unwrap_or(0).to_le_bytes());
+        buf.extend_from_slice(&record.dead_lettered_at_ms.unwrap_or(0).to_le_bytes());
+        buf.push(record.dlq_reason.map(|value| value as u8).unwrap_or(0));
         buf
     }
 
@@ -1053,6 +1435,7 @@ impl QueueActor {
     }
 
     fn reset_live_ready_state(&mut self) {
+        self.ready.clear();
         for shard in &mut self.ready_shards {
             shard.clear();
         }
@@ -1123,29 +1506,26 @@ impl QueueActor {
     }
 
     fn push_ready(&mut self, id: MessageId) {
-        let shard = Self::shard_for_id(id);
-        let id_u64 = id.as_u64();
-        let step = Self::READY_SHARDS as u64;
-
-        if let Some(range) = self.ready_shards[shard].back_mut() {
-            if id_u64 == range.end.saturating_add(step) {
-                range.end = id_u64;
-                self.ready_count += 1;
-                return;
-            }
-        }
-
-        self.ready_shards[shard].push_back(ReadyRange {
-            next: id_u64,
-            end: id_u64,
-        });
-        self.ready_count += 1;
+        self.push_ready_entry(self.next_ready_seq, id);
+        self.next_ready_seq = self.next_ready_seq.saturating_add(1);
     }
 
-    fn push_ready_range(&mut self, range: ReadyRange) {
-        let shard = range.next as usize & (Self::READY_SHARDS - 1);
-        Self::push_range_into(&mut self.ready_shards, shard, range);
-        self.ready_count += Self::range_len(range);
+    fn push_ready_entry(&mut self, ready_seq: u64, id: MessageId) {
+        self.ready.push_back(ReadyEntry { ready_seq, id });
+        self.ready_count = self.ready.len();
+        if let Some(record) = self.records.get(&id) {
+            let enqueue_ms = if record.first_enqueued_at_ms != 0 {
+                record.first_enqueued_at_ms
+            } else {
+                self.clock.now_epoch_ms()
+            };
+            self.oldest_ready_enqueued_at_ms = Some(
+                self.oldest_ready_enqueued_at_ms
+                    .map(|current| current.min(enqueue_ms))
+                    .unwrap_or(enqueue_ms),
+            );
+        }
+
     }
 
     fn push_persisted_ready(&mut self, id: MessageId) {
@@ -1162,6 +1542,25 @@ impl QueueActor {
         let shard = range.next as usize & (Self::READY_SHARDS - 1);
         Self::push_range_into(&mut self.persisted_ready_shards, shard, range);
         self.persisted_ready_count += Self::range_len(range);
+    }
+
+    fn recompute_oldest_ready_enqueued_at_ms(&mut self) {
+        self.oldest_ready_enqueued_at_ms = self.ready.front().and_then(|entry| {
+            self.records.get(&entry.id).and_then(|record| {
+                (record.first_enqueued_at_ms != 0).then_some(record.first_enqueued_at_ms)
+            })
+        });
+    }
+
+    fn pop_ready_entry(&mut self) -> Option<ReadyEntry> {
+        let entry = self.ready.pop_front()?;
+        self.ready_count = self.ready.len();
+        if self.ready.is_empty() {
+            self.oldest_ready_enqueued_at_ms = None;
+        } else {
+            self.recompute_oldest_ready_enqueued_at_ms();
+        }
+        Some(entry)
     }
 
     fn plan_ready_index_mutation(
@@ -1357,38 +1756,23 @@ impl QueueActor {
     }
 
     fn pop_ready(&mut self) -> Option<MessageId> {
-        let step = Self::READY_SHARDS as u64;
-        for _ in 0..Self::READY_SHARDS {
-            let shard = self.next_ready_shard;
-            if let Some(range) = self.ready_shards[shard].front_mut() {
-                let id = MessageId::new(range.next);
-                if range.next == range.end {
-                    self.ready_shards[shard].pop_front();
-                } else {
-                    range.next = range.next.saturating_add(step);
-                }
-                self.ready_count = self.ready_count.saturating_sub(1);
-                self.next_ready_shard = (shard + 1) % Self::READY_SHARDS;
-                return Some(id);
-            }
-            self.next_ready_shard = (shard + 1) % Self::READY_SHARDS;
-        }
-
-        None
+        self.pop_ready_entry().map(|entry| entry.id)
     }
 
     pub fn ready_len(&self) -> usize {
-        self.ready_count
+        self.ready.len()
     }
 
     pub fn admin_snapshot(&self) -> QueueAdminSnapshot {
+        let now_epoch_ms = self.clock.now_epoch_ms();
         QueueAdminSnapshot {
-            messages_ready: self.ready_count,
+            messages_ready: self.ready.len(),
             messages_leased: self.inflight.len(),
-            messages_total: self.ready_count + self.inflight.len() + self.persisted_delayed.len(),
-            // Queue records do not persist enqueue timestamps today, so a warm actor
-            // cannot report an honest oldest age after recovery.
-            oldest_message_age_seconds: 0,
+            messages_total: self.ready.len() + self.inflight.len() + self.persisted_delayed.len(),
+            oldest_message_age_seconds: self
+                .oldest_ready_enqueued_at_ms
+                .map(|timestamp| now_epoch_ms.saturating_sub(timestamp) / 1_000)
+                .unwrap_or(0),
         }
     }
 
@@ -1434,15 +1818,7 @@ impl QueueActor {
     }
 
     pub fn ready_contains(&self, id: MessageId) -> bool {
-        let shard = Self::shard_for_id(id);
-        let id_u64 = id.as_u64();
-        let step = Self::READY_SHARDS as u64;
-
-        self.ready_shards[shard].iter().any(|range| {
-            id_u64 >= range.next
-                && id_u64 <= range.end
-                && (id_u64 - range.next).is_multiple_of(step)
-        })
+        self.ready.iter().any(|entry| entry.id == id)
     }
 
     /// Returns true if an availability notification should be sent (queue transitioned empty->non-empty).
@@ -1490,7 +1866,7 @@ impl QueueActor {
             return Err("Truncated record body".to_string());
         }
 
-        Ok(QueueRecord::loaded(
+        Ok(QueueRecord::loaded_legacy(
             bytes.slice(16..16 + body_len),
             attempts,
             visible_at_ms,
@@ -1499,14 +1875,54 @@ impl QueueActor {
 
     /// Deserialize only queue metadata without hydrating the body.
     fn decode_record_header(bytes: &[u8]) -> Result<QueueRecord, String> {
-        if bytes.len() < 12 {
+        if bytes.len() == 12 {
+            let attempts = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+            let visible_at_ms = u64::from_le_bytes(bytes[4..12].try_into().unwrap());
+            return Ok(QueueRecord::metadata_only(attempts, visible_at_ms));
+        }
+
+        if bytes.len() < 79 || bytes[0] != Self::HEADER_VERSION_V2 {
             return Err("Invalid record format".to_string());
         }
 
-        let attempts = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-        let visible_at_ms = u64::from_le_bytes(bytes[4..12].try_into().unwrap());
+        let state = match bytes[1] {
+            0 => QueueState::Ready,
+            1 => QueueState::Delayed,
+            2 => QueueState::Leased,
+            3 => QueueState::Dlq,
+            other => return Err(format!("Unknown queue state {}", other)),
+        };
+        let enqueue_seq = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
+        let ready_seq = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
+        let attempts = u32::from_le_bytes(bytes[18..22].try_into().unwrap());
+        let visible_at_ms = u64::from_le_bytes(bytes[22..30].try_into().unwrap());
+        let first_enqueued_at_ms = u64::from_le_bytes(bytes[30..38].try_into().unwrap());
+        let last_leased_at_ms = u64::from_le_bytes(bytes[38..46].try_into().unwrap());
+        let lease_epoch = u64::from_le_bytes(bytes[46..54].try_into().unwrap());
+        let lease_token = u64::from_le_bytes(bytes[54..62].try_into().unwrap());
+        let lease_expires_at_ms = u64::from_le_bytes(bytes[62..70].try_into().unwrap());
+        let dead_lettered_at_ms = u64::from_le_bytes(bytes[70..78].try_into().unwrap());
+        let dlq_reason = match bytes[78] {
+            0 => None,
+            1 => Some(DlqReason::MaxAttemptsExceeded),
+            other => return Err(format!("Unknown DLQ reason {}", other)),
+        };
 
-        Ok(QueueRecord::metadata_only(attempts, visible_at_ms))
+        Ok(QueueRecord {
+            body: None,
+            state,
+            enqueue_seq,
+            ready_seq: (ready_seq != 0).then_some(ready_seq),
+            attempts,
+            visible_at_ms,
+            first_enqueued_at_ms,
+            last_leased_at_ms: (last_leased_at_ms != 0).then_some(last_leased_at_ms),
+            lease_epoch,
+            lease_token: (lease_token != 0).then_some(lease_token),
+            lease_expires_at_ms: (lease_expires_at_ms != 0).then_some(lease_expires_at_ms),
+            dead_lettered_at_ms: (dead_lettered_at_ms != 0).then_some(dead_lettered_at_ms),
+            dlq_reason,
+        })
     }
 
     fn load_record_metadata_from_store(
@@ -1523,20 +1939,24 @@ impl QueueActor {
 
         match txn.get(&header_key) {
             Ok(Some(bytes)) => {
-                let layout = if bytes.len() >= 16 {
-                    StoredRecordLayout::EmbeddedHeader
-                } else {
+                let layout = if Self::is_versioned_header(&bytes) || bytes.len() == 12 {
                     StoredRecordLayout::SplitHeaderBody
+                } else {
+                    StoredRecordLayout::EmbeddedHeader
                 };
-                Self::decode_record_header(&bytes).map(|record| (record, layout))
+                match layout {
+                    StoredRecordLayout::SplitHeaderBody => {
+                        Self::decode_record_header(&bytes).map(|record| (record, layout))
+                    }
+                    StoredRecordLayout::EmbeddedHeader => Self::decode_legacy_record(bytes)
+                        .map(|record| (record.metadata_only_from(), layout)),
+                    StoredRecordLayout::LegacyKey => unreachable!(),
+                }
             }
             Ok(None) => match txn.get(&legacy_key) {
                 Ok(Some(bytes)) => {
                     let record = Self::decode_legacy_record(bytes)?;
-                    Ok((
-                        QueueRecord::metadata_only(record.attempts, record.visible_at_ms),
-                        StoredRecordLayout::LegacyKey,
-                    ))
+                    Ok((record.metadata_only_from(), StoredRecordLayout::LegacyKey))
                 }
                 Ok(None) => Err(format!("Message {} disappeared from storage", id)),
                 Err(e) => Err(format!("Failed to read legacy message {}: {:?}", id, e)),
@@ -1558,7 +1978,7 @@ impl QueueActor {
         match txn.get(&body_key) {
             Ok(Some(bytes)) => Ok(bytes),
             Ok(None) => match txn.get(&header_key) {
-                Ok(Some(bytes)) if bytes.len() >= 16 => {
+                Ok(Some(bytes)) if !Self::is_versioned_header(&bytes) && bytes.len() >= 16 => {
                     let record = Self::decode_legacy_record(bytes)?;
                     record
                         .body
@@ -1598,7 +2018,7 @@ impl QueueActor {
 
         match txn.get(&header_key) {
             Ok(Some(header_bytes)) => {
-                if header_bytes.len() >= 16 {
+                if !Self::is_versioned_header(&header_bytes) && header_bytes.len() >= 16 {
                     if let Ok(record) = Self::decode_legacy_record(header_bytes.clone()) {
                         return Ok((record, StoredRecordLayout::EmbeddedHeader));
                     }
@@ -1606,7 +2026,10 @@ impl QueueActor {
                 let header = Self::decode_record_header(&header_bytes)?;
                 match txn.get(&body_key) {
                     Ok(Some(body_bytes)) => Ok((
-                        QueueRecord::loaded(body_bytes, header.attempts, header.visible_at_ms),
+                        QueueRecord {
+                            body: Some(body_bytes),
+                            ..header
+                        },
                         StoredRecordLayout::SplitHeaderBody,
                     )),
                     Ok(None) => Err(format!("Message body {} disappeared from storage", id)),
@@ -1662,11 +2085,100 @@ impl QueueActor {
             .ok_or_else(|| format!("Message {} body missing after hydration", id))?;
         self.cache_record(
             id,
-            QueueRecord::metadata_only(record.attempts, record.visible_at_ms),
+            record.metadata_only_from(),
             layout,
         );
         self.cache_body(id, body.clone());
         Ok((body, record.attempts))
+    }
+
+    fn is_versioned_header(bytes: &[u8]) -> bool {
+        bytes.len() >= 79 && bytes.first().copied() == Some(Self::HEADER_VERSION_V2)
+    }
+
+    #[allow(dead_code)]
+    fn encode_ack_dedup_value(expires_at_ms: u64) -> Vec<u8> {
+        expires_at_ms.to_le_bytes().to_vec()
+    }
+
+    #[allow(dead_code)]
+    fn decode_ack_dedup_value(bytes: &[u8]) -> Option<u64> {
+        Some(u64::from_le_bytes(bytes.get(0..8)?.try_into().ok()?))
+    }
+
+    #[allow(dead_code)]
+    fn durable_meta_snapshot(&self) -> QueueMetaSnapshot {
+        QueueMetaSnapshot {
+            next_id: self.next_id,
+            next_ready_seq: self.next_ready_seq,
+            ready_count: self.ready.len() as u64,
+            delayed_count: self.persisted_delayed.len() as u64,
+            leased_count: self.inflight.len() as u64,
+            dlq_count: self.dlq_count as u64,
+            oldest_ready_enqueued_at_ms: self.oldest_ready_enqueued_at_ms,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn write_meta_snapshot(
+        &self,
+        txn: &mut cntryl_midge::Transaction,
+        meta: QueueMetaSnapshot,
+    ) -> Result<(), String> {
+        txn.put(self.meta_key.clone(), Self::encode_meta(meta), None)
+            .map_err(|e| format!("Failed to write queue meta: {:?}", e))
+    }
+
+    #[allow(dead_code)]
+    fn write_record_as_split(
+        &self,
+        txn: &mut cntryl_midge::Transaction,
+        id: MessageId,
+        record: &QueueRecord,
+        prior_layout: Option<StoredRecordLayout>,
+    ) -> Result<(), String> {
+        if matches!(prior_layout, Some(StoredRecordLayout::LegacyKey)) {
+            txn.delete(self.cached_legacy_message_key(id))
+                .map_err(|e| format!("Failed to delete legacy queue record: {:?}", e))?;
+        }
+
+        txn.put(
+            self.cached_header_key(id),
+            Self::encode_record_header(record),
+            None,
+        )
+        .map_err(|e| format!("Failed to write queue header: {:?}", e))?;
+
+        let body = record
+            .body
+            .as_ref()
+            .ok_or_else(|| format!("Queue record {} missing body for write", id))?;
+        txn.put(self.cached_body_key(id), body.to_vec(), None)
+            .map_err(|e| format!("Failed to write queue body: {:?}", e))?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn read_durable_ack_dedup(&self, id: MessageId, token: u64, now_epoch_ms: u64) -> Option<bool> {
+        let cf_id = self.queue_key.family.id();
+        let txn = self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
+            .ok()?;
+        let bytes = txn.get(&self.ack_dedup_key(id, token)).ok()??;
+        Some(
+            Self::decode_ack_dedup_value(bytes.as_ref())
+                .map(|expires_at_ms| expires_at_ms > now_epoch_ms)
+                .unwrap_or(false),
+        )
+    }
+
+    #[allow(dead_code)]
+    fn cache_record_state(&mut self, id: MessageId, record: &QueueRecord, layout: StoredRecordLayout) {
+        self.cache_record(id, record.metadata_only_from(), layout);
+        if let Some(body) = record.body.as_ref() {
+            self.cache_body(id, body.clone());
+        }
     }
 
     fn commit_ack_transaction(
@@ -1828,8 +2340,12 @@ impl QueueActor {
             self.push_ready(id);
             self.push_persisted_ready(id);
         } else {
-            self.delayed
-                .push(Reverse(DelayedMessage { id, visible_at }));
+            self.delayed.push(Reverse(DelayedMessage {
+                id,
+                enqueue_seq: id.as_u64(),
+                visible_at,
+                visible_at_ms,
+            }));
             self.insert_persisted_delayed(id, visible_at_ms);
         }
         if !self.index_meta_written {
@@ -1980,13 +2496,18 @@ impl QueueActor {
             self.next_id_limit = limit;
         }
         for (id, record, cached_body, visible_at) in post_commit {
+            let visible_at_ms = record.visible_at_ms;
             self.cache_record(id, record, StoredRecordLayout::EmbeddedHeader);
             self.cache_body(id, cached_body);
             if visible_at <= now_instant {
                 self.push_ready(id);
             } else {
-                self.delayed
-                    .push(Reverse(DelayedMessage { id, visible_at }));
+                self.delayed.push(Reverse(DelayedMessage {
+                    id,
+                    enqueue_seq: id.as_u64(),
+                    visible_at,
+                    visible_at_ms,
+                }));
             }
         }
         for id in staged_ready_ids {
@@ -2041,6 +2562,7 @@ impl QueueActor {
     ) -> QueueResponse {
         let batch_size = batch_size.unwrap_or(1);
         let now = self.clock.now_instant();
+        let now_epoch_ms = self.clock.now_epoch_ms();
         let lease_duration = Duration::from_secs(lease_seconds);
 
         let mut messages = Vec::with_capacity(batch_size);
@@ -2070,13 +2592,21 @@ impl QueueActor {
                 Inflight {
                     token,
                     expires_at,
+                    expires_at_epoch_ms: now_epoch_ms
+                        .saturating_add(lease_seconds.saturating_mul(1_000)),
                     owner_session_id,
                     attempts: attempts + 1,
+                    lease_epoch: 0,
                 },
             );
 
             // Schedule expiration timer
-            self.timers.push(Reverse(LeaseExpiry { id, expires_at }));
+            self.timers.push(Reverse(LeaseExpiry {
+                id,
+                lease_epoch: 0,
+                expires_at,
+                expires_at_ms: now_epoch_ms.saturating_add(lease_seconds.saturating_mul(1_000)),
+            }));
 
             // Update deadline cache if this expiration is sooner
             if expires_at < self.next_expiration_deadline {
@@ -2111,6 +2641,7 @@ impl QueueActor {
         lease_seconds: u64,
     ) -> QueueResponse {
         let now = self.clock.now_instant();
+        let now_epoch_ms = self.clock.now_epoch_ms();
 
         // Check if message is inflight
         let inflight = match self.inflight.get_mut(&id) {
@@ -2133,11 +2664,14 @@ impl QueueActor {
         // Extend expiration
         let new_expires_at = now + Duration::from_secs(lease_seconds);
         inflight.expires_at = new_expires_at;
+        inflight.expires_at_epoch_ms = now_epoch_ms.saturating_add(lease_seconds.saturating_mul(1_000));
 
         // Schedule new timer (old timer will be ignored when it fires)
         self.timers.push(Reverse(LeaseExpiry {
             id,
+            lease_epoch: inflight.lease_epoch,
             expires_at: new_expires_at,
+            expires_at_ms: inflight.expires_at_epoch_ms,
         }));
 
         // Update deadline cache if this expiration is sooner
@@ -2878,18 +3412,7 @@ impl QueueActor {
     fn populate_live_ready_from_persisted(&mut self, matured_delayed_ids: &[MessageId]) {
         self.reset_live_ready_state();
 
-        if matured_delayed_ids.is_empty() {
-            for shard in 0..self.persisted_ready_shards.len() {
-                let shard_len = self.persisted_ready_shards[shard].len();
-                for idx in 0..shard_len {
-                    let range = self.persisted_ready_shards[shard][idx];
-                    self.push_ready_range(range);
-                }
-            }
-            return;
-        }
-
-        let mut ready_ids = Vec::new();
+        let mut ready_ids = Vec::with_capacity(self.persisted_ready_count + matured_delayed_ids.len());
         for ranges in &self.persisted_ready_shards {
             for range in ranges {
                 let mut id = range.next;
@@ -3037,7 +3560,6 @@ impl QueueActor {
                 };
             }
             self.push_persisted_ready_range(range);
-            self.push_ready_range(range);
             scanned_ready_count += Self::range_len(range) as u64;
             max_id = Some(max_id.map(|m| m.max(range.end)).unwrap_or(range.end));
         }
@@ -3065,8 +3587,12 @@ impl QueueActor {
             } else {
                 let delay_ms = visible_at_ms.saturating_sub(now_epoch_ms);
                 let visible_at = now_instant + Duration::from_millis(delay_ms);
-                self.delayed
-                    .push(Reverse(DelayedMessage { id, visible_at }));
+                self.delayed.push(Reverse(DelayedMessage {
+                    id,
+                    enqueue_seq: id.as_u64(),
+                    visible_at,
+                    visible_at_ms,
+                }));
                 if visible_at < self.next_delayed_deadline {
                     self.next_delayed_deadline = visible_at;
                 }
@@ -3077,9 +3603,7 @@ impl QueueActor {
             self.next_delayed_deadline = now_instant + Duration::from_secs(3600);
         }
 
-        if !matured_delayed_ids.is_empty() {
-            self.populate_live_ready_from_persisted(&matured_delayed_ids);
-        }
+        self.populate_live_ready_from_persisted(&matured_delayed_ids);
 
         if meta_snapshot.ready_count != scanned_ready_count
             || meta_snapshot.delayed_count != scanned_delayed_count
@@ -3237,9 +3761,12 @@ impl QueueActor {
             else {
                 continue;
             };
-            let record = match Self::decode_record_header(&value_bytes) {
-                Ok(record) => record,
-                Err(_) => continue,
+            let record = if let Ok(record) = Self::decode_record_header(&value_bytes) {
+                record
+            } else if let Ok(record) = Self::decode_legacy_record(value_bytes.clone()) {
+                record.metadata_only_from()
+            } else {
+                continue;
             };
 
             max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
@@ -3248,8 +3775,16 @@ impl QueueActor {
             } else {
                 let delay_ms = record.visible_at_ms.saturating_sub(now_epoch_ms);
                 let visible_at = now_instant + Duration::from_millis(delay_ms);
-                self.delayed
-                    .push(Reverse(DelayedMessage { id, visible_at }));
+                self.delayed.push(Reverse(DelayedMessage {
+                    id,
+                    enqueue_seq: if record.enqueue_seq != 0 {
+                        record.enqueue_seq
+                    } else {
+                        id.as_u64()
+                    },
+                    visible_at,
+                    visible_at_ms: record.visible_at_ms,
+                }));
                 self.insert_persisted_delayed(id, record.visible_at_ms);
                 if visible_at < self.next_delayed_deadline {
                     self.next_delayed_deadline = visible_at;
@@ -3274,8 +3809,16 @@ impl QueueActor {
             } else {
                 let delay_ms = record.visible_at_ms.saturating_sub(now_epoch_ms);
                 let visible_at = now_instant + Duration::from_millis(delay_ms);
-                self.delayed
-                    .push(Reverse(DelayedMessage { id, visible_at }));
+                self.delayed.push(Reverse(DelayedMessage {
+                    id,
+                    enqueue_seq: if record.enqueue_seq != 0 {
+                        record.enqueue_seq
+                    } else {
+                        id.as_u64()
+                    },
+                    visible_at,
+                    visible_at_ms: record.visible_at_ms,
+                }));
                 self.insert_persisted_delayed(id, record.visible_at_ms);
                 if visible_at < self.next_delayed_deadline {
                     self.next_delayed_deadline = visible_at;
@@ -3602,10 +4145,10 @@ pub mod tests {
             QueueResponse::Sent { id } => id,
             _ => panic!("Expected Enqueued response"),
         };
-        let reserve_response = actor.handle_receive(30, Some(1));
 
         // Assert
         assert_eq!(actor.ready_len(), 1);
+        let reserve_response = actor.handle_receive(30, Some(1));
         match reserve_response {
             QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);

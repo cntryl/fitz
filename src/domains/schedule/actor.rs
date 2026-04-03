@@ -1,17 +1,21 @@
 use crate::domains::schedule::protocol::{
-    parse_concrete_schedule_route, validate_concrete_schedule_route, CronSchedule,
+    epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
+    parse_concrete_schedule_route, validate_concrete_schedule_route, Clock, CronSchedule,
     ScheduleCreateEntry, ScheduleDef, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
+    SystemClock,
 };
-use crate::domains::schedule::store::{PersistedSchedule, ScheduleInsert, ScheduleStore};
+use crate::domains::schedule::store::{
+    PersistedPendingFire, PersistedSchedule, ScheduleFireClaim, ScheduleInsert, ScheduleStore,
+};
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
 use fxhash::FxBuildHasher;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
@@ -25,6 +29,8 @@ struct PendingScheduleCreate {
     next_fire_time: Instant,
     next_fire_ms: u64,
     previous_fire_ms: Option<u64>,
+    last_fire_ms: Option<u64>,
+    executions_total: u64,
     previous_list_index: Option<usize>,
 }
 
@@ -35,6 +41,8 @@ struct PendingScheduleFire {
     next_fire_time: Instant,
     next_fire_ms: u64,
     previous_fire_ms: u64,
+    last_fire_ms: Option<u64>,
+    executions_total: u64,
 }
 
 /// Durable schedule coordinator for one route family.
@@ -67,15 +75,33 @@ pub struct ScheduleActor {
     /// tolerated and ignored by comparing each popped timestamp against the
     /// current definition's `next_fire_ms`.
     ready_heap: BinaryHeap<(Reverse<u64>, String)>,
+    /// Durably claimed schedule fires awaiting successful publish.
+    pending_fires: BTreeMap<(u64, String), Bytes>,
+    /// Recent successful schedule delivery timestamps for live per-minute stats.
+    recent_execution_ms: VecDeque<u64>,
+    /// Injected wall-clock and monotonic time source.
+    clock: Arc<dyn Clock>,
 }
 
 impl ScheduleActor {
+    const READY_HEAP_REBUILD_SLACK: usize = 32;
+
     pub fn try_new(
         family: RouteFamily,
         db: Arc<cntryl_midge::Engine>,
         write_options: cntryl_midge::WriteOptions,
     ) -> Result<Self, String> {
-        Self::try_new_at(family, db, write_options, Instant::now())
+        Self::try_new_with_clock(family, db, write_options, Arc::new(SystemClock))
+    }
+
+    pub fn try_new_with_clock(
+        family: RouteFamily,
+        db: Arc<cntryl_midge::Engine>,
+        write_options: cntryl_midge::WriteOptions,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, String> {
+        let now = clock.now_instant();
+        Self::try_new_at_with_clock(family, db, write_options, clock, now)
     }
 
     pub fn new(
@@ -86,10 +112,31 @@ impl ScheduleActor {
         Self::try_new(family, db, write_options).expect("schedule actor startup should succeed")
     }
 
+    pub fn new_with_clock(
+        family: RouteFamily,
+        db: Arc<cntryl_midge::Engine>,
+        write_options: cntryl_midge::WriteOptions,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self::try_new_with_clock(family, db, write_options, clock)
+            .expect("schedule actor startup should succeed")
+    }
+
+    #[cfg(test)]
     fn try_new_at(
         family: RouteFamily,
         db: Arc<cntryl_midge::Engine>,
         write_options: cntryl_midge::WriteOptions,
+        now: Instant,
+    ) -> Result<Self, String> {
+        Self::try_new_at_with_clock(family, db, write_options, Arc::new(SystemClock), now)
+    }
+
+    fn try_new_at_with_clock(
+        family: RouteFamily,
+        db: Arc<cntryl_midge::Engine>,
+        write_options: cntryl_midge::WriteOptions,
+        clock: Arc<dyn Clock>,
         now: Instant,
     ) -> Result<Self, String> {
         let store = ScheduleStore::new(db);
@@ -104,6 +151,9 @@ impl ScheduleActor {
             last_scan_time: now,
             scan_dedup_window: std::time::Duration::from_millis(10),
             ready_heap: BinaryHeap::new(),
+            pending_fires: BTreeMap::new(),
+            recent_execution_ms: VecDeque::new(),
+            clock,
         };
 
         actor.preload_from_store_at(now)?;
@@ -111,7 +161,7 @@ impl ScheduleActor {
     }
 
     fn preload_from_store_at(&mut self, now: Instant) -> Result<(), String> {
-        let now_ms = Self::instant_to_ms_at(now, now);
+        let now_ms = Self::instant_to_ms_at_with_clock(now, now, self.clock.as_ref());
         let entries = self
             .store
             .load_all(self.family.as_u64(), self.write_options)?;
@@ -122,6 +172,8 @@ impl ScheduleActor {
             cron,
             payload,
             next_fire_ms,
+            last_fire_ms,
+            executions_total,
         } in entries
         {
             match CronSchedule::parse(&cron) {
@@ -130,16 +182,24 @@ impl ScheduleActor {
 
                     let (effective_next_fire_time, effective_next_fire_ms, previous_fire_ms) =
                         if next_fire_ms <= now_ms {
-                            let normalized_next_fire_time = parsed_cron.next_fire_time(now);
-                            let normalized_next_fire_ms =
-                                Self::instant_to_ms_at(normalized_next_fire_time, now);
-                            normalization_batch.push((
-                                route.clone(),
-                                cron.clone(),
-                                payload.clone(),
-                                normalized_next_fire_ms,
-                                Some(next_fire_ms),
-                            ));
+                            let normalized_next_fire_time =
+                                parsed_cron.next_fire_time_with_clock(now, self.clock.as_ref());
+                            let normalized_next_fire_ms = Self::instant_to_ms_at_with_clock(
+                                normalized_next_fire_time,
+                                now,
+                                self.clock.as_ref(),
+                            );
+                            normalization_batch.push(
+                                crate::domains::schedule::store::ScheduleBatchInsert {
+                                    route: route.clone(),
+                                    cron: cron.clone(),
+                                    payload: payload.clone(),
+                                    next_fire_ms: normalized_next_fire_ms,
+                                    previous_fire_ms: Some(next_fire_ms),
+                                    last_fire_ms,
+                                    executions_total,
+                                },
+                            );
                             (
                                 normalized_next_fire_time,
                                 normalized_next_fire_ms,
@@ -147,7 +207,11 @@ impl ScheduleActor {
                             )
                         } else {
                             (
-                                Self::ms_to_instant_at(next_fire_ms, now),
+                                Self::ms_to_instant_at_with_clock(
+                                    next_fire_ms,
+                                    now,
+                                    self.clock.as_ref(),
+                                ),
                                 next_fire_ms,
                                 None,
                             )
@@ -162,8 +226,16 @@ impl ScheduleActor {
                         payload,
                         next_fire_time: effective_next_fire_time,
                         next_fire_ms: effective_next_fire_ms,
+                        last_fire_ms,
+                        executions_total,
                         list_index,
                     };
+
+                    if let Some(last_fire_ms) = last_fire_ms {
+                        if now_ms.saturating_sub(last_fire_ms) <= 60_000 {
+                            self.recent_execution_ms.push_back(last_fire_ms);
+                        }
+                    }
 
                     self.schedules.insert(route.clone(), def);
                     self.ready_heap
@@ -184,6 +256,13 @@ impl ScheduleActor {
                 &normalization_batch,
                 self.write_options,
             )?;
+        }
+
+        for pending_fire in self.store.load_pending_fires(self.family.as_u64())? {
+            self.pending_fires.insert(
+                (pending_fire.fire_ms, pending_fire.route),
+                pending_fire.payload,
+            );
         }
 
         Ok(())
@@ -207,8 +286,13 @@ impl ScheduleActor {
                         )
                         .map(|timestamp| timestamp.to_rfc3339())
                         .unwrap_or_default(),
-                        last_run: None,
-                        executions_total: 0,
+                        last_run: schedule.last_fire_ms.and_then(|timestamp_ms| {
+                            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+                                timestamp_ms as i64,
+                            )
+                            .map(|timestamp| timestamp.to_rfc3339())
+                        }),
+                        executions_total: schedule.executions_total,
                         enabled: true,
                     })
             })
@@ -245,22 +329,29 @@ impl ScheduleActor {
     ) -> Result<bool, String> {
         validate_concrete_schedule_route(&route)?;
 
-        let (previous_next_fire_ms, previous_list_index) = self
+        let (previous_next_fire_ms, previous_list_index, previous_last_fire_ms, previous_executions_total) = self
             .schedules
             .get(&route)
-            .map(|existing| (Some(existing.next_fire_ms), Some(existing.list_index)))
-            .unwrap_or((None, None));
+            .map(|existing| {
+                (
+                    Some(existing.next_fire_ms),
+                    Some(existing.list_index),
+                    existing.last_fire_ms,
+                    existing.executions_total,
+                )
+            })
+            .unwrap_or((None, None, None, 0));
 
         if let Some(existing) = self.schedules.get(&route) {
-            if existing.cron == cron && existing.payload == payload && existing.next_fire_time > now
-            {
+            if existing.cron == cron && existing.payload == payload {
                 return Ok(false);
             }
         }
 
         let cron_obj = self.parsed_cron_for(&cron)?;
-        let next_fire_time = cron_obj.next_fire_time(now);
-        let next_fire_ms = Self::instant_to_ms_at(next_fire_time, now);
+        let next_fire_time = cron_obj.next_fire_time_with_clock(now, self.clock.as_ref());
+        let next_fire_ms =
+            Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
 
         self.store.insert(
             self.family.as_u64(),
@@ -270,6 +361,8 @@ impl ScheduleActor {
                 payload: &payload,
                 next_fire_ms,
                 previous_fire_ms: previous_next_fire_ms,
+                last_fire_ms: previous_last_fire_ms,
+                executions_total: previous_executions_total,
             },
             self.write_options,
         )?;
@@ -282,11 +375,14 @@ impl ScheduleActor {
             payload,
             next_fire_time,
             next_fire_ms,
+            last_fire_ms: previous_last_fire_ms,
+            executions_total: previous_executions_total,
             list_index,
         };
 
         self.schedules.insert(route.clone(), def);
         self.ready_heap.push((Reverse(next_fire_ms), route));
+        self.compact_ready_heap_if_needed();
         Ok(true)
     }
 
@@ -296,7 +392,7 @@ impl ScheduleActor {
         cron: String,
         payload: Bytes,
     ) -> Result<bool, String> {
-        self.create_schedule_at(route, cron, payload, Instant::now())
+        self.create_schedule_at(route, cron, payload, self.clock.now_instant())
     }
 
     fn create_schedules_at(
@@ -322,21 +418,27 @@ impl ScheduleActor {
 
             validate_concrete_schedule_route(&entry.route)?;
 
-            let (previous_fire_ms, previous_list_index, should_skip) =
+            let (previous_fire_ms, previous_list_index, last_fire_ms, executions_total, should_skip) =
                 match self.schedules.get(&entry.route) {
                     Some(existing)
-                        if existing.cron == entry.cron
-                            && existing.payload == entry.payload
-                            && existing.next_fire_time > now =>
+                        if existing.cron == entry.cron && existing.payload == entry.payload =>
                     {
-                        (Some(existing.next_fire_ms), Some(existing.list_index), true)
+                        (
+                            Some(existing.next_fire_ms),
+                            Some(existing.list_index),
+                            existing.last_fire_ms,
+                            existing.executions_total,
+                            true,
+                        )
                     }
                     Some(existing) => (
                         Some(existing.next_fire_ms),
                         Some(existing.list_index),
+                        existing.last_fire_ms,
+                        existing.executions_total,
                         false,
                     ),
-                    None => (None, None, false),
+                    None => (None, None, None, 0, false),
                 };
 
             if should_skip {
@@ -344,8 +446,9 @@ impl ScheduleActor {
             }
 
             let parsed_cron = self.parsed_cron_for(&entry.cron)?;
-            let next_fire_time = parsed_cron.next_fire_time(now);
-            let next_fire_ms = Self::instant_to_ms_at(next_fire_time, now);
+            let next_fire_time = parsed_cron.next_fire_time_with_clock(now, self.clock.as_ref());
+            let next_fire_ms =
+                Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
 
             pending.push(PendingScheduleCreate {
                 route: entry.route,
@@ -355,6 +458,8 @@ impl ScheduleActor {
                 next_fire_time,
                 next_fire_ms,
                 previous_fire_ms,
+                last_fire_ms,
+                executions_total,
                 previous_list_index,
             });
         }
@@ -365,14 +470,14 @@ impl ScheduleActor {
 
         let store_items: Vec<_> = pending
             .iter()
-            .map(|entry| {
-                (
-                    entry.route.clone(),
-                    entry.cron.clone(),
-                    entry.payload.clone(),
-                    entry.next_fire_ms,
-                    entry.previous_fire_ms,
-                )
+            .map(|entry| crate::domains::schedule::store::ScheduleBatchInsert {
+                route: entry.route.clone(),
+                cron: entry.cron.clone(),
+                payload: entry.payload.clone(),
+                next_fire_ms: entry.next_fire_ms,
+                previous_fire_ms: entry.previous_fire_ms,
+                last_fire_ms: entry.last_fire_ms,
+                executions_total: entry.executions_total,
             })
             .collect();
 
@@ -394,6 +499,8 @@ impl ScheduleActor {
                 payload: entry.payload,
                 next_fire_time: entry.next_fire_time,
                 next_fire_ms: entry.next_fire_ms,
+                last_fire_ms: entry.last_fire_ms,
+                executions_total: entry.executions_total,
                 list_index,
             };
 
@@ -402,11 +509,13 @@ impl ScheduleActor {
             self.schedules.insert(entry.route, def);
         }
 
+        self.compact_ready_heap_if_needed();
+
         Ok(changed)
     }
 
     pub fn create_schedules(&mut self, entries: Vec<ScheduleCreateEntry>) -> Result<usize, String> {
-        self.create_schedules_at(entries, Instant::now())
+        self.create_schedules_at(entries, self.clock.now_instant())
     }
 
     pub fn delete_schedule(&mut self, route: String) -> Result<bool, String> {
@@ -425,6 +534,7 @@ impl ScheduleActor {
 
         if let Some(removed_def) = self.schedules.remove(&route) {
             self.remove_list_entry(removed_def.list_index);
+            self.compact_ready_heap_if_needed();
             return Ok(true);
         }
 
@@ -537,6 +647,31 @@ impl ScheduleActor {
         }
     }
 
+    fn compact_ready_heap_if_needed(&mut self) {
+        if self.schedules.is_empty() {
+            self.ready_heap.clear();
+            return;
+        }
+
+        let live_entries = self.schedules.len();
+        let heap_entries = self.ready_heap.len();
+        let stale_entries = heap_entries.saturating_sub(live_entries);
+
+        if stale_entries >= Self::READY_HEAP_REBUILD_SLACK
+            || heap_entries > live_entries.saturating_mul(2)
+        {
+            self.rebuild_ready_heap();
+        }
+    }
+
+    fn rebuild_ready_heap(&mut self) {
+        let mut rebuilt = BinaryHeap::with_capacity(self.schedules.len());
+        for schedule in self.schedules.values() {
+            rebuilt.push((Reverse(schedule.next_fire_ms), schedule.route.clone()));
+        }
+        self.ready_heap = rebuilt;
+    }
+
     pub fn list_entries(
         &mut self,
         offset: u64,
@@ -570,13 +705,13 @@ impl ScheduleActor {
         )
     }
 
-    fn scan_and_fire_at(&mut self, now: Instant) -> Vec<(String, Bytes)> {
+    fn claim_due_fires_at(&mut self, now: Instant) -> Vec<PersistedPendingFire> {
         if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
             return Vec::new();
         }
         self.last_scan_time = now;
 
-        let now_ms = Self::instant_to_ms_at(now, now);
+        let now_ms = Self::instant_to_ms_at_with_clock(now, now, self.clock.as_ref());
         let mut heap_popped = Vec::new();
         while let Some(&(Reverse(fire_ms), _)) = self.ready_heap.peek() {
             if fire_ms > now_ms {
@@ -596,8 +731,10 @@ impl ScheduleActor {
                 continue;
             }
 
-            let next_fire_time = def.parsed_cron.next_fire_time(now);
-            let next_fire_ms = Self::instant_to_ms_at(next_fire_time, now);
+            let next_fire_time =
+                def.parsed_cron.next_fire_time_with_clock(now, self.clock.as_ref());
+            let next_fire_ms =
+                Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
             to_reschedule.push(PendingScheduleFire {
                 route: route.clone(),
                 cron: def.cron.clone(),
@@ -605,6 +742,8 @@ impl ScheduleActor {
                 next_fire_time,
                 next_fire_ms,
                 previous_fire_ms: fire_ms,
+                last_fire_ms: def.last_fire_ms,
+                executions_total: def.executions_total,
             });
         }
 
@@ -614,20 +753,20 @@ impl ScheduleActor {
 
         let store_items: Vec<_> = to_reschedule
             .iter()
-            .map(|item| {
-                (
-                    item.route.clone(),
-                    item.cron.clone(),
-                    item.payload.clone(),
-                    item.next_fire_ms,
-                    Some(item.previous_fire_ms),
-                )
+            .map(|item| ScheduleFireClaim {
+                route: &item.route,
+                cron: &item.cron,
+                payload: &item.payload,
+                next_fire_ms: item.next_fire_ms,
+                previous_fire_ms: item.previous_fire_ms,
+                last_fire_ms: item.last_fire_ms,
+                executions_total: item.executions_total,
             })
             .collect();
 
-        if let Err(error) =
-            self.store
-                .insert_batch(self.family.as_u64(), &store_items, self.write_options)
+        if let Err(error) = self
+            .store
+            .claim_due_batch(self.family.as_u64(), &store_items, self.write_options)
         {
             warn!("Failed to persist schedule reschedule batch: {}", error);
             for item in to_reschedule {
@@ -637,7 +776,7 @@ impl ScheduleActor {
             return Vec::new();
         }
 
-        let mut fired = Vec::with_capacity(store_items.len());
+        let mut claimed = Vec::with_capacity(store_items.len());
         for item in to_reschedule {
             let Some(def) = self.schedules.get_mut(&item.route) else {
                 continue;
@@ -650,29 +789,115 @@ impl ScheduleActor {
             def.next_fire_ms = item.next_fire_ms;
             self.ready_heap
                 .push((Reverse(item.next_fire_ms), item.route.clone()));
-            fired.push((item.route.clone(), item.payload.clone()));
+            self.pending_fires.insert(
+                (item.previous_fire_ms, item.route.clone()),
+                item.payload.clone(),
+            );
+            claimed.push(PersistedPendingFire {
+                route: item.route.clone(),
+                payload: item.payload.clone(),
+                fire_ms: item.previous_fire_ms,
+            });
             info!(
                 "Schedule fired: {} (next fire: ~{:?})",
                 item.route, item.next_fire_time
             );
         }
 
-        fired
+        claimed
+    }
+
+    fn scan_and_fire_at(&mut self, now: Instant) -> Vec<(String, Bytes)> {
+        self.claim_due_fires_at(now)
+            .into_iter()
+            .map(|item| (item.route, item.payload))
+            .collect()
     }
 
     pub fn scan_and_fire(&mut self) -> Vec<(String, Bytes)> {
-        self.scan_and_fire_at(Instant::now())
+        self.scan_and_fire_at(self.clock.now_instant())
+    }
+
+    pub(crate) fn pending_fires_for_delivery(&self) -> Vec<PersistedPendingFire> {
+        self.pending_fires
+            .iter()
+            .map(|((fire_ms, route), payload)| PersistedPendingFire {
+                route: route.clone(),
+                payload: payload.clone(),
+                fire_ms: *fire_ms,
+            })
+            .collect()
+    }
+
+    pub(crate) fn ack_pending_fires(
+        &mut self,
+        delivered: &[(u64, String)],
+    ) -> Result<usize, String> {
+        if delivered.is_empty() {
+            return Ok(0);
+        }
+
+        let acknowledged_at_ms = self.clock.now_epoch_ms();
+        let store_items: Vec<_> = delivered
+            .iter()
+            .map(|(fire_ms, route)| crate::domains::schedule::store::SchedulePendingFireAck {
+                route,
+                fire_ms: *fire_ms,
+                executed_at_ms: acknowledged_at_ms,
+            })
+            .collect();
+
+        self.store
+            .ack_pending_fires(self.family.as_u64(), &store_items, self.write_options)?;
+
+        let mut acked = 0;
+        for (fire_ms, route) in delivered {
+            if self.pending_fires.remove(&(*fire_ms, route.clone())).is_some() {
+                if let Some(schedule) = self.schedules.get_mut(route) {
+                    schedule.last_fire_ms = Some(acknowledged_at_ms);
+                    schedule.executions_total = schedule.executions_total.saturating_add(1);
+                }
+                self.record_recent_execution(acknowledged_at_ms);
+                acked += 1;
+            }
+        }
+
+        Ok(acked)
+    }
+
+    pub(crate) fn pending_fire_count(&self) -> usize {
+        self.pending_fires.len()
+    }
+
+    pub(crate) fn executions_per_minute(&mut self) -> f64 {
+        let now_ms = self.clock.now_epoch_ms();
+        self.prune_recent_executions(now_ms);
+        self.recent_execution_ms.len() as f64
+    }
+
+    fn record_recent_execution(&mut self, executed_at_ms: u64) {
+        self.prune_recent_executions(executed_at_ms);
+        self.recent_execution_ms.push_back(executed_at_ms);
+    }
+
+    fn prune_recent_executions(&mut self, now_ms: u64) {
+        while let Some(oldest) = self.recent_execution_ms.front().copied() {
+            if now_ms.saturating_sub(oldest) <= 60_000 {
+                break;
+            }
+            self.recent_execution_ms.pop_front();
+        }
     }
 
     #[doc(hidden)]
     pub fn scan_and_fire_cpu_only(&mut self) -> Vec<(String, Bytes)> {
-        let now = Instant::now();
+        let now = self.clock.now_instant();
         if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
             return Vec::new();
         }
         self.last_scan_time = now;
 
-        let now_ms = Self::instant_to_ms_at(now, now);
+        let now_ms = Self::instant_to_ms_at_with_clock(now, now, self.clock.as_ref());
         let mut heap_popped = Vec::new();
 
         while let Some(&(Reverse(fire_ms), _)) = self.ready_heap.peek() {
@@ -698,11 +923,13 @@ impl ScheduleActor {
 
     #[doc(hidden)]
     pub fn bench_prepare_scan(&mut self, ready_count: usize) {
-        let now = Instant::now();
+        let now = self.clock.now_instant();
         let ready_limit = ready_count.min(self.list_entries.len());
-        let ready_ms = Self::instant_to_ms_at(now, now).saturating_sub(1);
+        let ready_ms = Self::instant_to_ms_at_with_clock(now, now, self.clock.as_ref())
+            .saturating_sub(1);
         let not_ready_time = now.checked_add(Duration::from_secs(60)).unwrap_or(now);
-        let not_ready_ms = Self::instant_to_ms_at(not_ready_time, now);
+        let not_ready_ms =
+            Self::instant_to_ms_at_with_clock(not_ready_time, now, self.clock.as_ref());
         let routes: Vec<_> = self
             .list_entries
             .iter()
@@ -730,33 +957,33 @@ impl ScheduleActor {
             .unwrap_or(now);
     }
 
+    #[cfg(test)]
     fn current_epoch_ms() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|_| Duration::from_secs(0))
-            .as_millis() as u64
+        Self::current_epoch_ms_with_clock(&SystemClock)
     }
 
+    #[cfg(test)]
+    fn current_epoch_ms_with_clock(clock: &dyn Clock) -> u64 {
+        clock.now_epoch_ms()
+    }
+
+    fn anchor_epoch_ms_with_clock(anchor: Instant, clock: &dyn Clock) -> u64 {
+        instant_to_epoch_ms_with_reference(anchor, clock.now_instant(), clock.now_epoch_ms())
+    }
+
+    #[cfg(test)]
     fn instant_to_ms_at(instant: Instant, anchor: Instant) -> u64 {
-        let anchor_ms = Self::current_epoch_ms();
-        if instant >= anchor {
-            anchor_ms.saturating_add(instant.duration_since(anchor).as_millis() as u64)
-        } else {
-            anchor_ms.saturating_sub(anchor.duration_since(instant).as_millis() as u64)
-        }
+        Self::instant_to_ms_at_with_clock(instant, anchor, &SystemClock)
     }
 
-    fn ms_to_instant_at(timestamp_ms: u64, anchor: Instant) -> Instant {
-        let anchor_ms = Self::current_epoch_ms();
-        if timestamp_ms >= anchor_ms {
-            anchor
-                .checked_add(Duration::from_millis(timestamp_ms - anchor_ms))
-                .unwrap_or(anchor)
-        } else {
-            anchor
-                .checked_sub(Duration::from_millis(anchor_ms - timestamp_ms))
-                .unwrap_or(anchor)
-        }
+    fn instant_to_ms_at_with_clock(instant: Instant, anchor: Instant, clock: &dyn Clock) -> u64 {
+        let anchor_ms = Self::anchor_epoch_ms_with_clock(anchor, clock);
+        instant_to_epoch_ms_with_reference(instant, anchor, anchor_ms)
+    }
+
+    fn ms_to_instant_at_with_clock(timestamp_ms: u64, anchor: Instant, clock: &dyn Clock) -> Instant {
+        let anchor_ms = Self::anchor_epoch_ms_with_clock(anchor, clock);
+        epoch_ms_to_instant_with_reference(timestamp_ms, anchor, anchor_ms)
     }
 
     pub fn handle(&mut self, msg: ScheduleMessage) -> ScheduleResponse {
@@ -804,6 +1031,54 @@ impl Actor for ScheduleActor {
 mod tests {
     use super::*;
     use crate::testkit::create_test_engine_with_cfs;
+    use chrono::TimeZone;
+    use std::sync::Mutex;
+
+    #[derive(Clone)]
+    struct MockClock {
+        state: Arc<Mutex<MockClockState>>,
+    }
+
+    #[derive(Clone, Copy)]
+    struct MockClockState {
+        instant: Instant,
+        epoch_ms: u64,
+    }
+
+    impl MockClock {
+        fn new(epoch_ms: u64) -> Self {
+            Self {
+                state: Arc::new(Mutex::new(MockClockState {
+                    instant: Instant::now(),
+                    epoch_ms,
+                })),
+            }
+        }
+
+        fn advance(&self, duration: Duration) {
+            let mut state = self.state.lock().expect("lock mock clock");
+            state.instant += duration;
+            state.epoch_ms = state.epoch_ms.saturating_add(duration.as_millis() as u64);
+        }
+    }
+
+    impl Clock for MockClock {
+        fn now_instant(&self) -> Instant {
+            self.state.lock().expect("lock mock clock").instant
+        }
+
+        fn now_epoch_ms(&self) -> u64 {
+            self.state.lock().expect("lock mock clock").epoch_ms
+        }
+    }
+
+    fn epoch_ms(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> u64 {
+        chrono::Utc
+            .with_ymd_and_hms(year, month, day, hour, minute, second)
+            .single()
+            .expect("valid datetime")
+            .timestamp_millis() as u64
+    }
 
     fn make_actor() -> ScheduleActor {
         let store = create_test_engine_with_cfs(vec![1]);
@@ -811,6 +1086,16 @@ mod tests {
             RouteFamily::new(1),
             store,
             cntryl_midge::WriteOptions::buffered(),
+        )
+    }
+
+    fn make_actor_with_clock(clock: Arc<dyn Clock>) -> ScheduleActor {
+        let store = create_test_engine_with_cfs(vec![1]);
+        ScheduleActor::new_with_clock(
+            RouteFamily::new(1),
+            store,
+            cntryl_midge::WriteOptions::buffered(),
+            clock,
         )
     }
 
@@ -832,6 +1117,8 @@ mod tests {
                     payload: &payload,
                     next_fire_ms: overdue_ms,
                     previous_fire_ms: None,
+                    last_fire_ms: None,
+                    executions_total: 0,
                 },
                 cntryl_midge::WriteOptions::buffered(),
             )
@@ -873,6 +1160,8 @@ mod tests {
                     payload: &payload,
                     next_fire_ms: overdue_ms,
                     previous_fire_ms: None,
+                    last_fire_ms: None,
+                    executions_total: 0,
                 },
                 cntryl_midge::WriteOptions::buffered(),
             )
@@ -908,6 +1197,70 @@ mod tests {
     }
 
     #[test]
+    fn should_preserve_pending_due_occurrence_given_identical_create_retry_at_due_boundary() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/retry/run".to_string();
+        let cron = "* * * * *".to_string();
+        let payload = Bytes::from_static(b"payload");
+        let created_at = Instant::now();
+
+        actor
+            .create_schedule_at(route.clone(), cron.clone(), payload.clone(), created_at)
+            .expect("create schedule");
+
+        let original = actor.schedules.get(&route).expect("schedule").clone();
+
+        // Act
+        let changed = actor
+            .create_schedule_at(
+                route.clone(),
+                cron,
+                payload,
+                original.next_fire_time,
+            )
+            .expect("retry identical create");
+
+        // Assert
+        assert!(!changed, "identical retry should remain idempotent at due time");
+        let schedule = actor.schedules.get(&route).expect("schedule");
+        assert_eq!(schedule.next_fire_ms, original.next_fire_ms);
+        assert_eq!(schedule.next_fire_time, original.next_fire_time);
+    }
+
+    #[test]
+    fn should_preserve_pending_due_occurrence_given_identical_batch_retry_at_due_boundary() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/batch-retry/run".to_string();
+        let cron = "* * * * *".to_string();
+        let payload = Bytes::from_static(b"payload");
+        let created_at = Instant::now();
+
+        actor
+            .create_schedule_at(route.clone(), cron.clone(), payload.clone(), created_at)
+            .expect("create schedule");
+
+        let original = actor.schedules.get(&route).expect("schedule").clone();
+        let entries = vec![ScheduleCreateEntry {
+            route: route.clone(),
+            cron,
+            payload,
+        }];
+
+        // Act
+        let changed = actor
+            .create_schedules_at(entries, original.next_fire_time)
+            .expect("retry identical batch create");
+
+        // Assert
+        assert_eq!(changed, 0, "identical batch retry should not rewrite the schedule");
+        let schedule = actor.schedules.get(&route).expect("schedule");
+        assert_eq!(schedule.next_fire_ms, original.next_fire_ms);
+        assert_eq!(schedule.next_fire_time, original.next_fire_time);
+    }
+
+    #[test]
     fn should_not_advance_in_memory_or_fire_when_reschedule_persist_fails() {
         // Arrange
         let mut actor = make_actor();
@@ -934,6 +1287,139 @@ mod tests {
             before,
             "in-memory schedule should not advance when persistence fails"
         );
+    }
+
+    #[test]
+    fn should_report_execution_state_given_acknowledged_pending_fire() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/execution-state/run";
+        actor
+            .create_schedule(
+                route.to_string(),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"payload"),
+            )
+            .expect("create schedule");
+        actor.bench_prepare_scan(1);
+        let claimed_fire_ms = actor.schedules.get(route).expect("schedule").next_fire_ms;
+        let now = Instant::now();
+        actor.last_scan_time = now
+            .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+            .unwrap();
+
+        // Act
+        let fired = actor.scan_and_fire_at(now);
+        actor
+            .ack_pending_fires(&[(claimed_fire_ms, route.to_string())])
+            .expect("ack pending fire");
+        let snapshot = actor.admin_snapshot();
+
+        // Assert
+        assert_eq!(fired.len(), 1, "scan should claim one due occurrence");
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].executions_total, 1);
+        assert!(snapshot[0].last_run.is_some());
+        assert!(actor.executions_per_minute() >= 1.0);
+    }
+
+    #[test]
+    fn should_compact_ready_heap_given_repeated_schedule_upserts() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/compact/run".to_string();
+        let now = Instant::now();
+        actor
+            .create_schedule_at(
+                route.clone(),
+                "0 2 * * *".to_string(),
+                Bytes::from_static(b"one"),
+                now,
+            )
+            .expect("create schedule");
+        actor
+            .create_schedule_at(
+                route.clone(),
+                "0 3 * * *".to_string(),
+                Bytes::from_static(b"two"),
+                now,
+            )
+            .expect("first upsert");
+
+        // Act
+        actor
+            .create_schedule_at(
+                route.clone(),
+                "0 4 * * *".to_string(),
+                Bytes::from_static(b"three"),
+                now,
+            )
+            .expect("second upsert");
+
+        // Assert
+        assert_eq!(actor.schedule_count(), 1);
+        assert_eq!(actor.ready_heap.len(), 1);
+        assert_eq!(actor.schedules.get(&route).expect("schedule").cron, "0 4 * * *");
+    }
+
+    #[test]
+    fn should_clear_ready_heap_given_last_schedule_delete() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/delete-compact/run";
+        actor
+            .create_schedule(
+                route.to_string(),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"payload"),
+            )
+            .expect("create schedule");
+
+        // Act
+        let deleted = actor
+            .delete_schedule(route.to_string())
+            .expect("delete schedule");
+
+        // Assert
+        assert!(deleted);
+        assert!(actor.ready_heap.is_empty());
+        assert_eq!(actor.schedule_count(), 0);
+    }
+
+    #[test]
+    fn should_invalidate_shared_full_list_cache_given_schedule_delete() {
+        // Arrange
+        let mut actor = make_actor();
+        let first_route = "schedule://acme/jobs/cache-first/run";
+        let second_route = "schedule://acme/jobs/cache-second/run";
+        actor
+            .create_schedule(
+                first_route.to_string(),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"first"),
+            )
+            .expect("create first schedule");
+        actor
+            .create_schedule(
+                second_route.to_string(),
+                "0 * * * *".to_string(),
+                Bytes::from_static(b"second"),
+            )
+            .expect("create second schedule");
+        let (cached, _) = actor.list_entries(0, 0);
+
+        // Act
+        actor
+            .delete_schedule(first_route.to_string())
+            .expect("delete schedule");
+        let (refreshed, total_count) = actor.list_entries(0, 0);
+
+        // Assert
+        assert_eq!(cached.len(), 2);
+        assert_eq!(refreshed.len(), 1);
+        assert_eq!(total_count, 1);
+        assert!(refreshed.iter().all(|entry| entry.route != first_route));
+        assert!(refreshed.iter().any(|entry| entry.route == second_route));
     }
 
     #[test]
@@ -1012,6 +1498,203 @@ mod tests {
             "deleted schedules should not ghost-fire from stale heap entries"
         );
         assert_eq!(actor.schedule_count(), 0);
+    }
+
+    #[test]
+    fn should_not_fire_future_occurrence_given_cancel_after_due_scan() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/cancel-after-scan/run";
+        actor
+            .create_schedule(
+                route.to_string(),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"payload"),
+            )
+            .expect("create schedule");
+        actor.bench_prepare_scan(1);
+
+        let first_scan_at = Instant::now();
+        actor.last_scan_time = first_scan_at
+            .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+            .unwrap();
+
+        // Act
+        let first_fired = actor.scan_and_fire_at(first_scan_at);
+        let next_fire_time = actor
+            .schedules
+            .get(route)
+            .expect("schedule")
+            .next_fire_time;
+        actor
+            .delete_schedule(route.to_string())
+            .expect("delete schedule");
+        actor.last_scan_time = next_fire_time
+            .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+            .unwrap();
+        let second_fired = actor.scan_and_fire_at(next_fire_time);
+
+        // Assert
+        assert_eq!(first_fired.len(), 1, "scan should claim the due occurrence once");
+        assert!(
+            second_fired.is_empty(),
+            "cancel after the due scan should suppress all future occurrences"
+        );
+        assert_eq!(actor.schedule_count(), 0);
+    }
+
+    #[test]
+    fn should_not_fire_original_due_occurrence_given_batch_reschedule_before_due_scan() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/batch-reschedule/run".to_string();
+        let original_payload = Bytes::from_static(b"original");
+        let replacement_payload = Bytes::from_static(b"replacement");
+        let created_at = Instant::now();
+
+        actor
+            .create_schedule_at(
+                route.clone(),
+                "* * * * *".to_string(),
+                original_payload,
+                created_at,
+            )
+            .expect("create schedule");
+
+        let original = actor.schedules.get(&route).expect("schedule").clone();
+        let entries = vec![ScheduleCreateEntry {
+            route: route.clone(),
+            cron: "0 2 * * *".to_string(),
+            payload: replacement_payload.clone(),
+        }];
+
+        // Act
+        let changed = actor
+            .create_schedules_at(entries, original.next_fire_time)
+            .expect("batch reschedule");
+        actor.last_scan_time = original
+            .next_fire_time
+            .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+            .unwrap();
+        let fired = actor.scan_and_fire_at(original.next_fire_time);
+
+        // Assert
+        assert_eq!(changed, 1, "batch reschedule should rewrite the schedule");
+        assert!(
+            fired.is_empty(),
+            "reschedule before the due scan should suppress the original occurrence"
+        );
+        let schedule = actor.schedules.get(&route).expect("schedule");
+        assert_eq!(schedule.cron, "0 2 * * *");
+        assert_eq!(schedule.payload, replacement_payload);
+        assert!(schedule.next_fire_time > original.next_fire_time);
+    }
+
+    #[test]
+    fn should_not_fire_original_due_occurrence_given_single_reschedule_before_due_scan() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/reschedule/run".to_string();
+        let original_payload = Bytes::from_static(b"original");
+        let replacement_payload = Bytes::from_static(b"replacement");
+        let created_at = Instant::now();
+
+        actor
+            .create_schedule_at(
+                route.clone(),
+                "* * * * *".to_string(),
+                original_payload,
+                created_at,
+            )
+            .expect("create schedule");
+
+        let original = actor.schedules.get(&route).expect("schedule").clone();
+
+        // Act
+        let changed = actor
+            .create_schedule_at(
+                route.clone(),
+                "0 2 * * *".to_string(),
+                replacement_payload.clone(),
+                original.next_fire_time,
+            )
+            .expect("reschedule before due scan");
+        actor.last_scan_time = original
+            .next_fire_time
+            .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+            .unwrap();
+        let fired = actor.scan_and_fire_at(original.next_fire_time);
+
+        // Assert
+        assert!(changed, "single reschedule should rewrite the schedule");
+        assert!(
+            fired.is_empty(),
+            "reschedule before the due scan should suppress the original occurrence"
+        );
+        let schedule = actor.schedules.get(&route).expect("schedule");
+        assert_eq!(schedule.cron, "0 2 * * *");
+        assert_eq!(schedule.payload, replacement_payload);
+        assert!(schedule.next_fire_time > original.next_fire_time);
+    }
+
+    #[test]
+    fn should_allow_claimed_due_occurrence_given_single_reschedule_after_due_scan() {
+        // Arrange
+        let clock = Arc::new(MockClock::new(epoch_ms(2026, 3, 31, 5, 59, 30)));
+        let mut actor = make_actor_with_clock(clock.clone());
+        let route = "schedule://acme/jobs/reschedule-after-scan/run".to_string();
+        let original_payload = Bytes::from_static(b"original");
+        let replacement_payload = Bytes::from_static(b"replacement");
+
+        actor
+            .create_schedule_at(
+                route.clone(),
+                "* * * * *".to_string(),
+                original_payload.clone(),
+                clock.now_instant(),
+            )
+            .expect("create schedule");
+
+        let original = actor.schedules.get(&route).expect("schedule").clone();
+        clock.advance(original.next_fire_time.duration_since(clock.now_instant()));
+        actor.last_scan_time = clock
+            .now_instant()
+            .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+            .unwrap();
+
+        // Act
+        let first_fired = actor.scan_and_fire();
+        let changed = actor
+            .create_schedule_at(
+                route.clone(),
+                "0 2 * * *".to_string(),
+                replacement_payload.clone(),
+                clock.now_instant(),
+            )
+            .expect("reschedule after due scan");
+        clock.advance(Duration::from_millis(1));
+        actor.last_scan_time = clock
+            .now_instant()
+            .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+            .unwrap();
+        let second_fired = actor.scan_and_fire();
+
+        // Assert
+        assert_eq!(first_fired.len(), 1, "scan should claim the original due occurrence");
+        assert_eq!(first_fired[0].0, route);
+        assert_eq!(first_fired[0].1, original_payload);
+        assert!(changed, "reschedule after the due scan should update future occurrences");
+        assert!(
+            second_fired.is_empty(),
+            "rescheduling after the due scan should not create a duplicate fire at the old due boundary"
+        );
+        let schedule = actor
+            .schedules
+            .get("schedule://acme/jobs/reschedule-after-scan/run")
+            .expect("schedule");
+        assert_eq!(schedule.cron, "0 2 * * *");
+        assert_eq!(schedule.payload, replacement_payload);
+        assert!(schedule.next_fire_time > original.next_fire_time);
     }
 
     #[test]

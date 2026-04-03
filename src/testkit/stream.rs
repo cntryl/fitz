@@ -59,11 +59,7 @@ impl MailboxSink for TestSink {
 
 /// Create an in-memory Midge database for stream tests
 pub fn create_test_db() -> Arc<cntryl_midge::Engine> {
-    use cntryl_midge::testkit::MidgeOptions;
-    Arc::new(
-        cntryl_midge::Engine::open_with_options(MidgeOptions::default())
-            .expect("create in-memory db"),
-    )
+    crate::testkit::create_test_engine_with_cfs(vec![1])
 }
 
 /// Create a StreamStore with in-memory database for tests

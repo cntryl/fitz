@@ -4,14 +4,25 @@ use std::sync::Arc;
 
 use cntryl_midge::WriteOptions;
 
-const DEFINITION_VALUE_VERSION: u8 = 1;
+const DEFINITION_VALUE_VERSION_V1: u8 = 1;
+const DEFINITION_VALUE_VERSION_V2: u8 = 2;
+const PENDING_FIRE_VALUE_VERSION: u8 = 1;
 const DEFINITION_PREFIX: &[u8] = b"sched:def:";
 const DUE_PREFIX: &[u8] = b"sched:due:";
+const PENDING_FIRE_PREFIX: &[u8] = b"sched:pending:";
 const DUE_INDEX_VALUE: &[u8] = &[1];
 const LEGACY_PREFIX: &[u8] = b"sched:m";
 const LEGACY_INDEX_PREFIX: &[u8] = b"sched:idx:";
 
-pub type ScheduleBatchInsertItem = (String, String, Bytes, u64, Option<u64>);
+pub struct ScheduleBatchInsert {
+    pub route: String,
+    pub cron: String,
+    pub payload: Bytes,
+    pub next_fire_ms: u64,
+    pub previous_fire_ms: Option<u64>,
+    pub last_fire_ms: Option<u64>,
+    pub executions_total: u64,
+}
 
 pub struct ScheduleInsert<'a> {
     pub route: &'a str,
@@ -19,6 +30,24 @@ pub struct ScheduleInsert<'a> {
     pub payload: &'a Bytes,
     pub next_fire_ms: u64,
     pub previous_fire_ms: Option<u64>,
+    pub last_fire_ms: Option<u64>,
+    pub executions_total: u64,
+}
+
+pub struct ScheduleFireClaim<'a> {
+    pub route: &'a str,
+    pub cron: &'a str,
+    pub payload: &'a Bytes,
+    pub next_fire_ms: u64,
+    pub previous_fire_ms: u64,
+    pub last_fire_ms: Option<u64>,
+    pub executions_total: u64,
+}
+
+pub struct SchedulePendingFireAck<'a> {
+    pub route: &'a str,
+    pub fire_ms: u64,
+    pub executed_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +56,15 @@ pub struct PersistedSchedule {
     pub cron: String,
     pub payload: Bytes,
     pub next_fire_ms: u64,
+    pub last_fire_ms: Option<u64>,
+    pub executions_total: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedPendingFire {
+    pub route: String,
+    pub payload: Bytes,
+    pub fire_ms: u64,
 }
 
 pub struct ScheduleStore {
@@ -57,6 +95,20 @@ impl ScheduleStore {
 
         let mut key = Vec::with_capacity(DUE_PREFIX.len() + 18 + route.len());
         key.extend_from_slice(DUE_PREFIX);
+        key.extend_from_slice(minute_epoch.to_be_bytes().as_slice());
+        key.push(b'/');
+        key.extend_from_slice(ms_offset.to_be_bytes().as_slice());
+        key.push(b':');
+        key.extend_from_slice(route.as_bytes());
+        key
+    }
+
+    pub(crate) fn encode_pending_fire_key(fire_ms: u64, route: &str) -> Vec<u8> {
+        let minute_epoch = fire_ms / 60_000;
+        let ms_offset = fire_ms % 60_000;
+
+        let mut key = Vec::with_capacity(PENDING_FIRE_PREFIX.len() + 18 + route.len());
+        key.extend_from_slice(PENDING_FIRE_PREFIX);
         key.extend_from_slice(minute_epoch.to_be_bytes().as_slice());
         key.push(b'/');
         key.extend_from_slice(ms_offset.to_be_bytes().as_slice());
@@ -140,10 +192,23 @@ impl ScheduleStore {
         Self::decode_due_key_with_prefix(key, LEGACY_PREFIX)
     }
 
-    fn encode_definition_value(next_fire_ms: u64, cron: &str, payload: &Bytes) -> Vec<u8> {
-        let mut value = Vec::with_capacity(1 + 8 + 4 + cron.len() + 4 + payload.len());
-        value.push(DEFINITION_VALUE_VERSION);
+    fn decode_pending_fire_key(key: &[u8]) -> Result<(u64, String), String> {
+        Self::decode_due_key_with_prefix(key, PENDING_FIRE_PREFIX)
+    }
+
+    fn encode_definition_value(
+        next_fire_ms: u64,
+        cron: &str,
+        payload: &Bytes,
+        last_fire_ms: Option<u64>,
+        executions_total: u64,
+    ) -> Vec<u8> {
+        let mut value =
+            Vec::with_capacity(1 + 8 + 8 + 8 + 4 + cron.len() + 4 + payload.len());
+        value.push(DEFINITION_VALUE_VERSION_V2);
         value.extend_from_slice(&next_fire_ms.to_be_bytes());
+        value.extend_from_slice(&last_fire_ms.unwrap_or(0).to_be_bytes());
+        value.extend_from_slice(&executions_total.to_be_bytes());
         value.extend_from_slice(&(cron.len() as u32).to_be_bytes());
         value.extend_from_slice(cron.as_bytes());
         value.extend_from_slice(&(payload.len() as u32).to_be_bytes());
@@ -151,40 +216,81 @@ impl ScheduleStore {
         value
     }
 
-    fn decode_definition_value(value: &[u8]) -> Result<(u64, String, Bytes), String> {
-        if value.len() < 17 {
+    fn decode_definition_value(value: &[u8]) -> Result<(u64, String, Bytes, Option<u64>, u64), String> {
+        if value.is_empty() {
             return Err("Schedule definition value too short".to_string());
         }
-        if value[0] != DEFINITION_VALUE_VERSION {
-            return Err(format!(
+
+        match value[0] {
+            DEFINITION_VALUE_VERSION_V1 => {
+                if value.len() < 17 {
+                    return Err("Schedule definition value too short".to_string());
+                }
+
+                let next_fire_ms = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                let cron_len = u32::from_be_bytes(value[9..13].try_into().unwrap()) as usize;
+                let cron_start = 13;
+                let cron_end = cron_start + cron_len;
+                if value.len() < cron_end + 4 {
+                    return Err("Schedule definition value truncated before cron".to_string());
+                }
+
+                let cron = String::from_utf8(value[cron_start..cron_end].to_vec())
+                    .map_err(|e| format!("Invalid cron encoding: {}", e))?;
+                let payload_len =
+                    u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap()) as usize;
+                let payload_start = cron_end + 4;
+                let payload_end = payload_start + payload_len;
+                if value.len() != payload_end {
+                    return Err("Schedule definition value has invalid payload length".to_string());
+                }
+
+                Ok((
+                    next_fire_ms,
+                    cron,
+                    Bytes::copy_from_slice(&value[payload_start..payload_end]),
+                    None,
+                    0,
+                ))
+            }
+            DEFINITION_VALUE_VERSION_V2 => {
+                if value.len() < 33 {
+                    return Err("Schedule definition value too short".to_string());
+                }
+
+                let next_fire_ms = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                let last_fire_ms = u64::from_be_bytes(value[9..17].try_into().unwrap());
+                let executions_total = u64::from_be_bytes(value[17..25].try_into().unwrap());
+                let cron_len = u32::from_be_bytes(value[25..29].try_into().unwrap()) as usize;
+                let cron_start = 29;
+                let cron_end = cron_start + cron_len;
+                if value.len() < cron_end + 4 {
+                    return Err("Schedule definition value truncated before cron".to_string());
+                }
+
+                let cron = String::from_utf8(value[cron_start..cron_end].to_vec())
+                    .map_err(|e| format!("Invalid cron encoding: {}", e))?;
+                let payload_len =
+                    u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap()) as usize;
+                let payload_start = cron_end + 4;
+                let payload_end = payload_start + payload_len;
+                if value.len() != payload_end {
+                    return Err("Schedule definition value has invalid payload length".to_string());
+                }
+
+                Ok((
+                    next_fire_ms,
+                    cron,
+                    Bytes::copy_from_slice(&value[payload_start..payload_end]),
+                    (last_fire_ms != 0).then_some(last_fire_ms),
+                    executions_total,
+                ))
+            }
+            other => Err(format!(
                 "Unsupported schedule definition value version: {}",
-                value[0]
-            ));
+                other
+            )),
         }
-
-        let next_fire_ms = u64::from_be_bytes(value[1..9].try_into().unwrap());
-        let cron_len = u32::from_be_bytes(value[9..13].try_into().unwrap()) as usize;
-        let cron_start = 13;
-        let cron_end = cron_start + cron_len;
-        if value.len() < cron_end + 4 {
-            return Err("Schedule definition value truncated before cron".to_string());
-        }
-
-        let cron = String::from_utf8(value[cron_start..cron_end].to_vec())
-            .map_err(|e| format!("Invalid cron encoding: {}", e))?;
-        let payload_len =
-            u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap()) as usize;
-        let payload_start = cron_end + 4;
-        let payload_end = payload_start + payload_len;
-        if value.len() != payload_end {
-            return Err("Schedule definition value has invalid payload length".to_string());
-        }
-
-        Ok((
-            next_fire_ms,
-            cron,
-            Bytes::copy_from_slice(&value[payload_start..payload_end]),
-        ))
     }
 
     fn decode_legacy_value(value: &[u8]) -> Result<(String, Bytes), String> {
@@ -199,6 +305,27 @@ impl ScheduleStore {
         Ok((cron, payload))
     }
 
+    fn encode_pending_fire_value(payload: &Bytes) -> Vec<u8> {
+        let mut value = Vec::with_capacity(1 + payload.len());
+        value.push(PENDING_FIRE_VALUE_VERSION);
+        value.extend_from_slice(payload);
+        value
+    }
+
+    fn decode_pending_fire_value(value: &[u8]) -> Result<Bytes, String> {
+        if value.is_empty() {
+            return Err("Schedule pending fire value too short".to_string());
+        }
+        if value[0] != PENDING_FIRE_VALUE_VERSION {
+            return Err(format!(
+                "Unsupported schedule pending fire value version: {}",
+                value[0]
+            ));
+        }
+
+        Ok(Bytes::copy_from_slice(&value[1..]))
+    }
+
     pub fn insert(
         &self,
         cf_id: u64,
@@ -207,8 +334,13 @@ impl ScheduleStore {
     ) -> Result<Vec<u8>, String> {
         let definition_key = Self::encode_definition_key(schedule.route);
         let due_key = Self::encode_due_key(schedule.next_fire_ms, schedule.route);
-        let definition_value =
-            Self::encode_definition_value(schedule.next_fire_ms, schedule.cron, schedule.payload);
+        let definition_value = Self::encode_definition_value(
+            schedule.next_fire_ms,
+            schedule.cron,
+            schedule.payload,
+            schedule.last_fire_ms,
+            schedule.executions_total,
+        );
 
         let mut txn = self
             .db
@@ -235,7 +367,7 @@ impl ScheduleStore {
     pub fn insert_batch(
         &self,
         cf_id: u64,
-        items: &[ScheduleBatchInsertItem],
+        items: &[ScheduleBatchInsert],
         write_options: WriteOptions,
     ) -> Result<(), String> {
         if items.is_empty() {
@@ -247,23 +379,130 @@ impl ScheduleStore {
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        for (route, cron, payload, next_fire_ms, previous_fire_ms) in items {
-            let definition_key = Self::encode_definition_key(route);
-            let definition_value = Self::encode_definition_value(*next_fire_ms, cron, payload);
-            let due_key = Self::encode_due_key(*next_fire_ms, route);
+        for item in items {
+            let definition_key = Self::encode_definition_key(&item.route);
+            let definition_value = Self::encode_definition_value(
+                item.next_fire_ms,
+                &item.cron,
+                &item.payload,
+                item.last_fire_ms,
+                item.executions_total,
+            );
+            let due_key = Self::encode_due_key(item.next_fire_ms, &item.route);
 
             txn.put(definition_key, definition_value, None)
                 .map_err(|e| format!("put schedule definition failed: {:?}", e))?;
 
-            if let Some(previous_fire_ms) = previous_fire_ms {
-                if previous_fire_ms != next_fire_ms {
-                    txn.delete(Self::encode_due_key(*previous_fire_ms, route))
+            if let Some(previous_fire_ms) = item.previous_fire_ms {
+                if previous_fire_ms != item.next_fire_ms {
+                    txn.delete(Self::encode_due_key(previous_fire_ms, &item.route))
                         .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
                 }
             }
 
             txn.put(due_key, DUE_INDEX_VALUE.to_vec(), None)
                 .map_err(|e| format!("put due index failed: {:?}", e))?;
+        }
+
+        self.commit_or_inject(txn, write_options)
+    }
+
+    pub fn claim_due_batch(
+        &self,
+        cf_id: u64,
+        items: &[ScheduleFireClaim<'_>],
+        write_options: WriteOptions,
+    ) -> Result<(), String> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        let mut txn = self
+            .db
+            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+
+        for item in items {
+            let definition_key = Self::encode_definition_key(item.route);
+            let definition_value = Self::encode_definition_value(
+                item.next_fire_ms,
+                item.cron,
+                item.payload,
+                item.last_fire_ms,
+                item.executions_total,
+            );
+            let due_key = Self::encode_due_key(item.next_fire_ms, item.route);
+            let pending_fire_key = Self::encode_pending_fire_key(item.previous_fire_ms, item.route);
+
+            txn.put(definition_key, definition_value, None)
+                .map_err(|e| format!("put schedule definition failed: {:?}", e))?;
+
+            if item.previous_fire_ms != item.next_fire_ms {
+                txn.delete(Self::encode_due_key(item.previous_fire_ms, item.route))
+                    .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
+            }
+
+            txn.put(due_key, DUE_INDEX_VALUE.to_vec(), None)
+                .map_err(|e| format!("put due index failed: {:?}", e))?;
+            txn.put(
+                pending_fire_key,
+                Self::encode_pending_fire_value(item.payload),
+                None,
+            )
+            .map_err(|e| format!("put pending fire failed: {:?}", e))?;
+        }
+
+        self.commit_or_inject(txn, write_options)
+    }
+
+    pub fn ack_pending_fires(
+        &self,
+        cf_id: u64,
+        items: &[SchedulePendingFireAck<'_>],
+        write_options: WriteOptions,
+    ) -> Result<(), String> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        let mut txn = self
+            .db
+            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+        let mut definitions = BTreeMap::<String, Option<(u64, String, Bytes, Option<u64>, u64)>>::new();
+
+        for item in items {
+            txn.delete(Self::encode_pending_fire_key(item.fire_ms, item.route))
+                .map_err(|e| format!("delete pending fire failed: {:?}", e))?;
+
+            let state = match definitions.entry(item.route.to_string()) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    let loaded = txn
+                        .get(&Self::encode_definition_key(item.route))
+                        .map_err(|e| format!("get schedule definition failed: {:?}", e))?
+                        .map(|value| Self::decode_definition_value(value.as_ref()))
+                        .transpose()?;
+                    entry.insert(loaded)
+                }
+            };
+
+            if let Some((next_fire_ms, cron, payload, last_fire_ms, executions_total)) = state {
+                *last_fire_ms = Some(item.executed_at_ms);
+                *executions_total = executions_total.saturating_add(1);
+                txn.put(
+                    Self::encode_definition_key(item.route),
+                    Self::encode_definition_value(
+                        *next_fire_ms,
+                        cron,
+                        payload,
+                        *last_fire_ms,
+                        *executions_total,
+                    ),
+                    None,
+                )
+                .map_err(|e| format!("update schedule execution state failed: {:?}", e))?;
+            }
         }
 
         self.commit_or_inject(txn, write_options)
@@ -314,7 +553,7 @@ impl ScheduleStore {
                 Self::decode_definition_key(&key),
                 Self::decode_definition_value(&value),
             ) {
-                (Ok(route), Ok((next_fire_ms, cron, payload))) => {
+                (Ok(route), Ok((next_fire_ms, cron, payload, last_fire_ms, executions_total))) => {
                     schedules.insert(
                         route.clone(),
                         PersistedSchedule {
@@ -322,6 +561,8 @@ impl ScheduleStore {
                             cron,
                             payload,
                             next_fire_ms,
+                            last_fire_ms,
+                            executions_total,
                         },
                     );
                 }
@@ -351,6 +592,8 @@ impl ScheduleStore {
                         cron,
                         payload,
                         next_fire_ms,
+                        last_fire_ms: None,
+                        executions_total: 0,
                     };
                     imported_definitions.push(persisted.clone());
                     schedules.insert(route.clone(), persisted);
@@ -384,6 +627,8 @@ impl ScheduleStore {
                         schedule.next_fire_ms,
                         &schedule.cron,
                         &schedule.payload,
+                        schedule.last_fire_ms,
+                        schedule.executions_total,
                     ),
                     None,
                 )
@@ -420,6 +665,65 @@ impl ScheduleStore {
 
         self.commit_or_inject(write_tx, write_options)?;
         Ok(schedules.into_values().collect())
+    }
+
+    pub fn load_pending_fires(&self, cf_id: u64) -> Result<Vec<PersistedPendingFire>, String> {
+        let read_tx = self
+            .db
+            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+
+        let rows = read_tx
+            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(PENDING_FIRE_PREFIX)))
+            .map_err(|e| format!("scan pending fires failed: {:?}", e))?
+            .collect_all();
+
+        let mut pending = Vec::with_capacity(rows.len());
+        for (key, value) in rows {
+            match (
+                Self::decode_pending_fire_key(&key),
+                Self::decode_pending_fire_value(&value),
+            ) {
+                (Ok((fire_ms, route)), Ok(payload)) => {
+                    pending.push(PersistedPendingFire {
+                        route,
+                        payload,
+                        fire_ms,
+                    });
+                }
+                (Err(error), _) | (_, Err(error)) => {
+                    tracing::warn!("Failed to decode pending schedule fire: {}", error);
+                }
+            }
+        }
+
+        pending.sort_by(|left, right| {
+            (left.fire_ms, left.route.as_str()).cmp(&(right.fire_ms, right.route.as_str()))
+        });
+        Ok(pending)
+    }
+
+    pub fn delete_pending_fires(
+        &self,
+        cf_id: u64,
+        items: &[(u64, String)],
+        write_options: WriteOptions,
+    ) -> Result<(), String> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        let mut txn = self
+            .db
+            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+
+        for (fire_ms, route) in items {
+            txn.delete(Self::encode_pending_fire_key(*fire_ms, route))
+                .map_err(|e| format!("delete pending fire failed: {:?}", e))?;
+        }
+
+        self.commit_or_inject(txn, write_options)
     }
 
     #[cfg(test)]
@@ -520,6 +824,8 @@ mod tests {
                     payload: &payload,
                     next_fire_ms,
                     previous_fire_ms: None,
+                    last_fire_ms: None,
+                    executions_total: 0,
                 },
                 WriteOptions::buffered(),
             )
@@ -535,7 +841,9 @@ mod tests {
             (
                 next_fire_ms,
                 "* * * * *".to_string(),
-                Bytes::from_static(b"payload")
+                Bytes::from_static(b"payload"),
+                None,
+                0,
             )
         );
         assert_eq!(
@@ -625,6 +933,8 @@ mod tests {
                     payload: &payload,
                     next_fire_ms,
                     previous_fire_ms: None,
+                    last_fire_ms: None,
+                    executions_total: 0,
                 },
                 WriteOptions::buffered(),
             )
@@ -643,6 +953,154 @@ mod tests {
         assert!(
             read_raw_value(&db, 1, &ScheduleStore::encode_due_key(next_fire_ms, route)).is_none(),
             "due index should be deleted"
+        );
+    }
+
+    #[test]
+    fn should_persist_pending_fire_given_claimed_due_schedule() {
+        // Arrange
+        let (store, db) = make_store();
+        let route = "schedule://acme/jobs/claim/run";
+        let payload = Bytes::from_static(b"payload");
+        let original_fire_ms = 1_700_000_020_000_u64;
+        let next_fire_ms = 1_700_000_080_000_u64;
+
+        store
+            .insert(
+                1,
+                ScheduleInsert {
+                    route,
+                    cron: "* * * * *",
+                    payload: &payload,
+                    next_fire_ms: original_fire_ms,
+                    previous_fire_ms: None,
+                    last_fire_ms: None,
+                    executions_total: 0,
+                },
+                WriteOptions::buffered(),
+            )
+            .expect("insert schedule");
+
+        // Act
+        store
+            .claim_due_batch(
+                1,
+                &[ScheduleFireClaim {
+                    route,
+                    cron: "* * * * *",
+                    payload: &payload,
+                    next_fire_ms,
+                    previous_fire_ms: original_fire_ms,
+                    last_fire_ms: None,
+                    executions_total: 0,
+                }],
+                WriteOptions::buffered(),
+            )
+            .expect("claim due schedule");
+        let pending = store.load_pending_fires(1).expect("load pending fires");
+
+        // Assert
+        assert_eq!(
+            pending,
+            vec![PersistedPendingFire {
+                route: route.to_string(),
+                payload: payload.clone(),
+                fire_ms: original_fire_ms,
+            }]
+        );
+        assert!(
+            read_raw_value(
+                &db,
+                1,
+                &ScheduleStore::encode_due_key(original_fire_ms, route),
+            )
+            .is_none(),
+            "original due key should be removed after claim"
+        );
+        assert!(
+            read_raw_value(&db, 1, &ScheduleStore::encode_due_key(next_fire_ms, route)).is_some(),
+            "next due key should be persisted after claim"
+        );
+        assert!(
+            read_raw_value(
+                &db,
+                1,
+                &ScheduleStore::encode_pending_fire_key(original_fire_ms, route),
+            )
+            .is_some(),
+            "pending fire should be persisted after claim"
+        );
+    }
+
+    #[test]
+    fn should_record_execution_state_given_acknowledged_claimed_due_schedule() {
+        // Arrange
+        let (store, db) = make_store();
+        let route = "schedule://acme/jobs/claim/run";
+        let payload = Bytes::from_static(b"payload");
+        let original_fire_ms = 1_700_000_020_000_u64;
+        let next_fire_ms = 1_700_000_080_000_u64;
+        let executed_at_ms = 1_700_000_021_500_u64;
+
+        store
+            .insert(
+                1,
+                ScheduleInsert {
+                    route,
+                    cron: "* * * * *",
+                    payload: &payload,
+                    next_fire_ms: original_fire_ms,
+                    previous_fire_ms: None,
+                    last_fire_ms: None,
+                    executions_total: 0,
+                },
+                WriteOptions::buffered(),
+            )
+            .expect("insert schedule");
+        store
+            .claim_due_batch(
+                1,
+                &[ScheduleFireClaim {
+                    route,
+                    cron: "* * * * *",
+                    payload: &payload,
+                    next_fire_ms,
+                    previous_fire_ms: original_fire_ms,
+                    last_fire_ms: None,
+                    executions_total: 0,
+                }],
+                WriteOptions::buffered(),
+            )
+            .expect("claim due schedule");
+
+        // Act
+        store
+            .ack_pending_fires(
+                1,
+                &[SchedulePendingFireAck {
+                    route,
+                    fire_ms: original_fire_ms,
+                    executed_at_ms,
+                }],
+                WriteOptions::buffered(),
+            )
+            .expect("ack pending fire");
+        let pending = store.load_pending_fires(1).expect("load pending fires");
+        let schedules = store.load_all(1, WriteOptions::buffered()).expect("load schedules");
+
+        // Assert
+        assert!(pending.is_empty(), "pending fire should be removed after ack");
+        assert_eq!(schedules.len(), 1);
+        assert_eq!(schedules[0].last_fire_ms, Some(executed_at_ms));
+        assert_eq!(schedules[0].executions_total, 1);
+        assert!(
+            read_raw_value(
+                &db,
+                1,
+                &ScheduleStore::encode_pending_fire_key(original_fire_ms, route),
+            )
+            .is_none(),
+            "pending fire row should be deleted after ack"
         );
     }
 }
