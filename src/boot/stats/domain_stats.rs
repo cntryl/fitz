@@ -123,11 +123,7 @@ impl Runtime {
 
     pub fn stream_events_total(&self) -> usize {
         self.refresh_stream_admin_snapshot();
-        self.admin_read_model
-            .streams(None)
-            .into_iter()
-            .map(|stream| stream.offset.saturating_add(1) as usize)
-            .sum()
+        self.admin_read_model.stream_events_total()
     }
 
     pub fn stream_operations_per_second(&self) -> f64 {

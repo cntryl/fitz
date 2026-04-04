@@ -283,7 +283,7 @@ impl StreamResourceDetail {
 }
 
 impl StreamRealmWatermarkDetail {
-    fn new(
+    pub(crate) fn snapshot(
         realm: &str,
         area_count: usize,
         resource_count: usize,
@@ -305,7 +305,7 @@ impl StreamRealmWatermark {
 }
 
 impl StreamAreaWatermarkDetail {
-    fn new(
+    pub(crate) fn snapshot(
         realm: &str,
         area: &str,
         resource_count: usize,
@@ -1320,16 +1320,9 @@ pub fn stream_realm_watermark_detail(
     runtime: &Runtime,
     realm: &str,
 ) -> StreamRealmWatermarkDetail {
-    let streams = runtime.stream_list_streams(Some(realm));
-    let area_count = streams
-        .iter()
-        .map(|stream| stream.area.clone())
-        .collect::<BTreeSet<_>>()
-        .len();
-    let resource_count = streams.len();
-    let family_watermarks = runtime.stream_list_realm_watermarks(realm);
-
-    StreamRealmWatermarkDetail::new(realm, area_count, resource_count, family_watermarks)
+    runtime
+        .stream_realm_watermark_detail(realm)
+        .unwrap_or_else(|| StreamRealmWatermarkDetail::snapshot(realm, 0, 0, Vec::new()))
 }
 
 pub fn stream_area_watermark_detail(
@@ -1337,14 +1330,9 @@ pub fn stream_area_watermark_detail(
     realm: &str,
     area: &str,
 ) -> StreamAreaWatermarkDetail {
-    let resource_count = runtime
-        .stream_list_streams(Some(realm))
-        .into_iter()
-        .filter(|stream| stream.area == area)
-        .count();
-    let family_watermarks = runtime.stream_list_area_watermarks(realm, area);
-
-    StreamAreaWatermarkDetail::new(realm, area, resource_count, family_watermarks)
+    runtime
+        .stream_area_watermark_detail(realm, area)
+        .unwrap_or_else(|| StreamAreaWatermarkDetail::snapshot(realm, area, 0, Vec::new()))
 }
 
 pub fn lease_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> LeaseResourceDetail {

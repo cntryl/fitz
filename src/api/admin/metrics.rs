@@ -116,6 +116,46 @@ fn add_observability_metrics(output: &mut String) {
     }
 }
 
+fn encode_prometheus_label_value(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+fn append_stream_watermark_metrics(output: &mut String, runtime: &Runtime) {
+    output.push_str(
+        "# HELP fitz_stream_realm_watermark Highest committed realm watermark per Stream route family and realm\n",
+    );
+    output.push_str("# TYPE fitz_stream_realm_watermark gauge\n");
+    for detail in runtime.stream_list_realm_watermark_details() {
+        let realm = encode_prometheus_label_value(&detail.realm);
+        for watermark in detail.family_watermarks {
+            output.push_str(&format!(
+                "fitz_stream_realm_watermark{{realm=\"{}\",family=\"{}\"}} {}\n",
+                realm, watermark.family, watermark.watermark
+            ));
+        }
+    }
+    output.push('\n');
+
+    output.push_str(
+        "# HELP fitz_stream_area_watermark Highest committed area watermark per Stream route family, realm, and area\n",
+    );
+    output.push_str("# TYPE fitz_stream_area_watermark gauge\n");
+    for detail in runtime.stream_list_area_watermark_details() {
+        let realm = encode_prometheus_label_value(&detail.realm);
+        let area = encode_prometheus_label_value(&detail.area);
+        for watermark in detail.family_watermarks {
+            output.push_str(&format!(
+                "fitz_stream_area_watermark{{realm=\"{}\",area=\"{}\",family=\"{}\"}} {}\n",
+                realm, area, watermark.family, watermark.watermark
+            ));
+        }
+    }
+    output.push('\n');
+}
+
 fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     // KV domain
     output.push_str("# HELP fitz_kv_transactions_active Active KV transactions\n");
@@ -209,6 +249,8 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
         runtime.stream_subscriptions_active()
     ));
     output.push('\n');
+
+    append_stream_watermark_metrics(output, runtime);
 
     // Schedule domain
     output.push_str("# HELP fitz_schedule_active Active schedules\n");

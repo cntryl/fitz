@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cargo test:*)"
+      "Bash(cargo test:*)",
+      "Bash(find /d/repos/cntryl/fitz-workspace/fitz/docs -type f -name *.md)",
+      "Bash(ls /d/repos/cntryl/fitz-workspace/fitz/tests/schedule*.rs)",
+      "Bash(wc -l /d/repos/cntryl/fitz-workspace/fitz/tests/schedule*.rs)"
     ]
   }
 }

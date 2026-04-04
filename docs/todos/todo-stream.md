@@ -133,15 +133,15 @@ Operators must be able to inspect:
 Current surface:
 
 - Admin stream views rebuild durable committed metadata plus live append-session counts.
-- Admin now exposes dedicated realm and area watermark views for Stream committed history inspection.
+- Admin now persists dedicated realm and area watermark snapshots for Stream committed history inspection.
 - Global stats include `streams_active`, `events_total`, `operations_per_second`, and `subscriptions_active`.
 - Prometheus exports `fitz_stream_active`, `fitz_stream_events_total`, `fitz_stream_operations_per_second`, and `fitz_stream_subscriptions_active`.
+- Prometheus also exports first-class labeled Stream watermark series through `fitz_stream_realm_watermark{realm,family}` and `fitz_stream_area_watermark{realm,area,family}`.
 - Stream conflict and notify-drop counters are emitted through the observability metrics collector as `fitz_stream_append_conflicts_total` and `fitz_stream_notify_drops_total`.
 
 Current gaps to keep explicit:
 
-- The metrics surface still does not expose replay lag or watermark series as first-class labeled metrics.
-- The admin read model remains resource-centric; realm and area watermark inspection uses dedicated Stream endpoints rather than per-resource rows.
+- The metrics surface still does not expose replay lag because broker-side replay cursors do not exist.
 - Admin does not expose broker-side replay cursors because broker-side replay cursors do not exist.
 
 ## G. Highest-Value Tests

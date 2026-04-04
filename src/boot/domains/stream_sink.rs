@@ -6,7 +6,7 @@ use crate::protocol::payload_codec::PayloadEncoder;
 use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -37,6 +37,19 @@ struct StreamActorKey {
     realm: String,
     area: String,
     resource: String,
+}
+
+#[derive(Default)]
+struct StreamRealmSnapshot {
+    areas: BTreeSet<String>,
+    resource_count: usize,
+    families: BTreeSet<u64>,
+}
+
+#[derive(Default)]
+struct StreamAreaSnapshot {
+    resource_count: usize,
+    families: BTreeSet<u64>,
 }
 
 const STREAM_OPERATIONS_TOTAL: &str = "fitz_stream_operations_total";
@@ -136,10 +149,14 @@ impl StreamDomainSink {
     fn sync_admin_snapshot(&self) {
         let mut streams: BTreeMap<(u64, String, String, String), crate::api::admin::StreamInfo> =
             BTreeMap::new();
+        let mut realm_snapshots: BTreeMap<String, StreamRealmSnapshot> = BTreeMap::new();
+        let mut area_snapshots: BTreeMap<(String, String), StreamAreaSnapshot> = BTreeMap::new();
+        let mut committed_events_total = 0usize;
 
         if let Ok(families) = self.store.list_column_families() {
             for family in families {
-                if let Ok(records) = self.stream_store.list_resource_metadata(family.id() as u64) {
+                let family_id = family.id() as u64;
+                if let Ok(records) = self.stream_store.list_resource_metadata(family_id) {
                     for StreamAdminRecord {
                         realm,
                         area,
@@ -148,14 +165,11 @@ impl StreamDomainSink {
                         committed_size_bytes,
                     } in records
                     {
+                        committed_events_total =
+                            committed_events_total.saturating_add(next_offset as usize);
                         let last_offset = next_offset.saturating_sub(1);
                         streams.insert(
-                            (
-                                family.id() as u64,
-                                realm.clone(),
-                                area.clone(),
-                                resource.clone(),
-                            ),
+                            (family_id, realm.clone(), area.clone(), resource.clone()),
                             crate::api::admin::StreamInfo::snapshot(
                                 &realm,
                                 &area,
@@ -166,10 +180,77 @@ impl StreamDomainSink {
                                 0,
                             ),
                         );
+
+                        let realm_snapshot = realm_snapshots.entry(realm.clone()).or_default();
+                        realm_snapshot.areas.insert(area.clone());
+                        realm_snapshot.resource_count =
+                            realm_snapshot.resource_count.saturating_add(1);
+                        realm_snapshot.families.insert(family_id);
+
+                        let area_snapshot = area_snapshots.entry((realm.clone(), area.clone())).or_default();
+                        area_snapshot.resource_count =
+                            area_snapshot.resource_count.saturating_add(1);
+                        area_snapshot.families.insert(family_id);
                     }
                 }
             }
         }
+
+        let stream_realm_watermarks = realm_snapshots
+            .into_iter()
+            .map(|(realm, snapshot)| {
+                let family_watermarks = snapshot
+                    .families
+                    .into_iter()
+                    .filter_map(|family_id| {
+                        self.stream_store
+                            .get_realm_watermark(family_id, &realm)
+                            .ok()
+                            .map(|watermark| {
+                                crate::api::admin::StreamRealmWatermark::snapshot(
+                                    family_id,
+                                    watermark,
+                                )
+                            })
+                    })
+                    .collect();
+
+                crate::api::admin::StreamRealmWatermarkDetail::snapshot(
+                    &realm,
+                    snapshot.areas.len(),
+                    snapshot.resource_count,
+                    family_watermarks,
+                )
+            })
+            .collect();
+
+        let stream_area_watermarks = area_snapshots
+            .into_iter()
+            .map(|((realm, area), snapshot)| {
+                let family_watermarks = snapshot
+                    .families
+                    .into_iter()
+                    .filter_map(|family_id| {
+                        self.stream_store
+                            .get_watermark(family_id, &realm, &area)
+                            .ok()
+                            .map(|watermark| {
+                                crate::api::admin::StreamAreaWatermark::snapshot(
+                                    family_id,
+                                    watermark,
+                                )
+                            })
+                    })
+                    .collect();
+
+                crate::api::admin::StreamAreaWatermarkDetail::snapshot(
+                    &realm,
+                    &area,
+                    snapshot.resource_count,
+                    family_watermarks,
+                )
+            })
+            .collect();
 
         let actors = self.actors.lock();
         for (key, actor) in actors.iter() {
@@ -177,32 +258,27 @@ impl StreamDomainSink {
             let last_offset = actor
                 .metadata()
                 .ok()
-                .and_then(|response| response.metadata.last_resource_offset)
-                .unwrap_or(0);
+                .and_then(|response| response.metadata.last_resource_offset);
             let sessions_active = usize::from(actor.has_active_session());
-            let committed_size_bytes = streams
-                .get(&(
-                    key.family_id,
-                    key.realm.clone(),
-                    key.area.clone(),
-                    key.resource.clone(),
-                ))
-                .map(|item| item.size_bytes)
-                .unwrap_or(0);
+            let stream_key = (
+                key.family_id,
+                key.realm.clone(),
+                key.area.clone(),
+                key.resource.clone(),
+            );
+            let committed_snapshot = streams.get(&stream_key);
+            let committed_size_bytes = committed_snapshot.map(|item| item.size_bytes).unwrap_or(0);
+            let committed_offset = committed_snapshot.map(|item| item.offset);
+            let visible_offset = last_offset.or(committed_offset).unwrap_or(0);
 
             streams.insert(
-                (
-                    key.family_id,
-                    key.realm.clone(),
-                    key.area.clone(),
-                    key.resource.clone(),
-                ),
+                stream_key,
                 crate::api::admin::StreamInfo::snapshot(
                     &key.realm,
                     &key.area,
                     &key.resource,
-                    last_offset,
-                    last_offset,
+                    visible_offset,
+                    visible_offset,
                     committed_size_bytes,
                     sessions_active,
                 ),
@@ -211,6 +287,12 @@ impl StreamDomainSink {
 
         self.admin_read_model
             .replace_streams(streams.into_values().collect());
+        self.admin_read_model
+            .replace_stream_realm_watermarks(stream_realm_watermarks);
+        self.admin_read_model
+            .replace_stream_area_watermarks(stream_area_watermarks);
+        self.admin_read_model
+            .replace_stream_events_total(committed_events_total);
     }
 
     fn encode_stream_read_data(
@@ -472,75 +554,6 @@ impl StreamDomainSink {
 
     pub fn stream_count(&self) -> usize {
         self.actors.lock().len()
-    }
-
-    pub fn list_realm_watermarks(
-        &self,
-        realm: &str,
-    ) -> Vec<crate::api::admin::StreamRealmWatermark> {
-        let Ok(families) = self.store.list_column_families() else {
-            return Vec::new();
-        };
-
-        let mut watermarks = Vec::new();
-        for family in families {
-            let family_id = family.id() as u64;
-            let has_realm_data = self
-                .stream_store
-                .list_resource_metadata(family_id)
-                .map(|records| records.iter().any(|record| record.realm == realm))
-                .unwrap_or(false);
-            if !has_realm_data {
-                continue;
-            }
-
-            if let Ok(watermark) = self.stream_store.get_realm_watermark(family_id, realm) {
-                watermarks.push(crate::api::admin::StreamRealmWatermark::snapshot(
-                    family_id,
-                    watermark,
-                ));
-            }
-        }
-
-        watermarks.sort_by_key(|item| item.family);
-        watermarks
-    }
-
-    pub fn list_area_watermarks(
-        &self,
-        realm: &str,
-        area: &str,
-    ) -> Vec<crate::api::admin::StreamAreaWatermark> {
-        let Ok(families) = self.store.list_column_families() else {
-            return Vec::new();
-        };
-
-        let mut watermarks = Vec::new();
-        for family in families {
-            let family_id = family.id() as u64;
-            let has_area_data = self
-                .stream_store
-                .list_resource_metadata(family_id)
-                .map(|records| {
-                    records
-                        .iter()
-                        .any(|record| record.realm == realm && record.area == area)
-                })
-                .unwrap_or(false);
-            if !has_area_data {
-                continue;
-            }
-
-            if let Ok(watermark) = self.stream_store.get_watermark(family_id, realm, area) {
-                watermarks.push(crate::api::admin::StreamAreaWatermark::snapshot(
-                    family_id,
-                    watermark,
-                ));
-            }
-        }
-
-        watermarks.sort_by_key(|item| item.family);
-        watermarks
     }
 }
 

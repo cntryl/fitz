@@ -50,15 +50,44 @@ impl Runtime {
         self.admin_read_model.streams(realm)
     }
 
+    pub(crate) fn stream_list_realm_watermark_details(
+        &self,
+    ) -> Vec<crate::api::admin::StreamRealmWatermarkDetail> {
+        self.refresh_stream_admin_snapshot();
+        self.admin_read_model.stream_realm_watermarks()
+    }
+
+    pub(crate) fn stream_realm_watermark_detail(
+        &self,
+        realm: &str,
+    ) -> Option<crate::api::admin::StreamRealmWatermarkDetail> {
+        self.refresh_stream_admin_snapshot();
+        self.admin_read_model.stream_realm_watermark(realm)
+    }
+
     pub fn stream_list_realm_watermarks(
         &self,
         realm: &str,
     ) -> Vec<crate::api::admin::StreamRealmWatermark> {
-        self.domains
-            .read()
-            .as_ref()
-            .map(|domains| domains.stream.list_realm_watermarks(realm))
+        self.stream_realm_watermark_detail(realm)
+            .map(|detail| detail.family_watermarks)
             .unwrap_or_default()
+    }
+
+    pub(crate) fn stream_list_area_watermark_details(
+        &self,
+    ) -> Vec<crate::api::admin::StreamAreaWatermarkDetail> {
+        self.refresh_stream_admin_snapshot();
+        self.admin_read_model.stream_area_watermarks()
+    }
+
+    pub(crate) fn stream_area_watermark_detail(
+        &self,
+        realm: &str,
+        area: &str,
+    ) -> Option<crate::api::admin::StreamAreaWatermarkDetail> {
+        self.refresh_stream_admin_snapshot();
+        self.admin_read_model.stream_area_watermark(realm, area)
     }
 
     pub fn stream_list_area_watermarks(
@@ -66,10 +95,8 @@ impl Runtime {
         realm: &str,
         area: &str,
     ) -> Vec<crate::api::admin::StreamAreaWatermark> {
-        self.domains
-            .read()
-            .as_ref()
-            .map(|domains| domains.stream.list_area_watermarks(realm, area))
+        self.stream_area_watermark_detail(realm, area)
+            .map(|detail| detail.family_watermarks)
             .unwrap_or_default()
     }
 

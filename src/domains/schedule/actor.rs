@@ -1772,7 +1772,7 @@ mod tests {
         // Assert — create returns Err; in-memory state is not advanced
         assert!(result.is_err(), "create should propagate the store error");
         assert!(
-            actor.schedules.get(route).is_none(),
+            !actor.schedules.contains_key(route),
             "schedule must not be inserted into in-memory map on persist failure"
         );
         assert!(
@@ -1785,6 +1785,80 @@ mod tests {
         assert!(
             actor.list_entries.iter().all(|e| e.route != route),
             "list index must not contain the route on persist failure"
+        );
+    }
+
+    #[test]
+    fn should_not_update_schedule_given_upsert_persistence_failure() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/upsert-fail/run";
+        actor
+            .create_schedule(
+                route.to_string(),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"original"),
+            )
+            .expect("create schedule");
+        let original_cron = actor.schedules.get(route).expect("schedule").cron.clone();
+        let original_next_fire_ms = actor.schedules.get(route).expect("schedule").next_fire_ms;
+
+        // Act — inject failure before upsert
+        actor.store.fail_next_commit_for_tests();
+        let result = actor.create_schedule(
+            route.to_string(),
+            "0 2 * * *".to_string(),
+            Bytes::from_static(b"updated"),
+        );
+
+        // Assert — upsert returns Err; original in-memory state is not changed
+        assert!(result.is_err(), "upsert should propagate the store error");
+        let schedule = actor.schedules.get(route).expect("schedule still present");
+        assert_eq!(
+            schedule.cron, original_cron,
+            "cron must not change on upsert persist failure"
+        );
+        assert_eq!(
+            schedule.payload,
+            Bytes::from_static(b"original"),
+            "payload must not change on upsert persist failure"
+        );
+        assert_eq!(
+            schedule.next_fire_ms, original_next_fire_ms,
+            "next_fire_ms must not change on upsert persist failure"
+        );
+    }
+
+    #[test]
+    fn should_not_remove_schedule_given_cancel_persistence_failure() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/cancel-fail/run";
+        actor
+            .create_schedule(
+                route.to_string(),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"payload"),
+            )
+            .expect("create schedule");
+
+        // Act — inject failure before cancel
+        actor.store.fail_next_commit_for_tests();
+        let result = actor.delete_schedule(route.to_string());
+
+        // Assert — cancel returns Err; in-memory state is not removed
+        assert!(result.is_err(), "cancel should propagate the store error");
+        assert!(
+            actor.schedules.contains_key(route),
+            "schedule must not be removed from in-memory map on cancel persist failure"
+        );
+        assert!(
+            actor.ready_heap.iter().any(|(_, r)| r == route),
+            "ready heap must still contain the route on cancel persist failure"
+        );
+        assert!(
+            actor.list_entries.iter().any(|e| e.route == route),
+            "list index must still contain the route on cancel persist failure"
         );
     }
 }

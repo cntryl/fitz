@@ -1,6 +1,7 @@
 use crate::api::admin::{
     KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueDeadLetter, QueueInfo,
-    QueueLease, RpcPendingRequest, RpcWorker, ScheduleInfo, SessionInfo, StreamInfo,
+    QueueLease, RpcPendingRequest, RpcWorker, ScheduleInfo, SessionInfo,
+    StreamAreaWatermarkDetail, StreamInfo, StreamRealmWatermarkDetail,
 };
 use crate::session::session::SessionInfo as RuntimeSessionInfo;
 use chrono::Utc;
@@ -10,6 +11,8 @@ use std::sync::Arc;
 
 type ScheduleIdentity = (String, String, String, String);
 type LeaseIdentity = (String, String, String);
+type StreamRealmIdentity = String;
+type StreamAreaIdentity = (String, String);
 
 fn schedule_identity_key(
     realm: &str,
@@ -70,6 +73,9 @@ fn collect_map_value_matches<K, T: Clone>(
 pub struct AdminReadModel {
     kv_transactions: RwLock<Vec<KvTransaction>>,
     streams: RwLock<Vec<StreamInfo>>,
+    stream_realm_watermarks: RwLock<BTreeMap<StreamRealmIdentity, StreamRealmWatermarkDetail>>,
+    stream_area_watermarks: RwLock<BTreeMap<StreamAreaIdentity, StreamAreaWatermarkDetail>>,
+    stream_events_total: RwLock<usize>,
     notice_subscriptions: RwLock<Vec<NoticeSubscription>>,
     notice_routes: RwLock<Vec<NoticeRouteInfo>>,
     queues: RwLock<Vec<QueueInfo>>,
@@ -103,6 +109,59 @@ impl AdminReadModel {
     pub fn streams(&self, realm: Option<&str>) -> Vec<StreamInfo> {
         let streams = self.streams.read();
         collect_slice_matches(&streams, |item| matches_realm(realm, &item.realm))
+    }
+
+    pub fn replace_stream_realm_watermarks(&self, watermarks: Vec<StreamRealmWatermarkDetail>) {
+        *self.stream_realm_watermarks.write() = watermarks
+            .into_iter()
+            .map(|detail| (detail.realm.clone(), detail))
+            .collect();
+    }
+
+    pub fn stream_realm_watermark(&self, realm: &str) -> Option<StreamRealmWatermarkDetail> {
+        self.stream_realm_watermarks.read().get(realm).cloned()
+    }
+
+    pub fn stream_realm_watermarks(&self) -> Vec<StreamRealmWatermarkDetail> {
+        self.stream_realm_watermarks
+            .read()
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    pub fn replace_stream_area_watermarks(&self, watermarks: Vec<StreamAreaWatermarkDetail>) {
+        *self.stream_area_watermarks.write() = watermarks
+            .into_iter()
+            .map(|detail| ((detail.realm.clone(), detail.area.clone()), detail))
+            .collect();
+    }
+
+    pub fn stream_area_watermark(
+        &self,
+        realm: &str,
+        area: &str,
+    ) -> Option<StreamAreaWatermarkDetail> {
+        self.stream_area_watermarks
+            .read()
+            .get(&(realm.to_string(), area.to_string()))
+            .cloned()
+    }
+
+    pub fn stream_area_watermarks(&self) -> Vec<StreamAreaWatermarkDetail> {
+        self.stream_area_watermarks
+            .read()
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    pub fn replace_stream_events_total(&self, total: usize) {
+        *self.stream_events_total.write() = total;
+    }
+
+    pub fn stream_events_total(&self) -> usize {
+        *self.stream_events_total.read()
     }
 
     pub fn replace_notice_subscriptions(&self, subscriptions: Vec<NoticeSubscription>) {

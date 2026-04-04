@@ -896,6 +896,39 @@ async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics()
 
 #[tokio::test]
 #[serial]
+async fn should_export_stream_watermark_series_given_committed_stream_history() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    seed_stream_snapshot_data(store);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/metrics")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload = String::from_utf8(body.to_vec()).unwrap();
+    assert!(payload.contains("fitz_stream_realm_watermark{realm=\"prod\",family=\"1\"} 2"));
+    assert!(payload.contains(
+        "fitz_stream_area_watermark{realm=\"prod\",area=\"audit\",family=\"1\"} 0"
+    ));
+    assert!(payload.contains(
+        "fitz_stream_area_watermark{realm=\"prod\",area=\"logs\",family=\"1\"} 1"
+    ));
+}
+
+#[tokio::test]
+#[serial]
 async fn should_return_global_stats() {
     // Arrange
     let runtime = test_runtime();
