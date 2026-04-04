@@ -119,7 +119,7 @@ pub fn setup(
     let rpc_sink = Arc::new(
         RpcDomainSink::new(router.clone(), admin_read_model.clone())
             .with_request_timeout(rpc_request_timeout.unwrap_or(std::time::Duration::from_secs(30)))
-            .with_metrics(crate::boot::observability::metrics()),
+            .with_metrics((*crate::boot::observability::metrics()).clone()),
     );
     router.register_domain_pattern("rpc", rpc_sink.clone() as Arc<dyn MailboxSink>);
     rpc_sink.start_timeout_loop();
