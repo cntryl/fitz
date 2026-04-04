@@ -7,7 +7,7 @@ use chrono::Utc;
 use fxhash::FxBuildHasher;
 use parking_lot::Mutex;
 use std::cmp::Ordering as HeapOrdering;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -28,6 +28,7 @@ const RPC_TIMEOUT_ERROR: &str = "Worker did not reply within timeout period";
 // requests disappear on disconnect cleanup or broker restart; this bound keeps
 // that live coordination state from growing without limit in one process.
 const RPC_MAX_PENDING_REQUESTS: usize = 4096;
+const RPC_DEFAULT_ROUTE_PENDING_CAPACITY: usize = 1000;
 // Admin endpoints read from a coalesced in-memory snapshot so hot-path request
 // dispatch does not rewrite the current-process read model on every mutation.
 const RPC_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
@@ -72,6 +73,8 @@ struct RpcWorker {
     registered_at: String,
     requests_handled: u64,
     total_latency_us: u64,
+    in_flight: usize,
+    max_concurrent: usize,
 }
 
 impl RpcWorker {
@@ -83,6 +86,8 @@ impl RpcWorker {
             registered_at: Utc::now().to_rfc3339(),
             requests_handled: 0,
             total_latency_us: 0,
+            in_flight: 0,
+            max_concurrent: 1,
         }
     }
 
@@ -102,7 +107,21 @@ impl RpcWorker {
             registered_at: registered_at.into(),
             requests_handled,
             total_latency_us,
+            in_flight: 0,
+            max_concurrent: 1,
         }
+    }
+
+    fn is_available(&self) -> bool {
+        self.in_flight < self.max_concurrent
+    }
+
+    fn claim_slot(&mut self) {
+        self.in_flight = self.in_flight.saturating_add(1);
+    }
+
+    fn release_slot(&mut self) {
+        self.in_flight = self.in_flight.saturating_sub(1);
     }
 
     fn record_completion(&mut self, latency_us: u64) {
@@ -196,6 +215,39 @@ impl RpcPendingRequest {
     }
 }
 
+#[derive(Debug, Clone)]
+struct RpcQueuedRequest {
+    request: crate::domains::rpc::protocol::RpcRequest,
+    caller_session_id: u64,
+    caller_inbox_addr: RouteAddress,
+    submitted_at: String,
+    submitted_at_instant: Instant,
+    expires_at: Instant,
+}
+
+impl RpcQueuedRequest {
+    fn from_request(
+        request: crate::domains::rpc::protocol::RpcRequest,
+        caller_session_id: u64,
+        caller_inbox_addr: RouteAddress,
+        expires_at: Instant,
+    ) -> Self {
+        Self {
+            request,
+            caller_session_id,
+            caller_inbox_addr,
+            submitted_at: Utc::now().to_rfc3339(),
+            submitted_at_instant: Instant::now(),
+            expires_at,
+        }
+    }
+
+    fn age_seconds(&self, now: Instant) -> u64 {
+        now.saturating_duration_since(self.submitted_at_instant)
+            .as_secs()
+    }
+}
+
 struct RpcPendingErrorDelivery {
     correlation_id: uuid::Uuid,
     caller_session_id: u64,
@@ -230,44 +282,48 @@ struct RpcPendingTimeoutResult {
     timeout_deliveries: Vec<RpcPendingErrorDelivery>,
 }
 
+struct RpcQueuedDispatch {
+    request: crate::domains::rpc::protocol::RpcRequest,
+    worker: RpcWorker,
+    live_request_count: usize,
+}
+
 struct RpcRouteState {
     workers: Vec<RpcWorker>,
-    rr_index: usize,
+    ready_queue: VecDeque<usize>,
+    queued: VecDeque<uuid::Uuid>,
 }
 
 impl RpcRouteState {
     fn new() -> Self {
         Self {
             workers: Vec::new(),
-            rr_index: 0,
+            ready_queue: VecDeque::new(),
+            queued: VecDeque::new(),
         }
     }
 
     fn register_worker(&mut self, worker: RpcWorker) {
+        let index = self.workers.len();
         self.workers.push(worker);
-    }
-
-    fn record_completion(&mut self, session_id: u64, latency_us: u64) -> bool {
-        if let Some(worker) = self
-            .workers
-            .iter_mut()
-            .find(|worker| worker.session_id == session_id)
-        {
-            worker.record_completion(latency_us);
-            return true;
+        if self.workers[index].is_available() {
+            self.ready_queue.push_back(index);
         }
-
-        false
     }
 
     fn unregister_worker(&mut self, worker_addr: &RouteAddress, session_id: u64) {
-        self.workers
-            .retain(|worker| worker.addr != *worker_addr || worker.session_id != session_id);
-
-        if self.workers.is_empty() {
-            self.rr_index = 0;
-        } else {
-            self.rr_index %= self.workers.len();
+        if let Some(index) = self
+            .workers
+            .iter()
+            .position(|worker| worker.addr == *worker_addr && worker.session_id == session_id)
+        {
+            self.workers.remove(index);
+            self.ready_queue.retain(|ready_index| *ready_index != index);
+            for ready_index in &mut self.ready_queue {
+                if *ready_index > index {
+                    *ready_index -= 1;
+                }
+            }
         }
     }
 
@@ -277,26 +333,86 @@ impl RpcRouteState {
 
     fn unregister_session(&mut self, session_id: u64) -> usize {
         let before = self.workers.len();
-        self.workers
-            .retain(|worker| worker.session_id != session_id);
 
-        if self.workers.is_empty() {
-            self.rr_index = 0;
-        } else {
-            self.rr_index %= self.workers.len();
+        while let Some(index) = self
+            .workers
+            .iter()
+            .position(|worker| worker.session_id == session_id)
+        {
+            self.workers.remove(index);
+            self.ready_queue.retain(|ready_index| *ready_index != index);
+            for ready_index in &mut self.ready_queue {
+                if *ready_index > index {
+                    *ready_index -= 1;
+                }
+            }
         }
 
         before.saturating_sub(self.workers.len())
     }
 
-    fn select_worker(&mut self) -> Option<RpcWorker> {
-        if self.workers.is_empty() {
-            return None;
+    fn has_available_worker(&self) -> bool {
+        !self.ready_queue.is_empty()
+    }
+
+    fn has_queued_requests(&self) -> bool {
+        !self.queued.is_empty()
+    }
+
+    fn queued_len(&self) -> usize {
+        self.queued.len()
+    }
+
+    fn enqueue_request(&mut self, correlation_id: uuid::Uuid) {
+        self.queued.push_back(correlation_id);
+    }
+
+    fn pop_queued_request(&mut self) -> Option<uuid::Uuid> {
+        self.queued.pop_front()
+    }
+
+    fn remove_queued_request(&mut self, correlation_id: &uuid::Uuid) -> bool {
+        let before = self.queued.len();
+        self.queued.retain(|queued_id| queued_id != correlation_id);
+        before != self.queued.len()
+    }
+
+    fn claim_worker(&mut self) -> Option<RpcWorker> {
+        let index = self.ready_queue.pop_front()?;
+        let worker = self.workers.get_mut(index)?;
+        worker.claim_slot();
+        if worker.is_available() {
+            self.ready_queue.push_back(index);
         }
 
-        let pick = self.rr_index % self.workers.len();
-        self.rr_index = self.rr_index.wrapping_add(1);
-        Some(self.workers[pick].clone())
+        Some(worker.clone())
+    }
+
+    fn release_worker(
+        &mut self,
+        worker_addr: &RouteAddress,
+        session_id: u64,
+        latency_us: Option<u64>,
+    ) -> bool {
+        let Some((index, worker)) = self
+            .workers
+            .iter_mut()
+            .enumerate()
+            .find(|(_, worker)| worker.addr == *worker_addr && worker.session_id == session_id)
+        else {
+            return false;
+        };
+
+        let was_available = worker.is_available();
+        if let Some(latency_us) = latency_us {
+            worker.record_completion(latency_us);
+        }
+        worker.release_slot();
+        if !was_available && worker.is_available() {
+            self.ready_queue.push_back(index);
+        }
+
+        true
     }
 }
 
@@ -527,6 +643,8 @@ impl RpcPendingTable {
 struct RpcState {
     routes: RpcFastMap<Route, RpcRouteState>,
     pending: RpcPendingTable,
+    queued: RpcFastMap<uuid::Uuid, RpcQueuedRequest>,
+    queued_expirations: BinaryHeap<ExpiringPendingRequest>,
 }
 
 fn rpc_admin_snapshot_due(
@@ -546,6 +664,8 @@ impl RpcState {
         Self {
             routes: HashMap::with_capacity_and_hasher(64, FxBuildHasher::default()),
             pending: RpcPendingTable::new(),
+            queued: HashMap::with_capacity_and_hasher(256, FxBuildHasher::default()),
+            queued_expirations: BinaryHeap::with_capacity(256),
         }
     }
 
@@ -563,16 +683,17 @@ impl RpcState {
         let mut removed_workers = 0;
         self.routes.retain(|_, route_state| {
             removed_workers += route_state.unregister_session(session_id);
-            route_state.worker_count() > 0
+            route_state.worker_count() > 0 || route_state.has_queued_requests()
         });
 
         let pending_cleanup = self.pending.cleanup_session(session_id);
+        let queued_removed = self.cleanup_queued_session(session_id);
 
         RpcSessionCleanupResult {
             removed_workers,
             detached_callers: pending_cleanup.detached_callers,
-            removed_pending: pending_cleanup.removed_pending,
-            pending_len: pending_cleanup.pending_len,
+            removed_pending: pending_cleanup.removed_pending + queued_removed,
+            pending_len: self.live_request_count(),
             disconnect_deliveries: pending_cleanup.disconnect_deliveries,
         }
     }
@@ -590,7 +711,7 @@ impl RpcState {
                 let before = route_state.worker_count();
                 route_state.unregister_worker(worker_addr, session_id);
                 removed = before.saturating_sub(route_state.worker_count());
-                remove_route = route_state.worker_count() == 0;
+                remove_route = route_state.worker_count() == 0 && !route_state.has_queued_requests();
             }
 
             if remove_route {
@@ -605,8 +726,185 @@ impl RpcState {
         RpcWorkerCleanupResult {
             removed_workers,
             removed_pending: pending_cleanup.removed_pending,
-            pending_len: pending_cleanup.pending_len,
+            pending_len: self.live_request_count(),
             disconnect_deliveries: pending_cleanup.disconnect_deliveries,
+        }
+    }
+
+    fn has_registered_workers(&self, route: &Route) -> bool {
+        self.routes
+            .get(route)
+            .map(|route_state| route_state.worker_count() > 0)
+            .unwrap_or(false)
+    }
+
+    fn contains_correlation(&self, correlation_id: &uuid::Uuid) -> bool {
+        self.pending.contains_correlation(correlation_id) || self.queued.contains_key(correlation_id)
+    }
+
+    fn live_request_count(&self) -> usize {
+        self.pending.len() + self.queued.len()
+    }
+
+    fn queue_request(&mut self, correlation_id: uuid::Uuid, request: RpcQueuedRequest) {
+        let route = request.request.route.clone();
+        self.ensure_route_state(&route).enqueue_request(correlation_id);
+        self.queued_expirations.push(ExpiringPendingRequest {
+            expires_at: request.expires_at,
+            correlation_id,
+        });
+        self.queued.insert(correlation_id, request);
+    }
+
+    fn remove_queued_request(&mut self, correlation_id: &uuid::Uuid) -> Option<RpcQueuedRequest> {
+        let queued = self.queued.remove(correlation_id)?;
+        if let Some(route_state) = self.routes.get_mut(&queued.request.route) {
+            route_state.remove_queued_request(correlation_id);
+        }
+        self.routes
+            .retain(|_, route_state| route_state.worker_count() > 0 || route_state.has_queued_requests());
+        Some(queued)
+    }
+
+    fn next_queued_dispatch(&mut self, route: &Route) -> Option<RpcQueuedDispatch> {
+        let (worker, correlation_id) = {
+            let route_state = self.routes.get_mut(route)?;
+            if !route_state.has_available_worker() || !route_state.has_queued_requests() {
+                return None;
+            }
+            let worker = route_state.claim_worker()?;
+            let correlation_id = route_state
+                .pop_queued_request()
+                .expect("queued correlation id for dispatch");
+            (worker, correlation_id)
+        };
+
+        let queued = self
+            .queued
+            .remove(&correlation_id)
+            .expect("queued request for dispatch");
+        let pending = RpcPendingRequest::new(RpcPendingRequestInit {
+            route: queued.request.route.clone(),
+            caller_session_id: queued.caller_session_id,
+            caller_inbox_addr: queued.caller_inbox_addr.clone(),
+            worker_addr: worker.addr.clone(),
+            worker_session_id: worker.session_id,
+            submitted_at: queued.submitted_at.clone(),
+            submitted_at_instant: queued.submitted_at_instant,
+            expires_at: queued.expires_at,
+        });
+        self.pending.track_pending(correlation_id, pending);
+
+        Some(RpcQueuedDispatch {
+            request: queued.request,
+            worker,
+            live_request_count: self.live_request_count(),
+        })
+    }
+
+    fn remove_pending_request(
+        &mut self,
+        correlation_id: &uuid::Uuid,
+    ) -> Option<(RpcPendingRequest, usize)> {
+        let pending = self.pending.pending.remove(correlation_id)?;
+        if let Some(route_state) = self.routes.get_mut(&pending.route) {
+            route_state.release_worker(&pending.worker_addr, pending.worker_session_id, None);
+        }
+        Some((pending, self.live_request_count()))
+    }
+
+    fn release_worker_for_pending(
+        &mut self,
+        pending: &RpcPendingRequest,
+        latency_us: Option<u64>,
+    ) {
+        if let Some(route_state) = self.routes.get_mut(&pending.route) {
+            route_state.release_worker(&pending.worker_addr, pending.worker_session_id, latency_us);
+        }
+    }
+
+    fn cleanup_queued_session(&mut self, session_id: u64) -> usize {
+        let queued_to_remove: Vec<uuid::Uuid> = self
+            .queued
+            .iter()
+            .filter(|(_, queued)| queued.caller_session_id == session_id)
+            .map(|(correlation_id, _)| *correlation_id)
+            .collect();
+
+        for correlation_id in &queued_to_remove {
+            self.remove_queued_request(correlation_id);
+        }
+
+        queued_to_remove.len()
+    }
+
+    fn expire_timed_out(&mut self, now: Instant) -> RpcPendingTimeoutResult {
+        let mut timeout_deliveries = Vec::new();
+        let mut removed_pending = 0;
+
+        while let Some(expiring) = self.pending.expirations.peek() {
+            if expiring.expires_at > now {
+                break;
+            }
+
+            let expiring = self.pending.expirations.pop().expect("pending expiration entry");
+            let Some(pending) = self.pending.pending.get(&expiring.correlation_id).cloned() else {
+                continue;
+            };
+
+            if pending.expires_at != expiring.expires_at {
+                continue;
+            }
+
+            let pending = self
+                .pending
+                .pending
+                .remove(&expiring.correlation_id)
+                .expect("tracked pending request");
+            self.release_worker_for_pending(&pending, None);
+            removed_pending = removed_pending.saturating_add(1);
+
+            if let Some(caller_inbox_addr) = pending.caller_inbox_addr {
+                timeout_deliveries.push(RpcPendingErrorDelivery {
+                    correlation_id: expiring.correlation_id,
+                    caller_session_id: pending.caller_session_id,
+                    caller_inbox_addr,
+                });
+            }
+        }
+
+        while let Some(expiring) = self.queued_expirations.peek() {
+            if expiring.expires_at > now {
+                break;
+            }
+
+            let expiring = self
+                .queued_expirations
+                .pop()
+                .expect("queued expiration entry");
+            let Some(queued) = self.queued.get(&expiring.correlation_id).cloned() else {
+                continue;
+            };
+
+            if queued.expires_at != expiring.expires_at {
+                continue;
+            }
+
+            let queued = self
+                .remove_queued_request(&expiring.correlation_id)
+                .expect("tracked queued request");
+            removed_pending = removed_pending.saturating_add(1);
+            timeout_deliveries.push(RpcPendingErrorDelivery {
+                correlation_id: expiring.correlation_id,
+                caller_session_id: queued.caller_session_id,
+                caller_inbox_addr: queued.caller_inbox_addr,
+            });
+        }
+
+        RpcPendingTimeoutResult {
+            removed_pending,
+            pending_len: self.live_request_count(),
+            timeout_deliveries,
         }
     }
 
@@ -622,6 +920,7 @@ pub struct RpcDomainSink {
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     active: AtomicBool,
     request_timeout: Duration,
+    route_pending_capacity: usize,
     snapshot_dirty: AtomicBool,
     snapshot_syncing: AtomicBool,
     last_snapshot_elapsed_us: AtomicU64,
@@ -640,6 +939,7 @@ impl RpcDomainSink {
             admin_read_model,
             active: AtomicBool::new(true),
             request_timeout: RPC_DEFAULT_REQUEST_TIMEOUT,
+            route_pending_capacity: RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
             snapshot_dirty: AtomicBool::new(false),
             snapshot_syncing: AtomicBool::new(false),
             last_snapshot_elapsed_us: AtomicU64::new(0),
@@ -654,6 +954,11 @@ impl RpcDomainSink {
         } else {
             request_timeout
         };
+        self
+    }
+
+    pub fn with_route_pending_capacity(mut self, route_pending_capacity: usize) -> Self {
+        self.route_pending_capacity = route_pending_capacity.max(1);
         self
     }
 
@@ -1124,13 +1429,16 @@ impl MailboxSink for RpcDomainSink {
                 let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
                     session_inbox_address(*envelope.destination().family(), frame_ctx.session_id)
                 });
-                let mut state = self.state.lock();
-                let route_state = state.ensure_route_state(worker_addr.route());
-                route_state.register_worker(RpcWorker::new(
-                    worker_addr.clone(),
-                    worker_inbox_addr,
-                    frame_ctx.session_id,
-                ));
+                {
+                    let mut state = self.state.lock();
+                    let route_state = state.ensure_route_state(worker_addr.route());
+                    route_state.register_worker(RpcWorker::new(
+                        worker_addr.clone(),
+                        worker_inbox_addr,
+                        frame_ctx.session_id,
+                    ));
+                }
+                self.dispatch_queued_requests_for_route(worker_addr.route());
                 tracing::debug!(
                     domain = "rpc",
                     worker = worker_addr.route().as_str(),
@@ -1167,8 +1475,15 @@ impl MailboxSink for RpcDomainSink {
                 let route_registry_lookup_start = Instant::now();
                 let route_registry_lookup_us =
                     route_registry_lookup_start.elapsed().as_micros() as u64;
-                let duplicate_correlation = state.pending.contains_correlation(&req.correlation_id);
-                let route_exists = state.routes.contains_key(&req.route);
+                let duplicate_correlation = state.contains_correlation(&req.correlation_id);
+                let route_exists = state.has_registered_workers(&req.route);
+                let total_live_requests = state.live_request_count();
+                let route_requires_queue = state
+                    .route_state(&req.route)
+                    .map(|route_state| {
+                        route_state.has_queued_requests() || !route_state.has_available_worker()
+                    })
+                    .unwrap_or(false);
                 let mut worker_selection_us = 0_u64;
 
                 if duplicate_correlation {
@@ -1218,7 +1533,7 @@ impl MailboxSink for RpcDomainSink {
                         }),
                         None,
                     )
-                } else if state.pending.len() >= RPC_MAX_PENDING_REQUESTS {
+                } else if total_live_requests >= RPC_MAX_PENDING_REQUESTS {
                     let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
                     drop(state);
 
@@ -1245,27 +1560,52 @@ impl MailboxSink for RpcDomainSink {
                         }),
                         None,
                     )
-                } else {
-                    let worker_selection_start = Instant::now();
-                    let selected_worker = state
+                } else if route_requires_queue {
+                    let queued_len = state
                         .route_state(&req.route)
-                        .and_then(|route_state| route_state.select_worker());
-                    worker_selection_us = worker_selection_start.elapsed().as_micros() as u64;
+                        .map(|route_state| route_state.queued_len())
+                        .unwrap_or(0);
 
-                    if let Some(worker) = selected_worker {
-                        let expires_at = Instant::now() + self.request_timeout;
+                    if queued_len >= self.route_pending_capacity {
+                        let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
+                        drop(state);
+
+                        self.histogram_observe_us(
+                            "rpc_route_registry_lookup_us",
+                            route_registry_lookup_us,
+                        );
+                        self.histogram_observe_us("rpc_dispatch_state_lock_us", state_wait_us);
+                        self.histogram_observe_us("rpc_dispatch_state_wait_us", state_wait_us);
+                        self.histogram_observe_us("rpc_dispatch_state_hold_us", state_hold_us);
+                        self.histogram_observe_us("rpc_worker_selection_us", worker_selection_us);
+                        self.counter_inc("rpc_requests_rejected_backpressure_total");
+                        tracing::warn!(
+                            domain = "rpc",
+                            correlation_id = %req.correlation_id,
+                            route = req.route.as_str(),
+                            route_pending_capacity = self.route_pending_capacity,
+                            "Rejected request because the route-local RPC queue is full"
+                        );
+                        (
+                            Some(RpcResponseMsg::CodeError {
+                                code: crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+                                message: RPC_BACKPRESSURE_ERROR.to_string(),
+                            }),
+                            None,
+                        )
+                    } else {
                         let pending_track_start = Instant::now();
-                        let pending_len = state.pending.track_pending(
+                        let expires_at = Instant::now() + self.request_timeout;
+                        state.queue_request(
                             req.correlation_id,
-                            RpcPendingRequest::from_dispatch(
-                                &req,
+                            RpcQueuedRequest::from_request(
+                                req.clone(),
                                 frame_ctx.session_id,
                                 caller_inbox_addr,
-                                worker.addr.clone(),
-                                worker.session_id,
                                 expires_at,
                             ),
-                        ) as u64;
+                        );
+                        let live_request_count = state.live_request_count() as u64;
                         let pending_track_us = pending_track_start.elapsed().as_micros() as u64;
                         let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
                         drop(state);
@@ -1280,23 +1620,66 @@ impl MailboxSink for RpcDomainSink {
                         self.histogram_observe_us("rpc_worker_selection_us", worker_selection_us);
                         self.histogram_observe_us("rpc_pending_track_us", pending_track_us);
                         self.histogram_observe_us("rpc_pending_route_index_us", 0);
-                        self.gauge_set("rpc_pending_requests", pending_len);
+                        self.gauge_set("rpc_pending_requests", live_request_count);
+                        self.schedule_admin_snapshot(false);
+                        self.dispatch_queued_requests_for_route(&req.route);
 
-                        let request_payload = crate::protocol::rpc_codec::encode_request_into(
+                        tracing::debug!(
+                            domain = "rpc",
+                            correlation_id = %req.correlation_id,
+                            route = req.route.as_str(),
+                            live_request_count,
+                            "Request queued on route-local RPC pending queue"
+                        );
+
+                        (Some(RpcResponseMsg::Ok { data: vec![] }), None)
+                    }
+                } else {
+                    let worker_selection_start = Instant::now();
+                    let selected_worker = state
+                        .route_state(&req.route)
+                        .and_then(|route_state| route_state.claim_worker());
+                    worker_selection_us = worker_selection_start.elapsed().as_micros() as u64;
+
+                    if let Some(worker) = selected_worker {
+                        let expires_at = Instant::now() + self.request_timeout;
+                        let pending_track_start = Instant::now();
+                        state.pending.track_pending(
+                            req.correlation_id,
+                            RpcPendingRequest::from_dispatch(
+                                &req,
+                                frame_ctx.session_id,
+                                caller_inbox_addr,
+                                worker.addr.clone(),
+                                worker.session_id,
+                                expires_at,
+                            ),
+                        );
+                        let live_request_count = state.live_request_count() as u64;
+                        let pending_track_us = pending_track_start.elapsed().as_micros() as u64;
+                        let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
+                        drop(state);
+
+                        self.histogram_observe_us(
+                            "rpc_route_registry_lookup_us",
+                            route_registry_lookup_us,
+                        );
+                        self.histogram_observe_us("rpc_dispatch_state_lock_us", state_wait_us);
+                        self.histogram_observe_us("rpc_dispatch_state_wait_us", state_wait_us);
+                        self.histogram_observe_us("rpc_dispatch_state_hold_us", state_hold_us);
+                        self.histogram_observe_us("rpc_worker_selection_us", worker_selection_us);
+                        self.histogram_observe_us("rpc_pending_track_us", pending_track_us);
+                        self.histogram_observe_us("rpc_pending_route_index_us", 0);
+                        self.gauge_set("rpc_pending_requests", live_request_count);
+                        self.schedule_admin_snapshot(false);
+
+                        let request_forward_start = Instant::now();
+                        let forward_result = self.forward_request_to_worker(
                             &req,
+                            &worker,
+                            frame_ctx.channel_id,
                             &mut payload_encoder,
                         );
-                        let request_forward_start = Instant::now();
-
-                        let forward_ctx = FrameContext::new(
-                            worker.session_id,
-                            frame_ctx.channel_id,
-                            crate::protocol::tlv::MessageType::new(302),
-                            bytes::Bytes::from(request_payload),
-                            *worker.inbox_addr.family(),
-                        );
-                        let forward_envelope = Envelope::new(worker.inbox_addr, forward_ctx);
-                        let forward_result = self.router.route(forward_envelope);
                         self.histogram_observe_elapsed_us(
                             "rpc_request_forward_us",
                             request_forward_start,
@@ -1353,7 +1736,10 @@ impl MailboxSink for RpcDomainSink {
                                 DeliveryError::HighLaneFull { .. },
                             )) => {
                                 self.counter_inc("rpc_request_forward_errors_total");
-                                let pending_len = self.remove_pending_request(&req.correlation_id);
+                                let pending_len = self
+                                    .remove_pending_request(&req.correlation_id)
+                                    .map(|(_, pending_len)| pending_len)
+                                    .unwrap_or_default();
                                 tracing::warn!(
                                     domain = "rpc",
                                     correlation_id = %req.correlation_id,
@@ -1416,10 +1802,11 @@ impl MailboxSink for RpcDomainSink {
                 let pending_route_lookup_us =
                     pending_route_lookup_start.elapsed().as_micros() as u64;
                 let mut state_changed = false;
+                let mut dispatch_route = None;
 
                 if let Some(owner_worker_session_id) = wrong_worker_owner {
                     let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
-                    let pending_len = state.pending.len();
+                    let pending_len = state.live_request_count();
                     drop(state);
 
                     self.histogram_observe_us(
@@ -1460,28 +1847,26 @@ impl MailboxSink for RpcDomainSink {
                     match caller_info.expect("caller info should be present when owner matched") {
                     RpcPendingResponseDisposition::Forward {
                         pending: caller_info,
-                        pending_len,
+                        pending_len: _,
                         removed_pending,
                     } => {
                         let pending_lookup_us = pending_route_lookup_us;
                         if removed_pending {
                             let completion_latency_us =
                                 caller_info.submitted_at_instant.elapsed().as_micros() as u64;
-                            if let Some(route_state) =
-                                state.route_state(caller_info.worker_addr.route())
-                            {
-                                route_state.record_completion(
-                                    caller_info.worker_session_id,
-                                    completion_latency_us,
-                                );
-                            }
+                            state.release_worker_for_pending(
+                                &caller_info,
+                                Some(completion_latency_us),
+                            );
+                            let live_request_count = state.live_request_count();
                             self.histogram_observe_us(
                                 "rpc_pending_route_remove_us",
                                 pending_lookup_us,
                             );
                             self.histogram_observe_us("rpc_pending_untrack_us", pending_lookup_us);
-                            self.gauge_set("rpc_pending_requests", pending_len as u64);
+                            self.gauge_set("rpc_pending_requests", live_request_count as u64);
                             state_changed = true;
+                            dispatch_route = Some(caller_info.route.clone());
                         }
 
                         let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
@@ -1568,9 +1953,11 @@ impl MailboxSink for RpcDomainSink {
                     }
                     RpcPendingResponseDisposition::InvalidSequence {
                         pending: caller_info,
-                        pending_len,
+                        pending_len: _,
                         expected_seq,
                     } => {
+                        state.release_worker_for_pending(&caller_info, None);
+                        let live_request_count = state.live_request_count();
                         let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
                         drop(state);
                         self.histogram_observe_us(
@@ -1587,10 +1974,11 @@ impl MailboxSink for RpcDomainSink {
                         );
                         self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
                         self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
-                        self.gauge_set("rpc_pending_requests", pending_len as u64);
+                        self.gauge_set("rpc_pending_requests", live_request_count as u64);
                         self.counter_inc("rpc_response_invalid_sequence_total");
                         self.counter_inc("rpc_cleanup_pending_removed_total");
                         self.schedule_admin_snapshot(false);
+                        self.dispatch_queued_requests_for_route(&caller_info.route);
 
                         if let Some(caller_inbox_addr) = caller_info.caller_inbox_addr {
                             self.forward_pending_error_deliveries(
@@ -1636,6 +2024,7 @@ impl MailboxSink for RpcDomainSink {
                     }
                     RpcPendingResponseDisposition::Missing => {
                         let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
+                        let live_request_count = state.live_request_count();
                         drop(state);
                         self.histogram_observe_us(
                             "rpc_pending_route_lookup_us",
@@ -1664,10 +2053,15 @@ impl MailboxSink for RpcDomainSink {
                         tracing::warn!(
                             domain = "rpc",
                             correlation_id = %resp.correlation_id,
+                            pending_len = live_request_count,
                             "No pending request for response"
                         );
                     }
                 }
+                }
+                if let Some(route) = dispatch_route {
+                    self.schedule_admin_snapshot(false);
+                    self.dispatch_queued_requests_for_route(&route);
                 }
                 (None, state_changed.then_some(false))
             }
@@ -1680,10 +2074,11 @@ impl MailboxSink for RpcDomainSink {
                     .pending
                     .worker_session_id(&correlation_id)
                     .filter(|owner_session_id| *owner_session_id != frame_ctx.session_id);
+                let mut dispatch_route = None;
 
                 if let Some(owner_worker_session_id) = wrong_worker_owner {
                     let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
-                    let pending_len = state.pending.len();
+                    let pending_len = state.live_request_count();
                     drop(state);
 
                     self.histogram_observe_us("rpc_ack_state_wait_us", state_wait_us);
@@ -1719,19 +2114,26 @@ impl MailboxSink for RpcDomainSink {
                     (None, None)
                 } else {
                     let pending_route_remove_start = Instant::now();
-                    let pending_len = state.pending.remove_pending(&correlation_id);
+                    let removed_pending = state.remove_pending_request(&correlation_id);
                     let pending_route_remove_us =
                         pending_route_remove_start.elapsed().as_micros() as u64;
                     let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
+                    if let Some((pending, _)) = removed_pending.as_ref() {
+                        dispatch_route = Some(pending.route.clone());
+                    }
                     drop(state);
 
                     self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_remove_us);
                     self.histogram_observe_us("rpc_ack_state_wait_us", state_wait_us);
                     self.histogram_observe_us("rpc_ack_state_hold_us", state_hold_us);
-                    if let Some(pending_len) = pending_len {
+                    if let Some((_, pending_len)) = removed_pending {
                         self.histogram_observe_us("rpc_pending_untrack_us", pending_route_remove_us);
                         self.gauge_set("rpc_pending_requests", pending_len as u64);
                         self.counter_inc("rpc_cleanup_acks_total");
+                        self.schedule_admin_snapshot(false);
+                        if let Some(route) = dispatch_route {
+                            self.dispatch_queued_requests_for_route(&route);
+                        }
                     } else {
                         self.counter_inc("rpc_cleanup_acks_missing_pending_total");
                     }
