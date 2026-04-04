@@ -1069,56 +1069,54 @@ mod tests {
     }
 
     #[test]
-    fn should_count_publish_failure_given_no_registered_subscriber() {
-        // Arrange — fire a due schedule when no subscriber mailbox is registered
+    fn should_count_publish_failure_given_domain_routing_error() {
+        // Arrange — create a due schedule but do NOT register the "schedule" domain
+        // pattern so that router.route() returns an error when the fire is published.
         let family = RouteFamily::new(1);
         let schedule_route = "schedule://acme/jobs/orphan/run";
-        let schedule_address = RouteAddress::new(family, Route::new(schedule_route));
-        let sender_address = RouteAddress::new(family, Route::new("inbox://session/1"));
         let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
         let router = Arc::new(Router::new());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
         let sink = Arc::new(ScheduleDomainSink::new(
-            store,
+            store.clone(),
             router.clone(),
             admin_read_model,
         ));
-        router.register_domain_pattern("schedule", sink.clone());
-
-        sink.deliver(Envelope::from_route(
-            sender_address,
-            schedule_address,
-            FrameContext::new(
-                1,
-                ChannelId::Sub,
-                MessageType::new(700),
-                encode_schedule_create(schedule_route, "* * * * *", b"orphan"),
-                family,
-            ),
-        ))
-        .expect("create schedule");
+        // Intentionally do NOT register the "schedule" domain pattern so routing fails.
 
         {
             let mut actors = sink.actors.lock();
-            let actor = actors.get_mut(&family).expect("schedule actor");
+            let mut actor = crate::domains::schedule::ScheduleActor::new(
+                family,
+                store,
+                cntryl_midge::WriteOptions::buffered(),
+            );
+            actor
+                .create_schedule(
+                    schedule_route.to_string(),
+                    "* * * * *".to_string(),
+                    Bytes::from_static(b"orphan"),
+                )
+                .expect("create schedule");
             actor.bench_prepare_scan(1);
+            actors.insert(family, actor);
         }
 
         assert_eq!(sink.publish_failure_count(), 0, "no failures before scan");
 
-        // Act — scan fires but no subscriber is registered, so routing will fail
+        // Act — scan fires but domain pattern is not registered, routing fails
         sink.scan_due_schedules();
 
         // Assert
         assert_eq!(
             sink.publish_failure_count(),
             1,
-            "publish failure should be counted when routing fails"
+            "publish failure should be counted when domain routing returns an error"
         );
         assert_eq!(
             sink.ack_failure_count(),
             0,
-            "ack failure counter must remain zero when publish already failed"
+            "ack failure counter must remain zero when the publish itself failed"
         );
     }
 }
