@@ -431,5 +431,8 @@ mod tests {
         assert!(metrics.contains("fitz_schedule_executions_per_minute 1"));
         assert!(metrics.contains("fitz_schedule_subscriptions_active 0"));
         assert!(metrics.contains("fitz_schedule_pending_fires 1"));
+        assert!(metrics.contains("fitz_schedule_publish_failures_total 0"));
+        assert!(metrics.contains("fitz_schedule_ack_failures_total 0"));
+        assert!(metrics.contains("fitz_schedule_overdue_normalizations_total 0"));
     }
 }

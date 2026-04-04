@@ -227,6 +227,9 @@ async fn handle_schedule_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, 
         executions_per_minute: runtime.schedule_executions_per_minute(),
         subscriptions_active: runtime.schedule_subscriptions_active(),
         pending_fires: runtime.schedule_pending_fires(),
+        publish_failures_total: runtime.schedule_publish_failures(),
+        ack_failures_total: runtime.schedule_ack_failures(),
+        overdue_normalizations_total: runtime.schedule_overdue_normalizations(),
     })
 }
 
