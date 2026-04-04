@@ -109,6 +109,44 @@ pub struct StreamResourceDetail {
     pub sessions_active: usize,
 }
 
+/// Stream realm watermark detail built from committed stream state.
+///
+/// Watermarks are reported per RouteFamily because Stream sequencing is a hard
+/// isolation boundary. `resource_count` and `area_count` reflect the committed
+/// stream resources currently visible through the admin snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamRealmWatermarkDetail {
+    pub realm: String,
+    pub area_count: usize,
+    pub resource_count: usize,
+    pub family_watermarks: Vec<StreamRealmWatermark>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamRealmWatermark {
+    pub family: u64,
+    pub watermark: u64,
+}
+
+/// Stream area watermark detail built from committed stream state.
+///
+/// Watermarks are reported per RouteFamily because Stream sequencing is a hard
+/// isolation boundary. `resource_count` reflects the committed stream resources
+/// currently visible in the target area.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamAreaWatermarkDetail {
+    pub realm: String,
+    pub area: String,
+    pub resource_count: usize,
+    pub family_watermarks: Vec<StreamAreaWatermark>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamAreaWatermark {
+    pub family: u64,
+    pub watermark: u64,
+}
+
 /// Live in-memory Lease resource detail for the current broker process.
 ///
 /// `active_leases` counts only leases currently tracked in memory for this
@@ -241,6 +279,50 @@ impl StreamResourceDetail {
             size_bytes: 0,
             sessions_active: 0,
         }
+    }
+}
+
+impl StreamRealmWatermarkDetail {
+    fn new(
+        realm: &str,
+        area_count: usize,
+        resource_count: usize,
+        family_watermarks: Vec<StreamRealmWatermark>,
+    ) -> Self {
+        Self {
+            realm: realm.to_string(),
+            area_count,
+            resource_count,
+            family_watermarks,
+        }
+    }
+}
+
+impl StreamRealmWatermark {
+    pub(crate) fn snapshot(family: u64, watermark: u64) -> Self {
+        Self { family, watermark }
+    }
+}
+
+impl StreamAreaWatermarkDetail {
+    fn new(
+        realm: &str,
+        area: &str,
+        resource_count: usize,
+        family_watermarks: Vec<StreamAreaWatermark>,
+    ) -> Self {
+        Self {
+            realm: realm.to_string(),
+            area: area.to_string(),
+            resource_count,
+            family_watermarks,
+        }
+    }
+}
+
+impl StreamAreaWatermark {
+    pub(crate) fn snapshot(family: u64, watermark: u64) -> Self {
+        Self { family, watermark }
     }
 }
 
@@ -1232,6 +1314,37 @@ pub fn stream_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> StreamResour
         Some(item) => StreamResourceDetail::from_stream(item),
         None => StreamResourceDetail::empty(path),
     }
+}
+
+pub fn stream_realm_watermark_detail(
+    runtime: &Runtime,
+    realm: &str,
+) -> StreamRealmWatermarkDetail {
+    let streams = runtime.stream_list_streams(Some(realm));
+    let area_count = streams
+        .iter()
+        .map(|stream| stream.area.clone())
+        .collect::<BTreeSet<_>>()
+        .len();
+    let resource_count = streams.len();
+    let family_watermarks = runtime.stream_list_realm_watermarks(realm);
+
+    StreamRealmWatermarkDetail::new(realm, area_count, resource_count, family_watermarks)
+}
+
+pub fn stream_area_watermark_detail(
+    runtime: &Runtime,
+    realm: &str,
+    area: &str,
+) -> StreamAreaWatermarkDetail {
+    let resource_count = runtime
+        .stream_list_streams(Some(realm))
+        .into_iter()
+        .filter(|stream| stream.area == area)
+        .count();
+    let family_watermarks = runtime.stream_list_area_watermarks(realm, area);
+
+    StreamAreaWatermarkDetail::new(realm, area, resource_count, family_watermarks)
 }
 
 pub fn lease_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> LeaseResourceDetail {

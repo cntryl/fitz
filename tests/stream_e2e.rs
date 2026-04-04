@@ -15,6 +15,20 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::Duration;
 
+async fn wait_for_stream_subscription_count(server: &TestServer, expected: usize) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if server.runtime.stream_subscriptions_active() == expected {
+                return;
+            }
+
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("wait for stream subscription count");
+}
+
 fn decode_stream_ok_data(payload: &[u8]) -> Vec<u8> {
     let mut dec = PayloadDecoder::new(payload);
     let status = dec.get_u8().expect("stream response status");
@@ -306,6 +320,54 @@ where
     assert_eq!(status, 0, "Should isolate streams by route");
 }
 
+async fn should_read_committed_area_history_given_wildcard_route<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let orders_route = "stream://test/events/orders";
+    let audits_route = "stream://test/events/audits";
+
+    // Act
+    commit_stream_record(&mut client, orders_route, b"order-created").await;
+    commit_stream_record_with_offset(&mut client, audits_route, 0, b"audit-recorded").await;
+
+    let response = client
+        .send_and_receive(&build_stream_read("stream://test/events/*", 0), 2000)
+        .await
+        .expect("read area history");
+
+    // Assert
+    let records = parse_stream_read_records(&response);
+    let bodies: Vec<Vec<u8>> = records.into_iter().map(|(_, body)| body).collect();
+    assert_eq!(bodies, vec![b"order-created".to_vec(), b"audit-recorded".to_vec()]);
+}
+
+async fn should_read_committed_realm_history_given_wildcard_route<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let events_route = "stream://test/events/orders";
+    let audit_route = "stream://test/audit/ledger";
+
+    // Act
+    commit_stream_record(&mut client, events_route, b"realm-one").await;
+    commit_stream_record_with_offset(&mut client, audit_route, 0, b"realm-two").await;
+
+    let response = client
+        .send_and_receive(&build_stream_read("stream://test/*/*", 0), 2000)
+        .await
+        .expect("read realm history");
+
+    // Assert
+    let records = parse_stream_read_records(&response);
+    let bodies: Vec<Vec<u8>> = records.into_iter().map(|(_, body)| body).collect();
+    assert_eq!(bodies, vec![b"realm-one".to_vec(), b"realm-two".to_vec()]);
+}
+
 async fn should_retain_other_stream_subscription_after_unsubscribe<C>(server: &TestServer)
 where
     C: StreamConnector,
@@ -357,6 +419,85 @@ where
         serde_json::from_slice(&retained_delivery.body).expect("notify payload JSON");
     assert_eq!(retained_payload["event"], "committed");
     assert_eq!(retained_payload["batch_size"], 1);
+}
+
+async fn should_remove_stream_subscription_when_subscriber_disconnects<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let route = "stream://test/app/events";
+    let mut subscriber = C::connect(server).await.expect("connect subscriber");
+
+    // Act
+    let subscribe_response = subscriber
+        .send_and_receive(&build_stream_subscribe(route), 2000)
+        .await
+        .expect("subscribe route");
+    let (_msg_type, status, _data) = parse_stream_response(&subscribe_response);
+    assert_eq!(status, 0, "Expected success for route subscribe");
+    wait_for_stream_subscription_count(server, 1).await;
+
+    drop(subscriber);
+    server
+        .wait_for_session_count(0)
+        .await
+        .expect("subscriber disconnect cleanup");
+
+    // Assert
+    wait_for_stream_subscription_count(server, 0).await;
+    assert_eq!(server.runtime.stream_subscriptions_active(), 0);
+}
+
+async fn should_not_treat_stream_subscription_as_replay_cursor_given_shared_route<C>(
+    server: &TestServer,
+) where
+    C: StreamConnector,
+{
+    // Arrange
+    let route = "stream://test/app/shared";
+    let mut writer = C::connect(server).await.expect("connect writer");
+    let mut subscriber = C::connect(server).await.expect("connect subscriber");
+
+    // Act
+    commit_stream_record(&mut writer, route, b"before-subscribe").await;
+
+    let subscribe_response = subscriber
+        .send_and_receive(&build_stream_subscribe(route), 2000)
+        .await
+        .expect("subscribe route");
+    let (_msg_type, status, _data) = parse_stream_response(&subscribe_response);
+    assert_eq!(status, 0, "Expected success for stream subscribe");
+
+    commit_stream_record_with_offset(&mut writer, route, 1, b"after-subscribe").await;
+    let live_delivery = subscriber
+        .recv_frame(2000)
+        .await
+        .expect("live stream delivery");
+    let live_delivery = parse_stream_delivery(&live_delivery).expect("parse stream delivery");
+
+    let read_response = writer
+        .send_and_receive(&build_stream_read(route, 0), 2000)
+        .await
+        .expect("read full stream history");
+
+    // Assert
+    assert_eq!(live_delivery.msg_type, 609);
+    assert_eq!(live_delivery.route, route);
+    let delivery_payload: serde_json::Value =
+        serde_json::from_slice(&live_delivery.body).expect("stream notify payload JSON");
+    assert_eq!(delivery_payload["last_resource_offset"], 1);
+    assert!(
+        subscriber.recv_frame(200).await.is_err(),
+        "stream subscribe should not replay committed history"
+    );
+
+    let records = parse_stream_read_records(&read_response);
+    let bodies: Vec<Vec<u8>> = records.into_iter().map(|(_, body)| body).collect();
+    assert_eq!(
+        bodies,
+        vec![b"before-subscribe".to_vec(), b"after-subscribe".to_vec()]
+    );
 }
 
 async fn should_abort_uncommitted_stream_session_on_disconnect<C>(server: &TestServer)
@@ -645,6 +786,10 @@ define_transport_tests!(
     should_handle_concurrent_appends_from_multiple_clients_tcp / should_handle_concurrent_appends_from_multiple_clients_ws => should_handle_concurrent_appends_from_multiple_clients,
     should_handle_sequential_read_operations_tcp / should_handle_sequential_read_operations_ws => should_handle_sequential_read_operations,
     should_isolate_streams_by_route_tcp / should_isolate_streams_by_route_ws => should_isolate_streams_by_route,
+    should_read_committed_area_history_given_wildcard_route_tcp / should_read_committed_area_history_given_wildcard_route_ws => should_read_committed_area_history_given_wildcard_route,
+    should_read_committed_realm_history_given_wildcard_route_tcp / should_read_committed_realm_history_given_wildcard_route_ws => should_read_committed_realm_history_given_wildcard_route,
     should_abort_uncommitted_stream_session_on_disconnect_tcp / should_abort_uncommitted_stream_session_on_disconnect_ws => should_abort_uncommitted_stream_session_on_disconnect,
+    should_remove_stream_subscription_when_subscriber_disconnects_tcp / should_remove_stream_subscription_when_subscriber_disconnects_ws => should_remove_stream_subscription_when_subscriber_disconnects,
+    should_not_treat_stream_subscription_as_replay_cursor_given_shared_route_tcp / should_not_treat_stream_subscription_as_replay_cursor_given_shared_route_ws => should_not_treat_stream_subscription_as_replay_cursor_given_shared_route,
     should_retain_other_stream_subscription_after_unsubscribe_tcp / should_retain_other_stream_subscription_after_unsubscribe_ws => should_retain_other_stream_subscription_after_unsubscribe,
 );

@@ -72,6 +72,7 @@ This directory is the canonical contract surface for Fitz domain semantics. Thes
 ## Ambiguity Watch List
 
 - Notice versus Stream recovery expectations. Fitz must never imply that missed Notice traffic can be rebuilt unless the producer also wrote the event to Stream.
+- Stream live subscriptions versus Stream replay. Stream subscriptions are live notify hints only; recovery still comes from client-managed offset reads.
 - Queue versus Stream consumption semantics. Queue is for mutable work state; Stream is for immutable history.
 - RPC streaming versus Stream replay. RPC sequence numbers are live response assembly, not durable history cursors.
 - Lease ownership versus Queue visibility. A queue lease does not become a durable lease-domain token.

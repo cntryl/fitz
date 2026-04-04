@@ -78,7 +78,7 @@ Intentionally unsupported:
 - Invariant: replay of committed history does not skip visible committed messages.
 	- Why it matters: Stream is the recovery surface.
 	- How it fails: reads skip committed records, or watermark logic exposes gaps incorrectly.
-	- How to test it: [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_read_appended_data`, `should_preserve_append_order`, `should_maintain_fifo_order_with_multiple_appends`, and [tests/stream_advanced.rs](../../tests/stream_advanced.rs) `should_return_empty_success_when_reading_past_committed_stream_watermark`.
+	- How to test it: [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_read_appended_data`, `should_preserve_append_order`, `should_maintain_fifo_order_with_multiple_appends`, `should_read_committed_area_history_given_wildcard_route_tcp`, `should_read_committed_realm_history_given_wildcard_route_tcp`, and [tests/stream_advanced.rs](../../tests/stream_advanced.rs) `should_return_empty_success_when_reading_past_committed_stream_watermark`.
 
 - Invariant: one active append session per resource is enforced.
 	- Why it matters: this is the current concurrency contract for predictable expected-offset conflict handling.
@@ -93,7 +93,7 @@ Intentionally unsupported:
 - Invariant: `ReadCursor` remains client-owned response metadata, not a broker recovery feature.
 	- Why it matters: reconnect behavior must stay explicit and deterministic.
 	- How it fails: docs or admin APIs imply broker-side cursor tracking or consumer-group semantics.
-	- How to test it: contract audit against [src/domains/stream/protocol.rs](../../src/domains/stream/protocol.rs), [src/domains/stream/mod.rs](../../src/domains/stream/mod.rs), and restart tests proving clients resume from offsets rather than restored sessions.
+	- How to test it: contract audit against [src/domains/stream/protocol.rs](../../src/domains/stream/protocol.rs), [src/domains/stream/mod.rs](../../src/domains/stream/mod.rs), restart tests proving clients resume from offsets rather than restored sessions, and [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_not_treat_stream_subscription_as_replay_cursor_given_shared_route_tcp`.
 
 - Invariant: reads past the current committed boundary return empty success instead of speculative data.
 	- Why it matters: a replay client must never confuse not-yet-committed with lost data.
@@ -133,13 +133,15 @@ Operators must be able to inspect:
 Current surface:
 
 - Admin stream views rebuild durable committed metadata plus live append-session counts.
+- Admin now exposes dedicated realm and area watermark views for Stream committed history inspection.
 - Global stats include `streams_active`, `events_total`, `operations_per_second`, and `subscriptions_active`.
-- Prometheus currently exports `fitz_stream_active`.
+- Prometheus exports `fitz_stream_active`, `fitz_stream_events_total`, `fitz_stream_operations_per_second`, and `fitz_stream_subscriptions_active`.
+- Stream conflict and notify-drop counters are emitted through the observability metrics collector as `fitz_stream_append_conflicts_total` and `fitz_stream_notify_drops_total`.
 
 Current gaps to keep explicit:
 
-- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) has a stub route for the per-domain Stream stats endpoint; it currently returns not_implemented. The domain data is not yet populated.
-- The metrics surface does not yet expose watermarks, conflict counters, replay lag, or notify-drop counters.
+- The metrics surface still does not expose replay lag or watermark series as first-class labeled metrics.
+- The admin read model remains resource-centric; realm and area watermark inspection uses dedicated Stream endpoints rather than per-resource rows.
 - Admin does not expose broker-side replay cursors because broker-side replay cursors do not exist.
 
 ## G. Highest-Value Tests
@@ -148,6 +150,8 @@ Current gaps to keep explicit:
 	- [tests/stream_basics.rs](../../tests/stream_basics.rs) `should_reject_second_active_session_on_same_resource`
 	- [tests/stream_basics.rs](../../tests/stream_basics.rs) `should_reject_stale_expected_offset_after_commit`
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_append_order`
+	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_read_committed_area_history_given_wildcard_route_tcp`
+	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_read_committed_realm_history_given_wildcard_route_tcp`
 - Restart and recovery tests:
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_monotonic_stream_resource_offsets_after_restart`
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_monotonic_stream_area_offsets_after_restart`
@@ -155,9 +159,10 @@ Current gaps to keep explicit:
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_drop_uncommitted_stream_batch_on_restart`
 - Race and concurrency tests:
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_handle_concurrent_appends_from_multiple_clients`
-	- required missing regression such as `should_not_treat_stream_subscription_as_replay_cursor_given_shared_route` if live-notify overlap becomes a first-class path
+	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_not_treat_stream_subscription_as_replay_cursor_given_shared_route_tcp`
 - Integration tests:
-	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) TCP and WebSocket append, read, and unsubscribe coverage
+	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) TCP and WebSocket append, wildcard read, unsubscribe, and disconnect cleanup coverage
+	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_remove_stream_subscription_when_subscriber_disconnects_tcp`
 - Benchmark and stress tests:
 	- tier3 and tier4 Stream benches should keep append/read separate from live notify fanout because these are different contract surfaces
 

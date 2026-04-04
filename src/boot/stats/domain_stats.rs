@@ -122,15 +122,23 @@ impl Runtime {
     }
 
     pub fn stream_events_total(&self) -> usize {
+        self.refresh_stream_admin_snapshot();
         self.admin_read_model
             .streams(None)
             .into_iter()
-            .map(|stream| stream.offset as usize)
+            .map(|stream| stream.offset.saturating_add(1) as usize)
             .sum()
     }
 
     pub fn stream_operations_per_second(&self) -> f64 {
-        0.0
+        let uptime_secs = self.uptime().as_secs_f64();
+        if uptime_secs < 0.001 {
+            return 0.0;
+        }
+
+        let total_operations =
+            crate::boot::observability::metrics().counter_get("fitz_stream_operations_total");
+        total_operations as f64 / uptime_secs
     }
 
     pub fn stream_subscriptions_active(&self) -> usize {
@@ -138,13 +146,7 @@ impl Runtime {
             .read()
             .as_ref()
             .map(|domains| domains.stream.subscription_count())
-            .unwrap_or_else(|| {
-                self.admin_read_model
-                    .streams(None)
-                    .into_iter()
-                    .map(|stream| stream.sessions_active)
-                    .sum()
-            })
+            .unwrap_or(0)
     }
 
     pub fn notice_publishes_per_second(&self) -> f64 {

@@ -40,6 +40,7 @@ Notice provides low-latency ephemeral fanout of live events to connected subscri
 ### Stream
 
 Stream provides durable ordered append and replay for committed history. It is the Fitz recovery surface for clients that need rebuild, catch-up, auditability, or deterministic rereads from persisted offsets.
+Clients resume from offsets they persist themselves; live Stream subscriptions are change notifications, not broker-managed replay cursors.
 
 ### KV
 
@@ -225,6 +226,7 @@ Stream guarantees:
 - ordered append within a resource
 - durable committed history according to the selected write mode
 - replay from client-supplied offsets
+- wildcard area and realm reads gated by committed watermarks
 - monotonic committed offsets and watermarks
 - committed history is readable after restart
 
@@ -232,6 +234,7 @@ Stream does NOT guarantee:
 
 - queue-style reservation or acknowledgement
 - broker-managed consumer positions
+- replay through live subscriptions or durable subscription recovery
 - durable live subscription recovery
 - recovery of abandoned append sessions
 - multi-node sequencing guarantees beyond the current broker contract

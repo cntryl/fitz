@@ -126,7 +126,8 @@ On successful CONNECT:
 - Ready to accept domain requests
 On disconnect (graceful or abrupt):
 - Immediately clean up:
-  - All active subscriptions → drop
+    - All active subscriptions → drop
+    - All live Stream subscriptions → drop
   - All active KV transactions → rollback
   - All active Stream sessions → abort
   - All held Leases → release
@@ -153,6 +154,7 @@ On reconnect with new CONNECT:
 - Clients **MUST** re-register RPC workers after reconnect.
 - Clients **MUST** reacquire leases after reconnect when the workflow still requires ownership.
 - Clients **SHOULD** track stream offsets locally and resume from the last known offset.
+- Clients **MUST NOT** expect Stream subscribe state to resume historical delivery; replay requires an explicit read from a client-managed offset.
 - Clients **SHOULD** implement reconnect backoff.
 - Clients **MAY** cache subscription and worker registration configuration for fast rebuild.
 

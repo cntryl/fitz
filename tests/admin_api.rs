@@ -13,6 +13,8 @@ use fitz::boot::domains::{
     ScheduleDomainSink, StreamDomainSink,
 };
 use fitz::boot::Runtime;
+use fitz::domains::stream::protocol::StreamWriteMode;
+use fitz::domains::stream::store::{CommitRecordsParams, EventPayload, StreamStore};
 use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
 use fitz::runtime::routing::RouteFamily;
 use fitz::runtime::Router;
@@ -183,6 +185,61 @@ fn seed_queue_snapshot_data(runtime: &Arc<Runtime>) {
     }]);
 }
 
+fn seed_stream_snapshot_data(store: Arc<cntryl_midge::Engine>) {
+    let stream_store = StreamStore::new(store);
+
+    let logs_application = [EventPayload {
+        body: Bytes::from_static(b"app-log"),
+        metadata: None,
+    }];
+    stream_store
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "prod",
+            area: "logs",
+            resource: "application",
+            expected_resource_next_offset: 0,
+            events: &logs_application,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Sync,
+        })
+        .expect("commit application stream record");
+
+    let logs_system = [EventPayload {
+        body: Bytes::from_static(b"system-log"),
+        metadata: None,
+    }];
+    stream_store
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "prod",
+            area: "logs",
+            resource: "system",
+            expected_resource_next_offset: 0,
+            events: &logs_system,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Sync,
+        })
+        .expect("commit system stream record");
+
+    let audit_events = [EventPayload {
+        body: Bytes::from_static(b"audit-log"),
+        metadata: None,
+    }];
+    stream_store
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "prod",
+            area: "audit",
+            resource: "events",
+            expected_resource_next_offset: 0,
+            events: &audit_events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Sync,
+        })
+        .expect("commit audit stream record");
+}
+
 async fn login_cookie(runtime: Arc<Runtime>) -> String {
     let req = Request::builder()
         .method(Method::POST)
@@ -340,6 +397,68 @@ async fn should_return_leaf_resource_detail() {
     assert!(payload.contains(r#""realm":"prod""#));
     assert!(payload.contains(r#""area":"logs""#));
     assert!(payload.contains(r#""resource":"application""#));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_stream_realm_watermarks_given_committed_stream_history() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    seed_stream_snapshot_data(store);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/stream/realms/prod/watermarks")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["realm"], "prod");
+    assert_eq!(payload["area_count"], 2);
+    assert_eq!(payload["resource_count"], 3);
+    assert_eq!(payload["family_watermarks"][0]["family"], 1);
+    assert_eq!(payload["family_watermarks"][0]["watermark"], 2);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_stream_area_watermarks_given_committed_stream_history() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    seed_stream_snapshot_data(store);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/stream/realms/prod/areas/logs/watermarks")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["realm"], "prod");
+    assert_eq!(payload["area"], "logs");
+    assert_eq!(payload["resource_count"], 2);
+    assert_eq!(payload["family_watermarks"][0]["family"], 1);
+    assert_eq!(payload["family_watermarks"][0]["watermark"], 1);
 }
 
 #[tokio::test]
@@ -694,6 +813,85 @@ async fn should_return_queue_domain_stats() {
     assert!(payload.contains(r#""messages_pending":3"#));
     assert!(payload.contains(r#""messages_dead_lettered":4"#));
     assert!(payload.contains(r#""leases_active":0"#));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_stream_domain_stats_given_recorded_operations() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    seed_stream_snapshot_data(store);
+    let metrics = fitz::boot::observability::metrics();
+    metrics.counter_add("fitz_stream_operations_total", 5);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/stream/stats")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["events_total"], 3);
+    assert!(payload["operations_per_second"].as_f64().unwrap_or(0.0) > 0.0);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics() {
+    // Arrange
+    let runtime = test_runtime();
+    let metrics = fitz::boot::observability::metrics();
+    let operations_before = metrics.counter_get("fitz_stream_operations_total");
+    let conflicts_before = metrics.counter_get("fitz_stream_append_conflicts_total");
+    let drops_before = metrics.counter_get("fitz_stream_notify_drops_total");
+    metrics.counter_add("fitz_stream_operations_total", 3);
+    metrics.counter_add("fitz_stream_append_conflicts_total", 2);
+    metrics.counter_add("fitz_stream_notify_drops_total", 1);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/metrics")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload = String::from_utf8(body.to_vec()).unwrap();
+    assert!(payload.contains("fitz_stream_events_total"));
+    assert!(payload.contains("fitz_stream_operations_per_second"));
+    assert!(payload.contains("fitz_stream_subscriptions_active"));
+    assert!(payload.contains(&format!(
+        "fitz_stream_operations_total {}",
+        operations_before + 3
+    )));
+    assert!(payload.contains(&format!(
+        "fitz_stream_append_conflicts_total {}",
+        conflicts_before + 2
+    )));
+    assert!(payload.contains(&format!(
+        "fitz_stream_notify_drops_total {}",
+        drops_before + 1
+    )));
 }
 
 #[tokio::test]

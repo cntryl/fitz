@@ -49,6 +49,7 @@ Disconnect semantics:
 
 - When a subscriber disconnects, its Notice subscriptions are removed.
 - Messages published after disconnect are missed permanently by that subscriber unless the producer also wrote the event to Stream.
+- Replay after disconnect still belongs to Stream and requires a client-managed offset on the Stream side, not a Notice resume token.
 
 Ordering and duplicates:
 

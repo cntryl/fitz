@@ -39,6 +39,8 @@ struct StreamActorKey {
     resource: String,
 }
 
+const STREAM_OPERATIONS_TOTAL: &str = "fitz_stream_operations_total";
+
 impl StreamActorKey {
     fn resource_route(&self) -> Route {
         Route::new(format!(
@@ -471,6 +473,75 @@ impl StreamDomainSink {
     pub fn stream_count(&self) -> usize {
         self.actors.lock().len()
     }
+
+    pub fn list_realm_watermarks(
+        &self,
+        realm: &str,
+    ) -> Vec<crate::api::admin::StreamRealmWatermark> {
+        let Ok(families) = self.store.list_column_families() else {
+            return Vec::new();
+        };
+
+        let mut watermarks = Vec::new();
+        for family in families {
+            let family_id = family.id() as u64;
+            let has_realm_data = self
+                .stream_store
+                .list_resource_metadata(family_id)
+                .map(|records| records.iter().any(|record| record.realm == realm))
+                .unwrap_or(false);
+            if !has_realm_data {
+                continue;
+            }
+
+            if let Ok(watermark) = self.stream_store.get_realm_watermark(family_id, realm) {
+                watermarks.push(crate::api::admin::StreamRealmWatermark::snapshot(
+                    family_id,
+                    watermark,
+                ));
+            }
+        }
+
+        watermarks.sort_by_key(|item| item.family);
+        watermarks
+    }
+
+    pub fn list_area_watermarks(
+        &self,
+        realm: &str,
+        area: &str,
+    ) -> Vec<crate::api::admin::StreamAreaWatermark> {
+        let Ok(families) = self.store.list_column_families() else {
+            return Vec::new();
+        };
+
+        let mut watermarks = Vec::new();
+        for family in families {
+            let family_id = family.id() as u64;
+            let has_area_data = self
+                .stream_store
+                .list_resource_metadata(family_id)
+                .map(|records| {
+                    records
+                        .iter()
+                        .any(|record| record.realm == realm && record.area == area)
+                })
+                .unwrap_or(false);
+            if !has_area_data {
+                continue;
+            }
+
+            if let Ok(watermark) = self.stream_store.get_watermark(family_id, realm, area) {
+                watermarks.push(crate::api::admin::StreamAreaWatermark::snapshot(
+                    family_id,
+                    watermark,
+                ));
+            }
+        }
+
+        watermarks.sort_by_key(|item| item.family);
+        watermarks
+    }
 }
 
 impl MailboxSink for StreamDomainSink {
@@ -512,6 +583,22 @@ impl MailboxSink for StreamDomainSink {
 
         use crate::domains::stream::protocol::StreamMessage;
         use crate::protocol::stream_codec::StreamResponse;
+
+        if matches!(
+            &stream_msg,
+            StreamMessage::Begin { .. }
+                | StreamMessage::Append { .. }
+                | StreamMessage::Commit { .. }
+                | StreamMessage::Rollback { .. }
+                | StreamMessage::Read { .. }
+                | StreamMessage::Last { .. }
+                | StreamMessage::GetMetadata { .. }
+                | StreamMessage::Subscribe { .. }
+                | StreamMessage::Unsubscribe { .. }
+                | StreamMessage::UnsubscribeAll { .. }
+        ) {
+            crate::boot::observability::counter_inc(STREAM_OPERATIONS_TOTAL);
+        }
 
         let (response, commit_notify, should_refresh_admin_snapshot) = match stream_msg {
             StreamMessage::Begin {

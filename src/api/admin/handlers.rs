@@ -94,10 +94,20 @@ async fn handle_hierarchical_get(
     match tail {
         ["stats"] => stats::handle_domain_stats(runtime, scheme).await,
         ["realms"] => handle_realms_collection(scheme, runtime),
+        ["realms", realm, "watermarks"] if scheme == "stream" => {
+            super::json_response(list::stream_realm_watermark_detail(runtime.as_ref(), realm))
+        }
         ["realms", realm] => super::json_response(list::RealmDetail {
             realm: (*realm).to_string(),
         }),
         ["realms", realm, "areas"] => handle_areas_collection(scheme, runtime, realm),
+        ["realms", realm, "areas", area, "watermarks"] if scheme == "stream" => {
+            super::json_response(list::stream_area_watermark_detail(
+                runtime.as_ref(),
+                realm,
+                area,
+            ))
+        }
         ["realms", realm, "areas", area] => super::json_response(list::AreaDetail {
             realm: (*realm).to_string(),
             area: (*area).to_string(),

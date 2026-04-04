@@ -53,7 +53,3 @@ pub(crate) fn error_response(status: StatusCode, message: &str) -> Response<Body
 pub(crate) fn not_found() -> Response<Body> {
     error_response(StatusCode::NOT_FOUND, "Not Found")
 }
-
-pub(crate) fn not_implemented() -> Response<Body> {
-    error_response(StatusCode::NOT_IMPLEMENTED, "Not Implemented")
-}

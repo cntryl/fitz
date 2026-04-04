@@ -186,6 +186,30 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str(&format!("fitz_stream_active {}\n", runtime.stream_active()));
     output.push('\n');
 
+    output.push_str("# HELP fitz_stream_events_total Total committed stream events visible through the admin snapshot\n");
+    output.push_str("# TYPE fitz_stream_events_total gauge\n");
+    output.push_str(&format!(
+        "fitz_stream_events_total {}\n",
+        runtime.stream_events_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_stream_operations_per_second Lifetime-average Stream operations per second\n");
+    output.push_str("# TYPE fitz_stream_operations_per_second gauge\n");
+    output.push_str(&format!(
+        "fitz_stream_operations_per_second {}\n",
+        runtime.stream_operations_per_second()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_stream_subscriptions_active Active Stream subscriptions\n");
+    output.push_str("# TYPE fitz_stream_subscriptions_active gauge\n");
+    output.push_str(&format!(
+        "fitz_stream_subscriptions_active {}\n",
+        runtime.stream_subscriptions_active()
+    ));
+    output.push('\n');
+
     // Schedule domain
     output.push_str("# HELP fitz_schedule_active Active schedules\n");
     output.push_str("# TYPE fitz_schedule_active gauge\n");

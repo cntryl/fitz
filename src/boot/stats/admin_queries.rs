@@ -31,7 +31,7 @@ impl Runtime {
         }
     }
 
-    fn refresh_stream_admin_snapshot(&self) {
+    pub(crate) fn refresh_stream_admin_snapshot(&self) {
         let domains = self.domains.read().clone();
         if let Some(domains) = domains {
             domains.stream.refresh_admin_snapshot_if_dirty();
@@ -48,6 +48,29 @@ impl Runtime {
     pub fn stream_list_streams(&self, realm: Option<&str>) -> Vec<crate::api::admin::StreamInfo> {
         self.refresh_stream_admin_snapshot();
         self.admin_read_model.streams(realm)
+    }
+
+    pub fn stream_list_realm_watermarks(
+        &self,
+        realm: &str,
+    ) -> Vec<crate::api::admin::StreamRealmWatermark> {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.stream.list_realm_watermarks(realm))
+            .unwrap_or_default()
+    }
+
+    pub fn stream_list_area_watermarks(
+        &self,
+        realm: &str,
+        area: &str,
+    ) -> Vec<crate::api::admin::StreamAreaWatermark> {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.stream.list_area_watermarks(realm, area))
+            .unwrap_or_default()
     }
 
     pub fn notice_list_subscriptions(
