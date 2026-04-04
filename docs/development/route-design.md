@@ -43,7 +43,7 @@ Domains are selected by **message type ranges**, not by scheme:
 | 200-299 | Queue | Persistent |
 | 300-399 | RPC | Ephemeral |
 | 400-499 | Lease | Ephemeral |
-| 500-599 | Notice | Ephemeral |
+| 500-504 | Notice | Ephemeral |
 | 600-699 | Stream | Persistent |
 | 700-799 | Schedule | Persistent |
 
@@ -403,7 +403,7 @@ impl LeaseKey {
 ### 5. Notice Domain (Pub/Sub)
 
 **Prefix**: `notice://`  
-**Message Types**: 500-599  
+**Message Types**: 500-504  
 **State**: Ephemeral (in-memory)
 
 #### Route Format
@@ -829,7 +829,7 @@ rpc://tenant-a/**#write   # RPC request access
 | 200-299 | Queue | ENQUEUE (200) | COMPLETE (204) |
 | 300-399 | RPC | SUBSCRIBE (300) | ACK (304) |
 | 400-499 | Lease | ACQUIRE (400) | QUERY (403) |
-| 500-599 | Notice | PUBLISH (500) | NOTIFY (504) |
+| 500-504 | Notice | PUBLISH (500) | NOTIFY (504) |
 | 600-699 | Stream | BEGIN (600) | UNSUBSCRIBE (608) |
 | 700-799 | Schedule | CREATE (700) | NOTIFY (705) |
 

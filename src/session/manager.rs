@@ -394,7 +394,7 @@ impl RuntimeIngress {
             404..=499 => Ok(Some(("lease", crate::auth::Access::Write))),
             500..=503 => Ok(Some(("notice", crate::auth::Access::Write))),
             504 => Err("invalid message type: 504 is server-to-client only"),
-            505..=599 => Ok(Some(("notice", crate::auth::Access::Read))),
+            505..=599 => Err("invalid message type: 505-599 are unsupported notice operations"),
             600..=603 => Ok(Some(("stream", crate::auth::Access::Write))),
             604..=608 => Ok(Some(("stream", crate::auth::Access::Read))),
             609 => Err("invalid message type: 609 is server-to-client only"),
@@ -431,7 +431,7 @@ impl RuntimeIngress {
                     route.map(|route| Self::canonicalize_domain_route_str("lease", route))
                 })
             }
-            500..=599 => {
+            500..=504 => {
                 crate::protocol::notice_codec::extract_auth_route(mt, payload).map(|route| {
                     route.map(|route| Self::canonicalize_domain_route_str("notice", route))
                 })
@@ -1044,7 +1044,7 @@ impl RuntimeIngress {
                     Err(e) => Err(e),
                 }
             }
-            500..=599 => match crate::protocol::notice_codec::parse_request(
+            500..=504 => match crate::protocol::notice_codec::parse_request(
                 &ctx,
                 payload.as_ref(),
                 session_info.route_family,
@@ -2115,5 +2115,17 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stream_route.as_str(), "stream://stream-data");
+    }
+
+    #[test]
+    fn should_reject_unassigned_notice_message_types() {
+        // Arrange
+        let msg_type = crate::protocol::tlv::MessageType::new(505);
+
+        // Act
+        let result = RuntimeIngress::domain_dispatch_for_msg_type(msg_type);
+
+        // Assert
+        assert!(result.is_err());
     }
 }

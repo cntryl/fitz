@@ -6,14 +6,14 @@
 
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
-use crate::runtime::routing::route_triplet;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
 use parking_lot::Mutex;
 use smallvec::SmallVec;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// Per-session wildcard cap used to keep the in-memory matcher bounded.
 const MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION: usize = 128;
@@ -24,6 +24,44 @@ struct NoticeDeliveryTarget {
     session_id: u64,
     subscription_id: u64,
     subscriber: crate::runtime::routing::RouteAddress,
+}
+
+struct NoticeRouteStats {
+    publishes_total: u64,
+    recent_publishes: VecDeque<Instant>,
+}
+
+impl NoticeRouteStats {
+    fn new() -> Self {
+        Self {
+            publishes_total: 0,
+            recent_publishes: VecDeque::new(),
+        }
+    }
+
+    fn record_publish(&mut self, now: Instant) {
+        self.prune_recent_publishes(now);
+        self.publishes_total = self.publishes_total.saturating_add(1);
+        self.recent_publishes.push_back(now);
+    }
+
+    fn publishes_total(&self) -> u64 {
+        self.publishes_total
+    }
+
+    fn publishes_per_minute(&mut self, now: Instant) -> f64 {
+        self.prune_recent_publishes(now);
+        self.recent_publishes.len() as f64
+    }
+
+    fn prune_recent_publishes(&mut self, now: Instant) {
+        while let Some(oldest) = self.recent_publishes.front().copied() {
+            if now.saturating_duration_since(oldest) <= Duration::from_secs(60) {
+                break;
+            }
+            self.recent_publishes.pop_front();
+        }
+    }
 }
 
 struct NoticeSubscription {
@@ -57,6 +95,13 @@ impl From<&NoticeSubscription> for NoticeDeliveryTarget {
     }
 }
 
+fn notice_route_realm(route: &str) -> Option<&str> {
+    let path = route.split_once("://").map_or(route, |(_, path)| path);
+    path.trim_start_matches('/')
+        .split('/')
+        .find(|segment| !segment.is_empty())
+}
+
 /// Live notice pub/sub state for the current broker process.
 ///
 /// This sink owns the authoritative in-memory subscription index used for
@@ -64,6 +109,7 @@ impl From<&NoticeSubscription> for NoticeDeliveryTarget {
 /// restart and is never durably recovered or replayed.
 pub struct NoticeDomainSink {
     families: Mutex<HashMap<u64, RoutedSubscriptionSet<NoticeSubscription>>>,
+    route_stats: Mutex<HashMap<String, NoticeRouteStats>>,
     next_sub_id: AtomicU64,
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
@@ -78,6 +124,7 @@ impl NoticeDomainSink {
     ) -> Self {
         Self {
             families: Mutex::new(HashMap::new()),
+            route_stats: Mutex::new(HashMap::with_capacity(64)),
             next_sub_id: AtomicU64::new(1),
             router,
             admin_read_model,
@@ -94,17 +141,18 @@ impl NoticeDomainSink {
     /// state only.
     fn sync_admin_snapshot(&self) {
         let families = self.families.lock();
+        let now = Instant::now();
         let created_at = Utc::now().to_rfc3339();
         let mut subscriptions = Vec::new();
         let mut routes: HashMap<String, usize> = HashMap::new();
         for state in families.values() {
             for subscription in state.values() {
                 let pattern = subscription.pattern.route().to_string();
-                if let Some(parts) = route_triplet(&pattern) {
+                if let Some(realm) = notice_route_realm(&pattern) {
                     subscriptions.push(crate::api::admin::NoticeSubscription::snapshot(
                         subscription.subscription_id,
                         subscription.session_id,
-                        parts.realm,
+                        realm,
                         pattern.clone(),
                         &created_at,
                     ));
@@ -113,13 +161,26 @@ impl NoticeDomainSink {
             }
         }
         drop(families);
+        let mut route_stats = self.route_stats.lock();
         self.admin_read_model
             .replace_notice_subscriptions(subscriptions);
         self.admin_read_model.replace_notice_routes(
             routes
                 .into_iter()
                 .map(|(route, subscribers)| {
-                    crate::api::admin::NoticeRouteInfo::snapshot(route, subscribers)
+                    let (publishes_total, publishes_per_minute) = route_stats
+                        .get_mut(route.as_str())
+                        .map(|stats| {
+                            (
+                                stats.publishes_total(),
+                                stats.publishes_per_minute(now),
+                            )
+                        })
+                        .unwrap_or((0, 0.0));
+                    let mut entry = crate::api::admin::NoticeRouteInfo::snapshot(route, subscribers);
+                    entry.publishes_total = publishes_total;
+                    entry.publishes_per_minute = publishes_per_minute;
+                    entry
                 })
                 .collect(),
         );
@@ -138,6 +199,25 @@ impl NoticeDomainSink {
     fn fan_out_notice_event(&self, targets: &NoticeDeliveryTargets, shared_suffix: &bytes::Bytes) {
         for target in targets {
             self.route_notice_notify(target, shared_suffix);
+        }
+    }
+
+    fn record_route_publishes(&self, routes: &[String]) {
+        if routes.is_empty() {
+            return;
+        }
+
+        let now = Instant::now();
+        let mut route_stats = self.route_stats.lock();
+
+        for route in routes {
+            if let Some(stats) = route_stats.get_mut(route.as_str()) {
+                stats.record_publish(now);
+            } else {
+                let mut stats = NoticeRouteStats::new();
+                stats.record_publish(now);
+                route_stats.insert(route.clone(), stats);
+            }
         }
     }
 
@@ -163,17 +243,24 @@ impl NoticeDomainSink {
         &self,
         family_id: crate::runtime::routing::RouteFamily,
         route: &str,
-    ) -> NoticeDeliveryTargets {
+    ) -> (NoticeDeliveryTargets, Vec<String>) {
         let families = self.families.lock();
         let Some(state) = families.get(&family_id.as_u64()) else {
-            return NoticeDeliveryTargets::new();
+            return (NoticeDeliveryTargets::new(), Vec::new());
         };
 
         let mut targets = NoticeDeliveryTargets::with_capacity(state.matching_capacity_hint(route));
+        let mut matching_routes: HashSet<String> = HashSet::with_capacity(
+            state.matching_capacity_hint(route),
+        );
         state.for_each_matching_route(family_id, route, |subscription| {
             targets.push(NoticeDeliveryTarget::from(subscription));
+            matching_routes.insert(subscription.pattern.route().to_string());
         });
-        targets
+        (
+            targets,
+            matching_routes.into_iter().collect(),
+        )
     }
 
     fn publish_route_payload(
@@ -182,14 +269,17 @@ impl NoticeDomainSink {
         route: &str,
         payload: &[u8],
     ) {
-        let targets = self.collect_matching_targets_for_route(family_id, route);
+        let (targets, matching_routes) = self.collect_matching_targets_for_route(family_id, route);
         if targets.is_empty() {
             return;
         }
 
+        self.record_route_publishes(&matching_routes);
+
         let shared_suffix =
             crate::protocol::notice_codec::encode_notify_shared_suffix(route, payload);
         self.fan_out_notice_event(&targets, &shared_suffix);
+        self.mark_admin_snapshot_dirty();
     }
 
     fn publish_event(&self, event: &crate::runtime::DomainPublishEvent) {
@@ -664,6 +754,92 @@ mod tests {
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_include_notice_subscription_given_flexible_route_shape() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let notice_route = "notice://acme/events";
+        let notice_address = RouteAddress::new(family, Route::new("notice://acme/inbound"));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+
+        // Act
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            notice_route,
+            family,
+        );
+        let subscribe_response = decode_notice_response(&subscriber_mailbox);
+        assert_eq!(subscribe_response.status, 0);
+        refresh_notice_admin_snapshot(&sink);
+
+        // Assert
+        let subscriptions = admin_read_model.notice_subscriptions(None, None);
+        let routes = admin_read_model.notice_routes(None);
+        assert_notice_admin_subscriptions(&subscriptions, &[notice_route]);
+        assert_notice_admin_routes(&routes, &[notice_route]);
+        assert_eq!(subscriptions[0].realm, "acme");
+    }
+
+    #[test]
+    fn should_track_notice_publish_activity_given_matching_publish() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let subscriber_session_id = 7;
+        let publisher_session_id = 11;
+        let notice_route = "notice://acme/app/events";
+        let notice_address = RouteAddress::new(family, Route::new("notice://acme/inbound"));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            subscriber_session_id,
+            notice_route,
+            family,
+        );
+        let subscribe_response = decode_notice_response(&subscriber_mailbox);
+        assert_eq!(subscribe_response.status, 0);
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            publisher_address,
+            notice_address,
+            FrameContext::new(
+                publisher_session_id,
+                ChannelId::Sub,
+                MessageType::new(500),
+                encode_notice_publish(notice_route, b"hello"),
+                family,
+            ),
+        ))
+        .expect("publish notice event");
+        refresh_notice_admin_snapshot(&sink);
+
+        // Assert
+        let routes = admin_read_model.notice_routes(None);
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].route, notice_route);
+        assert_eq!(routes[0].subscribers, 1);
+        assert_eq!(routes[0].publishes_total, 1);
+        assert_eq!(routes[0].publishes_per_minute, 1.0);
     }
 
     #[test]

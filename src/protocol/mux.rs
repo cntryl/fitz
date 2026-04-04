@@ -108,7 +108,7 @@ impl TypeMapping {
             200..=299 => Some(ChannelId::Sub),      // Queue
             300..=399 => Some(ChannelId::Rpc),      // RPC
             400..=499 => Some(ChannelId::Lease),    // Lease
-            500..=599 => Some(ChannelId::Pub),      // Notice (use Pub channel)
+            500..=504 => Some(ChannelId::Pub),      // Notice (use Pub channel)
             600..=699 => Some(ChannelId::Sub),      // Stream (use Sub channel)
             700..=799 => Some(ChannelId::Internal), // Schedule
             _ => None,
@@ -280,10 +280,11 @@ mod tests {
         let c3 = mapping.get_channel(250);
         let c4 = mapping.get_channel(350);
         let c5 = mapping.get_channel(450);
-        let c6 = mapping.get_channel(550);
-        let c7 = mapping.get_channel(650);
-        let c8 = mapping.get_channel(750);
-        let c9 = mapping.get_channel(999);
+        let c6 = mapping.get_channel(504);
+        let c7 = mapping.get_channel(505);
+        let c8 = mapping.get_channel(650);
+        let c9 = mapping.get_channel(750);
+        let c10 = mapping.get_channel(999);
 
         // Assert
         assert_eq!(c1, Some(ChannelId::Control));
@@ -292,9 +293,10 @@ mod tests {
         assert_eq!(c4, Some(ChannelId::Rpc));
         assert_eq!(c5, Some(ChannelId::Lease));
         assert_eq!(c6, Some(ChannelId::Pub)); // notice
-        assert_eq!(c7, Some(ChannelId::Sub)); // stream
-        assert_eq!(c8, Some(ChannelId::Internal)); // schedule
-        assert_eq!(c9, None);
+        assert_eq!(c7, None);
+        assert_eq!(c8, Some(ChannelId::Sub)); // stream
+        assert_eq!(c9, Some(ChannelId::Internal)); // schedule
+        assert_eq!(c10, None);
     }
 
     #[test]

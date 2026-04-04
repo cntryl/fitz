@@ -126,7 +126,7 @@ impl NoticeRouteActor {
         let to_remove: Vec<(SubscriptionId, crate::runtime::routing::Route)> = self
             .subscriptions
             .iter()
-            .filter(|(_, (_, addr, _, _))| addr == &msg.subscriber)
+            .filter(|(_, (sess_id, _, _, _))| *sess_id == msg.session_id)
             .map(|(&id, (_, _, pattern, _))| (id, pattern.clone()))
             .collect();
 
@@ -357,6 +357,35 @@ mod tests {
 
         // Assert
         assert_eq!(actor.subscriptions.len(), 1);
+        assert!(actor.subscriptions.contains_key(&SubscriptionId(2)));
+        assert_eq!(actor.index.count_subscriptions(test_family()), 1);
+    }
+
+    #[test]
+    fn should_remove_only_matching_session_subscriptions_given_shared_subscriber_address() {
+        // Arrange
+        let mut actor = NoticeRouteActor::new(test_family());
+        let subscriber = test_address("shared");
+        let pattern1 = test_route("notice://realm/one");
+        let pattern2 = test_route("notice://realm/two");
+
+        actor.index.insert(test_family(), &pattern1, SubscriptionId(1));
+        actor.index.insert(test_family(), &pattern2, SubscriptionId(2));
+        actor.subscriptions.insert(
+            SubscriptionId(1),
+            (test_session_id(1), subscriber.clone(), pattern1, None),
+        );
+        actor.subscriptions.insert(
+            SubscriptionId(2),
+            (test_session_id(2), subscriber.clone(), pattern2, None),
+        );
+
+        // Act
+        let unsubscribe_all = UnsubscribeAllMessage::new(test_session_id(1), subscriber);
+        actor.handle_unsubscribe_all(unsubscribe_all);
+
+        // Assert
+        assert_eq!(actor.subscription_count(), 1);
         assert!(actor.subscriptions.contains_key(&SubscriptionId(2)));
         assert_eq!(actor.index.count_subscriptions(test_family()), 1);
     }
