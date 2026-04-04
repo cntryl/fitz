@@ -369,8 +369,12 @@ mod tests {
         let pattern1 = test_route("notice://realm/one");
         let pattern2 = test_route("notice://realm/two");
 
-        actor.index.insert(test_family(), &pattern1, SubscriptionId(1));
-        actor.index.insert(test_family(), &pattern2, SubscriptionId(2));
+        actor
+            .index
+            .insert(test_family(), &pattern1, SubscriptionId(1));
+        actor
+            .index
+            .insert(test_family(), &pattern2, SubscriptionId(2));
         actor.subscriptions.insert(
             SubscriptionId(1),
             (test_session_id(1), subscriber.clone(), pattern1, None),

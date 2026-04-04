@@ -170,14 +170,10 @@ impl NoticeDomainSink {
                 .map(|(route, subscribers)| {
                     let (publishes_total, publishes_per_minute) = route_stats
                         .get_mut(route.as_str())
-                        .map(|stats| {
-                            (
-                                stats.publishes_total(),
-                                stats.publishes_per_minute(now),
-                            )
-                        })
+                        .map(|stats| (stats.publishes_total(), stats.publishes_per_minute(now)))
                         .unwrap_or((0, 0.0));
-                    let mut entry = crate::api::admin::NoticeRouteInfo::snapshot(route, subscribers);
+                    let mut entry =
+                        crate::api::admin::NoticeRouteInfo::snapshot(route, subscribers);
                     entry.publishes_total = publishes_total;
                     entry.publishes_per_minute = publishes_per_minute;
                     entry
@@ -250,17 +246,13 @@ impl NoticeDomainSink {
         };
 
         let mut targets = NoticeDeliveryTargets::with_capacity(state.matching_capacity_hint(route));
-        let mut matching_routes: HashSet<String> = HashSet::with_capacity(
-            state.matching_capacity_hint(route),
-        );
+        let mut matching_routes: HashSet<String> =
+            HashSet::with_capacity(state.matching_capacity_hint(route));
         state.for_each_matching_route(family_id, route, |subscription| {
             targets.push(NoticeDeliveryTarget::from(subscription));
             matching_routes.insert(subscription.pattern.route().to_string());
         });
-        (
-            targets,
-            matching_routes.into_iter().collect(),
-        )
+        (targets, matching_routes.into_iter().collect())
     }
 
     fn publish_route_payload(
