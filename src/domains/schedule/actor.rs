@@ -81,6 +81,8 @@ pub struct ScheduleActor {
     recent_execution_ms: VecDeque<u64>,
     /// Injected wall-clock and monotonic time source.
     clock: Arc<dyn Clock>,
+    /// Number of schedules normalized forward during the last preload.
+    overdue_normalizations: u64,
 }
 
 impl ScheduleActor {
@@ -154,6 +156,7 @@ impl ScheduleActor {
             pending_fires: BTreeMap::new(),
             recent_execution_ms: VecDeque::new(),
             clock,
+            overdue_normalizations: 0,
         };
 
         actor.preload_from_store_at(now)?;
@@ -251,6 +254,7 @@ impl ScheduleActor {
         }
 
         if !normalization_batch.is_empty() {
+            self.overdue_normalizations = normalization_batch.len() as u64;
             self.store.insert_batch(
                 self.family.as_u64(),
                 &normalization_batch,
@@ -886,6 +890,10 @@ impl ScheduleActor {
 
     pub(crate) fn pending_fire_count(&self) -> usize {
         self.pending_fires.len()
+    }
+
+    pub(crate) fn overdue_normalization_count(&self) -> u64 {
+        self.overdue_normalizations
     }
 
     pub(crate) fn executions_per_minute(&mut self) -> f64 {

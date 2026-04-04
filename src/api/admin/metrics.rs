@@ -284,6 +284,30 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
         runtime.schedule_pending_fires()
     ));
     output.push('\n');
+
+    output.push_str("# HELP fitz_schedule_publish_failures_total Total schedule fires that failed to route to a subscriber\n");
+    output.push_str("# TYPE fitz_schedule_publish_failures_total counter\n");
+    output.push_str(&format!(
+        "fitz_schedule_publish_failures_total {}\n",
+        runtime.schedule_publish_failures()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_schedule_ack_failures_total Total pending-fire acknowledgement persistence failures\n");
+    output.push_str("# TYPE fitz_schedule_ack_failures_total counter\n");
+    output.push_str(&format!(
+        "fitz_schedule_ack_failures_total {}\n",
+        runtime.schedule_ack_failures()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_schedule_overdue_normalizations_total Total schedule definitions normalized forward on last broker start\n");
+    output.push_str("# TYPE fitz_schedule_overdue_normalizations_total counter\n");
+    output.push_str(&format!(
+        "fitz_schedule_overdue_normalizations_total {}\n",
+        runtime.schedule_overdue_normalizations()
+    ));
+    output.push('\n');
 }
 
 #[cfg(test)]

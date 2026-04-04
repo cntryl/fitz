@@ -192,4 +192,28 @@ impl Runtime {
             .map(|domains| domains.schedule.pending_fire_count())
             .unwrap_or(0)
     }
+
+    pub fn schedule_publish_failures(&self) -> u64 {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.publish_failure_count())
+            .unwrap_or(0)
+    }
+
+    pub fn schedule_ack_failures(&self) -> u64 {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.ack_failure_count())
+            .unwrap_or(0)
+    }
+
+    pub fn schedule_overdue_normalizations(&self) -> u64 {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.overdue_normalization_count())
+            .unwrap_or(0)
+    }
 }

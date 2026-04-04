@@ -57,6 +57,10 @@ pub struct ScheduleDomainSink {
     snapshot_syncing: AtomicBool,
     last_snapshot_elapsed_us: AtomicU64,
     snapshot_epoch: Instant,
+    /// Total number of schedule fires that failed to route to a subscriber.
+    publish_failures: AtomicU64,
+    /// Total number of pending-fire acknowledgement persistence failures.
+    ack_failures: AtomicU64,
 }
 
 impl ScheduleDomainSink {
@@ -77,6 +81,8 @@ impl ScheduleDomainSink {
             snapshot_syncing: AtomicBool::new(false),
             last_snapshot_elapsed_us: AtomicU64::new(0),
             snapshot_epoch: Instant::now(),
+            publish_failures: AtomicU64::new(0),
+            ack_failures: AtomicU64::new(0),
         }
     }
 
@@ -170,6 +176,8 @@ impl ScheduleDomainSink {
             let destination = crate::runtime::routing::RouteAddress::new(family, route_value);
             if self.router.route(Envelope::new(destination, event)).is_ok() {
                 delivered.entry(family).or_default().push((fire_ms, route));
+            } else {
+                self.publish_failures.fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -180,6 +188,7 @@ impl ScheduleDomainSink {
             for (family, delivered_fires) in delivered {
                 if let Some(actor) = actors.get_mut(&family) {
                     if let Err(error) = actor.ack_pending_fires(&delivered_fires) {
+                        self.ack_failures.fetch_add(1, Ordering::Relaxed);
                         tracing::warn!(
                             route_family = family.as_u64(),
                             error = %error,
@@ -307,6 +316,22 @@ impl ScheduleDomainSink {
         actors
             .values_mut()
             .map(|actor| actor.executions_per_minute())
+            .sum()
+    }
+
+    pub fn publish_failure_count(&self) -> u64 {
+        self.publish_failures.load(Ordering::Relaxed)
+    }
+
+    pub fn ack_failure_count(&self) -> u64 {
+        self.ack_failures.load(Ordering::Relaxed)
+    }
+
+    pub fn overdue_normalization_count(&self) -> u64 {
+        let actors = self.actors.lock();
+        actors
+            .values()
+            .map(|actor| actor.overdue_normalization_count())
             .sum()
     }
 
