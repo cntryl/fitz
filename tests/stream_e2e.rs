@@ -341,7 +341,10 @@ where
     // Assert
     let records = parse_stream_read_records(&response);
     let bodies: Vec<Vec<u8>> = records.into_iter().map(|(_, body)| body).collect();
-    assert_eq!(bodies, vec![b"order-created".to_vec(), b"audit-recorded".to_vec()]);
+    assert_eq!(
+        bodies,
+        vec![b"order-created".to_vec(), b"audit-recorded".to_vec()]
+    );
 }
 
 async fn should_read_committed_realm_history_given_wildcard_route<C>(server: &TestServer)

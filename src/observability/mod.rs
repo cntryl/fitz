@@ -115,8 +115,7 @@ pub const METRIC_INGRESS_FRAME_TOTAL_LATENCY: &str = "fitz_ingress_frame_total_l
 pub const METRIC_SESSION_FRAME_PROCESS_LATENCY: &str = "fitz_session_frame_process_latency_us";
 pub const METRIC_SESSION_TLV_DECODE_LATENCY: &str = "fitz_session_tlv_decode_latency_us";
 pub const METRIC_SESSION_MUX_ROUTE_LATENCY: &str = "fitz_session_mux_route_latency_us";
-pub const METRIC_SESSION_INGRESS_HANDOFF_LATENCY: &str =
-    "fitz_session_ingress_handoff_latency_us";
+pub const METRIC_SESSION_INGRESS_HANDOFF_LATENCY: &str = "fitz_session_ingress_handoff_latency_us";
 pub const METRIC_OUTBOUND_DELIVER_LATENCY: &str = "fitz_outbound_deliver_latency_us";
 pub const METRIC_OUTBOUND_ENCODE_LATENCY: &str = "fitz_outbound_encode_latency_us";
 pub const METRIC_OUTBOUND_SEND_LATENCY: &str = "fitz_outbound_send_latency_us";

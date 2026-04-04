@@ -1784,10 +1784,7 @@ mod tests {
             "schedule must not be inserted into in-memory map on persist failure"
         );
         assert!(
-            !actor
-                .ready_heap
-                .iter()
-                .any(|(_, r)| r == route),
+            !actor.ready_heap.iter().any(|(_, r)| r == route),
             "ready heap must not contain the route on persist failure"
         );
         assert!(

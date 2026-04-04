@@ -187,6 +187,16 @@ pub fn create_bench_rpc_sink_with_timeout(
     )
 }
 
+pub fn create_bench_rpc_sink_with_route_pending_capacity(
+    router: Arc<Router>,
+    route_pending_capacity: usize,
+) -> Arc<RpcDomainSink> {
+    Arc::new(
+        RpcDomainSink::new(router, crate::api::admin::read_model::AdminReadModel::new())
+            .with_route_pending_capacity(route_pending_capacity),
+    )
+}
+
 pub fn create_bench_rpc_sink_with_metrics(
     router: Arc<Router>,
     metrics: MetricsCollector,

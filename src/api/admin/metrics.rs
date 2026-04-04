@@ -234,7 +234,9 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
-    output.push_str("# HELP fitz_stream_operations_per_second Lifetime-average Stream operations per second\n");
+    output.push_str(
+        "# HELP fitz_stream_operations_per_second Lifetime-average Stream operations per second\n",
+    );
     output.push_str("# TYPE fitz_stream_operations_per_second gauge\n");
     output.push_str(&format!(
         "fitz_stream_operations_per_second {}\n",

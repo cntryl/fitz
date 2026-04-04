@@ -13,9 +13,9 @@ use fitz::boot::domains::{
     ScheduleDomainSink, StreamDomainSink,
 };
 use fitz::boot::Runtime;
+use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
 use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::store::{CommitRecordsParams, EventPayload, StreamStore};
-use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
 use fitz::runtime::routing::RouteFamily;
 use fitz::runtime::Router;
 use hyper::header::{COOKIE, SET_COOKIE};
@@ -919,12 +919,11 @@ async fn should_export_stream_watermark_series_given_committed_stream_history() 
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload = String::from_utf8(body.to_vec()).unwrap();
     assert!(payload.contains("fitz_stream_realm_watermark{realm=\"prod\",family=\"1\"} 2"));
-    assert!(payload.contains(
-        "fitz_stream_area_watermark{realm=\"prod\",area=\"audit\",family=\"1\"} 0"
-    ));
-    assert!(payload.contains(
-        "fitz_stream_area_watermark{realm=\"prod\",area=\"logs\",family=\"1\"} 1"
-    ));
+    assert!(payload
+        .contains("fitz_stream_area_watermark{realm=\"prod\",area=\"audit\",family=\"1\"} 0"));
+    assert!(
+        payload.contains("fitz_stream_area_watermark{realm=\"prod\",area=\"logs\",family=\"1\"} 1")
+    );
 }
 
 #[tokio::test]

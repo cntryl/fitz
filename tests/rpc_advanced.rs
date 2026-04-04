@@ -10,7 +10,8 @@ mod fixtures;
 
 use bytes::Bytes;
 use fitz::benchkit::{
-    create_bench_rpc_sink, create_bench_rpc_sink_with_timeout, extract_single_tlv_field,
+    create_bench_rpc_sink, create_bench_rpc_sink_with_route_pending_capacity,
+    create_bench_rpc_sink_with_timeout, extract_single_tlv_field,
 };
 use fitz::boot::domains::RpcDomainSink;
 use fitz::domains::rpc::{
@@ -430,7 +431,7 @@ fn should_create_timeout_error_with_correlation_id() {
 fn should_reject_rpc_request_when_pending_capacity_reached_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());
-    let sink = create_bench_rpc_sink(router.clone());
+    let sink = create_bench_rpc_sink_with_route_pending_capacity(router.clone(), 4096);
     let family = RouteFamily::new(1);
     let route = "rpc://test/services/backpressure";
     let request_addr = RouteAddress::new(family, Route::new(route));
@@ -472,7 +473,7 @@ fn should_reject_rpc_request_when_pending_capacity_reached_given_rpc_sink() {
     // Assert
     assert_eq!(sink.pending_request_count(), 4096);
     assert_eq!(sink.worker_count(), 1);
-    assert_eq!(worker_sink.delivery_count(), 4097);
+    assert_eq!(worker_sink.delivery_count(), 2);
 
     let rejected_frames = rejected_caller_sink.snapshot();
     assert_eq!(rejected_frames.len(), 1);

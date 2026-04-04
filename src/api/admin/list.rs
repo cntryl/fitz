@@ -1316,10 +1316,7 @@ pub fn stream_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> StreamResour
     }
 }
 
-pub fn stream_realm_watermark_detail(
-    runtime: &Runtime,
-    realm: &str,
-) -> StreamRealmWatermarkDetail {
+pub fn stream_realm_watermark_detail(runtime: &Runtime, realm: &str) -> StreamRealmWatermarkDetail {
     runtime
         .stream_realm_watermark_detail(realm)
         .unwrap_or_else(|| StreamRealmWatermarkDetail::snapshot(realm, 0, 0, Vec::new()))

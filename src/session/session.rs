@@ -260,8 +260,9 @@ impl Session {
         frame: Bytes,
         ingress: &dyn Ingress,
     ) -> Result<(), SessionError> {
-        let _frame_latency =
-            crate::boot::observability::ScopedHistogramUs::new(obs::METRIC_SESSION_FRAME_PROCESS_LATENCY);
+        let _frame_latency = crate::boot::observability::ScopedHistogramUs::new(
+            obs::METRIC_SESSION_FRAME_PROCESS_LATENCY,
+        );
         debug!(
             session_id = self.info.session_id,
             frame_len = frame.len(),

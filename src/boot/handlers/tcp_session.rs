@@ -23,7 +23,8 @@ pub(super) async fn handle_tcp_connection(
 
     let session_id = handler.session_id;
 
-    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
+    let (outbound_tx, mut outbound_rx) =
+        tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
 
     let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(
         outbound_tx.clone(),

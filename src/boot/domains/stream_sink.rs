@@ -187,7 +187,9 @@ impl StreamDomainSink {
                             realm_snapshot.resource_count.saturating_add(1);
                         realm_snapshot.families.insert(family_id);
 
-                        let area_snapshot = area_snapshots.entry((realm.clone(), area.clone())).or_default();
+                        let area_snapshot = area_snapshots
+                            .entry((realm.clone(), area.clone()))
+                            .or_default();
                         area_snapshot.resource_count =
                             area_snapshot.resource_count.saturating_add(1);
                         area_snapshot.families.insert(family_id);
@@ -208,8 +210,7 @@ impl StreamDomainSink {
                             .ok()
                             .map(|watermark| {
                                 crate::api::admin::StreamRealmWatermark::snapshot(
-                                    family_id,
-                                    watermark,
+                                    family_id, watermark,
                                 )
                             })
                     })
@@ -236,8 +237,7 @@ impl StreamDomainSink {
                             .ok()
                             .map(|watermark| {
                                 crate::api::admin::StreamAreaWatermark::snapshot(
-                                    family_id,
-                                    watermark,
+                                    family_id, watermark,
                                 )
                             })
                     })

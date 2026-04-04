@@ -380,7 +380,10 @@ fn should_not_fanout_notice_across_route_families_given_same_pattern() {
     );
 
     // Act — publish only into actor1 (family 1)
-    let mut pubctx = Context::new(addr("notice://realm/area/iso/pub"), Arc::new(router.clone()));
+    let mut pubctx = Context::new(
+        addr("notice://realm/area/iso/pub"),
+        Arc::new(router.clone()),
+    );
     actor1.receive(
         NotificationMessage::Publish(PublishMessage::new(
             family1,

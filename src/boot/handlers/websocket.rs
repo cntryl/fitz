@@ -90,7 +90,8 @@ where
     );
 
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
+    let (outbound_tx, mut outbound_rx) =
+        tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
 
     let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(
         outbound_tx.clone(),
