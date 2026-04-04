@@ -5,11 +5,14 @@ Thanks for your interest! This project is in early development.
 ## Dev setup
 
 - Install Rust stable
+- Install shared tooling:
+  - `cargo install --git https://github.com/cntryl/tools --locked`
 - Clone the repo and run tests:
   - `cargo test`
 - Lint locally:
   - `cargo fmt --all -- --check`
   - `cargo clippy -D warnings`
+  - `cntryl-tools validate-tests`
 
 ## Running locally
 

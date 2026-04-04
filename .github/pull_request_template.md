@@ -10,7 +10,7 @@ Describe the change in one or two paragraphs.
 
 - [ ] `cargo test --workspace`
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo fitz-tools validate-tests --summary`
+- [ ] `cntryl-tools validate-tests`
 - [ ] Relevant docs updated when behavior or guarantees changed
 
 ## Domain Boundary Review

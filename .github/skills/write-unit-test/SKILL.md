@@ -102,7 +102,7 @@ cargo test test_guidelines_compliance
 Or validate all tests at once:
 
 ```powershell
-cargo fitz-tools validate-tests --summary
+cntryl-tools validate-tests
 ```
 
 ---

@@ -1,6 +1,6 @@
 # GitHub Copilot Instructions for Fitz Project
 
-- did you validate tests? `cargo fitz-tools validate-tests --summary`
+- did you validate tests? `cntryl-tools validate-tests`
 - did you fix all clippy warnings? `cargo clippy --workspace --all-targets`
 
 ## Test Writing Guidelines - STRICTLY ENFORCE

@@ -227,10 +227,11 @@ Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configura
 | `--runs <N>`   | Number of measurement runs per stress test | 5       |
 | `--warmup <N>` | Number of warmup runs before measurement   | 1       |
 
-- **set_elements(N):** Set this to the logical number of operations in each `ctx.measure(|| { ... })` (e.g. 3 for begin+put+rollback, 10 for 10 puts). Throughput reported by `cargo fitz-tools benchmark-summary` is elements/time, so N must match what the closure does.
+- **Install tooling:** Install the shared bench/report helpers once per environment with `cargo install --git https://github.com/cntryl/tools --locked`.
+- **set_elements(N):** Set this to the logical number of operations in each `ctx.measure(|| { ... })` (e.g. 3 for begin+put+rollback, 10 for 10 puts). Throughput reported by `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` is elements/time, so N must match what the closure does.
 - **Minimum runtime:** Aim for 5s of measured work per scenario. Runs shorter than 3s are invalid, and the summary script flags them as such because they do not provide stable enough medians.
-- **Output:** Stress results are written under `target/stress/<bench_name>/` (e.g. `target/stress/tier3_system_kv/latest.json`). Run `cargo fitz-tools benchmark-summary` after `cargo bench` and the stress bench binaries to produce `target/bench_summary.md`.
-- **Full refresh:** Run the full tier 3 / tier 4 suites, then run `cargo fitz-tools benchmark-summary` to regenerate the summary in one step.
+- **Output:** Stress results are written under `target/stress/<bench_name>/` (e.g. `target/stress/tier3_system_kv/latest.json`). Run `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` after `cargo bench` and the stress bench binaries to produce `target/bench_summary.md`.
+- **Full refresh:** Run the full tier 3 / tier 4 suites, then run `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` to regenerate the summary in one step.
 
 For CI, you can reduce total time by passing `-- --runs 5 --warmup 1` (or lower only if you are intentionally collecting provisional data) when running the full tier3/tier4 suite.
 
@@ -495,7 +496,7 @@ cargo watch -x "bench --bench tier1_hotpath_routing"
 
 ### CI Pipeline
 
-The repository CI includes a **benchmarks** job that runs all Criterion benches with the shared Criterion config and stress benches with `--runs 5 --warmup 1`, then runs `cargo fitz-tools benchmark-summary` and uploads `target/bench_summary.md` as an artifact. Criterion output is under `target/criterion/`; stress output is under `target/stress/<bench_name>/` (e.g. `latest.json`).
+The repository CI includes a **benchmarks** job that installs `cntryl-tools`, runs all Criterion benches with the shared Criterion config and stress benches with `--runs 5 --warmup 1`, then runs `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` and uploads `target/bench_summary.md` as an artifact. Criterion output is under `target/criterion/`; stress output is under `target/stress/<bench_name>/` (e.g. `latest.json`).
 
 #### Pull Request Checks:
 

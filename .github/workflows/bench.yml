@@ -25,6 +25,9 @@ jobs:
         with:
           shared-key: "bench"
 
+      - name: Install cntryl-tools
+        run: cargo install --git https://github.com/cntryl/tools --locked
+
       - name: Build all benchmarks
         run: cargo bench --no-run
 
@@ -40,6 +43,9 @@ jobs:
       - name: Run Tier 4 benchmarks (integration)
         run: cargo bench --bench 'tier4_*' -- --runs 5 --warmup 1
 
+      - name: Summarize benchmark results
+        run: cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
+
       - name: Upload Criterion artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -47,3 +53,5 @@ jobs:
           path: |
             target/criterion/**
             target/stress/**
+            target/bench_results.json
+            target/bench_summary.md

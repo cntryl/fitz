@@ -9,17 +9,13 @@ on:
     paths:
       - "src/**"
       - "tests/**"
-      - "tools/**"
       - "*.toml"
-      - ".cargo/**"
   pull_request:
     branches: [main]
     paths:
       - "src/**"
       - "tests/**"
-      - "tools/**"
       - "*.toml"
-      - ".cargo/**"
 
 jobs:
   ci:
@@ -38,8 +34,11 @@ jobs:
         with:
           shared-key: "ci"
 
+      - name: Install cntryl-tools
+        run: cargo install --git https://github.com/cntryl/tools --locked
+
       - name: Validate Test Structure
-        run: cargo fitz-tools validate-tests --summary
+        run: cntryl-tools validate-tests
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

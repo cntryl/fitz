@@ -1,3 +1,0 @@
-[alias]
-fitz-tools = "run -p fitz-tools --"
-tools = "run -p fitz-tools --"

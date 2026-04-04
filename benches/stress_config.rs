@@ -13,7 +13,8 @@
 /// iteration inside `ctx.measure_for(Duration::from_secs(5), || { ... })`. The target measured
 /// run is 5 seconds, with 3 seconds as the minimum acceptable floor, and N must match the
 /// logical number of meaningful operations performed in that batch so throughput
-/// (batch_size / elapsed_time) reported by `cargo fitz-tools benchmark-summary` is interpretable.
+/// (batch_size / elapsed_time) reported by `cntryl-tools summarize-benchmarks`
+/// with Fitz report overrides is interpretable.
 ///
 /// If a scenario has a natural transport or fanout scope, add tags like `measurement_scope`
 /// and `batch_size` so the report can distinguish direct, transport, and delivery cost.
