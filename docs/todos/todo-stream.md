@@ -1,39 +1,180 @@
 # Stream
 
-- Classification: Durable committed events and committed sequencing, ephemeral append sessions and subscriptions.
-- Outcome: store-authoritative, commit-time sequencing across resource, area, and realm with restart-safe metadata and honest admin/docs surfaces.
-- Status: Hardening complete. Live-notify performance follow-up may remain if that path becomes a first-class workload.
+## A. Domain Purpose Statement
 
-## Completed
+Stream is Fitz's durable append, replay, and catch-up domain.
 
-- [x] Chose one authoritative production path: `StreamStore` now owns durable offset allocation and committed stream metadata, while the boot sink is a thin adapter over warm per-resource actors.
-- [x] Moved resource, area, and realm sequencing into durable Midge-backed state with lazy upgrade and backfill for legacy metadata.
-- [x] Kept consumer cursors client-managed only. `ReadCursor` remains response metadata, not a durable broker-side cursor feature.
-- [x] Aborted live append sessions on disconnect cleanup and broker restart. Staged appends remain in-memory only and are dropped when the session disappears.
-- [x] Removed split sink/store staged-append ownership from the production path. One active append session per resource is enforced by the warm actor.
-- [x] Rebuilt stream admin snapshots from durable committed metadata plus live append-session counts so committed streams remain visible after restart.
-- [x] Aligned client/admin/OpenAPI/architecture docs with the implemented contract: committed data survives restart, append sessions and subscriptions do not, and reads past the watermark return an empty success.
+- Problem solved: committed ordered history that survives restart and can be read again from offsets.
+- Optimized for: append throughput, durable committed sequencing, and deterministic client-driven resume.
+- Not trying to do: broker-managed consumer groups, durable writer sessions, or queue-style work reservation.
+- Adjacent overlap: Notice also emits change notifications, but Stream owns durable history and recovery.
+- Strict boundary: if a client needs rebuild, replay, or backfill, it must use Stream rather than Notice.
 
-## Non-Goals Kept
+## B. Semantic Contract
 
-- Durable consumer groups or broker-side replay cursors.
-- Multi-node stream coordination.
-- New public Stream API surface beyond the existing wire contract.
+Clients can rely on the following:
 
-## Verification
+- Stream append is a two-phase live session: `Begin`, one or more `Append`, then `Commit` or `Rollback`.
+- Only one active append session may exist for a given resource at a time.
+- Committed records survive broker restart according to the selected stream write mode.
+- Reads are offset-based.
+- Resource reads are exact-history reads for one resource stream.
+- Area and realm reads are gated by committed watermarks.
+- `ReadCursor` is response metadata only. The client owns resume persistence.
+- Stream subscriptions are live change notifications only. They are not durable replay cursors.
 
-- [x] Restart tests prove resource offsets remain monotonic.
-- [x] Restart tests prove area and realm offsets remain monotonic.
-- [x] Disconnect tests prove abandoned append sessions are cleaned up.
-- [x] Crash/restart tests prove committed events stay readable and staged writes do not corrupt future appends.
-- [x] Admin snapshot tests prove stream resources rebuild from durable metadata after restart.
+Server guarantees:
 
-## Benchmark Findings
+- Resource offsets are monotonically increasing within a resource.
+- Area offsets are monotonically increasing within an area and reflect commit order.
+- Realm offsets are monotonically increasing within a realm and reflect commit order.
+- Area and realm sequencing follow commit order, not begin order.
+- Uncommitted staged appends are not visible as committed history.
+- Disconnect or restart aborts live append sessions and removes live subscriptions.
+- Reading past the committed watermark returns empty success rather than fabricating speculative records.
 
-- 2026-04-03 refreshed summary keeps append/read throughput strong on the authoritative path: tier3 sustained append measured about 825k ops/s, batch write about 840k ops/s, multiarea writes about 811k ops/s, read scan about 889k ops/s, and tier4 direct append about 790k ops/s.
-- Tier4 transport paths stayed healthy relative to the current contract: WebSocket append measured about 23.9k ops/s, TCP append about 17.2k ops/s, and multiclient concurrent appends about 51.4k ops/s after aligning the bench with the one-active-session-per-resource rule.
-- The current weak spots are still outside the durable append core: tier3 `publish_fanout_with_subscribers` measured about 198 ops/s, while offset-tracking overhead measured about 218k ops/s.
+Replay and catch-up semantics:
 
-## Performance Follow-Up
+- Replay starts from a client-supplied offset.
+- The server does not store consumer positions.
+- A reconnecting client must resume from its last known committed offset.
+- Resource replay is durable exact-history replay for committed resource records.
+- Area and realm replay are durable committed-history replay up to the respective watermark.
 
-- [ ] If live subscriber notifications are a first-class stream workload, profile and optimize the commit-notify/subscriber delivery path separately from the durable append/read path.
+Tail semantics:
+
+- `Last` is an exact-resource tail operation.
+- Wildcard area or realm routes do not expose a wildcard tail contract through `Last`.
+- Stream subscriptions are live notify hints about committed change, not a substitute for reading committed history.
+
+Durability modes:
+
+- `StreamWriteMode::Sync` maps to synchronous Midge commit.
+- `StreamWriteMode::Buffered` maps to buffered Midge commit and may lose very recent committed work on crash according to the storage policy.
+- The contract must always say `durable according to selected write mode`, not `fsync on every append`.
+
+Intentionally unsupported:
+
+- Broker-side consumer groups.
+- Durable broker-managed replay cursors.
+- Timestamp, beginning, end, or last-N replay APIs beyond the existing offset-based wire contract.
+- Durable stream subscription recovery.
+- Multi-node sequencing coordination.
+
+## C. Non-Negotiable Invariants
+
+- Invariant: committed resource offsets are monotonic and never reused.
+	- Why it matters: the client resume model depends on stable offsets.
+	- How it fails: restart or conflict handling reuses an offset or moves the next offset backward.
+	- How to test it: [tests/stream_basics.rs](../../tests/stream_basics.rs) `should_recover_next_offset_from_store_after_restart` and [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_monotonic_stream_resource_offsets_after_restart`.
+
+- Invariant: area and realm ordering follow commit-time monotonic sequencing.
+	- Why it matters: cross-resource replay must be deterministic within the contract actually offered.
+	- How it fails: begin order leaks into higher-level offsets, or restart rebuild regresses the counters.
+	- How to test it: [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_monotonic_stream_area_offsets_after_restart` and `should_preserve_monotonic_stream_realm_offsets_after_restart`.
+
+- Invariant: replay of committed history does not skip visible committed messages.
+	- Why it matters: Stream is the recovery surface.
+	- How it fails: reads skip committed records, or watermark logic exposes gaps incorrectly.
+	- How to test it: [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_read_appended_data`, `should_preserve_append_order`, `should_maintain_fifo_order_with_multiple_appends`, and [tests/stream_advanced.rs](../../tests/stream_advanced.rs) `should_return_empty_success_when_reading_past_committed_stream_watermark`.
+
+- Invariant: one active append session per resource is enforced.
+	- Why it matters: this is the current concurrency contract for predictable expected-offset conflict handling.
+	- How it fails: two writers append concurrently into one resource session path.
+	- How to test it: [tests/stream_basics.rs](../../tests/stream_basics.rs) `should_reject_second_active_session_on_same_resource`, `should_allow_new_session_after_commit`, and `should_allow_new_session_after_rollback`.
+
+- Invariant: uncommitted staged data never becomes durable history after disconnect or restart.
+	- Why it matters: partial writer loss must not corrupt future replay.
+	- How it fails: abandoned staged writes leak into reads or future offsets.
+	- How to test it: [tests/stream_basics.rs](../../tests/stream_basics.rs) `should_abort_append_session_on_owner_cleanup`, [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_abort_uncommitted_stream_session_on_disconnect`, and `should_drop_uncommitted_stream_batch_on_restart`.
+
+- Invariant: `ReadCursor` remains client-owned response metadata, not a broker recovery feature.
+	- Why it matters: reconnect behavior must stay explicit and deterministic.
+	- How it fails: docs or admin APIs imply broker-side cursor tracking or consumer-group semantics.
+	- How to test it: contract audit against [src/domains/stream/protocol.rs](../../src/domains/stream/protocol.rs), [src/domains/stream/mod.rs](../../src/domains/stream/mod.rs), and restart tests proving clients resume from offsets rather than restored sessions.
+
+- Invariant: reads past the current committed boundary return empty success instead of speculative data.
+	- Why it matters: a replay client must never confuse not-yet-committed with lost data.
+	- How it fails: area or realm reads leak records beyond watermark, or resource reads fabricate tail data.
+	- How to test it: [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_handle_read_past_end` and [tests/stream_advanced.rs](../../tests/stream_advanced.rs) `should_return_empty_success_when_reading_past_committed_stream_watermark`.
+
+## D. Anti-Goals / What This Domain Must Not Become
+
+- Stream must not become an ad hoc work queue with reservation and ack semantics.
+- Stream must not pretend to offer broker-managed consumer groups when the current contract is client-managed offsets only.
+- Stream must not hide commit-mode tradeoffs by describing buffered writes as synchronous durability.
+- Stream must not blur live notify subscriptions into durable replay.
+- Stream must not silently recover append sessions after disconnect or restart.
+
+## E. Failure Semantics
+
+- Client disconnect: active append session is aborted; live stream subscriptions are removed; committed history remains.
+- Server restart: committed records, counters, and watermarks remain; append sessions and subscriptions are lost.
+- Storage failure during commit: commit fails and must not be described as durable success. The caller must resolve the error explicitly.
+- Stale expected offset: begin is rejected as a concurrency conflict.
+- Read beyond end on an exact resource route: empty success.
+- Read beyond watermark on area or realm routes: empty success.
+- Backpressure on live subscriber notifications: live notify delivery is best-effort and does not change committed stream history.
+
+## F. Observability Requirements
+
+Operators must be able to inspect:
+
+- committed stream resources
+- last committed resource offset
+- area watermark and realm watermark
+- live append sessions
+- stream subscription count
+- events total and operations rate
+- commit failures and conflict counters
+
+Current surface:
+
+- Admin stream views rebuild durable committed metadata plus live append-session counts.
+- Global stats include `streams_active`, `events_total`, `operations_per_second`, and `subscriptions_active`.
+- Prometheus currently exports `fitz_stream_active`.
+
+Current gaps to keep explicit:
+
+- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) does not yet implement the per-domain Stream stats endpoint.
+- The metrics surface does not yet expose watermarks, conflict counters, replay lag, or notify-drop counters.
+- Admin does not expose broker-side replay cursors because broker-side replay cursors do not exist.
+
+## G. Highest-Value Tests
+
+- Invariant tests:
+	- [tests/stream_basics.rs](../../tests/stream_basics.rs) `should_reject_second_active_session_on_same_resource`
+	- [tests/stream_basics.rs](../../tests/stream_basics.rs) `should_reject_stale_expected_offset_after_commit`
+	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_append_order`
+- Restart and recovery tests:
+	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_monotonic_stream_resource_offsets_after_restart`
+	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_monotonic_stream_area_offsets_after_restart`
+	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_monotonic_stream_realm_offsets_after_restart`
+	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_drop_uncommitted_stream_batch_on_restart`
+- Race and concurrency tests:
+	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_handle_concurrent_appends_from_multiple_clients`
+	- required missing regression such as `should_not_treat_stream_subscription_as_replay_cursor_given_shared_route` if live-notify overlap becomes a first-class path
+- Integration tests:
+	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) TCP and WebSocket append, read, and unsubscribe coverage
+- Benchmark and stress tests:
+	- tier3 and tier4 Stream benches should keep append/read separate from live notify fanout because these are different contract surfaces
+
+## H. Cross-Domain Boundaries
+
+- Stream versus Notice: Stream owns durable history and replay; Notice owns live-only fanout.
+- Stream versus KV: KV is current authoritative state; Stream is the historical record of committed events.
+- Stream versus Queue: Stream records immutable history; Queue manages mutable work lifecycle.
+- Stream versus RPC: RPC sequence numbers are live response assembly, not durable stream offsets.
+
+## I. Ambiguity Risks
+
+- Stream subscriptions can be misread as durable replay subscriptions. They are not.
+- Buffered commit mode can be oversold as hard durability if docs collapse it with sync mode.
+- Area and realm watermark behavior can be misread as skipped data if empty-success semantics are not documented clearly.
+- Broader docs may blur client-managed offsets into broker-managed recovery if they describe `ReadCursor` too casually.
+
+## J. Recommended Wording For Fitz Docs / ADRs
+
+- Use this sentence in broader docs: `Stream is Fitz's durable append and replay domain. Clients resume from offsets they persist themselves; Fitz does not store broker-side consumer cursors.`
+- Use this sentence when comparing Notice and Stream: `Notice is live-only fanout. Stream is the recovery surface.`
+- Use this sentence when describing commit modes: `Committed stream data survives according to the selected write mode; Sync and Buffered are different durability contracts and must not be described as equivalent.`

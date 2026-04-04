@@ -1,75 +1,163 @@
 # Schedule
 
-- Requires real storage changes.
-- TTL-backed primary rows are the wrong foundation for durable recurring schedules.
-- Boot behavior and reschedule failure handling both need structural correction.
-- Status: Hardening complete. Single-create performance follow-up may remain if that path becomes a product requirement.
+## A. Domain Purpose Statement
 
-Define a TDD-driven implementation plan for the following server correction work.
+Schedule provides durable timing intent for future route-triggered work.
 
-### Important context:
+- Problem solved: durable create, upsert, cancel, and future execution of cron-based schedules.
+- Optimized for: persisted schedule definitions, boot-time preload, and explicit due-time handling.
+- Not trying to do: durable subscriber delivery, durable event history of every fire, or replay of every missed execution during downtime.
+- Adjacent overlap: Notice may carry live schedule notifications, but Notice does not make schedules durable. Stream may store execution history if the application writes it.
+- Strict boundary: Schedule owns durable timing definitions. It does not own durable downstream event recovery.
 
-- Do not repeat or reinvent domain-level requirement lists unless absolutely necessary.
-- Your job is to turn the existing concerns and checklists into an implementation strategy and test strategy.
+## B. Semantic Contract
 
-- When you are done this domain should be world-class
+Clients can rely on the following:
 
-## Classification
+- Schedule definitions are identified by route.
+- Create and upsert persist schedule definition state.
+- Cancel is explicit and idempotent for a missing route.
+- Persisted schedules are preloaded on broker start before schedule traffic is required.
+- Due-time computation comes from the parsed cron definition.
+- Missed executions are skipped forward to the next future fire time rather than replayed one by one after downtime.
 
-- Durable domain.
-- RouteFamily selection can remain a process/deployment concern for now. This pass does not add a separate persisted control-plane service that coordinates family assignment, and schedule durability must not depend on broker-local memory about that choice.
-- Sessions are ephemeral, but persisted schedules must survive broker restart and downtime.
+Server guarantees:
 
-## Current Reality
+- Schedule definitions are durable.
+- Pending due fire claims are durable broker-internal state until acknowledged.
+- Restart reloads persisted schedules and pending fire claims.
+- Schedule notifications and schedule subscriptions remain live session-scoped delivery state only.
+- Forward clock jumps do not replay every missed interval.
+- Backward clock jumps do not fire schedules early.
 
-- Primary persisted rows are TTL-backed `sched:m...` records.
-- Restart recovery depends on those rows still existing when the broker comes back.
-- The live sink only instantiates actors lazily per family, so persisted schedules are not loaded until that family receives traffic.
-- Fire/reschedule mutates in-memory state before checking whether persistence actually succeeded.
+Execution-state semantics:
 
-## Focus
+- The schedule definition and next durable fire point are authoritative.
+- Pending fire claims represent due work that the broker has durably claimed for publish.
+- Successful publish acknowledgement clears the pending fire claim.
+- Live subscriber receipt is not part of the durable schedule contract.
 
-- Make schedule definitions survive downtime unconditionally.
-- Make boot load durable schedule state before the schedule domain starts firing.
-- Remove silent loss paths from fire and reschedule.
+Replay and retry semantics:
 
-## Concrete Tasks
+- Fitz does not replay every missed fire after downtime.
+- Fitz normalizes overdue schedules forward.
+- Durable pending fire claims can survive restart until the broker finishes its internal publish-and-ack path.
+- If the application needs a durable audit trail of schedule executions, it must also write to Stream.
 
-- [x] Split durable schedule definition storage from the next-fire index.
-- [x] Make the next-fire index rebuildable instead of authoritative.
-- [x] Remove TTL from the durable schedule definition row.
-- [x] Fail or roll back fire/reschedule when persistence fails instead of silently advancing in memory.
-- [x] Preload persisted schedules during boot instead of waiting for the first request in a family.
-- [x] Keep admin schedule snapshots aligned with the preloaded actor state.
-- [x] Add restart and downtime regressions proving schedules do not disappear.
+Intentionally unsupported:
 
-## Non-Goals
+- Durable Notice-style subscriber delivery.
+- Replay of all missed executions after downtime.
+- Distributed multi-broker scheduler coordination.
+- A separate control plane for RouteFamily assignment.
 
-- Distributed scheduler coordination across multiple brokers.
-- Durable subscriber delivery or durable outbox semantics for schedule notifications.
-- A separate control-plane service that persists and coordinates RouteFamily assignment across brokers.
+## C. Non-Negotiable Invariants
 
-## Verification
+- Invariant: due work is never fired early.
+	- Why it matters: timing correctness is the primary trust boundary of Schedule.
+	- How it fails: clock handling or ready-scan logic publishes before due time.
+	- How to test it: [tests/schedule_advanced.rs](../../tests/schedule_advanced.rs) `should_not_fire_given_backward_epoch_jump_before_due_time`.
 
-- [x] Restart the broker without sending any schedule-domain traffic and prove persisted schedules still exist and fire.
-- [x] Keep the broker down longer than the old grace period and prove recurring schedules survive.
-- [x] Force a persistence failure on reschedule and prove the in-memory actor does not silently advance.
-- [x] Run `cargo test` for schedule-focused tests after the redesign lands.
+- Invariant: missed executions are skipped forward rather than replayed implicitly.
+	- Why it matters: Fitz must be explicit that Schedule is not a missed-fire replay engine.
+	- How it fails: startup or clock jump replays every overdue interval.
+	- How to test it: [tests/schedule_advanced.rs](../../tests/schedule_advanced.rs) `should_skip_missed_occurrences_given_forward_epoch_jump` and [src/domains/schedule/actor.rs](../../src/domains/schedule/actor.rs) unit coverage `should_skip_missed_execution_given_overdue_schedule_on_preload`.
 
-## Benchmark Findings
+- Invariant: persisted schedule definitions survive restart and are preloaded before schedule traffic.
+	- Why it matters: durable timing intent must not depend on a later request to wake the domain up.
+	- How it fails: restart hides persisted schedules until fresh traffic arrives.
+	- How to test it: [tests/schedule_e2e.rs](../../tests/schedule_e2e.rs) `should_preload_persisted_schedules_before_schedule_traffic_after_restart`.
 
-- The refreshed report separates hot in-proc schedule operations from durable create cost: tier3 create measured about 1.73M ops/s, cancel about 2.32M ops/s, list(10) about 233M ops/s, scan-and-fire measured about 258k ops/s for 1000 all-ready schedules and about 628k ops/s for 1000 partially ready schedules, while the mixed-workload scenario measured about 1.2k ops/s.
-- The end-to-end create path still looks store-bound rather than transport-bound: the latest tier4 direct/TCP/WebSocket create benches cluster around about 570-622 creates/s, multiclient creates measured about 589 creates/s, and WebSocket batch create remains the throughput escape hatch at about 16.2k creates/s.
-- Current Criterion `scan_and_fire` rows remain noisy/untrustworthy in `target/bench_summary.md`, so they are not strong enough to open new work by themselves.
+- Invariant: cancel and upsert races preserve one clear durable outcome.
+	- Why it matters: route-based identity is the core mutation model.
+	- How it fails: duplicate rows or stale next-fire state survive after replacement.
+	- How to test it: [tests/schedule_basics.rs](../../tests/schedule_basics.rs) `should_upsert_schedule_by_route`, `should_keep_single_schedule_given_identical_create_upsert`, and [tests/schedule_advanced.rs](../../tests/schedule_advanced.rs) `should_replace_schedule_preserving_ordering`.
 
-## Performance Follow-Up
+- Invariant: persistence failure must not silently advance live schedule state.
+	- Why it matters: a failed durable mutation must not look successful.
+	- How it fails: in-memory actor moves forward even though durable store write failed.
+	- How to test it: required missing focused regression such as `should_not_advance_schedule_state_given_persistence_failure`.
 
-- [ ] If single-schedule create throughput becomes a product requirement, target `ScheduleStore::insert` transaction shape and persistence cost before spending time on transport framing; that same path is the likely bound on the current low mixed-workload result.
+- Invariant: restart does not silently lose durable schedules or pending fire claims.
+	- Why it matters: Schedule is the durable timing-intent surface.
+	- How it fails: persisted rows disappear from boot state or pending claims are dropped.
+	- How to test it: [tests/schedule_e2e.rs](../../tests/schedule_e2e.rs) `should_preload_persisted_schedules_before_schedule_traffic_after_restart` and pending-fire store tests in [src/domains/schedule/store.rs](../../src/domains/schedule/store.rs).
 
-## Files To Touch First
+## D. Anti-Goals / What This Domain Must Not Become
 
-- `src/domains/schedule/store.rs`
-- `src/domains/schedule/actor.rs`
-- `src/boot/domains/schedule_sink.rs`
-- `tests/schedule_advanced.rs`
-- `tests/schedule_e2e.rs`
+- Schedule must not become vague best-effort timers.
+- Schedule must not imply durable subscriber delivery or outbox semantics.
+- Schedule must not blur skipped overdue executions into replay guarantees.
+- Schedule must not become a hidden history store for execution records.
+- Schedule must not depend on lazy post-traffic warmup for durable correctness.
+
+## E. Failure Semantics
+
+- Client disconnect: live schedule subscriptions disappear; persisted schedule definitions remain.
+- Server restart: persisted schedules and pending fire claims reload; live subscriptions do not.
+- Storage failure on create, upsert, cancel, or reschedule: mutation fails and must not silently advance live state.
+- Invalid cron: request rejected.
+- Backpressure or downstream subscriber loss: durable schedule definition remains correct, but subscriber delivery remains live-only.
+- Clock jump forward: missed intervals are skipped forward.
+- Clock jump backward: schedules do not fire early.
+
+## F. Observability Requirements
+
+Operators must be able to inspect:
+
+- persisted schedules active
+- next due time
+- pending fire claims
+- current live schedule subscription count
+- execution rate
+- create, cancel, and publish-failure counters
+- preload status after restart
+
+Current surface:
+
+- Global stats include `schedules_active`, `executions_per_minute`, `subscriptions_active`, and `pending_fires`.
+- Prometheus exports `fitz_schedule_active`, `fitz_schedule_executions_per_minute`, `fitz_schedule_subscriptions_active`, and `fitz_schedule_pending_fires`.
+- Admin schedule views are preloaded from persisted definitions at boot.
+
+Current gaps to keep explicit:
+
+- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) does not yet implement the per-domain Schedule stats endpoint.
+- Broader admin docs already note that `last_run` and `executions_total` are not fully authoritative in the current round; that caveat must remain visible until fixed.
+- Metrics do not yet expose overdue-normalization count or persistence-failure counters.
+
+## G. Highest-Value Tests
+
+- Invariant tests:
+	- [tests/schedule_basics.rs](../../tests/schedule_basics.rs) `should_upsert_schedule_by_route`
+	- [tests/schedule_basics.rs](../../tests/schedule_basics.rs) `should_cancel_schedule_by_route`
+	- [tests/schedule_advanced.rs](../../tests/schedule_advanced.rs) `should_replace_schedule_preserving_ordering`
+- Restart and recovery tests:
+	- [tests/schedule_e2e.rs](../../tests/schedule_e2e.rs) `should_preload_persisted_schedules_before_schedule_traffic_after_restart`
+- Race and timing tests:
+	- [tests/schedule_advanced.rs](../../tests/schedule_advanced.rs) `should_skip_missed_occurrences_given_forward_epoch_jump`
+	- [tests/schedule_advanced.rs](../../tests/schedule_advanced.rs) `should_not_fire_given_backward_epoch_jump_before_due_time`
+- Integration tests:
+	- [tests/schedule_e2e.rs](../../tests/schedule_e2e.rs) create, cancel, batch create, payload preservation, and transport cases
+- Benchmark and stress tests:
+	- tier3 Schedule create, cancel, list, and scan-and-fire benches
+	- tier4 Schedule create benches
+
+## H. Cross-Domain Boundaries
+
+- Schedule versus Notice: Schedule definitions are durable; schedule notifications are still live-only Notice-style delivery.
+- Schedule versus Stream: Stream is where execution history belongs if the application needs it.
+- Schedule versus Queue: use Queue when triggered work must be durably reserved and acknowledged.
+- Schedule versus Lease: use Lease when scheduled work also needs explicit local ownership coordination.
+
+## I. Ambiguity Risks
+
+- Users may assume overdue schedules replay all missed intervals unless the skip-forward rule is explicit.
+- Schedule notifications can be misread as durable delivery if docs blur Schedule and Notice.
+- Route-based upsert semantics can be misread as append-only creation unless identity-by-route is stated clearly.
+- Admin `last_run` and `executions_total` fields can be overtrusted if their current non-authoritative status is hidden.
+
+## J. Recommended Wording For Fitz Docs / ADRs
+
+- Use this sentence in broader docs: `Schedule stores durable timing intent and preloads persisted schedules on broker start. It does not guarantee durable subscriber delivery or replay every missed fire after downtime.`
+- Use this sentence when comparing Schedule and Stream: `Schedule decides when work should fire. Stream records what happened if the application needs history.`
+- Keep this sentence in clock-related docs: `Overdue schedules normalize forward to the next future fire time rather than replaying every missed interval.`
