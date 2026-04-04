@@ -154,7 +154,9 @@ impl NoticeDomainSink {
             *target.subscriber.family(),
         );
         let notify_envelope = Envelope::new(target.subscriber.clone(), notify_ctx);
-        let _ = self.router.route(notify_envelope);
+        if self.router.route(notify_envelope).is_err() {
+            crate::boot::observability::counter_inc("fitz_notice_delivery_drops_total");
+        }
     }
 
     fn collect_matching_targets_for_route(
@@ -398,6 +400,9 @@ impl MailboxSink for NoticeDomainSink {
                             pattern = sub_msg.pattern.as_str(),
                             limit = MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION,
                             "Rejected wildcard notice subscription because session limit was exceeded"
+                        );
+                        crate::boot::observability::counter_inc(
+                            "fitz_notice_wildcard_limit_rejects_total",
                         );
                         (
                             NoticeResponse::Error(format!(

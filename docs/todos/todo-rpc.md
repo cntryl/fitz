@@ -1,5 +1,7 @@
 # RPC
 
+This file defines RPC-specific contract detail and proof points. For Fitz-wide domain ownership, interaction rules, complexity budgets, and future feature admission, use [../development/domain-boundaries-spec.md](../development/domain-boundaries-spec.md) together with [todo-all.md](todo-all.md).
+
 ## A. Domain Purpose Statement
 
 RPC provides live request and response dispatch to currently registered workers.
@@ -67,12 +69,12 @@ Streaming response semantics:
 - Invariant: one correlation id maps to exactly one live pending request at a time.
 	- Why it matters: caller identity and response routing depend on it.
 	- How it fails: duplicate pending entries or reused correlation ids route a response to the wrong call.
-	- How to test it: [tests/rpc_basics.rs](../../tests/rpc_basics.rs) `should_correlate_response_with_request` and `should_match_response_to_request_by_correlation_id`, plus [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) `should_reject_wrong_correlation_response_after_accept_tcp` and `should_reject_wrong_correlation_response_after_accept_ws`. A direct sink-level regression such as `should_reject_wrong_correlation_response_given_rpc_sink` is still missing.
+	- How to test it: [tests/rpc_basics.rs](../../tests/rpc_basics.rs) `should_correlate_response_with_request` and `should_match_response_to_request_by_correlation_id`, plus [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) `should_reject_wrong_correlation_response_after_accept_tcp` and `should_reject_wrong_correlation_response_after_accept_ws`. Sink-level regressions in [src/boot/domains/rpc_sink.rs](../../src/boot/domains/rpc_sink.rs): `should_reject_duplicate_live_correlation_given_rpc_sink`, `should_reject_worker_response_from_non_owner_session_given_rpc_sink`, and `should_reject_worker_ack_from_non_owner_session_given_rpc_sink`.
 
 - Invariant: a response cannot be delivered to the wrong caller or wrong worker route.
 	- Why it matters: misrouting is worse than a visible failure.
 	- How it fails: reply route ownership or worker registration cleanup leaks across sessions.
-	- How to test it: [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) `should_reject_wrong_correlation_response_after_accept_tcp`, `should_reject_wrong_correlation_response_after_accept_ws`, `should_return_worker_disconnect_error_after_unsubscribe_tcp`, and `should_return_worker_disconnect_error_after_unsubscribe_ws`.
+	- How to test it: [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) `should_reject_wrong_correlation_response_after_accept_tcp`, `should_reject_wrong_correlation_response_after_accept_ws`, `should_return_worker_disconnect_error_after_unsubscribe_tcp`, and `should_return_worker_disconnect_error_after_unsubscribe_ws`. Sink-level regressions in [src/boot/domains/rpc_sink.rs](../../src/boot/domains/rpc_sink.rs): `should_reject_worker_response_from_non_owner_session_given_rpc_sink` and `should_reject_worker_ack_from_non_owner_session_given_rpc_sink`.
 
 - Invariant: a timed-out request never becomes live again.
 	- Why it matters: timeout must be a terminal caller-visible outcome.
@@ -129,11 +131,13 @@ Current surface:
 - Admin APIs expose live workers and live pending requests for the current broker instance.
 - Global stats include `workers_registered`, `requests_pending`, and `operations_per_second`.
 - Prometheus currently exports `fitz_rpc_workers_registered` and `fitz_rpc_requests_pending`.
+- Sink-level counters are now emitted for wrong-worker and duplicate-correlation rejects: `rpc_requests_rejected_duplicate_correlation_total`, `rpc_responses_rejected_wrong_worker_total`, and `rpc_acks_rejected_wrong_worker_total`.
+- Error codes 6007 (`ERR_RPC_DUPLICATE_CORRELATION`) and 6008 (`ERR_RPC_WRONG_WORKER`) are defined in [src/protocol/error_codes.rs](../../src/protocol/error_codes.rs) and asserted in [tests/rpc_basics.rs](../../tests/rpc_basics.rs) via `should_define_error_code_6007_rpc_duplicate_correlation` and `should_define_error_code_6008_rpc_wrong_worker`.
 
 Current gaps to keep explicit:
 
-- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) does not yet implement the per-domain RPC stats endpoint.
-- Current metrics do not expose timeout, backpressure, invalid-sequence, wrong-worker, or late-response counters.
+- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) has a stub route for the per-domain RPC stats endpoint; it currently returns not_implemented. The domain data is not yet populated.
+- Current metrics do not yet expose timeout, backpressure, invalid-sequence, or late-response counters.
 - Admin views are current-process only and must not be described as durable backlog state.
 
 ## G. Highest-Value Tests
@@ -148,6 +152,9 @@ Current gaps to keep explicit:
 - Race and cleanup tests:
 	- [tests/rpc_advanced.rs](../../tests/rpc_advanced.rs) `should_drop_late_response_after_lease_expired`
 	- [tests/rpc_advanced.rs](../../tests/rpc_advanced.rs) `should_reject_late_worker_response_after_timeout_given_rpc_sink`
+	- [src/boot/domains/rpc_sink.rs](../../src/boot/domains/rpc_sink.rs) `should_reject_duplicate_live_correlation_given_rpc_sink`
+	- [src/boot/domains/rpc_sink.rs](../../src/boot/domains/rpc_sink.rs) `should_reject_worker_response_from_non_owner_session_given_rpc_sink`
+	- [src/boot/domains/rpc_sink.rs](../../src/boot/domains/rpc_sink.rs) `should_reject_worker_ack_from_non_owner_session_given_rpc_sink`
 - Integration tests:
 	- [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) worker disconnect, timeout, wrong correlation, and invalid sequence cases
 - Benchmark and stress tests:

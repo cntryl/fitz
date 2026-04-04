@@ -1,5 +1,7 @@
 # Notice
 
+This file defines Notice-specific contract detail and proof points. For Fitz-wide domain ownership, interaction rules, complexity budgets, and future feature admission, use [../development/domain-boundaries-spec.md](../development/domain-boundaries-spec.md) together with [todo-all.md](todo-all.md).
+
 ## A. Domain Purpose Statement
 
 Notice provides live fanout to subscribers that are connected now.
@@ -129,7 +131,7 @@ Current surface:
 
 Current gaps to keep explicit:
 
-- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) does not yet implement the per-domain Notice stats endpoint.
+- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) has a stub route for the per-domain Notice stats endpoint; it currently returns not_implemented. The domain data is not yet populated.
 - The metrics surface does not yet expose publish-failure, wildcard-limit-reject, or dropped-delivery counters.
 - Admin views are live current-process state only and must never be described as durable history.
 

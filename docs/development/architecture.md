@@ -16,6 +16,9 @@ Fitz is a **layered, synchronous-core broker** designed for:
 - **Isolation via realms** (multi-tenant resource partitioning)
 - **Deterministic message routing** (no async jitter in hot paths)
 - **High fanout** (pub/sub with wildcard patterns)
+
+For the strict internal contract that defines what each domain is allowed to do, what it must not do, and how domains compose safely, see [domain-boundaries-spec.md](domain-boundaries-spec.md).
+
 The server is implemented in **async I/O boundaries** (transport) with a **100% synchronous core** (routing, domains). This separation ensures:
 - Clean transport abstraction (WebSocket, TCP, HTTP)
 - Predictable domain latency (no async scheduling variability)
@@ -206,6 +209,9 @@ Session management:
 ### Layer 4: Domains
 **Files:** `src/domains/kv/`, `src/domains/queue/`, `src/domains/notice/`, etc.
 **Responsibility:** Domain-specific business logic.
+
+Use [domain-boundaries-spec.md](domain-boundaries-spec.md) as the authoritative boundary contract when deciding whether behavior belongs in a domain at all. This architecture guide explains where domains live in the system; the boundary specification explains what each domain is allowed to own.
+
 **Pattern (Synchronous Actor Model):**
 ```rust
 pub struct DomainActor { /* state */ }

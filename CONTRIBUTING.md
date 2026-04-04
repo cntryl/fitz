@@ -21,6 +21,13 @@ The broker is composed of modules under `src/`. The storage default is in-memory
 - Add tests when changing behavior
 - Prefer trait abstractions for storage/transport
 
+## Domain changes
+
+- Treat [docs/development/domain-boundaries-spec.md](docs/development/domain-boundaries-spec.md) as the primary architectural contract for domain responsibility, overlap, and feature placement.
+- Treat [docs/todos/todo-all.md](docs/todos/todo-all.md) and the per-domain files under [docs/todos](docs/todos) as the concise canonical contract index and proof-oriented domain detail.
+- If a change alters a domain guarantee, boundary, or overlap rule, update the relevant docs in the same PR.
+- Use [.github/pull_request_template.md](.github/pull_request_template.md) and complete the Domain Boundary Review section whenever a PR touches domain semantics, persistence, recovery, or cross-domain composition.
+
 ## Roadmap
 
 See `todo.md` for prioritized tasks.

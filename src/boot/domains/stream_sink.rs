@@ -428,7 +428,9 @@ impl StreamDomainSink {
             RouteFamily::from_u32(subscription.subscriber.family().id()),
         );
         let notify_envelope = Envelope::new(subscription.subscriber.clone(), notify_ctx);
-        let _ = self.router.route(notify_envelope);
+        if self.router.route(notify_envelope).is_err() {
+            crate::boot::observability::counter_inc("fitz_stream_notify_drops_total");
+        }
     }
 
     pub fn unsubscribe_all(&self, session_id: u64) {
@@ -539,7 +541,12 @@ impl MailboxSink for StreamDomainSink {
                                 true,
                             )
                         }
-                        Err(error) => (Self::stream_error_response(error), None, false),
+                        Err(error) => {
+                            crate::boot::observability::counter_inc(
+                                "fitz_stream_append_conflicts_total",
+                            );
+                            (Self::stream_error_response(error), None, false)
+                        }
                     }
                 }
                 Err(error) => (Self::stream_error_response(error), None, false),

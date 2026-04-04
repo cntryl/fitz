@@ -1754,4 +1754,37 @@ mod tests {
             "repeated scans inside the dedup window should not emit a duplicate fire"
         );
     }
+
+    #[test]
+    fn should_not_advance_schedule_state_given_persistence_failure() {
+        // Arrange
+        let mut actor = make_actor();
+        let route = "schedule://acme/jobs/create-fail/run";
+
+        // Act — inject persistence failure before create
+        actor.store.fail_next_commit_for_tests();
+        let result = actor.create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        );
+
+        // Assert — create returns Err; in-memory state is not advanced
+        assert!(result.is_err(), "create should propagate the store error");
+        assert!(
+            actor.schedules.get(route).is_none(),
+            "schedule must not be inserted into in-memory map on persist failure"
+        );
+        assert!(
+            !actor
+                .ready_heap
+                .iter()
+                .any(|(_, r)| r == route),
+            "ready heap must not contain the route on persist failure"
+        );
+        assert!(
+            actor.list_entries.iter().all(|e| e.route != route),
+            "list index must not contain the route on persist failure"
+        );
+    }
 }

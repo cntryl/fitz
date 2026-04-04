@@ -41,6 +41,11 @@ This directory is the canonical contract surface for Fitz domain semantics. Thes
 - [todo-lease.md](todo-lease.md)
 - [todo-schedule.md](todo-schedule.md)
 
+## Long-Form Boundary Specification
+
+- [../development/domain-boundaries-spec.md](../development/domain-boundaries-spec.md) is the authoritative long-form internal RFC for domain responsibilities, anti-goals, interaction rules, complexity budgets, and feature admission.
+- This file remains the concise canonical index for shared terms, the domain matrix, composition rules, and ambiguity watch items.
+
 ## Domain Matrix
 
 | Domain | Purpose | Committed Durable State | Live State Lost On Disconnect Or Restart | Ordered Contract | Replayable | Recovery Owner |

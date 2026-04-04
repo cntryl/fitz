@@ -49,6 +49,16 @@ pub fn gauge_set(name: &str, value: u64) {
     metrics_ref().gauge_set(name, value);
 }
 
+/// Increment a gauge by 1 using the cached global collector.
+pub fn gauge_inc(name: &str) {
+    metrics_ref().gauge_inc(name);
+}
+
+/// Decrement a gauge by 1 using the cached global collector.
+pub fn gauge_dec(name: &str) {
+    metrics_ref().gauge_dec(name);
+}
+
 /// Whether extra hot-path attribution metrics are enabled.
 ///
 /// Disabled by default because these measurements are expensive enough to distort

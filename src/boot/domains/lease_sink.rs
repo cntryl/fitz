@@ -359,7 +359,9 @@ impl LeaseDomainSink {
         };
 
         for waiter in expired_waiters {
+            crate::boot::observability::gauge_dec("fitz_lease_waiter_depth");
             self.untrack_session_waiter(waiter.session_id, key, waiter.queued_token);
+            crate::boot::observability::counter_inc("fitz_lease_acquire_timeouts_total");
             self.send_waiter_response(
                 &waiter,
                 &crate::domains::lease::protocol::LeaseResponse::Timeout,
@@ -485,6 +487,7 @@ impl LeaseDomainSink {
         };
 
         for (key, state) in expired_leases {
+            crate::boot::observability::counter_inc("fitz_lease_forced_releases_total");
             self.untrack_session_lease(state.owner_session_id, &key);
             self.remove_admin_lease(&key);
             self.notify_lease_change(&key);
@@ -713,6 +716,7 @@ impl LeaseDomainSink {
                     drop(pending_acquires);
 
                     self.track_session_waiter(owner_session_id, &key, queued_token);
+                    crate::boot::observability::gauge_inc("fitz_lease_waiter_depth");
 
                     LeaseResponse::Queued {
                         fencing_token: queued_token,
@@ -752,6 +756,9 @@ impl LeaseDomainSink {
                 } else if state.owner_id != owner_id {
                     LeaseResponse::NotHeld
                 } else if state.fencing_token != fencing_token {
+                    crate::boot::observability::counter_inc(
+                        "fitz_lease_invalid_token_rejects_total",
+                    );
                     LeaseResponse::Fenced {
                         current_token: state.fencing_token,
                     }
@@ -797,9 +804,14 @@ impl LeaseDomainSink {
                     LeaseResponse::Released
                 }
                 Some(state) if state.owner_id != owner_id => LeaseResponse::NotHeld,
-                Some(state) if state.fencing_token != fencing_token => LeaseResponse::Fenced {
-                    current_token: state.fencing_token,
-                },
+                Some(state) if state.fencing_token != fencing_token => {
+                    crate::boot::observability::counter_inc(
+                        "fitz_lease_invalid_token_rejects_total",
+                    );
+                    LeaseResponse::Fenced {
+                        current_token: state.fencing_token,
+                    }
+                }
                 Some(state) => {
                     leases.remove(&key);
                     removed_state = Some(state);

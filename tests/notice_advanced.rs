@@ -6,10 +6,13 @@
 //! - notice_e2e_scale.rs: End-to-end scale tests
 
 use bytes::Bytes;
-use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
+use fitz::domains::notice::protocol::{
+    NotificationMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
+};
 use fitz::domains::notice::NoticeRouteActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
+use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use fitz::testkit::notice::{addr, make_router, route, session_id, TestSink};
 use std::sync::Arc;
 
@@ -332,4 +335,104 @@ fn should_handle_5k_subscriptions_without_failure_end_to_end() {
     // Assert
     let total: usize = sinks.iter().map(|s| s.count()).sum();
     assert_eq!(total, n);
+}
+
+// ===== Contract: RouteFamily isolation and disconnect cleanup =====
+
+#[test]
+fn should_not_fanout_notice_across_route_families_given_same_pattern() {
+    // Arrange — two actors, one per family
+    let router = make_router();
+    let family1 = RouteFamily::new(1);
+    let family2 = RouteFamily::new(2);
+
+    let mut actor1 = NoticeRouteActor::new(family1);
+    let mut actor2 = NoticeRouteActor::new(family2);
+
+    // Subscribe a sink in family 1
+    let sink1 = Arc::new(TestSink::new());
+    let sub1 = addr("notice://realm/area/iso/recv1"); // addr() uses family 1
+    router.register(sub1.clone(), sink1.clone());
+    let mut ctx1 = Context::new(sub1.clone(), Arc::new(router.clone()));
+    actor1.receive(
+        NotificationMessage::Subscribe(SubscribeMessage::new(
+            family1,
+            route("notice://realm/area/iso/*"),
+            session_id(1),
+            sub1.clone(),
+        )),
+        &mut ctx1,
+    );
+
+    // Subscribe a sink in family 2 with the same wildcard pattern
+    let sink2 = Arc::new(TestSink::new());
+    let sub2 = RouteAddress::new(family2, route("notice://realm/area/iso/recv2"));
+    router.register(sub2.clone(), sink2.clone());
+    let mut ctx2 = Context::new(sub2.clone(), Arc::new(router.clone()));
+    actor2.receive(
+        NotificationMessage::Subscribe(SubscribeMessage::new(
+            family2,
+            route("notice://realm/area/iso/*"),
+            session_id(2),
+            sub2.clone(),
+        )),
+        &mut ctx2,
+    );
+
+    // Act — publish only into actor1 (family 1)
+    let mut pubctx = Context::new(addr("notice://realm/area/iso/pub"), Arc::new(router.clone()));
+    actor1.receive(
+        NotificationMessage::Publish(PublishMessage::new(
+            family1,
+            route("notice://realm/area/iso/pub"),
+            Bytes::from("msg"),
+        )),
+        &mut pubctx,
+    );
+
+    // Assert — family 1 delivers; family 2 is fully isolated
+    assert_eq!(sink1.count(), 1);
+    assert_eq!(sink2.count(), 0);
+}
+
+#[test]
+fn should_not_deliver_notice_after_disconnect_cleanup_given_publish_race() {
+    // Arrange
+    let router = make_router();
+    let sink = Arc::new(TestSink::new());
+    let sub = addr("notice://realm/area/race/recv");
+    router.register(sub.clone(), sink.clone());
+
+    let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
+    let family = *sub.family();
+    let mut ctx = Context::new(sub.clone(), Arc::new(router.clone()));
+
+    actor.receive(
+        NotificationMessage::Subscribe(SubscribeMessage::new(
+            family,
+            route("notice://realm/area/race/*"),
+            session_id(1),
+            sub.clone(),
+        )),
+        &mut ctx,
+    );
+
+    // Simulate disconnect cleanup (UnsubscribeAll)
+    actor.receive(
+        NotificationMessage::UnsubscribeAll(UnsubscribeAllMessage::new(session_id(1), sub.clone())),
+        &mut ctx,
+    );
+
+    // Act — publish races with cleanup (arrives after)
+    actor.receive(
+        NotificationMessage::Publish(PublishMessage::new(
+            family,
+            route("notice://realm/area/race/recv"),
+            Bytes::from("late"),
+        )),
+        &mut ctx,
+    );
+
+    // Assert — no delivery after session was cleaned up
+    assert_eq!(sink.count(), 0);
 }

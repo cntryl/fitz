@@ -2868,6 +2868,7 @@ impl QueueActor {
 
         // Validate token
         if inflight.token != token {
+            Self::increment_counter(obs::METRIC_QUEUE_COMPLETE_REJECTED);
             let response = QueueResponse::InvalidToken;
             // Don't cache invalid token - security: wrong token should fail every time
             return response;
@@ -2877,6 +2878,7 @@ impl QueueActor {
         if inflight.expires_at <= now {
             // Remove stale inflight entry
             self.inflight.remove(&id);
+            Self::increment_counter(obs::METRIC_QUEUE_COMPLETE_REJECTED);
             let response = QueueResponse::LeaseExpired;
             // Cache expired response
             if let Ok(bytes) = bincode::serialize(&response) {
@@ -3489,6 +3491,7 @@ impl QueueActor {
                         self.queue_key, id, record.attempts
                     );
 
+                    Self::increment_counter(obs::METRIC_QUEUE_DLQ_TRANSITIONS);
                     return;
                 }
 
@@ -3575,6 +3578,7 @@ impl QueueActor {
                             obs::METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY,
                             update_start,
                         );
+                        Self::increment_counter(obs::METRIC_QUEUE_REDELIVERIES);
                     }
                 }
             }

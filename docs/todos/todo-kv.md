@@ -1,5 +1,7 @@
 # KV
 
+This file defines KV-specific contract detail and proof points. For Fitz-wide domain ownership, interaction rules, complexity budgets, and future feature admission, use [../development/domain-boundaries-spec.md](../development/domain-boundaries-spec.md) together with [todo-all.md](todo-all.md).
+
 ## A. Domain Purpose Statement
 
 KV provides transactional reads and writes for current authoritative key and value state.
@@ -116,7 +118,7 @@ Current surface:
 
 Current gaps to keep explicit:
 
-- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) does not yet implement the per-domain KV stats endpoint.
+- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) has a stub route for the per-domain KV stats endpoint; it currently returns not_implemented. The domain data is not yet populated.
 - Metrics do not yet expose commit-failure, rollback, or invalid-transaction counters.
 - Admin transaction views are current-process only and must not be described as durable recovery handles.
 

@@ -311,6 +311,7 @@ impl MailboxSink for KvDomainSink {
                     }
                     (resp, true)
                 } else {
+                    crate::boot::observability::counter_inc("fitz_kv_commits_failed_total");
                     (resp, false)
                 }
             }
@@ -336,6 +337,7 @@ impl MailboxSink for KvDomainSink {
                     if let Some(k) = lock_key {
                         self.resource_locks.lock().remove(&k);
                     }
+                    crate::boot::observability::counter_inc("fitz_kv_rollbacks_total");
                     (resp, true)
                 } else {
                     (resp, false)
@@ -360,6 +362,15 @@ impl MailboxSink for KvDomainSink {
                 (actor.handle(kv_message), false)
             }
         };
+        if matches!(
+            &response,
+            crate::domains::kv::KvResponse::Error {
+                error: crate::domains::kv::KvError::InvalidTxId,
+                ..
+            }
+        ) {
+            crate::boot::observability::counter_inc("fitz_kv_invalid_transaction_rejects_total");
+        }
         if should_sync_admin_snapshot {
             self.sync_admin_snapshot();
         }

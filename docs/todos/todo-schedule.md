@@ -1,5 +1,7 @@
 # Schedule
 
+This file defines Schedule-specific contract detail and proof points. For Fitz-wide domain ownership, interaction rules, complexity budgets, and future feature admission, use [../development/domain-boundaries-spec.md](../development/domain-boundaries-spec.md) together with [todo-all.md](todo-all.md).
+
 ## A. Domain Purpose Statement
 
 Schedule provides durable timing intent for future route-triggered work.
@@ -121,7 +123,7 @@ Current surface:
 
 Current gaps to keep explicit:
 
-- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) does not yet implement the per-domain Schedule stats endpoint.
+- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) has a stub route for the per-domain Schedule stats endpoint; it currently returns not_implemented. The domain data is not yet populated.
 - Broader admin docs already note that `last_run` and `executions_total` are not fully authoritative in the current round; that caveat must remain visible until fixed.
 - Metrics do not yet expose overdue-normalization count or persistence-failure counters.
 

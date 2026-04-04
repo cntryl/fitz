@@ -12,6 +12,8 @@ Fitz is a layered broker with async transports and a sync runtime core. This doc
 
 These documents define behavior guarantees, implementation boundaries, and how those guarantees are tested.
 
+For the authoritative internal contract on domain responsibilities, overlap prevention, and feature placement, read [development/domain-boundaries-spec.md](development/domain-boundaries-spec.md).
+
 For a short durability contract page, read [user-guides/transaction-durability-contract.md](user-guides/transaction-durability-contract.md).
 
 ## Documentation Structure
@@ -36,10 +38,11 @@ For a short durability contract page, read [user-guides/transaction-durability-c
 ### Contributing To Runtime Correctness
 
 1. [development/architecture.md](development/architecture.md)
-2. [development/route-design.md](development/route-design.md)
-3. [development/storage-invariants.md](development/storage-invariants.md)
-4. [development/recovery-internals.md](development/recovery-internals.md)
-5. [development/testing.md](development/testing.md)
+2. [development/domain-boundaries-spec.md](development/domain-boundaries-spec.md)
+3. [development/route-design.md](development/route-design.md)
+4. [development/storage-invariants.md](development/storage-invariants.md)
+5. [development/recovery-internals.md](development/recovery-internals.md)
+6. [development/testing.md](development/testing.md)
 
 ### General Usage
 

@@ -1,5 +1,7 @@
 # Lease
 
+This file defines Lease-specific contract detail and proof points. For Fitz-wide domain ownership, interaction rules, complexity budgets, and future feature admission, use [../development/domain-boundaries-spec.md](../development/domain-boundaries-spec.md) together with [todo-all.md](todo-all.md).
+
 ## A. Domain Purpose Statement
 
 Lease provides single-broker ownership coordination with TTL expiry and process-local fencing tokens.
@@ -117,7 +119,7 @@ Current surface:
 
 Current gaps to keep explicit:
 
-- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) does not yet implement the per-domain Lease stats endpoint.
+- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) has a stub route for the per-domain Lease stats endpoint; it currently returns not_implemented. The domain data is not yet populated.
 - Current metrics do not expose waiter depth, timeout count, invalid-token count, or forced-release count.
 - Admin views are current-process only and must not be described as durable recovery state.
 

@@ -1,5 +1,7 @@
 # Queue
 
+This file defines Queue-specific contract detail and proof points. For Fitz-wide domain ownership, interaction rules, complexity budgets, and future feature admission, use [../development/domain-boundaries-spec.md](../development/domain-boundaries-spec.md) together with [todo-all.md](todo-all.md).
+
 ## A. Domain Purpose Statement
 
 Queue provides durable competing-consumer work delivery with visibility leases, redelivery, and optional dead-lettering.
@@ -122,7 +124,7 @@ Current surface:
 - Global stats include `messages_ready`, `messages_delayed`, `messages_pending`, `messages_dead_lettered`, `leases_active`, and `operations_per_second`.
 - Prometheus currently exports `fitz_queue_messages_pending` and `fitz_queue_leases_active`.
 - Admin APIs expose warm queue detail, live leases, retained dead letters, and DLQ replay and purge actions.
-- Queue is the only domain in [src/api/admin/stats.rs](../../src/api/admin/stats.rs) with a currently implemented per-domain stats response.
+- The per-domain Queue stats endpoint in [src/api/admin/stats.rs](../../src/api/admin/stats.rs) is implemented and returns `messages_ready`, `messages_delayed`, `messages_pending`, `messages_dead_lettered`, `leases_active`, and `operations_per_second`.
 
 Current gaps to keep explicit:
 
@@ -144,7 +146,11 @@ Current gaps to keep explicit:
 	- [tests/queue_advanced.rs](../../tests/queue_advanced.rs) `should_distribute_messages_fairly_among_competing_consumers`
 - Integration tests:
 	- [tests/queue_e2e.rs](../../tests/queue_e2e.rs) enqueue, dequeue, empty, concurrent enqueue, and mixed flow cases
-	- [tests/admin_api.rs](../../tests/admin_api.rs) DLQ replay admin coverage
+	- [tests/admin_api.rs](../../tests/admin_api.rs) `should_return_queue_detail_with_delayed_and_dead_letter_counts`
+	- [tests/admin_api.rs](../../tests/admin_api.rs) `should_return_queue_dead_letters_under_resource`
+	- [tests/admin_api.rs](../../tests/admin_api.rs) `should_replay_dead_letter_given_family_targeted_admin_request`
+	- [tests/admin_api.rs](../../tests/admin_api.rs) `should_purge_dead_letter_given_family_targeted_admin_request`
+	- [tests/admin_api.rs](../../tests/admin_api.rs) `should_return_queue_domain_stats`
 - Benchmark and stress tests:
 	- tier3 Queue sustained-load, mixed lifecycle, and backlog-depth benches
 	- tier4 Queue transport benches

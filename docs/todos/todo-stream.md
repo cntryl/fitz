@@ -1,5 +1,7 @@
 # Stream
 
+This file defines Stream-specific contract detail and proof points. For Fitz-wide domain ownership, interaction rules, complexity budgets, and future feature admission, use [../development/domain-boundaries-spec.md](../development/domain-boundaries-spec.md) together with [todo-all.md](todo-all.md).
+
 ## A. Domain Purpose Statement
 
 Stream is Fitz's durable append, replay, and catch-up domain.
@@ -136,7 +138,7 @@ Current surface:
 
 Current gaps to keep explicit:
 
-- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) does not yet implement the per-domain Stream stats endpoint.
+- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) has a stub route for the per-domain Stream stats endpoint; it currently returns not_implemented. The domain data is not yet populated.
 - The metrics surface does not yet expose watermarks, conflict counters, replay lag, or notify-drop counters.
 - Admin does not expose broker-side replay cursors because broker-side replay cursors do not exist.
 

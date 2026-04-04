@@ -92,6 +92,9 @@ pub const METRIC_QUEUE_RECOVERY_INDEX_HITS: &str = "fitz_queue_recovery_index_hi
 pub const METRIC_QUEUE_RECOVERY_INDEX_MISSING: &str = "fitz_queue_recovery_index_missing_total";
 pub const METRIC_QUEUE_RECOVERY_INDEX_INVALID: &str = "fitz_queue_recovery_index_invalid_total";
 pub const METRIC_QUEUE_RECOVERY_INDEX_FALLBACKS: &str = "fitz_queue_recovery_index_fallbacks_total";
+pub const METRIC_QUEUE_REDELIVERIES: &str = "fitz_queue_redeliveries_total";
+pub const METRIC_QUEUE_DLQ_TRANSITIONS: &str = "fitz_queue_dlq_transitions_total";
+pub const METRIC_QUEUE_COMPLETE_REJECTED: &str = "fitz_queue_complete_rejected_total";
 
 // Gauges
 pub const METRIC_CONNECTIONS_ACTIVE: &str = "fitz_connections_active";
