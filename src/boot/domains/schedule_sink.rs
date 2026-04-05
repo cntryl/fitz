@@ -1,4 +1,5 @@
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
+use crate::domains::schedule::ScheduleMetrics;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
@@ -61,6 +62,7 @@ pub struct ScheduleDomainSink {
     publish_failures: AtomicU64,
     /// Total number of pending-fire acknowledgement persistence failures.
     ack_failures: AtomicU64,
+    metrics: Option<ScheduleMetrics>,
 }
 
 impl ScheduleDomainSink {
@@ -83,7 +85,17 @@ impl ScheduleDomainSink {
             snapshot_epoch: Instant::now(),
             publish_failures: AtomicU64::new(0),
             ack_failures: AtomicU64::new(0),
+            metrics: None,
         }
+    }
+
+    pub fn with_metrics(
+        mut self,
+        collector: crate::observability::metrics::MetricsCollector,
+    ) -> Self {
+        self.metrics = Some(ScheduleMetrics::new(collector));
+        self.refresh_metrics_gauges();
+        self
     }
 
     pub fn stop(&self) {
@@ -202,6 +214,8 @@ impl ScheduleDomainSink {
         if snapshot_dirty || had_deliveries {
             self.schedule_admin_snapshot(false);
         }
+
+        self.refresh_metrics_gauges();
     }
 
     pub(crate) fn force_due_scan_for_tests(&self, ready_count: usize) {
@@ -346,6 +360,20 @@ impl ScheduleDomainSink {
         };
 
         self.admin_read_model.replace_schedules(snapshot);
+        self.refresh_metrics_gauges();
+    }
+
+    fn refresh_metrics_gauges(&self) {
+        if let Some(metrics) = &self.metrics {
+            metrics.set_schedule_count(self.schedule_count());
+            metrics.set_pending_fire_count(self.pending_fire_count());
+        }
+    }
+
+    fn schedule_response_is_failure(
+        response: &crate::domains::schedule::ScheduleResponse,
+    ) -> bool {
+        matches!(response, crate::domains::schedule::ScheduleResponse::Error(_))
     }
 
     fn schedule_admin_snapshot(&self, force: bool) {
@@ -431,6 +459,7 @@ impl MailboxSink for ScheduleDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
+        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
         let mut payload_encoder =
             crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
@@ -453,6 +482,9 @@ impl MailboxSink for ScheduleDomainSink {
         ) {
             Ok(msg) => msg,
             Err(e) => {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    metrics.record_failure(started_at);
+                }
                 tracing::warn!(
                     domain = "schedule",
                     error = %e,
@@ -487,6 +519,11 @@ impl MailboxSink for ScheduleDomainSink {
                     );
                     if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
                         let _ = self.router.route(response_envelope);
+                    }
+                    if let (Some(metrics), Some(started_at)) =
+                        (self.metrics.as_ref(), request_started)
+                    {
+                        metrics.record_failure(started_at);
                     }
                     return Ok(());
                 }
@@ -635,6 +672,14 @@ impl MailboxSink for ScheduleDomainSink {
         );
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             let _ = self.router.route(response_envelope);
+        }
+
+        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            if Self::schedule_response_is_failure(&response) {
+                metrics.record_failure(started_at);
+            } else {
+                metrics.record_success(started_at);
+            }
         }
 
         Ok(())

@@ -30,10 +30,12 @@
 
 pub mod actor;
 pub mod guard;
+pub mod metrics;
 pub mod protocol;
 pub mod session;
 
 pub use actor::{Clock, LeaseActor, SystemClock};
 pub use guard::{LeaseError, LeaseGuard, LeaseHandle};
+pub use metrics::LeaseMetrics;
 pub use protocol::{LeaseMessage, LeaseResponse};
 pub use session::SessionActor;

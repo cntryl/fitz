@@ -5,6 +5,7 @@
 //! restored after broker restart.
 
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
+use crate::domains::notice::NoticeMetrics;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
@@ -114,6 +115,7 @@ pub struct NoticeDomainSink {
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     admin_snapshot_dirty: AtomicBool,
+    metrics: Option<NoticeMetrics>,
     active: AtomicBool,
 }
 
@@ -129,8 +131,18 @@ impl NoticeDomainSink {
             router,
             admin_read_model,
             admin_snapshot_dirty: AtomicBool::new(false),
+            metrics: None,
             active: AtomicBool::new(true),
         }
+    }
+
+    pub fn with_metrics(
+        mut self,
+        collector: crate::observability::metrics::MetricsCollector,
+    ) -> Self {
+        self.metrics = Some(NoticeMetrics::new(collector));
+        self.refresh_metrics_gauges();
+        self
     }
 
     pub fn stop(&self) {
@@ -180,10 +192,24 @@ impl NoticeDomainSink {
                 })
                 .collect(),
         );
+        if let Some(metrics) = &self.metrics {
+            metrics.set_subscription_count(self.subscription_count());
+        }
     }
 
     fn mark_admin_snapshot_dirty(&self) {
         self.admin_snapshot_dirty.store(true, Ordering::Relaxed);
+        self.refresh_metrics_gauges();
+    }
+
+    fn refresh_metrics_gauges(&self) {
+        if let Some(metrics) = &self.metrics {
+            metrics.set_subscription_count(self.subscription_count());
+        }
+    }
+
+    fn notice_response_is_failure(response: &crate::protocol::notice_codec::NoticeResponse) -> bool {
+        matches!(response, crate::protocol::notice_codec::NoticeResponse::Error(_))
     }
 
     pub fn refresh_admin_snapshot_if_dirty(&self) {
@@ -384,6 +410,7 @@ impl MailboxSink for NoticeDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
+        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
 
         tracing::debug!(
             domain = "notice",
@@ -394,7 +421,15 @@ impl MailboxSink for NoticeDomainSink {
         );
 
         if frame_ctx.msg_type.as_u16() == 500 {
-            return self.handle_frame_publish(&frame_ctx, *envelope.destination().family());
+            let result = self.handle_frame_publish(&frame_ctx, *envelope.destination().family());
+            if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                if result.is_ok() {
+                    metrics.record_success(started_at);
+                } else {
+                    metrics.record_failure(started_at);
+                }
+            }
+            return result;
         }
 
         let notice_msg = match crate::protocol::notice_codec::parse_request(
@@ -416,6 +451,9 @@ impl MailboxSink for NoticeDomainSink {
         ) {
             Ok(msg) => msg,
             Err(e) => {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    metrics.record_failure(started_at);
+                }
                 tracing::warn!(domain = "notice", error = %e, "Failed to parse notice message");
                 return Err(DeliveryError::ActorStopped);
             }
@@ -571,6 +609,16 @@ impl MailboxSink for NoticeDomainSink {
             if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
                 let _ = self.router.route(response_envelope);
             }
+
+            if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                if Self::notice_response_is_failure(&response) {
+                    metrics.record_failure(started_at);
+                } else {
+                    metrics.record_success(started_at);
+                }
+            }
+        } else if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            metrics.record_success(started_at);
         }
 
         Ok(())

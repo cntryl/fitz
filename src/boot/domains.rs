@@ -12,7 +12,6 @@ use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 mod kv_sink;
 mod lease_sink;
 mod notice_sink;
-mod queue_projection;
 mod queue_sink;
 mod queue_waiters;
 mod rpc_sink;
@@ -86,11 +85,14 @@ pub fn setup(
     queue_write_options: cntryl_midge::WriteOptions,
     rpc_request_timeout: Option<std::time::Duration>,
 ) -> BootResult<DomainHandles> {
+    let metrics = (*crate::boot::observability::metrics()).clone();
+
     let kv_sink = Arc::new(KvDomainSink::new(
         store.clone(),
         router.clone(),
         admin_read_model.clone(),
-    ));
+    )
+    .with_metrics(metrics.clone()));
     router.register_domain_pattern("kv", kv_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered KV domain (handles kv://* across all route families)");
 
@@ -100,7 +102,8 @@ pub fn setup(
         admin_read_model.clone(),
         queue_write_options,
         crate::utils::idempotency::default_dedup_store(),
-    ));
+    )
+    .with_metrics(metrics.clone()));
     router.register_domain_pattern("queue", queue_sink.clone() as Arc<dyn MailboxSink>);
     queue_sink.start_wait_loop();
     tracing::info!("Registered Queue domain (handles queue://* across all route families)");
@@ -108,7 +111,8 @@ pub fn setup(
     let notice_sink = Arc::new(NoticeDomainSink::new(
         router.clone(),
         admin_read_model.clone(),
-    ));
+    )
+    .with_metrics(metrics.clone()));
     router.register_domain_pattern("notice", notice_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Notice domain (handles notice://* across all route families)");
 
@@ -116,14 +120,15 @@ pub fn setup(
         store.clone(),
         router.clone(),
         admin_read_model.clone(),
-    ));
+    )
+    .with_metrics(metrics.clone()));
     router.register_domain_pattern("stream", stream_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Stream domain (handles stream://* across all route families)");
 
     let rpc_sink = Arc::new(
         RpcDomainSink::new(router.clone(), admin_read_model.clone())
             .with_request_timeout(rpc_request_timeout.unwrap_or(std::time::Duration::from_secs(30)))
-            .with_metrics((*crate::boot::observability::metrics()).clone()),
+            .with_metrics(metrics.clone()),
     );
     router.register_domain_pattern("rpc", rpc_sink.clone() as Arc<dyn MailboxSink>);
     rpc_sink.start_timeout_loop();
@@ -132,7 +137,8 @@ pub fn setup(
     let lease_sink = Arc::new(LeaseDomainSink::new(
         router.clone(),
         admin_read_model.clone(),
-    ));
+    )
+    .with_metrics(metrics.clone()));
     router.register_domain_pattern("lease", lease_sink.clone() as Arc<dyn MailboxSink>);
     lease_sink.start_timeout_loop();
     tracing::info!(
@@ -143,7 +149,8 @@ pub fn setup(
         store.clone(),
         router.clone(),
         admin_read_model.clone(),
-    ));
+    )
+    .with_metrics(metrics.clone()));
     router.register_domain_pattern("schedule", schedule_sink.clone() as Arc<dyn MailboxSink>);
     schedule_sink
         .preload_persisted_families()

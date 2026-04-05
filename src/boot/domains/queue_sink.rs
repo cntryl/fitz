@@ -1,8 +1,11 @@
-use super::queue_projection::{QueueAdminProjection, QueueProjectionEntry, QueueProjectionState};
 use super::queue_waiters::{PendingReceive, QueueWaiterRegistry};
 use crate::observability as obs;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
+use crate::domains::queue::{
+    projection::{QueueAdminProjection, QueueProjectionEntry, QueueProjectionState},
+    QueueMetrics,
+};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -40,6 +43,7 @@ pub struct QueueDomainSink {
     /// Router for routing response envelopes back
     router: Arc<Router>,
     projection: QueueAdminProjection,
+    metrics: Option<QueueMetrics>,
     active: AtomicBool,
     next_idle_sweep_at: Mutex<Instant>,
 }
@@ -60,9 +64,19 @@ impl QueueDomainSink {
             waiters: QueueWaiterRegistry::new(),
             router,
             projection: QueueAdminProjection::new(admin_read_model),
+            metrics: None,
             active: AtomicBool::new(true),
             next_idle_sweep_at: Mutex::new(Instant::now()),
         }
+    }
+
+    pub fn with_metrics(
+        mut self,
+        collector: crate::observability::metrics::MetricsCollector,
+    ) -> Self {
+        self.metrics = Some(QueueMetrics::new(collector));
+        self.refresh_metrics_gauges();
+        self
     }
 
     pub fn stop(&self) {
@@ -195,6 +209,15 @@ impl QueueDomainSink {
                 error = ?error,
                 "Failed to route deferred queue receive response"
             );
+            if let Some(metrics) = &self.metrics {
+                metrics.record_failure(waiter.requested_at);
+            }
+        } else if let Some(metrics) = &self.metrics {
+            if Self::queue_response_is_failure(response) {
+                metrics.record_failure(waiter.requested_at);
+            } else {
+                metrics.record_success(waiter.requested_at);
+            }
         }
     }
 
@@ -291,6 +314,35 @@ impl QueueDomainSink {
 
     fn mark_admin_snapshot_dirty(&self) {
         self.projection.mark_dirty();
+        self.refresh_metrics_gauges();
+    }
+
+    fn refresh_metrics_gauges(&self) {
+        if let Some(metrics) = &self.metrics {
+            metrics.set_ready_messages(self.ready_message_count());
+            metrics.set_delayed_messages(self.delayed_message_count());
+            metrics.set_inflight_messages(self.active_lease_count());
+        }
+    }
+
+    fn observe_histogram_us(&self, name: &str, value_us: u64) {
+        if let Some(metrics) = &self.metrics {
+            metrics.histogram_observe_us(name, value_us);
+        } else {
+            crate::boot::observability::histogram_observe_us(name, value_us);
+        }
+    }
+
+    fn queue_response_is_failure(response: &crate::domains::queue::QueueResponse) -> bool {
+        matches!(
+            response,
+            crate::domains::queue::QueueResponse::InvalidToken
+                | crate::domains::queue::QueueResponse::LeaseExpired
+                | crate::domains::queue::QueueResponse::NotFound
+                | crate::domains::queue::QueueResponse::QueueNotFound
+                | crate::domains::queue::QueueResponse::BadRequest { .. }
+                | crate::domains::queue::QueueResponse::Error { .. }
+        )
     }
 
     pub fn refresh_admin_snapshot_if_dirty(&self) {
@@ -536,11 +588,15 @@ impl MailboxSink for QueueDomainSink {
 
         let route_addr = envelope.destination();
         let route_family = *route_addr.family();
+        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
 
         let queue_msg = match Self::parse_frame_to_queue_message(&frame_ctx, route_family) {
             Ok(msg) => msg,
             Err(response) => {
                 self.route_queue_response(&envelope, &frame_ctx, &response);
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    metrics.record_failure(started_at);
+                }
                 return Ok(());
             }
         };
@@ -568,7 +624,7 @@ impl MailboxSink for QueueDomainSink {
                         let wake_key = key.clone();
                         let actor_lock_start = Instant::now();
                         let (actor_handle, created_actor) = self.get_or_create_actor(key);
-                        crate::boot::observability::histogram_observe_us(
+                        self.observe_histogram_us(
                             obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
                             actor_lock_start.elapsed().as_micros() as u64,
                         );
@@ -576,7 +632,7 @@ impl MailboxSink for QueueDomainSink {
                         let actor_exec_start = Instant::now();
                         actor.process_due_work();
                         let resp = actor.handle_send(body, delay_seconds);
-                        crate::boot::observability::histogram_observe_us(
+                        self.observe_histogram_us(
                             obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
                             actor_exec_start.elapsed().as_micros() as u64,
                         );
@@ -598,7 +654,7 @@ impl MailboxSink for QueueDomainSink {
                         let wait_key = key.clone();
                         let actor_lock_start = Instant::now();
                         let (actor_handle, created_actor) = self.get_or_create_actor(key);
-                        crate::boot::observability::histogram_observe_us(
+                        self.observe_histogram_us(
                             obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
                             actor_lock_start.elapsed().as_micros() as u64,
                         );
@@ -610,7 +666,7 @@ impl MailboxSink for QueueDomainSink {
                             lease_seconds,
                             batch_size,
                         );
-                        crate::boot::observability::histogram_observe_us(
+                        self.observe_histogram_us(
                             obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
                             actor_exec_start.elapsed().as_micros() as u64,
                         );
@@ -650,7 +706,7 @@ impl MailboxSink for QueueDomainSink {
                     Ok(key) => {
                         let actor_lock_start = Instant::now();
                         let (actor_handle, created_actor) = self.get_or_create_actor(key);
-                        crate::boot::observability::histogram_observe_us(
+                        self.observe_histogram_us(
                             obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
                             actor_lock_start.elapsed().as_micros() as u64,
                         );
@@ -658,7 +714,7 @@ impl MailboxSink for QueueDomainSink {
                         let actor_exec_start = Instant::now();
                         actor.process_due_work();
                         let response = actor.handle_extend(id, token, lease_seconds);
-                        crate::boot::observability::histogram_observe_us(
+                        self.observe_histogram_us(
                             obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
                             actor_exec_start.elapsed().as_micros() as u64,
                         );
@@ -676,7 +732,7 @@ impl MailboxSink for QueueDomainSink {
                     Ok(key) => {
                         let actor_lock_start = Instant::now();
                         let (actor_handle, created_actor) = self.get_or_create_actor(key);
-                        crate::boot::observability::histogram_observe_us(
+                        self.observe_histogram_us(
                             obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
                             actor_lock_start.elapsed().as_micros() as u64,
                         );
@@ -684,7 +740,7 @@ impl MailboxSink for QueueDomainSink {
                         let actor_exec_start = Instant::now();
                         actor.process_due_work();
                         let response = actor.handle_ack(id, token);
-                        crate::boot::observability::histogram_observe_us(
+                        self.observe_histogram_us(
                             obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
                             actor_exec_start.elapsed().as_micros() as u64,
                         );
@@ -715,6 +771,14 @@ impl MailboxSink for QueueDomainSink {
         }
 
         self.route_queue_response(&envelope, &frame_ctx, &response);
+
+        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            if Self::queue_response_is_failure(&response) {
+                metrics.record_failure(started_at);
+            } else {
+                metrics.record_success(started_at);
+            }
+        }
 
         Ok(())
     }

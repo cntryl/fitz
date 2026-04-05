@@ -9,6 +9,7 @@ use dashmap::DashMap;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 /// Metrics collector instance.
 /// Clone-safe; backed by Arc<DashMap>.
@@ -22,6 +23,81 @@ pub struct MetricsCollector {
 /// Simple histogram with buckets (1ms, 5ms, 10ms, 50ms, 100ms, 500ms, 1s, +inf).
 pub struct Histogram {
     buckets: [AtomicU64; 9], // 8 buckets + one for infinity
+}
+
+#[derive(Clone)]
+pub struct DomainMetricSet {
+    collector: MetricsCollector,
+    requests_total: &'static str,
+    success_total: &'static str,
+    failure_total: &'static str,
+    latency_ms: &'static str,
+}
+
+impl DomainMetricSet {
+    pub fn new(
+        collector: MetricsCollector,
+        requests_total: &'static str,
+        success_total: &'static str,
+        failure_total: &'static str,
+        latency_ms: &'static str,
+    ) -> Self {
+        Self {
+            collector,
+            requests_total,
+            success_total,
+            failure_total,
+            latency_ms,
+        }
+    }
+
+    pub fn record_request_start(&self) -> Instant {
+        self.collector.counter_inc(self.requests_total);
+        Instant::now()
+    }
+
+    pub fn record_success(&self, started_at: Instant) {
+        self.collector.counter_inc(self.success_total);
+        self.observe_latency_ms(started_at);
+    }
+
+    pub fn record_failure(&self, started_at: Instant) {
+        self.collector.counter_inc(self.failure_total);
+        self.observe_latency_ms(started_at);
+    }
+
+    pub fn counter_inc(&self, name: &str) {
+        self.collector.counter_inc(name);
+    }
+
+    pub fn counter_add(&self, name: &str, amount: u64) {
+        self.collector.counter_add(name, amount);
+    }
+
+    pub fn gauge_set(&self, name: &str, value: u64) {
+        self.collector.gauge_set(name, value);
+    }
+
+    pub fn gauge_inc(&self, name: &str) {
+        self.collector.gauge_inc(name);
+    }
+
+    pub fn gauge_dec(&self, name: &str) {
+        self.collector.gauge_dec(name);
+    }
+
+    pub fn histogram_observe_us(&self, name: &str, value_us: u64) {
+        self.collector.histogram_observe_us(name, value_us);
+    }
+
+    pub fn histogram_observe_ms(&self, name: &str, value_ms: u64) {
+        self.collector.histogram_observe_ms(name, value_ms);
+    }
+
+    fn observe_latency_ms(&self, started_at: Instant) {
+        let elapsed_ms = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        self.collector.histogram_observe_ms(self.latency_ms, elapsed_ms);
+    }
 }
 
 impl Histogram {

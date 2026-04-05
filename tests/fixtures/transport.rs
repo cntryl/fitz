@@ -597,11 +597,20 @@ impl QueueConnector for WsQueueConnector {
 }
 
 /// Build QUEUE ENQUEUE frame (msg_type 200)
+fn normalize_queue_route(queue_name: &str) -> String {
+    if queue_name.contains("://") {
+        queue_name.to_string()
+    } else {
+        format!("queue://test/app/{queue_name}")
+    }
+}
+
 pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
     // Wire format: [u32 route_len][route][u32 body_len][body][u8 has_delay=0]
+    let route = normalize_queue_route(queue_name);
     let mut payload = Vec::new();
-    payload.extend_from_slice(&(queue_name.len() as u32).to_be_bytes());
-    payload.extend_from_slice(queue_name.as_bytes());
+    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route.as_bytes());
     payload.extend_from_slice(&(data.len() as u32).to_be_bytes());
     payload.extend_from_slice(data);
     payload.push(0); // has_delay = false
@@ -614,9 +623,10 @@ pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
 /// Build QUEUE RESERVE frame (msg_type 202)
 pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
     // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=0][u8 has_wait=0]
+    let route = normalize_queue_route(queue_name);
     let mut payload = Vec::new();
-    payload.extend_from_slice(&(queue_name.len() as u32).to_be_bytes());
-    payload.extend_from_slice(queue_name.as_bytes());
+    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route.as_bytes());
     payload.extend_from_slice(&30_u64.to_be_bytes()); // lease_seconds = 30
     payload.push(0); // has_batch_size = false
     payload.push(0); // has_wait = false
@@ -628,9 +638,10 @@ pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
 
 /// Build QUEUE RESERVE frame (msg_type 202) with wait_seconds.
 pub fn build_queue_dequeue_with_wait(queue_name: &str, wait_seconds: u64) -> Vec<u8> {
+    let route = normalize_queue_route(queue_name);
     let mut payload = Vec::new();
-    payload.extend_from_slice(&(queue_name.len() as u32).to_be_bytes());
-    payload.extend_from_slice(queue_name.as_bytes());
+    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route.as_bytes());
     payload.extend_from_slice(&30_u64.to_be_bytes());
     payload.push(0); // has_batch_size = false
     payload.push(1); // has_wait = true

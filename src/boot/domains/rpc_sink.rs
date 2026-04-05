@@ -873,7 +873,7 @@ pub struct RpcDomainSink {
     snapshot_syncing: AtomicBool,
     last_snapshot_elapsed_us: AtomicU64,
     snapshot_epoch: Instant,
-    metrics: Option<crate::observability::metrics::MetricsCollector>,
+    metrics: Option<crate::domains::rpc::RpcMetrics>,
 }
 
 impl RpcDomainSink {
@@ -914,7 +914,8 @@ impl RpcDomainSink {
         mut self,
         metrics: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.metrics = Some(metrics);
+        self.metrics = Some(crate::domains::rpc::RpcMetrics::new(metrics));
+        self.refresh_metrics_gauges();
         self
     }
 
@@ -974,6 +975,9 @@ impl RpcDomainSink {
     fn gauge_set(&self, name: &str, value: u64) {
         if let Some(ref metrics) = self.metrics {
             metrics.gauge_set(name, value);
+            if name == "rpc_pending_requests" {
+                metrics.set_pending_request_count(value as usize);
+            }
         }
     }
 
@@ -985,6 +989,13 @@ impl RpcDomainSink {
 
     fn histogram_observe_elapsed_us(&self, name: &str, start: Instant) {
         self.histogram_observe_us(name, start.elapsed().as_micros() as u64);
+    }
+
+    fn refresh_metrics_gauges(&self) {
+        if let Some(metrics) = &self.metrics {
+            metrics.set_worker_count(self.worker_count());
+            metrics.set_pending_request_count(self.pending_request_count());
+        }
     }
 
     fn expire_timed_out_requests(&self) {
@@ -1081,6 +1092,7 @@ impl RpcDomainSink {
         {
             self.schedule_admin_snapshot(false);
         }
+        self.refresh_metrics_gauges();
 
         tracing::debug!(
             domain = "rpc",
@@ -1121,6 +1133,7 @@ impl RpcDomainSink {
         if cleanup_result.removed_workers > 0 || cleanup_result.removed_pending > 0 {
             self.schedule_admin_snapshot(false);
         }
+        self.refresh_metrics_gauges();
 
         tracing::debug!(
             domain = "rpc",
@@ -1468,6 +1481,7 @@ impl MailboxSink for RpcDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
+        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
 
         tracing::debug!(
             domain = "rpc",
@@ -1484,6 +1498,9 @@ impl MailboxSink for RpcDomainSink {
         ) {
             Ok(msg) => msg,
             Err(e) => {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    metrics.record_failure(started_at);
+                }
                 tracing::warn!(domain = "rpc", error = %e, "Failed to parse RPC message");
                 return Err(DeliveryError::ActorStopped);
             }
@@ -1494,7 +1511,7 @@ impl MailboxSink for RpcDomainSink {
         let mut payload_encoder =
             crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
-        let (response, snapshot_policy) = match rpc_msg {
+        let (response, snapshot_policy, request_failed) = match rpc_msg {
             RpcMessage::Subscribe { worker_addr } => {
                 let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
                     session_inbox_address(*envelope.destination().family(), frame_ctx.session_id)
@@ -1515,7 +1532,8 @@ impl MailboxSink for RpcDomainSink {
                     session = frame_ctx.session_id,
                     "Worker registered"
                 );
-                (Some(RpcResponseMsg::Ok { data: vec![] }), Some(true))
+                self.refresh_metrics_gauges();
+                (Some(RpcResponseMsg::Ok { data: vec![] }), Some(true), false)
             }
             RpcMessage::Unsubscribe { worker_addr } => {
                 let cleanup_result =
@@ -1529,7 +1547,7 @@ impl MailboxSink for RpcDomainSink {
                     removed_pending = cleanup_result.removed_pending,
                     "Worker unregistered"
                 );
-                (Some(RpcResponseMsg::Ok { data: vec![] }), Some(true))
+                (Some(RpcResponseMsg::Ok { data: vec![] }), Some(true), false)
             }
             RpcMessage::Request(req) => {
                 self.expire_timed_out_requests();
@@ -1581,6 +1599,7 @@ impl MailboxSink for RpcDomainSink {
                             message: RPC_DUPLICATE_CORRELATION_ERROR.to_string(),
                         }),
                         None,
+                        true,
                     )
                 } else if !route_exists {
                     let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
@@ -1601,6 +1620,7 @@ impl MailboxSink for RpcDomainSink {
                             message: RPC_NO_WORKERS_ERROR.to_string(),
                         }),
                         None,
+                        true,
                     )
                 } else if total_live_requests >= RPC_MAX_PENDING_REQUESTS {
                     let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
@@ -1628,6 +1648,7 @@ impl MailboxSink for RpcDomainSink {
                             message: RPC_BACKPRESSURE_ERROR.to_string(),
                         }),
                         None,
+                        true,
                     )
                 } else if route_requires_queue {
                     let queued_len = state
@@ -1661,6 +1682,7 @@ impl MailboxSink for RpcDomainSink {
                                 message: RPC_BACKPRESSURE_ERROR.to_string(),
                             }),
                             None,
+                            true,
                         )
                     } else {
                         let pending_track_start = Instant::now();
@@ -1701,7 +1723,7 @@ impl MailboxSink for RpcDomainSink {
                             "Request queued on route-local RPC pending queue"
                         );
 
-                        (Some(RpcResponseMsg::Ok { data: vec![] }), None)
+                        (Some(RpcResponseMsg::Ok { data: vec![] }), None, false)
                     }
                 } else {
                     let worker_selection_start = Instant::now();
@@ -1763,7 +1785,7 @@ impl MailboxSink for RpcDomainSink {
                                     route = req.route.as_str(),
                                     "Request forwarded to worker"
                                 );
-                                (Some(RpcResponseMsg::Ok { data: vec![] }), Some(false))
+                                (Some(RpcResponseMsg::Ok { data: vec![] }), Some(false), false)
                             }
                             Err(crate::runtime::RouteError::RouteNotFound(_))
                             | Err(crate::runtime::RouteError::DeliveryFailed(
@@ -1794,6 +1816,7 @@ impl MailboxSink for RpcDomainSink {
                                         message: RPC_WORKER_NOT_FOUND_ERROR.to_string(),
                                     }),
                                     None,
+                                    true,
                                 )
                             }
                             Err(crate::runtime::RouteError::DeliveryFailed(
@@ -1823,6 +1846,7 @@ impl MailboxSink for RpcDomainSink {
                                         message: RPC_BACKPRESSURE_ERROR.to_string(),
                                     }),
                                     None,
+                                    true,
                                 )
                             }
                         }
@@ -1845,6 +1869,7 @@ impl MailboxSink for RpcDomainSink {
                                 message: RPC_NO_WORKERS_ERROR.to_string(),
                             }),
                             None,
+                            true,
                         )
                     }
                 }
@@ -1873,7 +1898,7 @@ impl MailboxSink for RpcDomainSink {
                 let mut state_changed = false;
                 let mut dispatch_route = None;
 
-                if let Some(owner_worker_session_id) = wrong_worker_owner {
+                let response_result = if let Some(owner_worker_session_id) = wrong_worker_owner {
                     let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
                     let pending_len = state.live_request_count();
                     drop(state);
@@ -1912,6 +1937,7 @@ impl MailboxSink for RpcDomainSink {
                         received_worker_session_id = frame_ctx.session_id,
                         "Rejected RPC response from non-owner worker"
                     );
+                    (None, None, true)
                 } else {
                     match caller_info.expect("caller info should be present when owner matched") {
                         RpcPendingResponseDisposition::Forward {
@@ -2026,6 +2052,7 @@ impl MailboxSink for RpcDomainSink {
                                 stream_end = resp.stream_end,
                                 "Response forwarded to requester and ACK sent to worker"
                             );
+                            (None, state_changed.then_some(false), false)
                         }
                         RpcPendingResponseDisposition::InvalidSequence {
                             pending: caller_info,
@@ -2097,6 +2124,7 @@ impl MailboxSink for RpcDomainSink {
                                 received_seq = resp.seq,
                                 "Rejected RPC response with invalid sequence"
                             );
+                            (None, state_changed.then_some(false), true)
                         }
                         RpcPendingResponseDisposition::Missing => {
                             let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
@@ -2133,14 +2161,17 @@ impl MailboxSink for RpcDomainSink {
                                 pending_len = live_request_count,
                                 "No pending request for response"
                             );
+                            (None, state_changed.then_some(false), true)
                         }
                     }
-                }
+                };
+
                 if let Some(route) = dispatch_route {
                     self.schedule_admin_snapshot(false);
                     self.dispatch_queued_requests_for_route(&route);
                 }
-                (None, state_changed.then_some(false))
+
+                response_result
             }
             RpcMessage::Ack { correlation_id } => {
                 let state_wait_start = Instant::now();
@@ -2188,7 +2219,7 @@ impl MailboxSink for RpcDomainSink {
                         received_worker_session_id = frame_ctx.session_id,
                         "Rejected RPC ACK from non-owner worker"
                     );
-                    (None, None)
+                    (None, None, true)
                 } else {
                     let pending_route_remove_start = Instant::now();
                     let removed_pending = state.remove_pending_request(&correlation_id);
@@ -2206,6 +2237,7 @@ impl MailboxSink for RpcDomainSink {
                     );
                     self.histogram_observe_us("rpc_ack_state_wait_us", state_wait_us);
                     self.histogram_observe_us("rpc_ack_state_hold_us", state_hold_us);
+                    let removed_pending_found = removed_pending.is_some();
                     if let Some((_, pending_len)) = removed_pending {
                         self.histogram_observe_us(
                             "rpc_pending_untrack_us",
@@ -2225,7 +2257,7 @@ impl MailboxSink for RpcDomainSink {
                         correlation_id = %correlation_id,
                         "Request acknowledged and cleaned up"
                     );
-                    (None, removed_pending.is_some().then_some(false))
+                    (None, removed_pending_found.then_some(false), !removed_pending_found)
                 }
             }
             RpcMessage::Deliver(_) => (
@@ -2233,6 +2265,7 @@ impl MailboxSink for RpcDomainSink {
                     "Deliver not valid client message".to_string(),
                 )),
                 None,
+                true,
             ),
         };
 
@@ -2252,6 +2285,14 @@ impl MailboxSink for RpcDomainSink {
             );
             if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
                 let _ = self.router.route(response_envelope);
+            }
+        }
+
+        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            if request_failed {
+                metrics.record_failure(started_at);
+            } else {
+                metrics.record_success(started_at);
             }
         }
 

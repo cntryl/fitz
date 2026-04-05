@@ -39,6 +39,7 @@
 
 pub mod actor;
 pub mod constants;
+pub mod metrics;
 pub mod protocol;
 pub mod session;
 pub mod storage;
@@ -51,6 +52,7 @@ pub use actor::StreamActor;
 pub use constants::{
     DEFAULT_LEASE_SIZE, DEFAULT_REALM_LEASE_BLOCK, INTERNAL_REALM_SEGMENT, NOTICE_DEBOUNCE_MS,
 };
+pub use metrics::StreamMetrics;
 pub use protocol::{
     AppendResponse, GetMetadataResponse, ReadResponse, StreamError, StreamMessage, StreamMetadata,
     StreamRecord,

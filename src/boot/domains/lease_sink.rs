@@ -8,6 +8,7 @@
 //! interpreted as durable or cross-node identifiers.
 
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
+use crate::domains::lease::LeaseMetrics;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
@@ -80,6 +81,7 @@ pub struct LeaseDomainSink {
     families: Mutex<HashMap<u64, RoutedSubscriptionSet<LeaseSubscription>>>,
     next_sub_id: AtomicU64,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    metrics: Option<LeaseMetrics>,
 }
 
 struct LeaseSubscription {
@@ -119,7 +121,17 @@ impl LeaseDomainSink {
             families: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
             admin_read_model,
+            metrics: None,
         }
+    }
+
+    pub fn with_metrics(
+        mut self,
+        collector: crate::observability::metrics::MetricsCollector,
+    ) -> Self {
+        self.metrics = Some(LeaseMetrics::new(collector));
+        self.refresh_metrics_gauges();
+        self
     }
 
     pub fn stop(&self) {
@@ -182,11 +194,56 @@ impl LeaseDomainSink {
     ) {
         self.admin_read_model
             .upsert_lease(self.lease_info_from_state(key, state));
+        self.refresh_metrics_gauges();
     }
 
     fn remove_admin_lease(&self, key: &crate::domains::lease::protocol::LeaseKey) {
         self.admin_read_model
             .remove_lease(&key.realm, &key.area, &key.resource);
+        self.refresh_metrics_gauges();
+    }
+
+    fn refresh_metrics_gauges(&self) {
+        let lease_count = self.lease_count();
+        let waiter_count = self.waiter_count();
+
+        if let Some(metrics) = &self.metrics {
+            metrics.set_active_leases(lease_count);
+            metrics.set_waiter_depth(waiter_count);
+        } else {
+            crate::boot::observability::gauge_set("fitz_lease_active_gauge", lease_count as u64);
+            crate::boot::observability::gauge_set("fitz_lease_waiter_depth", waiter_count as u64);
+        }
+    }
+
+    fn counter_inc(&self, name: &str) {
+        if let Some(metrics) = &self.metrics {
+            metrics.counter_inc(name);
+        } else {
+            crate::boot::observability::counter_inc(name);
+        }
+    }
+
+    fn waiter_count(&self) -> usize {
+        self.pending_acquires
+            .lock()
+            .values()
+            .map(VecDeque::len)
+            .sum()
+    }
+
+    fn lease_response_is_failure(response: &crate::domains::lease::protocol::LeaseResponse) -> bool {
+        matches!(
+            response,
+            crate::domains::lease::protocol::LeaseResponse::Timeout
+                | crate::domains::lease::protocol::LeaseResponse::HeldByOther { .. }
+                | crate::domains::lease::protocol::LeaseResponse::AlreadyQueued { .. }
+                | crate::domains::lease::protocol::LeaseResponse::QueueFull { .. }
+                | crate::domains::lease::protocol::LeaseResponse::NotHeld
+                | crate::domains::lease::protocol::LeaseResponse::Expired
+                | crate::domains::lease::protocol::LeaseResponse::Fenced { .. }
+                | crate::domains::lease::protocol::LeaseResponse::NotFound
+        )
     }
 
     fn track_session_lease(
@@ -359,13 +416,16 @@ impl LeaseDomainSink {
         };
 
         for waiter in expired_waiters {
-            crate::boot::observability::gauge_dec("fitz_lease_waiter_depth");
             self.untrack_session_waiter(waiter.session_id, key, waiter.queued_token);
-            crate::boot::observability::counter_inc("fitz_lease_acquire_timeouts_total");
+            self.counter_inc("fitz_lease_acquire_timeouts_total");
             self.send_waiter_response(
                 &waiter,
                 &crate::domains::lease::protocol::LeaseResponse::Timeout,
             );
+        }
+
+        if !key.resource.is_empty() {
+            self.refresh_metrics_gauges();
         }
     }
 
@@ -428,6 +488,7 @@ impl LeaseDomainSink {
                     fencing_token: waiter.queued_token,
                 },
             );
+            self.refresh_metrics_gauges();
         }
     }
 
@@ -461,12 +522,18 @@ impl LeaseDomainSink {
             expired
         };
 
+        let had_expired_waiters = !expired_waiters.is_empty();
+
         for (key, waiter) in expired_waiters {
             self.untrack_session_waiter(waiter.session_id, &key, waiter.queued_token);
             self.send_waiter_response(
                 &waiter,
                 &crate::domains::lease::protocol::LeaseResponse::Timeout,
             );
+        }
+
+        if had_expired_waiters {
+            self.refresh_metrics_gauges();
         }
 
         let expired_leases = {
@@ -487,7 +554,7 @@ impl LeaseDomainSink {
         };
 
         for (key, state) in expired_leases {
-            crate::boot::observability::counter_inc("fitz_lease_forced_releases_total");
+            self.counter_inc("fitz_lease_forced_releases_total");
             self.untrack_session_lease(state.owner_session_id, &key);
             self.remove_admin_lease(&key);
             self.notify_lease_change(&key);
@@ -503,6 +570,8 @@ impl LeaseDomainSink {
         for key in queued_keys {
             self.grant_next_waiter_if_available(&key, now);
         }
+
+        self.refresh_metrics_gauges();
     }
 
     pub fn cleanup_session(&self, session_id: u64) {
@@ -542,6 +611,7 @@ impl LeaseDomainSink {
             subscriptions_removed = removed_subscriptions,
             "Lease: released all leases for disconnected session"
         );
+        self.refresh_metrics_gauges();
     }
 
     pub fn lease_count(&self) -> usize {
@@ -716,7 +786,6 @@ impl LeaseDomainSink {
                     drop(pending_acquires);
 
                     self.track_session_waiter(owner_session_id, &key, queued_token);
-                    crate::boot::observability::gauge_inc("fitz_lease_waiter_depth");
 
                     LeaseResponse::Queued {
                         fencing_token: queued_token,
@@ -728,6 +797,10 @@ impl LeaseDomainSink {
         if let Some(state) = acquired_state.as_ref() {
             self.track_session_lease(owner_session_id, &key);
             self.upsert_admin_lease(&key, state);
+        }
+
+        if matches!(response, LeaseResponse::Queued { .. }) {
+            self.refresh_metrics_gauges();
         }
 
         response
@@ -756,9 +829,7 @@ impl LeaseDomainSink {
                 } else if state.owner_id != owner_id {
                     LeaseResponse::NotHeld
                 } else if state.fencing_token != fencing_token {
-                    crate::boot::observability::counter_inc(
-                        "fitz_lease_invalid_token_rejects_total",
-                    );
+                    self.counter_inc("fitz_lease_invalid_token_rejects_total");
                     LeaseResponse::Fenced {
                         current_token: state.fencing_token,
                     }
@@ -805,9 +876,7 @@ impl LeaseDomainSink {
                 }
                 Some(state) if state.owner_id != owner_id => LeaseResponse::NotHeld,
                 Some(state) if state.fencing_token != fencing_token => {
-                    crate::boot::observability::counter_inc(
-                        "fitz_lease_invalid_token_rejects_total",
-                    );
+                    self.counter_inc("fitz_lease_invalid_token_rejects_total");
                     LeaseResponse::Fenced {
                         current_token: state.fencing_token,
                     }
@@ -888,6 +957,7 @@ impl MailboxSink for LeaseDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
+        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
         let mut payload_encoder =
             crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
@@ -906,6 +976,9 @@ impl MailboxSink for LeaseDomainSink {
                 msg
             }
             Err(e) => {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    metrics.record_failure(started_at);
+                }
                 tracing::warn!(domain = "lease", error = %e, "Failed to parse lease message");
                 return Err(DeliveryError::ActorStopped);
             }
@@ -982,6 +1055,9 @@ impl MailboxSink for LeaseDomainSink {
             }
             LeaseMessage::Tick => {
                 self.sweep_expired_state();
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    metrics.record_success(started_at);
+                }
                 return Ok(());
             }
             LeaseMessage::Subscribe { family_id, pattern } => {
@@ -998,6 +1074,11 @@ impl MailboxSink for LeaseDomainSink {
                         );
                         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
                             let _ = self.router.route(response_envelope);
+                        }
+                        if let (Some(metrics), Some(started_at)) =
+                            (self.metrics.as_ref(), request_started)
+                        {
+                            metrics.record_failure(started_at);
                         }
                         return Ok(());
                     }
@@ -1030,6 +1111,12 @@ impl MailboxSink for LeaseDomainSink {
                     if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
                         let _ = self.router.route(response_envelope);
                     }
+                    self.refresh_metrics_gauges();
+                    if let (Some(metrics), Some(started_at)) =
+                        (self.metrics.as_ref(), request_started)
+                    {
+                        metrics.record_success(started_at);
+                    }
                     return Ok(());
                 }
 
@@ -1056,6 +1143,10 @@ impl MailboxSink for LeaseDomainSink {
                 );
                 if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
                     let _ = self.router.route(response_envelope);
+                }
+                self.refresh_metrics_gauges();
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    metrics.record_success(started_at);
                 }
                 return Ok(());
             }
@@ -1085,6 +1176,10 @@ impl MailboxSink for LeaseDomainSink {
                 if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
                     let _ = self.router.route(response_envelope);
                 }
+                self.refresh_metrics_gauges();
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    metrics.record_success(started_at);
+                }
                 return Ok(());
             }
             LeaseMessage::UnsubscribeAll => {
@@ -1103,6 +1198,10 @@ impl MailboxSink for LeaseDomainSink {
                 if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
                     let _ = self.router.route(response_envelope);
                 }
+                self.refresh_metrics_gauges();
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    metrics.record_success(started_at);
+                }
                 return Ok(());
             }
         };
@@ -1120,6 +1219,14 @@ impl MailboxSink for LeaseDomainSink {
         );
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             let _ = self.router.route(response_envelope);
+        }
+
+        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            if Self::lease_response_is_failure(&domain_response) {
+                metrics.record_failure(started_at);
+            } else {
+                metrics.record_success(started_at);
+            }
         }
 
         Ok(())

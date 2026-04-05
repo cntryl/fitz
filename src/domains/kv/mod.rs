@@ -40,9 +40,11 @@
 //! - All KV persistence MUST specify explicit CF via RouteFamily
 
 pub mod actor;
+pub mod metrics;
 pub mod protocol;
 pub mod session;
 
 pub use actor::KvActor;
+pub use metrics::KvMetrics;
 pub use protocol::{KvError, KvMessage, KvPair, KvResponse, ScanQuery, TxMode};
 pub use session::SessionActor;

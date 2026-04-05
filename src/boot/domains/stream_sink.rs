@@ -1,4 +1,5 @@
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
+use crate::domains::stream::StreamMetrics;
 use crate::domains::stream::store::StreamAdminRecord;
 use crate::domains::stream::{StreamActor, StreamRecord, StreamStore};
 use crate::protocol::frame_context::FrameContext;
@@ -74,6 +75,7 @@ pub struct StreamDomainSink {
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     admin_snapshot_dirty: AtomicBool,
+    metrics: Option<StreamMetrics>,
     active: AtomicBool,
 }
 
@@ -94,8 +96,18 @@ impl StreamDomainSink {
             router,
             admin_read_model,
             admin_snapshot_dirty: AtomicBool::new(true),
+            metrics: None,
             active: AtomicBool::new(true),
         }
+    }
+
+    pub fn with_metrics(
+        mut self,
+        collector: crate::observability::metrics::MetricsCollector,
+    ) -> Self {
+        self.metrics = Some(StreamMetrics::new(collector));
+        self.refresh_metrics_gauges();
+        self
     }
 
     pub fn stop(&self) {
@@ -144,6 +156,20 @@ impl StreamDomainSink {
 
     fn mark_admin_snapshot_dirty(&self) {
         self.admin_snapshot_dirty.store(true, Ordering::Relaxed);
+        self.refresh_metrics_gauges();
+    }
+
+    fn refresh_metrics_gauges(&self) {
+        if let Some(metrics) = &self.metrics {
+            metrics.set_stream_count(self.stream_count());
+            metrics.set_subscription_count(self.subscription_count());
+        }
+    }
+
+    fn stream_response_is_failure(
+        response: &crate::protocol::stream_codec::StreamResponse,
+    ) -> bool {
+        matches!(response, crate::protocol::stream_codec::StreamResponse::Error(_))
     }
 
     pub fn refresh_admin_snapshot_if_dirty(&self) {
@@ -528,6 +554,8 @@ impl StreamDomainSink {
         for (family_id, state) in families.iter_mut() {
             state.remove_session(RouteFamily::new(*family_id), session_id);
         }
+        drop(families);
+        self.refresh_metrics_gauges();
     }
 
     fn cleanup_session(&self, session_id: u64) {
@@ -582,6 +610,7 @@ impl MailboxSink for StreamDomainSink {
             Some(ctx) => ctx.clone(),
             None => return Err(DeliveryError::ActorStopped),
         };
+        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
         let mut payload_encoder = PayloadEncoder::with_capacity(256);
 
         let parsed_frame = match crate::protocol::stream_codec::parse_request(
@@ -597,13 +626,22 @@ impl MailboxSink for StreamDomainSink {
             }),
         ) {
             Ok(msg) => msg,
-            Err(_) => return Err(DeliveryError::ActorStopped),
+            Err(_) => {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    metrics.record_failure(started_at);
+                }
+                return Err(DeliveryError::ActorStopped);
+            }
         };
 
         use crate::domains::stream::protocol::{StreamMessage, StreamSubscriptionMessage};
         use crate::protocol::stream_codec::{ParsedStreamFrame, StreamResponse};
 
-        crate::boot::observability::counter_inc(STREAM_OPERATIONS_TOTAL);
+        if let Some(metrics) = &self.metrics {
+            metrics.counter_inc(STREAM_OPERATIONS_TOTAL);
+        } else {
+            crate::boot::observability::counter_inc(STREAM_OPERATIONS_TOTAL);
+        }
 
         // Subscription messages are handled entirely by the sink without touching StreamActor.
         if let ParsedStreamFrame::Sub(sub_msg) = parsed_frame {
@@ -685,6 +723,15 @@ impl MailboxSink for StreamDomainSink {
             );
             if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
                 let _ = self.router.route(response_envelope);
+            }
+
+            self.refresh_metrics_gauges();
+            if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                if Self::stream_response_is_failure(&response) {
+                    metrics.record_failure(started_at);
+                } else {
+                    metrics.record_success(started_at);
+                }
             }
             return Ok(());
         }
@@ -902,6 +949,14 @@ impl MailboxSink for StreamDomainSink {
         );
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             let _ = self.router.route(response_envelope);
+        }
+
+        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            if Self::stream_response_is_failure(&response) {
+                metrics.record_failure(started_at);
+            } else {
+                metrics.record_success(started_at);
+            }
         }
 
         Ok(())

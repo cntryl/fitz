@@ -41,6 +41,7 @@ pub struct KvDomainSink {
     tx_to_resource: Mutex<HashMap<(u64, u64), KvResourceLockKey>>,
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    metrics: Option<crate::domains::kv::KvMetrics>,
     active: AtomicBool,
 }
 
@@ -57,8 +58,20 @@ impl KvDomainSink {
             tx_to_resource: Mutex::new(HashMap::new()),
             router,
             admin_read_model,
+            metrics: None,
             active: AtomicBool::new(true),
         }
+    }
+
+    pub fn with_metrics(
+        mut self,
+        collector: crate::observability::metrics::MetricsCollector,
+    ) -> Self {
+        self.metrics = Some(crate::domains::kv::KvMetrics::new(collector));
+        if let Some(metrics) = &self.metrics {
+            metrics.set_active_transactions(self.active_transaction_count());
+        }
+        self
     }
 
     pub fn stop(&self) {
@@ -83,6 +96,9 @@ impl KvDomainSink {
             })
             .collect();
         self.admin_read_model.replace_kv_transactions(transactions);
+        if let Some(metrics) = &self.metrics {
+            metrics.set_active_transactions(self.active_transaction_count());
+        }
     }
 
     /// Remove all live KV transaction state owned by a disconnected session.
@@ -163,6 +179,10 @@ impl MailboxSink for KvDomainSink {
         ) {
             Ok(msg) => msg,
             Err(e) => {
+                if let Some(metrics) = &self.metrics {
+                    let started_at = metrics.record_request_start();
+                    metrics.record_failure(started_at);
+                }
                 tracing::warn!(
                     domain = "kv",
                     session = frame_ctx.session_id,
@@ -184,6 +204,7 @@ impl MailboxSink for KvDomainSink {
 
         use crate::domains::kv::{KvError, KvMessage, KvResponse, TxMode};
         let session_id = frame_ctx.session_id;
+        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
 
         tracing::trace!(
             domain = "kv",
@@ -400,6 +421,13 @@ impl MailboxSink for KvDomainSink {
         let response_envelope = match envelope.try_reply_to(response_ctx) {
             Some(env) => env,
             None => {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    if matches!(&response, crate::domains::kv::KvResponse::Error { .. }) {
+                        metrics.record_failure(started_at);
+                    } else {
+                        metrics.record_success(started_at);
+                    }
+                }
                 tracing::warn!(
                     domain = "kv",
                     session = frame_ctx.session_id,
@@ -411,6 +439,13 @@ impl MailboxSink for KvDomainSink {
 
         match self.router.route(response_envelope) {
             Ok(_) => {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    if matches!(&response, crate::domains::kv::KvResponse::Error { .. }) {
+                        metrics.record_failure(started_at);
+                    } else {
+                        metrics.record_success(started_at);
+                    }
+                }
                 tracing::debug!(
                     domain = "kv",
                     session = frame_ctx.session_id,
@@ -419,6 +454,9 @@ impl MailboxSink for KvDomainSink {
                 Ok(())
             }
             Err(e) => {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                    metrics.record_failure(started_at);
+                }
                 tracing::warn!(
                     domain = "kv",
                     session = frame_ctx.session_id,

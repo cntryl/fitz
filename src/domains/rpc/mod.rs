@@ -56,6 +56,7 @@
 
 pub mod actor;
 pub mod errors;
+pub mod metrics;
 pub mod protocol;
 pub mod reply_inbox;
 pub mod session;
@@ -63,6 +64,7 @@ pub mod session;
 // Re-export primary types
 pub use actor::RpcRouteActor;
 pub use errors::{RpcError, RpcErrorCode};
+pub use metrics::RpcMetrics;
 pub use protocol::{RpcMessage, RpcRequest, RpcResponse, RpcWorkItem};
 pub use reply_inbox::{InboxMessage, ReplyInboxActor};
 pub use session::SessionActor;

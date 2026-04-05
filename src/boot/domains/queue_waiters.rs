@@ -18,6 +18,7 @@ pub(super) struct PendingReceive {
     pub msg_type: u16,
     pub lease_seconds: u64,
     pub batch_size: Option<usize>,
+    pub requested_at: Instant,
     pub expires_at: Instant,
 }
 
@@ -73,6 +74,8 @@ impl QueueWaiterRegistry {
             });
         }
 
+        let requested_at = Instant::now();
+
         queue.push_back(PendingReceive {
             waiter_id,
             session_id: frame_ctx.session_id,
@@ -83,7 +86,8 @@ impl QueueWaiterRegistry {
             msg_type: frame_ctx.msg_type.as_u16(),
             lease_seconds,
             batch_size,
-            expires_at: Instant::now() + Duration::from_secs(wait_seconds),
+            requested_at,
+            expires_at: requested_at + Duration::from_secs(wait_seconds),
         });
         drop(pending_receives);
 

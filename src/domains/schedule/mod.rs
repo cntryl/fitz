@@ -13,11 +13,13 @@
 //! live, session-scoped delivery state only.
 
 pub mod actor;
+pub mod metrics;
 pub mod protocol;
 pub mod session;
 pub mod store;
 
 pub use actor::ScheduleActor;
+pub use metrics::ScheduleMetrics;
 pub use protocol::{
     CronSchedule, ScheduleCreateEntry, ScheduleDef, ScheduleError, ScheduleListEntry,
     ScheduleMessage, ScheduleResponse,

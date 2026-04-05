@@ -140,6 +140,7 @@
 
 pub mod actor;
 pub mod core;
+pub mod metrics;
 pub mod policy;
 pub mod protocol;
 pub mod projection;
@@ -147,6 +148,7 @@ pub mod session;
 
 pub use actor::{Clock, QueueActor, SystemClock};
 pub use core::{MessageId, QueueKey, ReservedMessage};
+pub use metrics::QueueMetrics;
 pub use policy::{MAX_WAIT_QUEUE_DEPTH, MAX_WAIT_SECONDS, WAIT_SWEEP_INTERVAL};
 pub use projection::{QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueLeaseSnapshot};
 pub use protocol::{QueueMessage, QueueResponse};
