@@ -1464,11 +1464,12 @@ mod tests {
                 router.clone(),
                 admin_read_model.clone(),
             )),
-            queue: Arc::new(QueueDomainSink::new(
+            queue: Arc::new(QueueDomainSink::with_dedup_store(
                 store.clone(),
                 router.clone(),
                 admin_read_model.clone(),
                 cntryl_midge::WriteOptions::buffered(),
+                crate::utils::idempotency::default_dedup_store(),
             )),
             notice: Arc::new(NoticeDomainSink::new(
                 router.clone(),

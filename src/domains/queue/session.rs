@@ -195,7 +195,7 @@ mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         )
     }
 

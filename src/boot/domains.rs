@@ -92,11 +92,12 @@ pub fn setup(
     router.register_domain_pattern("kv", kv_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered KV domain (handles kv://* across all route families)");
 
-    let queue_sink = Arc::new(QueueDomainSink::new(
+    let queue_sink = Arc::new(QueueDomainSink::with_dedup_store(
         store.clone(),
         router.clone(),
         admin_read_model.clone(),
         queue_write_options,
+        crate::utils::idempotency::default_dedup_store(),
     ));
     router.register_domain_pattern("queue", queue_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Queue domain (handles queue://* across all route families)");

@@ -65,8 +65,14 @@ use uuid::Uuid;
 /// Unique identifier for a context-dependent operation that requires deduplication
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DedupIdentifier {
-    /// Queue COMPLETE: (message_id, token)
-    QueueComplete(u64, u64),
+    /// Queue COMPLETE: (family, area, resource, message_id, token)
+    QueueComplete {
+        family: u64,
+        area: String,
+        resource: String,
+        message_id: u64,
+        token: u64,
+    },
     /// RPC REQUEST: correlation_id (Uuid)
     RpcRequest(Uuid),
 }
@@ -140,6 +146,11 @@ impl DedupStore {
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
+}
+
+/// Create a fresh deduplication store using the default queue/RPC retry TTL.
+pub fn default_dedup_store() -> Arc<DedupStore> {
+    Arc::new(DedupStore::new(Duration::from_secs(300)))
 }
 
 /// Classify an operation by domain and message type ID

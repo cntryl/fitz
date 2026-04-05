@@ -29,7 +29,7 @@ pub fn create_test_queue_actor(
         queue_key,
         store,
         max_attempts,
-        crate::utils::idempotency::global_dedup_store(),
+        crate::utils::idempotency::default_dedup_store(),
         cntryl_midge::WriteOptions::best_effort(),
     )
 }

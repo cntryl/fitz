@@ -2825,7 +2825,13 @@ impl QueueActor {
         let dedup_key = DedupKey {
             realm: self.queue_key.realm.clone(),
             domain: Domain::Queue,
-            identifier: DedupIdentifier::QueueComplete(id.as_u64(), token),
+            identifier: DedupIdentifier::QueueComplete {
+                family: self.queue_key.family.as_u64(),
+                area: self.queue_key.area.clone(),
+                resource: self.queue_key.resource.clone(),
+                message_id: id.as_u64(),
+                token,
+            },
         };
 
         if let Some(cached_response) = self.dedup_store.get(&dedup_key) {
@@ -4421,6 +4427,23 @@ pub mod tests {
         }
     }
 
+    fn send_and_reserve_single_message(actor: &mut QueueActor, body: &str) -> (MessageId, u64) {
+        let send_response = actor.handle_send(Bytes::from(body.to_string()), None);
+        let id = match send_response {
+            QueueResponse::Sent { id } => id,
+            _ => panic!("Expected Sent response"),
+        };
+
+        let receive_response = actor.handle_receive(30, Some(1));
+        match receive_response {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 1);
+                (id, messages[0].token)
+            }
+            _ => panic!("Expected Received response"),
+        }
+    }
+
     fn read_index_meta(
         store: &Arc<cntryl_midge::MidgeEngine>,
         queue_key: &QueueKey,
@@ -5155,6 +5178,103 @@ pub mod tests {
         // Assert
         assert_eq!(response, QueueResponse::InvalidToken);
         assert_eq!(actor.inflight.len(), 1);
+    }
+
+    #[test]
+    fn should_isolate_ack_dedup_given_different_queue_resources() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let shared_dedup_store = crate::utils::idempotency::default_dedup_store();
+        let first_key = unique_queue_key("jobs-dedup-a");
+        let second_key = unique_queue_key("jobs-dedup-b");
+        let mut first_actor = QueueActor::new(
+            RouteFamily::new(0),
+            first_key,
+            store.clone(),
+            None,
+            shared_dedup_store.clone(),
+        );
+        let mut second_actor = QueueActor::new(
+            RouteFamily::new(0),
+            second_key,
+            store,
+            None,
+            shared_dedup_store,
+        );
+        let (first_id, first_token) = send_and_reserve_single_message(&mut first_actor, "first");
+        let (second_id, second_token) =
+            send_and_reserve_single_message(&mut second_actor, "second");
+        if second_token == first_token {
+            second_actor
+                .inflight
+                .get_mut(&second_id)
+                .expect("second inflight message")
+                .token = first_token.wrapping_add(1);
+        }
+
+        // Act
+        let first_response = first_actor.handle_ack(first_id, first_token);
+        let second_response = second_actor.handle_ack(second_id, first_token);
+
+        // Assert
+        assert_eq!(first_id, second_id);
+        assert_eq!(first_response, QueueResponse::Acked);
+        assert_eq!(second_response, QueueResponse::InvalidToken);
+    }
+
+    #[test]
+    fn should_isolate_ack_dedup_given_different_route_families() {
+        // Arrange
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1, 2]);
+        let shared_dedup_store = crate::utils::idempotency::default_dedup_store();
+        let first_key = QueueKey {
+            family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "queue".to_string(),
+            resource: format!("jobs-family-{}", Uuid::new_v4()),
+        };
+        let second_key = QueueKey {
+            family: RouteFamily::new(2),
+            realm: first_key.realm.clone(),
+            area: first_key.area.clone(),
+            resource: first_key.resource.clone(),
+        };
+        let mut first_actor = QueueActor::new(
+            RouteFamily::new(1),
+            first_key,
+            store.clone(),
+            None,
+            shared_dedup_store.clone(),
+        );
+        let mut second_actor = QueueActor::new(
+            RouteFamily::new(2),
+            second_key,
+            store,
+            None,
+            shared_dedup_store,
+        );
+        let (first_id, first_token) = send_and_reserve_single_message(&mut first_actor, "first");
+        let (second_id, second_token) =
+            send_and_reserve_single_message(&mut second_actor, "second");
+        if second_token == first_token {
+            second_actor
+                .inflight
+                .get_mut(&second_id)
+                .expect("second inflight message")
+                .token = first_token.wrapping_add(1);
+        }
+
+        // Act
+        let first_response = first_actor.handle_ack(first_id, first_token);
+        let second_response = second_actor.handle_ack(second_id, first_token);
+
+        // Assert
+        assert_eq!(first_id, second_id);
+        assert_eq!(first_response, QueueResponse::Acked);
+        assert_eq!(second_response, QueueResponse::InvalidToken);
     }
 
     #[test]
