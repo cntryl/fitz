@@ -2600,9 +2600,8 @@ impl QueueActor {
     /// Handle reserve operation
     ///
     /// IMPORTANT: This method ALWAYS returns immediately (never blocks).
-    /// QueueDomainSink owns any `wait_seconds` handling and resumes waiting
-    /// requests when the queue becomes ready or when the wait expires.
-    /// QueueActor never stores waiters or blocks on empty queues.
+    /// QueueDomainSink owns queue watch notifications outside the actor.
+    /// QueueActor never stores subscriptions or blocks on empty queues.
     pub fn handle_receive(
         &mut self,
         lease_seconds: u64,
@@ -2689,9 +2688,8 @@ impl QueueActor {
             });
         }
 
-        // If no messages were reserved, return an empty response (avoid NotFound)
+        // If no messages were reserved, return an empty response (avoid NotFound).
         // Clients expect an empty slice when the queue is empty rather than an error.
-        // QueueDomainSink owns long-poll wait_seconds handling outside the actor.
         if messages.is_empty() {
             return QueueResponse::Received { messages };
         }
@@ -3615,21 +3613,13 @@ impl Actor for QueueActor {
                 body,
                 delay_seconds,
                 ..
-            } => {
-                self.handle_send(body, delay_seconds)
-            }
+            } => self.handle_send(body, delay_seconds),
 
             QueueMessage::Receive {
                 lease_seconds,
                 batch_size,
-                wait_seconds,
                 ..
-            } => {
-                // NOTE: wait_seconds is handled in QueueDomainSink, not in QueueActor.
-                // QueueActor always returns immediately and never stores waiters.
-                let _ = wait_seconds;
-                self.handle_receive(lease_seconds, batch_size)
-            }
+            } => self.handle_receive(lease_seconds, batch_size),
 
             QueueMessage::Extend {
                 id,

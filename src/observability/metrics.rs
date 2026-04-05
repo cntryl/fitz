@@ -96,7 +96,8 @@ impl DomainMetricSet {
 
     fn observe_latency_ms(&self, started_at: Instant) {
         let elapsed_ms = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
-        self.collector.histogram_observe_ms(self.latency_ms, elapsed_ms);
+        self.collector
+            .histogram_observe_ms(self.latency_ms, elapsed_ms);
     }
 }
 

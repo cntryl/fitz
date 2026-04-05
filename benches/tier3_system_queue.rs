@@ -1,10 +1,10 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch,
-    build_queue_dequeue_with_wait, build_queue_enqueue, create_bench_queue_actor,
-    create_bench_queue_sink, extract_single_tlv_field, register_session_counting_sink,
-    register_session_queue_sink, route_frame, CountingSink, FrameQueueSink,
+    build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch, build_queue_enqueue,
+    build_queue_watch, create_bench_queue_actor, create_bench_queue_sink, extract_single_tlv_field,
+    register_session_counting_sink, register_session_queue_sink, route_frame, CountingSink,
+    FrameQueueSink,
 };
 use fitz::domains::queue::{Clock, QueueActor, QueueKey, QueueResponse, ReservedMessage};
 use fitz::protocol::frame::ChannelId;
@@ -86,15 +86,15 @@ fn request_queue_response(
         .expect("queue response")
 }
 
-fn register_waiting_receive(
+fn register_queue_watch(
     router: &Arc<Router>,
     family: RouteFamily,
     source: &RouteAddress,
     destination: &str,
     session_id: u64,
 ) {
-    let wait_frame = build_queue_dequeue_with_wait(destination, 5);
-    let (msg_type, payload) = extract_single_tlv_field(&wait_frame);
+    let watch_frame = build_queue_watch(destination);
+    let (msg_type, payload) = extract_single_tlv_field(&watch_frame);
     route_frame(
         router.as_ref(),
         source,
@@ -690,7 +690,7 @@ fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
 
     let iterations = ctx.measure_for(Duration::from_secs(5), || {
         for (session_id, source, sink) in &waiters {
-            register_waiting_receive(&router, family, source, route, *session_id);
+            register_queue_watch(&router, family, source, route, *session_id);
             sink.reset();
         }
 
@@ -709,8 +709,7 @@ fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
 
         let deliveries: usize = waiters.iter().map(|(_, _, sink)| sink.count()).sum();
         assert_eq!(
-            deliveries,
-            waiter_count as usize,
+            deliveries, waiter_count as usize,
             "expected queue sends to wake all waiting receivers"
         );
     });

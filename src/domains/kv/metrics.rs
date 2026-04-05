@@ -6,6 +6,7 @@ pub const METRIC_SUCCESS_TOTAL: &str = "fitz_kv_success_total";
 pub const METRIC_FAILURE_TOTAL: &str = "fitz_kv_failure_total";
 pub const METRIC_LATENCY_MS: &str = "fitz_kv_latency_ms";
 pub const METRIC_ACTIVE_GAUGE: &str = "fitz_kv_active_gauge";
+pub const METRIC_SUBSCRIPTIONS_GAUGE: &str = "fitz_kv_subscriptions_gauge";
 
 #[derive(Clone)]
 pub struct KvMetrics {
@@ -43,5 +44,10 @@ impl KvMetrics {
 
     pub fn set_active_transactions(&self, count: usize) {
         self.metrics.gauge_set(METRIC_ACTIVE_GAUGE, count as u64);
+    }
+
+    pub fn set_subscription_count(&self, count: usize) {
+        self.metrics
+            .gauge_set(METRIC_SUBSCRIPTIONS_GAUGE, count as u64);
     }
 }

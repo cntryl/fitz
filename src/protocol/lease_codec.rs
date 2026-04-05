@@ -1,7 +1,7 @@
 //! Lease domain codec - ephemeral lock operations
 //!
 //! Encodes/decodes TLV messages for the lease domain inside one running broker.
-//! Supports Acquire, Extend, Release, Query operations.
+//! Supports Acquire, Extend, Release, Query, Subscribe, and Unsubscribe operations.
 //!
 //! Wire format follows CLIENT_SPEC: ACQUIRE success includes response_type
 //! (0=Acquired, 1=AlreadyHeld, 2=Queued, 3=AlreadyQueued) + fencing_token;
@@ -13,10 +13,12 @@
 //!
 //! Lease fencing tokens are process-local; a restart resets the token lineage.
 
-use crate::domains::lease::protocol::{LeaseMessage, LeaseResponse as DomainLeaseResponse};
+use crate::domains::lease::protocol::{
+    LeaseMessage, LeaseResponse as DomainLeaseResponse, LeaseSubscriptionMessage,
+};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use crate::runtime::routing::{Route, RouteFamily};
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 /// ACQUIRE success response_type (CLIENT_SPEC)
 pub mod acquire_response_type {
@@ -26,26 +28,71 @@ pub mod acquire_response_type {
     pub const ALREADY_QUEUED: u8 = 3;
 }
 
+/// Lease domain message type IDs.
+pub mod msg_type {
+    pub const ACQUIRE: u16 = 400;
+    pub const RENEW: u16 = 401;
+    pub const RELEASE: u16 = 402;
+    pub const QUERY: u16 = 403;
+    pub const SUBSCRIBE: u16 = 407;
+    pub const UNSUBSCRIBE: u16 = 408;
+    pub const NOTIFY: u16 = 409;
+}
+
+#[derive(Debug, Clone)]
+pub enum ParsedLeaseFrame {
+    Op(LeaseMessage),
+    Sub(LeaseSubscriptionMessage),
+}
+
+/// Parse an incoming lease frame.
+pub fn parse_frame(
+    ctx: &FrameContext,
+    payload: &[u8],
+    route_family: RouteFamily,
+    session_id: u64,
+    subscriber: RouteAddress,
+) -> Result<ParsedLeaseFrame, String> {
+    match ctx.msg_type.0 {
+        msg_type::ACQUIRE | msg_type::RENEW | msg_type::RELEASE | msg_type::QUERY => {
+            parse_request(ctx.msg_type.0, route_family, payload).map(ParsedLeaseFrame::Op)
+        }
+        msg_type::SUBSCRIBE => parse_subscribe(
+            &mut PayloadDecoder::new(payload),
+            route_family,
+            session_id,
+            subscriber,
+        )
+        .map(ParsedLeaseFrame::Sub),
+        msg_type::UNSUBSCRIBE => parse_unsubscribe(
+            &mut PayloadDecoder::new(payload),
+            route_family,
+            session_id,
+            subscriber,
+        )
+        .map(ParsedLeaseFrame::Sub),
+        msg_type::NOTIFY => Err("LEASE_NOTIFY is server-to-client only".to_string()),
+        _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
+    }
+}
+
 /// Parse incoming message from TLV-encoded bytes.
 ///
 /// `route_family` is injected by the session layer — it is never read
 /// from the wire payload.
 pub fn parse_request(
-    ctx: &FrameContext,
-    payload: &[u8],
+    msg_type: u16,
     route_family: RouteFamily,
+    payload: &[u8],
 ) -> Result<LeaseMessage, String> {
     let mut dec = PayloadDecoder::new(payload);
 
-    match ctx.msg_type.0 {
-        400 => parse_acquire(&mut dec, route_family),
-        401 => parse_extend(&mut dec, route_family),
-        402 => parse_release(&mut dec, route_family),
-        403 => parse_query(&mut dec, route_family),
-        407 => parse_subscribe(&mut dec, route_family),
-        408 => parse_unsubscribe(&mut dec, route_family),
-        409 => Ok(LeaseMessage::UnsubscribeAll),
-        _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
+    match msg_type {
+        msg_type::ACQUIRE => parse_acquire(&mut dec, route_family),
+        msg_type::RENEW => parse_extend(&mut dec, route_family),
+        msg_type::RELEASE => parse_release(&mut dec, route_family),
+        msg_type::QUERY => parse_query(&mut dec, route_family),
+        _ => Err(format!("Unknown operation: {}", msg_type)),
     }
 }
 
@@ -54,7 +101,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
     let mut dec = PayloadDecoder::new(payload);
 
     match msg_type {
-        400 => {
+        msg_type::ACQUIRE => {
             let route = dec.get_string_ref()?;
             dec.get_string_ref()?;
             dec.get_u64()?;
@@ -66,7 +113,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             }
             Ok(Some(route))
         }
-        401 => {
+        msg_type::RENEW => {
             let route = dec.get_string_ref()?;
             dec.get_string_ref()?;
             dec.get_u64()?;
@@ -76,7 +123,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             }
             Ok(Some(route))
         }
-        402 => {
+        msg_type::RELEASE => {
             let route = dec.get_string_ref()?;
             dec.get_string_ref()?;
             dec.get_u64()?;
@@ -85,14 +132,14 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             }
             Ok(Some(route))
         }
-        403 | 407 | 408 => {
+        msg_type::QUERY | msg_type::SUBSCRIBE | msg_type::UNSUBSCRIBE => {
             let route = dec.get_string_ref()?;
             if !dec.is_complete() {
                 return Err("Trailing data in message".to_string());
             }
             Ok(Some(route))
         }
-        409 => Ok(None),
+        msg_type::NOTIFY => Err("LEASE_NOTIFY is server-to-client only".to_string()),
         _ => Err(format!("Unknown operation: {}", msg_type)),
     }
 }
@@ -296,20 +343,25 @@ fn parse_query(
         route,
     })
 }
+
 /// Wire format: `[string pattern]`
 fn parse_subscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
-) -> Result<LeaseMessage, String> {
+    session_id: u64,
+    subscriber: RouteAddress,
+) -> Result<LeaseSubscriptionMessage, String> {
     let pattern = dec.get_string()?;
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(LeaseMessage::Subscribe {
+    Ok(LeaseSubscriptionMessage::Subscribe {
         family_id: route_family,
-        pattern,
+        pattern: Route::new(pattern.as_str()),
+        session_id,
+        subscriber,
     })
 }
 
@@ -317,16 +369,20 @@ fn parse_subscribe(
 fn parse_unsubscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
-) -> Result<LeaseMessage, String> {
+    session_id: u64,
+    subscriber: RouteAddress,
+) -> Result<LeaseSubscriptionMessage, String> {
     let pattern = dec.get_string()?;
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(LeaseMessage::Unsubscribe {
+    Ok(LeaseSubscriptionMessage::Unsubscribe {
         family_id: route_family,
-        pattern,
+        pattern: Route::new(pattern.as_str()),
+        session_id,
+        subscriber,
     })
 }
 

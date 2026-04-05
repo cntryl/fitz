@@ -232,4 +232,3 @@ fn classify_schedule(msg_type: u16) -> Idempotency {
         _ => Idempotency::NonIdempotent,
     }
 }
-

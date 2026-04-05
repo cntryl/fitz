@@ -86,7 +86,10 @@ impl AreaActor {
 
     /// Get RouteAddress for RealmActor coordination
     fn realm_actor_address(&self) -> RouteAddress {
-        let route = Route::new(format!("stream://{}/{}", self.realm, INTERNAL_REALM_SEGMENT));
+        let route = Route::new(format!(
+            "stream://{}/{}",
+            self.realm, INTERNAL_REALM_SEGMENT
+        ));
         RouteAddress::new(self.family_id, route)
     }
 
@@ -140,7 +143,10 @@ impl AreaActor {
         // Reply to StreamActor
         let reply_route = Route::new(format!("stream://{}/{}/{}", realm, area, reply_to));
         let reply_addr = RouteAddress::new(self.family_id, reply_route);
-        let _ = ctx.send(reply_addr, StreamCoordinationMessage::LeaseGranted { grant });
+        let _ = ctx.send(
+            reply_addr,
+            StreamCoordinationMessage::LeaseGranted { grant },
+        );
     }
 
     /// Handle BatchCommitted from StreamActor

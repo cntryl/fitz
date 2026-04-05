@@ -6,9 +6,10 @@
 //! - **Extend**: Extend lease expiration
 //! - **Release**: Relinquish ownership
 //! - **Query**: Inspect lease status (debugging)
+//! - **Subscribe / Unsubscribe**: Watch concrete lease routes for change notifications
 //! - **Tick**: Runtime-driven expiration (scheduler)
 
-use crate::runtime::routing::{route_triplet, Route, RouteFamily};
+use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
 
 /// Parsed lease identity
 ///
@@ -26,8 +27,8 @@ pub struct LeaseKey {
 impl LeaseKey {
     /// Parse a route into lease key
     ///
-    /// Expected route format: `{scheme}://{realm}/{area}/{resource}/{operation}`
-    /// or `/{realm}/{area}/{resource}/{operation}`
+    /// Expected route format: `lease://{realm}/{area}/{resource}`
+    /// or `{realm}/{area}/{resource}`
     ///
     /// Returns None if the route doesn't match the expected format.
     pub fn from_route(family: RouteFamily, route: &Route) -> Option<Self> {
@@ -139,7 +140,7 @@ impl LeaseError {
 pub enum LeaseMessage {
     /// Acquire a lease
     ///
-    /// Route format: `/{realm}/{area}/{resource}/acquire`
+    /// Route format: `lease://{realm}/{area}/{resource}`
     /// Lease identity: (family_id, realm, area, resource)
     /// If the lease is unowned or expired, grants it to the owner.
     /// If already owned by this owner, returns the existing token (idempotent).
@@ -160,7 +161,7 @@ pub enum LeaseMessage {
 
     /// Extend a lease
     ///
-    /// Route format: `/{realm}/{area}/{resource}/extend`
+    /// Route format: `lease://{realm}/{area}/{resource}`
     /// Lease identity: (family_id, realm, area, resource)
     /// Extends the lease expiration if the fencing token matches.
     /// Fails if the token is outdated or the lease is no longer held.
@@ -174,7 +175,7 @@ pub enum LeaseMessage {
 
     /// Release a lease
     ///
-    /// Route format: `/{realm}/{area}/{resource}/release`
+    /// Route format: `lease://{realm}/{area}/{resource}`
     /// Lease identity: (family_id, realm, area, resource)
     /// Releases the lease if the fencing token matches.
     /// Fails if the token is outdated or the lease is not held.
@@ -187,7 +188,7 @@ pub enum LeaseMessage {
 
     /// Query lease status (for testing/debugging)
     ///
-    /// Route format: `/{realm}/{area}/{resource}/query`
+    /// Route format: `lease://{realm}/{area}/{resource}`
     /// Lease identity: (family_id, realm, area, resource)
     Query {
         family_id: RouteFamily,
@@ -201,39 +202,26 @@ pub enum LeaseMessage {
     /// This is sent periodically by the scheduler to ensure leases
     /// are expired even when not being actively accessed.
     Tick,
+}
 
-    /// Subscribe to availability notifications
-    ///
-    /// Route format: `/{realm}/{area}/{resource}/subscribe`
-    /// Lease identity: (family_id, realm, area, resource)
-    /// Subscribes to change notifications on a lease. Notifications are published
-    /// when the lease is released or expires. Client provides a pattern that will be
-    /// used to match against notification routes.
-    ///
-    /// pattern: Wildcard pattern to subscribe to (e.g., "lease://acme/locks/db-migration/changed")
+/// Lease watch messages handled by LeaseDomainSink before actor dispatch.
+#[derive(Debug, Clone)]
+pub enum LeaseSubscriptionMessage {
+    /// Subscribe to lease change notifications for an exact route or wildcard pattern.
     Subscribe {
         family_id: RouteFamily,
-        pattern: String,
+        pattern: Route,
+        session_id: u64,
+        subscriber: RouteAddress,
     },
 
-    /// Unsubscribe from availability notifications
-    ///
-    /// Route format: `/{realm}/{area}/{resource}/unsubscribe`
-    /// Lease identity: (family_id, realm, area, resource)
-    /// Unsubscribes from change notifications for a specific pattern.
-    /// If pattern is not currently subscribed, returns UnsubscribeOk anyway (idempotent).
-    ///
-    /// pattern: Wildcard pattern to unsubscribe from
+    /// Remove an active lease watch for this session.
     Unsubscribe {
         family_id: RouteFamily,
-        pattern: String,
+        pattern: Route,
+        session_id: u64,
+        subscriber: RouteAddress,
     },
-
-    /// Unsubscribe from all availability notifications
-    ///
-    /// Removes all active subscriptions for this session.
-    /// Called automatically on session disconnect.
-    UnsubscribeAll,
 }
 
 /// Lease operation responses

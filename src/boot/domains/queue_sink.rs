@@ -1,14 +1,14 @@
-use super::queue_waiters::{PendingReceive, QueueWaiterRegistry};
+use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
+use crate::domains::queue::{
+    projection::{QueueAdminProjection, QueueProjectionEntry, QueueProjectionState},
+    QueueAdminSnapshot, QueueMetrics, QueueNotification, QueueSubscriptionMessage,
+};
 use crate::observability as obs;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
-use crate::domains::queue::{
-    projection::{QueueAdminProjection, QueueProjectionEntry, QueueProjectionState},
-    QueueMetrics,
-};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,8 +17,36 @@ struct WarmQueueActor {
     last_used: Instant,
 }
 
+struct QueueSubscription {
+    pattern: crate::runtime::matcher::Pattern,
+    session_id: u64,
+    subscription_id: u64,
+    subscriber: crate::runtime::routing::RouteAddress,
+}
+
+impl RoutedSubscription for QueueSubscription {
+    fn pattern(&self) -> &crate::runtime::matcher::Pattern {
+        &self.pattern
+    }
+
+    fn session_id(&self) -> u64 {
+        self.session_id
+    }
+
+    fn subscription_id(&self) -> u64 {
+        self.subscription_id
+    }
+}
+
+#[derive(Clone, Copy)]
+struct QueueReadyNotification {
+    family_id: crate::runtime::routing::RouteFamily,
+    snapshot: QueueAdminSnapshot,
+}
+
 const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_secs(5 * 60);
 const QUEUE_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
+const QUEUE_RUNTIME_SWEEP_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Queue domain sink with per-queue QueueActor instances
 ///
@@ -27,7 +55,7 @@ const QUEUE_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 /// - Parses TLV frames to QueueMessage
 /// - Dispatches to the correct actor based on route
 /// - Returns responses
-/// - Tracks queue-local reserve waiters for the current broker process
+/// - Tracks queue-local watch subscriptions for the current broker process
 /// - Exposes only warm in-memory queue/admin state for the current broker process
 pub struct QueueDomainSink {
     /// Midge storage engine
@@ -38,8 +66,10 @@ pub struct QueueDomainSink {
     dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     /// Per-queue actors keyed by QueueKey
     actors: Mutex<HashMap<crate::domains::queue::QueueKey, WarmQueueActor>>,
-    /// Queue-local reserve waiter registry scoped to this broker process.
-    waiters: QueueWaiterRegistry,
+    /// Queue-local watch subscriptions scoped to this broker process.
+    families: Mutex<HashMap<u64, RoutedSubscriptionSet<QueueSubscription>>>,
+    next_sub_id: AtomicU64,
+    ready_states: Mutex<HashMap<crate::domains::queue::QueueKey, bool>>,
     /// Router for routing response envelopes back
     router: Arc<Router>,
     projection: QueueAdminProjection,
@@ -61,7 +91,9 @@ impl QueueDomainSink {
             queue_write_options,
             dedup_store,
             actors: Mutex::new(HashMap::new()),
-            waiters: QueueWaiterRegistry::new(),
+            families: Mutex::new(HashMap::new()),
+            next_sub_id: AtomicU64::new(1),
+            ready_states: Mutex::new(HashMap::new()),
             router,
             projection: QueueAdminProjection::new(admin_read_model),
             metrics: None,
@@ -83,15 +115,15 @@ impl QueueDomainSink {
         self.active.store(false, Ordering::Relaxed);
     }
 
-    pub fn start_wait_loop(self: &Arc<Self>) {
+    pub fn start_runtime_sweep(self: &Arc<Self>) {
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
-            tracing::debug!("Queue wait loop not started: no Tokio runtime available");
+            tracing::debug!("Queue runtime sweep not started: no Tokio runtime available");
             return;
         };
 
         let weak = Arc::downgrade(self);
         handle.spawn(async move {
-            let mut interval = tokio::time::interval(crate::domains::queue::WAIT_SWEEP_INTERVAL);
+            let mut interval = tokio::time::interval(QUEUE_RUNTIME_SWEEP_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
@@ -104,7 +136,7 @@ impl QueueDomainSink {
                     break;
                 }
 
-                sink.sweep_waiters_and_runtime_state();
+                sink.sweep_runtime_state();
             }
         });
     }
@@ -120,41 +152,30 @@ impl QueueDomainSink {
         })
     }
 
-    fn parse_frame_to_queue_message(
+    fn parse_frame(
         frame_ctx: &FrameContext,
         route_family: crate::runtime::routing::RouteFamily,
-    ) -> Result<crate::domains::queue::QueueMessage, crate::domains::queue::QueueResponse> {
-        let msg_type = frame_ctx.msg_type.as_u16();
+        subscriber: crate::runtime::routing::RouteAddress,
+    ) -> Result<crate::protocol::queue_codec::ParsedQueueFrame, crate::domains::queue::QueueResponse>
+    {
+        crate::protocol::queue_codec::parse_frame(
+            frame_ctx,
+            &frame_ctx.payload,
+            route_family,
+            frame_ctx.session_id,
+            subscriber,
+        )
+        .map_err(|reason| crate::domains::queue::QueueResponse::BadRequest { reason })
+    }
 
-        if matches!(
-            msg_type,
-            crate::protocol::queue_codec::msg_type::ENQUEUE
-                | crate::protocol::queue_codec::msg_type::RESERVE
-                | crate::protocol::queue_codec::msg_type::EXTEND
-                | crate::protocol::queue_codec::msg_type::COMPLETE
-        ) {
-            return crate::protocol::queue_codec::parse_request(
-                msg_type,
-                route_family,
-                &frame_ctx.payload,
-            )
-            .map_err(|reason| crate::domains::queue::QueueResponse::BadRequest { reason });
-        }
-
-        let reason = match msg_type {
-            207 => {
-                "queue subscribe is not supported; use reserve wait_seconds on the queue route instead"
-                    .to_string()
-            }
-            208 => {
-                "queue unsubscribe is not supported; queued waits are scoped to the original reserve request"
-                    .to_string()
-            }
-            209 => "QUEUE_NOTIFY is not supported by the queue domain".to_string(),
-            _ => format!("unsupported queue message type: {}", msg_type),
-        };
-
-        Err(crate::domains::queue::QueueResponse::BadRequest { reason })
+    fn session_inbox_address(
+        family_id: crate::runtime::routing::RouteFamily,
+        session_id: u64,
+    ) -> crate::runtime::routing::RouteAddress {
+        crate::runtime::routing::RouteAddress::new(
+            family_id,
+            crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
+        )
     }
 
     fn route_queue_response(
@@ -184,99 +205,122 @@ impl QueueDomainSink {
         }
     }
 
-    fn route_waiter_response(
-        &self,
-        waiter: &PendingReceive,
-        response: &crate::domains::queue::QueueResponse,
-    ) {
-        let response_ctx = FrameContext::new(
-            waiter.session_id,
-            waiter.channel_id,
-            crate::protocol::tlv::MessageType::new(waiter.msg_type),
-            bytes::Bytes::from(crate::protocol::queue_codec::encode_response(response)),
-            waiter.route_family,
-        );
-        let response_envelope = Envelope::from_route(
-            waiter.reply_source.clone(),
-            waiter.reply_destination.clone(),
-            response_ctx,
-        );
-
-        if let Err(error) = self.router.route(response_envelope) {
-            tracing::warn!(
-                domain = "queue",
-                session = waiter.session_id,
-                error = ?error,
-                "Failed to route deferred queue receive response"
-            );
-            if let Some(metrics) = &self.metrics {
-                metrics.record_failure(waiter.requested_at);
-            }
-        } else if let Some(metrics) = &self.metrics {
-            if Self::queue_response_is_failure(response) {
-                metrics.record_failure(waiter.requested_at);
-            } else {
-                metrics.record_success(waiter.requested_at);
-            }
-        }
+    fn queue_ready_route(key: &crate::domains::queue::QueueKey) -> crate::runtime::routing::Route {
+        crate::runtime::routing::Route::new(format!(
+            "queue://{}/{}/{}/ready",
+            key.realm, key.area, key.resource
+        ))
     }
 
-    fn try_receive_for_waiter(
+    fn record_ready_state(
         &self,
         key: &crate::domains::queue::QueueKey,
-        waiter: &PendingReceive,
-    ) -> Option<crate::domains::queue::QueueResponse> {
-        let actor_handle = {
-            let mut actors = self.actors.lock();
-            let warm_actor = actors.get_mut(key)?;
-            warm_actor.last_used = Instant::now();
-            warm_actor.actor.clone()
-        };
+        snapshot: QueueAdminSnapshot,
+    ) -> Option<QueueReadyNotification> {
+        let is_ready = snapshot.messages_ready > 0;
+        let mut ready_states = self.ready_states.lock();
+        let was_ready = ready_states.get(key).copied().unwrap_or(false);
 
-        let mut actor = actor_handle.lock();
-        actor.process_due_work();
-        let response =
-            actor.handle_receive_for_session(waiter.session_id, waiter.lease_seconds, waiter.batch_size);
-        match &response {
-            crate::domains::queue::QueueResponse::Received { messages }
-                if messages.is_empty() => None,
-            _ => Some(response),
+        if snapshot.messages_total == 0 && snapshot.messages_leased == 0 {
+            ready_states.remove(key);
+        } else {
+            ready_states.insert(key.clone(), is_ready);
+        }
+
+        if !was_ready && is_ready {
+            Some(QueueReadyNotification {
+                family_id: key.family,
+                snapshot,
+            })
+        } else {
+            None
         }
     }
 
-    fn grant_waiters_for_key(&self, key: &crate::domains::queue::QueueKey, now: Instant) {
-        let expired_waiters = self.waiters.expire_timed_out_for_key(key, now);
-        for waiter in expired_waiters {
-            self.route_waiter_response(
-                &waiter,
-                &crate::domains::queue::QueueResponse::Received { messages: vec![] },
+    fn route_queue_notify_to_subscription(
+        &self,
+        session_id: u64,
+        subscription_id: u64,
+        subscriber: &crate::runtime::routing::RouteAddress,
+        route: &crate::runtime::routing::Route,
+        snapshot: QueueAdminSnapshot,
+    ) {
+        let payload = crate::protocol::queue_codec::encode_notify(
+            subscription_id,
+            route,
+            QueueNotification {
+                ready_messages: snapshot.messages_ready as u64,
+                delayed_messages: snapshot.messages_delayed as u64,
+                leased_messages: snapshot.messages_leased as u64,
+            },
+        );
+        let notify_ctx = FrameContext::new(
+            session_id,
+            crate::protocol::frame::ChannelId::Sub,
+            crate::protocol::tlv::MessageType::new(crate::protocol::queue_codec::msg_type::NOTIFY),
+            bytes::Bytes::from(payload),
+            *subscriber.family(),
+        );
+        let notify_envelope = Envelope::new(subscriber.clone(), notify_ctx);
+        if self.router.route(notify_envelope).is_err() {
+            crate::boot::observability::counter_inc("fitz_queue_notify_drops_total");
+        }
+    }
+
+    fn route_queue_ready_notification(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+        notification: QueueReadyNotification,
+    ) {
+        let route = Self::queue_ready_route(key);
+        let families = self.families.lock();
+        if let Some(state) = families.get(&notification.family_id.as_u64()) {
+            state.for_each_matching_route(notification.family_id, route.as_str(), |subscription| {
+                self.route_queue_notify_to_subscription(
+                    subscription.session_id,
+                    subscription.subscription_id,
+                    &subscription.subscriber,
+                    &route,
+                    notification.snapshot,
+                );
+            });
+        }
+    }
+
+    fn replay_ready_notifications_for_subscription(
+        &self,
+        family_id: crate::runtime::routing::RouteFamily,
+        pattern: &crate::runtime::matcher::Pattern,
+        session_id: u64,
+        subscription_id: u64,
+        subscriber: &crate::runtime::routing::RouteAddress,
+    ) {
+        let actors = self.actors.lock();
+        let ready_snapshots: Vec<_> = actors
+            .iter()
+            .filter(|(key, _)| key.family == family_id)
+            .filter_map(|(key, warm_actor)| {
+                let snapshot = warm_actor.actor.lock().admin_snapshot();
+                let route = Self::queue_ready_route(key);
+                (snapshot.messages_ready > 0 && pattern.matches(&route))
+                    .then_some((route, snapshot))
+            })
+            .collect();
+        drop(actors);
+
+        for (route, snapshot) in ready_snapshots {
+            self.route_queue_notify_to_subscription(
+                session_id,
+                subscription_id,
+                subscriber,
+                &route,
+                snapshot,
             );
         }
-
-        loop {
-            let waiter = self.waiters.pop_next_for_key(key);
-            let Some(waiter) = waiter else {
-                break;
-            };
-
-            if let Some(response) = self.try_receive_for_waiter(key, &waiter) {
-                self.waiters.complete(key, &waiter);
-                self.route_waiter_response(&waiter, &response);
-                self.mark_admin_snapshot_dirty();
-            } else {
-                self.waiters.requeue_front(key, waiter);
-                break;
-            }
-        }
     }
 
-    fn sweep_waiters_and_runtime_state(&self) {
-        let now = Instant::now();
-        self.sweep_idle_actors_at(now);
-        let keys = self.waiters.keys();
-        for key in keys {
-            self.grant_waiters_for_key(&key, now);
-        }
+    fn sweep_runtime_state(&self) {
+        self.sweep_idle_actors_at(Instant::now());
     }
 
     fn get_or_create_actor(
@@ -389,30 +433,49 @@ impl QueueDomainSink {
 
     fn sweep_idle_actors_at(&self, now: Instant) {
         let mut changed = false;
+        let mut notifications = Vec::new();
+        let mut removed_keys = Vec::new();
         let mut actors = self.actors.lock();
 
-        actors.retain(|_, warm_actor| {
+        actors.retain(|key, warm_actor| {
             let mut actor = warm_actor.actor.lock();
             let ready_before = actor.ready_len();
             let leases_before = actor.inflight.len();
             actor.process_due_work();
             let ready_after = actor.ready_len();
             let leases_after = actor.inflight.len();
+            let snapshot = actor.admin_snapshot();
             if ready_before != ready_after || leases_before != leases_after {
                 changed = true;
             }
 
+            if let Some(notification) = self.record_ready_state(key, snapshot) {
+                notifications.push((key.clone(), notification));
+            }
+
             let idle_for = now.saturating_duration_since(warm_actor.last_used);
-            let should_keep = idle_for < QUEUE_ACTOR_IDLE_TTL || !actor.inflight.is_empty();
+            let should_keep = idle_for < QUEUE_ACTOR_IDLE_TTL
+                || snapshot.messages_delayed > 0
+                || snapshot.messages_leased > 0;
             if !should_keep {
                 changed = true;
+                removed_keys.push(key.clone());
             }
             should_keep
         });
 
         drop(actors);
+        if !removed_keys.is_empty() {
+            let mut ready_states = self.ready_states.lock();
+            for key in removed_keys {
+                ready_states.remove(&key);
+            }
+        }
         if changed {
             self.mark_admin_snapshot_dirty();
+        }
+        for (key, notification) in notifications {
+            self.route_queue_ready_notification(&key, notification);
         }
     }
 
@@ -421,32 +484,39 @@ impl QueueDomainSink {
     /// broker-local runtime state only.
     pub fn cleanup_session(&self, session_id: u64) {
         let mut released_any = false;
-        let mut released_keys = Vec::new();
+        let mut notifications = Vec::new();
         let mut actors = self.actors.lock();
         for (key, warm_actor) in actors.iter_mut() {
             let mut actor = warm_actor.actor.lock();
             if actor.cleanup_session_leases(session_id) > 0 {
                 released_any = true;
-                released_keys.push(key.clone());
+                if let Some(notification) = self.record_ready_state(key, actor.admin_snapshot()) {
+                    notifications.push((key.clone(), notification));
+                }
             }
         }
         drop(actors);
 
-        let removed_waiters = self.waiters.remove_session_waiters(session_id);
+        let mut families = self.families.lock();
+        for (family_id, state) in families.iter_mut() {
+            state.remove_session(
+                crate::runtime::routing::RouteFamily::new(*family_id),
+                session_id,
+            );
+        }
+        drop(families);
 
         if released_any {
             self.mark_admin_snapshot_dirty();
         }
 
-        let now = Instant::now();
-        for key in released_keys {
-            self.grant_waiters_for_key(&key, now);
+        for (key, notification) in notifications {
+            self.route_queue_ready_notification(&key, notification);
         }
 
         tracing::debug!(
             domain = "queue",
             session = session_id,
-            waiters_removed = removed_waiters,
             "Queue session cleanup completed"
         );
     }
@@ -512,8 +582,12 @@ impl QueueDomainSink {
         };
 
         if matches!(result, Ok(true)) {
+            let snapshot = actor_handle.lock().admin_snapshot();
+            let notification = self.record_ready_state(&key, snapshot);
             self.mark_admin_snapshot_dirty();
-            self.grant_waiters_for_key(&key, Instant::now());
+            if let Some(notification) = notification {
+                self.route_queue_ready_notification(&key, notification);
+            }
         }
 
         if created_actor {
@@ -523,6 +597,7 @@ impl QueueDomainSink {
             };
             if should_remove {
                 self.actors.lock().remove(&key);
+                self.ready_states.lock().remove(&key);
                 self.mark_admin_snapshot_dirty();
             }
         }
@@ -552,6 +627,7 @@ impl QueueDomainSink {
             };
             if should_remove {
                 self.actors.lock().remove(&key);
+                self.ready_states.lock().remove(&key);
                 self.mark_admin_snapshot_dirty();
             }
         }
@@ -588,13 +664,21 @@ impl MailboxSink for QueueDomainSink {
 
         let route_addr = envelope.destination();
         let route_family = *route_addr.family();
-        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
+        let request_started = self
+            .metrics
+            .as_ref()
+            .map(|metrics| metrics.record_request_start());
+        let subscriber = envelope
+            .source()
+            .cloned()
+            .unwrap_or_else(|| Self::session_inbox_address(route_family, frame_ctx.session_id));
 
-        let queue_msg = match Self::parse_frame_to_queue_message(&frame_ctx, route_family) {
+        let parsed_frame = match Self::parse_frame(&frame_ctx, route_family, subscriber.clone()) {
             Ok(msg) => msg,
             Err(response) => {
                 self.route_queue_response(&envelope, &frame_ctx, &response);
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                {
                     metrics.record_failure(started_at);
                 }
                 return Ok(());
@@ -610,164 +694,248 @@ impl MailboxSink for QueueDomainSink {
 
         self.maybe_sweep_idle_actors();
 
+        if let crate::protocol::queue_codec::ParsedQueueFrame::Sub(sub_msg) = parsed_frame {
+            let (response, replay_watch) = match sub_msg {
+                QueueSubscriptionMessage::Watch {
+                    family_id,
+                    pattern,
+                    session_id,
+                    subscriber,
+                } => {
+                    let pattern_str = pattern.as_str().to_string();
+                    let subscription_id = {
+                        let mut families = self.families.lock();
+                        let state = families
+                            .entry(family_id.as_u64())
+                            .or_insert_with(RoutedSubscriptionSet::new);
+
+                        if let Some(id) = state.find_existing_id(session_id, pattern_str.as_str()) {
+                            id
+                        } else {
+                            let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                            state.insert(
+                                family_id,
+                                QueueSubscription {
+                                    pattern: crate::runtime::matcher::Pattern::new(
+                                        pattern_str.as_str(),
+                                    ),
+                                    session_id,
+                                    subscription_id: id,
+                                    subscriber: subscriber.clone(),
+                                },
+                            );
+                            id
+                        }
+                    };
+
+                    (
+                        crate::domains::queue::QueueResponse::WatchOk { subscription_id },
+                        Some((
+                            family_id,
+                            crate::runtime::matcher::Pattern::new(pattern_str.as_str()),
+                            session_id,
+                            subscription_id,
+                            subscriber,
+                        )),
+                    )
+                }
+                QueueSubscriptionMessage::Unwatch {
+                    family_id,
+                    pattern,
+                    session_id,
+                    ..
+                } => {
+                    let mut families = self.families.lock();
+                    if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                        state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                    }
+                    (crate::domains::queue::QueueResponse::UnwatchOk, None)
+                }
+            };
+
+            self.route_queue_response(&envelope, &frame_ctx, &response);
+            if let Some((family_id, pattern, session_id, subscription_id, subscriber)) =
+                replay_watch
+            {
+                self.replay_ready_notifications_for_subscription(
+                    family_id,
+                    &pattern,
+                    session_id,
+                    subscription_id,
+                    &subscriber,
+                );
+            }
+
+            if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                if Self::queue_response_is_failure(&response) {
+                    metrics.record_failure(started_at);
+                } else {
+                    metrics.record_success(started_at);
+                }
+            }
+            return Ok(());
+        }
+
         use crate::domains::queue::protocol::QueueMessage;
 
-        let (response, wake_waiters_for_key, deferred_wait_for_key, should_mark_admin_snapshot_dirty) =
-            match queue_msg {
-                QueueMessage::Send {
-                    family_id,
-                    route,
-                    body,
-                    delay_seconds,
-                } => match Self::queue_key_for_route(family_id, &route) {
-                    Ok(key) => {
-                        let wake_key = key.clone();
-                        let actor_lock_start = Instant::now();
-                        let (actor_handle, created_actor) = self.get_or_create_actor(key);
-                        self.observe_histogram_us(
-                            obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-                            actor_lock_start.elapsed().as_micros() as u64,
-                        );
-                        let mut actor = actor_handle.lock();
-                        let actor_exec_start = Instant::now();
-                        actor.process_due_work();
-                        let resp = actor.handle_send(body, delay_seconds);
-                        self.observe_histogram_us(
-                            obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-                            actor_exec_start.elapsed().as_micros() as u64,
-                        );
-                        let wake_waiters = actor.take_needs_wake_waiters().then_some(wake_key);
-                        let _ = created_actor;
-                        (resp, wake_waiters, None, true)
-                    }
-                    Err(response) => (response, None, None, false),
-                }
-                QueueMessage::Receive {
-                    family_id,
-                    route,
-                    lease_seconds,
-                    batch_size,
-                    wait_seconds,
-                } => match Self::queue_key_for_route(family_id, &route) {
-                    Ok(key) => {
-                        let wait_seconds = wait_seconds.unwrap_or(0);
-                        let wait_key = key.clone();
-                        let actor_lock_start = Instant::now();
-                        let (actor_handle, created_actor) = self.get_or_create_actor(key);
-                        self.observe_histogram_us(
-                            obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-                            actor_lock_start.elapsed().as_micros() as u64,
-                        );
-                        let mut actor = actor_handle.lock();
-                        let actor_exec_start = Instant::now();
-                        actor.process_due_work();
-                        let response = actor.handle_receive_for_session(
-                            frame_ctx.session_id,
-                            lease_seconds,
-                            batch_size,
-                        );
-                        self.observe_histogram_us(
-                            obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-                            actor_exec_start.elapsed().as_micros() as u64,
-                        );
-                        let _ = created_actor;
+        let queue_msg = match parsed_frame {
+            crate::protocol::queue_codec::ParsedQueueFrame::Op(msg) => msg,
+            crate::protocol::queue_codec::ParsedQueueFrame::Sub(_) => unreachable!(),
+        };
 
-                        let should_defer = matches!(
-                            &response,
-                            crate::domains::queue::QueueResponse::Received { messages }
-                                if messages.is_empty() && wait_seconds > 0
-                        );
+        let (response, ready_notification, should_mark_admin_snapshot_dirty) = match queue_msg {
+            QueueMessage::Send {
+                family_id,
+                route,
+                body,
+                delay_seconds,
+            } => match Self::queue_key_for_route(family_id, &route) {
+                Ok(key) => {
+                    let notification_key = key.clone();
+                    let actor_lock_start = Instant::now();
+                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    self.observe_histogram_us(
+                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+                        actor_lock_start.elapsed().as_micros() as u64,
+                    );
+                    let mut actor = actor_handle.lock();
+                    let actor_exec_start = Instant::now();
+                    actor.process_due_work();
+                    let resp = actor.handle_send(body, delay_seconds);
+                    let notification =
+                        self.record_ready_state(&notification_key, actor.admin_snapshot());
+                    self.observe_histogram_us(
+                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+                        actor_exec_start.elapsed().as_micros() as u64,
+                    );
+                    let _ = created_actor;
+                    (
+                        resp,
+                        notification.map(|event| (notification_key.clone(), event)),
+                        true,
+                    )
+                }
+                Err(response) => (response, None, false),
+            },
+            QueueMessage::Receive {
+                family_id,
+                route,
+                lease_seconds,
+                batch_size,
+            } => match Self::queue_key_for_route(family_id, &route) {
+                Ok(key) => {
+                    let notification_key = key.clone();
+                    let actor_lock_start = Instant::now();
+                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    self.observe_histogram_us(
+                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+                        actor_lock_start.elapsed().as_micros() as u64,
+                    );
+                    let mut actor = actor_handle.lock();
+                    let actor_exec_start = Instant::now();
+                    actor.process_due_work();
+                    let response = actor.handle_receive_for_session(
+                        frame_ctx.session_id,
+                        lease_seconds,
+                        batch_size,
+                    );
+                    let notification =
+                        self.record_ready_state(&notification_key, actor.admin_snapshot());
+                    self.observe_histogram_us(
+                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+                        actor_exec_start.elapsed().as_micros() as u64,
+                    );
+                    let _ = created_actor;
 
-                        if should_defer {
-                            match self.waiters.enqueue(
-                                &wait_key,
-                                &envelope,
-                                &frame_ctx,
-                                lease_seconds,
-                                batch_size,
-                                wait_seconds,
-                            ) {
-                                Ok(()) => (response, None, Some(wait_key), true),
-                                Err(wait_error) => (wait_error, None, None, true),
-                            }
-                        } else {
-                            (response, None, None, true)
-                        }
-                    }
-                    Err(response) => (response, None, None, false),
+                    (
+                        response,
+                        notification.map(|event| (notification_key.clone(), event)),
+                        true,
+                    )
                 }
-                QueueMessage::Extend {
-                    family_id,
-                    route,
-                    id,
-                    token,
-                    lease_seconds,
-                } => match Self::queue_key_for_route(family_id, &route) {
-                    Ok(key) => {
-                        let actor_lock_start = Instant::now();
-                        let (actor_handle, created_actor) = self.get_or_create_actor(key);
-                        self.observe_histogram_us(
-                            obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-                            actor_lock_start.elapsed().as_micros() as u64,
-                        );
-                        let mut actor = actor_handle.lock();
-                        let actor_exec_start = Instant::now();
-                        actor.process_due_work();
-                        let response = actor.handle_extend(id, token, lease_seconds);
-                        self.observe_histogram_us(
-                            obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-                            actor_exec_start.elapsed().as_micros() as u64,
-                        );
-                        let _ = created_actor;
-                        (response, None, None, true)
-                    }
-                    Err(response) => (response, None, None, false),
+                Err(response) => (response, None, false),
+            },
+            QueueMessage::Extend {
+                family_id,
+                route,
+                id,
+                token,
+                lease_seconds,
+            } => match Self::queue_key_for_route(family_id, &route) {
+                Ok(key) => {
+                    let notification_key = key.clone();
+                    let actor_lock_start = Instant::now();
+                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    self.observe_histogram_us(
+                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+                        actor_lock_start.elapsed().as_micros() as u64,
+                    );
+                    let mut actor = actor_handle.lock();
+                    let actor_exec_start = Instant::now();
+                    actor.process_due_work();
+                    let response = actor.handle_extend(id, token, lease_seconds);
+                    let notification =
+                        self.record_ready_state(&notification_key, actor.admin_snapshot());
+                    self.observe_histogram_us(
+                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+                        actor_exec_start.elapsed().as_micros() as u64,
+                    );
+                    let _ = created_actor;
+                    (
+                        response,
+                        notification.map(|event| (notification_key.clone(), event)),
+                        true,
+                    )
                 }
-                QueueMessage::Ack {
-                    family_id,
-                    route,
-                    id,
-                    token,
-                } => match Self::queue_key_for_route(family_id, &route) {
-                    Ok(key) => {
-                        let actor_lock_start = Instant::now();
-                        let (actor_handle, created_actor) = self.get_or_create_actor(key);
-                        self.observe_histogram_us(
-                            obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-                            actor_lock_start.elapsed().as_micros() as u64,
-                        );
-                        let mut actor = actor_handle.lock();
-                        let actor_exec_start = Instant::now();
-                        actor.process_due_work();
-                        let response = actor.handle_ack(id, token);
-                        self.observe_histogram_us(
-                            obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-                            actor_exec_start.elapsed().as_micros() as u64,
-                        );
-                        let _ = created_actor;
-                        (response, None, None, true)
-                    }
-                    Err(response) => (response, None, None, false),
+                Err(response) => (response, None, false),
+            },
+            QueueMessage::Ack {
+                family_id,
+                route,
+                id,
+                token,
+            } => match Self::queue_key_for_route(family_id, &route) {
+                Ok(key) => {
+                    let notification_key = key.clone();
+                    let actor_lock_start = Instant::now();
+                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    self.observe_histogram_us(
+                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+                        actor_lock_start.elapsed().as_micros() as u64,
+                    );
+                    let mut actor = actor_handle.lock();
+                    let actor_exec_start = Instant::now();
+                    actor.process_due_work();
+                    let response = actor.handle_ack(id, token);
+                    let notification =
+                        self.record_ready_state(&notification_key, actor.admin_snapshot());
+                    self.observe_histogram_us(
+                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+                        actor_exec_start.elapsed().as_micros() as u64,
+                    );
+                    let _ = created_actor;
+                    (
+                        response,
+                        notification.map(|event| (notification_key.clone(), event)),
+                        true,
+                    )
                 }
-                QueueMessage::LeaseExpired { .. } => (
-                    crate::domains::queue::QueueResponse::Error {
-                        message: "LeaseExpired is an internal message".to_string(),
-                    },
-                    None,
-                    None,
-                    false,
-                ),
-            };
+                Err(response) => (response, None, false),
+            },
+            QueueMessage::LeaseExpired { .. } => (
+                crate::domains::queue::QueueResponse::Error {
+                    message: "LeaseExpired is an internal message".to_string(),
+                },
+                None,
+                false,
+            ),
+        };
         if should_mark_admin_snapshot_dirty {
             self.mark_admin_snapshot_dirty();
         }
 
-        if let Some(key) = wake_waiters_for_key {
-            self.grant_waiters_for_key(&key, Instant::now());
-        }
-
-        if deferred_wait_for_key.is_some() {
-            return Ok(());
+        if let Some((key, notification)) = ready_notification {
+            self.route_queue_ready_notification(&key, notification);
         }
 
         self.route_queue_response(&envelope, &frame_ctx, &response);
@@ -831,24 +999,20 @@ mod tests {
         payload.put_u64(lease_seconds);
         payload.put_u8(1);
         payload.put_u32(batch_size);
-        payload.put_u8(0);
         Bytes::from(payload)
     }
 
-    fn encode_queue_reserve_with_wait(
-        route: &str,
-        lease_seconds: u64,
-        batch_size: u32,
-        wait_seconds: u64,
-    ) -> Bytes {
+    fn encode_queue_watch(pattern: &str) -> Bytes {
         let mut payload = Vec::new();
-        payload.put_u32(route.len() as u32);
-        payload.put_slice(route.as_bytes());
-        payload.put_u64(lease_seconds);
-        payload.put_u8(1);
-        payload.put_u32(batch_size);
-        payload.put_u8(1);
-        payload.put_u64(wait_seconds);
+        payload.put_u32(pattern.len() as u32);
+        payload.put_slice(pattern.as_bytes());
+        Bytes::from(payload)
+    }
+
+    fn encode_queue_unwatch(pattern: &str) -> Bytes {
+        let mut payload = Vec::new();
+        payload.put_u32(pattern.len() as u32);
+        payload.put_slice(pattern.as_bytes());
         Bytes::from(payload)
     }
 
@@ -906,6 +1070,26 @@ mod tests {
         )
     }
 
+    fn watch_response_subscription_id(frame: &FrameContext) -> u64 {
+        assert_eq!(frame.payload[0], 0, "expected success status");
+        u64::from_be_bytes(
+            frame.payload[1..9]
+                .try_into()
+                .expect("watch payload should include subscription id"),
+        )
+    }
+
+    fn decode_queue_watch_delivery(frame: &FrameContext) -> (u64, String, u64) {
+        let subscription_id = u64::from_be_bytes(frame.payload[0..8].try_into().unwrap());
+        let route_len = u32::from_be_bytes(frame.payload[8..12].try_into().unwrap()) as usize;
+        let route = String::from_utf8(frame.payload[12..12 + route_len].to_vec())
+            .expect("queue watch route should be utf-8");
+        let offset = 12 + route_len;
+        let ready_messages =
+            u64::from_be_bytes(frame.payload[offset..offset + 8].try_into().unwrap());
+        (subscription_id, route, ready_messages)
+    }
+
     fn force_actor_idle(sink: &QueueDomainSink, queue_route: &str, family: RouteFamily) {
         let key = crate::domains::queue::QueueKey::from_route(family, &Route::new(queue_route))
             .expect("queue key");
@@ -955,16 +1139,16 @@ mod tests {
         // Act
         queue_sink
             .deliver(Envelope::from_route(
-            sender_address,
-            queue_address,
-            FrameContext::new(
-                7,
-                ChannelId::Pub,
-                MessageType::new(200),
-                encode_queue_send(invalid_route, b"email"),
-                family,
-            ),
-        ))
+                sender_address,
+                queue_address,
+                FrameContext::new(
+                    7,
+                    ChannelId::Pub,
+                    MessageType::new(200),
+                    encode_queue_send(invalid_route, b"email"),
+                    family,
+                ),
+            ))
             .expect("reject malformed send");
         queue_sink.refresh_admin_snapshot_if_dirty();
 
@@ -977,7 +1161,10 @@ mod tests {
             .into_payload::<FrameContext>()
             .expect("send response frame");
         assert_eq!(response_frame.msg_type.as_u16(), 200);
-        assert_eq!(bad_request_reason(&response_frame), "invalid queue route: queue://acme/jobs");
+        assert_eq!(
+            bad_request_reason(&response_frame),
+            "invalid queue route: queue://acme/jobs"
+        );
         assert!(queue_sink.actors.lock().is_empty());
         assert!(admin_read_model.queues(None).is_empty());
     }
@@ -1025,7 +1212,10 @@ mod tests {
             .into_payload::<FrameContext>()
             .expect("receive response frame");
         assert_eq!(response_frame.msg_type.as_u16(), 202);
-        assert_eq!(bad_request_reason(&response_frame), "invalid queue route: queue://acme/jobs");
+        assert_eq!(
+            bad_request_reason(&response_frame),
+            "invalid queue route: queue://acme/jobs"
+        );
         assert!(sink.actors.lock().is_empty());
         assert!(admin_read_model.queues(None).is_empty());
     }
@@ -1073,7 +1263,10 @@ mod tests {
             .into_payload::<FrameContext>()
             .expect("extend response frame");
         assert_eq!(response_frame.msg_type.as_u16(), 203);
-        assert_eq!(bad_request_reason(&response_frame), "invalid queue route: queue://acme/jobs");
+        assert_eq!(
+            bad_request_reason(&response_frame),
+            "invalid queue route: queue://acme/jobs"
+        );
         assert!(sink.actors.lock().is_empty());
         assert!(admin_read_model.queues(None).is_empty());
     }
@@ -1121,13 +1314,16 @@ mod tests {
             .into_payload::<FrameContext>()
             .expect("ack response frame");
         assert_eq!(response_frame.msg_type.as_u16(), 204);
-        assert_eq!(bad_request_reason(&response_frame), "invalid queue route: queue://acme/jobs");
+        assert_eq!(
+            bad_request_reason(&response_frame),
+            "invalid queue route: queue://acme/jobs"
+        );
         assert!(sink.actors.lock().is_empty());
         assert!(admin_read_model.queues(None).is_empty());
     }
 
     #[test]
-    fn should_resume_waiting_receive_given_queue_send_when_queue_empty() {
+    fn should_notify_queue_watch_given_queue_send_when_queue_transitions_to_ready() {
         // Arrange
         let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
         let router = Arc::new(Router::new());
@@ -1148,15 +1344,15 @@ mod tests {
         router.register(sender_addr.clone(), sender_mailbox.clone());
         router.register_domain_pattern("queue", queue_sink as Arc<dyn MailboxSink>);
         let route = "queue://realm/area/resource";
-        let wait_ctx = FrameContext::new(
+        let watch_ctx = FrameContext::new(
             1,
             ChannelId::Pub,
-            MessageType::new(202),
-            encode_queue_reserve_with_wait(route, 30, 1, 5),
+            MessageType::new(207),
+            encode_queue_watch("queue://realm/area/resource/ready"),
             family,
         );
-        let wait_env =
-            Envelope::from_route(receiver_addr.clone(), queue_inbound_addr.clone(), wait_ctx);
+        let watch_env =
+            Envelope::from_route(receiver_addr.clone(), queue_inbound_addr.clone(), watch_ctx);
         let body: &[u8] = b"x";
         let mut send_payload = Vec::new();
         send_payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
@@ -1173,11 +1369,19 @@ mod tests {
         let send_env = Envelope::from_route(sender_addr, queue_inbound_addr, send_ctx);
 
         // Act
-        router.route(wait_env).expect("route waiting receive");
-        assert!(receiver_mailbox.receiver().try_recv().is_err());
+        router.route(watch_env).expect("route queue watch");
         router.route(send_env).expect("route send");
 
         // Assert
+        let watch_ack = receiver_mailbox
+            .receiver()
+            .try_recv()
+            .expect("watch ack envelope")
+            .into_payload::<FrameContext>()
+            .expect("watch ack frame");
+        assert_eq!(watch_ack.msg_type.as_u16(), 207);
+        let subscription_id = watch_response_subscription_id(&watch_ack);
+
         let send_ack = sender_mailbox
             .receiver()
             .try_recv()
@@ -1186,23 +1390,27 @@ mod tests {
             .expect("send ack frame");
         assert_eq!(send_ack.msg_type.as_u16(), 200);
 
-        let wait_response = receiver_mailbox
+        let notify_frame = receiver_mailbox
             .receiver()
             .try_recv()
-            .expect("waiting receive response envelope")
+            .expect("queue watch notify envelope")
             .into_payload::<FrameContext>()
-            .expect("waiting receive response frame");
-        assert_eq!(wait_response.msg_type.as_u16(), 202);
-        assert_eq!(receive_response_message_count(&wait_response), 1);
+            .expect("queue watch notify frame");
+        assert_eq!(notify_frame.msg_type.as_u16(), 209);
+        let (delivered_subscription_id, delivered_route, ready_messages) =
+            decode_queue_watch_delivery(&notify_frame);
+        assert_eq!(delivered_subscription_id, subscription_id);
+        assert_eq!(delivered_route, "queue://realm/area/resource/ready");
+        assert_eq!(ready_messages, 1);
         assert!(receiver_mailbox.receiver().try_recv().is_err());
     }
 
     #[test]
-    fn should_reject_legacy_queue_subscribe_given_removed_queue_subscription_path() {
+    fn should_register_queue_watch_given_watch_request() {
         // Arrange
         let family = RouteFamily::new(1);
         let subscriber_session_id = 7;
-        let queue_route = "queue://acme/jobs/emails";
+        let queue_route = "queue://acme/jobs/emails/ready";
         let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
         let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
         let subscriber_mailbox = Arc::new(Mailbox::new(8));
@@ -1229,35 +1437,35 @@ mod tests {
                 family,
             ),
         ))
-        .expect("reject removed queue subscribe path");
+        .expect("register queue watch path");
 
         // Assert
         let subscribe_envelope = subscriber_mailbox
             .receiver()
             .try_recv()
-            .expect("queue subscribe rejection envelope");
+            .expect("queue watch ack envelope");
         let subscribe_frame = subscribe_envelope
             .into_payload::<FrameContext>()
-            .expect("queue subscribe rejection frame");
+            .expect("queue watch ack frame");
         assert_eq!(subscribe_frame.msg_type.as_u16(), 207);
-        assert_eq!(
-            bad_request_reason(&subscribe_frame),
-            "queue subscribe is not supported; use reserve wait_seconds on the queue route instead"
-        );
+        assert!(watch_response_subscription_id(&subscribe_frame) > 0);
     }
 
     #[test]
-    fn should_reject_legacy_queue_unsubscribe_given_removed_queue_subscription_path() {
+    fn should_remove_queue_watch_given_unwatch_request() {
         // Arrange
         let family = RouteFamily::new(1);
         let subscriber_session_id = 7;
-        let queue_route = "queue://acme/jobs/emails";
+        let queue_route = "queue://acme/jobs/emails/ready";
         let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
         let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
         let subscriber_mailbox = Arc::new(Mailbox::new(16));
+        let sender_address = RouteAddress::new(family, Route::new("inbox://session/9"));
+        let sender_mailbox = Arc::new(Mailbox::new(8));
         let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
         let router = Arc::new(Router::new());
         router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        router.register(sender_address.clone(), sender_mailbox.clone());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
         let sink = new_queue_domain_sink(
             store,
@@ -1266,33 +1474,68 @@ mod tests {
             cntryl_midge::WriteOptions::best_effort(),
         );
 
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            queue_address.clone(),
+            FrameContext::new(
+                subscriber_session_id,
+                ChannelId::Pub,
+                MessageType::new(207),
+                encode_queue_watch(queue_route),
+                family,
+            ),
+        ))
+        .expect("register queue watch path");
+        let _ = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("watch ack envelope");
+
         // Act
         sink.deliver(Envelope::from_route(
             subscriber_address,
-            queue_address,
+            queue_address.clone(),
             FrameContext::new(
                 subscriber_session_id,
                 ChannelId::Pub,
                 MessageType::new(208),
-                encode_route_pattern(queue_route),
+                encode_queue_unwatch(queue_route),
                 family,
             ),
         ))
-        .expect("reject removed queue unsubscribe path");
+        .expect("remove queue watch path");
+
+        sink.deliver(Envelope::from_route(
+            sender_address,
+            queue_address,
+            FrameContext::new(
+                9,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send("queue://acme/jobs/emails", b"email"),
+                family,
+            ),
+        ))
+        .expect("enqueue watched queue message");
 
         // Assert
         let unsubscribe_ack_envelope = subscriber_mailbox
             .receiver()
             .try_recv()
-            .expect("unsubscribe rejection envelope");
+            .expect("unsubscribe ack envelope");
         let unsubscribe_ack_frame = unsubscribe_ack_envelope
             .into_payload::<FrameContext>()
-            .expect("unsubscribe rejection frame");
+            .expect("unsubscribe ack frame");
         assert_eq!(unsubscribe_ack_frame.msg_type.as_u16(), 208);
         assert_eq!(
-            bad_request_reason(&unsubscribe_ack_frame),
-            "queue unsubscribe is not supported; queued waits are scoped to the original reserve request"
+            unsubscribe_ack_frame.payload,
+            bytes::Bytes::from_static(&[0])
         );
+        let _ = sender_mailbox
+            .receiver()
+            .try_recv()
+            .expect("send ack envelope");
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
     }
 
     #[test]

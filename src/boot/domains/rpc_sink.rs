@@ -1481,7 +1481,10 @@ impl MailboxSink for RpcDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
-        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
+        let request_started = self
+            .metrics
+            .as_ref()
+            .map(|metrics| metrics.record_request_start());
 
         tracing::debug!(
             domain = "rpc",
@@ -1498,7 +1501,8 @@ impl MailboxSink for RpcDomainSink {
         ) {
             Ok(msg) => msg,
             Err(e) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                {
                     metrics.record_failure(started_at);
                 }
                 tracing::warn!(domain = "rpc", error = %e, "Failed to parse RPC message");
@@ -1785,7 +1789,11 @@ impl MailboxSink for RpcDomainSink {
                                     route = req.route.as_str(),
                                     "Request forwarded to worker"
                                 );
-                                (Some(RpcResponseMsg::Ok { data: vec![] }), Some(false), false)
+                                (
+                                    Some(RpcResponseMsg::Ok { data: vec![] }),
+                                    Some(false),
+                                    false,
+                                )
                             }
                             Err(crate::runtime::RouteError::RouteNotFound(_))
                             | Err(crate::runtime::RouteError::DeliveryFailed(
@@ -2257,7 +2265,11 @@ impl MailboxSink for RpcDomainSink {
                         correlation_id = %correlation_id,
                         "Request acknowledged and cleaned up"
                     );
-                    (None, removed_pending_found.then_some(false), !removed_pending_found)
+                    (
+                        None,
+                        removed_pending_found.then_some(false),
+                        !removed_pending_found,
+                    )
                 }
             }
             RpcMessage::Deliver(_) => (

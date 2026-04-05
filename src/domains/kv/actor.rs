@@ -61,6 +61,8 @@ pub struct ActiveKvTx {
     pub tx: cntryl_midge::Transaction,
     /// Write options for commit
     pub write_options: cntryl_midge::WriteOptions,
+    /// Successful mutating operations performed within this transaction.
+    pub mutation_count: u64,
 }
 
 /// KV actor managing transactions for a session
@@ -193,6 +195,7 @@ impl KvActor {
                         column_family: cf,
                         tx,
                         write_options,
+                        mutation_count: 0,
                     },
                 );
                 KvResponse::BeginOk { tx_id }
@@ -303,7 +306,10 @@ impl KvActor {
         let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
 
         match active.tx.put(scoped_key, value.to_vec(), None) {
-            Ok(()) => KvResponse::PutOk,
+            Ok(()) => {
+                active.mutation_count += 1;
+                KvResponse::PutOk
+            }
             Err(e) => KvResponse::Error {
                 error: Self::map_midge_error(e),
             },
@@ -348,7 +354,10 @@ impl KvActor {
             Ok(None) => {
                 // Key doesn't exist, proceed with insert
                 match active.tx.put(scoped_key, value.to_vec(), None) {
-                    Ok(()) => KvResponse::InsertOk,
+                    Ok(()) => {
+                        active.mutation_count += 1;
+                        KvResponse::InsertOk
+                    }
                     Err(e) => KvResponse::Error {
                         error: Self::map_midge_error(e),
                     },
@@ -387,7 +396,10 @@ impl KvActor {
         let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
 
         match active.tx.delete(scoped_key) {
-            Ok(()) => KvResponse::DeleteOk,
+            Ok(()) => {
+                active.mutation_count += 1;
+                KvResponse::DeleteOk
+            }
             Err(e) => KvResponse::Error {
                 error: Self::map_midge_error(e),
             },
@@ -430,7 +442,10 @@ impl KvActor {
         let scoped_end = Self::encode_scoped_key(&active.scoped_prefix, &end);
 
         match active.tx.delete_range(scoped_start, scoped_end) {
-            Ok(()) => KvResponse::DeleteRangeOk,
+            Ok(()) => {
+                active.mutation_count += 1;
+                KvResponse::DeleteRangeOk
+            }
             Err(e) => KvResponse::Error {
                 error: Self::map_midge_error(e),
             },
@@ -520,6 +535,10 @@ impl KvActor {
             .ok_or_else(|| KvResponse::Error {
                 error: KvError::InvalidTxId,
             })
+    }
+
+    pub fn mutation_count_for_tx(&self, tx_id: u64) -> Option<u64> {
+        self.transactions.get(&tx_id).map(|tx| tx.mutation_count)
     }
 
     fn realm_resource_prefix(realm: &str, area: &str, resource: &str) -> Vec<u8> {

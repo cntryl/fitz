@@ -269,12 +269,6 @@ impl LeaseActor {
                 self.expire_old_leases(ctx);
                 return None;
             }
-            LeaseMessage::Subscribe { .. }
-            | LeaseMessage::Unsubscribe { .. }
-            | LeaseMessage::UnsubscribeAll => {
-                // Subscription messages are handled by LeaseDomainSink subscription state
-                return None;
-            }
         };
 
         Some(response)

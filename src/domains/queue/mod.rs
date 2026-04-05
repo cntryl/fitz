@@ -121,18 +121,14 @@
 //! - Messages retry indefinitely on lease expiration
 //! - No DLQ behavior
 //!
-//! # Long Polling (RPC-Level Only)
+//! # Queue Watches
 //!
-//! Reserve operations support optional long polling for empty queues:
+//! Queue consumers can watch readiness routes instead of parking reserve requests:
 //! - QueueActor always returns immediately (never blocks)
-//! - `wait_seconds` is handled by QueueDomainSink inside the queue domain itself
-//! - The sink keeps ephemeral per-queue waiters for the current broker process
-//! - Waiters are resumed when a queue becomes ready or when their wait expires
-//! - No cross-domain subscriptions or external availability routes are involved
-//! - Benefits:
-//!   - Reduces polling overhead for idle queues
-//!   - Maintains deterministic actor performance
-//!   - Keeps queue scaling and waiting self-contained within the queue domain
+//! - QueueDomainSink owns ephemeral watch state for the current broker process
+//! - Watches target `queue://{realm}/{area}/{resource}/ready`
+//! - Notifications signal availability and never carry queue message bodies
+//! - Delayed visibility and lease-expiry transitions are surfaced through queue-local runtime sweeps
 //!
 //! # Usage
 //!
@@ -141,15 +137,13 @@
 pub mod actor;
 pub mod core;
 pub mod metrics;
-pub mod policy;
-pub mod protocol;
 pub mod projection;
+pub mod protocol;
 pub mod session;
 
 pub use actor::{Clock, QueueActor, SystemClock};
 pub use core::{MessageId, QueueKey, ReservedMessage};
 pub use metrics::QueueMetrics;
-pub use policy::{MAX_WAIT_QUEUE_DEPTH, MAX_WAIT_SECONDS, WAIT_SWEEP_INTERVAL};
 pub use projection::{QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueLeaseSnapshot};
-pub use protocol::{QueueMessage, QueueResponse};
+pub use protocol::{QueueMessage, QueueNotification, QueueResponse, QueueSubscriptionMessage};
 pub use session::SessionActor;

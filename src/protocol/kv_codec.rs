@@ -1,7 +1,10 @@
 //! KV domain TLV message types and codec
 
-use crate::domains::kv::{KvMessage, KvResponse, ScanQuery, TxMode};
-use crate::runtime::routing::{route_triplet_tail, RouteFamily};
+use crate::domains::kv::{
+    KvMessage, KvNotification, KvResponse, KvSubscriptionMessage, ScanQuery, TxMode,
+};
+use crate::protocol::frame_context::FrameContext;
+use crate::runtime::routing::{route_triplet_tail, Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 
 /// KV domain message type IDs
@@ -15,6 +18,45 @@ pub mod msg_type {
     pub const DELETE: u16 = 106;
     pub const DELETE_RANGE: u16 = 107;
     pub const SCAN: u16 = 108;
+    pub const SUBSCRIBE: u16 = 109;
+    pub const UNSUBSCRIBE: u16 = 110;
+    pub const NOTIFY: u16 = 111;
+}
+
+#[derive(Debug, Clone)]
+pub enum ParsedKvFrame {
+    Op(KvMessage),
+    Sub(KvSubscriptionMessage),
+}
+
+pub fn parse_frame(
+    ctx: &FrameContext,
+    payload: &[u8],
+    route_family: RouteFamily,
+    session_id: u64,
+    subscriber: RouteAddress,
+) -> Result<ParsedKvFrame, String> {
+    match ctx.msg_type.0 {
+        msg_type::BEGIN
+        | msg_type::COMMIT
+        | msg_type::ROLLBACK
+        | msg_type::GET
+        | msg_type::PUT
+        | msg_type::INSERT
+        | msg_type::DELETE
+        | msg_type::DELETE_RANGE
+        | msg_type::SCAN => {
+            parse_request(ctx.msg_type.0, route_family, payload).map(ParsedKvFrame::Op)
+        }
+        msg_type::SUBSCRIBE => {
+            parse_subscribe(route_family, session_id, subscriber, payload).map(ParsedKvFrame::Sub)
+        }
+        msg_type::UNSUBSCRIBE => {
+            parse_unsubscribe(route_family, session_id, subscriber, payload).map(ParsedKvFrame::Sub)
+        }
+        msg_type::NOTIFY => Err("KV_NOTIFY is server-to-client only".to_string()),
+        _ => Err(format!("Unknown KV message type: {}", ctx.msg_type.0)),
+    }
 }
 
 /// Parse KV request from bytes
@@ -48,6 +90,13 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
         KvResponse::BeginOk { tx_id } => {
             buf.put_u8(0); // status: success
             buf.put_u64(*tx_id);
+        }
+        KvResponse::SubscribeOk { subscription_id } => {
+            buf.put_u8(0); // status: success
+            buf.put_u64(*subscription_id);
+        }
+        KvResponse::UnsubscribeOk => {
+            buf.put_u8(0); // status: success
         }
         KvResponse::CommitOk => {
             buf.put_u8(0); // status: success
@@ -197,6 +246,15 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
 
             Ok(Some(route_str))
         }
+        msg_type::SUBSCRIBE | msg_type::UNSUBSCRIBE => {
+            let mut offset = 0;
+            let route_str = read_route_str(payload, &mut offset, "KV watch")?;
+            validate_route(route_str)?;
+            if offset != payload.len() {
+                return Err("Trailing data in KV watch payload".to_string());
+            }
+            Ok(Some(route_str))
+        }
         msg_type::COMMIT
         | msg_type::ROLLBACK
         | msg_type::GET
@@ -214,6 +272,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             validate_route(route_str)?;
             Ok(None)
         }
+        msg_type::NOTIFY => Err("KV_NOTIFY is server-to-client only".to_string()),
         _ => Err(format!("Unknown KV message type: {}", msg_type)),
     }
 }
@@ -364,6 +423,59 @@ fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, S
         mode,
         write_options,
     })
+}
+
+fn parse_subscribe(
+    route_family: RouteFamily,
+    session_id: u64,
+    subscriber: RouteAddress,
+    payload: &[u8],
+) -> Result<KvSubscriptionMessage, String> {
+    let mut offset = 0;
+    let pattern_str = read_route_str(payload, &mut offset, "KV SUBSCRIBE")?;
+    validate_route(pattern_str)?;
+    if offset != payload.len() {
+        return Err("Trailing data in KV SUBSCRIBE payload".to_string());
+    }
+
+    Ok(KvSubscriptionMessage::Subscribe {
+        family_id: route_family,
+        pattern: Route::from_ref(pattern_str),
+        session_id,
+        subscriber,
+    })
+}
+
+fn parse_unsubscribe(
+    route_family: RouteFamily,
+    session_id: u64,
+    subscriber: RouteAddress,
+    payload: &[u8],
+) -> Result<KvSubscriptionMessage, String> {
+    let mut offset = 0;
+    let pattern_str = read_route_str(payload, &mut offset, "KV UNSUBSCRIBE")?;
+    validate_route(pattern_str)?;
+    if offset != payload.len() {
+        return Err("Trailing data in KV UNSUBSCRIBE payload".to_string());
+    }
+
+    Ok(KvSubscriptionMessage::Unsubscribe {
+        family_id: route_family,
+        pattern: Route::from_ref(pattern_str),
+        session_id,
+        subscriber,
+    })
+}
+
+pub fn encode_notify(subscription_id: u64, route: &Route, notification: KvNotification) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    buf.put_u64(subscription_id);
+    buf.put_u32(route.as_str().len() as u32);
+    buf.put_slice(route.as_str().as_bytes());
+    buf.put_u64(notification.mutation_count);
+    buf
 }
 
 fn parse_get(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
@@ -1075,5 +1187,19 @@ mod tests {
             Ok(KvMessage::Begin { resource, .. }) => assert_eq!(resource, "users/by/id"),
             _ => panic!("Expected KvMessage::Begin with nested resource path"),
         }
+    }
+
+    #[test]
+    fn should_encode_subscribe_ok_response() {
+        // Arrange
+        let response = KvResponse::SubscribeOk { subscription_id: 9 };
+
+        // Act
+        let encoded = encode_response(&response);
+
+        // Assert
+        assert_eq!(encoded.len(), 9);
+        assert_eq!(encoded[0], 0);
+        assert_eq!(u64::from_be_bytes(encoded[1..9].try_into().unwrap()), 9);
     }
 }

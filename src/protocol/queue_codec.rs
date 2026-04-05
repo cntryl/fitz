@@ -1,7 +1,10 @@
 //! Queue domain TLV message types and codec
 
-use crate::domains::queue::{MessageId, QueueMessage, QueueResponse};
-use crate::runtime::routing::{Route, RouteFamily};
+use crate::domains::queue::{
+    MessageId, QueueMessage, QueueNotification, QueueResponse, QueueSubscriptionMessage,
+};
+use crate::protocol::frame_context::FrameContext;
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 
 /// Queue domain message type IDs
@@ -10,6 +13,38 @@ pub mod msg_type {
     pub const RESERVE: u16 = 202;
     pub const EXTEND: u16 = 203;
     pub const COMPLETE: u16 = 204;
+    pub const WATCH: u16 = 207;
+    pub const UNWATCH: u16 = 208;
+    pub const NOTIFY: u16 = 209;
+}
+
+#[derive(Debug, Clone)]
+pub enum ParsedQueueFrame {
+    Op(QueueMessage),
+    Sub(QueueSubscriptionMessage),
+}
+
+pub fn parse_frame(
+    ctx: &FrameContext,
+    payload: &[u8],
+    route_family: RouteFamily,
+    session_id: u64,
+    subscriber: RouteAddress,
+) -> Result<ParsedQueueFrame, String> {
+    match ctx.msg_type.0 {
+        msg_type::ENQUEUE => parse_enqueue(route_family, payload).map(ParsedQueueFrame::Op),
+        msg_type::RESERVE => parse_reserve(route_family, payload).map(ParsedQueueFrame::Op),
+        msg_type::EXTEND => parse_extend(route_family, payload).map(ParsedQueueFrame::Op),
+        msg_type::COMPLETE => parse_complete(route_family, payload).map(ParsedQueueFrame::Op),
+        msg_type::WATCH => {
+            parse_watch(route_family, session_id, subscriber, payload).map(ParsedQueueFrame::Sub)
+        }
+        msg_type::UNWATCH => {
+            parse_unwatch(route_family, session_id, subscriber, payload).map(ParsedQueueFrame::Sub)
+        }
+        msg_type::NOTIFY => Err("QUEUE_NOTIFY is server-to-client only".to_string()),
+        _ => Err(format!("Unknown Queue message type: {}", ctx.msg_type.0)),
+    }
 }
 
 /// Parse Queue request from bytes
@@ -37,6 +72,13 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
         QueueResponse::Sent { id } => {
             buf.put_u8(0); // status: success
             buf.put_u64(id.as_u64());
+        }
+        QueueResponse::WatchOk { subscription_id } => {
+            buf.put_u8(0); // status: success
+            buf.put_u64(*subscription_id);
+        }
+        QueueResponse::UnwatchOk => {
+            buf.put_u8(0); // status: success
         }
         QueueResponse::SentBatch { ids } => {
             buf.put_u8(0); // status: success
@@ -122,11 +164,17 @@ fn parse_route_str_ref<'a>(payload: &'a [u8], offset: &mut usize) -> Result<&'a 
 /// Extract the queue route or pattern used for authorization without constructing a full message.
 pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
     match msg_type {
-        msg_type::ENQUEUE | msg_type::RESERVE | msg_type::EXTEND | msg_type::COMPLETE => {
+        msg_type::ENQUEUE
+        | msg_type::RESERVE
+        | msg_type::EXTEND
+        | msg_type::COMPLETE
+        | msg_type::WATCH
+        | msg_type::UNWATCH => {
             let mut offset = 0;
             parse_route_str_ref(payload, &mut offset).map(Some)
         }
-        _ => Ok(None),
+        msg_type::NOTIFY => Err("QUEUE_NOTIFY is server-to-client only".to_string()),
+        _ => Err(format!("Unknown Queue message type: {}", msg_type)),
     }
 }
 
@@ -190,7 +238,7 @@ fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
 }
 
 fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
-    // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 lease_seconds][u8 has_batch_size][u32 batch?][u8 has_wait][u64 wait?]
+    // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 lease_seconds][u8 has_batch_size][u32 batch?]
     let mut offset = 0;
 
     // Parse route
@@ -235,39 +283,73 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
         None
     };
 
-    // Parse wait_seconds (1 byte flag, then u64 if present)
-    let wait_seconds = if offset < payload.len() {
-        let has_wait_seconds = payload[offset];
-        offset += 1;
-        if has_wait_seconds == 1 {
-            if offset + 8 > payload.len() {
-                return Err("Incomplete wait_seconds".to_string());
-            }
-            let wait = u64::from_be_bytes([
-                payload[offset],
-                payload[offset + 1],
-                payload[offset + 2],
-                payload[offset + 3],
-                payload[offset + 4],
-                payload[offset + 5],
-                payload[offset + 6],
-                payload[offset + 7],
-            ]);
-            Some(wait)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    if offset != payload.len() {
+        return Err("Trailing data in reserve request".to_string());
+    }
 
     Ok(QueueMessage::Receive {
         family_id,
         route: Route::from_ref(route_str),
         lease_seconds,
         batch_size,
-        wait_seconds,
     })
+}
+
+fn parse_watch(
+    family_id: RouteFamily,
+    session_id: u64,
+    subscriber: RouteAddress,
+    payload: &[u8],
+) -> Result<QueueSubscriptionMessage, String> {
+    let mut offset = 0;
+    let pattern_str = parse_route_str_ref(payload, &mut offset)?;
+    if offset != payload.len() {
+        return Err("Trailing data in watch request".to_string());
+    }
+
+    Ok(QueueSubscriptionMessage::Watch {
+        family_id,
+        pattern: Route::from_ref(pattern_str),
+        session_id,
+        subscriber,
+    })
+}
+
+fn parse_unwatch(
+    family_id: RouteFamily,
+    session_id: u64,
+    subscriber: RouteAddress,
+    payload: &[u8],
+) -> Result<QueueSubscriptionMessage, String> {
+    let mut offset = 0;
+    let pattern_str = parse_route_str_ref(payload, &mut offset)?;
+    if offset != payload.len() {
+        return Err("Trailing data in unwatch request".to_string());
+    }
+
+    Ok(QueueSubscriptionMessage::Unwatch {
+        family_id,
+        pattern: Route::from_ref(pattern_str),
+        session_id,
+        subscriber,
+    })
+}
+
+pub fn encode_notify(
+    subscription_id: u64,
+    route: &Route,
+    notification: QueueNotification,
+) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    buf.put_u64(subscription_id);
+    buf.put_u32(route.as_str().len() as u32);
+    buf.put_slice(route.as_str().as_bytes());
+    buf.put_u64(notification.ready_messages);
+    buf.put_u64(notification.delayed_messages);
+    buf.put_u64(notification.leased_messages);
+    buf
 }
 
 fn parse_extend(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
@@ -413,7 +495,6 @@ mod tests {
         payload.extend_from_slice(&30u64.to_be_bytes()); // lease_seconds
         payload.push(1); // batch_size present
         payload.extend_from_slice(&5u32.to_be_bytes()); // batch_size = 5
-        payload.push(0); // No wait_seconds
 
         // Act
         let result = parse_request(msg_type::RESERVE, RouteFamily::new(2), &payload);
@@ -423,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_reserve_message_with_wait_seconds() {
+    fn should_reject_reserve_message_with_trailing_wait_seconds() {
         // Arrange
         let route = "queue://realm/area/test";
         let mut payload = Vec::new();
@@ -440,15 +521,8 @@ mod tests {
 
         // Assert
         match result {
-            Ok(QueueMessage::Receive {
-                batch_size,
-                wait_seconds,
-                ..
-            }) => {
-                assert_eq!(batch_size, Some(1));
-                assert_eq!(wait_seconds, Some(5));
-            }
-            other => panic!("expected receive message, got {:?}", other),
+            Err(error) => assert_eq!(error, "Trailing data in reserve request"),
+            Ok(message) => panic!("expected trailing-data error, got {:?}", message),
         }
     }
 
@@ -505,5 +579,21 @@ mod tests {
 
         // Assert
         assert!(!encoded.is_empty());
+    }
+
+    #[test]
+    fn should_encode_watch_response() {
+        // Arrange
+        let response = QueueResponse::WatchOk {
+            subscription_id: 42,
+        };
+
+        // Act
+        let encoded = encode_response(&response);
+
+        // Assert
+        assert_eq!(encoded.len(), 9);
+        assert_eq!(encoded[0], 0);
+        assert_eq!(u64::from_be_bytes(encoded[1..9].try_into().unwrap()), 42);
     }
 }

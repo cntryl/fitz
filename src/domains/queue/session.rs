@@ -64,7 +64,6 @@ impl SessionActor {
         route: Route,
         lease_seconds: u64,
         batch_size: Option<usize>,
-        wait_seconds: Option<u64>,
         queue_actor: &mut QueueActor,
         ctx: &mut Context<QueueActor>,
     ) -> Result<(), String> {
@@ -81,7 +80,6 @@ impl SessionActor {
             route,
             lease_seconds,
             batch_size,
-            wait_seconds,
         };
         queue_actor.receive(msg, ctx);
         Ok(())
@@ -266,7 +264,6 @@ mod tests {
             Route::new("queue://realm/area/jobs/reserve"),
             30,
             Some(10),
-            None,
             &mut actor,
             &mut ctx,
         );
@@ -295,7 +292,6 @@ mod tests {
             Route::new("queue://realm/area/jobs/receive"),
             30,
             Some(10),
-            None,
             &mut actor,
             &mut ctx,
         );

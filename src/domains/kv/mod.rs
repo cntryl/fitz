@@ -32,6 +32,14 @@
 //! - `delete_range` - Delete range of keys
 //! - `scan` - Scan range of keys
 //!
+//! # KV Watches
+//!
+//! Clients can watch KV resources for committed mutations:
+//! - KvDomainSink owns ephemeral watch state for the current broker process
+//! - Watches target `kv://{realm}/{area}/{resource}` and wildcard resource patterns
+//! - Notifications are emitted only after a transaction commits at least one mutating operation
+//! - Uncommitted writes, empty commits, disconnect cleanup, and broker restart do not replay notifications
+//!
 //! # Column Family Mapping
 //!
 //! KV domain uses explicit RouteFamily -> ColumnFamily mapping:
@@ -46,5 +54,8 @@ pub mod session;
 
 pub use actor::KvActor;
 pub use metrics::KvMetrics;
-pub use protocol::{KvError, KvMessage, KvPair, KvResponse, ScanQuery, TxMode};
+pub use protocol::{
+    KvError, KvMessage, KvNotification, KvPair, KvResponse, KvSubscriptionMessage, ScanQuery,
+    TxMode,
+};
 pub use session::SessionActor;

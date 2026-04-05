@@ -208,8 +208,13 @@ impl NoticeDomainSink {
         }
     }
 
-    fn notice_response_is_failure(response: &crate::protocol::notice_codec::NoticeResponse) -> bool {
-        matches!(response, crate::protocol::notice_codec::NoticeResponse::Error(_))
+    fn notice_response_is_failure(
+        response: &crate::protocol::notice_codec::NoticeResponse,
+    ) -> bool {
+        matches!(
+            response,
+            crate::protocol::notice_codec::NoticeResponse::Error(_)
+        )
     }
 
     pub fn refresh_admin_snapshot_if_dirty(&self) {
@@ -410,7 +415,10 @@ impl MailboxSink for NoticeDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
-        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
+        let request_started = self
+            .metrics
+            .as_ref()
+            .map(|metrics| metrics.record_request_start());
 
         tracing::debug!(
             domain = "notice",
@@ -451,7 +459,8 @@ impl MailboxSink for NoticeDomainSink {
         ) {
             Ok(msg) => msg,
             Err(e) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                {
                     metrics.record_failure(started_at);
                 }
                 tracing::warn!(domain = "notice", error = %e, "Failed to parse notice message");

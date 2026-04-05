@@ -1,6 +1,6 @@
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
-use crate::domains::stream::StreamMetrics;
 use crate::domains::stream::store::StreamAdminRecord;
+use crate::domains::stream::StreamMetrics;
 use crate::domains::stream::{StreamActor, StreamRecord, StreamStore};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::PayloadEncoder;
@@ -169,7 +169,10 @@ impl StreamDomainSink {
     fn stream_response_is_failure(
         response: &crate::protocol::stream_codec::StreamResponse,
     ) -> bool {
-        matches!(response, crate::protocol::stream_codec::StreamResponse::Error(_))
+        matches!(
+            response,
+            crate::protocol::stream_codec::StreamResponse::Error(_)
+        )
     }
 
     pub fn refresh_admin_snapshot_if_dirty(&self) {
@@ -610,7 +613,10 @@ impl MailboxSink for StreamDomainSink {
             Some(ctx) => ctx.clone(),
             None => return Err(DeliveryError::ActorStopped),
         };
-        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
+        let request_started = self
+            .metrics
+            .as_ref()
+            .map(|metrics| metrics.record_request_start());
         let mut payload_encoder = PayloadEncoder::with_capacity(256);
 
         let parsed_frame = match crate::protocol::stream_codec::parse_request(
@@ -627,7 +633,8 @@ impl MailboxSink for StreamDomainSink {
         ) {
             Ok(msg) => msg,
             Err(_) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                {
                     metrics.record_failure(started_at);
                 }
                 return Err(DeliveryError::ActorStopped);
@@ -661,24 +668,23 @@ impl MailboxSink for StreamDomainSink {
                         .entry(family_id.as_u64())
                         .or_insert_with(RoutedSubscriptionSet::new);
 
-                    let subscription_id =
-                        if let Some(id) = state.find_existing_id(session_id, pattern.as_str()) {
-                            id
-                        } else {
-                            let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                            state.insert(
-                                family_id,
-                                StreamSubscription {
-                                    pattern: crate::runtime::matcher::Pattern::new(
-                                        pattern.as_str(),
-                                    ),
-                                    session_id,
-                                    subscription_id: new_id,
-                                    subscriber,
-                                },
-                            );
-                            new_id
-                        };
+                    let subscription_id = if let Some(id) =
+                        state.find_existing_id(session_id, pattern.as_str())
+                    {
+                        id
+                    } else {
+                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                        state.insert(
+                            family_id,
+                            StreamSubscription {
+                                pattern: crate::runtime::matcher::Pattern::new(pattern.as_str()),
+                                session_id,
+                                subscription_id: new_id,
+                                subscriber,
+                            },
+                        );
+                        new_id
+                    };
 
                     (
                         StreamResponse::Ok {

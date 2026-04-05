@@ -445,6 +445,96 @@ where
     );
 }
 
+async fn should_deliver_lease_watch_notification_after_release<C>(server: &TestServer)
+where
+    C: LeaseConnector,
+{
+    // Arrange
+    let route = "lease://test/locks/watch-release";
+    let mut watcher = C::connect(server).await.expect("watcher connect");
+    let mut holder = C::connect(server).await.expect("holder connect");
+
+    let subscribe_response = watcher
+        .send_and_receive(&build_lease_subscribe(route), 2000)
+        .await
+        .expect("subscribe lease watch");
+    let (_msg_type, status, data) = parse_lease_response(&subscribe_response);
+    assert_eq!(status, 0, "Expected subscribe success");
+    let subscription_id = extract_lease_subscription_id(&data).expect("subscription id");
+
+    let acquire_response = holder
+        .send_and_receive(&build_lease_acquire_immediate(route, "owner1", 30), 2000)
+        .await
+        .expect("acquire lease");
+    let (_msg_type, status, data) = parse_lease_response(&acquire_response);
+    assert_eq!(status, 0, "Expected acquire success");
+    let token = parse_lease_token_response(&data).expect("lease token");
+
+    // Act
+    let release_response = holder
+        .send_and_receive(&build_lease_release(route, "owner1", token), 2000)
+        .await
+        .expect("release lease");
+    let (_msg_type, status, _data) = parse_lease_response(&release_response);
+    assert_eq!(status, 0, "Expected release success");
+
+    let notify_frame = watcher.recv_frame(2000).await.expect("lease notify frame");
+
+    // Assert
+    let delivery = parse_lease_watch_delivery(&notify_frame).expect("lease watch delivery");
+    assert_eq!(delivery.msg_type, 409);
+    assert_eq!(delivery.subscription_id, subscription_id);
+    assert_eq!(delivery.route, route);
+    assert!(delivery.payload.is_empty(), "Expected empty lease notify payload");
+}
+
+async fn should_not_deliver_lease_watch_notification_after_unsubscribe<C>(server: &TestServer)
+where
+    C: LeaseConnector,
+{
+    // Arrange
+    let route = "lease://test/locks/watch-unsubscribe";
+    let mut watcher = C::connect(server).await.expect("watcher connect");
+    let mut holder = C::connect(server).await.expect("holder connect");
+
+    let subscribe_response = watcher
+        .send_and_receive(&build_lease_subscribe(route), 2000)
+        .await
+        .expect("subscribe lease watch");
+    let (_msg_type, status, _data) = parse_lease_response(&subscribe_response);
+    assert_eq!(status, 0, "Expected subscribe success");
+
+    let unsubscribe_response = watcher
+        .send_and_receive(&build_lease_unsubscribe(route), 2000)
+        .await
+        .expect("unsubscribe lease watch");
+    let (_msg_type, status, _data) = parse_lease_response(&unsubscribe_response);
+    assert_eq!(status, 0, "Expected unsubscribe success");
+
+    let acquire_response = holder
+        .send_and_receive(&build_lease_acquire_immediate(route, "owner1", 30), 2000)
+        .await
+        .expect("acquire lease");
+    let (_msg_type, status, data) = parse_lease_response(&acquire_response);
+    assert_eq!(status, 0, "Expected acquire success");
+    let token = parse_lease_token_response(&data).expect("lease token");
+
+    // Act
+    let release_response = holder
+        .send_and_receive(&build_lease_release(route, "owner1", token), 2000)
+        .await
+        .expect("release lease");
+    let (_msg_type, status, _data) = parse_lease_response(&release_response);
+    assert_eq!(status, 0, "Expected release success");
+
+    // Assert
+    let notify_result = watcher.recv_frame(750).await;
+    assert!(
+        notify_result.is_err(),
+        "Expected no lease notify after unsubscribe"
+    );
+}
+
 // ===== TCP TESTS =====
 
 #[tokio::test]
@@ -518,6 +608,19 @@ async fn should_report_pending_waiters_while_acquire_is_queued_tcp() {
     should_report_pending_waiters_while_acquire_is_queued::<TcpLeaseConnector>(&server).await;
 }
 
+#[tokio::test]
+async fn should_deliver_lease_watch_notification_after_release_tcp() {
+    let server = TestServer::start().await.expect("start");
+    should_deliver_lease_watch_notification_after_release::<TcpLeaseConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_not_deliver_lease_watch_notification_after_unsubscribe_tcp() {
+    let server = TestServer::start().await.expect("start");
+    should_not_deliver_lease_watch_notification_after_unsubscribe::<TcpLeaseConnector>(&server)
+        .await;
+}
+
 // ===== WEBSOCKET TESTS =====
 
 #[tokio::test]
@@ -589,4 +692,17 @@ async fn should_time_out_waiting_acquire_when_holder_remains_ws() {
 async fn should_report_pending_waiters_while_acquire_is_queued_ws() {
     let server = TestServer::start().await.expect("start");
     should_report_pending_waiters_while_acquire_is_queued::<WsLeaseConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_deliver_lease_watch_notification_after_release_ws() {
+    let server = TestServer::start().await.expect("start");
+    should_deliver_lease_watch_notification_after_release::<WsLeaseConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_not_deliver_lease_watch_notification_after_unsubscribe_ws() {
+    let server = TestServer::start().await.expect("start");
+    should_not_deliver_lease_watch_notification_after_unsubscribe::<WsLeaseConnector>(&server)
+        .await;
 }

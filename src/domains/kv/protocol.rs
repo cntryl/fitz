@@ -5,9 +5,10 @@
 //! - Resource (table) isolation
 //! - Explicit RouteFamily → ColumnFamily mapping
 
-use crate::runtime::routing::RouteFamily;
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 use cntryl_midge::WriteOptions;
+use serde::{Deserialize, Serialize};
 
 /// KV operation request
 #[derive(Debug, Clone)]
@@ -80,6 +81,29 @@ pub enum KvMessage {
     },
 }
 
+/// KV watch messages handled by KvDomainSink before actor dispatch.
+#[derive(Debug, Clone)]
+pub enum KvSubscriptionMessage {
+    Subscribe {
+        family_id: RouteFamily,
+        pattern: Route,
+        session_id: u64,
+        subscriber: RouteAddress,
+    },
+    Unsubscribe {
+        family_id: RouteFamily,
+        pattern: Route,
+        session_id: u64,
+        subscriber: RouteAddress,
+    },
+}
+
+/// Lightweight change notification for committed KV mutations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvNotification {
+    pub mutation_count: u64,
+}
+
 /// Transaction mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TxMode {
@@ -107,6 +131,12 @@ pub struct ScanQuery {
 pub enum KvResponse {
     /// Transaction began successfully with server-assigned ID
     BeginOk { tx_id: u64 },
+
+    /// KV watch registered successfully.
+    SubscribeOk { subscription_id: u64 },
+
+    /// KV watch removed successfully.
+    UnsubscribeOk,
 
     /// Transaction committed successfully
     CommitOk,

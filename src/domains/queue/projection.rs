@@ -1,13 +1,13 @@
+use crate::api::admin::read_model::AdminReadModel;
 use crate::api::admin::{
     QueueDeadLetter, QueueDeadLetterSnapshot as AdminQueueDeadLetterSnapshot, QueueInfo,
     QueueInfoSnapshot as AdminQueueInfoSnapshot, QueueLease,
     QueueLeaseSnapshot as AdminQueueLeaseSnapshot,
 };
-use crate::api::admin::read_model::AdminReadModel;
 use crate::domains::queue::core::QueueKey;
 use chrono::{TimeZone, Utc};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Point-in-time warm-actor queue counts for admin diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,7 +187,8 @@ impl QueueAdminProjection {
     fn apply(&self, state: QueueProjectionState) {
         self.read_model.replace_queues(state.queues);
         self.read_model.replace_queue_leases(state.leases);
-        self.read_model.replace_queue_dead_letters(state.dead_letters);
+        self.read_model
+            .replace_queue_dead_letters(state.dead_letters);
     }
 }
 

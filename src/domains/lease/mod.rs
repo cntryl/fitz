@@ -11,14 +11,16 @@
 //! - **Fencing tokens**: process-local monotonic tokens used only while the
 //!   broker instance is alive
 //! - **TTL-based expiration**: leases expire when their local TTL elapses
+//! - **Explicit lease watches**: clients can subscribe to `LEASE_NOTIFY (409)`
+//!   for concrete lease routes without polling
 //! - **Session cleanup**: disconnect removes session-owned lease state
 //! - **No recovery**: restart-loss is expected and must remain visible in tests
 //!
 //! # Route Format
 //!
-//! Leases use hierarchical routes: `lease://{realm}/{area}/{resource}/{operation}`
+//! Leases use hierarchical routes: `lease://{realm}/{area}/{resource}`
 //!
-//! Example: `lease://acme/locks/db-migration/acquire`
+//! Example: `lease://acme/locks/db-migration`
 //!
 //! Lease identity is `(family_id, realm, area, resource)` extracted from the route.
 //!
@@ -37,5 +39,5 @@ pub mod session;
 pub use actor::{Clock, LeaseActor, SystemClock};
 pub use guard::{LeaseError, LeaseGuard, LeaseHandle};
 pub use metrics::LeaseMetrics;
-pub use protocol::{LeaseMessage, LeaseResponse};
+pub use protocol::{LeaseMessage, LeaseResponse, LeaseSubscriptionMessage};
 pub use session::SessionActor;

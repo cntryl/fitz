@@ -370,10 +370,11 @@ impl ScheduleDomainSink {
         }
     }
 
-    fn schedule_response_is_failure(
-        response: &crate::domains::schedule::ScheduleResponse,
-    ) -> bool {
-        matches!(response, crate::domains::schedule::ScheduleResponse::Error(_))
+    fn schedule_response_is_failure(response: &crate::domains::schedule::ScheduleResponse) -> bool {
+        matches!(
+            response,
+            crate::domains::schedule::ScheduleResponse::Error(_)
+        )
     }
 
     fn schedule_admin_snapshot(&self, force: bool) {
@@ -459,7 +460,10 @@ impl MailboxSink for ScheduleDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
-        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
+        let request_started = self
+            .metrics
+            .as_ref()
+            .map(|metrics| metrics.record_request_start());
         let mut payload_encoder =
             crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
@@ -482,7 +486,8 @@ impl MailboxSink for ScheduleDomainSink {
         ) {
             Ok(msg) => msg,
             Err(e) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                {
                     metrics.record_failure(started_at);
                 }
                 tracing::warn!(

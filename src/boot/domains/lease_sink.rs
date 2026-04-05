@@ -134,6 +134,17 @@ impl LeaseDomainSink {
         self
     }
 
+    fn session_inbox_address(
+        route_family: crate::runtime::routing::RouteFamily,
+        session_id: u64,
+    ) -> crate::runtime::routing::RouteAddress {
+        let route = format!("inbox://session/{session_id}");
+        crate::runtime::routing::RouteAddress::new(
+            route_family,
+            crate::runtime::routing::Route::new(route.as_str()),
+        )
+    }
+
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
     }
@@ -232,7 +243,9 @@ impl LeaseDomainSink {
             .sum()
     }
 
-    fn lease_response_is_failure(response: &crate::domains::lease::protocol::LeaseResponse) -> bool {
+    fn lease_response_is_failure(
+        response: &crate::domains::lease::protocol::LeaseResponse,
+    ) -> bool {
         matches!(
             response,
             crate::domains::lease::protocol::LeaseResponse::Timeout
@@ -338,6 +351,36 @@ impl LeaseDomainSink {
             response_ctx,
         );
         let _ = self.router.route(response_envelope);
+    }
+
+    fn route_lease_response(
+        &self,
+        envelope: &Envelope,
+        frame_ctx: &FrameContext,
+        response: &crate::domains::lease::protocol::LeaseResponse,
+        request_started: Option<std::time::Instant>,
+    ) -> Result<(), DeliveryError> {
+        let response_bytes = crate::protocol::lease_codec::encode_domain_response(response);
+        let response_ctx = FrameContext::new(
+            frame_ctx.session_id,
+            frame_ctx.channel_id,
+            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+            bytes::Bytes::from(response_bytes),
+            frame_ctx.route_family,
+        );
+        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+            let _ = self.router.route(response_envelope);
+        }
+
+        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            if Self::lease_response_is_failure(response) {
+                metrics.record_failure(started_at);
+            } else {
+                metrics.record_success(started_at);
+            }
+        }
+
+        Ok(())
     }
 
     fn notify_lease_change(&self, key: &crate::domains::lease::protocol::LeaseKey) {
@@ -646,7 +689,9 @@ impl LeaseDomainSink {
                 let notify_ctx = FrameContext::new(
                     sub.session_id,
                     crate::protocol::frame::ChannelId::Sub,
-                    crate::protocol::tlv::MessageType::new(409),
+                    crate::protocol::tlv::MessageType::new(
+                        crate::protocol::lease_codec::msg_type::NOTIFY,
+                    ),
                     bytes::Bytes::from(notify_payload),
                     event.family_id,
                 );
@@ -957,14 +1002,20 @@ impl MailboxSink for LeaseDomainSink {
                 return Err(DeliveryError::ActorStopped);
             }
         };
-        let request_started = self.metrics.as_ref().map(|metrics| metrics.record_request_start());
-        let mut payload_encoder =
-            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        let request_started = self
+            .metrics
+            .as_ref()
+            .map(|metrics| metrics.record_request_start());
+        let subscriber = envelope.source().cloned().unwrap_or_else(|| {
+            Self::session_inbox_address(frame_ctx.route_family, frame_ctx.session_id)
+        });
 
-        let lease_msg = match crate::protocol::lease_codec::parse_request(
+        let parsed_frame = match crate::protocol::lease_codec::parse_frame(
             &frame_ctx,
             &frame_ctx.payload,
-            *envelope.destination().family(),
+            frame_ctx.route_family,
+            frame_ctx.session_id,
+            subscriber,
         ) {
             Ok(msg) => {
                 tracing::debug!(
@@ -976,7 +1027,8 @@ impl MailboxSink for LeaseDomainSink {
                 msg
             }
             Err(e) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                {
                     metrics.record_failure(started_at);
                 }
                 tracing::warn!(domain = "lease", error = %e, "Failed to parse lease message");
@@ -984,7 +1036,69 @@ impl MailboxSink for LeaseDomainSink {
             }
         };
 
-        use crate::domains::lease::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
+        use crate::domains::lease::protocol::{
+            LeaseKey, LeaseMessage, LeaseResponse, LeaseSubscriptionMessage,
+        };
+
+        if let crate::protocol::lease_codec::ParsedLeaseFrame::Sub(sub_msg) = parsed_frame {
+            let response = match sub_msg {
+                LeaseSubscriptionMessage::Subscribe {
+                    family_id,
+                    pattern,
+                    session_id,
+                    subscriber,
+                } => {
+                    let pattern_str = pattern.as_str().to_string();
+                    let subscription_id = {
+                        let mut families = self.families.lock();
+                        let state = families
+                            .entry(family_id.as_u64())
+                            .or_insert_with(RoutedSubscriptionSet::new);
+
+                        if let Some(existing_id) =
+                            state.find_existing_id(session_id, pattern_str.as_str())
+                        {
+                            existing_id
+                        } else {
+                            let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                            state.insert(
+                                family_id,
+                                LeaseSubscription {
+                                    pattern: crate::runtime::matcher::Pattern::new(
+                                        pattern_str.as_str(),
+                                    ),
+                                    session_id,
+                                    route_address: subscriber,
+                                    subscription_id: new_id,
+                                },
+                            );
+                            new_id
+                        }
+                    };
+                    LeaseResponse::SubscribeOk { subscription_id }
+                }
+                LeaseSubscriptionMessage::Unsubscribe {
+                    family_id,
+                    pattern,
+                    session_id,
+                    ..
+                } => {
+                    let mut families = self.families.lock();
+                    if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                        state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                    }
+                    LeaseResponse::UnsubscribeOk
+                }
+            };
+
+            self.refresh_metrics_gauges();
+            return self.route_lease_response(&envelope, &frame_ctx, &response, request_started);
+        }
+
+        let lease_msg = match parsed_frame {
+            crate::protocol::lease_codec::ParsedLeaseFrame::Op(msg) => msg,
+            crate::protocol::lease_codec::ParsedLeaseFrame::Sub(_) => unreachable!(),
+        };
 
         let session_prefix = frame_ctx.session_id.to_string();
         let effective_owner = |owner_id: String| {
@@ -1055,181 +1169,15 @@ impl MailboxSink for LeaseDomainSink {
             }
             LeaseMessage::Tick => {
                 self.sweep_expired_state();
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
-                    metrics.record_success(started_at);
-                }
-                return Ok(());
-            }
-            LeaseMessage::Subscribe { family_id, pattern } => {
-                let route_address = match envelope.source() {
-                    Some(src) => src,
-                    None => {
-                        let error_bytes = vec![1u8];
-                        let response_ctx = FrameContext::new(
-                            frame_ctx.session_id,
-                            frame_ctx.channel_id,
-                            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
-                            bytes::Bytes::from(error_bytes),
-                            frame_ctx.route_family,
-                        );
-                        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-                            let _ = self.router.route(response_envelope);
-                        }
-                        if let (Some(metrics), Some(started_at)) =
-                            (self.metrics.as_ref(), request_started)
-                        {
-                            metrics.record_failure(started_at);
-                        }
-                        return Ok(());
-                    }
-                };
-
-                let subscription_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                let family_id_u64 = family_id.as_u64();
-
-                let mut families = self.families.lock();
-                let family_state = families
-                    .entry(family_id_u64)
-                    .or_insert_with(RoutedSubscriptionSet::new);
-
-                if let Some(existing) =
-                    family_state.find_existing_id(frame_ctx.session_id, pattern.as_str())
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
                 {
-                    let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
-                        &mut payload_encoder,
-                        &LeaseResponse::SubscribeOk {
-                            subscription_id: existing,
-                        },
-                    );
-                    let response_ctx = FrameContext::new(
-                        frame_ctx.session_id,
-                        frame_ctx.channel_id,
-                        crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
-                        bytes::Bytes::from(response_bytes),
-                        frame_ctx.route_family,
-                    );
-                    if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-                        let _ = self.router.route(response_envelope);
-                    }
-                    self.refresh_metrics_gauges();
-                    if let (Some(metrics), Some(started_at)) =
-                        (self.metrics.as_ref(), request_started)
-                    {
-                        metrics.record_success(started_at);
-                    }
-                    return Ok(());
-                }
-
-                family_state.insert(
-                    family_id,
-                    LeaseSubscription {
-                        pattern: crate::runtime::matcher::Pattern::new(pattern.as_str()),
-                        session_id: frame_ctx.session_id,
-                        route_address: route_address.clone(),
-                        subscription_id,
-                    },
-                );
-
-                let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
-                    &mut payload_encoder,
-                    &LeaseResponse::SubscribeOk { subscription_id },
-                );
-                let response_ctx = FrameContext::new(
-                    frame_ctx.session_id,
-                    frame_ctx.channel_id,
-                    crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
-                    bytes::Bytes::from(response_bytes),
-                    frame_ctx.route_family,
-                );
-                if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-                    let _ = self.router.route(response_envelope);
-                }
-                self.refresh_metrics_gauges();
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
-                    metrics.record_success(started_at);
-                }
-                return Ok(());
-            }
-            LeaseMessage::Unsubscribe { family_id, pattern } => {
-                let family_id_u64 = family_id.as_u64();
-                let mut families = self.families.lock();
-
-                if let Some(family_state) = families.get_mut(&family_id_u64) {
-                    family_state.remove_session_pattern(
-                        family_id,
-                        frame_ctx.session_id,
-                        pattern.as_str(),
-                    );
-                }
-
-                let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
-                    &mut payload_encoder,
-                    &LeaseResponse::UnsubscribeOk,
-                );
-                let response_ctx = FrameContext::new(
-                    frame_ctx.session_id,
-                    frame_ctx.channel_id,
-                    crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
-                    bytes::Bytes::from(response_bytes),
-                    frame_ctx.route_family,
-                );
-                if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-                    let _ = self.router.route(response_envelope);
-                }
-                self.refresh_metrics_gauges();
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
-                    metrics.record_success(started_at);
-                }
-                return Ok(());
-            }
-            LeaseMessage::UnsubscribeAll => {
-                self.unsubscribe_all(frame_ctx.session_id);
-                let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
-                    &mut payload_encoder,
-                    &LeaseResponse::UnsubscribeOk,
-                );
-                let response_ctx = FrameContext::new(
-                    frame_ctx.session_id,
-                    frame_ctx.channel_id,
-                    crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
-                    bytes::Bytes::from(response_bytes),
-                    frame_ctx.route_family,
-                );
-                if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-                    let _ = self.router.route(response_envelope);
-                }
-                self.refresh_metrics_gauges();
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
                     metrics.record_success(started_at);
                 }
                 return Ok(());
             }
         };
 
-        let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
-            &mut payload_encoder,
-            &domain_response,
-        );
-        let response_ctx = FrameContext::new(
-            frame_ctx.session_id,
-            frame_ctx.channel_id,
-            crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
-            bytes::Bytes::from(response_bytes),
-            frame_ctx.route_family,
-        );
-        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            let _ = self.router.route(response_envelope);
-        }
-
-        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
-            if Self::lease_response_is_failure(&domain_response) {
-                metrics.record_failure(started_at);
-            } else {
-                metrics.record_success(started_at);
-            }
-        }
-
-        Ok(())
+        self.route_lease_response(&envelope, &frame_ctx, &domain_response, request_started)
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {

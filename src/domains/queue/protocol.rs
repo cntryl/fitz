@@ -26,15 +26,15 @@
 //! - Invalid tokens are rejected (prevents accidental duplicate operations)
 //! - Tokens are ephemeral (not persisted, regenerated on actor restart)
 //!
-//! # Long Polling (RPC-Level Only)
+//! # Queue Watches
 //!
-//! Receive operations support optional long polling via `wait_seconds`:
+//! Queue availability is surfaced through explicit watch notifications:
 //! - QueueActor always returns immediately (never blocks)
-//! - If empty and `wait_seconds > 0`, QueueDomainSink keeps an ephemeral waiter
-//! - The waiter is resumed when the queue becomes ready or when the wait expires
-//! - QueueActor never stores waiters or blocking state
+//! - QueueDomainSink owns ephemeral watch state for the current broker process
+//! - Watches target `queue://{realm}/{area}/{resource}/ready`
+//! - Notifications are readiness signals only; they never carry queue message bodies
 
-use crate::runtime::routing::{Route, RouteFamily};
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
@@ -69,18 +69,11 @@ pub enum QueueMessage {
     ///
     /// If `batch_size` is None, defaults to 1.
     ///
-    /// # Long Polling (RPC-Level Only)
-    ///
-    /// If `wait_seconds` is provided and receive returns empty:
-    /// - QueueDomainSink keeps the request parked inside the queue domain
-    /// - The waiter is resumed when the queue becomes ready or the wait expires
-    /// - QueueActor NEVER blocks or stores waiters
     Receive {
         family_id: RouteFamily,
         route: Route,
         lease_seconds: u64,
         batch_size: Option<usize>,
-        wait_seconds: Option<u64>,
     },
 
     /// Extend message lease
@@ -119,6 +112,31 @@ pub enum QueueMessage {
     LeaseExpired { id: MessageId },
 }
 
+/// Queue watch messages handled by QueueDomainSink before actor dispatch.
+#[derive(Debug, Clone)]
+pub enum QueueSubscriptionMessage {
+    Watch {
+        family_id: RouteFamily,
+        pattern: Route,
+        session_id: u64,
+        subscriber: RouteAddress,
+    },
+    Unwatch {
+        family_id: RouteFamily,
+        pattern: Route,
+        session_id: u64,
+        subscriber: RouteAddress,
+    },
+}
+
+/// Lightweight readiness notification payload for queue watchers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueNotification {
+    pub ready_messages: u64,
+    pub delayed_messages: u64,
+    pub leased_messages: u64,
+}
+
 /// Queue errors
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueError {
@@ -143,6 +161,12 @@ impl QueueError {
 pub enum QueueResponse {
     /// Message successfully sent
     Sent { id: MessageId },
+
+    /// Queue watch successfully registered.
+    WatchOk { subscription_id: u64 },
+
+    /// Queue watch successfully removed.
+    UnwatchOk,
 
     /// Multiple messages successfully sent in one batch (same semantics as N×Sent)
     SentBatch { ids: Vec<MessageId> },

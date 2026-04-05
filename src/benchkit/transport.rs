@@ -204,44 +204,43 @@ pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
 
 /// Build QUEUE RESERVE frame (msg_type 202)
 pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
-    // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=0][u8 has_wait=0]
+    // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=0]
     let mut payload = Vec::new();
     payload.extend_from_slice(&(queue_name.len() as u32).to_be_bytes());
     payload.extend_from_slice(queue_name.as_bytes());
     payload.extend_from_slice(&30_u64.to_be_bytes());
     payload.push(0); // has_batch_size = false
-    payload.push(0); // has_wait = false
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(202, &payload);
     builder.build()
 }
 
-/// Build QUEUE RESERVE frame (msg_type 202) with wait_seconds.
-pub fn build_queue_dequeue_with_wait(queue_name: &str, wait_seconds: u64) -> Vec<u8> {
+/// Build QUEUE WATCH frame (msg_type 207).
+pub fn build_queue_watch(queue_name: &str) -> Vec<u8> {
+    let pattern = if queue_name.contains('*') || queue_name.ends_with("/ready") {
+        queue_name.to_string()
+    } else {
+        format!("{queue_name}/ready")
+    };
     let mut payload = Vec::new();
-    payload.extend_from_slice(&(queue_name.len() as u32).to_be_bytes());
-    payload.extend_from_slice(queue_name.as_bytes());
-    payload.extend_from_slice(&30_u64.to_be_bytes());
-    payload.push(0); // has_batch_size = false
-    payload.push(1); // has_wait = true
-    payload.extend_from_slice(&wait_seconds.to_be_bytes());
+    payload.extend_from_slice(&(pattern.len() as u32).to_be_bytes());
+    payload.extend_from_slice(pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(202, &payload);
+    builder.encode_field(207, &payload);
     builder.build()
 }
 
 /// Build QUEUE RESERVE frame (msg_type 202) with an explicit batch size.
 pub fn build_queue_dequeue_batch(queue_name: &str, batch_size: u32) -> Vec<u8> {
-    // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=1][u32 batch][u8 has_wait=0]
+    // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=1][u32 batch]
     let mut payload = Vec::new();
     payload.extend_from_slice(&(queue_name.len() as u32).to_be_bytes());
     payload.extend_from_slice(queue_name.as_bytes());
     payload.extend_from_slice(&30_u64.to_be_bytes());
     payload.push(1); // has_batch_size = true
     payload.extend_from_slice(&batch_size.to_be_bytes());
-    payload.push(0); // has_wait = false
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(202, &payload);

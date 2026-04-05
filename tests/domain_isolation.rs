@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const DOMAINS: &[&str] = &["kv", "lease", "notice", "queue", "rpc", "schedule", "stream"];
+const DOMAINS: &[&str] = &[
+    "kv", "lease", "notice", "queue", "rpc", "schedule", "stream",
+];
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct OwnedSourceFile {
@@ -54,16 +56,21 @@ fn domain_owned_source_files(repo_root: &Path) -> Vec<OwnedSourceFile> {
         );
     }
 
-    collect_boot_domain_files(&repo_root.join("src").join("boot").join("domains"), &mut files);
+    collect_boot_domain_files(
+        &repo_root.join("src").join("boot").join("domains"),
+        &mut files,
+    );
     files.sort();
     files
 }
 
 fn collect_rust_files(dir: &Path, owner: &'static str, files: &mut Vec<OwnedSourceFile>) {
-    let entries = fs::read_dir(dir).unwrap_or_else(|error| panic!("failed to read {}: {error}", dir.display()));
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", dir.display()));
 
     for entry in entries {
-        let entry = entry.unwrap_or_else(|error| panic!("failed to read entry in {}: {error}", dir.display()));
+        let entry = entry
+            .unwrap_or_else(|error| panic!("failed to read entry in {}: {error}", dir.display()));
         let path = entry.path();
 
         if path.is_dir() {
@@ -78,10 +85,12 @@ fn collect_rust_files(dir: &Path, owner: &'static str, files: &mut Vec<OwnedSour
 }
 
 fn collect_boot_domain_files(dir: &Path, files: &mut Vec<OwnedSourceFile>) {
-    let entries = fs::read_dir(dir).unwrap_or_else(|error| panic!("failed to read {}: {error}", dir.display()));
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", dir.display()));
 
     for entry in entries {
-        let entry = entry.unwrap_or_else(|error| panic!("failed to read entry in {}: {error}", dir.display()));
+        let entry = entry
+            .unwrap_or_else(|error| panic!("failed to read entry in {}: {error}", dir.display()));
         let path = entry.path();
 
         if path.is_dir() {

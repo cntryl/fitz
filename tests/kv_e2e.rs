@@ -512,6 +512,54 @@ where
     assert_ne!(status, 0, "Expected stale tx_id rejection after reconnect");
 }
 
+async fn should_deliver_kv_watch_notification_after_committed_put<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    // Arrange
+    let mut watcher = C::connect(server).await.expect("failed to connect watcher");
+    let mut writer = C::connect(server).await.expect("failed to connect writer");
+    let route = "kv://test/app/watch-users";
+
+    let subscribe_response = watcher
+        .request(&build_kv_subscribe(route), 2000)
+        .await
+        .expect("subscribe failed");
+    let (_msg_type, status, data) = parse_kv_response(&subscribe_response);
+    assert_eq!(status, 0, "Expected subscribe success");
+    let subscription_id = extract_kv_subscription_id(&data).expect("extract subscription id");
+
+    let begin_response = writer
+        .request(&build_kv_begin(route, 1, 0), 2000)
+        .await
+        .expect("begin failed");
+    let tx_id = expect_kv_begin_ok(&begin_response, "kv watch commit");
+
+    // Act
+    let put_response = writer
+        .request(&build_kv_put(tx_id, route, b"user:1", b"alice"), 2000)
+        .await
+        .expect("put failed");
+    let (_msg_type, status, _data) = parse_kv_response(&put_response);
+    assert_eq!(status, 0, "Expected put success");
+
+    let commit_response = writer
+        .request(&build_kv_commit(tx_id, route), 2000)
+        .await
+        .expect("commit failed");
+    let (_msg_type, status, _data) = parse_kv_response(&commit_response);
+    assert_eq!(status, 0, "Expected commit success");
+
+    let notify_frame = watcher.recv_frame(2000).await.expect("watch notify frame");
+
+    // Assert
+    let delivery = parse_kv_watch_delivery(&notify_frame).expect("parse kv watch delivery");
+    assert_eq!(delivery.msg_type, 111);
+    assert_eq!(delivery.subscription_id, subscription_id);
+    assert_eq!(delivery.route, route);
+    assert_eq!(delivery.mutation_count, 1);
+}
+
 async fn should_put_and_get_same_key_in_transaction<C>(server: &TestServer)
 where
     C: KvConnector,
@@ -1008,6 +1056,20 @@ async fn should_reject_stale_transaction_id_after_client_reconnect_tcp() {
 }
 
 #[tokio::test]
+async fn should_deliver_kv_watch_notification_after_committed_put_tcp() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_deliver_kv_watch_notification_after_committed_put::<TcpConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
 async fn should_unregister_tcp_inbox_route_on_disconnect() {
     let server = TestServer::start()
         .await
@@ -1285,6 +1347,20 @@ async fn should_handle_large_batch_writes_in_transaction_ws() {
 
     // Act
     should_handle_large_batch_writes_in_transaction::<WsConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_deliver_kv_watch_notification_after_committed_put_ws() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_deliver_kv_watch_notification_after_committed_put::<WsConnector>(&server).await;
 
     // Assert
     // (assertions are in the helper)

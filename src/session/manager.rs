@@ -384,14 +384,21 @@ impl RuntimeIngress {
 
         match mt {
             100 | 101 | 102 | 104 | 105 | 106 | 107 => Ok(Some(("kv", crate::auth::Access::Write))),
-            103 | 108 => Ok(Some(("kv", crate::auth::Access::Read))),
+            103 | 108 | 109 | 110 => Ok(Some(("kv", crate::auth::Access::Read))),
+            111 => Err("invalid message type: 111 is server-to-client only"),
             200..=204 => Ok(Some(("queue", crate::auth::Access::Write))),
-            205..=299 => Ok(Some(("queue", crate::auth::Access::Read))),
+            207 | 208 => Ok(Some(("queue", crate::auth::Access::Read))),
+            209 => Err("invalid message type: 209 is server-to-client only"),
+            205 | 206 | 210..=299 => Err("invalid message type: unsupported queue operation"),
             300..=304 => Ok(Some(("rpc", crate::auth::Access::Write))),
             305..=399 => Ok(Some(("rpc", crate::auth::Access::Read))),
             400..=402 => Ok(Some(("lease", crate::auth::Access::Write))),
             403 => Ok(Some(("lease", crate::auth::Access::Read))),
-            404..=499 => Ok(Some(("lease", crate::auth::Access::Write))),
+            407 | 408 => Ok(Some(("lease", crate::auth::Access::Read))),
+            409 => Err("invalid message type: 409 is server-to-client only"),
+            404..=406 | 410..=499 => {
+                Err("invalid message type: unsupported lease operation")
+            }
             500..=503 => Ok(Some(("notice", crate::auth::Access::Write))),
             504 => Err("invalid message type: 504 is server-to-client only"),
             505..=599 => Err("invalid message type: 505-599 are unsupported notice operations"),
@@ -417,7 +424,7 @@ impl RuntimeIngress {
         let mt = msg_type.as_u16();
 
         match mt {
-            100..=108 => crate::protocol::kv_codec::extract_auth_route(mt, payload)
+            100..=110 => crate::protocol::kv_codec::extract_auth_route(mt, payload)
                 .map(|route| route.map(|route| Self::canonicalize_domain_route_str("kv", route))),
             200..=299 => {
                 crate::protocol::queue_codec::extract_auth_route(mt, payload).map(|route| {
@@ -983,7 +990,16 @@ impl RuntimeIngress {
 
         let mt = msg_type.as_u16();
         match mt {
-            100..=108 => {
+            100..=110 => {
+                if matches!(mt, 109 | 110) {
+                    return crate::protocol::kv_codec::extract_auth_route(mt, payload.as_ref())
+                        .map(|route| {
+                            route.map(|route| {
+                                Route::new(Self::canonicalize_domain_route_str("kv", route))
+                            })
+                        });
+                }
+
                 // KV domain: Per CLIENT_SPEC, all operations now include route on wire
                 // RouteFamily comes from the session, not from the route
                 // Parse message to extract route for authorization
@@ -1080,61 +1096,26 @@ impl RuntimeIngress {
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },
-            200..=299 => {
-                let mt = msg_type.as_u16();
-                if matches!(
-                    mt,
-                    crate::protocol::queue_codec::msg_type::ENQUEUE
-                        | crate::protocol::queue_codec::msg_type::RESERVE
-                        | crate::protocol::queue_codec::msg_type::EXTEND
-                        | crate::protocol::queue_codec::msg_type::COMPLETE
-                ) {
-                    match crate::protocol::queue_codec::parse_request(
-                        mt,
-                        session_info.route_family,
-                        payload.as_ref(),
-                    ) {
-                        Ok(crate::domains::queue::QueueMessage::Send { route, .. }) => Ok(Some(
-                            Self::canonicalize_domain_route("queue", route.clone()),
-                        )),
-                        Ok(crate::domains::queue::QueueMessage::Receive { route, .. }) => Ok(Some(
-                            Self::canonicalize_domain_route("queue", route.clone()),
-                        )),
-                        Ok(crate::domains::queue::QueueMessage::Extend { route, .. }) => Ok(Some(
-                            Self::canonicalize_domain_route("queue", route.clone()),
-                        )),
-                        Ok(crate::domains::queue::QueueMessage::Ack { route, .. }) => Ok(Some(
-                            Self::canonicalize_domain_route("queue", route.clone()),
-                        )),
-                        Ok(_) => Ok(None),
-                        Err(e) => Err(e),
-                    }
-                } else {
-                    Ok(None)
-                }
-            }
-            400..=499 => {
-                match crate::protocol::lease_codec::parse_request(
-                    &ctx,
-                    payload.as_ref(),
-                    session_info.route_family,
-                ) {
-                    Ok(crate::domains::lease::protocol::LeaseMessage::Acquire {
-                        route, ..
-                    }) => Ok(Some(route.clone())),
-                    Ok(crate::domains::lease::protocol::LeaseMessage::Extend { route, .. }) => {
-                        Ok(Some(route.clone()))
-                    }
-                    Ok(crate::domains::lease::protocol::LeaseMessage::Release {
-                        route, ..
-                    }) => Ok(Some(route.clone())),
-                    Ok(crate::domains::lease::protocol::LeaseMessage::Query { route, .. }) => {
-                        Ok(Some(route.clone()))
-                    }
-                    Ok(_) => Ok(None),
-                    Err(e) => Err(e),
-                }
-            }
+            200..=299 => crate::protocol::queue_codec::extract_auth_route(
+                msg_type.as_u16(),
+                payload.as_ref(),
+            )
+            .map(|route| {
+                route.map(|value| {
+                    let canonical = Self::canonicalize_domain_route_str("queue", value);
+                    crate::runtime::routing::Route::new(canonical.as_ref())
+                })
+            }),
+            400..=499 => crate::protocol::lease_codec::extract_auth_route(
+                msg_type.as_u16(),
+                payload.as_ref(),
+            )
+            .map(|route| {
+                route.map(|value| {
+                    let canonical = Self::canonicalize_domain_route_str("lease", value);
+                    crate::runtime::routing::Route::new(canonical.as_ref())
+                })
+            }),
             600..=699 => {
                 match crate::protocol::stream_codec::extract_auth_route(
                     ctx.msg_type.0,

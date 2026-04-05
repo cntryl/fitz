@@ -109,6 +109,16 @@ impl TestConnectorClient for TcpClient {
 }
 
 #[async_trait::async_trait]
+impl FrameReceivingConnector for TcpClient {
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[async_trait::async_trait]
 impl<T> TestConnectorClient for T
 where
     T: HasFixtureClient + Send,
@@ -133,6 +143,16 @@ impl TestConnectorClient for WsClient {
 
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), String> {
         self.0.send_frame(frame).await.map_err(|e| e.to_string())
+    }
+}
+
+#[async_trait::async_trait]
+impl FrameReceivingConnector for WsClient {
+    async fn recv_frame(&mut self, timeout_ms: u64) -> Result<Vec<u8>, String> {
+        self.0
+            .recv_frame(timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -293,6 +313,76 @@ pub fn build_lease_query(route: &str) -> Vec<u8> {
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(403, &buf);
     builder.build()
+}
+
+/// Build LEASE SUBSCRIBE frame (msg_type 407)
+pub fn build_lease_subscribe(pattern: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(pattern.len() as u32);
+    buf.put_slice(pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(407, &buf);
+    builder.build()
+}
+
+/// Build LEASE UNSUBSCRIBE frame (msg_type 408)
+pub fn build_lease_unsubscribe(pattern: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(pattern.len() as u32);
+    buf.put_slice(pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(408, &buf);
+    builder.build()
+}
+
+pub fn extract_lease_subscription_id(data: &[u8]) -> Result<u64, String> {
+    if data.len() < 9 {
+        return Err("Lease subscribe response too short".to_string());
+    }
+
+    Ok(u64::from_be_bytes(data[1..9].try_into().map_err(|_| {
+        "Lease subscribe response missing subscription id".to_string()
+    })?))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaseWatchDelivery {
+    pub msg_type: u16,
+    pub subscription_id: u64,
+    pub route: String,
+    pub payload: Vec<u8>,
+}
+
+pub fn parse_lease_watch_delivery(frame: &[u8]) -> Result<LeaseWatchDelivery, String> {
+    use fitz::protocol::payload_codec::PayloadDecoder;
+
+    let mut parser = TlvFrameParser::new(frame);
+    let (msg_type, payload) = parser
+        .next_field()
+        .ok_or_else(|| "Missing lease watch delivery frame".to_string())?;
+    if msg_type != 409 {
+        return Err(format!(
+            "Unexpected lease watch delivery msg_type: {}",
+            msg_type
+        ));
+    }
+
+    let mut decoder = PayloadDecoder::new(&payload);
+    let subscription_id = decoder.get_u64()?;
+    let route = decoder.get_string()?;
+    let payload = decoder.get_bytes()?.to_vec();
+    if !decoder.is_complete() {
+        return Err("Trailing data in lease watch delivery".to_string());
+    }
+
+    Ok(LeaseWatchDelivery {
+        msg_type,
+        subscription_id,
+        route,
+        payload,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -605,6 +695,15 @@ fn normalize_queue_route(queue_name: &str) -> String {
     }
 }
 
+fn normalize_queue_watch_pattern(pattern: &str) -> String {
+    let normalized = normalize_queue_route(pattern);
+    if normalized.contains('*') || normalized.ends_with("/ready") {
+        normalized
+    } else {
+        format!("{normalized}/ready")
+    }
+}
+
 pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
     // Wire format: [u32 route_len][route][u32 body_len][body][u8 has_delay=0]
     let route = normalize_queue_route(queue_name);
@@ -622,34 +721,97 @@ pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
 
 /// Build QUEUE RESERVE frame (msg_type 202)
 pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
-    // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=0][u8 has_wait=0]
+    // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=0]
     let route = normalize_queue_route(queue_name);
     let mut payload = Vec::new();
     payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
     payload.extend_from_slice(&30_u64.to_be_bytes()); // lease_seconds = 30
     payload.push(0); // has_batch_size = false
-    payload.push(0); // has_wait = false
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(202, &payload);
     builder.build()
 }
 
-/// Build QUEUE RESERVE frame (msg_type 202) with wait_seconds.
-pub fn build_queue_dequeue_with_wait(queue_name: &str, wait_seconds: u64) -> Vec<u8> {
-    let route = normalize_queue_route(queue_name);
+/// Build QUEUE WATCH frame (msg_type 207).
+pub fn build_queue_watch(pattern: &str) -> Vec<u8> {
+    let pattern = normalize_queue_watch_pattern(pattern);
     let mut payload = Vec::new();
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
-    payload.extend_from_slice(route.as_bytes());
-    payload.extend_from_slice(&30_u64.to_be_bytes());
-    payload.push(0); // has_batch_size = false
-    payload.push(1); // has_wait = true
-    payload.extend_from_slice(&wait_seconds.to_be_bytes());
+    payload.extend_from_slice(&(pattern.len() as u32).to_be_bytes());
+    payload.extend_from_slice(pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(202, &payload);
+    builder.encode_field(207, &payload);
     builder.build()
+}
+
+/// Build QUEUE UNWATCH frame (msg_type 208).
+pub fn build_queue_unwatch(pattern: &str) -> Vec<u8> {
+    let pattern = normalize_queue_watch_pattern(pattern);
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&(pattern.len() as u32).to_be_bytes());
+    payload.extend_from_slice(pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(208, &payload);
+    builder.build()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueWatchDelivery {
+    pub msg_type: u16,
+    pub subscription_id: u64,
+    pub route: String,
+    pub ready_messages: u64,
+    pub delayed_messages: u64,
+    pub leased_messages: u64,
+}
+
+pub fn extract_queue_subscription_id(data: &[u8]) -> Result<u64, String> {
+    if data.len() < 9 {
+        return Err("Queue watch response too short".to_string());
+    }
+
+    Ok(u64::from_be_bytes(data[1..9].try_into().map_err(|_| {
+        "Queue watch response missing subscription id".to_string()
+    })?))
+}
+
+pub fn parse_queue_watch_delivery(frame: &[u8]) -> Result<QueueWatchDelivery, String> {
+    let mut parser = TlvFrameParser::new(frame);
+    let (msg_type, payload) = parser
+        .next_field_ref()
+        .ok_or_else(|| "Missing queue watch delivery frame".to_string())?;
+    if msg_type != 209 {
+        return Err(format!("Unexpected queue watch msg_type: {}", msg_type));
+    }
+
+    if payload.len() < 36 {
+        return Err("Queue watch payload too short".to_string());
+    }
+
+    let subscription_id = u64::from_be_bytes(payload[0..8].try_into().unwrap());
+    let route_len = u32::from_be_bytes(payload[8..12].try_into().unwrap()) as usize;
+    if payload.len() < 12 + route_len + 24 {
+        return Err("Queue watch payload truncated".to_string());
+    }
+
+    let route = String::from_utf8(payload[12..12 + route_len].to_vec())
+        .map_err(|_| "Queue watch route is not valid UTF-8".to_string())?;
+    let offset = 12 + route_len;
+    let ready_messages = u64::from_be_bytes(payload[offset..offset + 8].try_into().unwrap());
+    let delayed_messages = u64::from_be_bytes(payload[offset + 8..offset + 16].try_into().unwrap());
+    let leased_messages = u64::from_be_bytes(payload[offset + 16..offset + 24].try_into().unwrap());
+
+    Ok(QueueWatchDelivery {
+        msg_type,
+        subscription_id,
+        route,
+        ready_messages,
+        delayed_messages,
+        leased_messages,
+    })
 }
 
 /// Parse QUEUE response
@@ -1391,7 +1553,7 @@ pub fn parse_schedule_delivery(frame: &[u8]) -> Result<ScheduleDelivery, String>
 // ============================================================================
 
 #[async_trait::async_trait]
-pub trait KvConnector: TestConnectorClient + Sized {
+pub trait KvConnector: FrameReceivingConnector + Sized {
     async fn connect(server: &TestServer) -> Result<Self, String>;
     async fn send_and_receive(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>, String> {
         self.request(frame, timeout_ms).await
@@ -1475,6 +1637,28 @@ pub fn build_kv_commit(tx_id: u64, route: &str) -> Vec<u8> {
     builder.build()
 }
 
+/// Build KV SUBSCRIBE frame (msg_type 109)
+pub fn build_kv_subscribe(route_pattern: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&(route_pattern.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route_pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(109, &payload);
+    builder.build()
+}
+
+/// Build KV UNSUBSCRIBE frame (msg_type 110)
+pub fn build_kv_unsubscribe(route_pattern: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&(route_pattern.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route_pattern.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(110, &payload);
+    builder.build()
+}
+
 /// Build KV ROLLBACK frame (msg_type 102)
 pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
     let mut payload = Vec::new();
@@ -1520,6 +1704,54 @@ pub fn parse_kv_tx_id(data: &[u8]) -> Result<u64, String> {
         data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8],
     ];
     Ok(u64::from_be_bytes(bytes))
+}
+
+pub fn extract_kv_subscription_id(data: &[u8]) -> Result<u64, String> {
+    if data.len() < 9 {
+        return Err("KV subscribe response too short".to_string());
+    }
+
+    Ok(u64::from_be_bytes(data[1..9].try_into().map_err(|_| {
+        "KV subscribe response missing subscription id".to_string()
+    })?))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KvWatchDelivery {
+    pub msg_type: u16,
+    pub subscription_id: u64,
+    pub route: String,
+    pub mutation_count: u64,
+}
+
+pub fn parse_kv_watch_delivery(frame: &[u8]) -> Result<KvWatchDelivery, String> {
+    use fitz::protocol::payload_codec::PayloadDecoder;
+
+    let mut parser = TlvFrameParser::new(frame);
+    let (msg_type, payload) = parser
+        .next_field()
+        .ok_or_else(|| "Missing KV watch delivery frame".to_string())?;
+    if msg_type != 111 {
+        return Err(format!(
+            "Unexpected KV watch delivery msg_type: {}",
+            msg_type
+        ));
+    }
+
+    let mut decoder = PayloadDecoder::new(&payload);
+    let subscription_id = decoder.get_u64()?;
+    let route = decoder.get_string()?;
+    let mutation_count = decoder.get_u64()?;
+    if !decoder.is_complete() {
+        return Err("Trailing data in KV watch delivery".to_string());
+    }
+
+    Ok(KvWatchDelivery {
+        msg_type,
+        subscription_id,
+        route,
+        mutation_count,
+    })
 }
 
 /// Extract value from KV GET response

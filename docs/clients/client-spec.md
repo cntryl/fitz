@@ -517,7 +517,7 @@ Each record is:
 ### Message Framing (How Domain Operations Map to TLV)
 
 **CRITICAL: Every Fitz message is a single TLV record where:**
-- **Type** = MessageType (verb wire code: 100-108 for KV, 500-504 for Notice, etc.)
+- **Type** = MessageType (verb wire code: 100-111 for KV, 500-504 for Notice, etc.)
 - **Length** = Total byte count of domain payload (all fields concatenated)
 - **Value** = Domain-specific fields (as documented per domain)
 
@@ -1230,10 +1230,14 @@ A request is valid **only if**:
   | `GET` | `{realm}/{area}/{resource}` |
   | `PUT` | `{realm}/{area}/{resource}` |
   | `INSERT` | `{realm}/{area}/{resource}` |
+  | `DELETE` | `{realm}/{area}/{resource}` |
+  | `DELETE_RANGE` | `{realm}/{area}/{resource}` |
   | `SCAN` | `{realm}/{area}/{resource}`, `{realm}/{area}/*` |
+  | `SUBSCRIBE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*`, `{realm}/*/*` |
+  | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
   | `COMMIT` | `{realm}/{area}/{resource}` |
   | `ROLLBACK` | `{realm}/{area}/{resource}` |
-  **Note:** `LIST`, `CREATE`, and `DELETE` (admin) operations are broker-internal management operations not currently exposed in the client wire protocol. Clients should focus on data operations: BEGIN, GET, PUT, INSERT, SCAN, COMMIT, ROLLBACK.
+  **Note:** `LIST`, `CREATE`, and `DELETE` (admin) operations are broker-internal management operations not currently exposed in the client wire protocol. Clients should focus on data operations: BEGIN, GET, PUT, INSERT, DELETE, DELETE_RANGE, SCAN, SUBSCRIBE, UNSUBSCRIBE, COMMIT, ROLLBACK.
 
 ### Stream Domain
 
@@ -1309,6 +1313,8 @@ A request is valid **only if**:
   | `RENEW` | `{realm}/{area}/{resource}` |
   | `RELEASE` | `{realm}/{area}/{resource}` |
   | `QUERY` | `{realm}/{area}/{resource}` |
+  | `SUBSCRIBE` | `{realm}/{area}/{resource}` |
+  | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 
 ### Notice Domain
 
@@ -1377,6 +1383,9 @@ Clients MUST:
 | KV       | DELETE             |       106 | Data          | Delete key              |
 | KV       | DELETE_RANGE       |       107 | Data          | Delete key range        |
 | KV       | SCAN               |       108 | Data          | Scan keys in range      |
+| KV       | SUBSCRIBE          |       109 | Data          | Watch committed changes |
+| KV       | UNSUBSCRIBE        |       110 | Data          | Stop watching changes   |
+| KV       | NOTIFY             |       111 | Notification  | Committed change event  |
 | Queue    | ENQUEUE            |       200 | Data          | Add message             |
 | Queue    | ENQUEUE_BATCH      |       201 | Reserved      | Batch add (future)      |
 | Queue    | RESERVE            |       202 | Data          | Lease message(s)        |
@@ -1394,6 +1403,9 @@ Clients MUST:
 | Lease    | RENEW              |       401 | Data          | Extend lease            |
 | Lease    | RELEASE            |       402 | Data          | Release lease           |
 | Lease    | QUERY              |       403 | Data          | Query lease status      |
+| Lease    | SUBSCRIBE          |       407 | Data          | Subscribe to changes    |
+| Lease    | UNSUBSCRIBE        |       408 | Data          | Unsubscribe             |
+| Lease    | NOTIFY             |       409 | Server→Client | Lease change event      |
 | Notice   | PUBLISH            |       500 | Data          | Publish message         |
 | Notice   | SUBSCRIBE          |       501 | Data          | Subscribe to pattern    |
 | Notice   | UNSUBSCRIBE        |       502 | Data          | Unsubscribe             |
@@ -1446,11 +1458,16 @@ domains may still keep live server-side state where their contract requires it.
 | `Delete` | 106 | C→S | Delete single key |
 | `DeleteRange` | 107 | C→S | Delete key range |
 | `Scan` | 108 | C→S | Scan key range |
+| `Subscribe` | 109 | C→S | Watch committed changes |
+| `Unsubscribe` | 110 | C→S | Stop watching changes |
+| `Notify` | 111 | S→C | Deliver committed change |
 
 **Constraints:**
 - All data operations MUST be within a transaction (explicit BEGIN required)
 - Operations within a single transaction MUST be sequential (no parallel calls with same tx_id)
 - Multiple transactions to different resources MAY be parallel
+- Watches are session-scoped and MUST be re-established after reconnect
+- `Notify` is emitted only after a successful `Commit` that applied one or more mutations
 
 ---
 
@@ -1489,12 +1506,15 @@ domains may still keep live server-side state where their contract requires it.
 | `Extend` | 401 | C→S | Extend existing lease |
 | `Release` | 402 | C→S | Release lease |
 | `Query` | 403 | C→S | Query lease status |
-| `Subscribe` | (future) | C→S | Watch lease changes |
-| `Unsubscribe` | (future) | C→S | Stop watching |
+| `Subscribe` | 407 | C→S | Watch lease changes |
+| `Unsubscribe` | 408 | C→S | Stop watching |
+| `Notify` | 409 | S→C | Deliver lease change event |
 
 **Constraints:**
 - Token MUST match to extend or release (prevents cross-holder mutations)
 - Expiry is lazy (expires when next operation touches resource)
+- Watches are session-scoped and are removed automatically on disconnect
+- `Notify` is a best-effort hint that lease state changed; clients still use `Query` or `Acquire` for authoritative state transitions
 - Disconnect cleanup and broker restart both clear lease ownership; clients MUST reacquire if they still need exclusivity
 - Atomic compare-and-swap via token (no blindupdate)
 
@@ -3254,6 +3274,9 @@ Every operation includes full context:
 |  106 | DELETE       |
 |  107 | DELETE_RANGE |
 |  108 | SCAN         |
+|  109 | SUBSCRIBE    |
+|  110 | UNSUBSCRIBE  |
+|  111 | NOTIFY       |
 
 #### BEGIN Request
 
@@ -3404,6 +3427,46 @@ Response (error):
   [bytes]  error_msg
 ```
 
+#### SUBSCRIBE Request
+
+```
+[u32 BE]  route_pattern_len
+[bytes]   route_pattern
+Response (success):
+  [u8]     0 (status: success)
+  [u64 BE] subscription_id
+Response (error):
+  [u8]     1 (status: error)
+  [u32 BE] error_len
+  [bytes]  error_msg
+```
+
+`route_pattern` MAY be an exact resource route like `kv://realm/area/resource` or a wildcard pattern like `kv://realm/area/*` or `kv://realm/*/*`.
+
+#### UNSUBSCRIBE Request
+
+```
+[u32 BE]  route_pattern_len
+[bytes]   route_pattern
+Response (success):
+  [u8]     0 (status: success)
+Response (error):
+  [u8]     1 (status: error)
+  [u32 BE] error_len
+  [bytes]  error_msg
+```
+
+#### NOTIFY Delivery
+
+```
+[u64 BE]  subscription_id
+[u32 BE]  route_len
+[bytes]   route
+[u64 BE]  mutation_count
+```
+
+`NOTIFY` is server-to-client only. The broker emits it after a successful `COMMIT` when the committed transaction changed at least one key in a watched resource.
+
 #### ROLLBACK Request
 
 ```
@@ -3549,6 +3612,9 @@ still maintains live session-scoped transaction state keyed by `tx_id`.
 |  401 | RENEW   | Extend lease expiration by issuing new token |
 |  402 | RELEASE | Relinquish lease, grant to next waiter |
 |  403 | QUERY   | Inspect current holder and waiter count |
+|  407 | SUBSCRIBE | Register a live watch on a lease route |
+|  408 | UNSUBSCRIBE | Remove a live watch |
+|  409 | NOTIFY | Server-to-client lease change notification |
 
 #### ACQUIRE Request
 
@@ -3670,6 +3736,53 @@ still maintains live session-scoped transaction state keyed by `tx_id`.
 [u32 BE] error_len
 [bytes]  error_msg
 ```
+
+#### SUBSCRIBE Request
+
+```
+[u32 BE]  route_len
+[bytes]   route
+```
+
+**Design Notes:**
+- Watches are exact-route subscriptions on `lease://{realm}/{area}/{resource}`
+- Duplicate subscribe calls for the same `(session, route)` return the existing `subscription_id`
+- Subscriptions are session-scoped and are removed automatically on disconnect
+
+**Response (status=0, success):**
+```
+[u8]     0 (status)
+[u64 BE] subscription_id
+```
+
+#### UNSUBSCRIBE Request
+
+```
+[u32 BE]  route_len
+[bytes]   route
+```
+
+**Design Notes:**
+- Unsubscribe is idempotent; removing a missing watch still returns success
+
+**Response (status=0, success):**
+```
+[u8]     0 (status)
+```
+
+#### NOTIFY (409) — Server to Client
+
+```
+[u64 BE]  subscription_id
+[u32 BE]  route_len
+[bytes]   route
+[u32 BE]  payload_len (= 0 today)
+```
+
+**Design Notes:**
+- `NOTIFY` is emitted when a watched lease changes because of release, expiry, or disconnect cleanup
+- The payload is currently empty; the route identifies which lease changed
+- Delivery is best-effort and is never acknowledged or retried
 
 #### Response Types (Detailed)
 
@@ -4264,7 +4377,7 @@ Server pushes a schedule fire notification to a subscriber.
 | Value | Name |
 |---:|---|
 | 1 | CONNECT |
-**KV Domain (100–108):**
+**KV Domain (100–111):**
 | Value | Name |
 |---:|---|
 | 100 | BEGIN |
@@ -4276,6 +4389,9 @@ Server pushes a schedule fire notification to a subscriber.
 | 106 | DELETE |
 | 107 | DELETE_RANGE |
 | 108 | SCAN |
+| 109 | SUBSCRIBE |
+| 110 | UNSUBSCRIBE |
+| 111 | NOTIFY |
 **Queue Domain (200–209):**
 | Value | Name |
 |---:|---|

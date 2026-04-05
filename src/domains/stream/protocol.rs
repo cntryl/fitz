@@ -194,7 +194,6 @@ pub enum StreamMessage {
         family_id: RouteFamily,
         route: Route,
     },
-
 }
 
 /// Subscription management messages handled by the sink before actor dispatch.
@@ -444,7 +443,6 @@ impl StreamError {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

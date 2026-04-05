@@ -42,6 +42,7 @@ impl NoticeMetrics {
     }
 
     pub fn set_subscription_count(&self, count: usize) {
-        self.metrics.gauge_set(METRIC_SUBSCRIPTIONS_GAUGE, count as u64);
+        self.metrics
+            .gauge_set(METRIC_SUBSCRIPTIONS_GAUGE, count as u64);
     }
 }

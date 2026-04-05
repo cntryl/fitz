@@ -227,36 +227,40 @@ where
     assert_eq!(status, 0, "Should allow enqueue after dequeue");
 }
 
-async fn should_resume_waiting_receive_given_enqueue<C>(server: &TestServer)
+async fn should_notify_queue_watch_given_enqueue<C>(server: &TestServer)
 where
     C: QueueConnector,
 {
+    // Arrange
     let queue_route = "queue://test/app/audits";
     let mut receiver = C::connect(server).await.expect("connect receiver");
     let mut sender = C::connect(server).await.expect("connect sender");
 
-    let wait_receive = async {
-        receiver
-            .send_and_receive(&build_queue_dequeue_with_wait(queue_route, 2), 2500)
-            .await
-    };
-    let enqueue_after = async {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        sender
-            .send_and_receive(&build_queue_enqueue(queue_route, b"retained"), 2000)
-            .await
-    };
+    let watch_response = receiver
+        .send_and_receive(&build_queue_watch(queue_route), 2000)
+        .await
+        .expect("watch queue route");
+    let (_msg_type, status, data) = parse_queue_response(&watch_response);
+    assert_eq!(status, 0, "Expected success for queue watch registration");
+    let subscription_id = extract_queue_subscription_id(&data).expect("watch subscription id");
 
-    let (receive_response, enqueue_response) = tokio::join!(wait_receive, enqueue_after);
-    let enqueue_response = enqueue_response.expect("enqueue route");
+    // Act
+    let enqueue_response = sender
+        .send_and_receive(&build_queue_enqueue(queue_route, b"retained"), 2000)
+        .await
+        .expect("enqueue route");
     let (_msg_type, status, _data) = parse_queue_response(&enqueue_response);
     assert_eq!(status, 0, "Expected success for queue enqueue");
 
-    let receive_response = receive_response.expect("waiting receive response");
-    let (_msg_type, status, data) = parse_queue_response(&receive_response);
-    assert_eq!(status, 0, "Expected success for waiting receive");
-    let messages = extract_queue_messages(&data).expect("extract queue messages");
-    assert_eq!(messages, vec![b"retained".to_vec()]);
+    // Assert
+    let delivery_frame = receiver
+        .recv_frame(2500)
+        .await
+        .expect("queue watch delivery");
+    let delivery = parse_queue_watch_delivery(&delivery_frame).expect("parse queue watch delivery");
+    assert_eq!(delivery.subscription_id, subscription_id);
+    assert_eq!(delivery.route, format!("{queue_route}/ready"));
+    assert!(delivery.ready_messages >= 1);
 }
 
 define_transport_tests!(
@@ -270,5 +274,5 @@ define_transport_tests!(
     should_handle_batch_enqueue_operations_tcp / should_handle_batch_enqueue_operations_ws => should_handle_batch_enqueue_operations,
     should_handle_concurrent_enqueue_from_multiple_clients_tcp / should_handle_concurrent_enqueue_from_multiple_clients_ws => should_handle_concurrent_enqueue_from_multiple_clients,
     should_handle_mixed_enqueue_dequeue_sequence_tcp / should_handle_mixed_enqueue_dequeue_sequence_ws => should_handle_mixed_enqueue_dequeue_sequence,
-    should_resume_waiting_receive_given_enqueue_tcp / should_resume_waiting_receive_given_enqueue_ws => should_resume_waiting_receive_given_enqueue,
+    should_notify_queue_watch_given_enqueue_tcp / should_notify_queue_watch_given_enqueue_ws => should_notify_queue_watch_given_enqueue,
 );
