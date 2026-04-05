@@ -504,6 +504,18 @@ pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     (0, 1, Vec::new())
 }
 
+pub fn parse_notice_subscription_id(data: &[u8]) -> Result<Option<u64>, String> {
+    use fitz::protocol::payload_codec::PayloadDecoder;
+
+    let mut decoder = PayloadDecoder::new(data);
+    let subscription_id = decoder.get_optional_u64()?;
+    if !decoder.is_complete() {
+        return Err("Trailing data in notice subscription response".to_string());
+    }
+
+    Ok(subscription_id)
+}
+
 pub struct NoticeDelivery {
     pub msg_type: u16,
     pub subscription_id: u64,
@@ -584,28 +596,6 @@ impl QueueConnector for WsQueueConnector {
     }
 }
 
-/// Build QUEUE SUBSCRIBE frame (msg_type 207)
-pub fn build_queue_subscribe(route_pattern: &str) -> Vec<u8> {
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&(route_pattern.len() as u32).to_be_bytes());
-    payload.extend_from_slice(route_pattern.as_bytes());
-
-    let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(207, &payload);
-    builder.build()
-}
-
-/// Build QUEUE UNSUBSCRIBE frame (msg_type 208)
-pub fn build_queue_unsubscribe(route_pattern: &str) -> Vec<u8> {
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&(route_pattern.len() as u32).to_be_bytes());
-    payload.extend_from_slice(route_pattern.as_bytes());
-
-    let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(208, &payload);
-    builder.build()
-}
-
 /// Build QUEUE ENQUEUE frame (msg_type 200)
 pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
     // Wire format: [u32 route_len][route][u32 body_len][body][u8 has_delay=0]
@@ -636,6 +626,21 @@ pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
     builder.build()
 }
 
+/// Build QUEUE RESERVE frame (msg_type 202) with wait_seconds.
+pub fn build_queue_dequeue_with_wait(queue_name: &str, wait_seconds: u64) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&(queue_name.len() as u32).to_be_bytes());
+    payload.extend_from_slice(queue_name.as_bytes());
+    payload.extend_from_slice(&30_u64.to_be_bytes());
+    payload.push(0); // has_batch_size = false
+    payload.push(1); // has_wait = true
+    payload.extend_from_slice(&wait_seconds.to_be_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(202, &payload);
+    builder.build()
+}
+
 /// Parse QUEUE response
 pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
@@ -650,40 +655,6 @@ pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 
     // Fallback if no data
     (0, 1, Vec::new())
-}
-
-pub struct QueueDelivery {
-    pub msg_type: u16,
-    pub subscription_id: u64,
-    pub route: String,
-    pub body: Vec<u8>,
-}
-
-pub fn parse_queue_delivery(frame: &[u8]) -> Result<QueueDelivery, String> {
-    use fitz::protocol::payload_codec::PayloadDecoder;
-
-    let mut parser = TlvFrameParser::new(frame);
-    let (msg_type, payload) = parser
-        .next_field()
-        .ok_or_else(|| "Missing queue delivery frame".to_string())?;
-    if msg_type != 209 {
-        return Err(format!("Unexpected queue delivery msg_type: {}", msg_type));
-    }
-
-    let mut dec = PayloadDecoder::new(&payload);
-    let subscription_id = dec.get_u64()?;
-    let route = dec.get_string()?;
-    let body = dec.get_bytes()?.to_vec();
-    if !dec.is_complete() {
-        return Err("Trailing data in queue delivery".to_string());
-    }
-
-    Ok(QueueDelivery {
-        msg_type,
-        subscription_id,
-        route,
-        body,
-    })
 }
 
 /// Extract message bodies from Queue Reserve response

@@ -125,27 +125,29 @@
 //!
 //! Reserve operations support optional long polling for empty queues:
 //! - QueueActor always returns immediately (never blocks)
-//! - `wait_seconds` parameter handled at RPC layer:
-//!   1. RPC calls `handle_reserve()` synchronously
-//!   2. If empty and `wait_seconds > 0`:
-//!      - Subscribe to `notice://{realm}/{area}/{resource}/available`
-//!      - Wait up to `wait_seconds` for notice or timeout
-//!      - Retry `handle_reserve()` on notice or timeout
-//! - Notices are hints (at-most-once), not delivery guarantees
-//! - QueueActor never stores waiters or blocking state
+//! - `wait_seconds` is handled by QueueDomainSink inside the queue domain itself
+//! - The sink keeps ephemeral per-queue waiters for the current broker process
+//! - Waiters are resumed when a queue becomes ready or when their wait expires
+//! - No cross-domain subscriptions or external availability routes are involved
 //! - Benefits:
 //!   - Reduces polling overhead for idle queues
 //!   - Maintains deterministic actor performance
-//!   - Decouples waiting from queue state
+//!   - Keeps queue scaling and waiting self-contained within the queue domain
 //!
 //! # Usage
 //!
 //! Queue operations are dispatched via RPC or WebSocket messages.
 
 pub mod actor;
+pub mod core;
+pub mod policy;
 pub mod protocol;
+pub mod projection;
 pub mod session;
 
 pub use actor::{Clock, QueueActor, SystemClock};
-pub use protocol::{MessageId, QueueKey, QueueMessage, QueueResponse, ReservedMessage};
+pub use core::{MessageId, QueueKey, ReservedMessage};
+pub use policy::{MAX_WAIT_QUEUE_DEPTH, MAX_WAIT_SECONDS, WAIT_SWEEP_INTERVAL};
+pub use projection::{QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueLeaseSnapshot};
+pub use protocol::{QueueMessage, QueueResponse};
 pub use session::SessionActor;

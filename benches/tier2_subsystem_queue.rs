@@ -3,16 +3,14 @@ use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
 use fitz::benchkit::{
-    build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch, build_queue_enqueue,
-    build_queue_subscribe, create_bench_queue_sink, extract_single_tlv_field,
-    register_session_counting_sink, register_session_queue_sink, route_frame, CountingSink,
-    FrameQueueSink,
+    build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch,
+    build_queue_dequeue_with_wait, build_queue_enqueue, create_bench_queue_sink,
+    extract_single_tlv_field, register_session_counting_sink, register_session_queue_sink, route_frame,
+    CountingSink, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
-use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{MailboxSink, Router};
-use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use fitz::runtime::DomainPublishEvent;
+use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -70,16 +68,15 @@ fn request_queue_response(
         .expect("queue response")
 }
 
-fn subscribe_queue(
+fn register_waiting_receive(
     router: &Arc<Router>,
     family: RouteFamily,
     source: &RouteAddress,
     destination: &str,
     session_id: u64,
-    pattern: &str,
 ) {
-    let subscribe_frame = build_queue_subscribe(pattern);
-    let (msg_type, payload) = extract_single_tlv_field(&subscribe_frame);
+    let wait_frame = build_queue_dequeue_with_wait(destination, 5);
+    let (msg_type, payload) = extract_single_tlv_field(&wait_frame);
     route_frame(
         router.as_ref(),
         source,
@@ -90,7 +87,7 @@ fn subscribe_queue(
         payload,
         family,
     )
-    .expect("queue subscribe");
+    .expect("queue wait registration");
 }
 
 fn assert_queue_success(response: &[u8]) {
@@ -189,30 +186,20 @@ fn prepare_ack_case() -> PreparedAckCase {
     }
 }
 
-fn bench_queue_subscribe_primary(c: &mut Criterion) {
+fn bench_queue_wait_register_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_queue");
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function("availability_subscribe_primary", |b| {
+    group.bench_function("receive_wait_register_primary", |b| {
         b.iter_batched(
             || {
                 let (router, family, source, inbox) = setup_queue_request_sink();
-                let subscribe_frame = build_queue_subscribe(ROUTE_STR);
-                let (msg_type, payload) = extract_single_tlv_field(&subscribe_frame);
-                (router, family, source, inbox, msg_type, payload)
+                (router, family, source, inbox)
             },
-            |(router, family, source, inbox, msg_type, payload)| {
-                let response = request_queue_response(
-                    &router,
-                    family,
-                    &source,
-                    &inbox,
-                    ROUTE_STR,
-                    msg_type,
-                    black_box(payload),
-                );
-                assert_queue_success(&response);
+            |(router, family, source, inbox)| {
+                register_waiting_receive(&router, family, &source, ROUTE_STR, CLIENT_SESSION_ID);
+                assert!(inbox.drain().is_empty(), "wait registration should not reply immediately");
             },
             BatchSize::SmallInput,
         )
@@ -359,61 +346,84 @@ fn bench_queue_ack_primary(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_queue_fanout_primary(c: &mut Criterion) {
+fn bench_queue_waiter_wake_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_queue");
     group.sampling_mode(SamplingMode::Flat);
 
-    for subscriber_count in [1usize, 16usize, 64usize] {
-        let family = RouteFamily::new(1);
-        let router = Arc::new(Router::new());
-        let sink = create_bench_queue_sink(router.clone());
-        router.register_domain_pattern("queue", sink as Arc<dyn MailboxSink>);
-        let route = Route::new("queue://bench/subsystem/fanout");
-        let mut subscriber_sinks: Vec<Arc<CountingSink>> = Vec::with_capacity(subscriber_count);
-
-        for index in 0..subscriber_count {
-            let session_id = 10_000 + index as u64;
-            let (source, sink) = register_session_counting_sink(&router, family, session_id);
-            subscribe_queue(
-                &router,
-                family,
-                &source,
-                route.as_str(),
-                session_id,
-                route.as_str(),
-            );
-            sink.reset();
-            subscriber_sinks.push(sink);
-        }
-
-        let publish_event = DomainPublishEvent::new(
-            family,
-            route.clone(),
-            Bytes::from_static(b"queue fanout payload"),
-        );
-        let publish_destination = RouteAddress::new(family, route.clone());
-
-        group.throughput(Throughput::Elements(subscriber_count as u64));
+    for waiter_count in [1usize, 16usize, 64usize] {
+        group.throughput(Throughput::Elements(waiter_count as u64));
         group.bench_function(
-            format!("notify_{}_subscribers_primary", subscriber_count),
+            format!("wake_{}_waiting_receivers_primary", waiter_count),
             |b| {
-                b.iter(|| {
-                    router
-                        .route(Envelope::new(
-                            publish_destination.clone(),
-                            black_box(publish_event.clone()),
-                        ))
-                        .expect("queue fanout route should succeed");
+                b.iter_batched(
+                    || {
+                        let family = RouteFamily::new(1);
+                        let router = Arc::new(Router::new());
+                        let sink = create_bench_queue_sink(router.clone());
+                        router.register_domain_pattern("queue", sink as Arc<dyn MailboxSink>);
+                        let (sender_source, sender_inbox) =
+                            register_session_queue_sink(&router, family, CLIENT_SESSION_ID);
+                        let mut waiter_sinks: Vec<Arc<CountingSink>> =
+                            Vec::with_capacity(waiter_count);
 
-                    let deliveries: usize = subscriber_sinks.iter().map(|sink| sink.count()).sum();
-                    assert_eq!(
-                        deliveries, subscriber_count,
-                        "expected publish fanout to reach all subscribers"
-                    );
-                    for sink in &subscriber_sinks {
-                        sink.reset();
-                    }
-                })
+                        for index in 0..waiter_count {
+                            let session_id = 10_000 + index as u64;
+                            let (wait_source, wait_sink) =
+                                register_session_counting_sink(&router, family, session_id);
+                            register_waiting_receive(
+                                &router,
+                                family,
+                                &wait_source,
+                                ROUTE_STR,
+                                session_id,
+                            );
+                            wait_sink.reset();
+                            waiter_sinks.push(wait_sink);
+                        }
+
+                        let enqueue_frame = build_queue_enqueue(ROUTE_STR, b"queue waiter payload");
+                        let (enqueue_msg_type, enqueue_payload) =
+                            extract_single_tlv_field(&enqueue_frame);
+                        (
+                            router,
+                            family,
+                            sender_source,
+                            sender_inbox,
+                            waiter_sinks,
+                            enqueue_msg_type,
+                            enqueue_payload,
+                        )
+                    },
+                    |(
+                        router,
+                        family,
+                        sender_source,
+                        sender_inbox,
+                        waiter_sinks,
+                        enqueue_msg_type,
+                        enqueue_payload,
+                    )| {
+                        for _ in 0..waiter_count {
+                            let response = request_queue_response(
+                                &router,
+                                family,
+                                &sender_source,
+                                &sender_inbox,
+                                ROUTE_STR,
+                                enqueue_msg_type,
+                                black_box(enqueue_payload.clone()),
+                            );
+                            assert_queue_success(&response);
+                        }
+
+                        let deliveries: usize = waiter_sinks.iter().map(|sink| sink.count()).sum();
+                        assert_eq!(
+                            deliveries, waiter_count,
+                            "expected queue send to wake all waiting receivers"
+                        );
+                    },
+                    BatchSize::SmallInput,
+                )
             },
         );
     }
@@ -425,10 +435,10 @@ criterion_group! {
     name = benches;
     config = criterion_config::criterion_config_for_tier2();
     targets =
-        bench_queue_subscribe_primary,
+        bench_queue_wait_register_primary,
         bench_queue_enqueue_primary,
         bench_queue_dequeue_primary,
         bench_queue_ack_primary,
-        bench_queue_fanout_primary
+        bench_queue_waiter_wake_primary
 }
 criterion_main!(benches);

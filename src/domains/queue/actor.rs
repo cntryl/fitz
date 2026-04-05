@@ -59,7 +59,10 @@ use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
 
-use super::protocol::{MessageId, QueueKey, QueueMessage, QueueResponse, ReservedMessage};
+use super::{
+    MessageId, QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueKey, QueueLeaseSnapshot,
+    QueueMessage, QueueResponse, ReservedMessage,
+};
 
 #[cfg(test)]
 std::thread_local! {
@@ -232,36 +235,6 @@ pub struct Inflight {
     attempts: u32,
     /// Durable lease epoch for stale-event suppression.
     lease_epoch: u64,
-}
-
-/// Point-in-time warm-actor queue counts for admin diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct QueueAdminSnapshot {
-    pub messages_ready: usize,
-    pub messages_delayed: usize,
-    pub messages_leased: usize,
-    pub messages_dead_lettered: usize,
-    pub messages_total: usize,
-    pub oldest_message_age_seconds: u64,
-}
-
-/// Point-in-time live lease snapshot for admin diagnostics.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QueueLeaseSnapshot {
-    pub message_id: u64,
-    pub lease_token: u64,
-    pub session_id: Option<u64>,
-    pub expires_at_epoch_ms: u64,
-    pub attempts: usize,
-}
-
-/// Point-in-time dead-letter snapshot for admin diagnostics.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QueueDeadLetterSnapshot {
-    pub message_id: u64,
-    pub dead_lettered_at_epoch_ms: u64,
-    pub attempts: usize,
-    pub reason: &'static str,
 }
 
 /// Timer event for lease expiration
@@ -570,14 +543,8 @@ pub struct QueueActor {
     #[allow(dead_code)]
     recovery_path: RecoveryPath,
 
-    /// Pending availability notification (debounced)
-    pending_publish: Option<crate::runtime::domain_event::DomainPublishEvent>,
-
-    /// Debounce timer for availability notifications
-    notify_timer: Option<crate::runtime::context::TimerId>,
-
-    /// Flag indicating that availability notification is needed (set by enqueue)
-    needs_notify_availability: bool,
+    /// Flag indicating that queue-local waiters should be re-checked.
+    needs_wake_waiters: bool,
 
     /// Clock for time-based operations
     clock: Box<dyn Clock>,
@@ -599,7 +566,6 @@ pub struct QueueActor {
 
 impl QueueActor {
     const READY_SHARDS: usize = 8;
-    const NOTICE_DEBOUNCE_MS: u64 = 25;
     const ID_RESERVATION_BLOCK: u64 = 256;
     #[allow(dead_code)]
     const META_VERSION_V2: u8 = 2;
@@ -727,9 +693,7 @@ impl QueueActor {
             persisted_next_delayed_visibility_ms: None,
             index_meta_written: false,
             recovery_path: RecoveryPath::Empty,
-            pending_publish: None,
-            notify_timer: None,
-            needs_notify_availability: false,
+            needs_wake_waiters: false,
             clock,
             max_attempts,
             dedup_store,
@@ -1919,32 +1883,10 @@ impl QueueActor {
         self.ready.iter().any(|entry| entry.id == id)
     }
 
-    /// Returns true if an availability notification should be sent (queue transitioned empty->non-empty).
-    /// Clears the flag. Used by the domain sink when the actor is not run with a timer.
-    pub fn take_needs_notify_availability(&mut self) -> bool {
-        std::mem::take(&mut self.needs_notify_availability)
-    }
-
-    /// Schedule debounced availability notification
-    /// Uses base queue route (queue://realm/area/resource) so subscription pattern matches.
-    fn schedule_availability_notification(&mut self, ctx: &mut Context<Self>) {
-        let route_str = format!(
-            "queue://{}/{}/{}",
-            self.queue_key.realm, self.queue_key.area, self.queue_key.resource
-        );
-        let route = crate::runtime::routing::Route::new(route_str);
-
-        let payload = bytes::Bytes::from("{}");
-        let publish_event =
-            crate::runtime::domain_event::DomainPublishEvent::new(self.family, route, payload);
-
-        self.pending_publish = Some(publish_event);
-        if self.notify_timer.is_none() {
-            let timer_id = ctx
-                .timer_manager()
-                .schedule_once(std::time::Duration::from_millis(Self::NOTICE_DEBOUNCE_MS));
-            self.notify_timer = Some(timer_id);
-        }
+    /// Returns true if queue-local waiters should be re-checked.
+    /// Clears the flag. Used by the domain sink after state-changing operations.
+    pub fn take_needs_wake_waiters(&mut self) -> bool {
+        std::mem::take(&mut self.needs_wake_waiters)
     }
 
     /// Deserialize a legacy combined QueueRecord from an owned buffer without copying
@@ -2484,10 +2426,10 @@ impl QueueActor {
             self.index_meta_written = true;
         }
 
-        // Emit availability notification if queue transitioned from empty to non-empty
-        // (only for immediately visible messages, not delayed ones)
+        // Mark queue-local waiters for wakeup if the queue transitioned from empty to non-empty
+        // (only for immediately visible messages, not delayed ones).
         if was_empty && visible_at <= now_instant && self.ready_count > 0 {
-            self.needs_notify_availability = true;
+            self.needs_wake_waiters = true;
         }
 
         QueueResponse::Sent { id }
@@ -2658,16 +2600,8 @@ impl QueueActor {
     /// Handle reserve operation
     ///
     /// IMPORTANT: This method ALWAYS returns immediately (never blocks).
-    /// Long polling is handled at the RPC layer:
-    /// 1. RPC calls this method synchronously
-    /// 2. If empty and wait_seconds > 0, RPC subscribes to notice://.../available
-    /// 3. RPC waits up to wait_seconds for notice or timeout
-    /// 4. RPC retries reserve on notice or timeout
-    ///
-    /// NOTE: The notice:// reference above is a runtime convention handled entirely
-    /// within the RPC domain layer -- it does NOT create a compile-time dependency
-    /// between the Queue domain and the Notice domain.
-    ///
+    /// QueueDomainSink owns any `wait_seconds` handling and resumes waiting
+    /// requests when the queue becomes ready or when the wait expires.
     /// QueueActor never stores waiters or blocks on empty queues.
     pub fn handle_receive(
         &mut self,
@@ -2757,7 +2691,7 @@ impl QueueActor {
 
         // If no messages were reserved, return an empty response (avoid NotFound)
         // Clients expect an empty slice when the queue is empty rather than an error.
-        // Long‑polling is handled at the RPC layer using wait_seconds (see docs above).
+        // QueueDomainSink owns long-poll wait_seconds handling outside the actor.
         if messages.is_empty() {
             return QueueResponse::Received { messages };
         }
@@ -3682,13 +3616,7 @@ impl Actor for QueueActor {
                 delay_seconds,
                 ..
             } => {
-                let resp = self.handle_send(body, delay_seconds);
-                // Check if availability notification is needed
-                if self.needs_notify_availability {
-                    self.schedule_availability_notification(ctx);
-                    self.needs_notify_availability = false;
-                }
-                resp
+                self.handle_send(body, delay_seconds)
             }
 
             QueueMessage::Receive {
@@ -3697,13 +3625,9 @@ impl Actor for QueueActor {
                 wait_seconds,
                 ..
             } => {
-                // NOTE: wait_seconds is handled at RPC layer, not in QueueActor
-                // QueueActor always returns immediately (never blocks)
-                // If empty and wait_seconds > 0, RPC layer will:
-                //   1. Subscribe to notice://{realm}/{area}/{resource}/available
-                //   2. Wait up to wait_seconds for notice or timeout
-                //   3. Retry receive on notice or timeout
-                let _ = wait_seconds; // Unused by actor, used by RPC layer
+                // NOTE: wait_seconds is handled in QueueDomainSink, not in QueueActor.
+                // QueueActor always returns immediately and never stores waiters.
+                let _ = wait_seconds;
                 self.handle_receive(lease_seconds, batch_size)
             }
 
@@ -3720,13 +3644,6 @@ impl Actor for QueueActor {
                 self.handle_lease_expired(id);
                 return; // No response needed for internal timer message
             }
-
-            // Subscribe/Unsubscribe/UnsubscribeAll are handled at QueueDomainSink level, not in actor
-            QueueMessage::Subscribe { .. }
-            | QueueMessage::Unsubscribe { .. }
-            | QueueMessage::UnsubscribeAll { .. } => {
-                return; // No response needed, handled by sink
-            }
         };
 
         // Send response back to the client via reply
@@ -3737,15 +3654,7 @@ impl Actor for QueueActor {
         // Recovery is handled during actor construction; started() is a no-op.
     }
 
-    fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
-        // If availability notification timer fired, send pending publish
-        if self.notify_timer.is_some() && Some(timer_id) == self.notify_timer {
-            if let Some(event) = self.pending_publish.take() {
-                let _ = ctx.publish_event(event);
-            }
-            self.notify_timer = None;
-        }
-    }
+    fn on_timer(&mut self, _timer_id: crate::runtime::context::TimerId, _ctx: &mut Context<Self>) {}
 }
 
 impl QueueActor {

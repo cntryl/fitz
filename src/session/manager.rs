@@ -1082,42 +1082,13 @@ impl RuntimeIngress {
             },
             200..=299 => {
                 let mt = msg_type.as_u16();
-                if mt == crate::protocol::queue_codec::msg_type::SUBSCRIBE {
-                    match crate::protocol::queue_codec::parse_subscribe(
-                        session_info.route_family,
-                        payload.as_ref(),
-                        session_info.session_id,
-                        crate::runtime::routing::RouteAddress::new(
-                            session_info.route_family,
-                            Route::new(""),
-                        ),
-                    ) {
-                        Ok(crate::domains::queue::QueueMessage::Subscribe { pattern, .. }) => Ok(
-                            Some(Self::canonicalize_domain_route("queue", pattern.clone())),
-                        ),
-                        Err(e) => Err(e),
-                        Ok(_) => Err("parse_subscribe returned unexpected variant".to_string()),
-                    }
-                } else if mt == crate::protocol::queue_codec::msg_type::UNSUBSCRIBE {
-                    match crate::protocol::queue_codec::parse_unsubscribe(
-                        session_info.route_family,
-                        payload.as_ref(),
-                        session_info.session_id,
-                        crate::runtime::routing::RouteAddress::new(
-                            session_info.route_family,
-                            Route::new(""),
-                        ),
-                    ) {
-                        Ok(crate::domains::queue::QueueMessage::Unsubscribe {
-                            pattern, ..
-                        }) => Ok(Some(Self::canonicalize_domain_route(
-                            "queue",
-                            pattern.clone(),
-                        ))),
-                        Err(e) => Err(e),
-                        Ok(_) => Err("parse_unsubscribe returned unexpected variant".to_string()),
-                    }
-                } else {
+                if matches!(
+                    mt,
+                    crate::protocol::queue_codec::msg_type::ENQUEUE
+                        | crate::protocol::queue_codec::msg_type::RESERVE
+                        | crate::protocol::queue_codec::msg_type::EXTEND
+                        | crate::protocol::queue_codec::msg_type::COMPLETE
+                ) {
                     match crate::protocol::queue_codec::parse_request(
                         mt,
                         session_info.route_family,
@@ -1138,6 +1109,8 @@ impl RuntimeIngress {
                         Ok(_) => Ok(None),
                         Err(e) => Err(e),
                     }
+                } else {
+                    Ok(None)
                 }
             }
             400..=499 => {

@@ -1,6 +1,5 @@
 use crate::auth::Access;
-use crate::domains::queue::protocol::QueueMessage;
-use crate::domains::queue::QueueActor;
+use crate::domains::queue::{MessageId, QueueActor, QueueMessage};
 use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::Route;
 use crate::runtime::routing::RouteFamily;
@@ -94,7 +93,7 @@ impl SessionActor {
         &self,
         family: RouteFamily,
         route: Route,
-        id: crate::domains::queue::protocol::MessageId,
+        id: MessageId,
         token: u64,
         lease_seconds: u64,
         queue_actor: &mut QueueActor,
@@ -124,7 +123,7 @@ impl SessionActor {
         &self,
         family: RouteFamily,
         route: Route,
-        id: crate::domains::queue::protocol::MessageId,
+        id: MessageId,
         token: u64,
         queue_actor: &mut QueueActor,
         ctx: &mut Context<QueueActor>,
@@ -166,7 +165,7 @@ impl SessionActor {
 mod tests {
     use super::*;
     use crate::auth::Permission;
-    use crate::domains::queue::protocol::QueueKey;
+    use crate::domains::queue::QueueKey;
     use crate::runtime::actor::Context;
     use crate::runtime::router::Router;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -322,7 +321,7 @@ mod tests {
         let result = session.extend(
             RouteFamily::new(1),
             Route::new("queue://realm/area/jobs/extend"),
-            crate::domains::queue::protocol::MessageId::new(1),
+            MessageId::new(1),
             12345,
             60,
             &mut actor,
@@ -351,7 +350,7 @@ mod tests {
         let result = session.ack(
             RouteFamily::new(1),
             Route::new("queue://realm/area/jobs/ack"),
-            crate::domains::queue::protocol::MessageId::new(1),
+            MessageId::new(1),
             12345,
             &mut actor,
             &mut ctx,
@@ -379,7 +378,7 @@ mod tests {
         let result = session.ack(
             RouteFamily::new(1),
             Route::new("queue://realm/area/jobs/ack"),
-            crate::domains::queue::protocol::MessageId::new(1),
+            MessageId::new(1),
             12345,
             &mut actor,
             &mut ctx,

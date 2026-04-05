@@ -12,7 +12,9 @@ use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 mod kv_sink;
 mod lease_sink;
 mod notice_sink;
+mod queue_projection;
 mod queue_sink;
+mod queue_waiters;
 mod rpc_sink;
 mod schedule_sink;
 mod stream_sink;
@@ -100,6 +102,7 @@ pub fn setup(
         crate::utils::idempotency::default_dedup_store(),
     ));
     router.register_domain_pattern("queue", queue_sink.clone() as Arc<dyn MailboxSink>);
+    queue_sink.start_wait_loop();
     tracing::info!("Registered Queue domain (handles queue://* across all route families)");
 
     let notice_sink = Arc::new(NoticeDomainSink::new(

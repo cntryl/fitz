@@ -10,9 +10,6 @@ pub mod msg_type {
     pub const RESERVE: u16 = 202;
     pub const EXTEND: u16 = 203;
     pub const COMPLETE: u16 = 204;
-    pub const SUBSCRIBE: u16 = 207;
-    pub const UNSUBSCRIBE: u16 = 208;
-    pub const QUEUE_NOTIFY: u16 = 209;
 }
 
 /// Parse Queue request from bytes
@@ -63,15 +60,6 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
                            // Empty response
         }
         QueueResponse::Acked => {
-            buf.put_u8(0); // status: success
-                           // Empty response
-        }
-        QueueResponse::SubscribeOk { subscription_id } => {
-            buf.put_u8(0); // status: success
-            buf.put_u8(1); // has_subscription_id
-            buf.put_u64(*subscription_id);
-        }
-        QueueResponse::UnsubscribeOk => {
             buf.put_u8(0); // status: success
                            // Empty response
         }
@@ -134,12 +122,7 @@ fn parse_route_str_ref<'a>(payload: &'a [u8], offset: &mut usize) -> Result<&'a 
 /// Extract the queue route or pattern used for authorization without constructing a full message.
 pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
     match msg_type {
-        msg_type::ENQUEUE
-        | msg_type::RESERVE
-        | msg_type::EXTEND
-        | msg_type::COMPLETE
-        | msg_type::SUBSCRIBE
-        | msg_type::UNSUBSCRIBE => {
+        msg_type::ENQUEUE | msg_type::RESERVE | msg_type::EXTEND | msg_type::COMPLETE => {
             let mut offset = 0;
             parse_route_str_ref(payload, &mut offset).map(Some)
         }
@@ -231,8 +214,9 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
 
     // Parse batch_size (1 byte flag, then u32 if present)
     let batch_size = if offset < payload.len() {
-        if payload[offset] == 1 {
-            offset += 1;
+        let has_batch_size = payload[offset];
+        offset += 1;
+        if has_batch_size == 1 {
             if offset + 4 > payload.len() {
                 return Err("Incomplete batch_size".to_string());
             }
@@ -242,6 +226,7 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
                 payload[offset + 2],
                 payload[offset + 3],
             ]) as usize;
+            offset += 4;
             Some(size)
         } else {
             None
@@ -252,8 +237,9 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
 
     // Parse wait_seconds (1 byte flag, then u64 if present)
     let wait_seconds = if offset < payload.len() {
-        if payload[offset] == 1 {
-            offset += 1;
+        let has_wait_seconds = payload[offset];
+        offset += 1;
+        if has_wait_seconds == 1 {
             if offset + 8 > payload.len() {
                 return Err("Incomplete wait_seconds".to_string());
             }
@@ -393,82 +379,6 @@ fn parse_complete(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage
     })
 }
 
-/// Parse Subscribe request (wire format: [string pattern])
-///
-/// `session_id` and `subscriber` are injected by the session layer.
-pub fn parse_subscribe(
-    route_family: RouteFamily,
-    payload: &[u8],
-    session_id: u64,
-    subscriber: crate::runtime::routing::RouteAddress,
-) -> Result<QueueMessage, String> {
-    let mut offset = 0;
-
-    // Parse pattern string
-    let pattern_str = parse_route_str_ref(payload, &mut offset)?;
-
-    Ok(QueueMessage::Subscribe {
-        family_id: route_family,
-        pattern: Route::from_ref(pattern_str),
-        session_id,
-        subscriber,
-    })
-}
-
-/// Parse Unsubscribe request (wire format: [string pattern])
-///
-/// `session_id` and `subscriber` are injected by the session layer.
-pub fn parse_unsubscribe(
-    route_family: RouteFamily,
-    payload: &[u8],
-    session_id: u64,
-    subscriber: crate::runtime::routing::RouteAddress,
-) -> Result<QueueMessage, String> {
-    let mut offset = 0;
-
-    // Parse pattern string
-    let pattern_str = parse_route_str_ref(payload, &mut offset)?;
-
-    Ok(QueueMessage::Unsubscribe {
-        family_id: route_family,
-        pattern: Route::from_ref(pattern_str),
-        session_id,
-        subscriber,
-    })
-}
-
-/// Parse UnsubscribeAll request (no wire payload, session-scoped)
-///
-/// `session_id` and `subscriber` are injected by the session layer.
-pub fn parse_unsubscribe_all(
-    session_id: u64,
-    subscriber: crate::runtime::routing::RouteAddress,
-) -> QueueMessage {
-    QueueMessage::UnsubscribeAll {
-        session_id,
-        subscriber,
-    }
-}
-
-/// Encode a QUEUE_NOTIFY (209) payload.
-///
-/// Wire format: `[u64 subscription_id][string route][bytes payload]`
-pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
-    use bytes::BufMut;
-
-    let mut buf = Vec::new();
-    buf.put_u64(subscription_id);
-
-    let route_str = route.as_str();
-    buf.put_u32(route_str.len() as u32);
-    buf.put_slice(route_str.as_bytes());
-
-    buf.put_u32(payload.len() as u32);
-    buf.put_slice(payload);
-
-    buf
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,6 +420,36 @@ mod tests {
 
         // Assert
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_parse_reserve_message_with_wait_seconds() {
+        // Arrange
+        let route = "queue://realm/area/test";
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+        payload.extend_from_slice(route.as_bytes());
+        payload.extend_from_slice(&30u64.to_be_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&1u32.to_be_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&5u64.to_be_bytes());
+
+        // Act
+        let result = parse_request(msg_type::RESERVE, RouteFamily::new(2), &payload);
+
+        // Assert
+        match result {
+            Ok(QueueMessage::Receive {
+                batch_size,
+                wait_seconds,
+                ..
+            }) => {
+                assert_eq!(batch_size, Some(1));
+                assert_eq!(wait_seconds, Some(5));
+            }
+            other => panic!("expected receive message, got {:?}", other),
+        }
     }
 
     #[test]

@@ -1,17 +1,15 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch, build_queue_enqueue,
-    build_queue_subscribe, create_bench_queue_actor, create_bench_queue_sink,
-    extract_single_tlv_field, register_session_counting_sink, register_session_queue_sink,
-    route_frame, CountingSink, FrameQueueSink,
+    build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch,
+    build_queue_dequeue_with_wait, build_queue_enqueue, create_bench_queue_actor,
+    create_bench_queue_sink, extract_single_tlv_field, register_session_counting_sink,
+    register_session_queue_sink, route_frame, CountingSink, FrameQueueSink,
 };
 use fitz::domains::queue::{Clock, QueueActor, QueueKey, QueueResponse, ReservedMessage};
 use fitz::protocol::frame::ChannelId;
-use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{MailboxSink, Router};
-use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use fitz::runtime::DomainPublishEvent;
+use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -52,15 +50,6 @@ impl Clock for BenchClock {
     }
 }
 
-fn setup_queue_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<CountingSink>) {
-    let family = RouteFamily::new(1);
-    let router = Arc::new(Router::new());
-    let sink = create_bench_queue_sink(router.clone());
-    router.register_domain_pattern("queue", sink as Arc<dyn MailboxSink>);
-    let (source, inbox) = register_session_counting_sink(&router, family, CLIENT_SESSION_ID);
-    (router, family, source, inbox)
-}
-
 fn setup_queue_request_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<FrameQueueSink>) {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
@@ -97,16 +86,15 @@ fn request_queue_response(
         .expect("queue response")
 }
 
-fn subscribe_queue(
+fn register_waiting_receive(
     router: &Arc<Router>,
     family: RouteFamily,
     source: &RouteAddress,
     destination: &str,
     session_id: u64,
-    pattern: &str,
 ) {
-    let subscribe_frame = build_queue_subscribe(pattern);
-    let (msg_type, payload) = extract_single_tlv_field(&subscribe_frame);
+    let wait_frame = build_queue_dequeue_with_wait(destination, 5);
+    let (msg_type, payload) = extract_single_tlv_field(&wait_frame);
     route_frame(
         router.as_ref(),
         source,
@@ -117,7 +105,7 @@ fn subscribe_queue(
         payload,
         family,
     )
-    .expect("queue subscribe");
+    .expect("queue wait registration");
 }
 
 fn assert_queue_success(response: &[u8]) {
@@ -680,34 +668,53 @@ fn should_complete_routed_ack_roundtrip(ctx: &mut StressContext) {
 }
 
 #[stress_test]
-fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
-    ctx.tag("scenario", "publish_fanout");
-    ctx.tag("measurement_scope", "routed_fanout");
-    ctx.tag("operation", "notify");
-    ctx.tag("batch_size", "single_publish");
-    ctx.tag("subscriber_count", "16");
+fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
+    ctx.tag("scenario", "wait_wakeup");
+    ctx.tag("measurement_scope", "routed_waiters");
+    ctx.tag("operation", "receive_wait_and_enqueue");
+    ctx.tag("batch_size", "16_wait_16_enqueue");
+    ctx.tag("waiter_count", "16");
 
-    let (router, family, source, _inbox) = setup_queue_sink();
-    let route = "queue://bench/system/fanout";
-    let publish_route = Route::new(route);
-
-    for session_id in 2..18 {
-        subscribe_queue(&router, family, &source, route, session_id, route);
-    }
-
-    let publish_event = DomainPublishEvent::new(
-        family,
-        publish_route.clone(),
-        Bytes::from_static(b"queue fanout payload"),
-    );
+    let waiter_count = 16u64;
+    let route = "queue://bench/system/wait";
+    let (router, family, sender_source, sender_inbox) = setup_queue_request_sink();
+    let enqueue_frame = build_queue_enqueue(route, b"queue wait wake payload");
+    let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
+    let waiters: Vec<(u64, RouteAddress, Arc<CountingSink>)> = (0..waiter_count)
+        .map(|index| {
+            let session_id = CLIENT_SESSION_ID + 1 + index;
+            let (source, sink) = register_session_counting_sink(&router, family, session_id);
+            (session_id, source, sink)
+        })
+        .collect();
 
     let iterations = ctx.measure_for(Duration::from_secs(5), || {
-        let _ = router.route(Envelope::new(
-            RouteAddress::new(family, publish_route.clone()),
-            publish_event.clone(),
-        ));
+        for (session_id, source, sink) in &waiters {
+            register_waiting_receive(&router, family, source, route, *session_id);
+            sink.reset();
+        }
+
+        for _ in 0..waiter_count {
+            let response = request_queue_response(
+                &router,
+                family,
+                &sender_source,
+                &sender_inbox,
+                route,
+                enqueue_msg_type,
+                enqueue_payload.clone(),
+            );
+            assert_queue_success(&response);
+        }
+
+        let deliveries: usize = waiters.iter().map(|(_, _, sink)| sink.count()).sum();
+        assert_eq!(
+            deliveries,
+            waiter_count as usize,
+            "expected queue sends to wake all waiting receivers"
+        );
     });
-    ctx.set_elements(iterations as u64);
+    ctx.set_elements((waiter_count * 2) * iterations as u64);
 }
 
 stress_main!();
