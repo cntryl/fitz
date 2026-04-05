@@ -77,12 +77,12 @@ impl Runtime {
             })
     }
 
-    pub fn queue_leases_active(&self) -> usize {
+    pub fn queue_inflight_active(&self) -> usize {
         self.domains
             .read()
             .as_ref()
-            .map(|domains| domains.queue.active_lease_count())
-            .unwrap_or_else(|| self.admin_read_model.queue_leases(None).len())
+            .map(|domains| domains.queue.active_inflight_count())
+            .unwrap_or_else(|| self.admin_read_model.queue_inflight(None).len())
     }
 
     pub fn rpc_workers_registered(&self) -> usize {

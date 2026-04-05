@@ -92,7 +92,7 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 - Subscription state is **NOT** preserved by broker across disconnects
 - SUBSCRIBE is idempotent - duplicate subscription to same pattern returns same subscription_id
 - Client resumes receiving notifications/requests only after re-subscription confirmed
-- In-flight operations (KV transactions, Stream append sessions, Queue leases) are lost on disconnect
+- In-flight operations (KV transactions, Stream append sessions, Queue inflight entries) are lost on disconnect
 
 ## KV Domain
 

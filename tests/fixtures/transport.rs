@@ -765,7 +765,7 @@ pub struct QueueWatchDelivery {
     pub route: String,
     pub ready_messages: u64,
     pub delayed_messages: u64,
-    pub leased_messages: u64,
+    pub inflight_messages: u64,
 }
 
 pub fn extract_queue_subscription_id(data: &[u8]) -> Result<u64, String> {
@@ -802,7 +802,7 @@ pub fn parse_queue_watch_delivery(frame: &[u8]) -> Result<QueueWatchDelivery, St
     let offset = 12 + route_len;
     let ready_messages = u64::from_be_bytes(payload[offset..offset + 8].try_into().unwrap());
     let delayed_messages = u64::from_be_bytes(payload[offset + 8..offset + 16].try_into().unwrap());
-    let leased_messages = u64::from_be_bytes(payload[offset + 16..offset + 24].try_into().unwrap());
+    let inflight_messages = u64::from_be_bytes(payload[offset + 16..offset + 24].try_into().unwrap());
 
     Ok(QueueWatchDelivery {
         msg_type,
@@ -810,7 +810,7 @@ pub fn parse_queue_watch_delivery(frame: &[u8]) -> Result<QueueWatchDelivery, St
         route,
         ready_messages,
         delayed_messages,
-        leased_messages,
+        inflight_messages,
     })
 }
 

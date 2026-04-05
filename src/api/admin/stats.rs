@@ -68,7 +68,7 @@ pub struct QueueStats {
     pub messages_delayed: usize,
     pub messages_pending: usize,
     pub messages_dead_lettered: usize,
-    pub leases_active: usize,
+    pub inflight_active: usize,
     pub operations_per_second: f64,
 }
 
@@ -127,7 +127,7 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 messages_delayed: runtime.queue_messages_delayed(),
                 messages_pending: runtime.queue_messages_pending(),
                 messages_dead_lettered: runtime.queue_messages_dead_lettered(),
-                leases_active: runtime.queue_leases_active(),
+                inflight_active: runtime.queue_inflight_active(),
                 operations_per_second: runtime.queue_operations_per_second(),
             },
             rpc: RpcStats {
@@ -201,7 +201,7 @@ async fn handle_queue_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Inf
         messages_delayed: runtime.queue_messages_delayed(),
         messages_pending: runtime.queue_messages_pending(),
         messages_dead_lettered: runtime.queue_messages_dead_lettered(),
-        leases_active: runtime.queue_leases_active(),
+        inflight_active: runtime.queue_inflight_active(),
         operations_per_second: runtime.queue_operations_per_second(),
     })
 }

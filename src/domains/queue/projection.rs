@@ -1,8 +1,8 @@
 use crate::api::admin::read_model::AdminReadModel;
 use crate::api::admin::{
     QueueDeadLetter, QueueDeadLetterSnapshot as AdminQueueDeadLetterSnapshot, QueueInfo,
-    QueueInfoSnapshot as AdminQueueInfoSnapshot, QueueLease,
-    QueueLeaseSnapshot as AdminQueueLeaseSnapshot,
+    QueueInfoSnapshot as AdminQueueInfoSnapshot, QueueInflight,
+    QueueInflightSnapshot as AdminQueueInflightSnapshot,
 };
 use crate::domains::queue::core::QueueKey;
 use chrono::{TimeZone, Utc};
@@ -14,17 +14,17 @@ use std::sync::Arc;
 pub struct QueueAdminSnapshot {
     pub messages_ready: usize,
     pub messages_delayed: usize,
-    pub messages_leased: usize,
+    pub messages_inflight: usize,
     pub messages_dead_lettered: usize,
     pub messages_total: usize,
     pub oldest_message_age_seconds: u64,
 }
 
-/// Point-in-time live lease snapshot for admin diagnostics.
+/// Point-in-time live inflight snapshot for admin diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QueueLeaseSnapshot {
+pub struct QueueInflightSnapshot {
     pub message_id: u64,
-    pub lease_token: u64,
+    pub inflight_token: u64,
     pub session_id: Option<u64>,
     pub expires_at_epoch_ms: u64,
     pub attempts: usize,
@@ -42,20 +42,20 @@ pub struct QueueDeadLetterSnapshot {
 pub(crate) struct QueueProjectionEntry {
     pub key: QueueKey,
     pub snapshot: QueueAdminSnapshot,
-    pub leases: Vec<QueueLeaseSnapshot>,
+    pub inflight: Vec<QueueInflightSnapshot>,
     pub dead_letters: Vec<QueueDeadLetterSnapshot>,
 }
 
 pub(crate) struct QueueProjectionState {
     queues: Vec<QueueInfo>,
-    leases: Vec<QueueLease>,
+    inflight: Vec<QueueInflight>,
     dead_letters: Vec<QueueDeadLetter>,
 }
 
 impl QueueProjectionState {
     pub(crate) fn from_entries(entries: Vec<QueueProjectionEntry>) -> Self {
         let mut queues = Vec::with_capacity(entries.len());
-        let mut leases = Vec::new();
+        let mut inflight = Vec::new();
         let mut dead_letters = Vec::new();
 
         for entry in entries {
@@ -66,28 +66,28 @@ impl QueueProjectionState {
                 resource: &entry.key.resource,
                 messages_ready: entry.snapshot.messages_ready,
                 messages_delayed: entry.snapshot.messages_delayed,
-                messages_leased: entry.snapshot.messages_leased,
+                messages_inflight: entry.snapshot.messages_inflight,
                 messages_dead_lettered: entry.snapshot.messages_dead_lettered,
                 messages_total: entry.snapshot.messages_total,
                 oldest_message_age_seconds: entry.snapshot.oldest_message_age_seconds,
             }));
 
-            for lease in entry.leases {
+            for inflight_entry in entry.inflight {
                 let expires_at = Utc
-                    .timestamp_millis_opt(lease.expires_at_epoch_ms as i64)
+                    .timestamp_millis_opt(inflight_entry.expires_at_epoch_ms as i64)
                     .single()
                     .map(|timestamp| timestamp.to_rfc3339())
                     .unwrap_or_default();
-                leases.push(QueueLease::snapshot(AdminQueueLeaseSnapshot {
-                    message_id: lease.message_id,
+                inflight.push(QueueInflight::snapshot(AdminQueueInflightSnapshot {
+                    message_id: inflight_entry.message_id,
                     family: entry.key.family.as_u64(),
                     realm: &entry.key.realm,
                     area: &entry.key.area,
                     resource: &entry.key.resource,
-                    lease_token: lease.lease_token,
-                    session_id: lease.session_id,
+                    inflight_token: inflight_entry.inflight_token,
+                    session_id: inflight_entry.session_id,
                     expires_at: &expires_at,
-                    attempts: lease.attempts,
+                    attempts: inflight_entry.attempts,
                 }));
             }
 
@@ -117,7 +117,7 @@ impl QueueProjectionState {
                 &right.resource,
             ))
         });
-        leases.sort_by(|left, right| {
+        inflight.sort_by(|left, right| {
             (
                 &left.realm,
                 &left.area,
@@ -152,7 +152,7 @@ impl QueueProjectionState {
 
         Self {
             queues,
-            leases,
+            inflight,
             dead_letters,
         }
     }
@@ -186,7 +186,7 @@ impl QueueAdminProjection {
 
     fn apply(&self, state: QueueProjectionState) {
         self.read_model.replace_queues(state.queues);
-        self.read_model.replace_queue_leases(state.leases);
+        self.read_model.replace_queue_inflight(state.inflight);
         self.read_model
             .replace_queue_dead_letters(state.dead_letters);
     }
@@ -212,14 +212,14 @@ mod tests {
             snapshot: QueueAdminSnapshot {
                 messages_ready: 1,
                 messages_delayed: 2,
-                messages_leased: 3,
+                messages_inflight: 3,
                 messages_dead_lettered: 4,
                 messages_total: 10,
                 oldest_message_age_seconds: 5,
             },
-            leases: vec![QueueLeaseSnapshot {
+            inflight: vec![QueueInflightSnapshot {
                 message_id: 22,
-                lease_token: 33,
+                inflight_token: 33,
                 session_id: Some(44),
                 expires_at_epoch_ms: 1_700_000_000_000,
                 attempts: 2,
@@ -249,7 +249,7 @@ mod tests {
         assert_eq!(state.queues[0].area, "jobs");
         assert_eq!(state.queues[0].resource, "billing");
         assert_eq!(state.queues[1].realm, "zeta");
-        assert_eq!(state.leases[0].realm, "alpha");
+        assert_eq!(state.inflight[0].realm, "alpha");
         assert_eq!(state.dead_letters[0].realm, "alpha");
     }
 
@@ -267,12 +267,12 @@ mod tests {
 
         // Assert
         let queues = read_model.queues(None);
-        let leases = read_model.queue_leases(None);
+        let inflight = read_model.queue_inflight(None);
         let dead_letters = read_model.queue_dead_letters(None);
         assert_eq!(queues.len(), 1);
         assert_eq!(queues[0].realm, "acme");
-        assert_eq!(leases.len(), 1);
-        assert_eq!(leases[0].resource, "emails");
+        assert_eq!(inflight.len(), 1);
+        assert_eq!(inflight[0].resource, "emails");
         assert_eq!(dead_letters.len(), 1);
         assert_eq!(dead_letters[0].reason, "dlq");
     }
@@ -290,7 +290,7 @@ mod tests {
 
         // Assert
         assert!(read_model.queues(None).is_empty());
-        assert!(read_model.queue_leases(None).is_empty());
+        assert!(read_model.queue_inflight(None).is_empty());
         assert!(read_model.queue_dead_letters(None).is_empty());
     }
 }

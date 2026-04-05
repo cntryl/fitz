@@ -246,7 +246,7 @@ const rpc_call = client.rpcRequest(
 - **Multiple transactions can parallelize**: You can have 2+ transactions to different resources active simultaneously. **BUT:** one transaction (single tx_id) MUST be strictly sequential
 - **Multiple queues can parallelize**: Different queue resources can have parallel requests
 - **RPC exception**: RPC domain uses 16-byte UUID `correlation_id` for per-request correlation, enabling multiple in-flight RPC requests to be matched to responses
-- Messages stay self-contained on the wire, but several domains still maintain live broker-local state (for example KV transactions, Queue leases, subscriptions, and pending RPC work)
+- Messages stay self-contained on the wire, but several domains still maintain live broker-local state (for example KV transactions, Queue inflight entries, subscriptions, and pending RPC work)
 - Reconnect creates a new live session; clients MUST re-establish any required session-owned state and MUST NOT assume it survives disconnect
 
 ## Concurrency & Multiplexing Patterns

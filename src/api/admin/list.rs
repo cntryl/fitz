@@ -85,7 +85,7 @@ pub struct QueueResourceDetail {
     pub resource: String,
     pub messages_ready: usize,
     pub messages_delayed: usize,
-    pub messages_leased: usize,
+    pub messages_inflight: usize,
     pub messages_dead_lettered: usize,
     pub messages_total: usize,
     pub oldest_message_age_seconds: u64,
@@ -234,7 +234,7 @@ impl QueueResourceDetail {
             resource: item.resource,
             messages_ready: item.messages_ready,
             messages_delayed: item.messages_delayed,
-            messages_leased: item.messages_leased,
+            messages_inflight: item.messages_inflight,
             messages_dead_lettered: item.messages_dead_lettered,
             messages_total: item.messages_total,
             oldest_message_age_seconds: item.oldest_message_age_seconds,
@@ -248,7 +248,7 @@ impl QueueResourceDetail {
             resource: path.resource.to_string(),
             messages_ready: 0,
             messages_delayed: 0,
-            messages_leased: 0,
+            messages_inflight: 0,
             messages_dead_lettered: 0,
             messages_total: 0,
             oldest_message_age_seconds: 0,
@@ -511,17 +511,17 @@ pub struct QueueInfo {
     pub resource: String,
     pub messages_ready: usize,
     pub messages_delayed: usize,
-    pub messages_leased: usize,
+    pub messages_inflight: usize,
     pub messages_dead_lettered: usize,
     pub messages_total: usize,
     pub oldest_message_age_seconds: u64,
 }
 
-/// Collection of live in-memory Queue lease snapshots for the current broker
+/// Collection of live in-memory Queue inflight snapshots for the current broker
 /// process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueueLeasesList {
-    pub leases: Vec<QueueLease>,
+pub struct QueueInflightList {
+    pub inflight: Vec<QueueInflight>,
 }
 
 /// Collection of live in-memory Queue dead-letter snapshots for the current
@@ -531,19 +531,19 @@ pub struct QueueDeadLettersList {
     pub messages: Vec<QueueDeadLetter>,
 }
 
-/// Live in-memory Queue lease for the current broker process.
+/// Live in-memory Queue inflight entry for the current broker process.
 ///
-/// Lease ownership, lease tokens, and `session_id` are broker-local runtime
+/// Inflight ownership, inflight tokens, and `session_id` are broker-local runtime
 /// state only. They disappear on disconnect cleanup, idle actor eviction, or
 /// broker restart and are not durably recoverable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueueLease {
+pub struct QueueInflight {
     pub message_id: u64,
     pub family: u64,
     pub realm: String,
     pub area: String,
     pub resource: String,
-    pub lease_token: String,
+    pub inflight_token: String,
     pub session_id: String,
     pub expires_at: String,
     pub attempts: usize,
@@ -564,13 +564,13 @@ pub struct QueueDeadLetter {
     pub reason: String,
 }
 
-pub(crate) struct QueueLeaseSnapshot<'a> {
+pub(crate) struct QueueInflightSnapshot<'a> {
     pub(crate) message_id: u64,
     pub(crate) family: u64,
     pub(crate) realm: &'a str,
     pub(crate) area: &'a str,
     pub(crate) resource: &'a str,
-    pub(crate) lease_token: u64,
+    pub(crate) inflight_token: u64,
     pub(crate) session_id: Option<u64>,
     pub(crate) expires_at: &'a str,
     pub(crate) attempts: usize,
@@ -583,7 +583,7 @@ pub(crate) struct QueueInfoSnapshot<'a> {
     pub(crate) resource: &'a str,
     pub(crate) messages_ready: usize,
     pub(crate) messages_delayed: usize,
-    pub(crate) messages_leased: usize,
+    pub(crate) messages_inflight: usize,
     pub(crate) messages_dead_lettered: usize,
     pub(crate) messages_total: usize,
     pub(crate) oldest_message_age_seconds: u64,
@@ -785,7 +785,7 @@ impl QueueInfo {
             resource,
             messages_ready,
             messages_delayed,
-            messages_leased,
+            messages_inflight,
             messages_dead_lettered,
             messages_total,
             oldest_message_age_seconds,
@@ -798,7 +798,7 @@ impl QueueInfo {
             resource: resource.to_string(),
             messages_ready,
             messages_delayed,
-            messages_leased,
+            messages_inflight,
             messages_dead_lettered,
             messages_total,
             oldest_message_age_seconds,
@@ -806,15 +806,15 @@ impl QueueInfo {
     }
 }
 
-impl QueueLease {
-    pub(crate) fn snapshot(snapshot: QueueLeaseSnapshot<'_>) -> Self {
-        let QueueLeaseSnapshot {
+impl QueueInflight {
+    pub(crate) fn snapshot(snapshot: QueueInflightSnapshot<'_>) -> Self {
+        let QueueInflightSnapshot {
             message_id,
             family,
             realm,
             area,
             resource,
-            lease_token,
+            inflight_token,
             session_id,
             expires_at,
             attempts,
@@ -826,7 +826,7 @@ impl QueueLease {
             realm: realm.to_string(),
             area: area.to_string(),
             resource: resource.to_string(),
-            lease_token: lease_token.to_string(),
+            inflight_token: inflight_token.to_string(),
             session_id: session_id.map(|id| id.to_string()).unwrap_or_default(),
             expires_at: expires_at.to_string(),
             attempts,
@@ -1195,20 +1195,20 @@ pub async fn kv_transactions_for_resource(
     crate::api::admin::json_response(KvTransactionsList { transactions })
 }
 
-pub async fn queue_leases_for_resource(
+pub async fn queue_inflight_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
     family: Option<u64>,
 ) -> Result<Response<Body>, Infallible> {
-    let leases = runtime
-        .queue_list_leases(Some(path.realm))
+    let inflight = runtime
+        .queue_list_inflight(Some(path.realm))
         .into_iter()
-        .filter(|lease| {
-            path.matches(&lease.realm, &lease.area, &lease.resource)
-                && family.map(|value| lease.family == value).unwrap_or(true)
+        .filter(|entry| {
+            path.matches(&entry.realm, &entry.area, &entry.resource)
+                && family.map(|value| entry.family == value).unwrap_or(true)
         })
         .collect();
-    crate::api::admin::json_response(QueueLeasesList { leases })
+    crate::api::admin::json_response(QueueInflightList { inflight })
 }
 
 pub async fn queue_dead_letters_for_resource(
@@ -1294,7 +1294,7 @@ pub fn queue_detail(
     for queue in queues {
         detail.messages_ready += queue.messages_ready;
         detail.messages_delayed += queue.messages_delayed;
-        detail.messages_leased += queue.messages_leased;
+        detail.messages_inflight += queue.messages_inflight;
         detail.messages_dead_lettered += queue.messages_dead_lettered;
         detail.messages_total += queue.messages_total;
         detail.oldest_message_age_seconds = detail
@@ -1587,7 +1587,7 @@ mod tests {
             resource: "invoices",
             messages_ready: 0,
             messages_delayed: 0,
-            messages_leased: 0,
+            messages_inflight: 0,
             messages_dead_lettered: 0,
             messages_total: 0,
             oldest_message_age_seconds: 0,

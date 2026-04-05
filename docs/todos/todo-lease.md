@@ -9,7 +9,7 @@ Lease provides single-broker ownership coordination with TTL expiry and process-
 - Problem solved: current-process mutual exclusion and wait/renew/release coordination.
 - Optimized for: low-latency in-memory ownership decisions and explicit contention handling.
 - Not trying to do: durable lock recovery, distributed consensus, or cross-node fencing.
-- Adjacent overlap: Queue has visibility leases, but Queue leases are queue-delivery state, not lease-domain ownership tokens.
+- Adjacent overlap: Queue has visibility-style inflight handling, but Queue inflight entries are queue-delivery state, not lease-domain ownership tokens.
 - Strict boundary: if a workflow needs durable lock recovery or cluster-wide fencing, Lease is the wrong domain.
 
 ## B. Semantic Contract

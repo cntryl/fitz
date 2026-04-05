@@ -123,9 +123,12 @@ impl Runtime {
         self.admin_read_model.queues(realm)
     }
 
-    pub fn queue_list_leases(&self, realm: Option<&str>) -> Vec<crate::api::admin::QueueLease> {
+    pub fn queue_list_inflight(
+        &self,
+        realm: Option<&str>,
+    ) -> Vec<crate::api::admin::QueueInflight> {
         self.refresh_queue_admin_snapshot();
-        self.admin_read_model.queue_leases(realm)
+        self.admin_read_model.queue_inflight(realm)
     }
 
     pub fn queue_list_dead_letters(

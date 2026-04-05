@@ -189,11 +189,11 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
-    output.push_str("# HELP fitz_queue_leases_active Active queue leases\n");
-    output.push_str("# TYPE fitz_queue_leases_active gauge\n");
+    output.push_str("# HELP fitz_queue_inflight_active Active queue inflight entries\n");
+    output.push_str("# TYPE fitz_queue_inflight_active gauge\n");
     output.push_str(&format!(
-        "fitz_queue_leases_active {}\n",
-        runtime.queue_leases_active()
+        "fitz_queue_inflight_active {}\n",
+        runtime.queue_inflight_active()
     ));
     output.push('\n');
 

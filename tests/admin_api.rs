@@ -169,7 +169,7 @@ fn seed_queue_snapshot_data(runtime: &Arc<Runtime>) {
         resource: "worker".to_string(),
         messages_ready: 1,
         messages_delayed: 2,
-        messages_leased: 3,
+        messages_inflight: 3,
         messages_dead_lettered: 4,
         messages_total: 10,
         oldest_message_age_seconds: 9,
@@ -488,13 +488,13 @@ async fn should_return_kv_transactions_under_resource() {
 
 #[tokio::test]
 #[serial]
-async fn should_return_queue_leases_under_resource() {
+async fn should_return_queue_inflight_under_resource() {
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;
 
     let req = Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/leases")
+        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/inflight")
         .header(COOKIE, cookie)
         .body(Body::empty())
         .unwrap();
@@ -532,7 +532,7 @@ async fn should_return_queue_detail_with_delayed_and_dead_letter_counts() {
     let payload = String::from_utf8(body.to_vec()).unwrap();
     assert!(payload.contains(r#""messages_ready":1"#));
     assert!(payload.contains(r#""messages_delayed":2"#));
-    assert!(payload.contains(r#""messages_leased":3"#));
+    assert!(payload.contains(r#""messages_inflight":3"#));
     assert!(payload.contains(r#""messages_dead_lettered":4"#));
     assert!(payload.contains(r#""messages_total":10"#));
 }
@@ -813,7 +813,7 @@ async fn should_return_queue_domain_stats() {
     assert!(payload.contains(r#""messages_delayed":2"#));
     assert!(payload.contains(r#""messages_pending":3"#));
     assert!(payload.contains(r#""messages_dead_lettered":4"#));
-    assert!(payload.contains(r#""leases_active":0"#));
+    assert!(payload.contains(r#""inflight_active":0"#));
 }
 
 #[tokio::test]

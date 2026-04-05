@@ -3,14 +3,14 @@
 //! Each queue has:
 //! - Identity: (realm, area, resource) from route
 //! - Durable storage: Message headers and bodies persisted separately in Midge
-//! - Ephemeral leases: In-memory visibility tracking
+//! - Ephemeral inflight tracking: In-memory visibility tracking
 //!
 //! # Invariants
 //!
 //! 1. **Crash-safe ID reservation**: persisted ID reservations prevent collisions across restarts
 //! 2. **At-least-once delivery**: Messages may be delivered multiple times
-//! 3. **Lease isolation**: Reserved messages invisible to other consumers
-//! 4. **Automatic redelivery**: Expired leases or crashes return messages to ready queue
+//! 3. **Inflight isolation**: Reserved messages invisible to other consumers
+//! 4. **Automatic redelivery**: Expired inflight entries or crashes return messages to ready queue
 //! 5. **Full recovery**: All persisted state restored on restart (V-003 Fix)
 //! 6. **Correct time semantics**: Delays use absolute SystemTime epochs (V-002 Fix)
 //! 7. **Fair distribution**: Competing consumers get best-effort ready-queue order
@@ -60,7 +60,7 @@ use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
 
 use super::{
-    MessageId, QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueKey, QueueLeaseSnapshot,
+    MessageId, QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueKey, QueueInflightSnapshot,
     QueueMessage, QueueResponse, ReservedMessage,
 };
 
@@ -85,23 +85,23 @@ struct QueueRecord {
     enqueue_seq: u64,
     /// Current ready ordering sequence when the message is in the ready state.
     ready_seq: Option<u64>,
-    /// Number of delivery attempts (starts at 0, increments on successful lease grant).
+    /// Number of delivery attempts (starts at 0, increments on successful inflight assignment).
     attempts: u32,
     /// Visibility timestamp (milliseconds since UNIX epoch).
     ///
-    /// For delayed rows this is the time the message becomes ready. For leased
-    /// rows this is the lease expiry. For ready rows it is 0.
+    /// For delayed rows this is the time the message becomes ready. For inflight
+    /// rows this is the inflight expiry. For ready rows it is 0.
     visible_at_ms: u64,
     /// When the message was first committed to the queue.
     first_enqueued_at_ms: u64,
-    /// Last successful lease grant timestamp.
-    last_leased_at_ms: Option<u64>,
-    /// Monotonic lease epoch; increments on every successful lease grant.
-    lease_epoch: u64,
-    /// Current durable lease token, if any.
-    lease_token: Option<u64>,
-    /// Durable lease expiry in UNIX epoch milliseconds, if leased.
-    lease_expires_at_ms: Option<u64>,
+    /// Last successful inflight assignment timestamp.
+    last_inflight_at_ms: Option<u64>,
+    /// Monotonic inflight epoch; increments on every successful inflight assignment.
+    inflight_epoch: u64,
+    /// Current durable inflight token, if any.
+    inflight_token: Option<u64>,
+    /// Durable inflight expiry in UNIX epoch milliseconds, if inflight.
+    inflight_expires_at_ms: Option<u64>,
     /// Durable DLQ timestamp.
     dead_lettered_at_ms: Option<u64>,
     /// Durable DLQ reason code.
@@ -112,7 +112,7 @@ struct QueueRecord {
 enum QueueState {
     Ready = 0,
     Delayed = 1,
-    Leased = 2,
+    Inflight = 2,
     Dlq = 3,
 }
 
@@ -140,10 +140,10 @@ impl QueueRecord {
             attempts: 0,
             visible_at_ms: 0,
             first_enqueued_at_ms: now_epoch_ms,
-            last_leased_at_ms: None,
-            lease_epoch: 0,
-            lease_token: None,
-            lease_expires_at_ms: None,
+            last_inflight_at_ms: None,
+            inflight_epoch: 0,
+            inflight_token: None,
+            inflight_expires_at_ms: None,
             dead_lettered_at_ms: None,
             dlq_reason: None,
         }
@@ -160,10 +160,10 @@ impl QueueRecord {
             attempts: 0,
             visible_at_ms,
             first_enqueued_at_ms: now_epoch_ms,
-            last_leased_at_ms: None,
-            lease_epoch: 0,
-            lease_token: None,
-            lease_expires_at_ms: None,
+            last_inflight_at_ms: None,
+            inflight_epoch: 0,
+            inflight_token: None,
+            inflight_expires_at_ms: None,
             dead_lettered_at_ms: None,
             dlq_reason: None,
         }
@@ -179,10 +179,10 @@ impl QueueRecord {
             attempts,
             visible_at_ms,
             first_enqueued_at_ms: 0,
-            last_leased_at_ms: None,
-            lease_epoch: 0,
-            lease_token: None,
-            lease_expires_at_ms: None,
+            last_inflight_at_ms: None,
+            inflight_epoch: 0,
+            inflight_token: None,
+            inflight_expires_at_ms: None,
             dead_lettered_at_ms: None,
             dlq_reason: None,
         }
@@ -210,54 +210,54 @@ impl QueueRecord {
             attempts: self.attempts,
             visible_at_ms: self.visible_at_ms,
             first_enqueued_at_ms: self.first_enqueued_at_ms,
-            last_leased_at_ms: self.last_leased_at_ms,
-            lease_epoch: self.lease_epoch,
-            lease_token: self.lease_token,
-            lease_expires_at_ms: self.lease_expires_at_ms,
+            last_inflight_at_ms: self.last_inflight_at_ms,
+            inflight_epoch: self.inflight_epoch,
+            inflight_token: self.inflight_token,
+            inflight_expires_at_ms: self.inflight_expires_at_ms,
             dead_lettered_at_ms: self.dead_lettered_at_ms,
             dlq_reason: self.dlq_reason,
         }
     }
 }
 
-/// In-flight message lease (ephemeral, actor-owned)
+/// In-flight message state (ephemeral, actor-owned)
 #[derive(Debug, Clone)]
 pub struct Inflight {
     /// Random token for operation validation
     token: u64,
     /// Absolute expiration time
     expires_at: Instant,
-    /// Durable lease expiry in UNIX epoch milliseconds.
+    /// Durable inflight expiry in UNIX epoch milliseconds.
     expires_at_epoch_ms: u64,
-    /// Owning live session, if the lease was created through the broker session layer.
+    /// Owning live session, if the inflight entry was created through the broker session layer.
     owner_session_id: Option<u64>,
-    /// Delivery attempt count presented with the current lease.
+    /// Delivery attempt count presented with the current inflight assignment.
     attempts: u32,
-    /// Durable lease epoch for stale-event suppression.
-    lease_epoch: u64,
+    /// Durable inflight epoch for stale-event suppression.
+    inflight_epoch: u64,
 }
 
-/// Timer event for lease expiration
+/// Timer event for inflight expiration
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct LeaseExpiry {
+struct InflightExpiry {
     /// Message ID to re-enqueue
     id: MessageId,
-    /// Lease epoch to detect stale expiry events after extend/reassign.
-    lease_epoch: u64,
+    /// Inflight epoch to detect stale expiry events after extend/reassign.
+    inflight_epoch: u64,
     /// Expiration time (for ordering in heap)
     expires_at: Instant,
     /// Expiration time in UNIX epoch milliseconds.
     expires_at_ms: u64,
 }
 
-impl Ord for LeaseExpiry {
+impl Ord for InflightExpiry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Earlier expiration = higher priority (min-heap via Reverse wrapper)
         other.expires_at.cmp(&self.expires_at)
     }
 }
 
-impl PartialOrd for LeaseExpiry {
+impl PartialOrd for InflightExpiry {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
@@ -300,7 +300,7 @@ struct QueueMetaSnapshot {
     next_ready_seq: u64,
     ready_count: u64,
     delayed_count: u64,
-    leased_count: u64,
+    inflight_count: u64,
     dlq_count: u64,
     oldest_ready_enqueued_at_ms: Option<u64>,
 }
@@ -395,18 +395,18 @@ impl Clock for SystemClock {
 /// - `store`: Midge storage handle (for persistence)
 /// - `next_id`: Message ID counter (monotonic)
 /// - `ready`: Sharded FIFO queues of ready message IDs
-/// - `inflight`: Map of leased messages (id Ã¢â€ â€™ Inflight)
+/// - `inflight`: Map of inflight messages (id -> Inflight)
 /// - `timers`: Min-heap of expiration events (earliest first)
 /// - `clock`: Time source for expiration checks
 ///
 /// # Actor Responsibilities
 ///
 /// - Maintain best-effort ordering via sharded ready queues
-/// - Track inflight leases with expiration
+/// - Track inflight entries with expiration
 /// - Re-enqueue expired messages
 /// - Increment attempts on redelivery
 /// - Persist deletes on successful completion
-/// - Never persist lease state
+/// - Never persist inflight state
 pub struct QueueActor {
     /// Route family this actor serves (for validation)
     #[allow(dead_code)]
@@ -437,9 +437,9 @@ pub struct QueueActor {
     /// Cached Midge delayed-index prefix for this queue.
     delayed_index_prefix: Vec<u8>,
 
-    /// Cached Midge leased-index prefix for this queue.
+    /// Cached Midge inflight-index prefix for this queue.
     #[allow(dead_code)]
-    lease_index_prefix: Vec<u8>,
+    inflight_index_prefix: Vec<u8>,
 
     /// Cached Midge dead-letter index prefix for this queue.
     #[allow(dead_code)]
@@ -517,11 +517,11 @@ pub struct QueueActor {
     /// Approximate total bytes pinned by the hot-body cache.
     body_cache_bytes: usize,
 
-    /// Inflight map: leased messages (id Ã¢â€ â€™ Inflight)
+    /// Inflight map: inflight messages (id -> Inflight)
     pub inflight: FastMap<MessageId, Inflight>,
 
-    /// Timer heap: lease expiration events (earliest first, min-heap)
-    timers: BinaryHeap<Reverse<LeaseExpiry>>,
+    /// Timer heap: inflight expiration events (earliest first, min-heap)
+    timers: BinaryHeap<Reverse<InflightExpiry>>,
 
     /// Delayed visibility heap: messages not yet visible (earliest first, min-heap)
     delayed: BinaryHeap<Reverse<DelayedMessage>>,
@@ -662,7 +662,7 @@ impl QueueActor {
             legacy_message_key_prefix: Self::legacy_message_key_prefix(&queue_key),
             ready_index_prefix: Self::ready_index_prefix(&queue_key),
             delayed_index_prefix: Self::delayed_index_prefix(&queue_key),
-            lease_index_prefix: Self::lease_index_prefix(&queue_key),
+            inflight_index_prefix: Self::inflight_index_prefix(&queue_key),
             dlq_index_prefix: Self::dlq_index_prefix(&queue_key),
             ack_dedup_prefix: Self::ack_dedup_prefix(&queue_key),
             queue_key,
@@ -721,7 +721,7 @@ impl QueueActor {
         )
     }
 
-    /// Generate a random lease token
+    /// Generate a random inflight token
     fn generate_token() -> u64 {
         static TOKEN_COUNTER: AtomicU64 = AtomicU64::new(1);
         static TOKEN_SEED: OnceLock<u64> = OnceLock::new();
@@ -822,9 +822,9 @@ impl QueueActor {
         .into_bytes()
     }
 
-    fn lease_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
+    fn inflight_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
         format!(
-            "queue:{}:{}:{}:idx:lease:",
+            "queue:{}:{}:{}:idx:inflight:",
             queue_key.realm, queue_key.area, queue_key.resource
         )
         .into_bytes()
@@ -958,7 +958,7 @@ impl QueueActor {
         out.extend_from_slice(&meta.next_ready_seq.to_le_bytes());
         out.extend_from_slice(&meta.ready_count.to_le_bytes());
         out.extend_from_slice(&meta.delayed_count.to_le_bytes());
-        out.extend_from_slice(&meta.leased_count.to_le_bytes());
+        out.extend_from_slice(&meta.inflight_count.to_le_bytes());
         out.extend_from_slice(&meta.dlq_count.to_le_bytes());
         out.extend_from_slice(&meta.oldest_ready_enqueued_at_ms.unwrap_or(0).to_le_bytes());
         out
@@ -972,7 +972,7 @@ impl QueueActor {
                 next_ready_seq: next_id,
                 ready_count: 0,
                 delayed_count: 0,
-                leased_count: 0,
+                inflight_count: 0,
                 dlq_count: 0,
                 oldest_ready_enqueued_at_ms: None,
             });
@@ -986,7 +986,7 @@ impl QueueActor {
         let next_ready_seq = u64::from_le_bytes(bytes[9..17].try_into().ok()?);
         let ready_count = u64::from_le_bytes(bytes[17..25].try_into().ok()?);
         let delayed_count = u64::from_le_bytes(bytes[25..33].try_into().ok()?);
-        let leased_count = u64::from_le_bytes(bytes[33..41].try_into().ok()?);
+        let inflight_count = u64::from_le_bytes(bytes[33..41].try_into().ok()?);
         let dlq_count = u64::from_le_bytes(bytes[41..49].try_into().ok()?);
         let oldest_ready = u64::from_le_bytes(bytes[49..57].try_into().ok()?);
         Some(QueueMetaSnapshot {
@@ -994,7 +994,7 @@ impl QueueActor {
             next_ready_seq,
             ready_count,
             delayed_count,
-            leased_count,
+            inflight_count,
             dlq_count,
             oldest_ready_enqueued_at_ms: (oldest_ready != 0).then_some(oldest_ready),
         })
@@ -1318,13 +1318,13 @@ impl QueueActor {
     }
 
     #[allow(dead_code)]
-    fn lease_index_key(&self, expires_at_ms: u64, lease_epoch: u64, id: MessageId) -> Vec<u8> {
+    fn inflight_index_key(&self, expires_at_ms: u64, inflight_epoch: u64, id: MessageId) -> Vec<u8> {
         let mut key =
-            Vec::with_capacity(self.lease_index_prefix.len() + (Self::PADDED_U64_WIDTH * 3) + 2);
-        key.extend_from_slice(&self.lease_index_prefix);
+            Vec::with_capacity(self.inflight_index_prefix.len() + (Self::PADDED_U64_WIDTH * 3) + 2);
+        key.extend_from_slice(&self.inflight_index_prefix);
         Self::append_padded_u64(&mut key, expires_at_ms);
         key.push(b':');
-        Self::append_padded_u64(&mut key, lease_epoch);
+        Self::append_padded_u64(&mut key, inflight_epoch);
         key.push(b':');
         Self::append_padded_u64(&mut key, id.as_u64());
         key
@@ -1407,10 +1407,10 @@ impl QueueActor {
         buf.extend_from_slice(&record.attempts.to_le_bytes());
         buf.extend_from_slice(&record.visible_at_ms.to_le_bytes());
         buf.extend_from_slice(&record.first_enqueued_at_ms.to_le_bytes());
-        buf.extend_from_slice(&record.last_leased_at_ms.unwrap_or(0).to_le_bytes());
-        buf.extend_from_slice(&record.lease_epoch.to_le_bytes());
-        buf.extend_from_slice(&record.lease_token.unwrap_or(0).to_le_bytes());
-        buf.extend_from_slice(&record.lease_expires_at_ms.unwrap_or(0).to_le_bytes());
+        buf.extend_from_slice(&record.last_inflight_at_ms.unwrap_or(0).to_le_bytes());
+        buf.extend_from_slice(&record.inflight_epoch.to_le_bytes());
+        buf.extend_from_slice(&record.inflight_token.unwrap_or(0).to_le_bytes());
+        buf.extend_from_slice(&record.inflight_expires_at_ms.unwrap_or(0).to_le_bytes());
         buf.extend_from_slice(&record.dead_lettered_at_ms.unwrap_or(0).to_le_bytes());
         buf.push(record.dlq_reason.map(|value| value as u8).unwrap_or(0));
         buf
@@ -1772,7 +1772,7 @@ impl QueueActor {
         QueueAdminSnapshot {
             messages_ready: self.ready.len(),
             messages_delayed: self.persisted_delayed.len(),
-            messages_leased: self.inflight.len(),
+            messages_inflight: self.inflight.len(),
             messages_dead_lettered: self.persisted_dlq.len(),
             messages_total: self.ready.len()
                 + self.inflight.len()
@@ -1785,15 +1785,15 @@ impl QueueActor {
         }
     }
 
-    pub fn admin_leases(&self) -> Vec<QueueLeaseSnapshot> {
+    pub fn admin_inflight(&self) -> Vec<QueueInflightSnapshot> {
         let now_instant = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
 
         self.inflight
             .iter()
-            .map(|(id, inflight)| QueueLeaseSnapshot {
+            .map(|(id, inflight)| QueueInflightSnapshot {
                 message_id: id.as_u64(),
-                lease_token: inflight.token,
+                inflight_token: inflight.token,
                 session_id: inflight.owner_session_id,
                 expires_at_epoch_ms: now_epoch_ms.saturating_add(
                     inflight
@@ -1859,10 +1859,10 @@ impl QueueActor {
         }
     }
 
-    /// Drop any live leases owned by a disconnected session and return the
-    /// committed messages to the ready queue. The lease ownership itself is
+    /// Drop any live inflight entries owned by a disconnected session and return the
+    /// committed messages to the ready queue. The inflight ownership itself is
     /// ephemeral and is not durably recovered.
-    pub fn cleanup_session_leases(&mut self, session_id: u64) -> usize {
+    pub fn cleanup_session_inflight(&mut self, session_id: u64) -> usize {
         let released: Vec<_> = self
             .inflight
             .iter()
@@ -1928,7 +1928,7 @@ impl QueueActor {
         let state = match bytes[1] {
             0 => QueueState::Ready,
             1 => QueueState::Delayed,
-            2 => QueueState::Leased,
+            2 => QueueState::Inflight,
             3 => QueueState::Dlq,
             other => return Err(format!("Unknown queue state {}", other)),
         };
@@ -1937,10 +1937,10 @@ impl QueueActor {
         let attempts = u32::from_le_bytes(bytes[18..22].try_into().unwrap());
         let visible_at_ms = u64::from_le_bytes(bytes[22..30].try_into().unwrap());
         let first_enqueued_at_ms = u64::from_le_bytes(bytes[30..38].try_into().unwrap());
-        let last_leased_at_ms = u64::from_le_bytes(bytes[38..46].try_into().unwrap());
-        let lease_epoch = u64::from_le_bytes(bytes[46..54].try_into().unwrap());
-        let lease_token = u64::from_le_bytes(bytes[54..62].try_into().unwrap());
-        let lease_expires_at_ms = u64::from_le_bytes(bytes[62..70].try_into().unwrap());
+        let last_inflight_at_ms = u64::from_le_bytes(bytes[38..46].try_into().unwrap());
+        let inflight_epoch = u64::from_le_bytes(bytes[46..54].try_into().unwrap());
+        let inflight_token = u64::from_le_bytes(bytes[54..62].try_into().unwrap());
+        let inflight_expires_at_ms = u64::from_le_bytes(bytes[62..70].try_into().unwrap());
         let dead_lettered_at_ms = u64::from_le_bytes(bytes[70..78].try_into().unwrap());
         let dlq_reason = match bytes[78] {
             0 => None,
@@ -1956,10 +1956,10 @@ impl QueueActor {
             attempts,
             visible_at_ms,
             first_enqueued_at_ms,
-            last_leased_at_ms: (last_leased_at_ms != 0).then_some(last_leased_at_ms),
-            lease_epoch,
-            lease_token: (lease_token != 0).then_some(lease_token),
-            lease_expires_at_ms: (lease_expires_at_ms != 0).then_some(lease_expires_at_ms),
+            last_inflight_at_ms: (last_inflight_at_ms != 0).then_some(last_inflight_at_ms),
+            inflight_epoch,
+            inflight_token: (inflight_token != 0).then_some(inflight_token),
+            inflight_expires_at_ms: (inflight_expires_at_ms != 0).then_some(inflight_expires_at_ms),
             dead_lettered_at_ms: (dead_lettered_at_ms != 0).then_some(dead_lettered_at_ms),
             dlq_reason,
         })
@@ -2182,7 +2182,7 @@ impl QueueActor {
             next_ready_seq: self.next_ready_seq,
             ready_count: self.ready.len() as u64,
             delayed_count: self.persisted_delayed.len() as u64,
-            leased_count: self.inflight.len() as u64,
+            inflight_count: self.inflight.len() as u64,
             dlq_count: self.persisted_dlq.len() as u64,
             oldest_ready_enqueued_at_ms: self.oldest_ready_enqueued_at_ms,
         }
@@ -2604,31 +2604,31 @@ impl QueueActor {
     /// QueueActor never stores subscriptions or blocks on empty queues.
     pub fn handle_receive(
         &mut self,
-        lease_seconds: u64,
+        inflight_seconds: u64,
         batch_size: Option<usize>,
     ) -> QueueResponse {
-        self.handle_receive_internal(None, lease_seconds, batch_size)
+        self.handle_receive_internal(None, inflight_seconds, batch_size)
     }
 
     pub fn handle_receive_for_session(
         &mut self,
         session_id: u64,
-        lease_seconds: u64,
+        inflight_seconds: u64,
         batch_size: Option<usize>,
     ) -> QueueResponse {
-        self.handle_receive_internal(Some(session_id), lease_seconds, batch_size)
+        self.handle_receive_internal(Some(session_id), inflight_seconds, batch_size)
     }
 
     fn handle_receive_internal(
         &mut self,
         owner_session_id: Option<u64>,
-        lease_seconds: u64,
+        inflight_seconds: u64,
         batch_size: Option<usize>,
     ) -> QueueResponse {
         let batch_size = batch_size.unwrap_or(1);
         let now = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
-        let lease_duration = Duration::from_secs(lease_seconds);
+        let inflight_duration = Duration::from_secs(inflight_seconds);
 
         let mut messages = Vec::with_capacity(batch_size);
 
@@ -2647,9 +2647,9 @@ impl QueueActor {
                 }
             };
 
-            // Generate lease token
+            // Generate inflight token
             let token = Self::generate_token();
-            let expires_at = now + lease_duration;
+            let expires_at = now + inflight_duration;
 
             // Create inflight entry
             self.inflight.insert(
@@ -2658,19 +2658,19 @@ impl QueueActor {
                     token,
                     expires_at,
                     expires_at_epoch_ms: now_epoch_ms
-                        .saturating_add(lease_seconds.saturating_mul(1_000)),
+                        .saturating_add(inflight_seconds.saturating_mul(1_000)),
                     owner_session_id,
                     attempts: attempts + 1,
-                    lease_epoch: 0,
+                    inflight_epoch: 0,
                 },
             );
 
             // Schedule expiration timer
-            self.timers.push(Reverse(LeaseExpiry {
+            self.timers.push(Reverse(InflightExpiry {
                 id,
-                lease_epoch: 0,
+                inflight_epoch: 0,
                 expires_at,
-                expires_at_ms: now_epoch_ms.saturating_add(lease_seconds.saturating_mul(1_000)),
+                expires_at_ms: now_epoch_ms.saturating_add(inflight_seconds.saturating_mul(1_000)),
             }));
 
             // Update deadline cache if this expiration is sooner
@@ -2683,7 +2683,7 @@ impl QueueActor {
                 id,
                 body,
                 token,
-                lease_seconds,
+                inflight_seconds,
                 attempts: attempts + 1, // First attempt is 1 (not 0)
             });
         }
@@ -2702,7 +2702,7 @@ impl QueueActor {
         &mut self,
         id: MessageId,
         token: u64,
-        lease_seconds: u64,
+        inflight_seconds: u64,
     ) -> QueueResponse {
         let now = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
@@ -2720,21 +2720,20 @@ impl QueueActor {
 
         // Check if already expired
         if inflight.expires_at <= now {
-            // Remove stale inflight entry
             self.inflight.remove(&id);
-            return QueueResponse::LeaseExpired;
+            return QueueResponse::InflightExpired;
         }
 
         // Extend expiration
-        let new_expires_at = now + Duration::from_secs(lease_seconds);
+        let new_expires_at = now + Duration::from_secs(inflight_seconds);
         inflight.expires_at = new_expires_at;
         inflight.expires_at_epoch_ms =
-            now_epoch_ms.saturating_add(lease_seconds.saturating_mul(1_000));
+            now_epoch_ms.saturating_add(inflight_seconds.saturating_mul(1_000));
 
         // Schedule new timer (old timer will be ignored when it fires)
-        self.timers.push(Reverse(LeaseExpiry {
+        self.timers.push(Reverse(InflightExpiry {
             id,
-            lease_epoch: inflight.lease_epoch,
+            inflight_epoch: inflight.inflight_epoch,
             expires_at: new_expires_at,
             expires_at_ms: inflight.expires_at_epoch_ms,
         }));
@@ -2817,11 +2816,7 @@ impl QueueActor {
             // Remove stale inflight entry
             self.inflight.remove(&id);
             Self::increment_counter(obs::METRIC_QUEUE_COMPLETE_REJECTED);
-            let response = QueueResponse::LeaseExpired;
-            // Cache expired response
-            if let Ok(bytes) = bincode::serialize(&response) {
-                self.dedup_store.record(dedup_key, bytes);
-            }
+            let response = QueueResponse::InflightExpired;
             return response;
         }
 
@@ -3037,8 +3032,8 @@ impl QueueActor {
         record.ready_seq = Some(ready_seq);
         record.attempts = 0;
         record.visible_at_ms = 0;
-        record.lease_token = None;
-        record.lease_expires_at_ms = None;
+        record.inflight_token = None;
+        record.inflight_expires_at_ms = None;
         record.dead_lettered_at_ms = None;
         record.dlq_reason = None;
 
@@ -3168,8 +3163,8 @@ impl QueueActor {
         Ok(true)
     }
 
-    /// Handle lease expiration (internal timer event)
-    fn handle_lease_expired(&mut self, id: MessageId) {
+    /// Handle inflight expiration (internal timer event)
+    fn handle_inflight_expired(&mut self, id: MessageId) {
         // Check if message is still inflight
         let inflight = match self.inflight.get(&id) {
             Some(inflight) => inflight.clone(),
@@ -3180,7 +3175,7 @@ impl QueueActor {
 
         // Verify expiration (ignore stale timers from extend operations)
         if inflight.expires_at > now {
-            return; // Lease was extended, ignore this timer
+            return; // Inflight entry was extended, ignore this timer
         }
         let now_epoch_ms = self.clock.now_epoch_ms();
 
@@ -3260,8 +3255,8 @@ impl QueueActor {
                     record.state = QueueState::Dlq;
                     record.ready_seq = None;
                     record.visible_at_ms = 0;
-                    record.lease_token = None;
-                    record.lease_expires_at_ms = None;
+                    record.inflight_token = None;
+                    record.inflight_expires_at_ms = None;
                     record.dead_lettered_at_ms = Some(dead_lettered_at_ms);
                     record.dlq_reason = Some(DlqReason::MaxAttemptsExceeded);
 
@@ -3554,7 +3549,7 @@ impl QueueActor {
             let expiry = self.timers.pop().unwrap().0;
 
             // Handle expiration
-            self.handle_lease_expired(expiry.id);
+            self.handle_inflight_expired(expiry.id);
         }
 
         // If no more timers, set deadline to far future
@@ -3616,22 +3611,22 @@ impl Actor for QueueActor {
             } => self.handle_send(body, delay_seconds),
 
             QueueMessage::Receive {
-                lease_seconds,
+                inflight_seconds,
                 batch_size,
                 ..
-            } => self.handle_receive(lease_seconds, batch_size),
+            } => self.handle_receive(inflight_seconds, batch_size),
 
             QueueMessage::Extend {
                 id,
                 token,
-                lease_seconds,
+                inflight_seconds,
                 ..
-            } => self.handle_extend(id, token, lease_seconds),
+            } => self.handle_extend(id, token, inflight_seconds),
 
             QueueMessage::Ack { id, token, .. } => self.handle_ack(id, token),
 
-            QueueMessage::LeaseExpired { id } => {
-                self.handle_lease_expired(id);
+            QueueMessage::InflightExpired { id } => {
+                self.handle_inflight_expired(id);
                 return; // No response needed for internal timer message
             }
         };
@@ -4179,9 +4174,9 @@ impl QueueActor {
     ///
     /// # Competing Consumer Semantics
     ///
-    /// In-flight messages (leases that were held when process crashed) are automatically
+    /// In-flight messages (entries held when process crashed) are automatically
     /// redelivered because they're not persisted in the inflight map (ephemeral).
-    /// This is by design: lease state is not durable, so any reserved message is
+    /// This is by design: inflight state is not durable, so any reserved message is
     /// immediately available for another competing consumer to reserve after restart.
     ///
     /// # Minimal Data Loss Model
@@ -4482,7 +4477,7 @@ pub mod tests {
                 assert_eq!(messages[0].id, msg_id);
                 assert_eq!(messages[0].body, body);
                 assert_eq!(messages[0].attempts, 1);
-                assert_eq!(messages[0].lease_seconds, 30);
+                assert_eq!(messages[0].inflight_seconds, 30);
             }
             _ => panic!("Expected Received response"),
         }
@@ -5177,7 +5172,7 @@ pub mod tests {
     }
 
     #[test]
-    fn should_extend_lease_with_valid_token() {
+    fn should_extend_inflight_with_valid_token() {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
@@ -5248,7 +5243,7 @@ pub mod tests {
     }
 
     #[test]
-    fn should_redeliver_message_when_lease_expires() {
+    fn should_redeliver_message_when_inflight_expires() {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
@@ -5429,14 +5424,14 @@ pub mod tests {
     }
 
     #[test]
-    fn should_reject_operations_on_expired_lease() {
+    fn should_reject_operations_on_expired_inflight() {
         // Arrange
         let clock = MockClock::new();
         let store = Arc::new(
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
-        let queue_key = unique_queue_key("jobs-expired-lease");
+        let queue_key = unique_queue_key("jobs-expired-inflight");
         let mut actor = QueueActor::with_clock(
             RouteFamily::new(0), /* CF=0 for Midge test limitation */
             queue_key,
@@ -5462,7 +5457,7 @@ pub mod tests {
         // Since we're calling directly without going through actor receive,
         // the entry still exists but is expired
         let _extend_response = actor.handle_extend(msg_id, token, 60);
-        // However the logic checks expiration first, so it returns LeaseExpired
+        // However the logic checks expiration first, so it returns InflightExpired
         // before being removed, OR it could be NotFound if already cleaned up
         // Let's process timers explicitly to make this deterministic
         actor.process_expired_timers();
@@ -5599,7 +5594,7 @@ pub mod tests {
                 _ => panic!("Expected Reserved response on attempt {}", attempt),
             }
 
-            // Expire lease (simulating failed processing)
+            // Expire inflight entry (simulating failed processing)
             clock.advance(Duration::from_secs(31));
             actor.process_expired_timers();
 
@@ -5743,7 +5738,7 @@ pub mod tests {
         // Assert
         assert_eq!(snapshot.messages_ready, 0);
         assert_eq!(snapshot.messages_delayed, 0);
-        assert_eq!(snapshot.messages_leased, 0);
+        assert_eq!(snapshot.messages_inflight, 0);
         assert_eq!(snapshot.messages_dead_lettered, 1);
         assert_eq!(snapshot.messages_total, 1);
         assert_eq!(dead_letters.len(), 1);
@@ -5880,7 +5875,7 @@ pub mod tests {
                 _ => panic!("Expected Reserved response on attempt {}", attempt),
             }
 
-            // Expire lease
+            // Expire inflight entry
             clock.advance(Duration::from_secs(31));
             actor.process_expired_timers();
 

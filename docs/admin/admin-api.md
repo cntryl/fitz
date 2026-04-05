@@ -173,7 +173,7 @@ GET /api/v1/stats
     },
     "queue": {
       "messages_pending": 1847,
-      "leases_active": 67,
+      "inflight_active": 67,
       "operations_per_second": 78
     },
     "rpc": {
@@ -368,7 +368,7 @@ GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}?family={famil
 ```
 `family` is optional on read routes. When omitted, queue detail aggregates warm state across route families that share the same `{realm}/{area}/{resource}` on the current broker. When provided, the response is filtered to that exact queue identity.
 
-`messages_ready`, `messages_delayed`, `messages_leased`, `messages_dead_lettered`, and `messages_total` are point-in-time counts for the current broker only. They are not a durable catalog of every committed queue in storage.
+`messages_ready`, `messages_delayed`, `messages_inflight`, `messages_dead_lettered`, and `messages_total` are point-in-time counts for the current broker only. They are not a durable catalog of every committed queue in storage.
 
 **Response**:
 ```json
@@ -378,32 +378,32 @@ GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}?family={famil
   "resource": "emails",
   "messages_ready": 1847,
   "messages_delayed": 12,
-  "messages_leased": 67,
+  "messages_inflight": 67,
   "messages_dead_lettered": 4,
   "messages_total": 1930,
   "oldest_message_age_seconds": 0
 }
 ```
 
-#### List Live Queue Leases For A Resource
+#### List Live Queue Inflight Entries For A Resource
 ```
-GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/leases?family={family}
+GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/inflight?family={family}
 ```
-`family` is optional. When provided, only leases for that exact queue identity are returned.
+`family` is optional. When provided, only inflight entries for that exact queue identity are returned.
 
-`lease_token` and `session_id` describe live in-memory lease ownership only. They are dropped on disconnect cleanup, invalidated on lease expiry, and never survive broker restart.
+`inflight_token` and `session_id` describe live in-memory inflight ownership only. They are dropped on disconnect cleanup, invalidated on expiry, and never survive broker restart.
 
 **Response**:
 ```json
 {
-  "leases": [
+  "inflight": [
     {
       "message_id": 123456,
       "family": 1,
       "realm": "prod",
       "area": "jobs",
       "resource": "emails",
-      "lease_token": "987654321",
+      "inflight_token": "987654321",
       "session_id": "12345",
       "expires_at": "2026-01-31T10:35:00Z",
       "attempts": 2
@@ -642,7 +642,7 @@ POST /admin/sessions/{session_id}/close
 - `GET /api/v1/admin/notice/subscriptions?realm={realm}&route_pattern={pattern}` - List subscriptions
 - `GET /api/v1/admin/notice/routes?realm={realm}` - List routes with subscriber counts
 - `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}` - Get warm Queue resource detail
-- `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/leases` - List live queue leases for a resource
+- `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/inflight` - List live queue inflight entries for a resource
 - `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters` - List retained DLQ rows for a resource
   - Queue resource and lease snapshots are current-process only. They can disappear after disconnect cleanup, idle actor eviction, or broker restart until traffic rehydrates the queue.
   - Queue detail and list routes accept an optional `family` query parameter. Replay and purge require it.

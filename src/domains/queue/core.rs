@@ -49,13 +49,13 @@ impl std::fmt::Display for MessageId {
     }
 }
 
-/// Reserved message with body and lease metadata.
+/// Reserved message with body and inflight metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReservedMessage {
     pub id: MessageId,
     pub body: Bytes,
     pub token: u64,
-    pub lease_seconds: u64,
+    pub inflight_seconds: u64,
     pub attempts: u32,
 }
 

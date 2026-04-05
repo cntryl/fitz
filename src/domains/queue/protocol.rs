@@ -2,8 +2,8 @@
 //!
 //! Defines the message types for queue operations:
 //! - **Send**: Add message to queue
-//! - **Receive**: Lease one or more messages for processing
-//! - **Extend**: Extend lease expiration for a received message
+//! - **Receive**: Reserve one or more messages for processing
+//! - **Extend**: Extend inflight expiration for a reserved message
 //! - **Ack**: Acknowledge and delete message
 //!
 //! # Queue Identity
@@ -12,11 +12,11 @@
 //! - RouteFamily: Routing isolation boundary (opaque u64)
 //! - realm/area/resource: Logical identity within the family
 //!
-//! # Lease Semantics
+//! # Inflight Semantics
 //!
-//! - Messages are received with a lease duration
-//! - While leased, messages are invisible to other consumers
-//! - Leases expire automatically, returning messages to the ready queue
+//! - Messages are received with an inflight duration
+//! - While inflight, messages are invisible to other consumers
+//! - Inflight reservations expire automatically, returning messages to the ready queue
 //! - Redelivered messages have incremented attempt counters
 //!
 //! # Token Protocol
@@ -64,7 +64,7 @@ pub enum QueueMessage {
     ///
     /// Route format: `queue://{realm}/{area}/{resource}`
     ///
-    /// Pops up to `batch_size` messages from the ready queue, creates leases,
+    /// Pops up to `batch_size` messages from the ready queue, creates inflight reservations,
     /// and returns them with bodies loaded from storage.
     ///
     /// If `batch_size` is None, defaults to 1.
@@ -72,22 +72,22 @@ pub enum QueueMessage {
     Receive {
         family_id: RouteFamily,
         route: Route,
-        lease_seconds: u64,
+        inflight_seconds: u64,
         batch_size: Option<usize>,
     },
 
-    /// Extend message lease
+    /// Extend inflight reservation
     ///
     /// Route format: `queue://{realm}/{area}/{resource}`
     ///
     /// Extends the expiration time for a reserved message.
-    /// Requires valid token. Fails if token mismatches or lease expired.
+    /// Requires valid token. Fails if token mismatches or inflight reservation expired.
     Extend {
         family_id: RouteFamily,
         route: Route,
         id: MessageId,
         token: u64,
-        lease_seconds: u64,
+        inflight_seconds: u64,
     },
 
     /// Acknowledge message processing
@@ -96,7 +96,7 @@ pub enum QueueMessage {
     ///
     /// Marks message as successfully processed and acknowledges delivery.
     /// Removes inflight entry and deletes durable record.
-    /// Requires valid token. Fails if token mismatches or lease expired.
+    /// Requires valid token. Fails if token mismatches or inflight entry expired.
     Ack {
         family_id: RouteFamily,
         route: Route,
@@ -107,9 +107,9 @@ pub enum QueueMessage {
     /// Internal timer expiration event
     ///
     /// Not exposed via external routes.
-    /// Sent by the actor's timer system when a lease expires.
+    /// Sent by the actor's timer system when an inflight reservation expires.
     /// Causes message to be re-enqueued to the ready queue.
-    LeaseExpired { id: MessageId },
+    InflightExpired { id: MessageId },
 }
 
 /// Queue watch messages handled by QueueDomainSink before actor dispatch.
@@ -134,7 +134,7 @@ pub enum QueueSubscriptionMessage {
 pub struct QueueNotification {
     pub ready_messages: u64,
     pub delayed_messages: u64,
-    pub leased_messages: u64,
+    pub inflight_messages: u64,
 }
 
 /// Queue errors
@@ -174,7 +174,7 @@ pub enum QueueResponse {
     /// Messages successfully received
     Received { messages: Vec<ReservedMessage> },
 
-    /// Lease successfully extended
+    /// Inflight entry successfully extended
     Extended,
 
     /// Message successfully acknowledged
@@ -183,8 +183,8 @@ pub enum QueueResponse {
     /// Invalid token (mismatch with expected value)
     InvalidToken,
 
-    /// Lease already expired before operation
-    LeaseExpired,
+    /// Inflight reservation already expired before operation
+    InflightExpired,
 
     /// Message not found (completed or never existed)
     NotFound,

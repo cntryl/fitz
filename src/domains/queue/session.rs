@@ -62,7 +62,7 @@ impl SessionActor {
         &self,
         family: RouteFamily,
         route: Route,
-        lease_seconds: u64,
+        inflight_seconds: u64,
         batch_size: Option<usize>,
         queue_actor: &mut QueueActor,
         ctx: &mut Context<QueueActor>,
@@ -78,14 +78,14 @@ impl SessionActor {
         let msg = QueueMessage::Receive {
             family_id: family,
             route,
-            lease_seconds,
+            inflight_seconds,
             batch_size,
         };
         queue_actor.receive(msg, ctx);
         Ok(())
     }
 
-    /// Attempt to extend a message lease. Returns Err if authorization fails.
+    /// Attempt to extend a message inflight reservation. Returns Err if authorization fails.
     #[allow(clippy::too_many_arguments)]
     pub fn extend(
         &self,
@@ -93,14 +93,14 @@ impl SessionActor {
         route: Route,
         id: MessageId,
         token: u64,
-        lease_seconds: u64,
+        inflight_seconds: u64,
         queue_actor: &mut QueueActor,
         ctx: &mut Context<QueueActor>,
     ) -> Result<(), String> {
         // Extract base route (strip /extend suffix if present)
         let base_route = Self::extract_base_route(&route);
 
-        // Extend requires write access (modifying lease state is a write operation)
+        // Extend requires write access (modifying inflight state is a write operation)
         if !self.permissions.allows(&base_route, Access::Write) {
             return Err("unauthorized: extend".to_string());
         }
@@ -110,7 +110,7 @@ impl SessionActor {
             route,
             id,
             token,
-            lease_seconds,
+            inflight_seconds,
         };
         queue_actor.receive(msg, ctx);
         Ok(())

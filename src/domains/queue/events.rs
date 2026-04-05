@@ -26,12 +26,12 @@ pub enum QueueEvent {
         queue_key: QueueKey,
         message_id: MessageId,
     },
-    LeaseExpired {
+    InflightExpired {
         queue_key: QueueKey,
         message_id: MessageId,
         attempts: u32,
     },
-    LeaseExtended {
+    InflightExtended {
         queue_key: QueueKey,
         message_id: MessageId,
     },

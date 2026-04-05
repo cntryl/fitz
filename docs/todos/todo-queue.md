@@ -4,11 +4,11 @@ This file defines Queue-specific contract detail and proof points. For Fitz-wide
 
 ## A. Domain Purpose Statement
 
-Queue provides durable competing-consumer work delivery with visibility leases, redelivery, and optional dead-lettering.
+Queue provides durable competing-consumer work delivery with visibility inflight reservations, redelivery, and optional dead-lettering.
 
 - Problem solved: durable work backlog that consumers reserve, extend, complete, and retry.
 - Optimized for: at-least-once delivery, durable queue state, fair enough competing-consumer distribution, and bounded hot in-memory coordination.
-- Not trying to do: exactly-once delivery, durable inflight lease recovery, or durable event history.
+- Not trying to do: exactly-once delivery, durable inflight recovery, or durable event history.
 - Adjacent overlap: RPC also routes work to workers, but RPC is live-only. Stream also stores records, but Stream is immutable history rather than mutable work state.
 - Strict boundary: if the system needs durable work lifecycle, use Queue; if it needs immutable replayable history, use Stream.
 
@@ -17,16 +17,16 @@ Queue provides durable competing-consumer work delivery with visibility leases, 
 Clients can rely on the following:
 
 - Enqueue persists a message into durable queue state according to the queue's configured write policy.
-- Reserve grants exclusive live processing ownership for a message using a lease token and visibility timeout.
-- Complete removes the leased message when the correct live token is supplied.
-- Extend prolongs the current live lease when the correct token is supplied.
-- Expired leases return messages to availability for redelivery.
+- Reserve grants exclusive live processing ownership for a message using an inflight token and visibility timeout.
+- Complete removes the inflight message when the correct live token is supplied.
+- Extend prolongs the current inflight reservation when the correct token is supplied.
+- Expired inflight entries return messages to availability for redelivery.
 - Optional `max_attempts` moves terminal failures into durable dead-letter state.
 
 Server guarantees:
 
 - Queue committed messages and primary indexes survive restart according to the configured write policy.
-- Inflight lease ownership, lease tokens, and warm actor state are ephemeral.
+- Inflight ownership, inflight tokens, and warm actor state are ephemeral.
 - Delivery is at-least-once, not exactly-once.
 - Ready-queue ordering is maintained inside the durable ready sequence, but competing consumers do not imply a strict global consumption order.
 - Duplicate completion with the same live token is handled explicitly rather than mutating state twice.
@@ -53,7 +53,7 @@ Intentionally unsupported:
 
 - Exactly-once delivery.
 - Durable inflight lease recovery across restart.
-- Turning queue leases into cluster-wide lease-domain tokens.
+- Turning queue inflight tokens into cluster-wide lease-domain tokens.
 - Stream-style history replay for normal queue traffic.
 
 ## C. Non-Negotiable Invariants
@@ -92,7 +92,7 @@ Intentionally unsupported:
 
 - Queue must not become vague pub/sub with ack semantics.
 - Queue must not imply exactly-once delivery.
-- Queue must not turn inflight lease tokens into durable recovery handles.
+- Queue must not turn inflight tokens into durable recovery handles.
 - Queue must not impersonate Stream replay for normal backlog consumption.
 - Queue must not hide buffered write-policy tradeoffs behind synchronous durability language.
 
@@ -114,17 +114,17 @@ Operators must be able to inspect:
 - messages delayed
 - messages pending total
 - messages dead-lettered
-- active live queue leases
+- active live queue inflight entries
 - DLQ rows per queue
 - retry and redelivery counts
 - lease expiry counts
 
 Current surface:
 
-- Global stats include `messages_ready`, `messages_delayed`, `messages_pending`, `messages_dead_lettered`, `leases_active`, and `operations_per_second`.
-- Prometheus currently exports `fitz_queue_messages_pending` and `fitz_queue_leases_active`.
-- Admin APIs expose warm queue detail, live leases, retained dead letters, and DLQ replay and purge actions.
-- The per-domain Queue stats endpoint in [src/api/admin/stats.rs](../../src/api/admin/stats.rs) is implemented and returns `messages_ready`, `messages_delayed`, `messages_pending`, `messages_dead_lettered`, `leases_active`, and `operations_per_second`.
+- Global stats include `messages_ready`, `messages_delayed`, `messages_pending`, `messages_dead_lettered`, `inflight_active`, and `operations_per_second`.
+- Prometheus currently exports `fitz_queue_messages_pending` and `fitz_queue_inflight_active`.
+- Admin APIs expose warm queue detail, live inflight entries, retained dead letters, and DLQ replay and purge actions.
+- The per-domain Queue stats endpoint in [src/api/admin/stats.rs](../../src/api/admin/stats.rs) is implemented and returns `messages_ready`, `messages_delayed`, `messages_pending`, `messages_dead_lettered`, `inflight_active`, and `operations_per_second`.
 
 Current gaps to keep explicit:
 
@@ -159,7 +159,7 @@ Current gaps to keep explicit:
 
 - Queue versus RPC: Queue is durable backlog with reservation and redelivery; RPC is live request and response.
 - Queue versus Stream: Queue models mutable work lifecycle; Stream models immutable history.
-- Queue versus Lease: queue lease tokens govern message visibility only; they are not lease-domain fencing tokens.
+- Queue versus Lease: queue inflight tokens govern message visibility only; they are not lease-domain fencing tokens.
 - Queue versus Notice: Notice availability signals are hints around queue behavior, not durable queue state.
 
 ## I. Ambiguity Risks

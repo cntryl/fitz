@@ -1,7 +1,7 @@
 use crate::api::admin::{
     KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueDeadLetter, QueueInfo,
-    QueueLease, RpcPendingRequest, RpcWorker, ScheduleInfo, SessionInfo, StreamAreaWatermarkDetail,
-    StreamInfo, StreamRealmWatermarkDetail,
+    QueueInflight, RpcPendingRequest, RpcWorker, ScheduleInfo, SessionInfo,
+    StreamAreaWatermarkDetail, StreamInfo, StreamRealmWatermarkDetail,
 };
 use crate::session::session::SessionInfo as RuntimeSessionInfo;
 use chrono::Utc;
@@ -79,7 +79,7 @@ pub struct AdminReadModel {
     notice_subscriptions: RwLock<Vec<NoticeSubscription>>,
     notice_routes: RwLock<Vec<NoticeRouteInfo>>,
     queues: RwLock<Vec<QueueInfo>>,
-    queue_leases: RwLock<Vec<QueueLease>>,
+    queue_inflight: RwLock<Vec<QueueInflight>>,
     queue_dead_letters: RwLock<Vec<QueueDeadLetter>>,
     rpc_workers: RwLock<Vec<RpcWorker>>,
     rpc_pending: RwLock<Vec<RpcPendingRequest>>,
@@ -197,13 +197,13 @@ impl AdminReadModel {
         collect_slice_matches(&queues, |item| matches_realm(realm, &item.realm))
     }
 
-    pub fn replace_queue_leases(&self, leases: Vec<QueueLease>) {
-        *self.queue_leases.write() = leases;
+    pub fn replace_queue_inflight(&self, inflight: Vec<QueueInflight>) {
+        *self.queue_inflight.write() = inflight;
     }
 
-    pub fn queue_leases(&self, realm: Option<&str>) -> Vec<QueueLease> {
-        let leases = self.queue_leases.read();
-        collect_slice_matches(&leases, |item| matches_realm(realm, &item.realm))
+    pub fn queue_inflight(&self, realm: Option<&str>) -> Vec<QueueInflight> {
+        let inflight = self.queue_inflight.read();
+        collect_slice_matches(&inflight, |item| matches_realm(realm, &item.realm))
     }
 
     pub fn replace_queue_dead_letters(&self, messages: Vec<QueueDeadLetter>) {

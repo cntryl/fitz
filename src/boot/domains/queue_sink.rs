@@ -221,7 +221,7 @@ impl QueueDomainSink {
         let mut ready_states = self.ready_states.lock();
         let was_ready = ready_states.get(key).copied().unwrap_or(false);
 
-        if snapshot.messages_total == 0 && snapshot.messages_leased == 0 {
+        if snapshot.messages_total == 0 && snapshot.messages_inflight == 0 {
             ready_states.remove(key);
         } else {
             ready_states.insert(key.clone(), is_ready);
@@ -251,7 +251,7 @@ impl QueueDomainSink {
             QueueNotification {
                 ready_messages: snapshot.messages_ready as u64,
                 delayed_messages: snapshot.messages_delayed as u64,
-                leased_messages: snapshot.messages_leased as u64,
+                inflight_messages: snapshot.messages_inflight as u64,
             },
         );
         let notify_ctx = FrameContext::new(
@@ -365,7 +365,7 @@ impl QueueDomainSink {
         if let Some(metrics) = &self.metrics {
             metrics.set_ready_messages(self.ready_message_count());
             metrics.set_delayed_messages(self.delayed_message_count());
-            metrics.set_inflight_messages(self.active_lease_count());
+            metrics.set_inflight_messages(self.active_inflight_count());
         }
     }
 
@@ -381,7 +381,7 @@ impl QueueDomainSink {
         matches!(
             response,
             crate::domains::queue::QueueResponse::InvalidToken
-                | crate::domains::queue::QueueResponse::LeaseExpired
+                | crate::domains::queue::QueueResponse::InflightExpired
                 | crate::domains::queue::QueueResponse::NotFound
                 | crate::domains::queue::QueueResponse::QueueNotFound
                 | crate::domains::queue::QueueResponse::BadRequest { .. }
@@ -404,7 +404,7 @@ impl QueueDomainSink {
                 QueueProjectionEntry {
                     key: key.clone(),
                     snapshot: actor.admin_snapshot(),
-                    leases: actor.admin_leases(),
+                    inflight: actor.admin_inflight(),
                     dead_letters: actor.admin_dead_letters(),
                 }
             })
@@ -440,12 +440,12 @@ impl QueueDomainSink {
         actors.retain(|key, warm_actor| {
             let mut actor = warm_actor.actor.lock();
             let ready_before = actor.ready_len();
-            let leases_before = actor.inflight.len();
+            let inflight_before = actor.inflight.len();
             actor.process_due_work();
             let ready_after = actor.ready_len();
-            let leases_after = actor.inflight.len();
+            let inflight_after = actor.inflight.len();
             let snapshot = actor.admin_snapshot();
-            if ready_before != ready_after || leases_before != leases_after {
+            if ready_before != ready_after || inflight_before != inflight_after {
                 changed = true;
             }
 
@@ -456,7 +456,7 @@ impl QueueDomainSink {
             let idle_for = now.saturating_duration_since(warm_actor.last_used);
             let should_keep = idle_for < QUEUE_ACTOR_IDLE_TTL
                 || snapshot.messages_delayed > 0
-                || snapshot.messages_leased > 0;
+                || snapshot.messages_inflight > 0;
             if !should_keep {
                 changed = true;
                 removed_keys.push(key.clone());
@@ -479,8 +479,8 @@ impl QueueDomainSink {
         }
     }
 
-    /// Drop all live queue leases owned by the disconnected session and return
-    /// those committed messages to the ready queue. Lease ownership is
+    /// Drop all live queue inflight entries owned by the disconnected session and return
+    /// those committed messages to the ready queue. Inflight ownership is
     /// broker-local runtime state only.
     pub fn cleanup_session(&self, session_id: u64) {
         let mut released_any = false;
@@ -488,7 +488,7 @@ impl QueueDomainSink {
         let mut actors = self.actors.lock();
         for (key, warm_actor) in actors.iter_mut() {
             let mut actor = warm_actor.actor.lock();
-            if actor.cleanup_session_leases(session_id) > 0 {
+            if actor.cleanup_session_inflight(session_id) > 0 {
                 released_any = true;
                 if let Some(notification) = self.record_ready_state(key, actor.admin_snapshot()) {
                     notifications.push((key.clone(), notification));
@@ -548,7 +548,7 @@ impl QueueDomainSink {
             .sum()
     }
 
-    pub fn active_lease_count(&self) -> usize {
+    pub fn active_inflight_count(&self) -> usize {
         let actors = self.actors.lock();
         actors
             .values()
@@ -837,7 +837,7 @@ impl MailboxSink for QueueDomainSink {
             QueueMessage::Receive {
                 family_id,
                 route,
-                lease_seconds,
+                inflight_seconds,
                 batch_size,
             } => match Self::queue_key_for_route(family_id, &route) {
                 Ok(key) => {
@@ -853,7 +853,7 @@ impl MailboxSink for QueueDomainSink {
                     actor.process_due_work();
                     let response = actor.handle_receive_for_session(
                         frame_ctx.session_id,
-                        lease_seconds,
+                        inflight_seconds,
                         batch_size,
                     );
                     let notification =
@@ -877,7 +877,7 @@ impl MailboxSink for QueueDomainSink {
                 route,
                 id,
                 token,
-                lease_seconds,
+                inflight_seconds,
             } => match Self::queue_key_for_route(family_id, &route) {
                 Ok(key) => {
                     let notification_key = key.clone();
@@ -890,7 +890,7 @@ impl MailboxSink for QueueDomainSink {
                     let mut actor = actor_handle.lock();
                     let actor_exec_start = Instant::now();
                     actor.process_due_work();
-                    let response = actor.handle_extend(id, token, lease_seconds);
+                    let response = actor.handle_extend(id, token, inflight_seconds);
                     let notification =
                         self.record_ready_state(&notification_key, actor.admin_snapshot());
                     self.observe_histogram_us(
@@ -939,9 +939,9 @@ impl MailboxSink for QueueDomainSink {
                 }
                 Err(response) => (response, None, false),
             },
-            QueueMessage::LeaseExpired { .. } => (
+            QueueMessage::InflightExpired { .. } => (
                 crate::domains::queue::QueueResponse::Error {
-                    message: "LeaseExpired is an internal message".to_string(),
+                    message: "InflightExpired is an internal message".to_string(),
                 },
                 None,
                 false,
@@ -1016,11 +1016,11 @@ mod tests {
         Bytes::from(payload)
     }
 
-    fn encode_queue_reserve(route: &str, lease_seconds: u64, batch_size: u32) -> Bytes {
+    fn encode_queue_reserve(route: &str, inflight_seconds: u64, batch_size: u32) -> Bytes {
         let mut payload = Vec::new();
         payload.put_u32(route.len() as u32);
         payload.put_slice(route.as_bytes());
-        payload.put_u64(lease_seconds);
+        payload.put_u64(inflight_seconds);
         payload.put_u8(1);
         payload.put_u32(batch_size);
         Bytes::from(payload)
@@ -1040,13 +1040,13 @@ mod tests {
         Bytes::from(payload)
     }
 
-    fn encode_queue_extend(route: &str, id: u64, token: u64, lease_seconds: u64) -> Bytes {
+    fn encode_queue_extend(route: &str, id: u64, token: u64, inflight_seconds: u64) -> Bytes {
         let mut payload = Vec::new();
         payload.put_u32(route.len() as u32);
         payload.put_slice(route.as_bytes());
         payload.put_u64(id);
         payload.put_u64(token);
-        payload.put_u64(lease_seconds);
+        payload.put_u64(inflight_seconds);
         Bytes::from(payload)
     }
 
@@ -1636,23 +1636,23 @@ mod tests {
         assert_eq!(queues[0].resource, "emails");
         assert_eq!(queues[0].messages_ready, 0);
         assert_eq!(queues[0].messages_delayed, 0);
-        assert_eq!(queues[0].messages_leased, 1);
+        assert_eq!(queues[0].messages_inflight, 1);
         assert_eq!(queues[0].messages_dead_lettered, 0);
         assert_eq!(queues[0].messages_total, 1);
 
-        let leases = admin_read_model.queue_leases(None);
-        assert_eq!(leases.len(), 1);
-        assert_eq!(leases[0].realm, "acme");
-        assert_eq!(leases[0].area, "jobs");
-        assert_eq!(leases[0].resource, "emails");
-        assert_eq!(leases[0].message_id, 1);
-        assert_eq!(leases[0].session_id, worker_session_id.to_string());
-        assert_eq!(leases[0].attempts, 1);
-        assert!(!leases[0].expires_at.is_empty());
+        let inflight = admin_read_model.queue_inflight(None);
+        assert_eq!(inflight.len(), 1);
+        assert_eq!(inflight[0].realm, "acme");
+        assert_eq!(inflight[0].area, "jobs");
+        assert_eq!(inflight[0].resource, "emails");
+        assert_eq!(inflight[0].message_id, 1);
+        assert_eq!(inflight[0].session_id, worker_session_id.to_string());
+        assert_eq!(inflight[0].attempts, 1);
+        assert!(!inflight[0].expires_at.is_empty());
     }
 
     #[test]
-    fn should_cleanup_queue_leases_for_disconnected_session() {
+    fn should_cleanup_queue_inflight_for_disconnected_session() {
         // Arrange
         let family = RouteFamily::new(1);
         let sender_session_id = 7;
@@ -1711,7 +1711,7 @@ mod tests {
             .expect("reserve response");
 
         sink.refresh_admin_snapshot_if_dirty();
-        assert_eq!(admin_read_model.queue_leases(None).len(), 1);
+        assert_eq!(admin_read_model.queue_inflight(None).len(), 1);
 
         sink.deliver(Envelope::new(
             RouteAddress::new(family, Route::new("queue://cleanup")),
@@ -1728,10 +1728,10 @@ mod tests {
         assert_eq!(queues.len(), 1);
         assert_eq!(queues[0].messages_ready, 1);
         assert_eq!(queues[0].messages_delayed, 0);
-        assert_eq!(queues[0].messages_leased, 0);
+        assert_eq!(queues[0].messages_inflight, 0);
         assert_eq!(queues[0].messages_dead_lettered, 0);
         assert_eq!(queues[0].messages_total, 1);
-        assert!(admin_read_model.queue_leases(None).is_empty());
+        assert!(admin_read_model.queue_inflight(None).is_empty());
     }
 
     #[test]
@@ -1778,7 +1778,7 @@ mod tests {
         assert_eq!(queues.len(), 1);
         assert_eq!(queues[0].messages_ready, 0);
         assert_eq!(queues[0].messages_delayed, 1);
-        assert_eq!(queues[0].messages_leased, 0);
+        assert_eq!(queues[0].messages_inflight, 0);
         assert_eq!(queues[0].messages_dead_lettered, 0);
         assert_eq!(queues[0].messages_total, 1);
     }
@@ -1862,11 +1862,11 @@ mod tests {
 
         // Assert
         assert_eq!(sink.actors.lock().len(), 1);
-        assert_eq!(admin_read_model.queues(None)[0].messages_leased, 1);
+        assert_eq!(admin_read_model.queues(None)[0].messages_inflight, 1);
     }
 
     #[test]
-    fn should_not_evict_idle_queue_actor_with_live_leases() {
+    fn should_not_evict_idle_queue_actor_with_live_inflight() {
         // Arrange
         let family = RouteFamily::new(1);
         let sender_session_id = 7;
@@ -1931,7 +1931,7 @@ mod tests {
         assert_eq!(
             sink.actors.lock().len(),
             1,
-            "actors with live leases must stay warm until the lease is gone"
+            "actors with live inflight entries must stay warm until the inflight entry is gone"
         );
     }
 }

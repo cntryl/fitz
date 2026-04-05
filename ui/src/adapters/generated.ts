@@ -321,8 +321,8 @@ export interface QueueStats {
   messages_delayed: number;
   /** Number of ready queue messages */
   messages_ready: number;
-  /** Number of active queue message leases */
-  leases_active: number;
+  /** Number of active queue inflight entries */
+  inflight_active: number;
   /** Number of messages pending in queues */
   messages_pending: number;
   /** Queue operations per second */

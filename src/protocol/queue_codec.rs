@@ -109,9 +109,9 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
             buf.put_u8(1); // status: error
             buf.put_u8(1); // error_code: InvalidToken
         }
-        QueueResponse::LeaseExpired => {
+        QueueResponse::InflightExpired => {
             buf.put_u8(1); // status: error
-            buf.put_u8(2); // error_code: LeaseExpired
+            buf.put_u8(2); // error_code: InflightExpired
         }
         QueueResponse::NotFound => {
             buf.put_u8(1); // status: error
@@ -238,17 +238,17 @@ fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
 }
 
 fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
-    // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 lease_seconds][u8 has_batch_size][u32 batch?]
+    // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 inflight_seconds][u8 has_batch_size][u32 batch?]
     let mut offset = 0;
 
     // Parse route
     let route_str = parse_route_str_ref(payload, &mut offset)?;
 
-    // Parse lease_seconds (u64)
+    // Parse inflight_seconds (u64)
     if offset + 8 > payload.len() {
-        return Err("Incomplete lease_seconds".to_string());
+        return Err("Incomplete inflight_seconds".to_string());
     }
-    let lease_seconds = u64::from_be_bytes([
+    let inflight_seconds = u64::from_be_bytes([
         payload[offset],
         payload[offset + 1],
         payload[offset + 2],
@@ -290,7 +290,7 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
     Ok(QueueMessage::Receive {
         family_id,
         route: Route::from_ref(route_str),
-        lease_seconds,
+        inflight_seconds,
         batch_size,
     })
 }
@@ -348,12 +348,12 @@ pub fn encode_notify(
     buf.put_slice(route.as_str().as_bytes());
     buf.put_u64(notification.ready_messages);
     buf.put_u64(notification.delayed_messages);
-    buf.put_u64(notification.leased_messages);
+    buf.put_u64(notification.inflight_messages);
     buf
 }
 
 fn parse_extend(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
-    // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 message_id][u64 lease_token][u64 lease_seconds]
+    // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 message_id][u64 lease_token][u64 inflight_seconds]
     let mut offset = 0;
 
     // Parse route
@@ -391,11 +391,11 @@ fn parse_extend(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, 
     ]);
     offset += 8;
 
-    // Parse lease_seconds (u64)
+    // Parse inflight_seconds (u64)
     if offset + 8 > payload.len() {
-        return Err("Incomplete lease_seconds".to_string());
+        return Err("Incomplete inflight_seconds".to_string());
     }
-    let lease_seconds = u64::from_be_bytes([
+    let inflight_seconds = u64::from_be_bytes([
         payload[offset],
         payload[offset + 1],
         payload[offset + 2],
@@ -411,7 +411,7 @@ fn parse_extend(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, 
         route: Route::from_ref(route_str),
         id,
         token,
-        lease_seconds,
+        inflight_seconds,
     })
 }
 
@@ -492,7 +492,7 @@ mod tests {
         let mut payload = Vec::new();
         payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
         payload.extend_from_slice(route.as_bytes());
-        payload.extend_from_slice(&30u64.to_be_bytes()); // lease_seconds
+        payload.extend_from_slice(&30u64.to_be_bytes()); // inflight_seconds
         payload.push(1); // batch_size present
         payload.extend_from_slice(&5u32.to_be_bytes()); // batch_size = 5
 
@@ -569,7 +569,7 @@ mod tests {
                 id: MessageId::new(1),
                 token: 999,
                 body: Bytes::from("test"),
-                lease_seconds: 30,
+                inflight_seconds: 30,
                 attempts: 1,
             }],
         };

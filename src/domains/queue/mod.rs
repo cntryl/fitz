@@ -2,8 +2,8 @@
 //!
 //! Provides work queues optimized for competing consumers:
 //! - **Competing consumer semantics**: Multiple consumers can reserve messages fairly
-//! - **Lease-based visibility**: Reserved messages invisible to other consumers
-//! - **Automatic redelivery**: Expired or crashed leases return messages to ready queue
+//! - **Inflight-based visibility**: Reserved messages invisible to other consumers
+//! - **Automatic redelivery**: Expired or crashed inflight entries return messages to ready queue
 //! - **At-least-once delivery**: Messages may be delivered multiple times
 //! - **Minimal fairness**: Messages distributed fairly among consumers (not strict FIFO)
 //! - **Atomic batch operations**: All-or-nothing for ID allocation + message writes
@@ -18,11 +18,11 @@
 //!
 //! Example:
 //! ```text
-//! Consumer A reserves message 1 (lease 30s)
-//! Consumer B reserves message 2 (lease 30s)
+//! Consumer A reserves message 1 (inflight 30s)
+//! Consumer B reserves message 2 (inflight 30s)
 //! Consumer C tries to reserve → gets nothing (queue empty)
 //! Consumer A crashes before completing message 1
-//! After 30s, lease expires → message 1 returns to ready queue
+//! After 30s, inflight entry expires → message 1 returns to ready queue
 //! Consumer C tries again → gets message 1 (redelivery)
 //! ```
 //!
@@ -32,7 +32,7 @@
 //!   Messages are delivered in ready-queue order, but reserve order is non-deterministic.
 //! - **Committed-state durability**: Uses atomic batch operations (ID allocation + writes commit together).
 //!   Success responses are returned only after the configured queue write policy commits.
-//! - **Automatic redelivery**: Lease expiration automatically returns messages (ephemeral leases).
+//! - **Automatic redelivery**: Inflight expiration automatically returns messages (ephemeral inflight state).
 //!   Crashes automatically trigger redelivery (inflight state not persisted).
 //! - **Fair distribution**: Reserve operations pop from front of ready queue (simple FIFO internally).
 //!   Multiple competing consumers naturally distribute work.
@@ -42,12 +42,12 @@
 //! Queues represent **intent** (work to be done), not events of record.
 //! - Committed queue state is durable according to the configured `WriteOptions`
 //! - Producers can regenerate lost work items
-//! - Inflight leases and lease tokens remain broker-local, in-memory coordination state
+//! - Inflight entries and inflight tokens remain broker-local, in-memory coordination state
 //!
 //! # Key Features
 //!
 //! - **Single-node**: No distributed coordination (MVP)
-//! - **Ephemeral leases**: Lease state lost on restart (automatic redelivery)
+//! - **Ephemeral inflight state**: Inflight state lost on restart (automatic redelivery)
 //! - **Microsecond latency**: In-memory reserve/complete with persistent backing
 //! - **Token-based operations**: Random tokens prevent accidental duplicate operations
 //! - **Dead Letter Queue (DLQ)**: Optional max_attempts threshold for failed messages
@@ -64,21 +64,21 @@
 //! # Operations
 //!
 //! - **enqueue**: Add message to queue (returns MessageId after commit)
-//! - **reserve**: Lease one or more messages for processing (fair distribution)
-//! - **extend**: Extend lease expiration for a reserved message
+//! - **reserve**: Mark one or more messages inflight for processing (fair distribution)
+//! - **extend**: Extend inflight expiration for a reserved message
 //! - **complete**: Mark message as processed and delete it after commit
 //!
 //! # Competing Consumer Protocol
 //!
 //! ```text
-//! 1. Consumer A: Reserve(lease_secs=30) → (id=1, token=abc123, body="task")
-//! 2. Consumer B: Reserve(lease_secs=30) → (id=2, token=def456, body="task2")
+//! 1. Consumer A: Reserve(inflight_secs=30) → (id=1, token=abc123, body="task")
+//! 2. Consumer B: Reserve(inflight_secs=30) → (id=2, token=def456, body="task2")
 //! 3. Consumer A: [Processing task 1...]
 //! 4. Consumer B: [Processing task 2...]
-//! 5. Consumer A crashes → Lease expires after 30 seconds
-//! 6. Consumer C: Reserve(lease_secs=30) → (id=1, token=xyz789, body="task")
+//! 5. Consumer A crashes → Inflight entry expires after 30 seconds
+//! 6. Consumer C: Reserve(inflight_secs=30) → (id=1, token=xyz789, body="task")
 //!    ^^^ Message 1 redelivered with same body but new token
-//! 7. Consumer A recovers: Try Complete(id=1, token=abc123) → LeaseExpired (old token invalid)
+//! 7. Consumer A recovers: Try Complete(id=1, token=abc123) → InflightExpired (old token invalid)
 //! 8. Consumer C: Complete(id=1, token=xyz789) → OK (new token valid)
 //! ```
 //!
@@ -95,7 +95,7 @@
 //! Process restart fully recovers queue state:
 //! - All persisted messages recovered from storage
 //! - Delayed messages have correct visibility windows (using absolute epoch_ms)
-//! - In-flight messages automatically redelivered (leases are ephemeral)
+//! - In-flight messages automatically redelivered (inflight state is ephemeral)
 //! - next_id correctly initialized to prevent duplicate IDs
 //!
 //! # Time Semantics (V-002 Fix)
@@ -108,7 +108,7 @@
 //! # Dead Letter Queue (DLQ) Policy
 //!
 //! When creating a QueueActor with `max_attempts: Some(n)`:
-//! - Each lease expiration increments `attempts`
+//! - Each inflight expiration increments `attempts`
 //! - When `attempts >= max_attempts`:
 //!   - Message transitions into durable DLQ state
 //!   - Header and body remain in storage with DLQ metadata
@@ -118,7 +118,7 @@
 //! - Higher-level admin, replay, and purge surfaces build on top of this retained state
 //!
 //! When `max_attempts: None` (default):
-//! - Messages retry indefinitely on lease expiration
+//! - Messages retry indefinitely on inflight expiration
 //! - No DLQ behavior
 //!
 //! # Queue Watches
@@ -128,7 +128,7 @@
 //! - QueueDomainSink owns ephemeral watch state for the current broker process
 //! - Watches target `queue://{realm}/{area}/{resource}/ready`
 //! - Notifications signal availability and never carry queue message bodies
-//! - Delayed visibility and lease-expiry transitions are surfaced through queue-local runtime sweeps
+//! - Delayed visibility and inflight-expiry transitions are surfaced through queue-local runtime sweeps
 //!
 //! # Usage
 //!
@@ -145,6 +145,6 @@ pub mod session;
 pub use actor::{Clock, QueueActor, SystemClock};
 pub use core::{MessageId, QueueKey, ReservedMessage};
 pub use metrics::QueueMetrics;
-pub use projection::{QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueLeaseSnapshot};
+pub use projection::{QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueInflightSnapshot};
 pub use protocol::{QueueMessage, QueueNotification, QueueResponse, QueueSubscriptionMessage};
 pub use session::SessionActor;
