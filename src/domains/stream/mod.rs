@@ -39,6 +39,7 @@
 
 pub mod actor;
 pub mod constants;
+pub mod events;
 pub mod metrics;
 pub mod protocol;
 pub mod session;

@@ -4,7 +4,7 @@ use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -62,6 +62,8 @@ pub struct ScheduleDomainSink {
     publish_failures: AtomicU64,
     /// Total number of pending-fire acknowledgement persistence failures.
     ack_failures: AtomicU64,
+    /// Rolling window of acknowledged execution timestamps for executions-per-minute tracking.
+    recent_execution_ms: Mutex<VecDeque<u64>>,
     metrics: Option<ScheduleMetrics>,
 }
 
@@ -85,6 +87,7 @@ impl ScheduleDomainSink {
             snapshot_epoch: Instant::now(),
             publish_failures: AtomicU64::new(0),
             ack_failures: AtomicU64::new(0),
+            recent_execution_ms: Mutex::new(VecDeque::new()),
             metrics: None,
         }
     }
@@ -126,6 +129,24 @@ impl ScheduleDomainSink {
             )?;
             actors.insert(family, actor);
         }
+
+        // Seed the rolling-window execution counter from persisted last_fire_ms values.
+        // This preserves the executions-per-minute reading across broker restarts for
+        // schedules that fired within the last 60 seconds.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let cutoff_ms = now_ms.saturating_sub(60_000);
+        let mut deque = self.recent_execution_ms.lock();
+        for actor in actors.values() {
+            for ts in actor.last_fire_timestamps_since(cutoff_ms) {
+                deque.push_back(ts);
+            }
+        }
+        deque.make_contiguous().sort_unstable();
+        drop(deque);
+
         drop(actors);
 
         self.schedule_admin_snapshot(true);
@@ -199,13 +220,26 @@ impl ScheduleDomainSink {
             let mut actors = self.actors.lock();
             for (family, delivered_fires) in delivered {
                 if let Some(actor) = actors.get_mut(&family) {
-                    if let Err(error) = actor.ack_pending_fires(&delivered_fires) {
-                        self.ack_failures.fetch_add(1, Ordering::Relaxed);
-                        tracing::warn!(
-                            route_family = family.as_u64(),
-                            error = %error,
-                            "Failed to acknowledge pending schedule fires"
-                        );
+                    match actor.ack_pending_fires(&delivered_fires) {
+                        Ok((acked, acknowledged_at_ms)) if acked > 0 => {
+                            let mut deque = self.recent_execution_ms.lock();
+                            let cutoff = acknowledged_at_ms.saturating_sub(60_000);
+                            while deque.front().copied().is_some_and(|t| t < cutoff) {
+                                deque.pop_front();
+                            }
+                            for _ in 0..acked {
+                                deque.push_back(acknowledged_at_ms);
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            self.ack_failures.fetch_add(1, Ordering::Relaxed);
+                            tracing::warn!(
+                                route_family = family.as_u64(),
+                                error = %error,
+                                "Failed to acknowledge pending schedule fires"
+                            );
+                        }
                     }
                 }
             }
@@ -326,11 +360,16 @@ impl ScheduleDomainSink {
     }
 
     pub fn executions_per_minute(&self) -> f64 {
-        let mut actors = self.actors.lock();
-        actors
-            .values_mut()
-            .map(|actor| actor.executions_per_minute())
-            .sum()
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let cutoff = now_ms.saturating_sub(60_000);
+        let mut deque = self.recent_execution_ms.lock();
+        while deque.front().copied().is_some_and(|t| t < cutoff) {
+            deque.pop_front();
+        }
+        deque.len() as f64
     }
 
     pub fn publish_failure_count(&self) -> u64 {

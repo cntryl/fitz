@@ -13,7 +13,7 @@ use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
 use fxhash::FxBuildHasher;
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
@@ -77,8 +77,6 @@ pub struct ScheduleActor {
     ready_heap: BinaryHeap<(Reverse<u64>, String)>,
     /// Durably claimed schedule fires awaiting successful publish.
     pending_fires: BTreeMap<(u64, String), Bytes>,
-    /// Recent successful schedule delivery timestamps for live per-minute stats.
-    recent_execution_ms: VecDeque<u64>,
     /// Injected wall-clock and monotonic time source.
     clock: Arc<dyn Clock>,
     /// Number of schedules normalized forward during the last preload.
@@ -154,7 +152,6 @@ impl ScheduleActor {
             scan_dedup_window: std::time::Duration::from_millis(10),
             ready_heap: BinaryHeap::new(),
             pending_fires: BTreeMap::new(),
-            recent_execution_ms: VecDeque::new(),
             clock,
             overdue_normalizations: 0,
         };
@@ -233,12 +230,6 @@ impl ScheduleActor {
                         executions_total,
                         list_index,
                     };
-
-                    if let Some(last_fire_ms) = last_fire_ms {
-                        if now_ms.saturating_sub(last_fire_ms) <= 60_000 {
-                            self.recent_execution_ms.push_back(last_fire_ms);
-                        }
-                    }
 
                     self.schedules.insert(route.clone(), def);
                     self.ready_heap
@@ -846,12 +837,14 @@ impl ScheduleActor {
             .collect()
     }
 
+    /// Acknowledges delivered fires. Returns `(acked_count, acknowledged_at_ms)`.
+    /// `acknowledged_at_ms` is only meaningful when `acked_count > 0`.
     pub(crate) fn ack_pending_fires(
         &mut self,
         delivered: &[(u64, String)],
-    ) -> Result<usize, String> {
+    ) -> Result<(usize, u64), String> {
         if delivered.is_empty() {
-            return Ok(0);
+            return Ok((0, 0));
         }
 
         let acknowledged_at_ms = self.clock.now_epoch_ms();
@@ -880,40 +873,29 @@ impl ScheduleActor {
                     schedule.last_fire_ms = Some(acknowledged_at_ms);
                     schedule.executions_total = schedule.executions_total.saturating_add(1);
                 }
-                self.record_recent_execution(acknowledged_at_ms);
                 acked += 1;
             }
         }
 
-        Ok(acked)
+        Ok((acked, acknowledged_at_ms))
     }
 
     pub(crate) fn pending_fire_count(&self) -> usize {
         self.pending_fires.len()
     }
 
+    /// Returns all `last_fire_ms` timestamps for schedules that fired after `cutoff_ms`.
+    /// Used by the sink to seed its rolling-window execution counter on startup.
+    pub(crate) fn last_fire_timestamps_since(&self, cutoff_ms: u64) -> Vec<u64> {
+        self.schedules
+            .values()
+            .filter_map(|def| def.last_fire_ms)
+            .filter(|&ts| ts > cutoff_ms)
+            .collect()
+    }
+
     pub(crate) fn overdue_normalization_count(&self) -> u64 {
         self.overdue_normalizations
-    }
-
-    pub(crate) fn executions_per_minute(&mut self) -> f64 {
-        let now_ms = self.clock.now_epoch_ms();
-        self.prune_recent_executions(now_ms);
-        self.recent_execution_ms.len() as f64
-    }
-
-    fn record_recent_execution(&mut self, executed_at_ms: u64) {
-        self.prune_recent_executions(executed_at_ms);
-        self.recent_execution_ms.push_back(executed_at_ms);
-    }
-
-    fn prune_recent_executions(&mut self, now_ms: u64) {
-        while let Some(oldest) = self.recent_execution_ms.front().copied() {
-            if now_ms.saturating_sub(oldest) <= 60_000 {
-                break;
-            }
-            self.recent_execution_ms.pop_front();
-        }
     }
 
     #[doc(hidden)]
@@ -1345,7 +1327,6 @@ mod tests {
         assert_eq!(snapshot.len(), 1);
         assert_eq!(snapshot[0].executions_total, 1);
         assert!(snapshot[0].last_run.is_some());
-        assert!(actor.executions_per_minute() >= 1.0);
     }
 
     #[test]

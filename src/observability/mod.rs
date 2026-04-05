@@ -96,6 +96,15 @@ pub const METRIC_QUEUE_REDELIVERIES: &str = "fitz_queue_redeliveries_total";
 pub const METRIC_QUEUE_DLQ_TRANSITIONS: &str = "fitz_queue_dlq_transitions_total";
 pub const METRIC_QUEUE_COMPLETE_REJECTED: &str = "fitz_queue_complete_rejected_total";
 
+// Queue operation-specific counters and histograms
+pub const METRIC_QUEUE_ENQUEUE_TOTAL: &str = "fitz_queue_enqueue_total";
+pub const METRIC_QUEUE_RESERVE_TOTAL: &str = "fitz_queue_reserve_total";
+pub const METRIC_QUEUE_COMPLETE_TOTAL: &str = "fitz_queue_complete_total";
+pub const METRIC_QUEUE_RELEASE_TOTAL: &str = "fitz_queue_release_total";
+pub const METRIC_QUEUE_EXTEND_TOTAL: &str = "fitz_queue_extend_total";
+pub const METRIC_QUEUE_ENQUEUE_LATENCY_MS: &str = "fitz_queue_enqueue_latency_ms";
+pub const METRIC_QUEUE_RESERVE_LATENCY_MS: &str = "fitz_queue_reserve_latency_ms";
+
 // Gauges
 pub const METRIC_CONNECTIONS_ACTIVE: &str = "fitz_connections_active";
 pub const METRIC_SESSIONS_ACTIVE: &str = "fitz_sessions_active";

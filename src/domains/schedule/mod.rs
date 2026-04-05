@@ -13,6 +13,7 @@
 //! live, session-scoped delivery state only.
 
 pub mod actor;
+pub mod events;
 pub mod metrics;
 pub mod protocol;
 pub mod session;

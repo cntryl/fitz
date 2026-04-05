@@ -783,6 +783,23 @@ impl MailboxSink for QueueDomainSink {
             crate::protocol::queue_codec::ParsedQueueFrame::Sub(_) => unreachable!(),
         };
 
+        // Capture the operation kind before the consuming match for operation-specific metrics.
+        #[derive(Clone, Copy)]
+        enum QueueOpKind {
+            Send,
+            Receive,
+            Extend,
+            Ack,
+            Other,
+        }
+        let op_kind = match &queue_msg {
+            QueueMessage::Send { .. } => QueueOpKind::Send,
+            QueueMessage::Receive { .. } => QueueOpKind::Receive,
+            QueueMessage::Extend { .. } => QueueOpKind::Extend,
+            QueueMessage::Ack { .. } => QueueOpKind::Ack,
+            _ => QueueOpKind::Other,
+        };
+
         let (response, ready_notification, should_mark_admin_snapshot_dirty) = match queue_msg {
             QueueMessage::Send {
                 family_id,
@@ -945,6 +962,13 @@ impl MailboxSink for QueueDomainSink {
                 metrics.record_failure(started_at);
             } else {
                 metrics.record_success(started_at);
+                match op_kind {
+                    QueueOpKind::Send => metrics.record_enqueue(started_at),
+                    QueueOpKind::Receive => metrics.record_reserve(started_at),
+                    QueueOpKind::Ack => metrics.record_complete(),
+                    QueueOpKind::Extend => metrics.record_extend(),
+                    QueueOpKind::Other => {}
+                }
             }
         }
 

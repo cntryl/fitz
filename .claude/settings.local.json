@@ -7,7 +7,11 @@
       "Bash(wc -l /d/repos/cntryl/fitz-workspace/fitz/tests/schedule*.rs)",
       "Bash(cargo check:*)",
       "Bash(ls -la /d/repos/cntryl/fitz-workspace/fitz/src/domains/*/)",
-      "Bash(cargo build:*)"
+      "Bash(cargo build:*)",
+      "Bash(for domain:*)",
+      "Bash(do echo:*)",
+      "Read(//d/repos/cntryl/fitz-workspace/fitz/src/domains/$domain/**)",
+      "Bash(done)"
     ]
   }
 }

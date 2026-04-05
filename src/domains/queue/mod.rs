@@ -136,6 +136,7 @@
 
 pub mod actor;
 pub mod core;
+pub mod events;
 pub mod metrics;
 pub mod projection;
 pub mod protocol;

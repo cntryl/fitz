@@ -31,8 +31,10 @@
 //! tokens as cluster-wide or durable identifiers.
 
 pub mod actor;
+pub mod events;
 pub mod guard;
 pub mod metrics;
+pub mod projection;
 pub mod protocol;
 pub mod session;
 

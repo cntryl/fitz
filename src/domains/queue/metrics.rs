@@ -9,6 +9,15 @@ pub const METRIC_READY_GAUGE: &str = "fitz_queue_ready_gauge";
 pub const METRIC_DELAYED_GAUGE: &str = "fitz_queue_delayed_gauge";
 pub const METRIC_INFLIGHT_GAUGE: &str = "fitz_queue_inflight_gauge";
 
+// Operation-specific counters
+pub const METRIC_ENQUEUE_TOTAL: &str = "fitz_queue_enqueue_total";
+pub const METRIC_RESERVE_TOTAL: &str = "fitz_queue_reserve_total";
+pub const METRIC_COMPLETE_TOTAL: &str = "fitz_queue_complete_total";
+pub const METRIC_RELEASE_TOTAL: &str = "fitz_queue_release_total";
+pub const METRIC_EXTEND_TOTAL: &str = "fitz_queue_extend_total";
+pub const METRIC_ENQUEUE_LATENCY_MS: &str = "fitz_queue_enqueue_latency_ms";
+pub const METRIC_RESERVE_LATENCY_MS: &str = "fitz_queue_reserve_latency_ms";
+
 #[derive(Clone)]
 pub struct QueueMetrics {
     metrics: DomainMetricSet,
@@ -57,5 +66,31 @@ impl QueueMetrics {
 
     pub fn set_inflight_messages(&self, count: usize) {
         self.metrics.gauge_set(METRIC_INFLIGHT_GAUGE, count as u64);
+    }
+
+    pub fn record_enqueue(&self, started_at: Instant) {
+        self.metrics.counter_inc(METRIC_ENQUEUE_TOTAL);
+        let elapsed_ms = started_at.elapsed().as_micros() as u64 / 1_000;
+        self.metrics
+            .histogram_observe_ms(METRIC_ENQUEUE_LATENCY_MS, elapsed_ms);
+    }
+
+    pub fn record_reserve(&self, started_at: Instant) {
+        self.metrics.counter_inc(METRIC_RESERVE_TOTAL);
+        let elapsed_ms = started_at.elapsed().as_micros() as u64 / 1_000;
+        self.metrics
+            .histogram_observe_ms(METRIC_RESERVE_LATENCY_MS, elapsed_ms);
+    }
+
+    pub fn record_complete(&self) {
+        self.metrics.counter_inc(METRIC_COMPLETE_TOTAL);
+    }
+
+    pub fn record_release(&self) {
+        self.metrics.counter_inc(METRIC_RELEASE_TOTAL);
+    }
+
+    pub fn record_extend(&self) {
+        self.metrics.counter_inc(METRIC_EXTEND_TOTAL);
     }
 }

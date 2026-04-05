@@ -56,7 +56,9 @@
 
 pub mod actor;
 pub mod errors;
+pub mod events;
 pub mod metrics;
+pub mod projection;
 pub mod protocol;
 pub mod reply_inbox;
 pub mod session;
