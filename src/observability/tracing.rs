@@ -1,3 +1,4 @@
+use opentelemetry::trace::TraceContextExt;
 use std::time::Instant;
 /// Tracing helpers and utilities for Fitz.
 ///
@@ -8,6 +9,7 @@ use std::time::Instant;
 ///
 /// Safe for use in both async and sync code.
 use tracing::Span;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 /// Guard for measuring operation latency and recording to tracing span.
 /// Automatically records the duration when dropped.
@@ -43,6 +45,23 @@ impl LatencyGuard {
     pub fn elapsed_us(&self) -> u64 {
         self.start.elapsed().as_micros() as u64
     }
+}
+
+/// Record standard tracing attributes for the current span if available.
+pub fn record_current_span_trace_ids(span: &Span) {
+    let context = span.context();
+    let current_span = context.span();
+    let span_context = current_span.span_context();
+    if span_context.is_valid() {
+        span.record("trace_id", &span_context.trace_id().to_string());
+        span.record("span_id", &span_context.span_id().to_string());
+    }
+}
+
+/// Record standardized error fields to the provided span.
+pub fn record_error(span: &Span, error_kind: &'static str, error_message: &str) {
+    span.record("error.kind", &error_kind);
+    span.record("error.message", &error_message.to_string());
 }
 
 impl Drop for LatencyGuard {

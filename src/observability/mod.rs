@@ -31,6 +31,12 @@ pub mod tracing;
 /// Top-level span for an incoming request (always sampled)
 pub const SPAN_REQUEST: &str = "request";
 
+/// Service identity spans and attributes
+pub const SERVICE_NAME: &str = "fitz";
+pub const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const SERVICE_INSTANCE_ID_ENV: &str = "FITZ_SERVICE_INSTANCE_ID";
+pub const DEPLOYMENT_ENVIRONMENT_ENV: &str = "FITZ_DEPLOYMENT_ENVIRONMENT";
+
 /// TLV codec span (hot path, 0.1% sample)
 pub const SPAN_TLV_ENCODE: &str = "tlv::encode";
 pub const SPAN_TLV_DECODE: &str = "tlv::decode";
@@ -172,6 +178,13 @@ pub const ATTR_MATCH_COUNT: &str = "match_count";
 
 pub const ATTR_PROTOCOL: &str = "protocol";
 pub const ATTR_FRAME_SIZE: &str = "frame_size";
+
+pub const ATTR_TRACE_ID: &str = "trace_id";
+pub const ATTR_SPAN_ID: &str = "span_id";
+pub const ATTR_SERVICE_NAME: &str = "service.name";
+pub const ATTR_SERVICE_VERSION: &str = "service.version";
+pub const ATTR_SERVICE_INSTANCE_ID: &str = "service.instance.id";
+pub const ATTR_DEPLOYMENT_ENVIRONMENT: &str = "deployment.environment";
 
 // ============================================================================
 // SAMPLING CONFIGURATION

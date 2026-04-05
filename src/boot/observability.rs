@@ -7,9 +7,16 @@
 /// - Sampling rate configuration
 use crate::observability::metrics::MetricsCollector;
 use once_cell::sync::OnceCell;
+use opentelemetry::{
+    global,
+    sdk::{propagation::TraceContextPropagator, trace as sdktrace, Resource},
+    KeyValue,
+};
+use opentelemetry_otlp::WithExportConfig;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing_subscriber::{fmt, prelude::*, util::SubscriberInitExt, EnvFilter};
+use uuid::Uuid;
 
 /// Global metrics collector (initialized once during boot)
 static METRICS_COLLECTOR: OnceCell<Arc<MetricsCollector>> = OnceCell::new();
@@ -165,74 +172,98 @@ pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error:
         EnvFilter::new(format!("fitz={},warn", log_level))
     };
 
-    // Set up tracing subscriber with format and env filter
-    match log_format.as_str() {
-        "json" => {
-            // JSON structured logging (better for log aggregation)
-            let _ = tracing_subscriber::registry()
-                .with(env_filter)
-                .with(
-                    fmt::layer()
-                        .json()
-                        .with_current_span(true)
-                        .with_target(true)
-                        .with_level(true),
-                )
-                .try_init();
-        }
-        _ => {
-            // Text formatting (default, human-readable)
-            let _ = tracing_subscriber::registry()
-                .with(env_filter)
-                .with(
-                    fmt::layer()
-                        .compact()
-                        .with_timer(fmt::time::SystemTime)
-                        .with_ansi(true)
-                        .with_writer(std::io::stderr)
-                        .with_target(true)
-                        .with_level(true)
-                        .with_file(false)
-                        .with_line_number(false),
-                )
-                .try_init();
-        }
-    }
+    // Derive service identity and environment metadata
+    let service_instance_id =
+        std::env::var("FITZ_SERVICE_INSTANCE_ID").unwrap_or_else(|_| Uuid::new_v4().to_string());
+    let deployment_environment =
+        std::env::var("FITZ_DEPLOYMENT_ENVIRONMENT").unwrap_or_else(|_| "unknown".to_string());
 
-    // Create metrics collector if not already created.
-    let metrics_collector = METRICS_COLLECTOR
-        .get_or_init(|| Arc::new(MetricsCollector::new()))
-        .clone();
+    let fmt_layer = if log_format == "json" {
+        fmt::layer()
+            .json()
+            .with_current_span(true)
+            .with_target(true)
+            .with_level(true)
+            .boxed()
+    } else {
+        fmt::layer()
+            .compact()
+            .with_timer(fmt::time::SystemTime)
+            .with_ansi(true)
+            .with_writer(std::io::stderr)
+            .with_target(true)
+            .with_level(true)
+            .with_file(false)
+            .with_line_number(false)
+            .boxed()
+    };
 
-    // Environment variables for OTEL
+    let otel_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:4317".to_string());
+
+    // Initialize OpenTelemetry OTLP exporter when enabled.
     let otel_enabled = std::env::var("OTEL_ENABLED")
         .unwrap_or_else(|_| "true".to_string())
         .parse::<bool>()
         .unwrap_or(true);
 
-    let otel_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:4317".to_string());
-
     if otel_enabled {
-        tracing::info!("OpenTelemetry enabled, exporting to: {}", otel_endpoint);
+        let resource = Resource::new(vec![
+            KeyValue::new(
+                "service.name",
+                crate::observability::SERVICE_NAME.to_string(),
+            ),
+            KeyValue::new(
+                "service.version",
+                crate::observability::SERVICE_VERSION.to_string(),
+            ),
+            KeyValue::new("service.instance.id", service_instance_id.clone()),
+            KeyValue::new("deployment.environment", deployment_environment.clone()),
+        ]);
 
-        // Initialize OpenTelemetry OTLP exporter
-        // NOTE: This is a placeholder. In a production setup, you would:
-        // 1. Create an OTLP exporter with the endpoint
-        // 2. Set up a TracingLayerProvider with BatchSpanProcessor
-        // 3. Install the OTEL subscriber layer
-        // 4. Configure sampling strategy (TraceIdRatioBased for hot paths)
-        //
-        // For now, we just log that it's enabled. Full implementation would look like:
-        //
-        // let tracer = opentelemetry_otlp::new_pipeline()
-        //     .install_simple()
-        //     .map_err(|e| format!("Failed to init OTEL: {}", e))?;
-        // let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-        // (layer into subscriber above)
+        global::set_text_map_propagator(TraceContextPropagator::new());
+
+        let tracer = opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_exporter(
+                opentelemetry_otlp::new_exporter()
+                    .tonic()
+                    .with_endpoint(otel_endpoint.clone()),
+            )
+            .with_trace_config(
+                sdktrace::config().with_resource(resource).with_sampler(
+                    sdktrace::Sampler::TraceIdRatioBased(
+                        std::env::var("FITZ_OTEL_SAMPLE_RATIO")
+                            .ok()
+                            .and_then(|value| value.parse::<f64>().ok())
+                            .unwrap_or(1.0),
+                    ),
+                ),
+            )
+            .install_batch(opentelemetry::runtime::Tokio)
+            .map_err(|e| format!("Failed to init OTEL: {}", e))?;
+
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt_layer)
+            .with(tracing_opentelemetry::layer().with_tracer(tracer))
+            .try_init()
+            .ok();
+
+        tracing::info!("OpenTelemetry enabled, exporting to: {}", otel_endpoint);
     } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt_layer)
+            .try_init()
+            .ok();
+
         tracing::info!("OpenTelemetry disabled");
     }
+
+    let metrics_collector = METRICS_COLLECTOR
+        .get_or_init(|| Arc::new(MetricsCollector::new()))
+        .clone();
 
     let metrics_port = std::env::var("FITZ_METRICS_PORT")
         .ok()

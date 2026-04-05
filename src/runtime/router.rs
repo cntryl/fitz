@@ -378,14 +378,16 @@ impl Router {
         // Hot path: sample at 0.1% for span visibility; always record metrics
         let route_str = dest.route().as_str();
         let domain = extract_domain(route_str).unwrap_or("unknown");
-
-        if should_sample_hot_path() {
-            let _span = tracing::debug_span!(
+        let _route_span = if should_sample_hot_path() {
+            Some(tracing::debug_span!(
                 obs::SPAN_ROUTE_MATCH,
                 route = %dest,
-                domain = domain
-            );
-        }
+                domain = domain,
+            ))
+        } else {
+            None
+        };
+        let _route_guard = _route_span.as_ref().map(|span| span.enter());
 
         // Try exact RouteAddress lookup first
         let sink = if let Some(sink) = self.registry.get(&dest) {
@@ -424,13 +426,16 @@ impl Router {
 
         trace!(destination = %dest, domain = domain, "Router: routing envelope directly to known domain");
 
-        if should_sample_hot_path() {
-            let _span = tracing::debug_span!(
+        let _route_span = if should_sample_hot_path() {
+            Some(tracing::debug_span!(
                 obs::SPAN_ROUTE_MATCH,
                 route = %dest,
-                domain = domain
-            );
-        }
+                domain = domain,
+            ))
+        } else {
+            None
+        };
+        let _route_guard = _route_span.as_ref().map(|span| span.enter());
 
         let sink = self.registry.get_by_domain(domain).ok_or_else(|| {
             warn!(destination = %dest, domain = domain, "Router: no domain sink found");
