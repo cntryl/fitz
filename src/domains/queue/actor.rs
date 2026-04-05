@@ -2887,23 +2887,23 @@ impl QueueActor {
             return response;
         }
 
-        let (stored_record, stored_layout) = if let Some(record) = self.records.get(&id).cloned() {
+        let removing_delayed = self.persisted_delayed.contains_key(&id);
+        let (stored_layout, delayed_visible_at_ms) = if let Some(record) = self.records.get(&id) {
             (
-                Some(record),
                 self.record_layouts
                     .get(&id)
                     .copied()
                     .unwrap_or(StoredRecordLayout::EmbeddedHeader),
+                removing_delayed.then_some(record.visible_at_ms),
             )
         } else {
             match self.load_record_metadata_from_store(id) {
-                Ok((record, layout)) => (Some(record), layout),
-                Err(_) => (None, StoredRecordLayout::EmbeddedHeader),
+                Ok((record, layout)) => (layout, removing_delayed.then_some(record.visible_at_ms)),
+                Err(_) => (StoredRecordLayout::EmbeddedHeader, None),
             }
         };
         let persisted_ready_mutation =
             Self::plan_ready_index_mutation(&self.persisted_ready_shards, id);
-        let removing_delayed = self.persisted_delayed.contains_key(&id);
         let staged_ready_count = self.staged_ready_count_after_mutation(persisted_ready_mutation);
         let staged_delayed_count = self
             .persisted_delayed
@@ -2982,9 +2982,8 @@ impl QueueActor {
                         }
                     }
 
-                    if let Some(record) = stored_record.as_ref() {
-                        if let Err(e) = txn.delete(self.delayed_index_key(record.visible_at_ms, id))
-                        {
+                    if let Some(visible_at_ms) = delayed_visible_at_ms {
+                        if let Err(e) = txn.delete(self.delayed_index_key(visible_at_ms, id)) {
                             eprintln!(
                                 "WARN: Failed to update delayed index for message {}: {:?}",
                                 id, e

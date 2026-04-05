@@ -41,6 +41,7 @@ struct WarmQueueActor {
 }
 
 const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_secs(5 * 60);
+const QUEUE_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Queue domain sink with per-queue QueueActor instances
 ///
@@ -69,6 +70,7 @@ pub struct QueueDomainSink {
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     admin_snapshot_dirty: AtomicBool,
     active: AtomicBool,
+    next_idle_sweep_at: Mutex<Instant>,
 }
 
 impl QueueDomainSink {
@@ -89,6 +91,7 @@ impl QueueDomainSink {
             admin_read_model,
             admin_snapshot_dirty: AtomicBool::new(false),
             active: AtomicBool::new(true),
+            next_idle_sweep_at: Mutex::new(Instant::now()),
         }
     }
 
@@ -268,6 +271,20 @@ impl QueueDomainSink {
         self.sweep_idle_actors_at(Instant::now());
     }
 
+    fn maybe_sweep_idle_actors(&self) {
+        let now = Instant::now();
+
+        {
+            let mut next_idle_sweep_at = self.next_idle_sweep_at.lock();
+            if now < *next_idle_sweep_at {
+                return;
+            }
+            *next_idle_sweep_at = now + QUEUE_IDLE_SWEEP_INTERVAL;
+        }
+
+        self.sweep_idle_actors_at(now);
+    }
+
     fn sweep_idle_actors_at(&self, now: Instant) {
         let mut changed = false;
         let mut actors = self.actors.lock();
@@ -304,6 +321,10 @@ impl QueueDomainSink {
         &self,
         event: &crate::runtime::DomainPublishEvent,
     ) -> Result<(), DeliveryError> {
+        if self.subscription_count.load(Ordering::Relaxed) == 0 {
+            return Ok(());
+        }
+
         let family_id = event.family_id.as_u64();
         tracing::info!(
             domain = "queue",
@@ -339,6 +360,7 @@ impl QueueDomainSink {
                 "Queue: no family state for event (no subscriptions in this family)"
             );
         }
+
         Ok(())
     }
 
@@ -662,7 +684,7 @@ impl MailboxSink for QueueDomainSink {
             "Parsed Queue message successfully"
         );
 
-        self.sweep_idle_actors();
+        self.maybe_sweep_idle_actors();
 
         use crate::domains::queue::protocol::QueueMessage;
 
