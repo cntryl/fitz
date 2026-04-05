@@ -53,15 +53,15 @@ pub fn record_current_span_trace_ids(span: &Span) {
     let current_span = context.span();
     let span_context = current_span.span_context();
     if span_context.is_valid() {
-        span.record("trace_id", &span_context.trace_id().to_string());
-        span.record("span_id", &span_context.span_id().to_string());
+        span.record("trace_id", span_context.trace_id().to_string());
+        span.record("span_id", span_context.span_id().to_string());
     }
 }
 
 /// Record standardized error fields to the provided span.
 pub fn record_error(span: &Span, error_kind: &'static str, error_message: &str) {
-    span.record("error.kind", &error_kind);
-    span.record("error.message", &error_message.to_string());
+    span.record("error.kind", error_kind);
+    span.record("error.message", error_message.to_string());
 }
 
 impl Drop for LatencyGuard {
