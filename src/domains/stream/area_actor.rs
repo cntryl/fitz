@@ -10,8 +10,9 @@ use crate::runtime::actor::Context;
 use crate::runtime::domain_event::DomainPublishEvent;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
+use super::constants::INTERNAL_REALM_SEGMENT;
 use super::protocol::{
-    AreaWatermarkAdvanced, LeaseGrant, StreamMessage, DEFAULT_REALM_LEASE_BLOCK,
+    AreaWatermarkAdvanced, LeaseGranted, StreamCoordinationMessage, DEFAULT_REALM_LEASE_BLOCK,
 };
 use super::store::StreamStore;
 
@@ -85,7 +86,7 @@ impl AreaActor {
 
     /// Get RouteAddress for RealmActor coordination
     fn realm_actor_address(&self) -> RouteAddress {
-        let route = Route::new(format!("stream://{}/__realm__", self.realm));
+        let route = Route::new(format!("stream://{}/{}", self.realm, INTERNAL_REALM_SEGMENT));
         RouteAddress::new(self.family_id, route)
     }
 
@@ -104,7 +105,7 @@ impl AreaActor {
         if realm_remaining < count {
             // Request realm lease from RealmActor
             let lease_size = DEFAULT_REALM_LEASE_BLOCK.max(count);
-            let lease_req = StreamMessage::RequestRealmLease { count: lease_size };
+            let lease_req = StreamCoordinationMessage::RequestRealmLease { count: lease_size };
             let realm_addr = self.realm_actor_address();
             let _ = ctx.send(realm_addr, lease_req);
 
@@ -129,7 +130,7 @@ impl AreaActor {
         self.realm_lease_next = realm_end_excl;
 
         // Build paired grant
-        let grant = LeaseGrant {
+        let grant = LeaseGranted {
             area_start,
             area_end_exclusive: area_end_excl,
             realm_start,
@@ -139,7 +140,7 @@ impl AreaActor {
         // Reply to StreamActor
         let reply_route = Route::new(format!("stream://{}/{}/{}", realm, area, reply_to));
         let reply_addr = RouteAddress::new(self.family_id, reply_route);
-        let _ = ctx.send(reply_addr, StreamMessage::LeaseGranted { grant });
+        let _ = ctx.send(reply_addr, StreamCoordinationMessage::LeaseGranted { grant });
     }
 
     /// Handle BatchCommitted from StreamActor
@@ -191,10 +192,11 @@ impl AreaActor {
             }
 
             // Notify RealmActor
-            let notification = StreamMessage::AreaWatermarkAdvanced(AreaWatermarkAdvanced {
-                area: self.area.clone(),
-                watermark: self.area_watermark,
-            });
+            let notification =
+                StreamCoordinationMessage::AreaWatermarkAdvanced(AreaWatermarkAdvanced {
+                    area: self.area.clone(),
+                    watermark: self.area_watermark,
+                });
             let realm_addr = self.realm_actor_address();
             let _ = ctx.send(realm_addr, notification);
         }
@@ -239,7 +241,7 @@ impl AreaActor {
     }
 
     /// Update realm lease from RealmActor grant
-    pub fn update_realm_lease(&mut self, grant: LeaseGrant) {
+    pub fn update_realm_lease(&mut self, grant: LeaseGranted) {
         self.realm_lease_next = grant.realm_start;
         self.realm_lease_end = grant.realm_end_exclusive; // Already exclusive
     }
@@ -286,11 +288,11 @@ impl AreaActor {
 }
 
 impl Actor for AreaActor {
-    type Message = StreamMessage;
+    type Message = StreamCoordinationMessage;
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         match msg {
-            StreamMessage::RequestLease {
+            StreamCoordinationMessage::RequestLease {
                 realm,
                 area,
                 count,
@@ -298,17 +300,18 @@ impl Actor for AreaActor {
             } => {
                 self.handle_request_lease(&realm, &area, count, &reply_to, ctx);
             }
-            StreamMessage::BatchCommitted(commit) => {
+            StreamCoordinationMessage::BatchCommitted(commit) => {
                 self.handle_batch_committed(commit.first_area_offset, commit.last_area_offset, ctx);
             }
-            StreamMessage::LeaseGranted { grant } => {
+            StreamCoordinationMessage::LeaseGranted { grant } => {
                 // Update realm lease from RealmActor
                 self.update_realm_lease(grant);
 
                 // Process any pending lease requests now that we have realm lease
                 self.process_pending_lease_requests(ctx);
             }
-            _ => {}
+            StreamCoordinationMessage::RequestRealmLease { .. }
+            | StreamCoordinationMessage::AreaWatermarkAdvanced(_) => {}
         }
     }
 
@@ -348,7 +351,7 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor();
 
         // Grant realm lease first
-        actor.update_realm_lease(LeaseGrant {
+        actor.update_realm_lease(LeaseGranted {
             area_start: 0,
             area_end_exclusive: 0,
             realm_start: 0,
@@ -368,7 +371,7 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor();
 
         // Grant realm lease first
-        actor.update_realm_lease(LeaseGrant {
+        actor.update_realm_lease(LeaseGranted {
             area_start: 0,
             area_end_exclusive: 0,
             realm_start: 0,

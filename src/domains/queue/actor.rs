@@ -4563,7 +4563,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Act
@@ -4604,7 +4604,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Act
@@ -4633,7 +4633,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Act
@@ -4664,7 +4664,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Act
@@ -4696,7 +4696,7 @@ pub mod tests {
                 queue_key.clone(),
                 store.clone(),
                 None,
-                crate::utils::idempotency::global_dedup_store(),
+                crate::utils::idempotency::default_dedup_store(),
             );
 
             for i in 0..64 {
@@ -4712,7 +4712,7 @@ pub mod tests {
             queue_key.clone(),
             store.clone(),
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Assert
@@ -4742,7 +4742,7 @@ pub mod tests {
                 queue_key.clone(),
                 store.clone(),
                 None,
-                crate::utils::idempotency::global_dedup_store(),
+                crate::utils::idempotency::default_dedup_store(),
             );
 
             for i in 0..12 {
@@ -4759,7 +4759,7 @@ pub mod tests {
             queue_key.clone(),
             store.clone(),
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Assert
@@ -4786,7 +4786,7 @@ pub mod tests {
                 queue_key.clone(),
                 store.clone(),
                 None,
-                crate::utils::idempotency::global_dedup_store(),
+                crate::utils::idempotency::default_dedup_store(),
             );
 
             for i in 0..8 {
@@ -4803,7 +4803,7 @@ pub mod tests {
             queue_key.clone(),
             store.clone(),
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Assert
@@ -4882,7 +4882,7 @@ pub mod tests {
                 store.clone(),
                 Box::new(clock.clone()),
                 None,
-                crate::utils::idempotency::global_dedup_store(),
+                crate::utils::idempotency::default_dedup_store(),
             );
             let response = actor.handle_send(Bytes::from("delayed"), Some(1));
             assert!(matches!(response, QueueResponse::Sent { .. }));
@@ -4894,7 +4894,7 @@ pub mod tests {
             store.clone(),
             Box::new(clock.clone()),
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         assert_eq!(actor.ready_len(), 0);
@@ -4958,7 +4958,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Assert
@@ -4987,7 +4987,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Act
@@ -5021,7 +5021,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Act
@@ -5065,7 +5065,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Act
@@ -5092,7 +5092,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -5125,7 +5125,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         let sent = actor.handle_send(Bytes::from("test message"), None);
@@ -5160,7 +5160,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -5292,7 +5292,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -5329,7 +5329,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -5363,7 +5363,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -5414,7 +5414,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Enqueue 5 messages
@@ -5450,7 +5450,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Seed the queue in a known order.
@@ -5504,7 +5504,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -5544,7 +5544,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         let body = Bytes::from("test message");
@@ -5589,7 +5589,7 @@ pub mod tests {
             queue_key,
             store,
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
         let fake_id = MessageId::new(99999);
 
@@ -5617,7 +5617,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             None,
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Act
@@ -5677,7 +5677,7 @@ pub mod tests {
             store.clone(),
             Box::new(clock.clone()),
             Some(3), // max_attempts = 3
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Act - Enqueue message
@@ -5758,7 +5758,7 @@ pub mod tests {
                 store.clone(),
                 Box::new(clock.clone()),
                 Some(2),
-                crate::utils::idempotency::global_dedup_store(),
+                crate::utils::idempotency::default_dedup_store(),
             );
 
             let enqueue_response = actor.handle_send(Bytes::from("test message"), None);
@@ -5787,7 +5787,7 @@ pub mod tests {
             store,
             Box::new(clock),
             Some(2),
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
         let reserve_response = recovered.handle_receive(30, Some(1));
 
@@ -5822,7 +5822,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             Some(2),
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
         let msg_id = match actor.handle_send(Bytes::from("test message"), None) {
             QueueResponse::Sent { id } => id,
@@ -5869,7 +5869,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             Some(2),
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
         let msg_id = match actor.handle_send(Bytes::from("test message"), None) {
             QueueResponse::Sent { id } => id,
@@ -5918,7 +5918,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             Some(2),
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
         let msg_id = match actor.handle_send(Bytes::from("test message"), None) {
             QueueResponse::Sent { id } => id,
@@ -5962,7 +5962,7 @@ pub mod tests {
             store,
             Box::new(clock.clone()),
             None, // No max_attempts limit
-            crate::utils::idempotency::global_dedup_store(),
+            crate::utils::idempotency::default_dedup_store(),
         );
 
         // Act - Enqueue message

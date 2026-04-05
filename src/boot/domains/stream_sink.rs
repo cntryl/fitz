@@ -108,6 +108,12 @@ impl StreamDomainSink {
     ) -> Result<StreamActorKey, String> {
         let parts =
             route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
+        if parts.area == crate::domains::stream::INTERNAL_REALM_SEGMENT {
+            return Err(format!(
+                "area '{}' is reserved for internal broker use",
+                crate::domains::stream::INTERNAL_REALM_SEGMENT
+            ));
+        }
         Ok(StreamActorKey {
             family_id: family_id.as_u64(),
             realm: parts.realm.to_string(),
@@ -578,7 +584,7 @@ impl MailboxSink for StreamDomainSink {
         };
         let mut payload_encoder = PayloadEncoder::with_capacity(256);
 
-        let stream_msg = match crate::protocol::stream_codec::parse_request(
+        let parsed_frame = match crate::protocol::stream_codec::parse_request(
             &frame_ctx,
             &frame_ctx.payload,
             *envelope.destination().family(),
@@ -594,24 +600,99 @@ impl MailboxSink for StreamDomainSink {
             Err(_) => return Err(DeliveryError::ActorStopped),
         };
 
-        use crate::domains::stream::protocol::StreamMessage;
-        use crate::protocol::stream_codec::StreamResponse;
+        use crate::domains::stream::protocol::{StreamMessage, StreamSubscriptionMessage};
+        use crate::protocol::stream_codec::{ParsedStreamFrame, StreamResponse};
 
-        if matches!(
-            &stream_msg,
-            StreamMessage::Begin { .. }
-                | StreamMessage::Append { .. }
-                | StreamMessage::Commit { .. }
-                | StreamMessage::Rollback { .. }
-                | StreamMessage::Read { .. }
-                | StreamMessage::Last { .. }
-                | StreamMessage::GetMetadata { .. }
-                | StreamMessage::Subscribe { .. }
-                | StreamMessage::Unsubscribe { .. }
-                | StreamMessage::UnsubscribeAll { .. }
-        ) {
-            crate::boot::observability::counter_inc(STREAM_OPERATIONS_TOTAL);
+        crate::boot::observability::counter_inc(STREAM_OPERATIONS_TOTAL);
+
+        // Subscription messages are handled entirely by the sink without touching StreamActor.
+        if let ParsedStreamFrame::Sub(sub_msg) = parsed_frame {
+            let (response, _commit_notify, _should_refresh_admin_snapshot): (
+                StreamResponse,
+                Option<(Route, bytes::Bytes)>,
+                bool,
+            ) = match sub_msg {
+                StreamSubscriptionMessage::Subscribe {
+                    family_id,
+                    pattern,
+                    session_id,
+                    subscriber,
+                } => {
+                    let mut families = self.families.lock();
+                    let state = families
+                        .entry(family_id.as_u64())
+                        .or_insert_with(RoutedSubscriptionSet::new);
+
+                    let subscription_id =
+                        if let Some(id) = state.find_existing_id(session_id, pattern.as_str()) {
+                            id
+                        } else {
+                            let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                            state.insert(
+                                family_id,
+                                StreamSubscription {
+                                    pattern: crate::runtime::matcher::Pattern::new(
+                                        pattern.as_str(),
+                                    ),
+                                    session_id,
+                                    subscription_id: new_id,
+                                    subscriber,
+                                },
+                            );
+                            new_id
+                        };
+
+                    (
+                        StreamResponse::Ok {
+                            session_id: Some(subscription_id),
+                            data: vec![],
+                        },
+                        None,
+                        false,
+                    )
+                }
+                StreamSubscriptionMessage::Unsubscribe {
+                    family_id,
+                    pattern,
+                    session_id,
+                    ..
+                } => {
+                    let mut families = self.families.lock();
+                    if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                        state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                    }
+                    (
+                        StreamResponse::Ok {
+                            session_id: None,
+                            data: vec![],
+                        },
+                        None,
+                        false,
+                    )
+                }
+            };
+
+            let response_bytes = crate::protocol::stream_codec::encode_response_into(
+                &mut payload_encoder,
+                &response,
+            );
+            let response_ctx = FrameContext::new(
+                frame_ctx.session_id,
+                frame_ctx.channel_id,
+                crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+                bytes::Bytes::from(response_bytes),
+                frame_ctx.route_family,
+            );
+            if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+                let _ = self.router.route(response_envelope);
+            }
+            return Ok(());
         }
+
+        let stream_msg = match parsed_frame {
+            ParsedStreamFrame::Op(msg) => msg,
+            ParsedStreamFrame::Sub(_) => unreachable!(),
+        };
 
         let (response, commit_notify, should_refresh_admin_snapshot) = match stream_msg {
             StreamMessage::Begin {
@@ -798,85 +879,6 @@ impl MailboxSink for StreamDomainSink {
                     Err(error) => (Self::stream_error_response(error), None, false),
                 }
             }
-            StreamMessage::Subscribe {
-                family_id,
-                pattern,
-                session_id,
-                subscriber,
-            } => {
-                let mut families = self.families.lock();
-                let state = families
-                    .entry(family_id.as_u64())
-                    .or_insert_with(RoutedSubscriptionSet::new);
-
-                let subscription_id =
-                    if let Some(id) = state.find_existing_id(session_id, pattern.as_str()) {
-                        id
-                    } else {
-                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                        state.insert(
-                            family_id,
-                            StreamSubscription {
-                                pattern: crate::runtime::matcher::Pattern::new(pattern.as_str()),
-                                session_id,
-                                subscription_id: new_id,
-                                subscriber,
-                            },
-                        );
-                        new_id
-                    };
-
-                (
-                    StreamResponse::Ok {
-                        session_id: Some(subscription_id),
-                        data: vec![],
-                    },
-                    None,
-                    false,
-                )
-            }
-            StreamMessage::Unsubscribe {
-                family_id,
-                pattern,
-                session_id,
-                ..
-            } => {
-                let mut families = self.families.lock();
-                if let Some(state) = families.get_mut(&family_id.as_u64()) {
-                    state.remove_session_pattern(family_id, session_id, pattern.as_str());
-                }
-                (
-                    StreamResponse::Ok {
-                        session_id: None,
-                        data: vec![],
-                    },
-                    None,
-                    false,
-                )
-            }
-            StreamMessage::UnsubscribeAll { session_id, .. } => {
-                self.unsubscribe_all(session_id);
-                (
-                    StreamResponse::Ok {
-                        session_id: None,
-                        data: vec![],
-                    },
-                    None,
-                    false,
-                )
-            }
-            StreamMessage::RequestLease { .. }
-            | StreamMessage::LeaseGranted { .. }
-            | StreamMessage::RequestRealmLease { .. }
-            | StreamMessage::BatchCommitted(_)
-            | StreamMessage::AreaWatermarkAdvanced(_) => (
-                StreamResponse::Ok {
-                    session_id: None,
-                    data: vec![],
-                },
-                None,
-                false,
-            ),
         };
 
         if should_refresh_admin_snapshot {

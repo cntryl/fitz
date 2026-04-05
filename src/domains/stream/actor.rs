@@ -320,16 +320,7 @@ impl Actor for StreamActor {
                 }
             }
             StreamMessage::Rollback { session_id } => match self.rollback_session(session_id) {
-                Ok(()) => StreamResponse::CommitOk(CommitSessionResponse {
-                    first_resource_offset: 0,
-                    last_resource_offset: 0,
-                    first_area_offset: 0,
-                    last_area_offset: 0,
-                    first_realm_offset: 0,
-                    last_realm_offset: 0,
-                    batch_size: 0,
-                    ingest_metadata: None,
-                }),
+                Ok(()) => StreamResponse::RollbackOk,
                 Err(error) => StreamResponse::Error(Self::map_error(&error)),
             },
             StreamMessage::Read {
@@ -349,16 +340,6 @@ impl Actor for StreamActor {
                 Ok(response) => StreamResponse::MetadataOk(response),
                 Err(error) => StreamResponse::Error(Self::map_error(&error)),
             },
-            StreamMessage::Subscribe { .. }
-            | StreamMessage::Unsubscribe { .. }
-            | StreamMessage::UnsubscribeAll { .. }
-            | StreamMessage::RequestLease { .. }
-            | StreamMessage::LeaseGranted { .. }
-            | StreamMessage::RequestRealmLease { .. }
-            | StreamMessage::BatchCommitted(_)
-            | StreamMessage::AreaWatermarkAdvanced(_) => {
-                return;
-            }
         };
 
         let _ = ctx.reply(response).ok();

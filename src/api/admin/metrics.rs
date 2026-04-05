@@ -385,7 +385,7 @@ mod tests {
                 router.clone(),
                 admin_read_model.clone(),
             )),
-            queue: Arc::new(QueueDomainSink::with_dedup_store(
+            queue: Arc::new(QueueDomainSink::new(
                 store.clone(),
                 router.clone(),
                 admin_read_model.clone(),

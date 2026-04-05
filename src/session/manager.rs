@@ -1162,47 +1162,19 @@ impl RuntimeIngress {
                     Err(e) => Err(e),
                 }
             }
-            600..=699 => match crate::protocol::stream_codec::parse_request(
-                &ctx,
-                payload.as_ref(),
-                session_info.route_family,
-                crate::session::SessionId(session_info.session_id),
-                crate::runtime::routing::RouteAddress::new(
-                    session_info.route_family,
-                    Route::new(""),
-                ),
-            ) {
-                Ok(crate::domains::stream::protocol::StreamMessage::Begin { route, .. }) => Ok(
-                    Some(Self::canonicalize_domain_route("stream", route.clone())),
-                ),
-                Ok(crate::domains::stream::protocol::StreamMessage::Read { route, .. }) => Ok(
-                    Some(Self::canonicalize_domain_route("stream", route.clone())),
-                ),
-                Ok(crate::domains::stream::protocol::StreamMessage::Last { route, .. }) => Ok(
-                    Some(Self::canonicalize_domain_route("stream", route.clone())),
-                ),
-                Ok(crate::domains::stream::protocol::StreamMessage::GetMetadata {
-                    route, ..
-                }) => Ok(Some(Self::canonicalize_domain_route(
-                    "stream",
-                    route.clone(),
-                ))),
-                Ok(crate::domains::stream::protocol::StreamMessage::Subscribe {
-                    pattern, ..
-                }) => Ok(Some(Self::canonicalize_domain_route(
-                    "stream",
-                    pattern.clone(),
-                ))),
-                Ok(crate::domains::stream::protocol::StreamMessage::Unsubscribe {
-                    pattern,
-                    ..
-                }) => Ok(Some(Self::canonicalize_domain_route(
-                    "stream",
-                    pattern.clone(),
-                ))),
-                Ok(_) => Ok(None),
-                Err(e) => Err(e),
-            },
+            600..=699 => {
+                match crate::protocol::stream_codec::extract_auth_route(
+                    ctx.msg_type.0,
+                    payload.as_ref(),
+                ) {
+                    Ok(Some(route_str)) => Ok(Some(Self::canonicalize_domain_route(
+                        "stream",
+                        Route::new(route_str),
+                    ))),
+                    Ok(None) => Ok(None),
+                    Err(e) => Err(e),
+                }
+            }
             700..=799 => {
                 match crate::protocol::schedule_codec::parse_request(
                     &ctx,

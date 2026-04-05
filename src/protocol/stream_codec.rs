@@ -6,11 +6,23 @@
 //! `route_family` is a server-internal concept supplied by the session layer
 //! — it never appears on the wire.
 
-use crate::domains::stream::protocol::{IngestMetadata, StreamMessage, StreamWriteMode};
+use crate::domains::stream::protocol::{
+    IngestMetadata, StreamMessage, StreamSubscriptionMessage, StreamWriteMode,
+};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
+
+/// A parsed frame from the stream domain wire protocol.
+///
+/// Client operation frames (600-606) produce `Op`. Subscription frames (607-608)
+/// produce `Sub` and are handled by the sink without reaching `StreamActor`.
+#[derive(Debug, Clone)]
+pub enum ParsedStreamFrame {
+    Op(StreamMessage),
+    Sub(StreamSubscriptionMessage),
+}
 
 /// Response from stream operations
 #[derive(Debug, Clone)]
@@ -34,19 +46,21 @@ pub fn parse_request(
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
-) -> Result<StreamMessage, String> {
+) -> Result<ParsedStreamFrame, String> {
     let mut dec = PayloadDecoder::new(payload);
 
     match ctx.msg_type.0 {
-        600 => parse_begin(&mut dec, route_family),
-        601 => parse_append(&mut dec),
-        602 => parse_commit(&mut dec),
-        603 => parse_rollback(&mut dec),
-        604 => parse_read(&mut dec, route_family),
-        605 => parse_last(&mut dec, route_family),
-        606 => parse_get_metadata(&mut dec, route_family),
-        607 => parse_subscribe(&mut dec, route_family, session_id, subscriber),
-        608 => parse_unsubscribe(&mut dec, route_family, session_id, subscriber),
+        600 => parse_begin(&mut dec, route_family).map(ParsedStreamFrame::Op),
+        601 => parse_append(&mut dec).map(ParsedStreamFrame::Op),
+        602 => parse_commit(&mut dec).map(ParsedStreamFrame::Op),
+        603 => parse_rollback(&mut dec).map(ParsedStreamFrame::Op),
+        604 => parse_read(&mut dec, route_family).map(ParsedStreamFrame::Op),
+        605 => parse_last(&mut dec, route_family).map(ParsedStreamFrame::Op),
+        606 => parse_get_metadata(&mut dec, route_family).map(ParsedStreamFrame::Op),
+        607 => parse_subscribe(&mut dec, route_family, session_id, subscriber)
+            .map(ParsedStreamFrame::Sub),
+        608 => parse_unsubscribe(&mut dec, route_family, session_id, subscriber)
+            .map(ParsedStreamFrame::Sub),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
 }
@@ -266,7 +280,7 @@ fn parse_subscribe(
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
-) -> Result<StreamMessage, String> {
+) -> Result<StreamSubscriptionMessage, String> {
     let pattern_str = dec.get_string()?;
     let pattern = Route::new(pattern_str);
 
@@ -274,7 +288,7 @@ fn parse_subscribe(
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(StreamMessage::Subscribe {
+    Ok(StreamSubscriptionMessage::Subscribe {
         family_id: route_family,
         pattern,
         session_id: session_id.0,
@@ -288,7 +302,7 @@ fn parse_unsubscribe(
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
-) -> Result<StreamMessage, String> {
+) -> Result<StreamSubscriptionMessage, String> {
     let pattern_str = dec.get_string()?;
     let pattern = Route::new(pattern_str);
 
@@ -296,7 +310,7 @@ fn parse_unsubscribe(
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(StreamMessage::Unsubscribe {
+    Ok(StreamSubscriptionMessage::Unsubscribe {
         family_id: route_family,
         pattern,
         session_id: session_id.0,

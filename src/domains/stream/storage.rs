@@ -144,15 +144,20 @@ pub fn encode_realm_counter_key(realm: &str) -> Vec<u8> {
 }
 
 /// Value stored in resource index (full record)
+///
+/// `area_offset` and `realm_offset` are always written as `Some` at commit time.
+/// They are typed as `Option<u64>` solely for bincode format compatibility with
+/// existing on-disk data. Changing these to `u64` would be a breaking storage
+/// migration and must not be done without a migration plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceValue {
     pub resource_offset: u64,
     pub body: Bytes,
     pub metadata: Option<Bytes>,
     pub created_at: u64,
-    /// Area offset (filled in after commit)
+    /// Area offset — always `Some` when written at commit time.
     pub area_offset: Option<u64>,
-    /// Realm offset (filled in after commit)
+    /// Realm offset — always `Some` when written at commit time.
     pub realm_offset: Option<u64>,
 }
 

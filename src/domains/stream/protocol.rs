@@ -79,13 +79,13 @@ impl OffsetLease {
     }
 
     /// Update lease from area-level grant
-    pub fn update_from_area_lease(&mut self, grant: &LeaseGrant) {
+    pub fn update_from_area_lease(&mut self, grant: &LeaseGranted) {
         self.next = grant.area_start;
         self.end = grant.area_end_exclusive;
     }
 
     /// Update lease from realm-level grant
-    pub fn update_from_realm_lease(&mut self, grant: &LeaseGrant) {
+    pub fn update_from_realm_lease(&mut self, grant: &LeaseGranted) {
         self.next = grant.realm_start;
         self.end = grant.realm_end_exclusive;
     }
@@ -107,10 +107,21 @@ pub struct StreamRecord {
     /// Strict order within resource stream (server-assigned by StreamActor, strictly increasing)
     pub resource_offset: u64,
 
-    /// Global order within area (server-assigned via leased offsets on commit)
+    /// Global order within area (server-assigned via leased offsets on commit).
+    ///
+    /// `Some` when the record was read via the resource index (i.e., area/realm offsets
+    /// were committed alongside the resource offset). `None` for records read via the
+    /// area index when the area offset wasn't stored on the individual resource record.
     pub area_offset: Option<u64>,
 
-    /// Global order within realm (server-assigned via leased offsets on commit)
+    /// Global order within realm (server-assigned via leased offsets on commit).
+    ///
+    /// `Some` only for realm-scope reads where the realm offset is available in the
+    /// realm index. `None` for resource-scope and area-scope reads where the realm
+    /// index is not consulted.
+    ///
+    /// Note: changing this to `u64` would require a storage migration because the
+    /// on-disk `ResourceValue` encodes this as `Option<u64>` via bincode.
     pub realm_offset: Option<u64>,
 
     /// Event payload
@@ -184,6 +195,14 @@ pub enum StreamMessage {
         route: Route,
     },
 
+}
+
+/// Subscription management messages handled by the sink before actor dispatch.
+///
+/// These are never forwarded to `StreamActor`. The sink owns subscription state
+/// and handles these directly.
+#[derive(Debug, Clone)]
+pub enum StreamSubscriptionMessage {
     /// Subscribe to stream change notifications (client -> server)
     Subscribe {
         family_id: RouteFamily,
@@ -191,22 +210,26 @@ pub enum StreamMessage {
         session_id: u64,
         subscriber: crate::runtime::routing::RouteAddress,
     },
-
-    /// Unsubscribe from stream change notifications (client -> server)
+    /// Unsubscribe from a specific stream pattern (client -> server)
     Unsubscribe {
         family_id: RouteFamily,
         pattern: Route,
         session_id: u64,
         subscriber: crate::runtime::routing::RouteAddress,
     },
+}
 
-    /// Unsubscribe all stream subscriptions for a session (called on disconnect)
-    UnsubscribeAll {
-        session_id: u64,
-        subscriber: crate::runtime::routing::RouteAddress,
-    },
+// ═══════════════════════════════════════════════════════════════════════════
+// INTERNAL MESSAGES (Actor-to-actor communication)
+// ═══════════════════════════════════════════════════════════════════════════
 
-    // Internal actor messages
+/// Messages exchanged between AreaActor, RealmActor, and StreamActor for
+/// offset lease coordination and watermark propagation.
+///
+/// These are internal to the stream module and must never appear on the
+/// client-facing `StreamMessage` enum or be routed through the public sink.
+#[derive(Debug, Clone)]
+pub enum StreamCoordinationMessage {
     /// Request paired area+realm offsets from AreaActor (StreamActor -> AreaActor)
     RequestLease {
         realm: String,
@@ -214,23 +237,15 @@ pub enum StreamMessage {
         count: u64,
         reply_to: String,
     },
-
     /// Lease granted from AreaActor to StreamActor
     LeaseGranted { grant: LeaseGranted },
-
-    /// Request realm offsets from RealmActor (AreaActor -> RealmActor, internal only)
+    /// Request realm offsets from RealmActor (AreaActor -> RealmActor)
     RequestRealmLease { count: u64 },
-
     /// Batch committed notification from StreamActor to AreaActor
     BatchCommitted(BatchCommitted),
-
     /// Area watermark advanced from AreaActor to RealmActor
     AreaWatermarkAdvanced(AreaWatermarkAdvanced),
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// INTERNAL MESSAGES (Actor-to-actor communication)
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// Request lease from AreaActor
 #[derive(Debug, Clone)]
@@ -367,6 +382,8 @@ pub enum StreamResponse {
     AppendOk(AppendResponse),
     /// Response to Commit operation
     CommitOk(CommitSessionResponse),
+    /// Response to Rollback operation
+    RollbackOk,
     /// Response to Read operation
     ReadOk(ReadResponse),
     /// Response to Last operation
@@ -410,9 +427,6 @@ pub enum StreamError {
 
     /// Batch too large (2008)
     BatchTooLarge,
-
-    /// Lease requested - commit queued pending lease grant (2009)
-    LeaseRequested,
 }
 
 impl StreamError {
@@ -427,13 +441,10 @@ impl StreamError {
             StreamError::EventTooLarge => 2006,
             StreamError::SessionFull => 2007,
             StreamError::BatchTooLarge => 2008,
-            StreamError::LeaseRequested => 2009,
         }
     }
 }
 
-/// Backward compatibility alias
-pub type LeaseGrant = LeaseGranted;
 
 #[cfg(test)]
 mod tests {

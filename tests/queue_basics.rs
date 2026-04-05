@@ -40,7 +40,7 @@ fn make_queue_actor(realm: &str, area: &str, resource: &str) -> (QueueActor, Con
         queue_key,
         db,
         None,
-        fitz::utils::idempotency::global_dedup_store(),
+        fitz::utils::idempotency::default_dedup_store(),
     ); // max_attempts = None = unlimited retries
     let ctx = Context::new(addr, router);
 

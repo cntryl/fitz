@@ -65,6 +65,7 @@ fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::Engine>) {
             router.clone(),
             admin_read_model.clone(),
             cntryl_midge::WriteOptions::buffered(),
+            fitz::utils::idempotency::default_dedup_store(),
         )),
         notice: Arc::new(NoticeDomainSink::new(
             router.clone(),
@@ -104,7 +105,7 @@ fn seed_dead_lettered_queue_message(store: Arc<cntryl_midge::Engine>) -> u64 {
         queue_key,
         store,
         Some(2),
-        fitz::utils::idempotency::global_dedup_store(),
+        fitz::utils::idempotency::default_dedup_store(),
     );
     let message_id = match actor.handle_send(Bytes::from_static(b"email"), None) {
         QueueResponse::Sent { id } => id,

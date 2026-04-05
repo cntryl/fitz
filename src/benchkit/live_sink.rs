@@ -147,7 +147,7 @@ pub fn create_bench_notice_sink(router: Arc<Router>) -> Arc<NoticeDomainSink> {
 }
 
 pub fn create_bench_queue_sink(router: Arc<Router>) -> Arc<QueueDomainSink> {
-    Arc::new(QueueDomainSink::with_dedup_store(
+    Arc::new(QueueDomainSink::new(
         create_bench_store(),
         router,
         crate::api::admin::read_model::AdminReadModel::new(),

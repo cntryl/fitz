@@ -393,7 +393,7 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         store,
         Box::new(clock.clone()),
         Some(3),
-        fitz::utils::idempotency::global_dedup_store(),
+        fitz::utils::idempotency::default_dedup_store(),
         cntryl_midge::WriteOptions::best_effort(),
     );
     let payload = Bytes::from_static(b"mixed workload message");
@@ -484,7 +484,7 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
         queue_key.clone(),
         store.clone(),
         None,
-        fitz::utils::idempotency::global_dedup_store(),
+        fitz::utils::idempotency::default_dedup_store(),
     );
 
     let payload = Bytes::from_static(b"recovery message");
@@ -499,7 +499,7 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
             queue_key.clone(),
             store.clone(),
             None,
-            fitz::utils::idempotency::global_dedup_store(),
+            fitz::utils::idempotency::default_dedup_store(),
         );
     });
     ctx.set_elements(100 * iterations as u64);

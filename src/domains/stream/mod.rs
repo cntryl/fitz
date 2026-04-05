@@ -48,7 +48,9 @@ mod area_actor;
 mod realm_actor;
 
 pub use actor::StreamActor;
-pub use constants::{DEFAULT_LEASE_SIZE, DEFAULT_REALM_LEASE_BLOCK, NOTICE_DEBOUNCE_MS};
+pub use constants::{
+    DEFAULT_LEASE_SIZE, DEFAULT_REALM_LEASE_BLOCK, INTERNAL_REALM_SEGMENT, NOTICE_DEBOUNCE_MS,
+};
 pub use protocol::{
     AppendResponse, GetMetadataResponse, ReadResponse, StreamError, StreamMessage, StreamMetadata,
     StreamRecord,

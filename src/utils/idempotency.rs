@@ -1,6 +1,5 @@
 //! Idempotency classification and deduplication support
 
-use once_cell::sync::Lazy;
 use std::fmt;
 use std::sync::Arc;
 
@@ -234,17 +233,3 @@ fn classify_schedule(msg_type: u16) -> Idempotency {
     }
 }
 
-/// Global deduplication store shared across all domains and sessions
-///
-/// This store caches responses for token-scoped Queue COMPLETE deduplication with a
-/// 5-minute TTL. It is not part of the RPC domain contract.
-static GLOBAL_DEDUP_STORE: Lazy<Arc<DedupStore>> = Lazy::new(|| {
-    Arc::new(DedupStore::new(Duration::from_secs(300))) // 5 minute TTL
-});
-
-/// Get a reference to the global deduplication store
-///
-/// This should be passed to queue actors that support context-dependent deduplication.
-pub fn global_dedup_store() -> Arc<DedupStore> {
-    GLOBAL_DEDUP_STORE.clone()
-}

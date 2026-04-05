@@ -77,7 +77,7 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
         queue_key,
         store,
         None,
-        fitz::utils::idempotency::global_dedup_store(),
+        fitz::utils::idempotency::default_dedup_store(),
     );
 
     // Enqueue 30 messages (10 per consumer)
@@ -158,7 +158,7 @@ fn should_redelivery_messages_after_crash() {
             queue_key.clone(),
             store.clone(),
             None,
-            fitz::utils::idempotency::global_dedup_store(),
+            fitz::utils::idempotency::default_dedup_store(),
         );
 
         for i in 0..10 {
@@ -191,7 +191,7 @@ fn should_redelivery_messages_after_crash() {
         queue_key,
         store,
         None,
-        fitz::utils::idempotency::global_dedup_store(),
+        fitz::utils::idempotency::default_dedup_store(),
     );
 
     // Assert
@@ -249,7 +249,7 @@ fn should_preserve_fifo_order_after_recovery() {
         reference_queue_key,
         reference_store,
         None,
-        fitz::utils::idempotency::global_dedup_store(),
+        fitz::utils::idempotency::default_dedup_store(),
     );
 
     for i in 0..12 {
@@ -286,7 +286,7 @@ fn should_preserve_fifo_order_after_recovery() {
             recovery_queue_key.clone(),
             recovery_store.clone(),
             None,
-            fitz::utils::idempotency::global_dedup_store(),
+            fitz::utils::idempotency::default_dedup_store(),
         );
 
         for i in 0..12 {
@@ -303,7 +303,7 @@ fn should_preserve_fifo_order_after_recovery() {
         recovery_queue_key,
         recovery_store,
         None,
-        fitz::utils::idempotency::global_dedup_store(),
+        fitz::utils::idempotency::default_dedup_store(),
     );
 
     let mut recovered_bodies = Vec::new();
@@ -343,7 +343,7 @@ fn should_preserve_delayed_visibility_across_restart() {
             queue_key.clone(),
             store.clone(),
             None,
-            fitz::utils::idempotency::global_dedup_store(),
+            fitz::utils::idempotency::default_dedup_store(),
         );
 
         // Message 1: immediately visible
@@ -363,7 +363,7 @@ fn should_preserve_delayed_visibility_across_restart() {
         queue_key,
         store,
         None,
-        fitz::utils::idempotency::global_dedup_store(),
+        fitz::utils::idempotency::default_dedup_store(),
     );
 
     // Assert
@@ -399,7 +399,7 @@ fn should_prevent_id_collisions_across_crash() {
             queue_key.clone(),
             store.clone(),
             None,
-            fitz::utils::idempotency::global_dedup_store(),
+            fitz::utils::idempotency::default_dedup_store(),
         );
 
         for i in 0..10 {
@@ -423,7 +423,7 @@ fn should_prevent_id_collisions_across_crash() {
             queue_key.clone(),
             store.clone(),
             None,
-            fitz::utils::idempotency::global_dedup_store(),
+            fitz::utils::idempotency::default_dedup_store(),
         );
 
         for i in 0..10 {
@@ -469,7 +469,7 @@ fn should_redelivery_message_on_lease_expiration() {
         queue_key,
         store,
         None,
-        fitz::utils::idempotency::global_dedup_store(),
+        fitz::utils::idempotency::default_dedup_store(),
     );
 
     // Act
@@ -510,7 +510,7 @@ fn should_dlq_message_after_max_attempts() {
             store.clone(),
             Box::new(clock.clone()),
             Some(3),
-            fitz::utils::idempotency::global_dedup_store(),
+            fitz::utils::idempotency::default_dedup_store(),
         );
 
         let send_response = actor.handle_send(Bytes::from("task"), None);
@@ -542,7 +542,7 @@ fn should_dlq_message_after_max_attempts() {
         store.clone(),
         Box::new(clock),
         Some(3),
-        fitz::utils::idempotency::global_dedup_store(),
+        fitz::utils::idempotency::default_dedup_store(),
     );
     let reserve_response = recovered.handle_receive(30, Some(1));
 

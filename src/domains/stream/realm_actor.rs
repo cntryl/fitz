@@ -9,7 +9,7 @@ use crate::runtime::actor::Context;
 use crate::runtime::domain_event::DomainPublishEvent;
 use crate::runtime::routing::{Route, RouteFamily};
 
-use super::protocol::{LeaseGrant, StreamMessage};
+use super::protocol::{LeaseGranted, StreamCoordinationMessage};
 use super::store::StreamStore;
 
 /// RealmActor coordinates realm-level offsets and aggregates watermarks
@@ -64,12 +64,12 @@ impl RealmActor {
     }
 
     /// Grant realm offset lease to AreaActor
-    fn handle_request_realm_lease(&mut self, count: u64, _ctx: &mut Context<Self>) -> LeaseGrant {
+    fn handle_request_realm_lease(&mut self, count: u64, _ctx: &mut Context<Self>) -> LeaseGranted {
         let start = self.next_realm_offset;
         let end_excl = start + count;
         self.next_realm_offset = end_excl;
 
-        LeaseGrant {
+        LeaseGranted {
             area_start: 0, // Will be filled by AreaActor
             area_end_exclusive: 0,
             realm_start: start,
@@ -150,17 +150,19 @@ impl RealmActor {
 }
 
 impl Actor for RealmActor {
-    type Message = StreamMessage;
+    type Message = StreamCoordinationMessage;
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         match msg {
-            StreamMessage::RequestRealmLease { count, .. } => {
+            StreamCoordinationMessage::RequestRealmLease { count, .. } => {
                 let _ = self.handle_request_realm_lease(count, ctx);
             }
-            StreamMessage::AreaWatermarkAdvanced(adv) => {
+            StreamCoordinationMessage::AreaWatermarkAdvanced(adv) => {
                 self.handle_area_watermark_advanced(adv.area, adv.watermark, ctx);
             }
-            _ => {}
+            StreamCoordinationMessage::RequestLease { .. }
+            | StreamCoordinationMessage::LeaseGranted { .. }
+            | StreamCoordinationMessage::BatchCommitted(_) => {}
         }
     }
 

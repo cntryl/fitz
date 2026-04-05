@@ -81,21 +81,6 @@ impl QueueDomainSink {
         router: Arc<Router>,
         admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
         queue_write_options: cntryl_midge::WriteOptions,
-    ) -> Self {
-        Self::with_dedup_store(
-            store,
-            router,
-            admin_read_model,
-            queue_write_options,
-            crate::utils::idempotency::default_dedup_store(),
-        )
-    }
-
-    pub fn with_dedup_store(
-        store: Arc<cntryl_midge::Engine>,
-        router: Arc<Router>,
-        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
-        queue_write_options: cntryl_midge::WriteOptions,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
         Self {
@@ -1069,6 +1054,21 @@ mod tests {
             .expect("bad request reason should be valid utf-8")
     }
 
+    fn new_queue_domain_sink(
+        store: Arc<cntryl_midge::Engine>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+        queue_write_options: cntryl_midge::WriteOptions,
+    ) -> QueueDomainSink {
+        QueueDomainSink::new(
+            store,
+            router,
+            admin_read_model,
+            queue_write_options,
+            crate::utils::idempotency::default_dedup_store(),
+        )
+    }
+
     fn receive_response_message_count(frame: &FrameContext) -> u32 {
         assert_eq!(frame.payload[0], 0, "expected success status");
         u32::from_be_bytes(
@@ -1115,7 +1115,7 @@ mod tests {
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
 
         // Act
-        let sink = QueueDomainSink::new(
+        let sink = new_queue_domain_sink(
             store,
             router,
             admin_read_model,
@@ -1141,7 +1141,7 @@ mod tests {
         router.register(sender_address.clone(), sender_mailbox.clone());
         router.register(subscriber_address.clone(), subscriber_mailbox.clone());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
-        let sink = QueueDomainSink::new(
+        let sink = new_queue_domain_sink(
             store,
             router,
             admin_read_model.clone(),
@@ -1207,7 +1207,7 @@ mod tests {
         let router = Arc::new(Router::new());
         router.register(client_address.clone(), client_mailbox.clone());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
-        let sink = QueueDomainSink::new(
+        let sink = new_queue_domain_sink(
             store,
             router,
             admin_read_model.clone(),
@@ -1255,7 +1255,7 @@ mod tests {
         let router = Arc::new(Router::new());
         router.register(client_address.clone(), client_mailbox.clone());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
-        let sink = QueueDomainSink::new(
+        let sink = new_queue_domain_sink(
             store,
             router,
             admin_read_model.clone(),
@@ -1303,7 +1303,7 @@ mod tests {
         let router = Arc::new(Router::new());
         router.register(client_address.clone(), client_mailbox.clone());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
-        let sink = QueueDomainSink::new(
+        let sink = new_queue_domain_sink(
             store,
             router,
             admin_read_model.clone(),
@@ -1345,7 +1345,7 @@ mod tests {
         let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
         let router = Arc::new(Router::new());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
-        let queue_sink = Arc::new(QueueDomainSink::new(
+        let queue_sink = Arc::new(new_queue_domain_sink(
             store.clone(),
             router.clone(),
             admin_read_model,
@@ -1418,7 +1418,7 @@ mod tests {
         router.register(subscriber_address.clone(), subscriber_mailbox.clone());
         router.register(sender_address.clone(), sender_mailbox.clone());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
-        let sink = QueueDomainSink::new(
+        let sink = new_queue_domain_sink(
             store,
             router,
             admin_read_model,
@@ -1501,7 +1501,7 @@ mod tests {
         router.register(subscriber_address.clone(), subscriber_mailbox.clone());
         router.register(sender_address.clone(), sender_mailbox.clone());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
-        let sink = QueueDomainSink::new(
+        let sink = new_queue_domain_sink(
             store,
             router,
             admin_read_model,
@@ -1639,7 +1639,7 @@ mod tests {
         router.register(sender_address.clone(), sender_mailbox.clone());
         router.register(worker_address.clone(), worker_mailbox.clone());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
-        let sink = QueueDomainSink::new(
+        let sink = new_queue_domain_sink(
             store,
             router,
             admin_read_model.clone(),
@@ -1728,7 +1728,7 @@ mod tests {
         router.register(sender_address.clone(), sender_mailbox.clone());
         router.register(worker_address.clone(), worker_mailbox.clone());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
-        let sink = QueueDomainSink::new(
+        let sink = new_queue_domain_sink(
             store,
             router,
             admin_read_model.clone(),
@@ -1807,7 +1807,7 @@ mod tests {
         let router = Arc::new(Router::new());
         router.register(sender_address.clone(), sender_mailbox.clone());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
-        let sink = QueueDomainSink::new(
+        let sink = new_queue_domain_sink(
             store,
             router,
             admin_read_model.clone(),
@@ -1860,7 +1860,7 @@ mod tests {
         router.register(sender_address.clone(), sender_mailbox.clone());
         router.register(worker_address.clone(), worker_mailbox.clone());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
-        let sink = QueueDomainSink::new(
+        let sink = new_queue_domain_sink(
             store,
             router,
             admin_read_model.clone(),
@@ -1942,7 +1942,7 @@ mod tests {
         router.register(sender_address.clone(), sender_mailbox.clone());
         router.register(worker_address.clone(), worker_mailbox.clone());
         let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
-        let sink = QueueDomainSink::new(
+        let sink = new_queue_domain_sink(
             store,
             router,
             admin_read_model,
