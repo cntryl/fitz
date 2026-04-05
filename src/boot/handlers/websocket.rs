@@ -13,8 +13,8 @@ pub(super) async fn handle_websocket(
     config: IngressConfig,
     runtime: Arc<crate::boot::Runtime>,
 ) -> Result<hyper::Response<hyper::Body>, std::convert::Infallible> {
-    runtime.increment_sessions();
-
+    // Note: increment_connections / decrement_connections are handled by the
+    // HTTP listener wrapper (handle_http_upgrade) — no additional counter here.
     match hyper_tungstenite::upgrade(req, None) {
         Ok((response, websocket_fut)) => {
             let runtime_clone = runtime.clone();
@@ -23,14 +23,9 @@ pub(super) async fn handle_websocket(
                 match websocket_fut.await {
                     Ok(ws_stream) => {
                         tracing::info!("WebSocket upgrade completed");
-                        if let Err(e) = run_websocket_session(
-                            ws_stream,
-                            ingress,
-                            config,
-                            runtime_clone.clone(),
-                            router,
-                        )
-                        .await
+                        if let Err(e) =
+                            run_websocket_session(ws_stream, ingress, config, runtime_clone, router)
+                                .await
                         {
                             tracing::error!("WebSocket session error: {}", e);
                         }
@@ -39,14 +34,12 @@ pub(super) async fn handle_websocket(
                         tracing::error!("WebSocket upgrade error: {}", e);
                     }
                 }
-                runtime_clone.decrement_sessions();
             });
 
             Ok(response)
         }
         Err(e) => {
             tracing::debug!("WebSocket upgrade rejected: {}", e);
-            runtime.decrement_sessions();
             Ok(hyper::Response::builder()
                 .status(400)
                 .body(hyper::Body::from("Bad WebSocket upgrade request"))
@@ -110,7 +103,8 @@ where
 
     let ws_session_id = session_id;
     let runtime_for_writes = runtime.clone();
-    tokio::spawn(async move {
+    // Capture the handle so we can await graceful drain when the session closes.
+    let writer_handle = tokio::spawn(async move {
         tracing::debug!(
             session_id = ws_session_id,
             "WS outbound writer task started"
@@ -121,7 +115,10 @@ where
                 frame_len = frame.len(),
                 "WS outbound: sending frame to wire"
             );
-            if let Err(e) = ws_sender.send(Message::Binary(frame.to_vec())).await {
+            // `frame.into()` avoids the unconditional heap copy of `to_vec()` —
+            // Vec<u8> implements From<Bytes>, and reuses the allocation when the
+            // Bytes arc has no other active references.
+            if let Err(e) = ws_sender.send(Message::Binary(frame.into())).await {
                 tracing::error!(session_id = ws_session_id, error = %e, "WS outbound send error");
                 break;
             }
@@ -207,6 +204,18 @@ where
     };
     ingress.on_close(session_id, close_reason).await;
     router.unregister(&inbox_route);
+
+    // Drop the sender-side of the outbound channel so the writer task sees EOF
+    // and stops. Then wait up to 1 s for it to finish flushing remaining frames.
+    drop(sink);
+    drop(outbound_tx);
+    if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(1), writer_handle).await {
+        tracing::warn!(
+            session_id = session_id,
+            error = %e,
+            "WS writer task did not terminate in time"
+        );
+    }
 
     if result.is_ok() {
         info!("WebSocket connection closed, session {}", session_id);

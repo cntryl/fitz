@@ -7,6 +7,11 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
+// Initial capacity for the per-connection write buffer (length prefix + typical frame).
+// Grows automatically for larger frames; the allocation is reused across all frames
+// on the same connection so there is at most one heap allocation per connection.
+const WRITE_BUF_INIT_CAPACITY: usize = 512;
+
 /// Handle an incoming TCP connection with outbound response support.
 pub(super) async fn handle_tcp_connection(
     stream: TcpStream,
@@ -33,7 +38,8 @@ pub(super) async fn handle_tcp_connection(
         .get_route_family(session_id)
         .unwrap_or_else(|| crate::runtime::routing::RouteFamily::new(1));
     let inbox_route = crate::runtime::routing::session_inbox_address(initial_family, session_id);
-    let current_inbox = Arc::new(Mutex::new(inbox_route.clone()));
+    // Tracks the pre-auth inbox plus any CONNECT-time rebind so shutdown can
+    // unregister both if authentication moves the session to a new route family.
     let registered_inboxes = Arc::new(Mutex::new(vec![inbox_route.clone()]));
     tracing::debug!(
         session_id = session_id,
@@ -53,19 +59,21 @@ pub(super) async fn handle_tcp_connection(
             session_id = tcp_session_id,
             "TCP outbound writer task started"
         );
+        // Reusable write buffer — one allocation per connection regardless of frame count.
+        // We prepend the 4-byte length prefix here so write_all sends header + payload in
+        // a single syscall instead of two separate write_all calls.
+        let mut write_buf: Vec<u8> = Vec::with_capacity(WRITE_BUF_INIT_CAPACITY);
         while let Some(frame) = outbound_rx.recv().await {
             tracing::debug!(
                 session_id = tcp_session_id,
                 frame_len = frame.len(),
                 "TCP outbound: sending frame to wire"
             );
-            let len = frame.len() as u32;
-            if let Err(e) = write_half.write_all(&len.to_be_bytes()).await {
-                tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound write error (header)");
-                break;
-            }
-            if let Err(e) = write_half.write_all(frame.as_ref()).await {
-                tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound write error (payload)");
+            write_buf.clear();
+            write_buf.extend_from_slice(&(frame.len() as u32).to_be_bytes());
+            write_buf.extend_from_slice(&frame);
+            if let Err(e) = write_half.write_all(&write_buf).await {
+                tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound write error");
                 break;
             }
             if let Err(e) = write_half.flush().await {
@@ -84,7 +92,6 @@ pub(super) async fn handle_tcp_connection(
     let config_clone = config.clone();
     let runtime_for_frames = runtime.clone();
     let outbound_sink = sink.clone();
-    let current_inbox_for_frames = current_inbox.clone();
     let registered_inboxes_for_frames = registered_inboxes.clone();
     let mut frame_handle = tokio::spawn(async move {
         let session_config = crate::session::NewSessionConfig::unauthenticated(
@@ -117,6 +124,8 @@ pub(super) async fn handle_tcp_connection(
 
             if let Some(updated_route_family) = ingress_clone.get_route_family(session_id) {
                 if updated_route_family != *registered_inbox.family() {
+                    // CONNECT may rebind the session from the default pre-auth
+                    // family to its assigned authenticated family exactly once.
                     runtime_for_frames.router.unregister(&registered_inbox);
                     registered_inbox = crate::runtime::routing::session_inbox_address(
                         updated_route_family,
@@ -127,7 +136,6 @@ pub(super) async fn handle_tcp_connection(
                         outbound_sink.clone()
                             as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
                     );
-                    *current_inbox_for_frames.lock() = registered_inbox.clone();
                     let mut inboxes = registered_inboxes_for_frames.lock();
                     if !inboxes.contains(&registered_inbox) {
                         inboxes.push(registered_inbox.clone());
@@ -176,7 +184,6 @@ pub(super) async fn handle_tcp_connection(
         runtime.router.unregister(inbox);
     }
 
-    drop(current_inbox);
     drop(sink);
     drop(outbound_tx);
 

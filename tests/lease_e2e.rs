@@ -485,7 +485,10 @@ where
     assert_eq!(delivery.msg_type, 409);
     assert_eq!(delivery.subscription_id, subscription_id);
     assert_eq!(delivery.route, route);
-    assert!(delivery.payload.is_empty(), "Expected empty lease notify payload");
+    assert!(
+        delivery.payload.is_empty(),
+        "Expected empty lease notify payload"
+    );
 }
 
 async fn should_not_deliver_lease_watch_notification_after_unsubscribe<C>(server: &TestServer)

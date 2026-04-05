@@ -82,10 +82,17 @@ impl TcpHandler {
 
         loop {
             // Read more data from the owned read half (no mutex needed)
-            let n = self.read_half.read_buf(&mut buffer).await.map_err(|e| {
-                error!(session_id = self.session_id, error = %e, "TCP read error");
-                format!("read error: {}", e)
-            })?;
+            let n = match self.read_half.read_buf(&mut buffer).await {
+                Ok(n) => n,
+                Err(e) => {
+                    error!(session_id = self.session_id, error = %e, "TCP read error");
+                    let reason = format!("read error: {}", e);
+                    self.ingress
+                        .on_close(self.session_id, CloseReason::Error(reason.clone()))
+                        .await;
+                    return Err(reason);
+                }
+            };
 
             // 0 bytes means EOF
             if n == 0 {
@@ -150,18 +157,20 @@ impl TcpHandler {
                     "TCP frame payload preview"
                 );
 
-                // Forward to runtime with backpressure handling
+                // Forward to runtime with backpressure handling.
+                // Pass ownership directly — recover from TrySendError::Full to avoid
+                // an atomic ref-count increment (Bytes::clone) on every successful send.
                 let _handoff_latency = crate::boot::observability::ScopedHistogramUs::new(
                     obs::METRIC_TCP_CHANNEL_HANDOFF_LATENCY,
                 );
-                match self.tx.try_send((self.session_id, frame.clone())) {
+                match self.tx.try_send((self.session_id, frame)) {
                     Ok(()) => {
                         trace!(
                             session_id = self.session_id,
                             "TCP frame forwarded to channel successfully"
                         );
                     }
-                    Err(mpsc::error::TrySendError::Full(_)) => {
+                    Err(mpsc::error::TrySendError::Full((_, frame))) => {
                         crate::boot::observability::counter_inc(obs::METRIC_TCP_BACKPRESSURE);
                         warn!(
                             session_id = self.session_id,
@@ -190,7 +199,11 @@ impl TcpHandler {
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
                         error!(session_id = self.session_id, "TCP runtime channel closed");
-                        return Err("runtime channel closed".to_string());
+                        let reason = "runtime channel closed".to_string();
+                        self.ingress
+                            .on_close(self.session_id, CloseReason::Error(reason.clone()))
+                            .await;
+                        return Err(reason);
                     }
                 }
             }

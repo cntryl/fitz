@@ -396,9 +396,7 @@ impl RuntimeIngress {
             403 => Ok(Some(("lease", crate::auth::Access::Read))),
             407 | 408 => Ok(Some(("lease", crate::auth::Access::Read))),
             409 => Err("invalid message type: 409 is server-to-client only"),
-            404..=406 | 410..=499 => {
-                Err("invalid message type: unsupported lease operation")
-            }
+            404..=406 | 410..=499 => Err("invalid message type: unsupported lease operation"),
             500..=503 => Ok(Some(("notice", crate::auth::Access::Write))),
             504 => Err("invalid message type: 504 is server-to-client only"),
             505..=599 => Err("invalid message type: 505-599 are unsupported notice operations"),
