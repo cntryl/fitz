@@ -3,6 +3,20 @@
 - did you validate tests? `cntryl-tools validate-tests`
 - did you fix all clippy warnings? `cargo clippy --workspace --all-targets`
 
+## Architectural Laws - HARD CONSTRAINTS
+
+Before proposing or implementing any change that affects Fitz semantics, guarantees, recovery, routing, composition, or observability, enforce these rules:
+
+- A domain may only provide its own guarantees. Never blur Notice, Stream, Queue, RPC, Lease, KV, or Schedule into each other.
+- Ephemeral versus durable behavior must be explicit in code, docs, and APIs.
+- Disconnect kills session state. Reconnect is a new session unless a domain explicitly defines durable recovery.
+- Client-visible guarantees must match persisted reality. Never imply replay, exactly-once, durable pending state, or ownership continuity unless storage and recovery really provide it.
+- Domains define primitive physics, not user policy or workflow orchestration.
+- Cross-domain composition must be explicit. Composition is allowed; fusion is not.
+- Observability must never define behavior. Telemetry may describe correctness but must not control it.
+
+Review every boundary-sensitive change against `docs/development/architectural-laws.md` and `docs/development/domain-boundaries-spec.md`.
+
 ## Test Writing Guidelines - STRICTLY ENFORCE
 
 When generating or suggesting tests, **ALWAYS** follow these rules:

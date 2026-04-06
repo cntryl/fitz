@@ -146,7 +146,7 @@ fn parse_subscribe(
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(RpcMessage::Subscribe { worker_addr })
+    Ok(RpcMessage::RegisterWorker { worker_addr })
 }
 
 /// Wire format: `[string worker_addr]`
@@ -160,7 +160,7 @@ fn parse_unsubscribe(
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(RpcMessage::Unsubscribe { worker_addr })
+    Ok(RpcMessage::UnregisterWorker { worker_addr })
 }
 
 /// Wire format: `[bytes correlation_id][string route][string reply_route][bytes body]`

@@ -1516,7 +1516,7 @@ impl MailboxSink for RpcDomainSink {
             crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
         let (response, snapshot_policy, request_failed) = match rpc_msg {
-            RpcMessage::Subscribe { worker_addr } => {
+            RpcMessage::RegisterWorker { worker_addr } => {
                 let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
                     session_inbox_address(*envelope.destination().family(), frame_ctx.session_id)
                 });
@@ -1539,7 +1539,7 @@ impl MailboxSink for RpcDomainSink {
                 self.refresh_metrics_gauges();
                 (Some(RpcResponseMsg::Ok { data: vec![] }), Some(true), false)
             }
-            RpcMessage::Unsubscribe { worker_addr } => {
+            RpcMessage::UnregisterWorker { worker_addr } => {
                 let cleanup_result =
                     self.apply_worker_unsubscribe(&worker_addr, frame_ctx.session_id);
                 self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);

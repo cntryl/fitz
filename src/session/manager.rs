@@ -82,6 +82,159 @@ fn dispatch_session_cleanup(
     let _ = router.route(queue_envelope);
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DispatchDomain {
+    Kv,
+    Queue,
+    Rpc,
+    Lease,
+    Notice,
+    Stream,
+    Schedule,
+}
+
+impl DispatchDomain {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Kv => "kv",
+            Self::Queue => "queue",
+            Self::Rpc => "rpc",
+            Self::Lease => "lease",
+            Self::Notice => "notice",
+            Self::Stream => "stream",
+            Self::Schedule => "schedule",
+        }
+    }
+
+    fn wildcard_route(self) -> &'static str {
+        match self {
+            Self::Kv => "kv://**",
+            Self::Queue => "queue://**",
+            Self::Rpc => "rpc://**",
+            Self::Lease => "lease://**",
+            Self::Notice => "notice://**",
+            Self::Stream => "stream://**",
+            Self::Schedule => "schedule://**",
+        }
+    }
+
+    fn inbound_route(self) -> &'static crate::runtime::routing::Route {
+        static KV: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("kv://inbound"));
+        static QUEUE: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("queue://inbound"));
+        static RPC: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("rpc://inbound"));
+        static LEASE: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("lease://inbound"));
+        static NOTICE: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("notice://inbound"));
+        static STREAM: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("stream://inbound"));
+        static SCHEDULE: Lazy<crate::runtime::routing::Route> =
+            Lazy::new(|| crate::runtime::routing::Route::new("schedule://inbound"));
+
+        match self {
+            Self::Kv => &KV,
+            Self::Queue => &QUEUE,
+            Self::Rpc => &RPC,
+            Self::Lease => &LEASE,
+            Self::Notice => &NOTICE,
+            Self::Stream => &STREAM,
+            Self::Schedule => &SCHEDULE,
+        }
+    }
+
+    fn canonicalize_route_str<'a>(self, route: &'a str) -> Cow<'a, str> {
+        RuntimeIngress::canonicalize_domain_route_str(self.as_str(), route)
+    }
+
+    fn extract_auth_route<'a>(
+        self,
+        msg_type: u16,
+        payload: &'a [u8],
+    ) -> Result<Option<Cow<'a, str>>, String> {
+        match self {
+            Self::Kv => crate::protocol::kv_codec::extract_auth_route(msg_type, payload)
+                .map(|route| route.map(|route| self.canonicalize_route_str(route))),
+            Self::Queue => crate::protocol::queue_codec::extract_auth_route(msg_type, payload)
+                .map(|route| route.map(|route| self.canonicalize_route_str(route))),
+            Self::Rpc => crate::protocol::rpc_codec::extract_auth_route(msg_type, payload)
+                .map(|route| route.map(|route| self.canonicalize_route_str(route))),
+            Self::Lease => crate::protocol::lease_codec::extract_auth_route(msg_type, payload)
+                .map(|route| route.map(|route| self.canonicalize_route_str(route))),
+            Self::Notice => crate::protocol::notice_codec::extract_auth_route(msg_type, payload)
+                .map(|route| route.map(|route| self.canonicalize_route_str(route))),
+            Self::Stream => crate::protocol::stream_codec::extract_auth_route(msg_type, payload)
+                .map(|route| route.map(|route| self.canonicalize_route_str(route))),
+            Self::Schedule => {
+                crate::protocol::schedule_codec::extract_auth_route(msg_type, payload)
+                    .map(|route| route.map(|route| self.canonicalize_route_str(route)))
+            }
+        }
+    }
+}
+
+enum AuthorizationTargets<'a> {
+    SessionOwned,
+    Single(Cow<'a, str>),
+    Multiple(Vec<Cow<'a, str>>),
+}
+
+struct DomainDispatchRequest<'a> {
+    router: &'a crate::runtime::Router,
+    session_id: u64,
+    route_family: crate::runtime::routing::RouteFamily,
+    domain: DispatchDomain,
+    access: crate::auth::Access,
+    msg_type: crate::protocol::tlv::MessageType,
+    preserve_payload_for_handler: bool,
+}
+
+impl<'a> AuthorizationTargets<'a> {
+    fn span_target(&self) -> (&str, usize) {
+        match self {
+            Self::SessionOwned => ("<session-owned>", 1),
+            Self::Single(route) => (route.as_ref(), 1),
+            Self::Multiple(routes) => (
+                routes
+                    .first()
+                    .map(|route| route.as_ref())
+                    .unwrap_or("<session-owned>"),
+                routes.len(),
+            ),
+        }
+    }
+
+    fn authorize(
+        &self,
+        actor_ref: &crate::session::actor::SessionActor,
+        access: crate::auth::Access,
+        wildcard_route: &'static str,
+    ) -> (bool, &str, usize) {
+        match self {
+            Self::SessionOwned => (true, "<session-owned>", 0),
+            Self::Single(route) => {
+                let route = route.as_ref();
+                (actor_ref.authorize_route(route, access), route, 1)
+            }
+            Self::Multiple(routes) => {
+                let authorized = routes
+                    .iter()
+                    .all(|route| actor_ref.authorize_route(route.as_ref(), access));
+                (
+                    authorized,
+                    routes
+                        .first()
+                        .map(|route| route.as_ref())
+                        .unwrap_or(wildcard_route),
+                    routes.len(),
+                )
+            }
+        }
+    }
+}
+
 /// Outcome from the runtime for a single protocol message
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IngressDecision {
@@ -325,49 +478,6 @@ impl RuntimeIngress {
         Cow::Owned(canonical)
     }
 
-    fn wildcard_route_for_domain(domain: &str) -> &'static str {
-        match domain {
-            "kv" => "kv://**",
-            "queue" => "queue://**",
-            "rpc" => "rpc://**",
-            "lease" => "lease://**",
-            "notice" => "notice://**",
-            "stream" => "stream://**",
-            "schedule" => "schedule://**",
-            _ => "**",
-        }
-    }
-
-    fn inbound_route_for_domain_cached(domain: &str) -> &'static crate::runtime::routing::Route {
-        static KV: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("kv://inbound"));
-        static QUEUE: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("queue://inbound"));
-        static RPC: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("rpc://inbound"));
-        static LEASE: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("lease://inbound"));
-        static NOTICE: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("notice://inbound"));
-        static STREAM: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("stream://inbound"));
-        static SCHEDULE: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("schedule://inbound"));
-        static DEFAULT: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("inbox://inbound"));
-
-        match domain {
-            "kv" => &KV,
-            "queue" => &QUEUE,
-            "rpc" => &RPC,
-            "lease" => &LEASE,
-            "notice" => &NOTICE,
-            "stream" => &STREAM,
-            "schedule" => &SCHEDULE,
-            _ => &DEFAULT,
-        }
-    }
-
     fn cached_session_inbox_route(&self, session_id: u64) -> crate::runtime::routing::Route {
         self.session_inbox_routes
             .get(&session_id)
@@ -379,32 +489,34 @@ impl RuntimeIngress {
 
     fn domain_dispatch_for_msg_type(
         msg_type: crate::protocol::tlv::MessageType,
-    ) -> Result<Option<(&'static str, crate::auth::Access)>, &'static str> {
+    ) -> Result<Option<(DispatchDomain, crate::auth::Access)>, &'static str> {
         let mt = msg_type.as_u16();
 
         match mt {
-            100 | 101 | 102 | 104 | 105 | 106 | 107 => Ok(Some(("kv", crate::auth::Access::Write))),
-            103 | 108 | 109 | 110 => Ok(Some(("kv", crate::auth::Access::Read))),
+            100 | 101 | 102 | 104 | 105 | 106 | 107 => {
+                Ok(Some((DispatchDomain::Kv, crate::auth::Access::Write)))
+            }
+            103 | 108 | 109 | 110 => Ok(Some((DispatchDomain::Kv, crate::auth::Access::Read))),
             111 => Err("invalid message type: 111 is server-to-client only"),
-            200..=204 => Ok(Some(("queue", crate::auth::Access::Write))),
-            207 | 208 => Ok(Some(("queue", crate::auth::Access::Read))),
+            200..=204 => Ok(Some((DispatchDomain::Queue, crate::auth::Access::Write))),
+            207 | 208 => Ok(Some((DispatchDomain::Queue, crate::auth::Access::Read))),
             209 => Err("invalid message type: 209 is server-to-client only"),
             205 | 206 | 210..=299 => Err("invalid message type: unsupported queue operation"),
-            300..=304 => Ok(Some(("rpc", crate::auth::Access::Write))),
-            305..=399 => Ok(Some(("rpc", crate::auth::Access::Read))),
-            400..=402 => Ok(Some(("lease", crate::auth::Access::Write))),
-            403 => Ok(Some(("lease", crate::auth::Access::Read))),
-            407 | 408 => Ok(Some(("lease", crate::auth::Access::Read))),
+            300..=304 => Ok(Some((DispatchDomain::Rpc, crate::auth::Access::Write))),
+            305..=399 => Ok(Some((DispatchDomain::Rpc, crate::auth::Access::Read))),
+            400..=402 => Ok(Some((DispatchDomain::Lease, crate::auth::Access::Write))),
+            403 => Ok(Some((DispatchDomain::Lease, crate::auth::Access::Read))),
+            407 | 408 => Ok(Some((DispatchDomain::Lease, crate::auth::Access::Read))),
             409 => Err("invalid message type: 409 is server-to-client only"),
             404..=406 | 410..=499 => Err("invalid message type: unsupported lease operation"),
-            500..=503 => Ok(Some(("notice", crate::auth::Access::Write))),
+            500..=503 => Ok(Some((DispatchDomain::Notice, crate::auth::Access::Write))),
             504 => Err("invalid message type: 504 is server-to-client only"),
             505..=599 => Err("invalid message type: 505-599 are unsupported notice operations"),
-            600..=603 => Ok(Some(("stream", crate::auth::Access::Write))),
-            604..=608 => Ok(Some(("stream", crate::auth::Access::Read))),
+            600..=603 => Ok(Some((DispatchDomain::Stream, crate::auth::Access::Write))),
+            604..=608 => Ok(Some((DispatchDomain::Stream, crate::auth::Access::Read))),
             609 => Err("invalid message type: 609 is server-to-client only"),
-            700 | 701 | 706 => Ok(Some(("schedule", crate::auth::Access::Write))),
-            702..=704 => Ok(Some(("schedule", crate::auth::Access::Read))),
+            700 | 701 | 706 => Ok(Some((DispatchDomain::Schedule, crate::auth::Access::Write))),
+            702..=704 => Ok(Some((DispatchDomain::Schedule, crate::auth::Access::Read))),
             705 => Err("invalid message type: 705 is server-to-client only"),
             _ => Ok(None),
         }
@@ -414,45 +526,220 @@ impl RuntimeIngress {
         matches!(msg_type.as_u16(), 502 | 503)
     }
 
+    fn resolve_authorization_targets<'a>(
+        domain: DispatchDomain,
+        msg_type: crate::protocol::tlv::MessageType,
+        payload: &'a [u8],
+    ) -> Result<AuthorizationTargets<'a>, String> {
+        if domain == DispatchDomain::Schedule && msg_type.as_u16() == 706 {
+            let routes = crate::protocol::schedule_codec::extract_batch_auth_routes(payload)?
+                .into_iter()
+                .map(|route| domain.canonicalize_route_str(route))
+                .collect();
+            return Ok(AuthorizationTargets::Multiple(routes));
+        }
+
+        match Self::derive_auth_route_for_frame(domain, msg_type, payload)? {
+            Some(route) => Ok(AuthorizationTargets::Single(route)),
+            None if Self::skips_route_authorization(msg_type) => {
+                Ok(AuthorizationTargets::SessionOwned)
+            }
+            None => Ok(AuthorizationTargets::Single(Cow::Borrowed(
+                domain.wildcard_route(),
+            ))),
+        }
+    }
+
     fn derive_auth_route_for_frame<'a>(
-        &self,
+        domain: DispatchDomain,
         msg_type: crate::protocol::tlv::MessageType,
         payload: &'a [u8],
     ) -> Result<Option<Cow<'a, str>>, String> {
-        let mt = msg_type.as_u16();
+        domain.extract_auth_route(msg_type.as_u16(), payload)
+    }
 
-        match mt {
-            100..=110 => crate::protocol::kv_codec::extract_auth_route(mt, payload)
-                .map(|route| route.map(|route| Self::canonicalize_domain_route_str("kv", route))),
-            200..=299 => {
-                crate::protocol::queue_codec::extract_auth_route(mt, payload).map(|route| {
-                    route.map(|route| Self::canonicalize_domain_route_str("queue", route))
-                })
-            }
-            300..=399 => crate::protocol::rpc_codec::extract_auth_route(mt, payload)
-                .map(|route| route.map(|route| Self::canonicalize_domain_route_str("rpc", route))),
-            400..=499 => {
-                crate::protocol::lease_codec::extract_auth_route(mt, payload).map(|route| {
-                    route.map(|route| Self::canonicalize_domain_route_str("lease", route))
-                })
-            }
-            500..=504 => {
-                crate::protocol::notice_codec::extract_auth_route(mt, payload).map(|route| {
-                    route.map(|route| Self::canonicalize_domain_route_str("notice", route))
-                })
-            }
-            600..=699 => {
-                crate::protocol::stream_codec::extract_auth_route(mt, payload).map(|route| {
-                    route.map(|route| Self::canonicalize_domain_route_str("stream", route))
-                })
-            }
-            700..=799 => {
-                crate::protocol::schedule_codec::extract_auth_route(mt, payload).map(|route| {
-                    route.map(|route| Self::canonicalize_domain_route_str("schedule", route))
-                })
-            }
-            _ => Ok(None),
+    fn authorize_domain_targets(
+        &self,
+        session_id: u64,
+        msg_type: crate::protocol::tlv::MessageType,
+        domain: DispatchDomain,
+        access: crate::auth::Access,
+        targets: &AuthorizationTargets<'_>,
+    ) -> Result<(), IngressDecision> {
+        let Some(actor_ref) = self.get_session_actor(session_id) else {
+            warn!(
+                session_id = session_id,
+                "Ingress: missing session actor for authorization"
+            );
+            return Err(IngressDecision::Close(
+                "unauthorized: session actor missing".to_string(),
+            ));
+        };
+
+        let (auth_target, auth_target_count) = targets.span_target();
+
+        let _span = tracing::debug_span!(
+            obs::SPAN_PERMISSION_CHECK,
+            session_id = session_id,
+            route = auth_target,
+            route_count = auth_target_count,
+            access = ?access,
+        );
+        let _guard = _span.enter();
+        let start = Instant::now();
+
+        let (authorized, denied_route, denied_route_count) =
+            targets.authorize(&actor_ref, access, domain.wildcard_route());
+
+        if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+            let elapsed_us = start.elapsed().as_micros() as u64;
+            collector.histogram_observe_us(obs::METRIC_PERMISSION_CHECK_LATENCY, elapsed_us);
         }
+
+        if !authorized {
+            warn!(
+                session_id = session_id,
+                msg_type = msg_type.as_u16(),
+                route = denied_route,
+                route_count = denied_route_count,
+                access = ?access,
+                "Ingress: authorization DENIED"
+            );
+
+            if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+                collector.counter_inc(obs::METRIC_AUTH_FAILURES);
+            }
+
+            return Err(IngressDecision::Close(
+                "unauthorized: permission denied".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn dispatch_domain_frame(
+        &self,
+        dispatch: DomainDispatchRequest<'_>,
+        message_payload: &mut Option<Bytes>,
+    ) -> Result<(), IngressDecision> {
+        let route = dispatch.domain.inbound_route().clone();
+        let addr = crate::runtime::routing::RouteAddress::new(dispatch.route_family, route);
+        let dispatch_payload = if dispatch.preserve_payload_for_handler {
+            message_payload.as_ref().unwrap().clone()
+        } else {
+            message_payload.take().unwrap()
+        };
+        let ctx = crate::protocol::frame_context::FrameContext::new(
+            dispatch.session_id,
+            crate::protocol::frame::ChannelId::Pub,
+            dispatch.msg_type,
+            dispatch_payload,
+            dispatch.route_family,
+        );
+        let source = crate::runtime::routing::RouteAddress::new(
+            dispatch.route_family,
+            self.cached_session_inbox_route(dispatch.session_id),
+        );
+        let envelope = crate::runtime::envelope::Envelope::from_route(source, addr, ctx);
+        debug!(
+            session_id = dispatch.session_id,
+            domain = dispatch.domain.as_str(),
+            msg_type = dispatch.msg_type.as_u16(),
+            route = %envelope.destination(),
+            source = ?envelope.source(),
+            "Ingress: routing envelope to domain"
+        );
+
+        let dispatch_start = Instant::now();
+        let dispatch_result = dispatch
+            .router
+            .route_to_domain(dispatch.domain.as_str(), envelope);
+        if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+            collector.histogram_observe_us(
+                obs::METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY,
+                dispatch_start.elapsed().as_micros() as u64,
+            );
+        }
+
+        match dispatch_result {
+            Ok(()) => Ok(()),
+            Err(crate::runtime::router::RouteError::DeliveryFailed(
+                _,
+                crate::runtime::router::DeliveryError::MailboxFull { .. }
+                | crate::runtime::router::DeliveryError::HighLaneFull { .. },
+            )) => {
+                warn!(
+                    session_id = dispatch.session_id,
+                    domain = dispatch.domain.as_str(),
+                    "Ingress: domain dispatch backpressure"
+                );
+                Err(IngressDecision::Backpressure)
+            }
+            Err(e) => {
+                error!(
+                    session_id = dispatch.session_id,
+                    domain = dispatch.domain.as_str(),
+                    error = %e,
+                    "Ingress: router.route failed for domain dispatch"
+                );
+                Err(IngressDecision::Close(format!(
+                    "route delivery failed: {}",
+                    e
+                )))
+            }
+        }
+    }
+
+    fn authorize_and_dispatch_domain_frame(
+        &self,
+        dispatch: DomainDispatchRequest<'_>,
+        message_payload: &mut Option<Bytes>,
+    ) -> Result<(), IngressDecision> {
+        debug!(
+            session_id = dispatch.session_id,
+            msg_type = dispatch.msg_type.as_u16(),
+            domain = dispatch.domain.as_str(),
+            "Ingress: resolved domain for msg_type"
+        );
+
+        let payload_ref = message_payload.as_deref().unwrap();
+        let auth_route_start = Instant::now();
+        let targets = match Self::resolve_authorization_targets(
+            dispatch.domain,
+            dispatch.msg_type,
+            payload_ref,
+        ) {
+            Ok(targets) => targets,
+            Err(error) => {
+                warn!(
+                    session_id = dispatch.session_id,
+                    error = %error,
+                    domain = dispatch.domain.as_str(),
+                    "Ingress: failed to derive route for authorization"
+                );
+                return Err(IngressDecision::Close(format!(
+                    "authorization parse failed: {}",
+                    error
+                )));
+            }
+        };
+
+        if let Ok(collector) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+            collector.histogram_observe_us(
+                obs::METRIC_INGRESS_AUTH_ROUTE_LATENCY,
+                auth_route_start.elapsed().as_micros() as u64,
+            );
+        }
+
+        self.authorize_domain_targets(
+            dispatch.session_id,
+            dispatch.msg_type,
+            dispatch.domain,
+            dispatch.access,
+            &targets,
+        )?;
+        self.dispatch_domain_frame(dispatch, message_payload)
     }
 }
 
@@ -667,212 +954,20 @@ impl Ingress for RuntimeIngress {
                     return IngressDecision::Close(reason.to_string());
                 }
                 Ok(Some((domain, access))) => {
-                    debug!(
-                        session_id = session_id,
-                        msg_type = msg_type.as_u16(),
-                        domain = domain,
-                        "Ingress: resolved domain for msg_type"
-                    );
-                    let payload_ref = message_payload.as_ref().unwrap();
-                    // Attempt to derive a fine-grained route from the payload for better authorization.
-                    let auth_route_start = Instant::now();
-                    let auth_routes = if domain == "schedule" && msg_type.as_u16() == 706 {
-                        match crate::protocol::schedule_codec::extract_batch_auth_routes(
-                            payload_ref,
-                        ) {
-                            Ok(routes) => Some(
-                                routes
-                                    .into_iter()
-                                    .map(|route| {
-                                        Self::canonicalize_domain_route_str("schedule", route)
-                                    })
-                                    .collect::<Vec<_>>(),
-                            ),
-                            Err(e) => {
-                                warn!(session_id = session_id, error = %e, domain = domain, "Ingress: failed to derive routes for authorization");
-                                return IngressDecision::Close(format!(
-                                    "authorization parse failed: {}",
-                                    e
-                                ));
-                            }
-                        }
-                    } else {
-                        None
-                    };
-                    let auth_route = if auth_routes.is_none() {
-                        match self.derive_auth_route_for_frame(msg_type, payload_ref) {
-                            Ok(Some(r)) => Some(r),
-                            Ok(None) if Self::skips_route_authorization(msg_type) => None,
-                            Ok(None) => {
-                                Some(Cow::Borrowed(Self::wildcard_route_for_domain(domain)))
-                            }
-                            Err(e) => {
-                                warn!(session_id = session_id, error = %e, domain = domain, "Ingress: failed to derive route for authorization");
-                                return IngressDecision::Close(format!(
-                                    "authorization parse failed: {}",
-                                    e
-                                ));
-                            }
-                        }
-                    } else {
-                        None
-                    };
-
-                    if let Ok(collector) =
-                        std::panic::catch_unwind(crate::boot::observability::metrics)
-                    {
-                        collector.histogram_observe_us(
-                            obs::METRIC_INGRESS_AUTH_ROUTE_LATENCY,
-                            auth_route_start.elapsed().as_micros() as u64,
-                        );
-                    }
-
-                    // Check session actor's authorization
-                    if let Some(actor_ref) = self.get_session_actor(session_id) {
-                        let auth_target = auth_routes
-                            .as_ref()
-                            .and_then(|routes| routes.first().map(|route| route.as_ref()))
-                            .or_else(|| auth_route.as_ref().map(|route| route.as_ref()))
-                            .unwrap_or("<session-owned>");
-                        let auth_target_count =
-                            auth_routes.as_ref().map(|routes| routes.len()).unwrap_or(1);
-
-                        // 100% sample: authorization is critical path
-                        let _span = tracing::debug_span!(
-                            obs::SPAN_PERMISSION_CHECK,
-                            session_id = session_id,
-                            route = auth_target,
-                            route_count = auth_target_count,
-                            access = ?access,
-                        );
-                        let _guard = _span.enter();
-                        let start = Instant::now();
-
-                        let (authorized, denied_route, denied_route_count) =
-                            if let Some(auth_routes) = auth_routes.as_ref() {
-                                let authorized = auth_routes
-                                    .iter()
-                                    .all(|route| actor_ref.authorize_route(route.as_ref(), access));
-                                (
-                                    authorized,
-                                    auth_routes
-                                        .first()
-                                        .map(|route| route.as_ref())
-                                        .unwrap_or(Self::wildcard_route_for_domain(domain)),
-                                    auth_routes.len(),
-                                )
-                            } else if let Some(auth_route) = auth_route.as_ref() {
-                                let auth_route = auth_route.as_ref();
-                                (actor_ref.authorize_route(auth_route, access), auth_route, 1)
-                            } else {
-                                (true, "<session-owned>", 0)
-                            };
-
-                        // Record latency
-                        if let Ok(collector) =
-                            std::panic::catch_unwind(crate::boot::observability::metrics)
-                        {
-                            let elapsed_us = start.elapsed().as_micros() as u64;
-                            collector.histogram_observe_us(
-                                obs::METRIC_PERMISSION_CHECK_LATENCY,
-                                elapsed_us,
-                            );
-                        }
-
-                        if !authorized {
-                            warn!(
-                                session_id = session_id,
-                                msg_type = msg_type.as_u16(),
-                                route = denied_route,
-                                route_count = denied_route_count,
-                                access = ?access,
-                                "Ingress: authorization DENIED"
-                            );
-
-                            // Counter: auth failures
-                            if let Ok(collector) =
-                                std::panic::catch_unwind(crate::boot::observability::metrics)
-                            {
-                                collector.counter_inc(obs::METRIC_AUTH_FAILURES);
-                            }
-
-                            return IngressDecision::Close(
-                                "unauthorized: permission denied".to_string(),
-                            );
-                        }
-                    } else {
-                        warn!(
-                            session_id = session_id,
-                            "Ingress: missing session actor for authorization"
-                        );
-                        return IngressDecision::Close(
-                            "unauthorized: session actor missing".to_string(),
-                        );
-                    }
-
-                    let route = Self::inbound_route_for_domain_cached(domain).clone();
-                    let addr = crate::runtime::routing::RouteAddress::new(route_family, route);
-                    let dispatch_payload = if should_notify_handler && notify_frame.is_none() {
-                        message_payload.as_ref().unwrap().clone()
-                    } else {
-                        message_payload.take().unwrap()
-                    };
-                    let ctx = crate::protocol::frame_context::FrameContext::new(
+                    let dispatch = DomainDispatchRequest {
+                        router,
                         session_id,
-                        crate::protocol::frame::ChannelId::Pub,
+                        route_family,
+                        domain,
+                        access,
                         msg_type,
-                        dispatch_payload,
-                        route_family,
-                    );
-                    // Set source to the session's inbox so domain sinks can route responses back
-                    let source = crate::runtime::routing::RouteAddress::new(
-                        route_family,
-                        self.cached_session_inbox_route(session_id),
-                    );
-                    let envelope =
-                        crate::runtime::envelope::Envelope::from_route(source, addr, ctx);
-                    debug!(
-                        session_id = session_id,
-                        domain = domain,
-                        msg_type = msg_type.as_u16(),
-                        route = %envelope.destination(),
-                        source = ?envelope.source(),
-                        "Ingress: routing envelope to domain"
-                    );
-                    let dispatch_start = Instant::now();
-                    let dispatch_result = router.route_to_domain(domain, envelope);
-                    if let Ok(collector) =
-                        std::panic::catch_unwind(crate::boot::observability::metrics)
+                        preserve_payload_for_handler: should_notify_handler
+                            && notify_frame.is_none(),
+                    };
+                    if let Err(decision) =
+                        self.authorize_and_dispatch_domain_frame(dispatch, &mut message_payload)
                     {
-                        collector.histogram_observe_us(
-                            obs::METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY,
-                            dispatch_start.elapsed().as_micros() as u64,
-                        );
-                    }
-
-                    match dispatch_result {
-                        Ok(()) => {}
-                        Err(crate::runtime::router::RouteError::DeliveryFailed(
-                            _,
-                            crate::runtime::router::DeliveryError::MailboxFull { .. }
-                            | crate::runtime::router::DeliveryError::HighLaneFull { .. },
-                        )) => {
-                            warn!(
-                                session_id = session_id,
-                                domain = domain,
-                                "Ingress: domain dispatch backpressure"
-                            );
-                            return IngressDecision::Backpressure;
-                        }
-                        Err(e) => {
-                            error!(
-                                session_id = session_id,
-                                domain = domain,
-                                error = %e,
-                                "Ingress: router.route failed for domain dispatch"
-                            );
-                            return IngressDecision::Close(format!("route delivery failed: {}", e));
-                        }
+                        return decision;
                     }
                 }
                 Ok(None) => {}
@@ -1085,10 +1180,10 @@ impl RuntimeIngress {
                 Ok(crate::domains::rpc::protocol::RpcMessage::Request(r)) => {
                     Ok(Some(r.route.clone()))
                 }
-                Ok(crate::domains::rpc::protocol::RpcMessage::Subscribe { worker_addr }) => {
+                Ok(crate::domains::rpc::protocol::RpcMessage::RegisterWorker { worker_addr }) => {
                     Ok(Some(worker_addr.route().clone()))
                 }
-                Ok(crate::domains::rpc::protocol::RpcMessage::Unsubscribe { worker_addr }) => {
+                Ok(crate::domains::rpc::protocol::RpcMessage::UnregisterWorker { worker_addr }) => {
                     Ok(Some(worker_addr.route().clone()))
                 }
                 Ok(_) => Ok(None),

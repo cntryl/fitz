@@ -142,7 +142,7 @@ Current gaps to keep explicit:
 
 ## H. Cross-Domain Boundaries
 
-- Lease versus Queue: queue lease tokens control message visibility; lease-domain tokens control explicit ownership.
+- Lease versus Queue: queue inflight tokens control message visibility; lease-domain fencing tokens control explicit ownership.
 - Lease versus KV: Lease can guard a workflow around KV, but it does not make KV transactions durable across disconnect.
 - Lease versus Schedule: Schedule can trigger work, but Lease is the explicit local ownership surface if one run must exclude another.
 

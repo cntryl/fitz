@@ -1,7 +1,7 @@
 //! Lightweight SessionActor helpers for the RPC domain
 //!
 //! Responsibilities:
-//! - Enforce session-level authorization for RPC call/subscribe operations
+//! - Enforce session-level authorization for RPC call and worker-registration operations
 //! - Forward authorized operations to the RpcRouteActor
 //!
 //! This is intentionally small: a full actor system is out-of-scope for this change,
@@ -48,22 +48,22 @@ impl SessionActor {
         Ok(())
     }
 
-    /// Attempt to subscribe as a worker. Returns Err if authorization fails.
+    /// Attempt to register a worker. Returns Err if authorization fails.
     ///
-    /// Requires "subscribe" permission (represented as All access) on the RPC route.
-    pub fn subscribe_worker(
+    /// Requires worker-registration permission (represented as All access) on the RPC route.
+    pub fn register_worker(
         &self,
         worker_addr: RouteAddress,
         route: &Route,
         rpc_actor: &mut RpcRouteActor,
         ctx: &mut Context<RpcRouteActor>,
     ) -> Result<(), String> {
-        // Worker subscription requires All access (permission to handle calls)
+        // Worker registration requires All access (permission to handle calls)
         if !self.permissions.allows(route, Access::All) {
-            return Err("unauthorized: worker subscribe".to_string());
+            return Err("unauthorized: worker register".to_string());
         }
 
-        let msg = RpcMessage::Subscribe { worker_addr };
+        let msg = RpcMessage::RegisterWorker { worker_addr };
         rpc_actor.receive(msg, ctx);
         Ok(())
     }
@@ -125,7 +125,7 @@ mod tests {
         let worker_addr =
             RouteAddress::new(RouteFamily::new(1), Route::new("worker://realm/worker1"));
         actor.receive(
-            RpcMessage::Subscribe {
+            RpcMessage::RegisterWorker {
                 worker_addr: worker_addr.clone(),
             },
             &mut ctx,
@@ -153,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_worker_subscription_without_admin_permission() {
+    fn should_reject_worker_registration_without_admin_permission() {
         // Arrange
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let mut ctx = make_ctx();
@@ -168,7 +168,7 @@ mod tests {
         let route = Route::new("rpc://realm/area/resource/operation");
 
         // Act
-        let res = session.subscribe_worker(worker_addr, &route, &mut actor, &mut ctx);
+        let res = session.register_worker(worker_addr, &route, &mut actor, &mut ctx);
 
         // Assert
         assert!(res.is_err());
@@ -176,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn should_allow_worker_subscription_with_all_permission() {
+    fn should_allow_worker_registration_with_all_permission() {
         // Arrange
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let mut ctx = make_ctx();
@@ -191,7 +191,7 @@ mod tests {
         let route = Route::new("rpc://realm/area/resource/operation");
 
         // Act
-        let res = session.subscribe_worker(worker_addr, &route, &mut actor, &mut ctx);
+        let res = session.register_worker(worker_addr, &route, &mut actor, &mut ctx);
 
         // Assert
         assert!(res.is_ok());

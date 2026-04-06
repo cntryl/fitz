@@ -802,7 +802,8 @@ pub fn parse_queue_watch_delivery(frame: &[u8]) -> Result<QueueWatchDelivery, St
     let offset = 12 + route_len;
     let ready_messages = u64::from_be_bytes(payload[offset..offset + 8].try_into().unwrap());
     let delayed_messages = u64::from_be_bytes(payload[offset + 8..offset + 16].try_into().unwrap());
-    let inflight_messages = u64::from_be_bytes(payload[offset + 16..offset + 24].try_into().unwrap());
+    let inflight_messages =
+        u64::from_be_bytes(payload[offset + 16..offset + 24].try_into().unwrap());
 
     Ok(QueueWatchDelivery {
         msg_type,

@@ -1,8 +1,8 @@
 //! RPC protocol message types
 //!
 //! Defines the message types used for request/response operations:
-//! - **Subscribe**: Worker registers to handle requests for a route
-//! - **Unsubscribe**: Worker stops handling requests for a route
+//! - **RegisterWorker**: Worker registers to handle requests for a route
+//! - **UnregisterWorker**: Worker stops handling requests for a route
 //! - **Request**: Client request routed to available worker
 //! - **Response**: Worker response forwarded to client (supports streaming)
 //! - **Ack**: Worker signals completion for cleanup
@@ -119,20 +119,20 @@ impl RpcResponse {
 /// These messages coordinate worker registration, request routing, and response delivery.
 #[derive(Debug, Clone)]
 pub enum RpcMessage {
-    /// Worker subscribes to handle requests for this route
+    /// Worker registers to handle requests for this route
     ///
     /// Sent by workers to register as handlers for the route. Workers are
     /// assigned requests in round-robin fashion based on availability.
-    Subscribe {
+    RegisterWorker {
         /// Address of the worker actor
         worker_addr: RouteAddress,
     },
 
-    /// Worker unsubscribes from this route
+    /// Worker unregisters from this route
     ///
     /// Sent by workers to stop receiving requests. Cleans up worker registration
     /// and any in-flight tracking for this worker.
-    Unsubscribe {
+    UnregisterWorker {
         /// Address of the worker actor
         worker_addr: RouteAddress,
     },
@@ -166,14 +166,14 @@ pub enum RpcMessage {
 }
 
 impl RpcMessage {
-    /// Create Subscribe message
-    pub fn subscribe(worker_addr: RouteAddress) -> Self {
-        Self::Subscribe { worker_addr }
+    /// Create RegisterWorker message
+    pub fn register_worker(worker_addr: RouteAddress) -> Self {
+        Self::RegisterWorker { worker_addr }
     }
 
-    /// Create Unsubscribe message
-    pub fn unsubscribe(worker_addr: RouteAddress) -> Self {
-        Self::Unsubscribe { worker_addr }
+    /// Create UnregisterWorker message
+    pub fn unregister_worker(worker_addr: RouteAddress) -> Self {
+        Self::UnregisterWorker { worker_addr }
     }
 
     /// Create Request message

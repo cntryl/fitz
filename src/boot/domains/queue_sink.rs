@@ -287,7 +287,7 @@ impl QueueDomainSink {
         }
     }
 
-    fn replay_ready_notifications_for_subscription(
+    fn emit_current_ready_notifications_for_watch(
         &self,
         family_id: crate::runtime::routing::RouteFamily,
         pattern: &crate::runtime::matcher::Pattern,
@@ -695,7 +695,7 @@ impl MailboxSink for QueueDomainSink {
         self.maybe_sweep_idle_actors();
 
         if let crate::protocol::queue_codec::ParsedQueueFrame::Sub(sub_msg) = parsed_frame {
-            let (response, replay_watch) = match sub_msg {
+            let (response, initial_watch_snapshot) = match sub_msg {
                 QueueSubscriptionMessage::Watch {
                     family_id,
                     pattern,
@@ -755,9 +755,9 @@ impl MailboxSink for QueueDomainSink {
 
             self.route_queue_response(&envelope, &frame_ctx, &response);
             if let Some((family_id, pattern, session_id, subscription_id, subscriber)) =
-                replay_watch
+                initial_watch_snapshot
             {
-                self.replay_ready_notifications_for_subscription(
+                self.emit_current_ready_notifications_for_watch(
                     family_id,
                     &pattern,
                     session_id,

@@ -139,7 +139,9 @@ async fn handle_hierarchical_get(
             )
             .await
         }
-        ["realms", realm, "areas", area, "resources", resource, "inflight"] if scheme == "queue" => {
+        ["realms", realm, "areas", area, "resources", resource, "inflight"]
+            if scheme == "queue" =>
+        {
             let family = match parse_optional_queue_family(uri) {
                 Ok(family) => family,
                 Err(response) => return Ok(*response),

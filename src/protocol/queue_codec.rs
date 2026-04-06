@@ -353,7 +353,7 @@ pub fn encode_notify(
 }
 
 fn parse_extend(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
-    // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 message_id][u64 lease_token][u64 inflight_seconds]
+    // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 message_id][u64 inflight_token][u64 inflight_seconds]
     let mut offset = 0;
 
     // Parse route
@@ -416,7 +416,7 @@ fn parse_extend(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, 
 }
 
 fn parse_complete(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
-    // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 message_id][u64 lease_token]
+    // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 message_id][u64 inflight_token]
     let mut offset = 0;
 
     // Parse route

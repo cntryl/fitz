@@ -66,7 +66,7 @@ Intentionally unsupported:
 - Invariant: valid completion removes the message exactly once.
 	- Why it matters: completion must not double-delete or leave ghost backlog.
 	- How it fails: repeated completion mutates state twice, or correct completion leaves the message visible.
-	- How to test it: [tests/queue_basics.rs](../../tests/queue_basics.rs) `should_support_complete_operation_with_lease_token`, `should_deduplicate_complete_for_same_lease_token`, and `should_persist_message_until_completed`.
+	- How to test it: [tests/queue_basics.rs](../../tests/queue_basics.rs) `should_support_complete_operation_with_inflight_token`, `should_deduplicate_complete_for_same_inflight_token`, and `should_persist_message_until_completed`.
 
 - Invariant: expired lease returns the message to availability unless DLQ policy takes over.
 	- Why it matters: abandoned work must not disappear.
@@ -83,10 +83,10 @@ Intentionally unsupported:
 	- How it fails: committed messages, delayed visibility, or next-id state regress after restart.
 	- How to test it: [tests/queue_advanced.rs](../../tests/queue_advanced.rs) `should_redelivery_messages_after_crash`, `should_preserve_fifo_order_after_recovery`, `should_preserve_delayed_visibility_across_restart`, and `should_prevent_id_collisions_across_crash`.
 
-- Invariant: wrong or expired lease token cannot extend or complete a message.
+- Invariant: wrong or expired inflight token cannot extend or complete a message.
 	- Why it matters: stale ownership must not mutate queue state.
 	- How it fails: an old token can complete or extend after expiry or redelivery.
-	- How to test it: [tests/queue_basics.rs](../../tests/queue_basics.rs) `should_reject_complete_with_wrong_lease_token`, `should_reject_extend_with_expired_lease`, and `should_use_4013_for_invalid_lease_token`.
+	- How to test it: [tests/queue_basics.rs](../../tests/queue_basics.rs) `should_reject_complete_with_wrong_inflight_token`, `should_reject_extend_with_expired_lease`, and `should_use_4013_for_invalid_inflight_token`.
 
 ## D. Anti-Goals / What This Domain Must Not Become
 
@@ -98,7 +98,7 @@ Intentionally unsupported:
 
 ## E. Failure Semantics
 
-- Client disconnect: Fitz does not promise durable continuation of the old lease token. Redelivery follows expiry or restart recovery.
+- Client disconnect: Fitz does not promise durable continuation of the old inflight token. Redelivery follows expiry or restart recovery.
 - Server restart: committed messages and durable indexes recover; inflight lease ownership and tokens do not.
 - Storage failure during durable mutation: enqueue, complete, or DLQ mutation fails and must not be reported as committed success.
 - Empty queue reserve: explicit empty result.
@@ -135,14 +135,14 @@ Current gaps to keep explicit:
 
 - Invariant tests:
 	- [tests/queue_basics.rs](../../tests/queue_basics.rs) `should_support_enqueue_operation`
-	- [tests/queue_basics.rs](../../tests/queue_basics.rs) `should_support_complete_operation_with_lease_token`
+	- [tests/queue_basics.rs](../../tests/queue_basics.rs) `should_support_complete_operation_with_inflight_token`
 	- [tests/queue_basics.rs](../../tests/queue_basics.rs) `should_distribute_messages_fairly_among_consumers`
 - Restart and recovery tests:
 	- [tests/queue_advanced.rs](../../tests/queue_advanced.rs) `should_redelivery_messages_after_crash`
 	- [tests/queue_advanced.rs](../../tests/queue_advanced.rs) `should_preserve_fifo_order_after_recovery`
 	- [tests/queue_advanced.rs](../../tests/queue_advanced.rs) `should_preserve_delayed_visibility_across_restart`
 - Race and cleanup tests:
-	- [tests/queue_basics.rs](../../tests/queue_basics.rs) `should_deduplicate_complete_for_same_lease_token`
+	- [tests/queue_basics.rs](../../tests/queue_basics.rs) `should_deduplicate_complete_for_same_inflight_token`
 	- [tests/queue_advanced.rs](../../tests/queue_advanced.rs) `should_distribute_messages_fairly_among_competing_consumers`
 - Integration tests:
 	- [tests/queue_e2e.rs](../../tests/queue_e2e.rs) enqueue, dequeue, empty, concurrent enqueue, and mixed flow cases

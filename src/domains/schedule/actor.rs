@@ -5,7 +5,8 @@ use crate::domains::schedule::protocol::{
     SystemClock,
 };
 use crate::domains::schedule::store::{
-    PersistedPendingFire, PersistedSchedule, ScheduleFireClaim, ScheduleInsert, ScheduleStore,
+    PersistedPendingFireClaim, PersistedSchedule, ScheduleFireClaim, ScheduleInsert,
+    SchedulePendingFireClaimAck, ScheduleStore,
 };
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
@@ -76,7 +77,7 @@ pub struct ScheduleActor {
     /// current definition's `next_fire_ms`.
     ready_heap: BinaryHeap<(Reverse<u64>, String)>,
     /// Durably claimed schedule fires awaiting successful publish.
-    pending_fires: BTreeMap<(u64, String), Bytes>,
+    pending_fire_claims: BTreeMap<(u64, String), Bytes>,
     /// Injected wall-clock and monotonic time source.
     clock: Arc<dyn Clock>,
     /// Number of schedules normalized forward during the last preload.
@@ -151,7 +152,7 @@ impl ScheduleActor {
             last_scan_time: now,
             scan_dedup_window: std::time::Duration::from_millis(10),
             ready_heap: BinaryHeap::new(),
-            pending_fires: BTreeMap::new(),
+            pending_fire_claims: BTreeMap::new(),
             clock,
             overdue_normalizations: 0,
         };
@@ -253,10 +254,10 @@ impl ScheduleActor {
             )?;
         }
 
-        for pending_fire in self.store.load_pending_fires(self.family.as_u64())? {
-            self.pending_fires.insert(
-                (pending_fire.fire_ms, pending_fire.route),
-                pending_fire.payload,
+        for pending_fire_claim in self.store.load_pending_fire_claims(self.family.as_u64())? {
+            self.pending_fire_claims.insert(
+                (pending_fire_claim.fire_ms, pending_fire_claim.route),
+                pending_fire_claim.payload,
             );
         }
 
@@ -712,7 +713,7 @@ impl ScheduleActor {
         )
     }
 
-    fn claim_due_fires_at(&mut self, now: Instant) -> Vec<PersistedPendingFire> {
+    fn claim_due_fires_at(&mut self, now: Instant) -> Vec<PersistedPendingFireClaim> {
         if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
             return Vec::new();
         }
@@ -797,11 +798,11 @@ impl ScheduleActor {
             def.next_fire_ms = item.next_fire_ms;
             self.ready_heap
                 .push((Reverse(item.next_fire_ms), item.route.clone()));
-            self.pending_fires.insert(
+            self.pending_fire_claims.insert(
                 (item.previous_fire_ms, item.route.clone()),
                 item.payload.clone(),
             );
-            claimed.push(PersistedPendingFire {
+            claimed.push(PersistedPendingFireClaim {
                 route: item.route.clone(),
                 payload: item.payload.clone(),
                 fire_ms: item.previous_fire_ms,
@@ -826,10 +827,10 @@ impl ScheduleActor {
         self.scan_and_fire_at(self.clock.now_instant())
     }
 
-    pub(crate) fn pending_fires_for_delivery(&self) -> Vec<PersistedPendingFire> {
-        self.pending_fires
+    pub(crate) fn pending_fire_claims_for_delivery(&self) -> Vec<PersistedPendingFireClaim> {
+        self.pending_fire_claims
             .iter()
-            .map(|((fire_ms, route), payload)| PersistedPendingFire {
+            .map(|((fire_ms, route), payload)| PersistedPendingFireClaim {
                 route: route.clone(),
                 payload: payload.clone(),
                 fire_ms: *fire_ms,
@@ -839,7 +840,7 @@ impl ScheduleActor {
 
     /// Acknowledges delivered fires. Returns `(acked_count, acknowledged_at_ms)`.
     /// `acknowledged_at_ms` is only meaningful when `acked_count > 0`.
-    pub(crate) fn ack_pending_fires(
+    pub(crate) fn ack_pending_fire_claims(
         &mut self,
         delivered: &[(u64, String)],
     ) -> Result<(usize, u64), String> {
@@ -850,22 +851,23 @@ impl ScheduleActor {
         let acknowledged_at_ms = self.clock.now_epoch_ms();
         let store_items: Vec<_> = delivered
             .iter()
-            .map(
-                |(fire_ms, route)| crate::domains::schedule::store::SchedulePendingFireAck {
-                    route,
-                    fire_ms: *fire_ms,
-                    executed_at_ms: acknowledged_at_ms,
-                },
-            )
+            .map(|(fire_ms, route)| SchedulePendingFireClaimAck {
+                route,
+                fire_ms: *fire_ms,
+                executed_at_ms: acknowledged_at_ms,
+            })
             .collect();
 
-        self.store
-            .ack_pending_fires(self.family.as_u64(), &store_items, self.write_options)?;
+        self.store.ack_pending_fire_claims(
+            self.family.as_u64(),
+            &store_items,
+            self.write_options,
+        )?;
 
         let mut acked = 0;
         for (fire_ms, route) in delivered {
             if self
-                .pending_fires
+                .pending_fire_claims
                 .remove(&(*fire_ms, route.clone()))
                 .is_some()
             {
@@ -881,7 +883,7 @@ impl ScheduleActor {
     }
 
     pub(crate) fn pending_fire_count(&self) -> usize {
-        self.pending_fires.len()
+        self.pending_fire_claims.len()
     }
 
     /// Returns all `last_fire_ms` timestamps for schedules that fired after `cutoff_ms`.
@@ -1318,7 +1320,7 @@ mod tests {
         // Act
         let fired = actor.scan_and_fire_at(now);
         actor
-            .ack_pending_fires(&[(claimed_fire_ms, route.to_string())])
+            .ack_pending_fire_claims(&[(claimed_fire_ms, route.to_string())])
             .expect("ack pending fire");
         let snapshot = actor.admin_snapshot();
 

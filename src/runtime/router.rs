@@ -240,7 +240,64 @@ pub struct Router {
     registry: Arc<RouteRegistry>,
 }
 
+#[derive(Clone, Copy)]
+enum MissingRouteKind {
+    ExactOrDomainPattern,
+    KnownDomainPattern,
+}
+
 impl Router {
+    fn route_span(dest: &RouteAddress, domain: &str) -> Option<tracing::Span> {
+        if should_sample_hot_path() {
+            Some(tracing::debug_span!(
+                obs::SPAN_ROUTE_MATCH,
+                route = %dest,
+                domain = domain,
+            ))
+        } else {
+            None
+        }
+    }
+
+    fn record_route_match_latency(start: Instant) {
+        if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+            metrics.histogram_observe_us(
+                obs::METRIC_ROUTE_MATCH_LATENCY,
+                start.elapsed().as_micros() as u64,
+            );
+        }
+    }
+
+    fn record_delivery_failure() {
+        if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+            metrics.counter_inc(obs::METRIC_DELIVERY_FAILURES);
+        }
+    }
+
+    fn record_route_mismatch() {
+        if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+            metrics.counter_inc(obs::METRIC_ROUTE_MISMATCHES);
+        }
+    }
+
+    fn route_not_found(
+        dest: &RouteAddress,
+        domain: &str,
+        missing_route_kind: MissingRouteKind,
+    ) -> RouteError {
+        match missing_route_kind {
+            MissingRouteKind::ExactOrDomainPattern => {
+                warn!(destination = %dest, domain = domain, "Router: no route found (exact or domain pattern)");
+            }
+            MissingRouteKind::KnownDomainPattern => {
+                warn!(destination = %dest, domain = domain, "Router: no domain sink found");
+            }
+        }
+
+        Self::record_route_mismatch();
+        RouteError::RouteNotFound(dest.clone())
+    }
+
     fn deliver_with_sink(
         &self,
         dest: RouteAddress,
@@ -252,24 +309,51 @@ impl Router {
             Ok(()) => {
                 debug!(destination = %dest, "Router: envelope delivered successfully");
 
-                if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
-                    metrics.histogram_observe_us(
-                        obs::METRIC_ROUTE_MATCH_LATENCY,
-                        start.elapsed().as_micros() as u64,
-                    );
-                }
+                Self::record_route_match_latency(start);
 
                 Ok(())
             }
             Err(e) => {
                 warn!(destination = %dest, error = %e, "Router: delivery failed");
 
-                if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
-                    metrics.counter_inc(obs::METRIC_DELIVERY_FAILURES);
-                }
+                Self::record_delivery_failure();
 
                 Err(RouteError::DeliveryFailed(dest, e))
             }
+        }
+    }
+
+    fn route_with_resolved_sink(
+        &self,
+        envelope: Envelope,
+        domain: &str,
+        missing_route_kind: MissingRouteKind,
+        sink: Option<Arc<dyn MailboxSink>>,
+    ) -> Result<(), RouteError> {
+        let dest = envelope.destination().clone();
+        let start = Instant::now();
+
+        trace!(destination = %dest, domain = domain, "Router: routing envelope");
+
+        let _route_span = Self::route_span(&dest, domain);
+        let _route_guard = _route_span.as_ref().map(|span| span.enter());
+
+        let sink = sink.ok_or_else(|| Self::route_not_found(&dest, domain, missing_route_kind))?;
+
+        self.deliver_with_sink(dest, sink, envelope, start)
+    }
+
+    fn resolve_sink_for_route(
+        &self,
+        dest: &RouteAddress,
+        fallback_domain: &str,
+    ) -> Option<Arc<dyn MailboxSink>> {
+        if let Some(sink) = self.registry.get(dest) {
+            trace!(destination = %dest, "Router: exact route match found");
+            Some(sink)
+        } else {
+            trace!(destination = %dest, domain = fallback_domain, "Router: trying domain pattern fallback");
+            self.registry.get_by_domain(fallback_domain)
         }
     }
 
@@ -370,50 +454,17 @@ impl Router {
     /// - No retries or queuing on failure
     /// - Deadlines in envelope are not enforced (sink's responsibility)
     pub fn route(&self, envelope: Envelope) -> Result<(), RouteError> {
-        let dest = envelope.destination().clone();
-        let start = Instant::now();
+        let route_str = envelope.destination().route().to_string();
+        let domain = extract_domain(&route_str).unwrap_or("unknown");
+        let fallback_domain = extract_domain(&route_str).unwrap_or("");
+        let sink = self.resolve_sink_for_route(envelope.destination(), fallback_domain);
 
-        trace!(destination = %dest, "Router: routing envelope");
-
-        // Hot path: sample at 0.1% for span visibility; always record metrics
-        let route_str = dest.route().as_str();
-        let domain = extract_domain(route_str).unwrap_or("unknown");
-        let _route_span = if should_sample_hot_path() {
-            Some(tracing::debug_span!(
-                obs::SPAN_ROUTE_MATCH,
-                route = %dest,
-                domain = domain,
-            ))
-        } else {
-            None
-        };
-        let _route_guard = _route_span.as_ref().map(|span| span.enter());
-
-        // Try exact RouteAddress lookup first
-        let sink = if let Some(sink) = self.registry.get(&dest) {
-            trace!(destination = %dest, "Router: exact route match found");
-            sink
-        } else {
-            // Fall back to domain pattern matching using fast domain extraction
-            let domain = extract_domain(route_str).unwrap_or("");
-
-            trace!(destination = %dest, domain = domain, "Router: trying domain pattern fallback");
-
-            self.registry
-                .get_by_domain(domain)
-                .ok_or_else(|| {
-                    warn!(destination = %dest, domain = domain, "Router: no route found (exact or domain pattern)");
-
-                    // Record metrics
-                    if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
-                        metrics.counter_inc(obs::METRIC_ROUTE_MISMATCHES);
-                    }
-
-                    RouteError::RouteNotFound(dest.clone())
-                })?
-        };
-
-        self.deliver_with_sink(dest, sink, envelope, start)
+        self.route_with_resolved_sink(
+            envelope,
+            domain,
+            MissingRouteKind::ExactOrDomainPattern,
+            sink,
+        )
     }
 
     /// Route an envelope directly via a known domain pattern.
@@ -421,33 +472,9 @@ impl Router {
     /// This avoids an exact-route lookup miss when the caller already resolved
     /// the domain from another signal such as message type.
     pub fn route_to_domain(&self, domain: &str, envelope: Envelope) -> Result<(), RouteError> {
-        let dest = envelope.destination().clone();
-        let start = Instant::now();
+        let sink = self.registry.get_by_domain(domain);
 
-        trace!(destination = %dest, domain = domain, "Router: routing envelope directly to known domain");
-
-        let _route_span = if should_sample_hot_path() {
-            Some(tracing::debug_span!(
-                obs::SPAN_ROUTE_MATCH,
-                route = %dest,
-                domain = domain,
-            ))
-        } else {
-            None
-        };
-        let _route_guard = _route_span.as_ref().map(|span| span.enter());
-
-        let sink = self.registry.get_by_domain(domain).ok_or_else(|| {
-            warn!(destination = %dest, domain = domain, "Router: no domain sink found");
-
-            if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
-                metrics.counter_inc(obs::METRIC_ROUTE_MISMATCHES);
-            }
-
-            RouteError::RouteNotFound(dest.clone())
-        })?;
-
-        self.deliver_with_sink(dest, sink, envelope, start)
+        self.route_with_resolved_sink(envelope, domain, MissingRouteKind::KnownDomainPattern, sink)
     }
 
     /// Route an envelope to the high-priority lane (runtime-internal use only)

@@ -302,8 +302,8 @@ pub struct RpcRoute {
 - **Streaming support**: Multi-chunk responses with sequence numbers
 - **FIFO ordering**: Requests dispatched in arrival order
 - **Bounded queue**: Default 1000 request capacity per route
-- **No wildcards**: Workers subscribe to exact routes
-- **Session cleanup**: Worker subscriptions auto-removed on disconnect
+- **No wildcards**: Workers register for exact routes
+- **Session cleanup**: Worker registrations auto-removed on disconnect
 
 ---
 

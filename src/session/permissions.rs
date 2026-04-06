@@ -9,12 +9,46 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+type AuthorizationCache = HashMap<u8, HashMap<String, bool>>;
+
+const CHECK_CACHE_ENTRY_LIMIT: usize = 256;
+
 /// Compiled permission used by runtime checks. This is created from an
 /// auth::Permission by compiling the route-shaped string into a `Pattern`.
 #[derive(Debug, Clone)]
 struct CompiledPermission {
     pattern: crate::runtime::matcher::Pattern,
     access: Access,
+}
+
+impl CompiledPermission {
+    fn from_permission(
+        permission: Permission,
+        pattern_cache: Option<&mut HashMap<String, crate::runtime::matcher::Pattern>>,
+    ) -> Self {
+        let route_part = permission_route_part(&permission.raw);
+        let pattern = match pattern_cache {
+            Some(pattern_cache) => {
+                if let Some(pattern) = pattern_cache.get(route_part) {
+                    pattern.clone()
+                } else {
+                    let pattern = crate::runtime::matcher::Pattern::new(route_part);
+                    pattern_cache.insert(route_part.to_string(), pattern.clone());
+                    pattern
+                }
+            }
+            None => crate::runtime::matcher::Pattern::new(route_part),
+        };
+
+        Self {
+            pattern,
+            access: permission.access,
+        }
+    }
+
+    fn allows(&self, route: &str, access: Access) -> bool {
+        self.pattern.matches_str(route) && access_grants(self.access, access)
+    }
 }
 
 /// Opaque permission snapshot
@@ -24,72 +58,23 @@ pub struct SessionPermissions {
     inner: Arc<HashMap<String, String>>,
     /// Compiled Fitz permissions used by authorization checks
     compiled: Arc<Vec<CompiledPermission>>,
-    /// Cache for permission checks: (route_hash, access_bits) -> allowed
+    /// Cache for permission checks: access_bits -> route -> allowed
     /// Uses RwLock for thread-safe interior mutability
-    check_cache: Arc<RwLock<HashMap<(u64, u8), bool>>>,
+    check_cache: Arc<RwLock<AuthorizationCache>>,
 }
 
 impl SessionPermissions {
     pub fn new(map: HashMap<String, String>) -> Self {
-        Self {
-            inner: Arc::new(map),
-            compiled: Arc::new(Vec::new()),
-            check_cache: Arc::new(RwLock::new(HashMap::new())),
-        }
+        Self::from_parts(map, Vec::new())
     }
 
     /// Create permissions from parsed `auth::Permission` structs
     pub fn from_permissions(perms: Vec<Permission>) -> Self {
-        // Compile auth::Permission.raw into runtime Pattern objects here so that
-        // auth remains runtime-agnostic.
-        let compiled = if perms.len() <= 8 {
-            perms
-                .into_iter()
-                .map(|p| {
-                    let route_part = p.raw.split('#').next().unwrap_or("");
-                    CompiledPermission {
-                        pattern: crate::runtime::matcher::Pattern::new(route_part),
-                        access: p.access,
-                    }
-                })
-                .collect()
-        } else {
-            let mut pattern_cache: HashMap<String, crate::runtime::matcher::Pattern> =
-                HashMap::with_capacity(perms.len());
-            perms
-                .into_iter()
-                .map(|p| {
-                    // Remove any fragment ("#access") before compiling into a route pattern
-                    let route_part = p.raw.split('#').next().unwrap_or("");
-                    let pattern = if let Some(cached) = pattern_cache.get(route_part) {
-                        cached.clone()
-                    } else {
-                        let compiled = crate::runtime::matcher::Pattern::new(route_part);
-                        pattern_cache.insert(route_part.to_string(), compiled.clone());
-                        compiled
-                    };
-
-                    CompiledPermission {
-                        pattern,
-                        access: p.access,
-                    }
-                })
-                .collect()
-        };
-
-        Self {
-            inner: Arc::new(HashMap::new()),
-            compiled: Arc::new(compiled),
-            check_cache: Arc::new(RwLock::new(HashMap::new())),
-        }
+        Self::from_parts(HashMap::new(), Self::compile_permissions(perms))
     }
 
     pub fn empty() -> Self {
-        Self {
-            inner: Arc::new(HashMap::new()),
-            compiled: Arc::new(Vec::new()),
-            check_cache: Arc::new(RwLock::new(HashMap::new())),
-        }
+        Self::from_parts(HashMap::new(), Vec::new())
     }
 
     /// Create a permission set that allow all operations on all routes
@@ -115,55 +100,67 @@ impl SessionPermissions {
     /// Check whether the permission set allows the given access to a raw route string.
     #[inline]
     pub fn allows_route(&self, route: &str, access: Access) -> bool {
-        // Create cache key from route and access
-        let route_hash = route_to_hash(route);
         let access_bits = access_to_bits(access);
-        let cache_key = (route_hash, access_bits);
 
-        // Fast path: check cache first (read-lock, released immediately)
-        {
-            let cache = self.check_cache.read();
-            if let Some(&result) = cache.get(&cache_key) {
-                return result;
-            }
+        if let Some(result) = self.cached_authorization(route, access_bits) {
+            return result;
         }
 
-        // Slow path: evaluate permissions
-        let mut allowed = false;
-        for p in self.compiled.iter() {
-            if !p.pattern.matches_str(route) {
-                continue;
-            }
-
-            // Access semantics: All matches everything; Read matches Read/All; Write matches Write/All
-            match (&p.access, &access) {
-                (Access::All, _) => {
-                    allowed = true;
-                    break;
-                }
-                (Access::Read, Access::Read) => {
-                    allowed = true;
-                    break;
-                }
-                (Access::Write, Access::Write) => {
-                    allowed = true;
-                    break;
-                }
-                _ => continue,
-            }
-        }
-
-        // Cache the result (write-lock, held briefly)
-        {
-            let mut cache = self.check_cache.write();
-            // Simple LRU: if cache exceeds 256 entries, clear it
-            if cache.len() >= 256 {
-                cache.clear();
-            }
-            cache.insert(cache_key, allowed);
-        }
+        let allowed = self.evaluate_route_access(route, access);
+        self.cache_authorization(route, access_bits, allowed);
 
         allowed
+    }
+
+    fn from_parts(inner: HashMap<String, String>, compiled: Vec<CompiledPermission>) -> Self {
+        Self {
+            inner: Arc::new(inner),
+            compiled: Arc::new(compiled),
+            check_cache: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    fn compile_permissions(perms: Vec<Permission>) -> Vec<CompiledPermission> {
+        let mut pattern_cache = (perms.len() > 8).then(|| HashMap::with_capacity(perms.len()));
+
+        perms
+            .into_iter()
+            .map(|permission| CompiledPermission::from_permission(permission, pattern_cache.as_mut()))
+            .collect()
+    }
+
+    fn cached_authorization(&self, route: &str, access_bits: u8) -> Option<bool> {
+        let cache = self.check_cache.read();
+        cache.get(&access_bits).and_then(|routes| routes.get(route).copied())
+    }
+
+    fn evaluate_route_access(&self, route: &str, access: Access) -> bool {
+        self.compiled
+            .iter()
+            .any(|permission| permission.allows(route, access))
+    }
+
+    fn cache_authorization(&self, route: &str, access_bits: u8, allowed: bool) {
+        let mut cache = self.check_cache.write();
+        let should_clear = Self::cached_entry_count(&cache) >= CHECK_CACHE_ENTRY_LIMIT
+            && cache
+                .get(&access_bits)
+                .is_none_or(|routes| !routes.contains_key(route));
+
+        if should_clear {
+            cache.clear();
+        }
+
+        let routes = cache.entry(access_bits).or_default();
+        if let Some(cached) = routes.get_mut(route) {
+            *cached = allowed;
+        } else {
+            routes.insert(route.to_string(), allowed);
+        }
+    }
+
+    fn cached_entry_count(cache: &AuthorizationCache) -> usize {
+        cache.values().map(HashMap::len).sum()
     }
 }
 impl fmt::Display for SessionPermissions {
@@ -172,14 +169,14 @@ impl fmt::Display for SessionPermissions {
     }
 }
 
-/// Convert route string to a hash for cache key
 #[inline]
-fn route_to_hash(route: &str) -> u64 {
-    let mut hash: u64 = 5381;
-    for byte in route.as_bytes() {
-        hash = hash.wrapping_mul(33).wrapping_add(*byte as u64);
-    }
-    hash
+fn permission_route_part(raw_permission: &str) -> &str {
+    raw_permission.split('#').next().unwrap_or("")
+}
+
+#[inline]
+fn access_grants(granted: Access, requested: Access) -> bool {
+    matches!(granted, Access::All) || granted == requested
 }
 
 /// Convert Access to a compact bit representation for cache key
@@ -246,5 +243,52 @@ mod tests {
         // Assert
         assert!(!notify_allowed);
         assert!(!queue_allowed);
+    }
+
+    #[test]
+    fn should_allow_read_given_all_access_permission() {
+        // Arrange
+        let permission = Permission::parse("notice://prod/orders/**").unwrap();
+        let perms = SessionPermissions::from_permissions(vec![permission]);
+        let route = Route::new("notice://prod/orders/create");
+
+        // Act
+        let can_read = perms.allows(&route, Access::Read);
+
+        // Assert
+        assert!(can_read);
+    }
+
+    #[test]
+    fn should_allow_write_given_all_access_permission() {
+        // Arrange
+        let permission = Permission::parse("notice://prod/orders/**").unwrap();
+        let perms = SessionPermissions::from_permissions(vec![permission]);
+        let route = Route::new("notice://prod/orders/create");
+
+        // Act
+        let can_write = perms.allows(&route, Access::Write);
+
+        // Assert
+        assert!(can_write);
+    }
+
+    #[test]
+    fn should_cache_authorization_by_route_string() {
+        // Arrange
+        let permission = Permission::parse("notice://prod/orders/**#write").unwrap();
+        let perms = SessionPermissions::from_permissions(vec![permission]);
+        let first_route = "notice://prod/orders/create";
+        let second_route = "notice://prod/orders/update";
+
+        // Act
+        let _ = perms.allows_route(first_route, Access::Write);
+        let _ = perms.allows_route(second_route, Access::Write);
+
+        // Assert
+        let cache = perms.check_cache.read();
+        let routes = cache.get(&access_to_bits(Access::Write)).unwrap();
+        assert!(routes.contains_key(first_route));
+        assert!(routes.contains_key(second_route));
     }
 }

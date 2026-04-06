@@ -185,7 +185,7 @@ impl Runtime {
             .unwrap_or(0)
     }
 
-    pub fn schedule_pending_fires(&self) -> usize {
+    pub fn schedule_pending_fire_claims(&self) -> usize {
         self.domains
             .read()
             .as_ref()
@@ -193,11 +193,11 @@ impl Runtime {
             .unwrap_or(0)
     }
 
-    pub fn schedule_publish_failures(&self) -> u64 {
+    pub fn schedule_notify_failures(&self) -> u64 {
         self.domains
             .read()
             .as_ref()
-            .map(|domains| domains.schedule.publish_failure_count())
+            .map(|domains| domains.schedule.notify_failure_count())
             .unwrap_or(0)
     }
 

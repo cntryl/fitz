@@ -280,12 +280,12 @@ fn should_support_reserve_operation_with_batch_size() {
     // Assert
     // Response format:
     // - status: "ok" or error code
-    // - messages: Array of {message_id, payload, lease_token}
+    // - messages: Array of {message_id, payload, inflight_token}
     // - count: Number of messages reserved
 }
 
 #[test]
-fn should_support_extend_operation_for_lease() {
+fn should_support_extend_operation_for_inflight_reservation() {
     // Arrange
     // Documentation test: EXTEND operation format
     //
@@ -293,17 +293,17 @@ fn should_support_extend_operation_for_lease() {
     // Request format:
     // - operation: "extend"
     // - message_id: ID of reserved message
-    // - lease_token: Current lease token
+    // - inflight_token: Current queue inflight token
     // - new_visibility_timeout: Extended timeout in seconds
     //
     // Assert
     // Response format:
     // - status: "ok" or error code
-    // - new_lease_token: Token for next extension
+    // - new_inflight_token: Token for next extension window
 }
 
 #[test]
-fn should_support_complete_operation_with_lease_token() {
+fn should_support_complete_operation_with_inflight_token() {
     // Arrange
     // Documentation test: COMPLETE operation format
     //
@@ -311,7 +311,7 @@ fn should_support_complete_operation_with_lease_token() {
     // Request format:
     // - operation: "complete"
     // - message_id: ID of message to complete
-    // - lease_token: Current lease token (prevents completion by others)
+    // - inflight_token: Current queue inflight token (prevents completion by others)
     //
     // Assert
     // Response format:
@@ -326,16 +326,16 @@ fn should_return_server_assigned_message_id() {
 }
 
 #[test]
-fn should_have_lease_token_for_exclusive_access() {
+fn should_have_inflight_token_for_exclusive_access() {
     // Arrange
-    // - Only holder of lease_token can complete or extend
+    // - Only holder of the inflight_token can complete or extend
     // - Other clients receive error if trying to complete with wrong token
 }
 
 #[test]
-fn should_have_visibility_timeout_for_lease_duration() {
+fn should_have_visibility_timeout_for_inflight_duration() {
     // Arrange
-    // visibility_timeout controls how long message stays leased
+    // visibility_timeout controls how long message stays reserved and invisible
 
     // Act
     // - Message unavailable for other reserves during timeout
@@ -365,8 +365,8 @@ fn should_have_queue_error_code_range_4000_4099() {
     // Queue-specific codes:
     // - 4010 = ERR_QUEUE_NOT_FOUND (route not found)
     // - 4011 = ERR_INVALID_MESSAGE_ID (malformed ID)
-    // - 4012 = ERR_LEASE_EXPIRED (message no longer reserved)
-    // - 4013 = ERR_INVALID_LEASE_TOKEN (wrong token provided)
+    // - 4012 = ERR_INFLIGHT_EXPIRED (message no longer reserved)
+    // - 4013 = ERR_INVALID_INFLIGHT_TOKEN (wrong token provided)
     // - 4014 = ERR_BATCH_SIZE_OUT_OF_RANGE (batch_size <1 or >1000)
     // - 4015 = ERR_VISIBILITY_TIMEOUT_OUT_OF_RANGE (timeout <0 or >43200)
 }
@@ -392,13 +392,13 @@ fn should_use_4010_for_queue_not_found() {
 }
 
 #[test]
-fn should_use_4012_for_lease_expired() {
-    // Test: Try to complete after lease expires returns 4012
+fn should_use_4012_for_inflight_expired() {
+    // Test: Try to complete after inflight reservation expires returns 4012
 }
 
 #[test]
-fn should_use_4013_for_invalid_lease_token() {
-    // Test: Try to complete with wrong lease_token returns 4013
+fn should_use_4013_for_invalid_inflight_token() {
+    // Test: Try to complete with wrong inflight_token returns 4013
 }
 
 #[test]
@@ -426,10 +426,10 @@ fn should_complete_enqueue_reserve_complete_cycle() {
     // assert
     // let reserved_msg = &reserve_resp.messages[0];
     // assert
-    // let lease_token = reserved_msg.lease_token;
+    // let inflight_token = reserved_msg.inflight_token;
 
     // Step 3: Complete message
-    // let complete_resp = queue.complete(message_id, lease_token);
+    // let complete_resp = queue.complete(message_id, inflight_token);
     // assert
 
     // Assert
@@ -453,7 +453,7 @@ fn should_persist_message_until_completed() {
 }
 
 #[test]
-fn should_return_message_to_queue_on_lease_expiry() {
+fn should_return_message_to_queue_on_inflight_expiry() {
     // Arrange
     // queue.enqueue("msg-1", "data");
     // let reserve_resp = queue.reserve(batch_size=10, timeout=1); // 1 second
@@ -467,14 +467,14 @@ fn should_return_message_to_queue_on_lease_expiry() {
 }
 
 #[test]
-fn should_allow_lease_extension_before_expiry() {
+fn should_allow_inflight_extension_before_expiry() {
     // Arrange
     // queue.enqueue("msg-1", "data");
     // let reserve_resp = queue.reserve(batch_size=10, timeout=1);
-    // let lease_token = reserve_resp.messages[0].lease_token;
+    // let inflight_token = reserve_resp.messages[0].inflight_token;
 
     // Act
-    // let extend_resp = queue.extend("msg-1", lease_token, timeout=60);
+    // let extend_resp = queue.extend("msg-1", inflight_token, timeout=60);
     // assert
 
     // Assert
@@ -513,7 +513,7 @@ fn should_respect_batch_size_upper_limit() {
 }
 
 #[test]
-fn should_reject_complete_with_wrong_lease_token() {
+fn should_reject_complete_with_wrong_inflight_token() {
     // Arrange
     // queue.enqueue("msg-1", "data");
     // let client1_resp = client1.reserve(batch_size=10, timeout=30);
@@ -555,12 +555,12 @@ fn should_support_multiple_concurrent_consumers() {
 }
 
 #[test]
-fn should_isolate_leases_between_consumers() {
+fn should_isolate_inflight_tokens_between_consumers() {
     // Arrange
-    // One consumer can't affect another's lease
+    // One consumer can't affect another's inflight reservation
     //
     // Setup:
-    // - Consumer A reserves message with token T1
+    // - Consumer A reserves message with inflight token T1
     // - Consumer B tries to complete same message
     //
     // Act
@@ -568,7 +568,7 @@ fn should_isolate_leases_between_consumers() {
     // - Consumer B receives error 4013 (invalid token)
     //
     // Assert
-    // - Message stays in Consumer A's lease
+    // - Message stays in Consumer A's inflight reservation
     // - Consumer B can't extend or complete
 }
 
@@ -624,14 +624,14 @@ fn should_reject_complete_without_write_scope() {
 // ============================================================================
 
 #[test]
-fn should_deduplicate_complete_for_same_lease_token() {
+fn should_deduplicate_complete_for_same_inflight_token() {
     // Arrange
-    // COMPLETE is safe to retry only while using the same live lease token
+    // COMPLETE is safe to retry only while using the same live inflight token
     //
     // Setup:
     // - Enqueue a message and reserve it
-    // - COMPLETE succeeds with {message_id, lease_token}
-    // - COMPLETE is retried with the same {message_id, lease_token}
+    // - COMPLETE succeeds with {message_id, inflight_token}
+    // - COMPLETE is retried with the same {message_id, inflight_token}
     //
     // Act
     // Behavior:
@@ -644,13 +644,13 @@ fn should_deduplicate_complete_for_same_lease_token() {
 }
 
 #[test]
-fn should_allow_reenqueue_after_abandoned_lease() {
+fn should_allow_reenqueue_after_abandoned_inflight_reservation() {
     // Arrange
     // Enqueue -> reserve -> abandon -> enqueue = allowed
     //
     // Setup:
     // - Enqueue a message
-    // - Consumer reserves, abandons lease (no extend/complete)
+    // - Consumer reserves, abandons inflight reservation (no extend/complete)
     // - Timeout expires, message returns to queue
     // - Enqueue another copy of the same logical work item
     //
@@ -677,8 +677,8 @@ fn should_support_empty_message_payload() {
 }
 
 #[test]
-fn should_assign_unique_lease_tokens() {
-    // Test: Two reserves of same message get different lease_tokens
+fn should_assign_unique_inflight_tokens() {
+    // Test: Two reserves of same message get different inflight tokens
 }
 
 #[test]

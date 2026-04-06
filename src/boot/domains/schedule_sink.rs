@@ -58,8 +58,8 @@ pub struct ScheduleDomainSink {
     snapshot_syncing: AtomicBool,
     last_snapshot_elapsed_us: AtomicU64,
     snapshot_epoch: Instant,
-    /// Total number of schedule fires that failed to route to a subscriber.
-    publish_failures: AtomicU64,
+    /// Total number of schedule notifications that failed to route.
+    notify_failures: AtomicU64,
     /// Total number of pending-fire acknowledgement persistence failures.
     ack_failures: AtomicU64,
     /// Rolling window of acknowledged execution timestamps for executions-per-minute tracking.
@@ -85,7 +85,7 @@ impl ScheduleDomainSink {
             snapshot_syncing: AtomicBool::new(false),
             last_snapshot_elapsed_us: AtomicU64::new(0),
             snapshot_epoch: Instant::now(),
-            publish_failures: AtomicU64::new(0),
+            notify_failures: AtomicU64::new(0),
             ack_failures: AtomicU64::new(0),
             recent_execution_ms: Mutex::new(VecDeque::new()),
             metrics: None,
@@ -189,7 +189,7 @@ impl ScheduleDomainSink {
                 if !fired.is_empty() {
                     snapshot_dirty = true;
                 }
-                for pending_fire in actor.pending_fires_for_delivery() {
+                for pending_fire in actor.pending_fire_claims_for_delivery() {
                     publishes.push((
                         *family,
                         pending_fire.fire_ms,
@@ -210,7 +210,7 @@ impl ScheduleDomainSink {
             if self.router.route(Envelope::new(destination, event)).is_ok() {
                 delivered.entry(family).or_default().push((fire_ms, route));
             } else {
-                self.publish_failures.fetch_add(1, Ordering::Relaxed);
+                self.notify_failures.fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -220,7 +220,7 @@ impl ScheduleDomainSink {
             let mut actors = self.actors.lock();
             for (family, delivered_fires) in delivered {
                 if let Some(actor) = actors.get_mut(&family) {
-                    match actor.ack_pending_fires(&delivered_fires) {
+                    match actor.ack_pending_fire_claims(&delivered_fires) {
                         Ok((acked, acknowledged_at_ms)) if acked > 0 => {
                             let mut deque = self.recent_execution_ms.lock();
                             let cutoff = acknowledged_at_ms.saturating_sub(60_000);
@@ -372,8 +372,8 @@ impl ScheduleDomainSink {
         deque.len() as f64
     }
 
-    pub fn publish_failure_count(&self) -> u64 {
-        self.publish_failures.load(Ordering::Relaxed)
+    pub fn notify_failure_count(&self) -> u64 {
+        self.notify_failures.load(Ordering::Relaxed)
     }
 
     pub fn ack_failure_count(&self) -> u64 {
@@ -870,7 +870,7 @@ mod tests {
     }
 
     #[test]
-    fn should_replay_pending_schedule_notify_after_restart_given_initial_publish_failure() {
+    fn should_replay_pending_schedule_notify_after_restart_given_initial_notify_failure() {
         // Arrange
         let family = RouteFamily::new(1);
         let session_id = 7;
@@ -1158,7 +1158,7 @@ mod tests {
     }
 
     #[test]
-    fn should_count_publish_failure_given_domain_routing_error() {
+    fn should_count_notify_failure_given_domain_routing_error() {
         // Arrange — create a due schedule but do NOT register the "schedule" domain
         // pattern so that router.route() returns an error when the fire is published.
         let family = RouteFamily::new(1);
@@ -1191,16 +1191,16 @@ mod tests {
             actors.insert(family, actor);
         }
 
-        assert_eq!(sink.publish_failure_count(), 0, "no failures before scan");
+        assert_eq!(sink.notify_failure_count(), 0, "no failures before scan");
 
         // Act — scan fires but domain pattern is not registered, routing fails
         sink.scan_due_schedules();
 
         // Assert
         assert_eq!(
-            sink.publish_failure_count(),
+            sink.notify_failure_count(),
             1,
-            "publish failure should be counted when domain routing returns an error"
+            "notify failure should be counted when domain routing returns an error"
         );
         assert_eq!(
             sink.ack_failure_count(),

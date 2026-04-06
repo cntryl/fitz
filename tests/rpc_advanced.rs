@@ -209,7 +209,7 @@ fn should_track_active_leases_when_dispatching_request() {
     let worker_addr = create_worker_addr(1);
 
     actor.receive(
-        fitz::domains::rpc::RpcMessage::Subscribe {
+        fitz::domains::rpc::RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
         },
         &mut ctx,
@@ -232,7 +232,7 @@ fn should_release_lease_when_receiving_stream_end_response() {
     let correlation_id = Uuid::new_v4();
 
     actor.receive(
-        fitz::domains::rpc::RpcMessage::Subscribe {
+        fitz::domains::rpc::RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
         },
         &mut ctx,
@@ -257,7 +257,7 @@ fn should_release_lease_when_receiving_ack() {
     let correlation_id = Uuid::new_v4();
 
     actor.receive(
-        fitz::domains::rpc::RpcMessage::Subscribe {
+        fitz::domains::rpc::RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
         },
         &mut ctx,
@@ -285,7 +285,7 @@ fn should_allow_worker_to_take_next_request_after_lease_released() {
     let correlation_id_2 = Uuid::new_v4();
 
     actor.receive(
-        fitz::domains::rpc::RpcMessage::Subscribe {
+        fitz::domains::rpc::RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
         },
         &mut ctx,
@@ -342,7 +342,7 @@ fn should_drop_late_response_after_lease_expired() {
     let correlation_id = Uuid::new_v4();
 
     actor.receive(
-        fitz::domains::rpc::RpcMessage::Subscribe {
+        fitz::domains::rpc::RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
         },
         &mut ctx,
@@ -373,7 +373,7 @@ fn should_track_multiple_concurrent_leases() {
     // Register 3 workers
     for i in 1..=3 {
         actor.receive(
-            fitz::domains::rpc::RpcMessage::Subscribe {
+            fitz::domains::rpc::RpcMessage::RegisterWorker {
                 worker_addr: create_worker_addr(i),
             },
             &mut ctx,

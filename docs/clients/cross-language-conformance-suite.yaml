@@ -163,7 +163,7 @@ scenarios:
       auth_mode: ["anonymous", "valid_jwt"]
     expected:
       - "client performs configured reconnect backoff"
-      - "subscriptions/workers are restored"
+      - "client re-creates subscriptions and worker registrations"
       - "new requests succeed post reconnect"
 
   - id: "CS-011"

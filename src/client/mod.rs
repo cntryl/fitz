@@ -1,6 +1,6 @@
 //! Client-side error handling and retry logic
 //!
-//! Implements exponential backoff, error classification, and recovery strategies
+//! Implements exponential backoff, error classification, and reconnect strategies
 //! for network operations against the Fitz broker.
 
 pub mod frame;

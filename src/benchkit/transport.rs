@@ -249,7 +249,7 @@ pub fn build_queue_dequeue_batch(queue_name: &str, batch_size: u32) -> Vec<u8> {
 
 /// Build QUEUE COMPLETE frame (msg_type 204)
 pub fn build_queue_complete(queue_name: &str, message_id: u64, token: u64) -> Vec<u8> {
-    // Wire format: [u32 route_len][route][u64 message_id][u64 lease_token]
+    // Wire format: [u32 route_len][route][u64 message_id][u64 inflight_token]
     let mut payload = Vec::new();
     payload.extend_from_slice(&(queue_name.len() as u32).to_be_bytes());
     payload.extend_from_slice(queue_name.as_bytes());

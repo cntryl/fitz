@@ -1487,8 +1487,8 @@ domains may still keep live server-side state where their contract requires it.
 | `Unsubscribe` | (future) | C→S | Stop watching |
 
 **Constraints:**
-- Messages are leased (not immediately deleted)
-- Lease token MUST match to complete or extend (fencing)
+- Messages are reserved with an inflight visibility window (not immediately deleted)
+- Queue inflight token MUST match to complete or extend
 - FIFO ordering preserved within single reserve call
 - Duplicate reserves may violate FIFO (wait or use single-call pattern)
 
@@ -2979,15 +2979,15 @@ Every operation includes route:
 #### Semantics
 
 - **Route-Carrying Operations**: Every request includes the full queue route, but the broker still maintains live lease ownership in memory for the running process
-- **At-Least-Once**: Messages delivered until completed; expired leases requeue them
+- **At-Least-Once**: Messages delivered until completed; expired inflight reservations requeue them
 - **FIFO-ish**: Generally delivered in enqueue order; leasing can cause out-of-order
-- **Visibility Timeout**: Leased messages invisible to other consumers until expiry
-- **Token Binding**: Complete/Extend require both message_id and lease_token
-- **Durability Split**: Committed queue data survives restart according to the broker's configured write policy; live leases and lease tokens do not
+- **Visibility Timeout**: Reserved messages are invisible to other consumers until expiry
+- **Token Binding**: Complete/Extend require both message_id and inflight_token
+- **Durability Split**: Committed queue data survives restart according to the broker's configured write policy; live inflight reservations and inflight tokens do not
 
 ##### Opaque Server-Generated IDs
 
-**`message_id` and `lease_token` are server-generated opaque `u64` values:**
+**`message_id` and `inflight_token` are server-generated opaque `u64` values:**
 
 - Clients MUST NOT generate, predict, or cache these values
 - Clients MUST treat them as opaque cookies

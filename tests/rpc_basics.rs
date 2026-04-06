@@ -40,7 +40,7 @@ fn should_reject_rpc_request_without_call_permission() {
         Route::new("worker://acme/auth/worker1"),
     );
     actor.receive(
-        RpcMessage::Subscribe {
+        RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
         },
         &mut ctx,
@@ -77,7 +77,7 @@ fn should_allow_rpc_request_with_valid_call_permission() {
         Route::new("worker://acme/auth/worker1"),
     );
     actor.receive(
-        RpcMessage::Subscribe {
+        RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
         },
         &mut ctx,
@@ -118,7 +118,7 @@ fn should_enforce_realm_isolation_in_authorization() {
         Route::new("worker://acme/data/worker1"),
     );
     actor_acme.receive(
-        RpcMessage::Subscribe {
+        RpcMessage::RegisterWorker {
             worker_addr: worker_acme.clone(),
         },
         &mut ctx,
@@ -147,7 +147,7 @@ fn should_enforce_realm_isolation_in_authorization() {
 }
 
 #[test]
-fn should_allow_worker_subscription_with_valid_permissions() {
+fn should_allow_worker_registration_with_valid_permissions() {
     // Arrange
     let mut actor = RpcRouteActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
@@ -164,7 +164,7 @@ fn should_allow_worker_subscription_with_valid_permissions() {
     let route = Route::new("rpc://acme/inventory/item/query");
 
     // Act
-    let result = session.subscribe_worker(worker_addr, &route, &mut actor, &mut ctx);
+    let result = session.register_worker(worker_addr, &route, &mut actor, &mut ctx);
 
     // Assert
     assert!(result.is_ok());
@@ -172,7 +172,7 @@ fn should_allow_worker_subscription_with_valid_permissions() {
 }
 
 #[test]
-fn should_reject_worker_subscription_without_permissions() {
+fn should_reject_worker_registration_without_permissions() {
     // Arrange
     let mut actor = RpcRouteActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
@@ -189,7 +189,7 @@ fn should_reject_worker_subscription_without_permissions() {
     let route = Route::new("rpc://acme/admin/user/delete");
 
     // Act
-    let result = session.subscribe_worker(unauthorized_worker, &route, &mut actor, &mut ctx);
+    let result = session.register_worker(unauthorized_worker, &route, &mut actor, &mut ctx);
 
     // Assert
     assert!(result.is_err());
@@ -207,7 +207,7 @@ fn should_enforce_scope_boundaries_for_rpc_calls() {
         Route::new("worker://acme/billing/worker1"),
     );
     actor.receive(
-        RpcMessage::Subscribe {
+        RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
         },
         &mut ctx,
@@ -246,7 +246,7 @@ fn should_allow_requests_within_granted_scope() {
         Route::new("worker://acme/billing/worker1"),
     );
     actor.receive(
-        RpcMessage::Subscribe {
+        RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
         },
         &mut ctx,
@@ -297,7 +297,7 @@ fn should_route_request_to_available_worker() {
         Route::new("worker://realm/service/worker1"),
     );
 
-    let subscribe_msg = RpcMessage::Subscribe {
+    let subscribe_msg = RpcMessage::RegisterWorker {
         worker_addr: worker_addr.clone(),
     };
     actor.receive(subscribe_msg, &mut ctx);
@@ -353,7 +353,7 @@ fn should_correlate_response_with_request() {
         Route::new("worker://realm/service/worker1"),
     );
 
-    let subscribe_msg = RpcMessage::Subscribe {
+    let subscribe_msg = RpcMessage::RegisterWorker {
         worker_addr: worker_addr.clone(),
     };
     actor.receive(subscribe_msg, &mut ctx);
@@ -425,7 +425,7 @@ fn should_distribute_requests_across_multiple_workers() {
             RouteFamily::new(1),
             Route::new(format!("worker://realm/service/worker{}", i)),
         );
-        let subscribe_msg = RpcMessage::Subscribe {
+        let subscribe_msg = RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
         };
         actor.receive(subscribe_msg, &mut ctx);
@@ -459,13 +459,13 @@ fn should_handle_worker_unsubscribe() {
         Route::new("worker://realm/service/worker1"),
     );
 
-    let subscribe_msg = RpcMessage::Subscribe {
+    let subscribe_msg = RpcMessage::RegisterWorker {
         worker_addr: worker_addr.clone(),
     };
     actor.receive(subscribe_msg, &mut ctx);
 
     // Act
-    let unsubscribe_msg = RpcMessage::Unsubscribe {
+    let unsubscribe_msg = RpcMessage::UnregisterWorker {
         worker_addr: worker_addr.clone(),
     };
     actor.receive(unsubscribe_msg, &mut ctx);
@@ -497,7 +497,7 @@ fn should_maintain_request_order_in_queue() {
         RouteFamily::new(1),
         Route::new("worker://realm/service/worker1"),
     );
-    let subscribe_msg = RpcMessage::Subscribe {
+    let subscribe_msg = RpcMessage::RegisterWorker {
         worker_addr: worker_addr.clone(),
     };
     actor.receive(subscribe_msg, &mut ctx);
@@ -517,7 +517,7 @@ fn should_handle_streaming_response_with_multiple_chunks() {
         Route::new("worker://realm/service/worker1"),
     );
     actor.receive(
-        RpcMessage::Subscribe {
+        RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
         },
         &mut ctx,
@@ -590,7 +590,7 @@ fn should_cleanup_state_after_request_completion() {
         Route::new("worker://realm/service/worker1"),
     );
     actor.receive(
-        RpcMessage::Subscribe {
+        RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
         },
         &mut ctx,

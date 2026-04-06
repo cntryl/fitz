@@ -98,6 +98,7 @@ If you want a single local service, this is the smallest useful compose file:
 ## Documentation
 
 - Full docs index: [docs/README.md](docs/README.md)
+- Architectural laws: [docs/development/architectural-laws.md](docs/development/architectural-laws.md)
 - Client protocol spec: [docs/clients/client-spec.md](docs/clients/client-spec.md)
 - User onboarding guides: [docs/user-guides](docs/user-guides)
 - Operations guides: [docs/operations](docs/operations)

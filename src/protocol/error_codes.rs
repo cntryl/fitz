@@ -49,8 +49,8 @@ pub mod notice {
 
 /// Queue domain error codes (per CLIENT_SPEC Queue Domain section)
 pub mod queue {
-    pub const ERR_INVALID_TOKEN: u16 = 4001; // AC-QUEUE-006: Invalid or wrong lease token
-    pub const ERR_LEASE_EXPIRED: u16 = 4002;
+    pub const ERR_INVALID_TOKEN: u16 = 4001; // AC-QUEUE-006: Invalid or wrong inflight token
+    pub const ERR_INFLIGHT_EXPIRED: u16 = 4002;
     pub const ERR_MESSAGE_NOT_FOUND: u16 = 4003;
     pub const ERR_QUEUE_NOT_FOUND: u16 = 4004;
     pub const ERR_QUEUE_FULL: u16 = 4005; // Backpressure: queue at capacity, client should retry with backoff

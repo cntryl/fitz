@@ -44,7 +44,7 @@ pub struct ScheduleFireClaim<'a> {
     pub executions_total: u64,
 }
 
-pub struct SchedulePendingFireAck<'a> {
+pub struct SchedulePendingFireClaimAck<'a> {
     pub route: &'a str,
     pub fire_ms: u64,
     pub executed_at_ms: u64,
@@ -61,7 +61,7 @@ pub struct PersistedSchedule {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PersistedPendingFire {
+pub struct PersistedPendingFireClaim {
     pub route: String,
     pub payload: Bytes,
     pub fire_ms: u64,
@@ -456,10 +456,10 @@ impl ScheduleStore {
         self.commit_or_inject(txn, write_options)
     }
 
-    pub fn ack_pending_fires(
+    pub fn ack_pending_fire_claims(
         &self,
         cf_id: u64,
-        items: &[SchedulePendingFireAck<'_>],
+        items: &[SchedulePendingFireClaimAck<'_>],
         write_options: WriteOptions,
     ) -> Result<(), String> {
         if items.is_empty() {
@@ -669,7 +669,10 @@ impl ScheduleStore {
         Ok(schedules.into_values().collect())
     }
 
-    pub fn load_pending_fires(&self, cf_id: u64) -> Result<Vec<PersistedPendingFire>, String> {
+    pub fn load_pending_fire_claims(
+        &self,
+        cf_id: u64,
+    ) -> Result<Vec<PersistedPendingFireClaim>, String> {
         let read_tx = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
@@ -687,7 +690,7 @@ impl ScheduleStore {
                 Self::decode_pending_fire_value(&value),
             ) {
                 (Ok((fire_ms, route)), Ok(payload)) => {
-                    pending.push(PersistedPendingFire {
+                    pending.push(PersistedPendingFireClaim {
                         route,
                         payload,
                         fire_ms,
@@ -705,7 +708,7 @@ impl ScheduleStore {
         Ok(pending)
     }
 
-    pub fn delete_pending_fires(
+    pub fn delete_pending_fire_claims(
         &self,
         cf_id: u64,
         items: &[(u64, String)],
@@ -999,12 +1002,14 @@ mod tests {
                 WriteOptions::buffered(),
             )
             .expect("claim due schedule");
-        let pending = store.load_pending_fires(1).expect("load pending fires");
+        let pending = store
+            .load_pending_fire_claims(1)
+            .expect("load pending fire claims");
 
         // Assert
         assert_eq!(
             pending,
-            vec![PersistedPendingFire {
+            vec![PersistedPendingFireClaim {
                 route: route.to_string(),
                 payload: payload.clone(),
                 fire_ms: original_fire_ms,
@@ -1077,17 +1082,19 @@ mod tests {
 
         // Act
         store
-            .ack_pending_fires(
+            .ack_pending_fire_claims(
                 1,
-                &[SchedulePendingFireAck {
+                &[SchedulePendingFireClaimAck {
                     route,
                     fire_ms: original_fire_ms,
                     executed_at_ms,
                 }],
                 WriteOptions::buffered(),
             )
-            .expect("ack pending fire");
-        let pending = store.load_pending_fires(1).expect("load pending fires");
+            .expect("ack pending fire claim");
+        let pending = store
+            .load_pending_fire_claims(1)
+            .expect("load pending fire claims");
         let schedules = store
             .load_all(1, WriteOptions::buffered())
             .expect("load schedules");

@@ -8,6 +8,10 @@ info:
     The admin API uses cookie-backed session authentication. Most `/api/v1/**`
     endpoints require a valid admin session cookie issued by `POST /api/v1/session`.
 
+    Fitz admin surfaces intentionally mix durable committed state and live broker-local
+    state. Schema descriptions call out which fields survive restart and which fields
+    are current-process or session-scoped only.
+
 servers:
   - url: http://localhost:4090
     description: Local development server
@@ -1049,7 +1053,7 @@ components:
 
     KvResourceDetail:
       type: object
-      description: Live in-memory KV resource detail for the current broker process. `transactions_active` counts only active session-scoped transactions and resets after disconnect cleanup or broker restart.
+      description: Durable KV committed data exists separately from this admin view. This resource detail describes only the current broker process's live in-memory transaction activity for the resource. `transactions_active` counts active session-scoped transactions and resets after disconnect cleanup or broker restart.
       required: [realm, area, resource, transactions_active]
       properties:
         realm: { type: string }
@@ -1057,7 +1061,7 @@ components:
         resource: { type: string }
         transactions_active:
           type: integer
-          description: Broker-local count of active in-memory KV transactions for this resource. Not durable and reset on disconnect cleanup or broker restart.
+          description: Broker-local count of active in-memory KV transactions for this resource. This is not a durable recovery handle and resets on disconnect cleanup or broker restart.
 
     QueueResourceDetail:
       type: object
@@ -1098,7 +1102,7 @@ components:
 
     ScheduleResourceDetail:
       type: object
-      description: Durable, boot-loaded schedule detail for the current broker. executions_total is a non-authoritative placeholder until durable execution history exists.
+      description: Durable, boot-loaded schedule definition detail for the current broker. This describes persisted timing intent, not durable subscriber delivery or durable execution history. `executions_total` remains a non-authoritative placeholder until durable execution history exists.
       required: [realm, area, resource, enabled, executions_total]
       properties:
         realm: { type: string }
@@ -1109,16 +1113,21 @@ components:
           type: [string, "null"]
         next_run:
           type: [string, "null"]
-        executions_total: { type: integer }
+        executions_total:
+          type: integer
+          description: Non-authoritative current broker counter. This is not durable execution history.
 
     NoticeResourceDetail:
       type: object
+      description: Live in-memory Notice detail for the current broker process. `subscriptions_active` is session-scoped fanout state only and disappears on disconnect cleanup or broker restart.
       required: [realm, area, resource, subscriptions_active]
       properties:
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
-        subscriptions_active: { type: integer }
+        subscriptions_active:
+          type: integer
+          description: Broker-local count of active Notice subscriptions for this resource. Not durable and not replayable.
 
     OperationEntry:
       type: object
@@ -1140,15 +1149,19 @@ components:
 
     RpcOperationDetail:
       type: object
-      description: Point-in-time live in-memory RPC state for a single operation on the current broker process. Counts reset on broker restart and do not represent durable backlog or recovery state.
+      description: Point-in-time live in-memory RPC state for a single operation on the current broker process. Worker registrations and pending requests are ephemeral, reset on disconnect cleanup or broker restart, and do not represent durable backlog or recovery state.
       required: [realm, area, resource, operation, workers_registered, requests_pending]
       properties:
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
         operation: { type: string }
-        workers_registered: { type: integer }
-        requests_pending: { type: integer }
+        workers_registered:
+          type: integer
+          description: Live in-memory workers currently registered for this exact operation on this broker process.
+        requests_pending:
+          type: integer
+          description: Live in-memory pending requests waiting for a worker on this broker process. Not durable across disconnect or restart.
 
     KvTransaction:
       type: object

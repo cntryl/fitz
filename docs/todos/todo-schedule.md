@@ -112,13 +112,13 @@ Operators must be able to inspect:
 - pending fire claims
 - current live schedule subscription count
 - execution rate
-- create, cancel, and publish-failure counters
+- create, cancel, and notify-failure counters
 - preload status after restart
 
 Current surface:
 
-- Global stats include `schedules_active`, `executions_per_minute`, `subscriptions_active`, and `pending_fires`.
-- Prometheus exports `fitz_schedule_active`, `fitz_schedule_executions_per_minute`, `fitz_schedule_subscriptions_active`, and `fitz_schedule_pending_fires`.
+- Global stats include `schedules_active`, `executions_per_minute`, `subscriptions_active`, and `pending_fire_claims`.
+- Prometheus exports `fitz_schedule_active`, `fitz_schedule_executions_per_minute`, `fitz_schedule_subscriptions_active`, and `fitz_schedule_pending_fire_claims`.
 - Admin schedule views are preloaded from persisted definitions at boot.
 
 Current gaps to keep explicit:

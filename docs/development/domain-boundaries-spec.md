@@ -19,6 +19,8 @@ This specification is prescriptive:
 - long-term maintenance outranks short-term ergonomics
 - domain boundaries are safety rails, not suggestions
 
+Use [architectural-laws.md](architectural-laws.md) as the review gate for every change that touches guarantees, durability, disconnect behavior, cross-domain composition, or observability semantics. This document explains how those laws apply to the individual Fitz domains.
+
 ## System Rules
 
 These rules apply to every domain in this document:
@@ -168,7 +170,7 @@ Schedule provides durable timing intent for future work. It persists schedule de
 - become RPC
 - become event storage
 - imply exactly-once delivery
-- turn live lease tokens into durable recovery handles
+- turn live inflight tokens into durable recovery handles
 - hide work backlog as generic messaging
 
 ### RPC must NOT:
@@ -263,7 +265,7 @@ Queue guarantees:
 
 - durable backlog according to the selected write policy
 - at-least-once delivery semantics
-- exclusive live reservation per active lease token
+- exclusive live reservation per active inflight token
 - retry and redelivery after lease expiry
 - optional dead-letter transition when retry policy is exhausted
 

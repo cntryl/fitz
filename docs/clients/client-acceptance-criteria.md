@@ -370,8 +370,8 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 **Then:**
 
 - Server returns `ReservedOk(messages=[{id, payload, token}])`
-- Message includes lease token
-- Message is invisible to other consumers during lease
+- Message includes a queue inflight token
+- Message is invisible to other consumers during the inflight reservation
 
 ### AC-QUEUE-003: Complete Message
 
@@ -386,27 +386,27 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 
 ### AC-QUEUE-004: Extend Message Lease
 
-**MUST** extend lease before expiration
-**Given:** Message reserved with 30s lease, 20s elapsed  
+**MUST** extend an inflight reservation before expiration
+**Given:** Message reserved with 30s inflight window, 20s elapsed  
 **When:** Client sends `Extend(message_id, token, extend_seconds=30)`  
 **Then:**
 
 - Server returns `ExtendOk`
-- Lease is extended by 30s (now 40s remaining)
+- Inflight reservation is extended by 30s (now 40s remaining)
 - Message remains invisible to other consumers
 
 ### AC-QUEUE-005: Message Redelivery on Lease Expiration
 
-**MUST** redeliver message after lease expires
-**Given:** Message reserved with 5s lease, client does not complete  
+**MUST** redeliver message after the inflight reservation expires
+**Given:** Message reserved with 5s inflight window, client does not complete  
 **When:**
 
-1. Client waits for lease TTL to expire (e.g. 5s) plus a short margin (servers may process expiry lazily on the next operation)
+1. Client waits for the inflight TTL to expire (e.g. 5s) plus a short margin (servers may process expiry lazily on the next operation)
 2. Same or another client sends `Reserve()` on that queue
    **Then:**
 
 - The message is returned to the ready queue and can be reserved again
-- New reserve returns the same message with a new lease token
+- New reserve returns the same message with a new inflight token
 
 ### AC-QUEUE-006: Invalid Token Rejection (renumbered)
 
@@ -1065,8 +1065,8 @@ Error codes follow the format `XXYY` where:
 
 | Code | Name | Description | Retryable |
 |------|------|-------------|-----------|
-| 4001 | ERR_INVALID_TOKEN | Lease token invalid or wrong (AC-QUEUE-006) | No |
-| 4002 | ERR_LEASE_EXPIRED | Message lease expired | No |
+| 4001 | ERR_INVALID_TOKEN | Queue inflight token invalid or wrong (AC-QUEUE-006) | No |
+| 4002 | ERR_INFLIGHT_EXPIRED | Message inflight reservation expired | No |
 | 4003 | ERR_MESSAGE_NOT_FOUND | Message ID not found in queue | No |
 | 4004 | ERR_QUEUE_NOT_FOUND | Queue resource does not exist | No |
 | 4005 | ERR_QUEUE_FULL | Queue at capacity (backpressure) | Yes (with backoff) |

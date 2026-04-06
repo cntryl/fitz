@@ -1,8 +1,8 @@
 use crate::api::admin::read_model::AdminReadModel;
 use crate::api::admin::{
-    QueueDeadLetter, QueueDeadLetterSnapshot as AdminQueueDeadLetterSnapshot, QueueInfo,
-    QueueInfoSnapshot as AdminQueueInfoSnapshot, QueueInflight,
-    QueueInflightSnapshot as AdminQueueInflightSnapshot,
+    QueueDeadLetter, QueueDeadLetterSnapshot as AdminQueueDeadLetterSnapshot, QueueInflight,
+    QueueInflightSnapshot as AdminQueueInflightSnapshot, QueueInfo,
+    QueueInfoSnapshot as AdminQueueInfoSnapshot,
 };
 use crate::domains::queue::core::QueueKey;
 use chrono::{TimeZone, Utc};

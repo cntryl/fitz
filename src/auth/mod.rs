@@ -235,7 +235,16 @@ fn now_epoch_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn normalized_session_claims(
+fn resolved_tenant_or_empty(raw_claims: &RawClaims) -> String {
+    raw_claims
+        .tid
+        .clone()
+        .or_else(|| raw_claims.tenant_id.clone())
+        .or_else(|| raw_claims.org_id.clone())
+        .unwrap_or_default()
+}
+
+fn validated_session_claims(
     raw_claims: RawClaims,
     allowlist: &[&str],
     audiences: &[String],
@@ -251,6 +260,29 @@ fn normalized_session_claims(
     let session_perms = crate::session::permissions::SessionPermissions::from_permissions(
         claims.permissions.clone(),
     );
+    Ok((session_perms, claims))
+}
+
+fn permissive_session_claims(
+    raw_claims: RawClaims,
+) -> Result<
+    (
+        crate::session::permissions::SessionPermissions,
+        crate::auth::Claims,
+    ),
+    String,
+> {
+    let tenant = resolved_tenant_or_empty(&raw_claims);
+    let permissions = raw_claims.normalized_permissions()?;
+    let claims = crate::auth::Claims {
+        sub: raw_claims.sub,
+        tenant,
+        roles: raw_claims.roles.unwrap_or_default(),
+        permissions: permissions.clone(),
+        exp: raw_claims.exp,
+    };
+    let session_perms =
+        crate::session::permissions::SessionPermissions::from_permissions(permissions);
     Ok((session_perms, claims))
 }
 
@@ -288,33 +320,7 @@ pub fn permissions_from_compact_jwt(
 > {
     let raw_claims = claims::parse_jwt_noverify(compact)?;
 
-    // Resolve tenant (prefer tid > tenant_id > org_id, fallback to empty for no-verify path)
-    let tenant = if let Some(t) = &raw_claims.tid {
-        t.clone()
-    } else if let Some(t) = &raw_claims.tenant_id {
-        t.clone()
-    } else if let Some(t) = &raw_claims.org_id {
-        t.clone()
-    } else {
-        // For no-verify path without tenant field, use empty string
-        String::new()
-    };
-
-    // Get normalized permissions
-    let perms = raw_claims.normalized_permissions()?;
-
-    // Build Claims object with expiration time
-    let claims = crate::auth::Claims {
-        sub: raw_claims.sub.clone(),
-        tenant,
-        roles: raw_claims.roles.clone().unwrap_or_default(),
-        permissions: perms.clone(),
-        exp: raw_claims.exp,
-    };
-
-    let session_perms = crate::session::permissions::SessionPermissions::from_permissions(perms);
-
-    Ok((session_perms, claims))
+    permissive_session_claims(raw_claims)
 }
 
 pub fn permissions_from_signed_jwt(
@@ -331,32 +337,7 @@ pub fn permissions_from_signed_jwt(
     let raw_claims: RawClaims =
         serde_json::from_value(claims_value).map_err(|e| format!("json parse error: {}", e))?;
 
-    // Resolve tenant (prefer tid > tenant_id > org_id, fallback to empty)
-    let tenant = if let Some(t) = &raw_claims.tid {
-        t.clone()
-    } else if let Some(t) = &raw_claims.tenant_id {
-        t.clone()
-    } else if let Some(t) = &raw_claims.org_id {
-        t.clone()
-    } else {
-        String::new()
-    };
-
-    let perms = raw_claims.normalized_permissions()?;
-
-    // Build Claims object with expiration time
-    let claims = crate::auth::Claims {
-        sub: raw_claims.sub.clone(),
-        tenant,
-        roles: raw_claims.roles.clone().unwrap_or_default(),
-        permissions: perms.clone(),
-        exp: raw_claims.exp,
-    };
-
-    Ok((
-        crate::session::permissions::SessionPermissions::from_permissions(perms),
-        claims,
-    ))
+    permissive_session_claims(raw_claims)
 }
 
 pub fn permissions_from_hmac_jwt(
@@ -373,30 +354,7 @@ pub fn permissions_from_hmac_jwt(
     let raw_claims: RawClaims =
         serde_json::from_value(claims_value).map_err(|e| format!("json parse error: {}", e))?;
 
-    let tenant = if let Some(t) = &raw_claims.tid {
-        t.clone()
-    } else if let Some(t) = &raw_claims.tenant_id {
-        t.clone()
-    } else if let Some(t) = &raw_claims.org_id {
-        t.clone()
-    } else {
-        String::new()
-    };
-
-    let perms = raw_claims.normalized_permissions()?;
-
-    let claims = crate::auth::Claims {
-        sub: raw_claims.sub.clone(),
-        tenant,
-        roles: raw_claims.roles.clone().unwrap_or_default(),
-        permissions: perms.clone(),
-        exp: raw_claims.exp,
-    };
-
-    Ok((
-        crate::session::permissions::SessionPermissions::from_permissions(perms),
-        claims,
-    ))
+    permissive_session_claims(raw_claims)
 }
 
 pub async fn permissions_from_jwt_using_jwks(
@@ -441,7 +399,7 @@ pub async fn permissions_from_jwt_using_jwks(
     let raw_claims: RawClaims = serde_json::from_value(token_data.claims)
         .map_err(|e| format!("json parse error: {}", e))?;
 
-    normalized_session_claims(raw_claims, &[issuer.issuer.as_str()], audiences)
+    validated_session_claims(raw_claims, &[issuer.issuer.as_str()], audiences)
 }
 
 /// Verify a JWT using the configured verification path.
@@ -473,7 +431,7 @@ pub async fn permissions_from_verified_jwt(
                 token::verify_jwt_with_hmac_secret(compact, config.secret.as_bytes())?;
             let verified_raw: RawClaims = serde_json::from_value(claims_value)
                 .map_err(|e| format!("json parse error: {}", e))?;
-            normalized_session_claims(verified_raw, &[], auth_config.audiences())
+            validated_session_claims(verified_raw, &[], auth_config.audiences())
         }
         AuthConfig::Jwks(_) => {
             let issuer = auth_config
@@ -673,5 +631,55 @@ mod auth_tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("exactly one tenant id"));
+    }
+
+    #[test]
+    fn should_resolve_org_id_for_compact_jwt_given_primary_tenant_claims_missing() {
+        // Arrange
+        let claims = json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "user:1",
+            "exp": 9_999_999_999u64,
+            "org_id": "realm-from-org",
+            "fitz": { "permissions": ["stream://realm-from-org/area1/orders/*#write"] }
+        });
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret-key"),
+        )
+        .unwrap();
+
+        // Act
+        let (_perms, normalized_claims) = permissions_from_compact_jwt(&token).unwrap();
+
+        // Assert
+        assert_eq!(normalized_claims.tenant, "realm-from-org");
+    }
+
+    #[test]
+    fn should_use_empty_tenant_for_hmac_jwt_given_no_tenant_claims() {
+        // Arrange
+        let claims = json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "user:1",
+            "exp": 9_999_999_999u64,
+            "fitz": { "permissions": ["stream://realm1/area1/orders/*#write"] }
+        });
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret-key"),
+        )
+        .unwrap();
+
+        // Act
+        let (_perms, normalized_claims) =
+            permissions_from_hmac_jwt(&token, b"test-secret-key").unwrap();
+
+        // Assert
+        assert_eq!(normalized_claims.tenant, "");
     }
 }

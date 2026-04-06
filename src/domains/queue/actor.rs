@@ -60,7 +60,7 @@ use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
 
 use super::{
-    MessageId, QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueKey, QueueInflightSnapshot,
+    MessageId, QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueInflightSnapshot, QueueKey,
     QueueMessage, QueueResponse, ReservedMessage,
 };
 
@@ -332,6 +332,15 @@ enum PersistedReadyMutation {
         left: ReadyRange,
         right: ReadyRange,
     },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PersistedIndexMutationPlan {
+    ready_mutation: Option<(usize, PersistedReadyMutation)>,
+    delayed_index_delete: Option<u64>,
+    staged_ready_count: usize,
+    staged_delayed_count: usize,
+    staged_next_delayed_visibility: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1222,6 +1231,127 @@ impl QueueActor {
         count
     }
 
+    fn plan_index_mutation_for_unavailable_message(
+        &self,
+        id: MessageId,
+    ) -> PersistedIndexMutationPlan {
+        let ready_mutation = Self::plan_ready_index_mutation(&self.persisted_ready_shards, id);
+        let delayed_index_delete = self.persisted_delayed.get(&id).copied();
+
+        PersistedIndexMutationPlan {
+            ready_mutation,
+            delayed_index_delete,
+            staged_ready_count: self.staged_ready_count_after_mutation(ready_mutation),
+            staged_delayed_count: self
+                .persisted_delayed
+                .len()
+                .saturating_sub(usize::from(delayed_index_delete.is_some())),
+            staged_next_delayed_visibility: if delayed_index_delete.is_some() {
+                self.min_persisted_delayed_visibility_ms_excluding(id)
+            } else {
+                self.min_persisted_delayed_visibility_ms()
+            },
+        }
+    }
+
+    fn write_persisted_ready_mutation(
+        &self,
+        txn: &mut cntryl_midge::Transaction,
+        shard: usize,
+        mutation: PersistedReadyMutation,
+    ) -> Result<(), String> {
+        match mutation {
+            PersistedReadyMutation::Delete { removed } => txn
+                .delete(self.ready_range_key(shard, removed.next))
+                .map_err(|e| format!("Failed to delete queue ready index: {:?}", e)),
+            PersistedReadyMutation::Replace { removed, inserted } => txn
+                .delete(self.ready_range_key(shard, removed.next))
+                .and_then(|_| {
+                    txn.put(
+                        self.ready_range_key(shard, inserted.next),
+                        Self::encode_ready_range_value(inserted),
+                        None,
+                    )
+                })
+                .map_err(|e| format!("Failed to replace queue ready index: {:?}", e)),
+            PersistedReadyMutation::Split {
+                removed,
+                left,
+                right,
+            } => txn
+                .delete(self.ready_range_key(shard, removed.next))
+                .and_then(|_| {
+                    txn.put(
+                        self.ready_range_key(shard, left.next),
+                        Self::encode_ready_range_value(left),
+                        None,
+                    )
+                })
+                .and_then(|_| {
+                    txn.put(
+                        self.ready_range_key(shard, right.next),
+                        Self::encode_ready_range_value(right),
+                        None,
+                    )
+                })
+                .map_err(|e| format!("Failed to split queue ready index: {:?}", e)),
+        }
+    }
+
+    fn write_index_mutation_plan(
+        &self,
+        txn: &mut cntryl_midge::Transaction,
+        id: MessageId,
+        plan: PersistedIndexMutationPlan,
+        dead_lettered_at_ms: Option<u64>,
+    ) -> Result<(), String> {
+        if let Some((shard, mutation)) = plan.ready_mutation {
+            self.write_persisted_ready_mutation(txn, shard, mutation)
+                .map_err(|error| format!("Failed to update ready index for message {}: {}", id, error))?;
+        }
+
+        if let Some(visible_at_ms) = plan.delayed_index_delete {
+            txn.delete(self.delayed_index_key(visible_at_ms, id))
+                .map_err(|e| format!("Failed to update delayed index for message {}: {:?}", id, e))?;
+        }
+
+        if let Some(dead_lettered_at_ms) = dead_lettered_at_ms {
+            txn.put(self.dlq_index_key(dead_lettered_at_ms, id), Vec::new(), None)
+                .map_err(|e| format!("Failed to write DLQ index for message {}: {:?}", id, e))?;
+        }
+
+        txn.put(
+            self.index_meta_key.clone(),
+            Self::encode_index_meta(
+                self.next_id_limit,
+                plan.staged_ready_count as u64,
+                plan.staged_delayed_count as u64,
+                plan.staged_next_delayed_visibility,
+            ),
+            None,
+        )
+        .map_err(|e| format!("Failed to update queue index meta for message {}: {:?}", id, e))
+    }
+
+    fn apply_index_mutation_plan(
+        &mut self,
+        id: MessageId,
+        plan: PersistedIndexMutationPlan,
+        dead_lettered_at_ms: Option<u64>,
+    ) {
+        if let Some((shard, mutation)) = plan.ready_mutation {
+            self.apply_ready_index_mutation(shard, mutation);
+        }
+
+        if plan.delayed_index_delete.is_some() {
+            self.remove_persisted_delayed(id);
+        }
+
+        if let Some(dead_lettered_at_ms) = dead_lettered_at_ms {
+            self.insert_persisted_dlq(id, dead_lettered_at_ms);
+        }
+    }
+
     fn ready_range_key_with_prefix(prefix: &[u8], shard: usize, start: u64) -> Vec<u8> {
         let tens = (shard / 10) as u8;
         let ones = (shard % 10) as u8;
@@ -1318,7 +1448,12 @@ impl QueueActor {
     }
 
     #[allow(dead_code)]
-    fn inflight_index_key(&self, expires_at_ms: u64, inflight_epoch: u64, id: MessageId) -> Vec<u8> {
+    fn inflight_index_key(
+        &self,
+        expires_at_ms: u64,
+        inflight_epoch: u64,
+        id: MessageId,
+    ) -> Vec<u8> {
         let mut key =
             Vec::with_capacity(self.inflight_index_prefix.len() + (Self::PADDED_U64_WIDTH * 3) + 2);
         key.extend_from_slice(&self.inflight_index_prefix);
@@ -2820,33 +2955,21 @@ impl QueueActor {
             return response;
         }
 
-        let removing_delayed = self.persisted_delayed.contains_key(&id);
-        let (stored_layout, delayed_visible_at_ms) = if let Some(record) = self.records.get(&id) {
+        let (stored_layout, _record_visible_at_ms) = if let Some(record) = self.records.get(&id) {
             (
                 self.record_layouts
                     .get(&id)
                     .copied()
                     .unwrap_or(StoredRecordLayout::EmbeddedHeader),
-                removing_delayed.then_some(record.visible_at_ms),
+                record.visible_at_ms,
             )
         } else {
             match self.load_record_metadata_from_store(id) {
-                Ok((record, layout)) => (layout, removing_delayed.then_some(record.visible_at_ms)),
-                Err(_) => (StoredRecordLayout::EmbeddedHeader, None),
+                Ok((record, layout)) => (layout, record.visible_at_ms),
+                Err(_) => (StoredRecordLayout::EmbeddedHeader, 0),
             }
         };
-        let persisted_ready_mutation =
-            Self::plan_ready_index_mutation(&self.persisted_ready_shards, id);
-        let staged_ready_count = self.staged_ready_count_after_mutation(persisted_ready_mutation);
-        let staged_delayed_count = self
-            .persisted_delayed
-            .len()
-            .saturating_sub(usize::from(removing_delayed));
-        let staged_next_delayed_visibility = if removing_delayed {
-            self.min_persisted_delayed_visibility_ms_excluding(id)
-        } else {
-            self.min_persisted_delayed_visibility_ms()
-        };
+        let index_plan = self.plan_index_mutation_for_unavailable_message(id);
 
         let cf_id = self.queue_key.family.id();
         let header_key = self.cached_header_key(id);
@@ -2869,94 +2992,13 @@ impl QueueActor {
                     Err(format!("Failed to delete message {} in txn: {:?}", id, e))
                 }
                 Ok(()) => {
-                    let mut index_update_failed = false;
-                    if let Some((shard, mutation)) = persisted_ready_mutation {
-                        let ready_result = match mutation {
-                            PersistedReadyMutation::Delete { removed } => {
-                                txn.delete(self.ready_range_key(shard, removed.next))
-                            }
-                            PersistedReadyMutation::Replace { removed, inserted } => txn
-                                .delete(self.ready_range_key(shard, removed.next))
-                                .and_then(|_| {
-                                    txn.put(
-                                        self.ready_range_key(shard, inserted.next),
-                                        Self::encode_ready_range_value(inserted),
-                                        None,
-                                    )
-                                }),
-                            PersistedReadyMutation::Split {
-                                removed,
-                                left,
-                                right,
-                            } => txn
-                                .delete(self.ready_range_key(shard, removed.next))
-                                .and_then(|_| {
-                                    txn.put(
-                                        self.ready_range_key(shard, left.next),
-                                        Self::encode_ready_range_value(left),
-                                        None,
-                                    )
-                                })
-                                .and_then(|_| {
-                                    txn.put(
-                                        self.ready_range_key(shard, right.next),
-                                        Self::encode_ready_range_value(right),
-                                        None,
-                                    )
-                                }),
-                        };
-
-                        if let Err(e) = ready_result {
-                            eprintln!(
-                                "WARN: Failed to update ready index for message {}: {:?}",
-                                id, e
-                            );
-                            index_update_failed = true;
-                        }
-                    }
-
-                    if let Some(visible_at_ms) = delayed_visible_at_ms {
-                        if let Err(e) = txn.delete(self.delayed_index_key(visible_at_ms, id)) {
-                            eprintln!(
-                                "WARN: Failed to update delayed index for message {}: {:?}",
-                                id, e
-                            );
-                            index_update_failed = true;
-                        }
-                    }
-
-                    if let Err(e) = txn.put(
-                        self.index_meta_key.clone(),
-                        Self::encode_index_meta(
-                            self.next_id_limit,
-                            staged_ready_count as u64,
-                            staged_delayed_count as u64,
-                            staged_next_delayed_visibility,
-                        ),
-                        None,
-                    ) {
-                        eprintln!(
-                            "WARN: Failed to update queue index meta for message {}: {:?}",
-                            id, e
-                        );
-                        index_update_failed = true;
-                    }
-
-                    if index_update_failed {
-                        return QueueResponse::Error {
-                            message: format!(
-                                "Failed to update queue recovery index while deleting message {}",
-                                id
-                            ),
-                        };
+                    if let Err(error) = self.write_index_mutation_plan(&mut txn, id, index_plan, None) {
+                        return QueueResponse::Error { message: error };
                     }
 
                     match Self::commit_ack_transaction(txn, self.commit_write_options) {
                         Ok(()) => {
-                            if let Some((shard, mutation)) = persisted_ready_mutation {
-                                self.apply_ready_index_mutation(shard, mutation);
-                            }
-                            self.remove_persisted_delayed(id);
+                            self.apply_index_mutation_plan(id, index_plan, None);
                             Ok(())
                         }
                         Err(e) => {
@@ -3250,8 +3292,8 @@ impl QueueActor {
                 };
 
                 if is_dlq {
-                    let prior_visible_at_ms = record.visible_at_ms;
                     let dead_lettered_at_ms = now_epoch_ms;
+                    let index_plan = self.plan_index_mutation_for_unavailable_message(id);
                     record.state = QueueState::Dlq;
                     record.ready_seq = None;
                     record.visible_at_ms = 0;
@@ -3259,21 +3301,6 @@ impl QueueActor {
                     record.inflight_expires_at_ms = None;
                     record.dead_lettered_at_ms = Some(dead_lettered_at_ms);
                     record.dlq_reason = Some(DlqReason::MaxAttemptsExceeded);
-
-                    let persisted_ready_mutation =
-                        Self::plan_ready_index_mutation(&self.persisted_ready_shards, id);
-                    let removing_delayed = self.persisted_delayed.contains_key(&id);
-                    let staged_ready_count =
-                        self.staged_ready_count_after_mutation(persisted_ready_mutation);
-                    let staged_delayed_count = self
-                        .persisted_delayed
-                        .len()
-                        .saturating_sub(usize::from(removing_delayed));
-                    let staged_next_delayed_visibility = if removing_delayed {
-                        self.min_persisted_delayed_visibility_ms_excluding(id)
-                    } else {
-                        self.min_persisted_delayed_visibility_ms()
-                    };
                     let write_result =
                         if matches!(record_layout, StoredRecordLayout::SplitHeaderBody)
                             && has_body_key
@@ -3306,93 +3333,13 @@ impl QueueActor {
                         return;
                     }
 
-                    let mut index_update_failed = false;
-                    if let Some((shard, mutation)) = persisted_ready_mutation {
-                        let ready_result = match mutation {
-                            PersistedReadyMutation::Delete { removed } => {
-                                txn.delete(self.ready_range_key(shard, removed.next))
-                            }
-                            PersistedReadyMutation::Replace { removed, inserted } => txn
-                                .delete(self.ready_range_key(shard, removed.next))
-                                .and_then(|_| {
-                                    txn.put(
-                                        self.ready_range_key(shard, inserted.next),
-                                        Self::encode_ready_range_value(inserted),
-                                        None,
-                                    )
-                                }),
-                            PersistedReadyMutation::Split {
-                                removed,
-                                left,
-                                right,
-                            } => txn
-                                .delete(self.ready_range_key(shard, removed.next))
-                                .and_then(|_| {
-                                    txn.put(
-                                        self.ready_range_key(shard, left.next),
-                                        Self::encode_ready_range_value(left),
-                                        None,
-                                    )
-                                })
-                                .and_then(|_| {
-                                    txn.put(
-                                        self.ready_range_key(shard, right.next),
-                                        Self::encode_ready_range_value(right),
-                                        None,
-                                    )
-                                }),
-                        };
-
-                        if let Err(e) = ready_result {
-                            eprintln!(
-                                "WARN: Failed to update ready index for DLQ message {}: {:?}",
-                                id, e
-                            );
-                            index_update_failed = true;
-                        }
-                    }
-
-                    if removing_delayed {
-                        if let Err(e) = txn.delete(self.delayed_index_key(prior_visible_at_ms, id))
-                        {
-                            eprintln!(
-                                "WARN: Failed to update delayed index for DLQ message {}: {:?}",
-                                id, e
-                            );
-                            index_update_failed = true;
-                        }
-                    }
-
-                    if let Err(e) = txn.put(
-                        self.dlq_index_key(dead_lettered_at_ms, id),
-                        Vec::new(),
-                        None,
+                    if let Err(error) = self.write_index_mutation_plan(
+                        &mut txn,
+                        id,
+                        index_plan,
+                        Some(dead_lettered_at_ms),
                     ) {
-                        eprintln!(
-                            "WARN: Failed to write DLQ index for message {}: {:?}",
-                            id, e
-                        );
-                        index_update_failed = true;
-                    }
-
-                    if let Err(e) = txn.put(
-                        self.index_meta_key.clone(),
-                        Self::encode_index_meta(
-                            self.next_id_limit,
-                            staged_ready_count as u64,
-                            staged_delayed_count as u64,
-                            staged_next_delayed_visibility,
-                        ),
-                        None,
-                    ) {
-                        eprintln!(
-                            "WARN: Failed to update queue index meta for DLQ message {}: {:?}",
-                            id, e
-                        );
-                        index_update_failed = true;
-                    }
-
-                    if index_update_failed {
+                        eprintln!("WARN: {}", error);
                         return;
                     }
 
@@ -3406,11 +3353,7 @@ impl QueueActor {
                         obs::METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY,
                         update_start,
                     );
-                    if let Some((shard, mutation)) = persisted_ready_mutation {
-                        self.apply_ready_index_mutation(shard, mutation);
-                    }
-                    self.remove_persisted_delayed(id);
-                    self.insert_persisted_dlq(id, dead_lettered_at_ms);
+                    self.apply_index_mutation_plan(id, index_plan, Some(dead_lettered_at_ms));
                     self.cache_record(
                         id,
                         record.metadata_only_from(),

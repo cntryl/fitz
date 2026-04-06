@@ -279,19 +279,19 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
-    output.push_str("# HELP fitz_schedule_pending_fires Durably claimed schedule fires awaiting successful publish acknowledgement\n");
-    output.push_str("# TYPE fitz_schedule_pending_fires gauge\n");
+    output.push_str("# HELP fitz_schedule_pending_fire_claims Durably claimed schedule fires awaiting successful notify acknowledgement\n");
+    output.push_str("# TYPE fitz_schedule_pending_fire_claims gauge\n");
     output.push_str(&format!(
-        "fitz_schedule_pending_fires {}\n",
-        runtime.schedule_pending_fires()
+        "fitz_schedule_pending_fire_claims {}\n",
+        runtime.schedule_pending_fire_claims()
     ));
     output.push('\n');
 
-    output.push_str("# HELP fitz_schedule_publish_failures_total Total schedule fires that failed to route to a subscriber\n");
-    output.push_str("# TYPE fitz_schedule_publish_failures_total counter\n");
+    output.push_str("# HELP fitz_schedule_notify_failures_total Total schedule notifications that failed to route\n");
+    output.push_str("# TYPE fitz_schedule_notify_failures_total counter\n");
     output.push_str(&format!(
-        "fitz_schedule_publish_failures_total {}\n",
-        runtime.schedule_publish_failures()
+        "fitz_schedule_notify_failures_total {}\n",
+        runtime.schedule_notify_failures()
     ));
     output.push('\n');
 
@@ -433,8 +433,8 @@ mod tests {
         assert!(metrics.contains("fitz_schedule_active 1"));
         assert!(metrics.contains("fitz_schedule_executions_per_minute 1"));
         assert!(metrics.contains("fitz_schedule_subscriptions_active 0"));
-        assert!(metrics.contains("fitz_schedule_pending_fires 1"));
-        assert!(metrics.contains("fitz_schedule_publish_failures_total 0"));
+        assert!(metrics.contains("fitz_schedule_pending_fire_claims 1"));
+        assert!(metrics.contains("fitz_schedule_notify_failures_total 0"));
         assert!(metrics.contains("fitz_schedule_ack_failures_total 0"));
         assert!(metrics.contains("fitz_schedule_overdue_normalizations_total 0"));
     }

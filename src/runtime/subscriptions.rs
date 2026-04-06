@@ -185,6 +185,86 @@ impl Node {
             double_star_suffixes: SmallVec::new(),
         }
     }
+
+    fn add_terminal(&mut self, subscription_id: SubscriptionId) {
+        if !self.terminals.contains(&subscription_id) {
+            self.terminals.push(subscription_id);
+        }
+    }
+
+    fn remove_terminal(&mut self, subscription_id: SubscriptionId) {
+        self.terminals.retain(|id| *id != subscription_id);
+    }
+
+    fn add_double_star(
+        &mut self,
+        subscription_id: SubscriptionId,
+        suffix: Arc<[CompiledPatternSegment]>,
+    ) {
+        let is_duplicate = self
+            .double_star_subs
+            .iter()
+            .zip(self.double_star_suffixes.iter())
+            .any(|(id, existing_suffix)| {
+                *id == subscription_id && existing_suffix.as_ref() == suffix.as_ref()
+            });
+
+        if !is_duplicate {
+            self.double_star_subs.push(subscription_id);
+            self.double_star_suffixes.push(suffix);
+        }
+    }
+
+    fn remove_double_star(
+        &mut self,
+        subscription_id: SubscriptionId,
+        suffix: &[CompiledPatternSegment],
+    ) {
+        let mut index = 0;
+        while index < self.double_star_subs.len() {
+            if self.double_star_subs[index] == subscription_id
+                && self.double_star_suffixes[index].as_ref() == suffix
+            {
+                self.double_star_subs.swap_remove(index);
+                self.double_star_suffixes.swap_remove(index);
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    fn collect_double_star_matches(
+        &self,
+        route_segments: &[CompiledRouteSegment],
+        segment_index: usize,
+        results: &mut SubscriptionMatches,
+    ) {
+        for (subscription_id, suffix) in self
+            .double_star_subs
+            .iter()
+            .zip(self.double_star_suffixes.iter())
+        {
+            if suffix.is_empty() || matches_suffix_compiled(suffix, route_segments, segment_index) {
+                push_unique_subscription(results, *subscription_id);
+            }
+        }
+    }
+
+    fn collect_final_matches(&self, results: &mut SubscriptionMatches) {
+        if !self.terminals.is_empty() {
+            results.extend_from_slice(&self.terminals);
+        }
+
+        for (subscription_id, suffix) in self
+            .double_star_subs
+            .iter()
+            .zip(self.double_star_suffixes.iter())
+        {
+            if suffix.is_empty() {
+                push_unique_subscription(results, *subscription_id);
+            }
+        }
+    }
 }
 
 /// High-performance subscription index for wildcard route matching
@@ -359,17 +439,11 @@ impl SubscriptionIndex {
                 }
                 // Check double-star entries against remaining route (rare).
                 if !node.double_star_subs.is_empty() {
-                    for (sub_id, suffix) in node
-                        .double_star_subs
-                        .iter()
-                        .zip(node.double_star_suffixes.iter())
-                    {
-                        if suffix.is_empty()
-                            || matches_suffix_compiled(suffix, &compiled_route_segments, seg_idx)
-                        {
-                            push_unique_subscription(&mut results, *sub_id);
-                        }
-                    }
+                    node.collect_double_star_matches(
+                        &compiled_route_segments,
+                        seg_idx,
+                        &mut results,
+                    );
                 }
             }
             std::mem::swap(&mut current, &mut next);
@@ -377,22 +451,7 @@ impl SubscriptionIndex {
 
         // All route segments consumed — collect terminals from final frontier.
         for &node_id in &current {
-            let node = &self.nodes[node_id as usize];
-            if !node.terminals.is_empty() {
-                results.extend_from_slice(&node.terminals);
-            }
-            // Check empty-suffix double-star entries (match end of route).
-            if !node.double_star_subs.is_empty() {
-                for (sub_id, suffix) in node
-                    .double_star_subs
-                    .iter()
-                    .zip(node.double_star_suffixes.iter())
-                {
-                    if suffix.is_empty() {
-                        push_unique_subscription(&mut results, *sub_id);
-                    }
-                }
-            }
+            self.nodes[node_id as usize].collect_final_matches(&mut results);
         }
 
         results
@@ -430,10 +489,7 @@ impl SubscriptionIndex {
     ) {
         if seg_idx >= segments.len() {
             // Pattern exhausted: terminal subscriber at this node.
-            let node = &mut self.nodes[node_id as usize];
-            if !node.terminals.contains(&subscription_id) {
-                node.terminals.push(subscription_id);
-            }
+            self.nodes[node_id as usize].add_terminal(subscription_id);
             return;
         }
 
@@ -442,17 +498,7 @@ impl SubscriptionIndex {
                 // ** followed by remaining pattern becomes a stored suffix.
                 let suffix: Arc<[CompiledPatternSegment]> =
                     Arc::from(segments[seg_idx + 1..].to_vec());
-                let node = &mut self.nodes[node_id as usize];
-                // Prevent duplicate (same sub_id + same suffix).
-                let is_dup = node
-                    .double_star_subs
-                    .iter()
-                    .zip(node.double_star_suffixes.iter())
-                    .any(|(id, suf)| *id == subscription_id && suf.as_ref() == suffix.as_ref());
-                if !is_dup {
-                    node.double_star_subs.push(subscription_id);
-                    node.double_star_suffixes.push(suffix);
-                }
+                self.nodes[node_id as usize].add_double_star(subscription_id, suffix);
             }
             CompiledPatternSegment::Star => {
                 // Get or create * child.
@@ -486,27 +532,14 @@ impl SubscriptionIndex {
         subscription_id: SubscriptionId,
     ) {
         if seg_idx >= segments.len() {
-            self.nodes[node_id as usize]
-                .terminals
-                .retain(|id| id != &subscription_id);
+            self.nodes[node_id as usize].remove_terminal(subscription_id);
             return;
         }
 
         match &segments[seg_idx] {
             CompiledPatternSegment::DoubleStar => {
                 let suffix = &segments[seg_idx + 1..];
-                let node = &mut self.nodes[node_id as usize];
-                let mut i = 0;
-                while i < node.double_star_subs.len() {
-                    if node.double_star_subs[i] == subscription_id
-                        && node.double_star_suffixes[i].as_ref() == suffix
-                    {
-                        node.double_star_subs.swap_remove(i);
-                        node.double_star_suffixes.swap_remove(i);
-                    } else {
-                        i += 1;
-                    }
-                }
+                self.nodes[node_id as usize].remove_double_star(subscription_id, suffix);
             }
             CompiledPatternSegment::Star => {
                 if let Some(child) = self.nodes[node_id as usize].single_wildcard {
@@ -524,35 +557,43 @@ impl SubscriptionIndex {
     #[inline]
     fn compile_pattern_segments_intern(&mut self, route: &str) -> Vec<CompiledPatternSegment> {
         let parsed = self.segments_cache.get_or_parse(route);
-        let mut compiled = Vec::with_capacity(parsed.len());
-        for segment in parsed.iter() {
-            match segment {
-                PatternSegment::Literal(value) => {
-                    compiled.push(CompiledPatternSegment::Exact(
-                        self.segment_interner.intern(value),
-                    ));
-                }
-                PatternSegment::Star => compiled.push(CompiledPatternSegment::Star),
-                PatternSegment::DoubleStar => compiled.push(CompiledPatternSegment::DoubleStar),
-            }
-        }
-        compiled
+        Self::compile_pattern_segments_from_iter(parsed.iter(), |value| {
+            Some(self.segment_interner.intern(value))
+        })
+        .expect("segment interning should not fail")
     }
 
     #[inline]
     fn compile_pattern_segments_lookup(&self, route: &str) -> Option<Vec<CompiledPatternSegment>> {
         let parsed = parse_pattern_segments(route);
-        let mut compiled = Vec::with_capacity(parsed.len());
-        for segment in parsed {
+        Self::compile_pattern_segments_from_iter(parsed.iter(), |value| {
+            self.segment_interner.lookup(value)
+        })
+    }
+
+    #[inline]
+    fn compile_pattern_segments_from_iter<'a, I, F>(
+        segments: I,
+        mut resolve_exact_id: F,
+    ) -> Option<Vec<CompiledPatternSegment>>
+    where
+        I: IntoIterator<Item = &'a PatternSegment>,
+        F: FnMut(&str) -> Option<SegmentId>,
+    {
+        let segments = segments.into_iter();
+        let (lower_bound, _) = segments.size_hint();
+        let mut compiled = Vec::with_capacity(lower_bound);
+
+        for segment in segments {
             match segment {
                 PatternSegment::Literal(value) => {
-                    let seg_id = self.segment_interner.lookup(&value)?;
-                    compiled.push(CompiledPatternSegment::Exact(seg_id));
+                    compiled.push(CompiledPatternSegment::Exact(resolve_exact_id(value)?));
                 }
                 PatternSegment::Star => compiled.push(CompiledPatternSegment::Star),
                 PatternSegment::DoubleStar => compiled.push(CompiledPatternSegment::DoubleStar),
             }
         }
+
         Some(compiled)
     }
 
