@@ -5,7 +5,8 @@
 
 use super::create_bench_store;
 use crate::boot::domains::{
-    LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink, StreamDomainSink,
+    LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink, ScheduleDomainSink,
+    StreamDomainSink,
 };
 use crate::observability::metrics::MetricsCollector;
 use crate::protocol::frame::ChannelId;
@@ -206,4 +207,12 @@ pub fn create_bench_rpc_sink_with_metrics(
         RpcDomainSink::new(router, crate::api::admin::read_model::AdminReadModel::new())
             .with_metrics(metrics),
     )
+}
+
+pub fn create_bench_schedule_sink(router: Arc<Router>) -> Arc<ScheduleDomainSink> {
+    Arc::new(ScheduleDomainSink::new(
+        create_bench_store(),
+        router,
+        crate::api::admin::read_model::AdminReadModel::new(),
+    ))
 }

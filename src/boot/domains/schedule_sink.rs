@@ -185,8 +185,8 @@ impl ScheduleDomainSink {
         {
             let mut actors = self.actors.lock();
             for (family, actor) in actors.iter_mut() {
-                let fired = actor.scan_and_fire();
-                if !fired.is_empty() {
+                let claimed = actor.claim_due_fires();
+                if !claimed.is_empty() {
                     snapshot_dirty = true;
                 }
                 for pending_fire in actor.pending_fire_claims_for_delivery() {
@@ -467,6 +467,14 @@ impl ScheduleDomainSink {
 
     pub(crate) fn refresh_admin_snapshot_if_dirty(&self) {
         self.maybe_sync_admin_snapshot(true);
+    }
+
+    #[doc(hidden)]
+    pub fn bench_publish_event(
+        &self,
+        event: &crate::runtime::DomainPublishEvent,
+    ) -> Result<(), DeliveryError> {
+        self.handle_domain_publish(event)
     }
 }
 

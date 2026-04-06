@@ -48,6 +48,14 @@ pub struct SchedulePendingFireClaimAck<'a> {
     pub route: &'a str,
     pub fire_ms: u64,
     pub executed_at_ms: u64,
+    pub definition: Option<ScheduleAckDefinition<'a>>,
+}
+
+pub struct ScheduleAckDefinition<'a> {
+    pub next_fire_ms: u64,
+    pub cron: &'a str,
+    pub payload: &'a Bytes,
+    pub executions_total: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -470,36 +478,20 @@ impl ScheduleStore {
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
-        let mut definitions =
-            BTreeMap::<String, Option<(u64, String, Bytes, Option<u64>, u64)>>::new();
 
         for item in items {
             txn.delete(Self::encode_pending_fire_key(item.fire_ms, item.route))
                 .map_err(|e| format!("delete pending fire failed: {:?}", e))?;
 
-            let state = match definitions.entry(item.route.to_string()) {
-                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::btree_map::Entry::Vacant(entry) => {
-                    let loaded = txn
-                        .get(&Self::encode_definition_key(item.route))
-                        .map_err(|e| format!("get schedule definition failed: {:?}", e))?
-                        .map(|value| Self::decode_definition_value(value.as_ref()))
-                        .transpose()?;
-                    entry.insert(loaded)
-                }
-            };
-
-            if let Some((next_fire_ms, cron, payload, last_fire_ms, executions_total)) = state {
-                *last_fire_ms = Some(item.executed_at_ms);
-                *executions_total = executions_total.saturating_add(1);
+            if let Some(definition) = &item.definition {
                 txn.put(
                     Self::encode_definition_key(item.route),
                     Self::encode_definition_value(
-                        *next_fire_ms,
-                        cron,
-                        payload,
-                        *last_fire_ms,
-                        *executions_total,
+                        definition.next_fire_ms,
+                        definition.cron,
+                        definition.payload,
+                        Some(item.executed_at_ms),
+                        definition.executions_total,
                     ),
                     None,
                 )
@@ -1088,6 +1080,12 @@ mod tests {
                     route,
                     fire_ms: original_fire_ms,
                     executed_at_ms,
+                    definition: Some(ScheduleAckDefinition {
+                        next_fire_ms,
+                        cron: "* * * * *",
+                        payload: &payload,
+                        executions_total: 1,
+                    }),
                 }],
                 WriteOptions::buffered(),
             )
@@ -1115,6 +1113,88 @@ mod tests {
             )
             .is_none(),
             "pending fire row should be deleted after ack"
+        );
+    }
+
+    #[test]
+    fn should_remove_pending_fire_without_recreating_definition_given_missing_schedule_state() {
+        // Arrange
+        let (store, db) = make_store();
+        let route = "schedule://acme/jobs/claim/run";
+        let payload = Bytes::from_static(b"payload");
+        let original_fire_ms = 1_700_000_020_000_u64;
+        let next_fire_ms = 1_700_000_080_000_u64;
+        let executed_at_ms = 1_700_000_021_500_u64;
+
+        store
+            .insert(
+                1,
+                ScheduleInsert {
+                    route,
+                    cron: "* * * * *",
+                    payload: &payload,
+                    next_fire_ms: original_fire_ms,
+                    previous_fire_ms: None,
+                    last_fire_ms: None,
+                    executions_total: 0,
+                },
+                WriteOptions::buffered(),
+            )
+            .expect("insert schedule");
+        store
+            .claim_due_batch(
+                1,
+                &[ScheduleFireClaim {
+                    route,
+                    cron: "* * * * *",
+                    payload: &payload,
+                    next_fire_ms,
+                    previous_fire_ms: original_fire_ms,
+                    last_fire_ms: None,
+                    executions_total: 0,
+                }],
+                WriteOptions::buffered(),
+            )
+            .expect("claim due schedule");
+        store
+            .delete_current(1, route, next_fire_ms, WriteOptions::buffered())
+            .expect("delete schedule definition");
+
+        // Act
+        store
+            .ack_pending_fire_claims(
+                1,
+                &[SchedulePendingFireClaimAck {
+                    route,
+                    fire_ms: original_fire_ms,
+                    executed_at_ms,
+                    definition: None,
+                }],
+                WriteOptions::buffered(),
+            )
+            .expect("ack pending fire claim");
+        let pending = store
+            .load_pending_fire_claims(1)
+            .expect("load pending fire claims");
+        let schedules = store
+            .load_all(1, WriteOptions::buffered())
+            .expect("load schedules");
+
+        // Assert
+        assert!(pending.is_empty(), "pending fire should be removed after ack");
+        assert!(schedules.is_empty(), "schedule definition should stay deleted");
+        assert!(
+            read_raw_value(
+                &db,
+                1,
+                &ScheduleStore::encode_pending_fire_key(original_fire_ms, route),
+            )
+            .is_none(),
+            "pending fire row should be deleted after ack"
+        );
+        assert!(
+            read_raw_value(&db, 1, &ScheduleStore::encode_definition_key(route)).is_none(),
+            "schedule definition should not be recreated"
         );
     }
 }

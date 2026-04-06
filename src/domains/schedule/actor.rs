@@ -5,8 +5,8 @@ use crate::domains::schedule::protocol::{
     SystemClock,
 };
 use crate::domains::schedule::store::{
-    PersistedPendingFireClaim, PersistedSchedule, ScheduleFireClaim, ScheduleInsert,
-    SchedulePendingFireClaimAck, ScheduleStore,
+    PersistedPendingFireClaim, PersistedSchedule, ScheduleAckDefinition, ScheduleFireClaim,
+    ScheduleInsert, SchedulePendingFireClaimAck, ScheduleStore,
 };
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
@@ -37,13 +37,9 @@ struct PendingScheduleCreate {
 
 struct PendingScheduleFire {
     route: String,
-    cron: String,
-    payload: Bytes,
     next_fire_time: Instant,
     next_fire_ms: u64,
     previous_fire_ms: u64,
-    last_fire_ms: Option<u64>,
-    executions_total: u64,
 }
 
 /// Durable schedule coordinator for one route family.
@@ -745,14 +741,10 @@ impl ScheduleActor {
             let next_fire_ms =
                 Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
             to_reschedule.push(PendingScheduleFire {
-                route: route.clone(),
-                cron: def.cron.clone(),
-                payload: def.payload.clone(),
+                route,
                 next_fire_time,
                 next_fire_ms,
                 previous_fire_ms: fire_ms,
-                last_fire_ms: def.last_fire_ms,
-                executions_total: def.executions_total,
             });
         }
 
@@ -762,14 +754,21 @@ impl ScheduleActor {
 
         let store_items: Vec<_> = to_reschedule
             .iter()
-            .map(|item| ScheduleFireClaim {
-                route: &item.route,
-                cron: &item.cron,
-                payload: &item.payload,
-                next_fire_ms: item.next_fire_ms,
-                previous_fire_ms: item.previous_fire_ms,
-                last_fire_ms: item.last_fire_ms,
-                executions_total: item.executions_total,
+            .map(|item| {
+                let schedule = self
+                    .schedules
+                    .get(&item.route)
+                    .expect("due schedule should still exist before persistence");
+
+                ScheduleFireClaim {
+                    route: &item.route,
+                    cron: &schedule.cron,
+                    payload: &schedule.payload,
+                    next_fire_ms: item.next_fire_ms,
+                    previous_fire_ms: item.previous_fire_ms,
+                    last_fire_ms: schedule.last_fire_ms,
+                    executions_total: schedule.executions_total,
+                }
             })
             .collect();
 
@@ -779,8 +778,7 @@ impl ScheduleActor {
         {
             warn!("Failed to persist schedule reschedule batch: {}", error);
             for item in to_reschedule {
-                self.ready_heap
-                    .push((Reverse(item.previous_fire_ms), item.route.clone()));
+                self.ready_heap.push((Reverse(item.previous_fire_ms), item.route));
             }
             return Vec::new();
         }
@@ -796,20 +794,22 @@ impl ScheduleActor {
 
             def.next_fire_time = item.next_fire_time;
             def.next_fire_ms = item.next_fire_ms;
+            let payload = def.payload.clone();
             self.ready_heap
                 .push((Reverse(item.next_fire_ms), item.route.clone()));
             self.pending_fire_claims.insert(
                 (item.previous_fire_ms, item.route.clone()),
-                item.payload.clone(),
+                payload.clone(),
             );
             claimed.push(PersistedPendingFireClaim {
-                route: item.route.clone(),
-                payload: item.payload.clone(),
+                route: item.route,
+                payload,
                 fire_ms: item.previous_fire_ms,
             });
             info!(
                 "Schedule fired: {} (next fire: ~{:?})",
-                item.route, item.next_fire_time
+                claimed.last().expect("claimed fire present").route,
+                item.next_fire_time
             );
         }
 
@@ -823,8 +823,17 @@ impl ScheduleActor {
             .collect()
     }
 
+    pub(crate) fn claim_due_fires(&mut self) -> Vec<PersistedPendingFireClaim> {
+        self.claim_due_fires_at(self.clock.now_instant())
+    }
+
     pub fn scan_and_fire(&mut self) -> Vec<(String, Bytes)> {
         self.scan_and_fire_at(self.clock.now_instant())
+    }
+
+    #[doc(hidden)]
+    pub fn bench_claim_due_fires(&mut self) -> Vec<PersistedPendingFireClaim> {
+        self.claim_due_fires()
     }
 
     pub(crate) fn pending_fire_claims_for_delivery(&self) -> Vec<PersistedPendingFireClaim> {
@@ -838,6 +847,11 @@ impl ScheduleActor {
             .collect()
     }
 
+    #[doc(hidden)]
+    pub fn bench_pending_fire_claims_for_delivery(&self) -> Vec<PersistedPendingFireClaim> {
+        self.pending_fire_claims_for_delivery()
+    }
+
     /// Acknowledges delivered fires. Returns `(acked_count, acknowledged_at_ms)`.
     /// `acknowledged_at_ms` is only meaningful when `acked_count > 0`.
     pub(crate) fn ack_pending_fire_claims(
@@ -849,12 +863,30 @@ impl ScheduleActor {
         }
 
         let acknowledged_at_ms = self.clock.now_epoch_ms();
+        let mut execution_counts: FastMap<&str, u64> =
+            HashMap::with_capacity_and_hasher(delivered.len(), FxBuildHasher::default());
         let store_items: Vec<_> = delivered
             .iter()
-            .map(|(fire_ms, route)| SchedulePendingFireClaimAck {
-                route,
-                fire_ms: *fire_ms,
-                executed_at_ms: acknowledged_at_ms,
+            .map(|(fire_ms, route)| {
+                let route_str = route.as_str();
+                let definition = self.schedules.get(route_str).map(|schedule| {
+                    let execution_count = execution_counts.entry(route_str).or_insert(0);
+                    *execution_count = execution_count.saturating_add(1);
+
+                    ScheduleAckDefinition {
+                        next_fire_ms: schedule.next_fire_ms,
+                        cron: &schedule.cron,
+                        payload: &schedule.payload,
+                        executions_total: schedule.executions_total.saturating_add(*execution_count),
+                    }
+                });
+
+                SchedulePendingFireClaimAck {
+                    route: route_str,
+                    fire_ms: *fire_ms,
+                    executed_at_ms: acknowledged_at_ms,
+                    definition,
+                }
             })
             .collect();
 
@@ -880,6 +912,14 @@ impl ScheduleActor {
         }
 
         Ok((acked, acknowledged_at_ms))
+    }
+
+    #[doc(hidden)]
+    pub fn bench_ack_pending_fire_claims(
+        &mut self,
+        delivered: &[(u64, String)],
+    ) -> Result<(usize, u64), String> {
+        self.ack_pending_fire_claims(delivered)
     }
 
     pub(crate) fn pending_fire_count(&self) -> usize {
