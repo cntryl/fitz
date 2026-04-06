@@ -671,8 +671,8 @@ fn should_complete_routed_ack_roundtrip(ctx: &mut StressContext) {
 fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
     ctx.tag("scenario", "wait_wakeup");
     ctx.tag("measurement_scope", "routed_waiters");
-    ctx.tag("operation", "receive_wait_and_enqueue");
-    ctx.tag("batch_size", "16_wait_16_enqueue");
+    ctx.tag("operation", "watch_wakeup_roundtrip");
+    ctx.tag("batch_size", "16_watch_16_enqueue_1_receive_16_ack_cleanup");
     ctx.tag("waiter_count", "16");
 
     let waiter_count = 16u64;
@@ -680,6 +680,8 @@ fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
     let (router, family, sender_source, sender_inbox) = setup_queue_request_sink();
     let enqueue_frame = build_queue_enqueue(route, b"queue wait wake payload");
     let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
+    let dequeue_frame = build_queue_dequeue_batch(route, waiter_count as u32);
+    let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
     let waiters: Vec<(u64, RouteAddress, Arc<CountingSink>)> = (0..waiter_count)
         .map(|index| {
             let session_id = CLIENT_SESSION_ID + 1 + index;
@@ -688,9 +690,13 @@ fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
         })
         .collect();
 
+    for (session_id, source, sink) in &waiters {
+        register_queue_watch(&router, family, source, route, *session_id);
+        sink.reset();
+    }
+
     let iterations = ctx.measure_for(Duration::from_secs(5), || {
-        for (session_id, source, sink) in &waiters {
-            register_queue_watch(&router, family, source, route, *session_id);
+        for (_, _, sink) in &waiters {
             sink.reset();
         }
 
@@ -712,8 +718,39 @@ fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
             deliveries, waiter_count as usize,
             "expected queue sends to wake all waiting receivers"
         );
+
+        let dequeue_response = request_queue_response(
+            &router,
+            family,
+            &sender_source,
+            &sender_inbox,
+            route,
+            dequeue_msg_type,
+            dequeue_payload.clone(),
+        );
+        let reserved_messages = parse_received_messages(&dequeue_response);
+        assert_eq!(
+            reserved_messages.len(),
+            waiter_count as usize,
+            "expected cleanup receive to drain the ready queue"
+        );
+
+        for (message_id, token) in reserved_messages {
+            let ack_frame = build_queue_complete(route, message_id, token);
+            let (ack_msg_type, ack_payload) = extract_single_tlv_field(&ack_frame);
+            let ack_response = request_queue_response(
+                &router,
+                family,
+                &sender_source,
+                &sender_inbox,
+                route,
+                ack_msg_type,
+                ack_payload,
+            );
+            assert_queue_success(&ack_response);
+        }
     });
-    ctx.set_elements((waiter_count * 2) * iterations as u64);
+    ctx.set_elements(((waiter_count * 2) + waiter_count + 1) * iterations as u64);
 }
 
 stress_main!();
