@@ -1,6 +1,6 @@
-//! Criterion benchmark for schedule domain scan_and_fire (same code path as tier3 stress).
+//! Criterion benchmark for schedule due-occurrence collection for live publish.
 //! Provides a single Criterion source of truth so report naming is consistent and stale
-//! "schedule_system_scan_and_fire" entries can be replaced.
+//! "schedule_system_collect_due_occurrences" entries can be replaced.
 
 use bytes::Bytes;
 use criterion::{
@@ -86,7 +86,7 @@ fn bench_scan_shapes(c: &mut Criterion) {
                         actor
                     },
                     |mut actor| {
-                        black_box(actor.scan_and_fire());
+                        black_box(actor.collect_due_occurrences_for_publish());
                     },
                     BatchSize::SmallInput,
                 )
@@ -103,7 +103,7 @@ fn bench_scan_shapes(c: &mut Criterion) {
                             actor
                         },
                         |mut actor| {
-                            black_box(actor.scan_and_fire_cpu_only());
+                            black_box(actor.collect_due_occurrences_for_publish_cpu_only());
                         },
                         BatchSize::SmallInput,
                     )

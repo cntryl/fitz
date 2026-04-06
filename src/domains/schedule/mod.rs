@@ -1,16 +1,20 @@
-//! Schedule domain: durable route-based time-triggered fanout with cron expressions
+//! Schedule domain: Fitz's durable timing-intent primitive.
 //!
-//! Schedules are identified by route string (not auto-generated IDs).
-//! Each schedule stores:
-//! - route: String - unique identity (e.g., "schedule://realm/area/resource/operation")
-//! - cron: String - 5-field cron expression for timing
-//! - payload: Bytes - arbitrary data to fanout to subscribers when fired
+//! Schedule durably stores timing intent only:
+//! - schedule definitions
+//! - next-fire computation
+//! - due-occurrence claiming
+//! - pending claimed occurrences
+//! - retry of unacknowledged claimed occurrences after restart
 //!
-//! On fire, schedule is published to all subscribers matching the route pattern.
-//! Durable schedule definitions are boot-loaded from storage on broker start.
-//! Missed executions are skipped forward to the next future fire time rather than
-//! replayed after downtime. Schedule subscriptions and notifications remain
-//! live, session-scoped delivery state only.
+//! Schedule keeps all delivery state ephemeral:
+//! - subscribers
+//! - live notify routing
+//! - session state
+//!
+//! Overdue schedules normalize forward to the next future occurrence after
+//! downtime. Schedule does not replay historical occurrences, retain a durable
+//! delivery backlog, or provide execution guarantees.
 
 pub mod actor;
 pub mod events;

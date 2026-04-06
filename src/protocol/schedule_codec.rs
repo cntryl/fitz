@@ -1,7 +1,7 @@
-//! Schedule domain codec - delayed/recurring tasks
+//! Schedule domain codec for durable timing intent.
 //!
-//! Encodes/decodes TLV messages for the schedule domain.
-//! Supports Create, Cancel, List operations with route-based identity.
+//! Encodes and decodes TLV messages for schedule definition management and
+//! ephemeral live notifications.
 
 use crate::domains::schedule::{ScheduleCreateEntry, ScheduleMessage, ScheduleResponse};
 use crate::protocol::frame_context::FrameContext;
@@ -202,16 +202,16 @@ fn parse_list(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
     Ok(ScheduleMessage::List { offset, limit })
 }
 
-/// Parse SUBSCRIBE message
-/// Wire format: [string pattern]
+/// Parse SUBSCRIBE message.
+/// Wire format: [string exact_route]
 fn parse_subscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
 ) -> Result<ScheduleMessage, String> {
-    let pattern_str = dec.get_string()?;
-    let pattern = Route::new(pattern_str);
+    let route_str = dec.get_string()?;
+    let route = Route::new(route_str);
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -219,22 +219,22 @@ fn parse_subscribe(
 
     Ok(ScheduleMessage::Subscribe {
         family_id: route_family,
-        pattern,
+        route,
         session_id: session_id.0,
         subscriber,
     })
 }
 
-/// Parse UNSUBSCRIBE message
-/// Wire format: [string pattern]
+/// Parse UNSUBSCRIBE message.
+/// Wire format: [string exact_route]
 fn parse_unsubscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
 ) -> Result<ScheduleMessage, String> {
-    let pattern_str = dec.get_string()?;
-    let pattern = Route::new(pattern_str);
+    let route_str = dec.get_string()?;
+    let route = Route::new(route_str);
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -242,16 +242,17 @@ fn parse_unsubscribe(
 
     Ok(ScheduleMessage::Unsubscribe {
         family_id: route_family,
-        pattern,
+        route,
         session_id: session_id.0,
         subscriber,
     })
 }
 
-/// Encode a SCHEDULE_NOTIFY (705) payload.
+/// Encode an ephemeral SCHEDULE_NOTIFY (705) payload.
 ///
 /// Wire format: [u64 subscription_id][bytes payload]
-/// Payload is what was stored with the schedule (fanout data)
+/// Payload is the stored schedule payload handed to the live notify path. The
+/// notification itself is not durably replayed as a delivery artifact.
 pub fn encode_notify(subscription_id: u64, payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_notify_into(&mut enc, subscription_id, payload)

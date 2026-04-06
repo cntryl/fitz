@@ -8,6 +8,6 @@ pub enum ScheduleEvent {
     ScheduleUpdated { route: String, cron: String },
     ScheduleDeleted { route: String },
     ScheduleFired { route: String, fire_ms: u64 },
-    ScheduleAcknowledged { route: String, executed_at_ms: u64 },
+    ScheduleAcknowledged { route: String, acknowledged_at_ms: u64 },
     ScheduleFireFailed { route: String },
 }

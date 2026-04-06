@@ -44,11 +44,11 @@ struct PendingScheduleFire {
 
 /// Durable schedule coordinator for one route family.
 ///
-/// Persisted schedule definitions survive broker restart and downtime through
-/// Midge. Live subscriptions and fanout delivery remain session-scoped and
-/// ephemeral. The in-memory heap is only a derived accelerator: authoritative
-/// state lives in the persisted definition row, and the due index can always be
-/// rebuilt from those durable definitions.
+/// Persisted schedule definitions and pending claimed occurrences survive broker
+/// restart and downtime through Midge. Live subscriptions and live notify
+/// routing stay session-scoped and ephemeral. The in-memory heap is only a
+/// derived accelerator: authoritative state lives in the persisted definition
+/// row, and the due index can always be rebuilt from those durable definitions.
 pub struct ScheduleActor {
     /// RouteFamily for storage column family mapping.
     family: RouteFamily,
@@ -72,8 +72,9 @@ pub struct ScheduleActor {
     /// tolerated and ignored by comparing each popped timestamp against the
     /// current definition's `next_fire_ms`.
     ready_heap: BinaryHeap<(Reverse<u64>, String)>,
-    /// Durably claimed schedule fires awaiting successful publish.
-    pending_fire_claims: BTreeMap<(u64, String), Bytes>,
+    /// Durably claimed occurrences awaiting acknowledged handoff into the live
+    /// publish path.
+    pending_claimed_occurrences: BTreeMap<(u64, String), Bytes>,
     /// Injected wall-clock and monotonic time source.
     clock: Arc<dyn Clock>,
     /// Number of schedules normalized forward during the last preload.
@@ -148,7 +149,7 @@ impl ScheduleActor {
             last_scan_time: now,
             scan_dedup_window: std::time::Duration::from_millis(10),
             ready_heap: BinaryHeap::new(),
-            pending_fire_claims: BTreeMap::new(),
+            pending_claimed_occurrences: BTreeMap::new(),
             clock,
             overdue_normalizations: 0,
         };
@@ -250,10 +251,14 @@ impl ScheduleActor {
             )?;
         }
 
-        for pending_fire_claim in self.store.load_pending_fire_claims(self.family.as_u64())? {
-            self.pending_fire_claims.insert(
-                (pending_fire_claim.fire_ms, pending_fire_claim.route),
-                pending_fire_claim.payload,
+        for pending_claimed_occurrence in self.store.load_pending_fire_claims(self.family.as_u64())?
+        {
+            self.pending_claimed_occurrences.insert(
+                (
+                    pending_claimed_occurrence.fire_ms,
+                    pending_claimed_occurrence.route,
+                ),
+                pending_claimed_occurrence.payload,
             );
         }
 
@@ -797,7 +802,7 @@ impl ScheduleActor {
             let payload = def.payload.clone();
             self.ready_heap
                 .push((Reverse(item.next_fire_ms), item.route.clone()));
-            self.pending_fire_claims.insert(
+            self.pending_claimed_occurrences.insert(
                 (item.previous_fire_ms, item.route.clone()),
                 payload.clone(),
             );
@@ -807,7 +812,7 @@ impl ScheduleActor {
                 fire_ms: item.previous_fire_ms,
             });
             info!(
-                "Schedule fired: {} (next fire: ~{:?})",
+                "Schedule occurrence claimed: {} (next fire: ~{:?})",
                 claimed.last().expect("claimed fire present").route,
                 item.next_fire_time
             );
@@ -816,7 +821,7 @@ impl ScheduleActor {
         claimed
     }
 
-    fn scan_and_fire_at(&mut self, now: Instant) -> Vec<(String, Bytes)> {
+    fn collect_due_occurrences_for_publish_at(&mut self, now: Instant) -> Vec<(String, Bytes)> {
         self.claim_due_fires_at(now)
             .into_iter()
             .map(|item| (item.route, item.payload))
@@ -827,8 +832,8 @@ impl ScheduleActor {
         self.claim_due_fires_at(self.clock.now_instant())
     }
 
-    pub fn scan_and_fire(&mut self) -> Vec<(String, Bytes)> {
-        self.scan_and_fire_at(self.clock.now_instant())
+    pub fn collect_due_occurrences_for_publish(&mut self) -> Vec<(String, Bytes)> {
+        self.collect_due_occurrences_for_publish_at(self.clock.now_instant())
     }
 
     #[doc(hidden)]
@@ -836,8 +841,8 @@ impl ScheduleActor {
         self.claim_due_fires()
     }
 
-    pub(crate) fn pending_fire_claims_for_delivery(&self) -> Vec<PersistedPendingFireClaim> {
-        self.pending_fire_claims
+    pub(crate) fn pending_claimed_occurrences_for_publish(&self) -> Vec<PersistedPendingFireClaim> {
+        self.pending_claimed_occurrences
             .iter()
             .map(|((fire_ms, route), payload)| PersistedPendingFireClaim {
                 route: route.clone(),
@@ -848,43 +853,48 @@ impl ScheduleActor {
     }
 
     #[doc(hidden)]
-    pub fn bench_pending_fire_claims_for_delivery(&self) -> Vec<PersistedPendingFireClaim> {
-        self.pending_fire_claims_for_delivery()
+    pub fn bench_pending_claimed_occurrences_for_publish(&self) -> Vec<PersistedPendingFireClaim> {
+        self.pending_claimed_occurrences_for_publish()
     }
 
-    /// Acknowledges delivered fires. Returns `(acked_count, acknowledged_at_ms)`.
+    /// Acknowledges occurrences handed off to the live publish path.
+    /// Returns `(acked_count, acknowledged_at_ms)`.
     /// `acknowledged_at_ms` is only meaningful when `acked_count > 0`.
     pub(crate) fn ack_pending_fire_claims(
         &mut self,
-        delivered: &[(u64, String)],
+        handed_off_occurrences: &[(u64, String)],
     ) -> Result<(usize, u64), String> {
-        if delivered.is_empty() {
+        if handed_off_occurrences.is_empty() {
             return Ok((0, 0));
         }
 
         let acknowledged_at_ms = self.clock.now_epoch_ms();
-        let mut execution_counts: FastMap<&str, u64> =
-            HashMap::with_capacity_and_hasher(delivered.len(), FxBuildHasher::default());
-        let store_items: Vec<_> = delivered
+        let mut acknowledgement_counts: FastMap<&str, u64> = HashMap::with_capacity_and_hasher(
+            handed_off_occurrences.len(),
+            FxBuildHasher::default(),
+        );
+        let store_items: Vec<_> = handed_off_occurrences
             .iter()
             .map(|(fire_ms, route)| {
                 let route_str = route.as_str();
                 let definition = self.schedules.get(route_str).map(|schedule| {
-                    let execution_count = execution_counts.entry(route_str).or_insert(0);
-                    *execution_count = execution_count.saturating_add(1);
+                    let acknowledgement_count = acknowledgement_counts.entry(route_str).or_insert(0);
+                    *acknowledgement_count = acknowledgement_count.saturating_add(1);
 
                     ScheduleAckDefinition {
                         next_fire_ms: schedule.next_fire_ms,
                         cron: &schedule.cron,
                         payload: &schedule.payload,
-                        executions_total: schedule.executions_total.saturating_add(*execution_count),
+                        executions_total: schedule
+                            .executions_total
+                            .saturating_add(*acknowledgement_count),
                     }
                 });
 
                 SchedulePendingFireClaimAck {
                     route: route_str,
                     fire_ms: *fire_ms,
-                    executed_at_ms: acknowledged_at_ms,
+                    acknowledged_at_ms,
                     definition,
                 }
             })
@@ -897,9 +907,9 @@ impl ScheduleActor {
         )?;
 
         let mut acked = 0;
-        for (fire_ms, route) in delivered {
+        for (fire_ms, route) in handed_off_occurrences {
             if self
-                .pending_fire_claims
+                .pending_claimed_occurrences
                 .remove(&(*fire_ms, route.clone()))
                 .is_some()
             {
@@ -923,11 +933,11 @@ impl ScheduleActor {
     }
 
     pub(crate) fn pending_fire_count(&self) -> usize {
-        self.pending_fire_claims.len()
+        self.pending_claimed_occurrences.len()
     }
 
-    /// Returns all `last_fire_ms` timestamps for schedules that fired after `cutoff_ms`.
-    /// Used by the sink to seed its rolling-window execution counter on startup.
+    /// Returns all acknowledged live-handoff timestamps after `cutoff_ms`.
+    /// Used by the sink to seed its rolling-window acknowledgement counter on startup.
     pub(crate) fn last_fire_timestamps_since(&self, cutoff_ms: u64) -> Vec<u64> {
         self.schedules
             .values()
@@ -941,7 +951,7 @@ impl ScheduleActor {
     }
 
     #[doc(hidden)]
-    pub fn scan_and_fire_cpu_only(&mut self) -> Vec<(String, Bytes)> {
+    pub fn collect_due_occurrences_for_publish_cpu_only(&mut self) -> Vec<(String, Bytes)> {
         let now = self.clock.now_instant();
         if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
             return Vec::new();
@@ -1066,9 +1076,11 @@ impl ScheduleActor {
                     total_count,
                 }
             }
-            ScheduleMessage::Subscribe { .. } => ScheduleResponse::Ok,
-            ScheduleMessage::Unsubscribe { .. } => ScheduleResponse::Ok,
-            ScheduleMessage::UnsubscribeAll { .. } => ScheduleResponse::Ok,
+            ScheduleMessage::Subscribe { .. }
+            | ScheduleMessage::Unsubscribe { .. }
+            | ScheduleMessage::UnsubscribeAll { .. } => ScheduleResponse::Error(
+                "schedule subscription state is owned by the schedule domain sink".to_string(),
+            ),
         }
     }
 }
@@ -1234,7 +1246,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let fired = actor.scan_and_fire_at(now);
+        let fired = actor.collect_due_occurrences_for_publish_at(now);
 
         // Assert
         assert!(
@@ -1327,7 +1339,7 @@ mod tests {
 
         // Act
         actor.store.fail_next_commit_for_tests();
-        let fired = actor.scan_and_fire();
+        let fired = actor.collect_due_occurrences_for_publish();
 
         // Assert
         assert!(fired.is_empty(), "scan should not emit on persist failure");
@@ -1358,7 +1370,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let fired = actor.scan_and_fire_at(now);
+        let fired = actor.collect_due_occurrences_for_publish_at(now);
         actor
             .ack_pending_fire_claims(&[(claimed_fire_ms, route.to_string())])
             .expect("ack pending fire");
@@ -1505,7 +1517,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let fired = actor.scan_and_fire_at(now);
+        let fired = actor.collect_due_occurrences_for_publish_at(now);
 
         // Assert
         assert!(
@@ -1541,7 +1553,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let fired = actor.scan_and_fire_at(now);
+        let fired = actor.collect_due_occurrences_for_publish_at(now);
 
         // Assert
         assert!(
@@ -1571,7 +1583,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let first_fired = actor.scan_and_fire_at(first_scan_at);
+        let first_fired = actor.collect_due_occurrences_for_publish_at(first_scan_at);
         let next_fire_time = actor.schedules.get(route).expect("schedule").next_fire_time;
         actor
             .delete_schedule(route.to_string())
@@ -1579,7 +1591,7 @@ mod tests {
         actor.last_scan_time = next_fire_time
             .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
             .unwrap();
-        let second_fired = actor.scan_and_fire_at(next_fire_time);
+        let second_fired = actor.collect_due_occurrences_for_publish_at(next_fire_time);
 
         // Assert
         assert_eq!(
@@ -1627,7 +1639,7 @@ mod tests {
             .next_fire_time
             .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
             .unwrap();
-        let fired = actor.scan_and_fire_at(original.next_fire_time);
+        let fired = actor.collect_due_occurrences_for_publish_at(original.next_fire_time);
 
         // Assert
         assert_eq!(changed, 1, "batch reschedule should rewrite the schedule");
@@ -1674,7 +1686,7 @@ mod tests {
             .next_fire_time
             .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
             .unwrap();
-        let fired = actor.scan_and_fire_at(original.next_fire_time);
+        let fired = actor.collect_due_occurrences_for_publish_at(original.next_fire_time);
 
         // Assert
         assert!(changed, "single reschedule should rewrite the schedule");
@@ -1714,7 +1726,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let first_fired = actor.scan_and_fire();
+        let first_fired = actor.collect_due_occurrences_for_publish();
         let changed = actor
             .create_schedule_at(
                 route.clone(),
@@ -1728,7 +1740,7 @@ mod tests {
             .now_instant()
             .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
             .unwrap();
-        let second_fired = actor.scan_and_fire();
+        let second_fired = actor.collect_due_occurrences_for_publish();
 
         // Assert
         assert_eq!(
@@ -1775,8 +1787,10 @@ mod tests {
             .unwrap();
 
         // Act
-        let first = actor.scan_and_fire_at(now);
-        let second = actor.scan_and_fire_at(now.checked_add(Duration::from_millis(1)).unwrap());
+        let first = actor.collect_due_occurrences_for_publish_at(now);
+        let second = actor.collect_due_occurrences_for_publish_at(
+            now.checked_add(Duration::from_millis(1)).unwrap(),
+        );
 
         // Assert
         assert_eq!(first.len(), 1, "first due scan should emit one fire");

@@ -292,9 +292,9 @@ fn should_skip_missed_occurrences_given_forward_epoch_jump() {
     clock.advance_epoch(Duration::from_secs(180));
 
     // Act
-    let first_fire = actor.scan_and_fire();
+    let first_fire = actor.collect_due_occurrences_for_publish();
     clock.advance(Duration::from_secs(1));
-    let second_fire = actor.scan_and_fire();
+    let second_fire = actor.collect_due_occurrences_for_publish();
 
     // Assert
     assert_eq!(first_fire.len(), 1);
@@ -319,9 +319,9 @@ fn should_not_fire_given_backward_epoch_jump_before_due_time() {
     clock.rewind_epoch(Duration::from_secs(90));
 
     // Act
-    let before_due = actor.scan_and_fire();
+    let before_due = actor.collect_due_occurrences_for_publish();
     clock.advance(Duration::from_secs(121));
-    let after_due = actor.scan_and_fire();
+    let after_due = actor.collect_due_occurrences_for_publish();
 
     // Assert
     assert!(before_due.is_empty());

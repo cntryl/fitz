@@ -594,41 +594,41 @@ fn should_preserve_payload_in_schedule() {
 // ========== Subscribe/Unsubscribe Tests ==========
 
 #[test]
-fn should_handle_subscribe_operation() {
+fn should_reject_subscribe_operation_given_direct_actor_call() {
     // Arrange
     let mut actor = make_schedule_actor();
-    let pattern = Route::new("schedule://acme/jobs/backup/run");
+    let route = Route::new("schedule://acme/jobs/backup/run");
     let family = RouteFamily::new(1);
     let subscriber = RouteAddress::new(family, Route::new("session1"));
 
     // Act
     let response = actor.handle(ScheduleMessage::Subscribe {
         family_id: family,
-        pattern,
+        route,
         session_id: 1,
         subscriber,
     });
 
     // Assert
-    assert!(matches!(response, ScheduleResponse::Ok));
+    assert!(matches!(response, ScheduleResponse::Error(_)));
 }
 
 #[test]
-fn should_handle_unsubscribe_operation() {
+fn should_reject_unsubscribe_operation_given_direct_actor_call() {
     // Arrange
     let mut actor = make_schedule_actor();
-    let pattern = Route::new("schedule://acme/jobs/backup/run");
+    let route = Route::new("schedule://acme/jobs/backup/run");
     let family = RouteFamily::new(1);
     let subscriber = RouteAddress::new(family, Route::new("session1"));
 
     // Act
     let response = actor.handle(ScheduleMessage::Unsubscribe {
         family_id: family,
-        pattern,
+        route,
         session_id: 1,
         subscriber,
     });
 
     // Assert
-    assert!(matches!(response, ScheduleResponse::Ok));
+    assert!(matches!(response, ScheduleResponse::Error(_)));
 }

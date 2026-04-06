@@ -123,17 +123,17 @@ pub enum ScheduleMessage {
         /// Maximum number of entries to return (0 = all remaining). Default: 100
         limit: u64,
     },
-    /// Subscribe to schedule fire notifications by pattern (client -> server)
+    /// Subscribe to live notifications for one exact schedule route.
     Subscribe {
         family_id: RouteFamily,
-        pattern: Route,
+        route: Route,
         session_id: u64,
         subscriber: RouteAddress,
     },
-    /// Unsubscribe from schedule fire notifications by pattern (client -> server)
+    /// Remove one live notification subscription for one exact schedule route.
     Unsubscribe {
         family_id: RouteFamily,
-        pattern: Route,
+        route: Route,
         session_id: u64,
         subscriber: RouteAddress,
     },
@@ -175,7 +175,7 @@ pub struct ScheduleListEntry {
     pub payload: Bytes,
 }
 
-/// Schedule definition: cron timing, route identity, payload to fanout
+/// Schedule definition plus actor-local timing accelerators.
 #[derive(Debug, Clone)]
 pub struct ScheduleDef {
     /// Route string (unique identity for this schedule)
@@ -184,17 +184,17 @@ pub struct ScheduleDef {
     pub cron: String,
     /// Parsed cron schedule (cached to avoid reparsing)
     pub parsed_cron: CronSchedule,
-    /// Payload bytes to fanout to subscribers (what to send)
+    /// Payload bytes handed to the live publish path when an occurrence is claimed.
     pub payload: Bytes,
     /// Next fire time calculated from cron + current time
     pub next_fire_time: Instant,
     /// Exact next-fire timestamp stored in the durable definition row
     pub next_fire_ms: u64,
-    /// Last successful schedule delivery timestamp in UNIX epoch milliseconds.
+    /// Last acknowledged live handoff timestamp in UNIX epoch milliseconds.
     pub last_fire_ms: Option<u64>,
-    /// Total successful schedule deliveries recorded for this definition.
+    /// Total acknowledged live handoffs recorded for this definition.
     pub executions_total: u64,
-    /// Current index in the actor's mutable LIST backing store.
+    /// Internal index into the actor's mutable LIST backing store.
     pub list_index: usize,
 }
 

@@ -47,7 +47,7 @@ pub struct ScheduleFireClaim<'a> {
 pub struct SchedulePendingFireClaimAck<'a> {
     pub route: &'a str,
     pub fire_ms: u64,
-    pub executed_at_ms: u64,
+    pub acknowledged_at_ms: u64,
     pub definition: Option<ScheduleAckDefinition<'a>>,
 }
 
@@ -490,12 +490,12 @@ impl ScheduleStore {
                         definition.next_fire_ms,
                         definition.cron,
                         definition.payload,
-                        Some(item.executed_at_ms),
+                        Some(item.acknowledged_at_ms),
                         definition.executions_total,
                     ),
                     None,
                 )
-                .map_err(|e| format!("update schedule execution state failed: {:?}", e))?;
+                .map_err(|e| format!("update schedule acknowledgement state failed: {:?}", e))?;
             }
         }
 
@@ -1032,14 +1032,14 @@ mod tests {
     }
 
     #[test]
-    fn should_record_execution_state_given_acknowledged_claimed_due_schedule() {
+    fn should_record_acknowledgement_state_given_acknowledged_claimed_due_schedule() {
         // Arrange
         let (store, db) = make_store();
         let route = "schedule://acme/jobs/claim/run";
         let payload = Bytes::from_static(b"payload");
         let original_fire_ms = 1_700_000_020_000_u64;
         let next_fire_ms = 1_700_000_080_000_u64;
-        let executed_at_ms = 1_700_000_021_500_u64;
+        let acknowledged_at_ms = 1_700_000_021_500_u64;
 
         store
             .insert(
@@ -1079,7 +1079,7 @@ mod tests {
                 &[SchedulePendingFireClaimAck {
                     route,
                     fire_ms: original_fire_ms,
-                    executed_at_ms,
+                    acknowledged_at_ms,
                     definition: Some(ScheduleAckDefinition {
                         next_fire_ms,
                         cron: "* * * * *",
@@ -1103,7 +1103,7 @@ mod tests {
             "pending fire should be removed after ack"
         );
         assert_eq!(schedules.len(), 1);
-        assert_eq!(schedules[0].last_fire_ms, Some(executed_at_ms));
+        assert_eq!(schedules[0].last_fire_ms, Some(acknowledged_at_ms));
         assert_eq!(schedules[0].executions_total, 1);
         assert!(
             read_raw_value(
@@ -1124,7 +1124,7 @@ mod tests {
         let payload = Bytes::from_static(b"payload");
         let original_fire_ms = 1_700_000_020_000_u64;
         let next_fire_ms = 1_700_000_080_000_u64;
-        let executed_at_ms = 1_700_000_021_500_u64;
+        let acknowledged_at_ms = 1_700_000_021_500_u64;
 
         store
             .insert(
@@ -1167,7 +1167,7 @@ mod tests {
                 &[SchedulePendingFireClaimAck {
                     route,
                     fire_ms: original_fire_ms,
-                    executed_at_ms,
+                    acknowledged_at_ms,
                     definition: None,
                 }],
                 WriteOptions::buffered(),

@@ -227,8 +227,10 @@ fn should_complete_system_mixed_workload(ctx: &mut StressContext) {
 }
 
 #[stress_test]
-fn should_complete_system_scan_and_fire_not_ready_1000_schedules(ctx: &mut StressContext) {
-    ctx.tag("scenario", "scan_fire_not_ready_1000");
+fn should_complete_system_collect_due_occurrences_not_ready_1000_schedules(
+    ctx: &mut StressContext,
+) {
+    ctx.tag("scenario", "collect_due_occurrences_not_ready_1000");
     ctx.tag("measurement_scope", "direct_actor");
     ctx.tag("batch_size", "1000_scanned");
     ctx.tag("ready_state", "none_ready");
@@ -237,14 +239,16 @@ fn should_complete_system_scan_and_fire_not_ready_1000_schedules(ctx: &mut Stres
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         actor.bench_prepare_scan(0);
-        let _fired = actor.scan_and_fire();
+        let _fired = actor.collect_due_occurrences_for_publish();
     });
     ctx.set_elements(1000 * iterations as u64);
 }
 
 #[stress_test]
-fn should_complete_system_scan_and_fire_partially_ready_1000_schedules(ctx: &mut StressContext) {
-    ctx.tag("scenario", "scan_fire_partial_ready_1000");
+fn should_complete_system_collect_due_occurrences_partially_ready_1000_schedules(
+    ctx: &mut StressContext,
+) {
+    ctx.tag("scenario", "collect_due_occurrences_partial_ready_1000");
     ctx.tag("measurement_scope", "direct_actor");
     ctx.tag("batch_size", "1000_scanned");
     ctx.tag("ready_state", "partial_ready");
@@ -253,14 +257,16 @@ fn should_complete_system_scan_and_fire_partially_ready_1000_schedules(ctx: &mut
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         actor.bench_prepare_scan(100);
-        let _fired = actor.scan_and_fire();
+        let _fired = actor.collect_due_occurrences_for_publish();
     });
     ctx.set_elements(1000 * iterations as u64);
 }
 
 #[stress_test]
-fn should_complete_system_scan_and_fire_all_ready_1000_schedules(ctx: &mut StressContext) {
-    ctx.tag("scenario", "scan_fire_all_ready_1000");
+fn should_complete_system_collect_due_occurrences_all_ready_1000_schedules(
+    ctx: &mut StressContext,
+) {
+    ctx.tag("scenario", "collect_due_occurrences_all_ready_1000");
     ctx.tag("measurement_scope", "direct_actor");
     ctx.tag("batch_size", "1000_scanned");
     ctx.tag("ready_state", "all_ready");
@@ -269,7 +275,7 @@ fn should_complete_system_scan_and_fire_all_ready_1000_schedules(ctx: &mut Stres
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         actor.bench_prepare_scan(1000);
-        let _fired = actor.scan_and_fire();
+        let _fired = actor.collect_due_occurrences_for_publish();
     });
     ctx.set_elements(1000 * iterations as u64);
 }

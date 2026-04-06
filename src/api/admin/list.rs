@@ -164,8 +164,8 @@ pub struct LeaseResourceDetail {
 /// boot-loaded schedule definitions.
 ///
 /// `enabled`, `cron`, and `next_run` reflect persisted schedule definitions for
-/// this resource. `executions_total` reflects persisted successful schedule
-/// deliveries recorded on acknowledgment.
+/// this resource. `executions_total` reflects persisted acknowledged live
+/// handoffs recorded when a claimed occurrence leaves durable pending state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleResourceDetail {
     pub realm: String,
@@ -670,8 +670,8 @@ pub struct SchedulesList {
 /// broker process at boot.
 ///
 /// Schedule definitions survive restart and downtime. `last_run` and
-/// `executions_total` reflect persisted successful deliveries recorded when a
-/// claimed pending fire is acknowledged after publish.
+/// `executions_total` reflect persisted acknowledged live handoffs recorded
+/// when a claimed pending occurrence leaves durable pending state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleInfo {
     pub realm: String,

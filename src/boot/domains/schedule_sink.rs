@@ -1,4 +1,3 @@
-use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::domains::schedule::ScheduleMetrics;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
@@ -24,23 +23,116 @@ fn schedule_admin_snapshot_due(
 }
 
 struct ScheduleSubscription {
-    pattern: crate::runtime::matcher::Pattern,
+    route: String,
     session_id: u64,
     subscription_id: u64,
     subscriber: crate::runtime::routing::RouteAddress,
 }
 
-impl RoutedSubscription for ScheduleSubscription {
-    fn pattern(&self) -> &crate::runtime::matcher::Pattern {
-        &self.pattern
+struct ScheduleSubscriptionSet {
+    subscriptions: HashMap<u64, ScheduleSubscription>,
+    session_routes: HashMap<u64, HashMap<String, u64>>,
+    exact_routes: HashMap<String, Vec<u64>>,
+}
+
+impl ScheduleSubscriptionSet {
+    fn new() -> Self {
+        Self {
+            subscriptions: HashMap::new(),
+            session_routes: HashMap::new(),
+            exact_routes: HashMap::new(),
+        }
     }
 
-    fn session_id(&self) -> u64 {
-        self.session_id
+    fn subscription_count(&self) -> usize {
+        self.subscriptions.len()
     }
 
-    fn subscription_id(&self) -> u64 {
-        self.subscription_id
+    fn find_existing_id(&self, session_id: u64, route: &str) -> Option<u64> {
+        self.session_routes
+            .get(&session_id)
+            .and_then(|routes| routes.get(route).copied())
+    }
+
+    fn insert(&mut self, subscription: ScheduleSubscription) {
+        let subscription_id = subscription.subscription_id;
+        let session_id = subscription.session_id;
+        let route = subscription.route.clone();
+
+        self.session_routes
+            .entry(session_id)
+            .or_default()
+            .insert(route.clone(), subscription_id);
+        self.exact_routes
+            .entry(route)
+            .or_default()
+            .push(subscription_id);
+        self.subscriptions.insert(subscription_id, subscription);
+    }
+
+    fn remove_session_route(&mut self, session_id: u64, route: &str) -> usize {
+        let Some(subscription_id) = self.find_existing_id(session_id, route) else {
+            return 0;
+        };
+
+        usize::from(self.remove_subscription(subscription_id))
+    }
+
+    fn remove_session(&mut self, session_id: u64) -> usize {
+        let Some(routes) = self.session_routes.remove(&session_id) else {
+            return 0;
+        };
+
+        let removed_ids: Vec<u64> = routes.into_values().collect();
+        for subscription_id in &removed_ids {
+            self.remove_subscription(*subscription_id);
+        }
+
+        removed_ids.len()
+    }
+
+    fn for_each_route(&self, route: &str, mut visit: impl FnMut(&ScheduleSubscription)) -> usize {
+        let Some(subscription_ids) = self.exact_routes.get(route) else {
+            return 0;
+        };
+
+        let mut matched = 0;
+        for subscription_id in subscription_ids {
+            if let Some(subscription) = self.subscriptions.get(subscription_id) {
+                matched += 1;
+                visit(subscription);
+            }
+        }
+
+        matched
+    }
+
+    fn remove_subscription(&mut self, subscription_id: u64) -> bool {
+        let Some(subscription) = self.subscriptions.remove(&subscription_id) else {
+            return false;
+        };
+
+        let session_routes_empty = if let Some(routes) = self.session_routes.get_mut(&subscription.session_id) {
+            routes.remove(subscription.route.as_str());
+            routes.is_empty()
+        } else {
+            false
+        };
+        if session_routes_empty {
+            self.session_routes.remove(&subscription.session_id);
+        }
+
+        let route_entries_empty = if let Some(route_entries) = self.exact_routes.get_mut(subscription.route.as_str()) {
+            route_entries.retain(|id| *id != subscription_id);
+            route_entries.is_empty()
+        } else {
+            false
+        };
+        if route_entries_empty {
+            self.exact_routes.remove(subscription.route.as_str());
+        }
+
+        true
     }
 }
 
@@ -49,7 +141,7 @@ pub struct ScheduleDomainSink {
     actors: Mutex<
         HashMap<crate::runtime::routing::RouteFamily, crate::domains::schedule::ScheduleActor>,
     >,
-    sub_families: Mutex<HashMap<u64, RoutedSubscriptionSet<ScheduleSubscription>>>,
+    sub_families: Mutex<HashMap<u64, ScheduleSubscriptionSet>>,
     next_sub_id: AtomicU64,
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
@@ -58,12 +150,13 @@ pub struct ScheduleDomainSink {
     snapshot_syncing: AtomicBool,
     last_snapshot_elapsed_us: AtomicU64,
     snapshot_epoch: Instant,
-    /// Total number of schedule notifications that failed to route.
-    notify_failures: AtomicU64,
+    /// Total number of live publish handoffs that failed to route.
+    live_publish_failures: AtomicU64,
     /// Total number of pending-fire acknowledgement persistence failures.
     ack_failures: AtomicU64,
-    /// Rolling window of acknowledged execution timestamps for executions-per-minute tracking.
-    recent_execution_ms: Mutex<VecDeque<u64>>,
+    /// Rolling window of acknowledged handoff timestamps for the legacy
+    /// executions-per-minute metric.
+    recent_acknowledgement_ms: Mutex<VecDeque<u64>>,
     metrics: Option<ScheduleMetrics>,
 }
 
@@ -85,9 +178,9 @@ impl ScheduleDomainSink {
             snapshot_syncing: AtomicBool::new(false),
             last_snapshot_elapsed_us: AtomicU64::new(0),
             snapshot_epoch: Instant::now(),
-            notify_failures: AtomicU64::new(0),
+            live_publish_failures: AtomicU64::new(0),
             ack_failures: AtomicU64::new(0),
-            recent_execution_ms: Mutex::new(VecDeque::new()),
+            recent_acknowledgement_ms: Mutex::new(VecDeque::new()),
             metrics: None,
         }
     }
@@ -130,15 +223,16 @@ impl ScheduleDomainSink {
             actors.insert(family, actor);
         }
 
-        // Seed the rolling-window execution counter from persisted last_fire_ms values.
-        // This preserves the executions-per-minute reading across broker restarts for
-        // schedules that fired within the last 60 seconds.
+        // Seed the rolling-window acknowledgement counter from persisted
+        // last_fire_ms values. This preserves the legacy
+        // executions-per-minute metric across broker restarts for occurrences
+        // that were already acknowledged within the last 60 seconds.
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
         let cutoff_ms = now_ms.saturating_sub(60_000);
-        let mut deque = self.recent_execution_ms.lock();
+        let mut deque = self.recent_acknowledgement_ms.lock();
         for actor in actors.values() {
             for ts in actor.last_fire_timestamps_since(cutoff_ms) {
                 deque.push_back(ts);
@@ -180,7 +274,7 @@ impl ScheduleDomainSink {
     }
 
     fn scan_due_schedules(&self) {
-        let mut publishes = Vec::new();
+        let mut live_publish_candidates = Vec::new();
         let mut snapshot_dirty = false;
         {
             let mut actors = self.actors.lock();
@@ -189,8 +283,8 @@ impl ScheduleDomainSink {
                 if !claimed.is_empty() {
                     snapshot_dirty = true;
                 }
-                for pending_fire in actor.pending_fire_claims_for_delivery() {
-                    publishes.push((
+                for pending_fire in actor.pending_claimed_occurrences_for_publish() {
+                    live_publish_candidates.push((
                         *family,
                         pending_fire.fire_ms,
                         pending_fire.route,
@@ -200,29 +294,34 @@ impl ScheduleDomainSink {
             }
         }
 
-        let mut delivered =
+        let mut handed_off_occurrences =
             HashMap::<crate::runtime::routing::RouteFamily, Vec<(u64, String)>>::new();
-        for (family, fire_ms, route, payload) in publishes {
+        for (family, fire_ms, route, payload) in live_publish_candidates {
             let route_value = crate::runtime::routing::Route::new(route.clone());
             let event =
                 crate::runtime::DomainPublishEvent::new(family, route_value.clone(), payload);
             let destination = crate::runtime::routing::RouteAddress::new(family, route_value);
+            // Ack is keyed to a successful handoff into the live publish path,
+            // not to downstream subscriber receipt.
             if self.router.route(Envelope::new(destination, event)).is_ok() {
-                delivered.entry(family).or_default().push((fire_ms, route));
+                handed_off_occurrences
+                    .entry(family)
+                    .or_default()
+                    .push((fire_ms, route));
             } else {
-                self.notify_failures.fetch_add(1, Ordering::Relaxed);
+                self.live_publish_failures.fetch_add(1, Ordering::Relaxed);
             }
         }
 
-        let had_deliveries = !delivered.is_empty();
+        let had_handoffs = !handed_off_occurrences.is_empty();
 
-        if !delivered.is_empty() {
+        if !handed_off_occurrences.is_empty() {
             let mut actors = self.actors.lock();
-            for (family, delivered_fires) in delivered {
+            for (family, handed_off_fires) in handed_off_occurrences {
                 if let Some(actor) = actors.get_mut(&family) {
-                    match actor.ack_pending_fire_claims(&delivered_fires) {
+                    match actor.ack_pending_fire_claims(&handed_off_fires) {
                         Ok((acked, acknowledged_at_ms)) if acked > 0 => {
-                            let mut deque = self.recent_execution_ms.lock();
+                            let mut deque = self.recent_acknowledgement_ms.lock();
                             let cutoff = acknowledged_at_ms.saturating_sub(60_000);
                             while deque.front().copied().is_some_and(|t| t < cutoff) {
                                 deque.pop_front();
@@ -245,7 +344,7 @@ impl ScheduleDomainSink {
             }
         }
 
-        if snapshot_dirty || had_deliveries {
+        if snapshot_dirty || had_handoffs {
             self.schedule_admin_snapshot(false);
         }
 
@@ -285,7 +384,7 @@ impl ScheduleDomainSink {
         }
     }
 
-    fn route_schedule_notify(
+    fn route_live_notify(
         &self,
         subscription: &ScheduleSubscription,
         payload: &[u8],
@@ -304,6 +403,8 @@ impl ScheduleDomainSink {
             crate::runtime::routing::RouteFamily::from_u32(subscription.subscriber.family().id()),
         );
         let notify_envelope = Envelope::new(subscription.subscriber.clone(), notify_ctx);
+        // Subscriber notify routing is best-effort and must not redefine the
+        // schedule domain's durable acknowledgement boundary.
         let _ = self.router.route(notify_envelope);
     }
 
@@ -316,8 +417,8 @@ impl ScheduleDomainSink {
         if let Some(state) = families.get(&family_id) {
             let mut payload_encoder =
                 crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-            state.for_each_matching(event, |subscription| {
-                self.route_schedule_notify(subscription, &event.payload, &mut payload_encoder);
+            state.for_each_route(event.route.as_str(), |subscription| {
+                self.route_live_notify(subscription, &event.payload, &mut payload_encoder);
             });
         }
         Ok(())
@@ -325,11 +426,8 @@ impl ScheduleDomainSink {
 
     pub fn unsubscribe_all(&self, session_id: u64) {
         let mut families = self.sub_families.lock();
-        for (family_id, state) in families.iter_mut() {
-            state.remove_session(
-                crate::runtime::routing::RouteFamily::new(*family_id),
-                session_id,
-            );
+        for state in families.values_mut() {
+            state.remove_session(session_id);
         }
         tracing::debug!(
             domain = "schedule",
@@ -359,13 +457,14 @@ impl ScheduleDomainSink {
             .sum()
     }
 
+    /// Legacy metric name: counts acknowledged live handoffs over the last minute.
     pub fn executions_per_minute(&self) -> f64 {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
         let cutoff = now_ms.saturating_sub(60_000);
-        let mut deque = self.recent_execution_ms.lock();
+        let mut deque = self.recent_acknowledgement_ms.lock();
         while deque.front().copied().is_some_and(|t| t < cutoff) {
             deque.pop_front();
         }
@@ -373,7 +472,7 @@ impl ScheduleDomainSink {
     }
 
     pub fn notify_failure_count(&self) -> u64 {
-        self.notify_failures.load(Ordering::Relaxed)
+        self.live_publish_failures.load(Ordering::Relaxed)
     }
 
     pub fn ack_failure_count(&self) -> u64 {
@@ -623,13 +722,13 @@ impl MailboxSink for ScheduleDomainSink {
                 }
                 ScheduleMessage::Subscribe {
                     family_id,
-                    pattern,
+                    route,
                     session_id,
                     subscriber,
                 } => {
                     if let Err(error) =
                         crate::domains::schedule::protocol::validate_concrete_schedule_route(
-                            pattern.as_str(),
+                            route.as_str(),
                         )
                     {
                         ScheduleResponse::Error(error)
@@ -639,38 +738,33 @@ impl MailboxSink for ScheduleDomainSink {
                         let mut families = self.sub_families.lock();
                         let state = families
                             .entry(fam_id)
-                            .or_insert_with(RoutedSubscriptionSet::new);
+                            .or_insert_with(ScheduleSubscriptionSet::new);
 
-                        let existing_sub_id = state.find_existing_id(session_id, pattern.as_str());
+                        let existing_sub_id = state.find_existing_id(session_id, route.as_str());
 
                         let sub_id = if let Some(id) = existing_sub_id {
                             tracing::debug!(
                                 domain = "schedule",
                                 session = session_id,
                                 subscription_id = id,
-                                pattern = pattern.as_str(),
+                                route = route.as_str(),
                                 "Schedule subscription already exists (idempotent)"
                             );
                             id
                         } else {
                             let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                            state.insert(
-                                family_id,
-                                ScheduleSubscription {
-                                    pattern: crate::runtime::matcher::Pattern::new(
-                                        pattern.as_str(),
-                                    ),
-                                    session_id,
-                                    subscription_id: new_id,
-                                    subscriber,
-                                },
-                            );
+                            state.insert(ScheduleSubscription {
+                                route: route.as_str().to_string(),
+                                session_id,
+                                subscription_id: new_id,
+                                subscriber,
+                            });
 
                             tracing::debug!(
                                 domain = "schedule",
                                 session = session_id,
                                 subscription_id = new_id,
-                                pattern = pattern.as_str(),
+                                route = route.as_str(),
                                 "Schedule subscription added"
                             );
                             new_id
@@ -683,13 +777,13 @@ impl MailboxSink for ScheduleDomainSink {
                 }
                 ScheduleMessage::Unsubscribe {
                     family_id,
-                    pattern,
+                    route,
                     session_id,
                     ..
                 } => {
                     if let Err(error) =
                         crate::domains::schedule::protocol::validate_concrete_schedule_route(
-                            pattern.as_str(),
+                            route.as_str(),
                         )
                     {
                         ScheduleResponse::Error(error)
@@ -697,7 +791,7 @@ impl MailboxSink for ScheduleDomainSink {
                         let fam_id = family_id.as_u64();
                         let mut families = self.sub_families.lock();
                         if let Some(state) = families.get_mut(&fam_id) {
-                            state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                            state.remove_session_route(session_id, route.as_str());
                         }
                         ScheduleResponse::Ok
                     }
@@ -762,9 +856,9 @@ mod tests {
         Bytes::from(encoder.finish())
     }
 
-    fn encode_schedule_subscribe(pattern: &str) -> Bytes {
+    fn encode_schedule_subscribe(route: &str) -> Bytes {
         let mut encoder = PayloadEncoder::new();
-        encoder.put_string(pattern);
+        encoder.put_string(route);
         Bytes::from(encoder.finish())
     }
 
@@ -878,7 +972,7 @@ mod tests {
     }
 
     #[test]
-    fn should_replay_pending_schedule_notify_after_restart_given_initial_notify_failure() {
+    fn should_retry_pending_claim_after_restart_given_initial_live_publish_failure() {
         // Arrange
         let family = RouteFamily::new(1);
         let session_id = 7;
@@ -979,7 +1073,7 @@ mod tests {
         restarted_sink.scan_due_schedules();
         assert!(
             subscriber_mailbox.receiver().try_recv().is_err(),
-            "pending fire should be acknowledged after a successful replay"
+            "pending claimed occurrence should be acknowledged after a successful live handoff retry"
         );
     }
 
@@ -1166,9 +1260,10 @@ mod tests {
     }
 
     #[test]
-    fn should_count_notify_failure_given_domain_routing_error() {
+    fn should_count_live_publish_failure_given_domain_routing_error() {
         // Arrange — create a due schedule but do NOT register the "schedule" domain
-        // pattern so that router.route() returns an error when the fire is published.
+        // handler so that router.route() returns an error when the live publish
+        // handoff is attempted.
         let family = RouteFamily::new(1);
         let schedule_route = "schedule://acme/jobs/orphan/run";
         let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
@@ -1179,7 +1274,7 @@ mod tests {
             router.clone(),
             admin_read_model,
         ));
-        // Intentionally do NOT register the "schedule" domain pattern so routing fails.
+        // Intentionally do NOT register the "schedule" domain handler so routing fails.
 
         {
             let mut actors = sink.actors.lock();
@@ -1201,14 +1296,14 @@ mod tests {
 
         assert_eq!(sink.notify_failure_count(), 0, "no failures before scan");
 
-        // Act — scan fires but domain pattern is not registered, routing fails
+        // Act — scan claims an occurrence but the live publish handoff cannot be routed
         sink.scan_due_schedules();
 
         // Assert
         assert_eq!(
             sink.notify_failure_count(),
             1,
-            "notify failure should be counted when domain routing returns an error"
+            "live publish handoff failure should be counted when domain routing returns an error"
         );
         assert_eq!(
             sink.ack_failure_count(),

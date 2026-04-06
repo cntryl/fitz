@@ -263,7 +263,7 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
-    output.push_str("# HELP fitz_schedule_executions_per_minute Successful schedule deliveries over the last minute\n");
+    output.push_str("# HELP fitz_schedule_executions_per_minute Acknowledged schedule handoffs over the last minute\n");
     output.push_str("# TYPE fitz_schedule_executions_per_minute gauge\n");
     output.push_str(&format!(
         "fitz_schedule_executions_per_minute {}\n",
@@ -279,7 +279,7 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
-    output.push_str("# HELP fitz_schedule_pending_fire_claims Durably claimed schedule fires awaiting successful notify acknowledgement\n");
+    output.push_str("# HELP fitz_schedule_pending_fire_claims Durably claimed schedule occurrences awaiting acknowledged live handoff\n");
     output.push_str("# TYPE fitz_schedule_pending_fire_claims gauge\n");
     output.push_str(&format!(
         "fitz_schedule_pending_fire_claims {}\n",
@@ -287,7 +287,7 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
-    output.push_str("# HELP fitz_schedule_notify_failures_total Total schedule notifications that failed to route\n");
+    output.push_str("# HELP fitz_schedule_notify_failures_total Total schedule live publish handoffs that failed to route\n");
     output.push_str("# TYPE fitz_schedule_notify_failures_total counter\n");
     output.push_str(&format!(
         "fitz_schedule_notify_failures_total {}\n",
