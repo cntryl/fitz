@@ -42,6 +42,11 @@ struct PendingScheduleFire {
     previous_fire_ms: u64,
 }
 
+struct PendingClaim {
+    payload: Bytes,
+    claimed_at_ms: u64,
+}
+
 /// Durable schedule coordinator for one route family.
 ///
 /// Persisted schedule definitions and pending claimed occurrences survive broker
@@ -74,7 +79,7 @@ pub struct ScheduleActor {
     ready_heap: BinaryHeap<(Reverse<u64>, String)>,
     /// Durably claimed occurrences awaiting acknowledged handoff into the live
     /// publish path.
-    pending_claimed_occurrences: BTreeMap<(u64, String), Bytes>,
+    pending_claimed_occurrences: BTreeMap<(u64, String), PendingClaim>,
     /// Injected wall-clock and monotonic time source.
     clock: Arc<dyn Clock>,
     /// Number of schedules normalized forward during the last preload.
@@ -251,14 +256,23 @@ impl ScheduleActor {
             )?;
         }
 
-        for pending_claimed_occurrence in self.store.load_pending_fire_claims(self.family.as_u64())?
+        for pending_claimed_occurrence in
+            self.store.load_pending_fire_claims(self.family.as_u64())?
         {
+            let claimed_at_ms = if pending_claimed_occurrence.claimed_at_ms == 0 {
+                pending_claimed_occurrence.fire_ms
+            } else {
+                pending_claimed_occurrence.claimed_at_ms
+            };
             self.pending_claimed_occurrences.insert(
                 (
                     pending_claimed_occurrence.fire_ms,
                     pending_claimed_occurrence.route,
                 ),
-                pending_claimed_occurrence.payload,
+                PendingClaim {
+                    payload: pending_claimed_occurrence.payload,
+                    claimed_at_ms,
+                },
             );
         }
 
@@ -769,6 +783,7 @@ impl ScheduleActor {
                     route: &item.route,
                     cron: &schedule.cron,
                     payload: &schedule.payload,
+                    claimed_at_ms: now_ms,
                     next_fire_ms: item.next_fire_ms,
                     previous_fire_ms: item.previous_fire_ms,
                     last_fire_ms: schedule.last_fire_ms,
@@ -783,7 +798,8 @@ impl ScheduleActor {
         {
             warn!("Failed to persist schedule reschedule batch: {}", error);
             for item in to_reschedule {
-                self.ready_heap.push((Reverse(item.previous_fire_ms), item.route));
+                self.ready_heap
+                    .push((Reverse(item.previous_fire_ms), item.route));
             }
             return Vec::new();
         }
@@ -804,11 +820,15 @@ impl ScheduleActor {
                 .push((Reverse(item.next_fire_ms), item.route.clone()));
             self.pending_claimed_occurrences.insert(
                 (item.previous_fire_ms, item.route.clone()),
-                payload.clone(),
+                PendingClaim {
+                    payload: payload.clone(),
+                    claimed_at_ms: now_ms,
+                },
             );
             claimed.push(PersistedPendingFireClaim {
                 route: item.route,
                 payload,
+                claimed_at_ms: now_ms,
                 fire_ms: item.previous_fire_ms,
             });
             info!(
@@ -844,9 +864,10 @@ impl ScheduleActor {
     pub(crate) fn pending_claimed_occurrences_for_publish(&self) -> Vec<PersistedPendingFireClaim> {
         self.pending_claimed_occurrences
             .iter()
-            .map(|((fire_ms, route), payload)| PersistedPendingFireClaim {
+            .map(|((fire_ms, route), claim)| PersistedPendingFireClaim {
                 route: route.clone(),
-                payload: payload.clone(),
+                payload: claim.payload.clone(),
+                claimed_at_ms: claim.claimed_at_ms,
                 fire_ms: *fire_ms,
             })
             .collect()
@@ -878,7 +899,8 @@ impl ScheduleActor {
             .map(|(fire_ms, route)| {
                 let route_str = route.as_str();
                 let definition = self.schedules.get(route_str).map(|schedule| {
-                    let acknowledgement_count = acknowledgement_counts.entry(route_str).or_insert(0);
+                    let acknowledgement_count =
+                        acknowledgement_counts.entry(route_str).or_insert(0);
                     *acknowledgement_count = acknowledgement_count.saturating_add(1);
 
                     ScheduleAckDefinition {
@@ -930,6 +952,37 @@ impl ScheduleActor {
         delivered: &[(u64, String)],
     ) -> Result<(usize, u64), String> {
         self.ack_pending_fire_claims(delivered)
+    }
+
+    pub(crate) fn cleanup_stale_pending_claims(&mut self, ttl_ms: u64) -> Result<usize, String> {
+        let now_epoch_ms = self.clock.now_epoch_ms();
+        let expired: Vec<_> = self
+            .pending_claimed_occurrences
+            .iter()
+            .filter(|(_, claim)| now_epoch_ms.saturating_sub(claim.claimed_at_ms) >= ttl_ms)
+            .map(|((fire_ms, route), _)| (*fire_ms, route.clone()))
+            .collect();
+
+        if expired.is_empty() {
+            return Ok(0);
+        }
+
+        self.store.delete_pending_fire_claims(
+            self.family.as_u64(),
+            &expired,
+            self.write_options,
+        )?;
+
+        for key in &expired {
+            self.pending_claimed_occurrences.remove(key);
+        }
+
+        Ok(expired.len())
+    }
+
+    #[doc(hidden)]
+    pub fn bench_cleanup_stale_pending_claims(&mut self, ttl_ms: u64) -> Result<usize, String> {
+        self.cleanup_stale_pending_claims(ttl_ms)
     }
 
     pub(crate) fn pending_fire_count(&self) -> usize {

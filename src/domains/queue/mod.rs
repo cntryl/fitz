@@ -142,7 +142,8 @@ pub mod projection;
 pub mod protocol;
 pub mod session;
 
-pub use actor::{Clock, QueueActor, SystemClock};
+pub use crate::runtime::clock::{Clock, SystemClock};
+pub use actor::QueueActor;
 pub use core::{MessageId, QueueKey, ReservedMessage};
 pub use metrics::QueueMetrics;
 pub use projection::{QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueInflightSnapshot};

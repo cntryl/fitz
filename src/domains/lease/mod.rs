@@ -38,7 +38,8 @@ pub mod projection;
 pub mod protocol;
 pub mod session;
 
-pub use actor::{Clock, LeaseActor, SystemClock};
+pub use crate::runtime::clock::{Clock, SystemClock};
+pub use actor::LeaseActor;
 pub use guard::{LeaseError, LeaseGuard, LeaseHandle};
 pub use metrics::LeaseMetrics;
 pub use protocol::{LeaseMessage, LeaseResponse, LeaseSubscriptionMessage};

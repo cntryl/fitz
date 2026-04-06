@@ -6,7 +6,8 @@ use cntryl_midge::WriteOptions;
 
 const DEFINITION_VALUE_VERSION_V1: u8 = 1;
 const DEFINITION_VALUE_VERSION_V2: u8 = 2;
-const PENDING_FIRE_VALUE_VERSION: u8 = 1;
+const PENDING_FIRE_VALUE_VERSION_V1: u8 = 1;
+const PENDING_FIRE_VALUE_VERSION_V2: u8 = 2;
 const DEFINITION_PREFIX: &[u8] = b"sched:def:";
 const DUE_PREFIX: &[u8] = b"sched:due:";
 const PENDING_FIRE_PREFIX: &[u8] = b"sched:pending:";
@@ -38,6 +39,7 @@ pub struct ScheduleFireClaim<'a> {
     pub route: &'a str,
     pub cron: &'a str,
     pub payload: &'a Bytes,
+    pub claimed_at_ms: u64,
     pub next_fire_ms: u64,
     pub previous_fire_ms: u64,
     pub last_fire_ms: Option<u64>,
@@ -72,6 +74,7 @@ pub struct PersistedSchedule {
 pub struct PersistedPendingFireClaim {
     pub route: String,
     pub payload: Bytes,
+    pub claimed_at_ms: u64,
     pub fire_ms: u64,
 }
 
@@ -314,25 +317,36 @@ impl ScheduleStore {
         Ok((cron, payload))
     }
 
-    fn encode_pending_fire_value(payload: &Bytes) -> Vec<u8> {
-        let mut value = Vec::with_capacity(1 + payload.len());
-        value.push(PENDING_FIRE_VALUE_VERSION);
+    fn encode_pending_fire_value(payload: &Bytes, claimed_at_ms: u64) -> Vec<u8> {
+        let mut value = Vec::with_capacity(1 + std::mem::size_of::<u64>() + payload.len());
+        value.push(PENDING_FIRE_VALUE_VERSION_V2);
+        value.extend_from_slice(&claimed_at_ms.to_le_bytes());
         value.extend_from_slice(payload);
         value
     }
 
-    fn decode_pending_fire_value(value: &[u8]) -> Result<Bytes, String> {
+    fn decode_pending_fire_value(value: &[u8]) -> Result<(u64, Bytes), String> {
         if value.is_empty() {
             return Err("Schedule pending fire value too short".to_string());
         }
-        if value[0] != PENDING_FIRE_VALUE_VERSION {
-            return Err(format!(
-                "Unsupported schedule pending fire value version: {}",
-                value[0]
-            ));
-        }
 
-        Ok(Bytes::copy_from_slice(&value[1..]))
+        match value[0] {
+            PENDING_FIRE_VALUE_VERSION_V1 => Ok((0, Bytes::copy_from_slice(&value[1..]))),
+            PENDING_FIRE_VALUE_VERSION_V2 => {
+                if value.len() < 1 + std::mem::size_of::<u64>() {
+                    return Err(
+                        "Schedule pending fire value missing claimed-at timestamp".to_string()
+                    );
+                }
+
+                let claimed_at_ms = u64::from_le_bytes(value[1..9].try_into().unwrap());
+                Ok((claimed_at_ms, Bytes::copy_from_slice(&value[9..])))
+            }
+            other => Err(format!(
+                "Unsupported schedule pending fire value version: {}",
+                other
+            )),
+        }
     }
 
     pub fn insert(
@@ -455,7 +469,7 @@ impl ScheduleStore {
                 .map_err(|e| format!("put due index failed: {:?}", e))?;
             txn.put(
                 pending_fire_key,
-                Self::encode_pending_fire_value(item.payload),
+                Self::encode_pending_fire_value(item.payload, item.claimed_at_ms),
                 None,
             )
             .map_err(|e| format!("put pending fire failed: {:?}", e))?;
@@ -681,10 +695,11 @@ impl ScheduleStore {
                 Self::decode_pending_fire_key(&key),
                 Self::decode_pending_fire_value(&value),
             ) {
-                (Ok((fire_ms, route)), Ok(payload)) => {
+                (Ok((fire_ms, route)), Ok((claimed_at_ms, payload))) => {
                     pending.push(PersistedPendingFireClaim {
                         route,
                         payload,
+                        claimed_at_ms,
                         fire_ms,
                     });
                 }
@@ -986,6 +1001,7 @@ mod tests {
                     route,
                     cron: "* * * * *",
                     payload: &payload,
+                    claimed_at_ms: 1_700_000_020_500_u64,
                     next_fire_ms,
                     previous_fire_ms: original_fire_ms,
                     last_fire_ms: None,
@@ -1004,6 +1020,7 @@ mod tests {
             vec![PersistedPendingFireClaim {
                 route: route.to_string(),
                 payload: payload.clone(),
+                claimed_at_ms: 1_700_000_020_500_u64,
                 fire_ms: original_fire_ms,
             }]
         );
@@ -1063,6 +1080,7 @@ mod tests {
                     route,
                     cron: "* * * * *",
                     payload: &payload,
+                    claimed_at_ms: 1_700_000_020_500_u64,
                     next_fire_ms,
                     previous_fire_ms: original_fire_ms,
                     last_fire_ms: None,
@@ -1148,6 +1166,7 @@ mod tests {
                     route,
                     cron: "* * * * *",
                     payload: &payload,
+                    claimed_at_ms: 1_700_000_020_500_u64,
                     next_fire_ms,
                     previous_fire_ms: original_fire_ms,
                     last_fire_ms: None,
@@ -1181,8 +1200,14 @@ mod tests {
             .expect("load schedules");
 
         // Assert
-        assert!(pending.is_empty(), "pending fire should be removed after ack");
-        assert!(schedules.is_empty(), "schedule definition should stay deleted");
+        assert!(
+            pending.is_empty(),
+            "pending fire should be removed after ack"
+        );
+        assert!(
+            schedules.is_empty(),
+            "schedule definition should stay deleted"
+        );
         assert!(
             read_raw_value(
                 &db,

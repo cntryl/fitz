@@ -32,6 +32,8 @@ struct AppendSession {
 }
 
 pub type SessionId = u64;
+type SequenceGuardKey = (u64, String, String, String);
+type SequenceGuard = Arc<Mutex<()>>;
 
 #[derive(Debug, Clone)]
 pub struct BatchLimits {
@@ -116,7 +118,7 @@ pub struct StreamStore {
     sessions: Arc<Mutex<HashMap<SessionId, AppendSession>>>,
     ttl: StreamTTL,
     next_session_id: std::sync::atomic::AtomicU64,
-    sequencing_guards: Arc<Mutex<HashMap<u64, Arc<Mutex<()>>>>>,
+    sequencing_guards: Arc<Mutex<HashMap<SequenceGuardKey, SequenceGuard>>>,
 }
 
 impl StreamStore {
@@ -143,9 +145,22 @@ impl StreamStore {
         self.limits.clone()
     }
 
-    fn family_sequence_guard(&self, family: u64) -> Arc<Mutex<()>> {
+    fn resource_sequence_guard(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> SequenceGuard {
         let mut guards = self.sequencing_guards.lock();
-        match guards.entry(family) {
+        let key = (
+            family,
+            realm.to_string(),
+            area.to_string(),
+            resource.to_string(),
+        );
+
+        match guards.entry(key) {
             Entry::Occupied(entry) => entry.get().clone(),
             Entry::Vacant(entry) => {
                 let guard = Arc::new(Mutex::new(()));
@@ -372,7 +387,7 @@ impl StreamStore {
             return Err("ERR_EMPTY_BATCH".to_string());
         }
 
-        let sequencing_guard = self.family_sequence_guard(family);
+        let sequencing_guard = self.resource_sequence_guard(family, realm, area, resource);
         let _sequencing_lock = sequencing_guard.lock();
 
         let (resource_meta_before, upgrade_resource_meta) =
@@ -1306,12 +1321,22 @@ impl StreamStore {
         watermark: u64,
     ) -> Result<(), String> {
         let key = encode_watermark_key(realm, area);
-        let value = WatermarkValue { watermark };
 
         let mut txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+
+        // Monotonicity guard: watermarks must only advance, never regress.
+        // If the new value is not strictly greater than the current value, no-op.
+        if let Ok(Some(existing)) = txn.get(&key) {
+            let current = WatermarkValue::decode(&existing).watermark;
+            if watermark <= current {
+                return Ok(());
+            }
+        }
+
+        let value = WatermarkValue { watermark };
         txn.put(key, value.encode(), None)
             .map_err(|e| format!("txn put failed: {:?}", e))?;
         let opts = cntryl_midge::WriteOptions::sync();
@@ -1347,12 +1372,21 @@ impl StreamStore {
         watermark: u64,
     ) -> Result<(), String> {
         let key = crate::domains::stream::storage::encode_realm_watermark_key(realm);
-        let value = WatermarkValue { watermark };
 
         let mut txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+
+        // Monotonicity guard: realm watermarks must only advance, never regress.
+        if let Ok(Some(existing)) = txn.get(&key) {
+            let current = WatermarkValue::decode(&existing).watermark;
+            if watermark <= current {
+                return Ok(());
+            }
+        }
+
+        let value = WatermarkValue { watermark };
         txn.put(key, value.encode(), None)
             .map_err(|e| format!("txn put failed: {:?}", e))?;
         let opts = cntryl_midge::WriteOptions::sync();
@@ -1455,5 +1489,37 @@ impl StreamStore {
             },
             Err(e) => Err(format!("get_next_resource_offset error: {:?}", e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testkit::create_test_engine_with_cfs;
+
+    #[test]
+    fn should_reuse_sequence_guard_given_same_resource() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+
+        // Act
+        let first = store.resource_sequence_guard(1, "test", "events", "orders");
+        let second = store.resource_sequence_guard(1, "test", "events", "orders");
+
+        // Assert
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn should_create_distinct_sequence_guards_given_different_resources() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+
+        // Act
+        let left = store.resource_sequence_guard(1, "test", "events", "orders");
+        let right = store.resource_sequence_guard(1, "test", "events", "audits");
+
+        // Assert
+        assert!(!Arc::ptr_eq(&left, &right));
     }
 }

@@ -179,10 +179,11 @@ impl Scheduler {
                     // Check deadline before processing
                     if envelope.is_expired() {
                         ctx.metrics().record_expired();
-                        eprintln!(
-                            "Dropped expired high-priority message {:?} for actor {:?}",
-                            envelope.id(),
-                            address
+                        tracing::warn!(
+                            message_id = envelope.id().as_u64(),
+                            actor = ?address,
+                            priority = "high",
+                            "Dropped expired message"
                         );
                         record_worker_busy_time(busy_start.elapsed());
                         processed_high += 1;
@@ -238,10 +239,11 @@ impl Scheduler {
                     // Check deadline before processing
                     if envelope.is_expired() {
                         ctx.metrics().record_expired();
-                        eprintln!(
-                            "Dropped expired message {:?} for actor {:?}",
-                            envelope.id(),
-                            address
+                        tracing::warn!(
+                            message_id = envelope.id().as_u64(),
+                            actor = ?address,
+                            priority = "normal",
+                            "Dropped expired message"
                         );
                         record_worker_busy_time(busy_start.elapsed());
                         processed_normal += 1;
@@ -263,9 +265,10 @@ impl Scheduler {
                         actor.on_timer(timer_id, &mut ctx);
                     })) {
                         record_worker_busy_time(timer_start.elapsed());
-                        eprintln!(
-                            "Actor {:?} panicked during timer handling: {:?}\nStopping actor. Supervisor will handle restart.",
-                            address, e
+                        tracing::error!(
+                            actor = ?address,
+                            error = ?e,
+                            "Actor panicked during timer handling"
                         );
 
                         ctx.metrics().record_panic();
@@ -334,11 +337,11 @@ fn process_envelope<A: Actor>(
                 envelope_id: metadata.id.as_u64(),
             };
 
-            eprintln!(
-                "Type mismatch: envelope {:?} for actor {:?} - expected {}, got different type",
-                metadata.id,
-                address,
-                std::any::type_name::<A::Message>()
+            tracing::warn!(
+                message_id = metadata.id.as_u64(),
+                actor = ?address,
+                expected = std::any::type_name::<A::Message>(),
+                "Actor received message with mismatched type"
             );
 
             actor.on_error(error, ctx);
@@ -355,9 +358,10 @@ fn process_envelope<A: Actor>(
         actor.receive(msg, ctx);
     })) {
         // Structured panic error
-        eprintln!(
-            "Actor {:?} panicked during message processing: {:?}\nStopping actor. Supervisor will handle restart.",
-            address, e
+        tracing::error!(
+            actor = ?address,
+            error = ?e,
+            "Actor panicked during message processing"
         );
 
         ctx.metrics().record_panic();

@@ -57,6 +57,7 @@ use fxhash::FxBuildHasher;
 use crate::observability as obs;
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
+use crate::runtime::clock::{Clock, SystemClock};
 use crate::runtime::routing::RouteFamily;
 
 use super::{
@@ -67,7 +68,17 @@ use super::{
 #[cfg(test)]
 std::thread_local! {
     static FAIL_NEXT_ACK_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_NEXT_REDELIVERY_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
+
+#[path = "actor_recovery.rs"]
+pub(crate) mod recovery;
+#[path = "actor_state.rs"]
+pub(crate) mod state;
+#[path = "actor_storage.rs"]
+pub(crate) mod storage;
+#[path = "actor_timers.rs"]
+pub(crate) mod timers;
 
 type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 
@@ -371,28 +382,6 @@ struct IndexMetaSnapshot {
 enum DecodedIndexMeta {
     LegacyV1,
     V2(IndexMetaSnapshot),
-}
-
-/// Clock abstraction for testable time
-pub trait Clock: Send + Sync {
-    fn now_instant(&self) -> Instant;
-    fn now_epoch_ms(&self) -> u64;
-}
-
-/// System clock using Instant::now()
-pub struct SystemClock;
-
-impl Clock for SystemClock {
-    fn now_instant(&self) -> Instant {
-        Instant::now()
-    }
-
-    fn now_epoch_ms(&self) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|_| Duration::from_secs(0))
-            .as_millis() as u64
-    }
 }
 
 /// Queue actor managing a single message queue
@@ -1111,9 +1100,11 @@ impl QueueActor {
         {
             Ok(txn) => txn,
             Err(e) => {
-                eprintln!(
-                    "WARN: Failed to begin meta recovery tx for queue {:?}: {:?}, starting from 1",
-                    self.queue_key, e
+                tracing::warn!(
+                    queue = ?self.queue_key,
+                    route_family = self.queue_key.family.as_u64(),
+                    error = ?e,
+                    "Failed to begin queue meta recovery transaction; starting from 1"
                 );
                 return 1;
             }
@@ -1124,9 +1115,11 @@ impl QueueActor {
             Ok(None) => 1,
             Err(e) if Self::is_missing_read_snapshot_error(&e) => 1,
             Err(e) => {
-                eprintln!(
-                    "WARN: Failed to recover next_id for queue {:?}: {:?}, starting from 1",
-                    self.queue_key, e
+                tracing::warn!(
+                    queue = ?self.queue_key,
+                    route_family = self.queue_key.family.as_u64(),
+                    error = ?e,
+                    "Failed to recover queue next_id; starting from 1"
                 );
                 1
             }
@@ -1307,17 +1300,25 @@ impl QueueActor {
     ) -> Result<(), String> {
         if let Some((shard, mutation)) = plan.ready_mutation {
             self.write_persisted_ready_mutation(txn, shard, mutation)
-                .map_err(|error| format!("Failed to update ready index for message {}: {}", id, error))?;
+                .map_err(|error| {
+                    format!("Failed to update ready index for message {}: {}", id, error)
+                })?;
         }
 
         if let Some(visible_at_ms) = plan.delayed_index_delete {
             txn.delete(self.delayed_index_key(visible_at_ms, id))
-                .map_err(|e| format!("Failed to update delayed index for message {}: {:?}", id, e))?;
+                .map_err(|e| {
+                    format!("Failed to update delayed index for message {}: {:?}", id, e)
+                })?;
         }
 
         if let Some(dead_lettered_at_ms) = dead_lettered_at_ms {
-            txn.put(self.dlq_index_key(dead_lettered_at_ms, id), Vec::new(), None)
-                .map_err(|e| format!("Failed to write DLQ index for message {}: {:?}", id, e))?;
+            txn.put(
+                self.dlq_index_key(dead_lettered_at_ms, id),
+                Vec::new(),
+                None,
+            )
+            .map_err(|e| format!("Failed to write DLQ index for message {}: {:?}", id, e))?;
         }
 
         txn.put(
@@ -1330,7 +1331,12 @@ impl QueueActor {
             ),
             None,
         )
-        .map_err(|e| format!("Failed to update queue index meta for message {}: {:?}", id, e))
+        .map_err(|e| {
+            format!(
+                "Failed to update queue index meta for message {}: {:?}",
+                id, e
+            )
+        })
     }
 
     fn apply_index_mutation_plan(
@@ -2390,6 +2396,22 @@ impl QueueActor {
         }
     }
 
+    fn update_cached_inflight_metadata(
+        &mut self,
+        id: MessageId,
+        inflight_epoch: u64,
+        inflight_token: Option<u64>,
+        inflight_expires_at_ms: Option<u64>,
+        last_inflight_at_ms: Option<u64>,
+    ) {
+        if let Some(record) = self.records.get_mut(&id) {
+            record.inflight_epoch = inflight_epoch;
+            record.inflight_token = inflight_token;
+            record.inflight_expires_at_ms = inflight_expires_at_ms;
+            record.last_inflight_at_ms = last_inflight_at_ms;
+        }
+    }
+
     fn commit_ack_transaction(
         txn: cntryl_midge::Transaction,
         write_options: cntryl_midge::WriteOptions,
@@ -2412,9 +2434,36 @@ impl QueueActor {
         txn.commit(write_options).map_err(|e| format!("{:?}", e))
     }
 
+    fn commit_redelivery_transaction(
+        txn: cntryl_midge::Transaction,
+        write_options: cntryl_midge::WriteOptions,
+    ) -> Result<(), String> {
+        #[cfg(test)]
+        {
+            let should_fail = FAIL_NEXT_REDELIVERY_COMMIT.with(|cell| {
+                let should_fail = cell.get();
+                if should_fail {
+                    cell.set(false);
+                }
+                should_fail
+            });
+
+            if should_fail {
+                return Err("Injected queue redelivery commit failure".to_string());
+            }
+        }
+
+        txn.commit(write_options).map_err(|e| format!("{:?}", e))
+    }
+
     #[cfg(test)]
     fn fail_next_ack_commit_for_tests() {
         FAIL_NEXT_ACK_COMMIT.with(|cell| cell.set(true));
+    }
+
+    #[cfg(test)]
+    fn fail_next_redelivery_commit_for_tests() {
+        FAIL_NEXT_REDELIVERY_COMMIT.with(|cell| cell.set(true));
     }
 
     /// Handle send operation
@@ -2777,7 +2826,13 @@ impl QueueActor {
             let (body, attempts) = match self.hydrate_record_for_receive(id) {
                 Ok(record) => record,
                 Err(e) => {
-                    eprintln!("WARN: {}", e);
+                    tracing::warn!(
+                        queue = ?self.queue_key,
+                        route_family = self.queue_key.family.as_u64(),
+                        message_id = id.as_u64(),
+                        error_reason = %e,
+                        "Failed to hydrate queue record for receive"
+                    );
                     continue;
                 }
             };
@@ -2785,6 +2840,13 @@ impl QueueActor {
             // Generate inflight token
             let token = Self::generate_token();
             let expires_at = now + inflight_duration;
+            let inflight_epoch = self
+                .records
+                .get(&id)
+                .map(|record| record.inflight_epoch.saturating_add(1))
+                .unwrap_or(1);
+            let expires_at_epoch_ms =
+                now_epoch_ms.saturating_add(inflight_seconds.saturating_mul(1_000));
 
             // Create inflight entry
             self.inflight.insert(
@@ -2792,20 +2854,26 @@ impl QueueActor {
                 Inflight {
                     token,
                     expires_at,
-                    expires_at_epoch_ms: now_epoch_ms
-                        .saturating_add(inflight_seconds.saturating_mul(1_000)),
+                    expires_at_epoch_ms,
                     owner_session_id,
                     attempts: attempts + 1,
-                    inflight_epoch: 0,
+                    inflight_epoch,
                 },
+            );
+            self.update_cached_inflight_metadata(
+                id,
+                inflight_epoch,
+                Some(token),
+                Some(expires_at_epoch_ms),
+                Some(now_epoch_ms),
             );
 
             // Schedule expiration timer
             self.timers.push(Reverse(InflightExpiry {
                 id,
-                inflight_epoch: 0,
+                inflight_epoch,
                 expires_at,
-                expires_at_ms: now_epoch_ms.saturating_add(inflight_seconds.saturating_mul(1_000)),
+                expires_at_ms: expires_at_epoch_ms,
             }));
 
             // Update deadline cache if this expiration is sooner
@@ -2861,17 +2929,27 @@ impl QueueActor {
 
         // Extend expiration
         let new_expires_at = now + Duration::from_secs(inflight_seconds);
+        inflight.inflight_epoch = inflight.inflight_epoch.saturating_add(1);
         inflight.expires_at = new_expires_at;
         inflight.expires_at_epoch_ms =
             now_epoch_ms.saturating_add(inflight_seconds.saturating_mul(1_000));
+        let inflight_epoch = inflight.inflight_epoch;
+        let inflight_expires_at_ms = inflight.expires_at_epoch_ms;
 
         // Schedule new timer (old timer will be ignored when it fires)
         self.timers.push(Reverse(InflightExpiry {
             id,
-            inflight_epoch: inflight.inflight_epoch,
+            inflight_epoch,
             expires_at: new_expires_at,
-            expires_at_ms: inflight.expires_at_epoch_ms,
+            expires_at_ms: inflight_expires_at_ms,
         }));
+        self.update_cached_inflight_metadata(
+            id,
+            inflight_epoch,
+            Some(token),
+            Some(inflight_expires_at_ms),
+            Some(now_epoch_ms),
+        );
 
         // Update deadline cache if this expiration is sooner
         if new_expires_at < self.next_expiration_deadline {
@@ -2988,11 +3066,19 @@ impl QueueActor {
                 legacy_key,
             ) {
                 Err(e) => {
-                    eprintln!("WARN: Failed to delete message {} in txn: {:?}", id, e);
+                    tracing::warn!(
+                        queue = ?self.queue_key,
+                        route_family = self.queue_key.family.as_u64(),
+                        message_id = id.as_u64(),
+                        error = ?e,
+                        "Failed to delete queue message in transaction"
+                    );
                     Err(format!("Failed to delete message {} in txn: {:?}", id, e))
                 }
                 Ok(()) => {
-                    if let Err(error) = self.write_index_mutation_plan(&mut txn, id, index_plan, None) {
+                    if let Err(error) =
+                        self.write_index_mutation_plan(&mut txn, id, index_plan, None)
+                    {
                         return QueueResponse::Error { message: error };
                     }
 
@@ -3002,9 +3088,12 @@ impl QueueActor {
                             Ok(())
                         }
                         Err(e) => {
-                            eprintln!(
-                                "WARN: Failed to commit delete txn for message {}: {}",
-                                id, e
+                            tracing::warn!(
+                                queue = ?self.queue_key,
+                                route_family = self.queue_key.family.as_u64(),
+                                message_id = id.as_u64(),
+                                error_reason = %e,
+                                "Failed to commit queue delete transaction"
                             );
                             Err(format!(
                                 "Failed to commit delete txn for message {}: {}",
@@ -3221,8 +3310,9 @@ impl QueueActor {
         }
         let now_epoch_ms = self.clock.now_epoch_ms();
 
-        // Remove inflight entry
-        self.inflight.remove(&id);
+        // NOTE: Inflight removal is deferred until after successful storage commit.
+        // On failure, the inflight entry stays intact and a retry timer is scheduled.
+        // This prevents message loss when storage operations fail (V-004 Fix).
 
         // Increment attempts in storage and check DLQ threshold
         let cf_id = self.queue_key.family.id();
@@ -3242,10 +3332,14 @@ impl QueueActor {
             match self.load_record_metadata_from_store(id) {
                 Ok((record, layout)) => (record, layout),
                 Err(e) => {
-                    eprintln!(
-                        "WARN: Failed to load message {} during redelivery: {}",
-                        id, e
+                    tracing::warn!(
+                        queue = ?self.queue_key,
+                        route_family = self.queue_key.family.as_u64(),
+                        message_id = id.as_u64(),
+                        error_reason = %e,
+                        "Failed to load queue message during redelivery"
                     );
+                    self.schedule_inflight_retry(id, &inflight);
                     return;
                 }
             }
@@ -3268,10 +3362,14 @@ impl QueueActor {
                     Ok(Some(_)) => true,
                     Ok(None) => false,
                     Err(e) => {
-                        eprintln!(
-                            "WARN: Failed to inspect queue storage layout for message {}: {:?}",
-                            id, e
+                        tracing::warn!(
+                            queue = ?self.queue_key,
+                            route_family = self.queue_key.family.as_u64(),
+                            message_id = id.as_u64(),
+                            error = ?e,
+                            "Failed to inspect queue storage layout during redelivery"
                         );
+                        self.schedule_inflight_retry(id, &inflight);
                         return;
                     }
                 };
@@ -3280,9 +3378,12 @@ impl QueueActor {
                         Ok(Some(_)) => true,
                         Ok(None) => false,
                         Err(e) => {
-                            eprintln!(
-                                "WARN: Failed to inspect body storage layout for message {}: {:?}",
-                                id, e
+                            tracing::warn!(
+                                queue = ?self.queue_key,
+                                route_family = self.queue_key.family.as_u64(),
+                                message_id = id.as_u64(),
+                                error = ?e,
+                                "Failed to inspect queue body storage layout during redelivery"
                             );
                             false
                         }
@@ -3316,10 +3417,14 @@ impl QueueActor {
                                 match self.load_body_from_store(id) {
                                     Ok(body) => record.body = Some(body),
                                     Err(e) => {
-                                        eprintln!(
-                                            "WARN: Failed to load body for DLQ message {}: {}",
-                                            id, e
+                                        tracing::warn!(
+                                            queue = ?self.queue_key,
+                                            route_family = self.queue_key.family.as_u64(),
+                                            message_id = id.as_u64(),
+                                            error_reason = %e,
+                                            "Failed to load queue body for DLQ transition"
                                         );
+                                        self.schedule_inflight_retry(id, &inflight);
                                         return;
                                     }
                                 }
@@ -3329,7 +3434,14 @@ impl QueueActor {
                         };
 
                     if let Err(e) = write_result {
-                        eprintln!("WARN: Failed to persist DLQ message {}: {:?}", id, e);
+                        tracing::warn!(
+                            queue = ?self.queue_key,
+                            route_family = self.queue_key.family.as_u64(),
+                            message_id = id.as_u64(),
+                            error = ?e,
+                            "Failed to persist queue DLQ record"
+                        );
+                        self.schedule_inflight_retry(id, &inflight);
                         return;
                     }
 
@@ -3339,19 +3451,44 @@ impl QueueActor {
                         index_plan,
                         Some(dead_lettered_at_ms),
                     ) {
-                        eprintln!("WARN: {}", error);
+                        tracing::warn!(
+                            queue = ?self.queue_key,
+                            route_family = self.queue_key.family.as_u64(),
+                            message_id = id.as_u64(),
+                            error_reason = %error,
+                            "Failed to update queue indexes during DLQ transition"
+                        );
+                        self.schedule_inflight_retry(id, &inflight);
                         return;
                     }
 
                     let update_start = Instant::now();
-                    if let Err(e) = txn.commit(self.commit_write_options) {
-                        eprintln!("WARN: Failed to commit DLQ transition txn {}: {:?}", id, e);
+                    if let Err(e) =
+                        Self::commit_redelivery_transaction(txn, self.commit_write_options)
+                    {
+                        tracing::warn!(
+                            queue = ?self.queue_key,
+                            route_family = self.queue_key.family.as_u64(),
+                            message_id = id.as_u64(),
+                            error = ?e,
+                            "Failed to commit queue DLQ transition"
+                        );
+                        self.schedule_inflight_retry(id, &inflight);
                         return;
                     }
 
                     Self::observe_elapsed_us(
                         obs::METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY,
                         update_start,
+                    );
+                    // DLQ commit succeeded — now safe to remove inflight entry (V-004 Fix)
+                    self.inflight.remove(&id);
+                    self.update_cached_inflight_metadata(
+                        id,
+                        inflight.inflight_epoch,
+                        None,
+                        None,
+                        record.last_inflight_at_ms,
                     );
                     self.apply_index_mutation_plan(id, index_plan, Some(dead_lettered_at_ms));
                     self.cache_record(
@@ -3361,9 +3498,12 @@ impl QueueActor {
                     );
                     self.evict_cached_body(id);
 
-                    eprintln!(
-                        "DLQ: queue={:?} message_id={} attempts={} - Message moved to dead letter queue",
-                        self.queue_key, id, record.attempts
+                    tracing::info!(
+                        queue = ?self.queue_key,
+                        route_family = self.queue_key.family.as_u64(),
+                        message_id = id.as_u64(),
+                        attempts = record.attempts,
+                        "Message moved to queue dead letter state"
                     );
 
                     Self::increment_counter(obs::METRIC_QUEUE_DLQ_TRANSITIONS);
@@ -3381,10 +3521,14 @@ impl QueueActor {
                                     txn.put(header_key.clone(), value, None)
                                 }
                                 Err(e) => {
-                                    eprintln!(
-                                        "WARN: Failed to decode embedded message {} during redelivery: {}",
-                                        id, e
+                                    tracing::warn!(
+                                        queue = ?self.queue_key,
+                                        route_family = self.queue_key.family.as_u64(),
+                                        message_id = id.as_u64(),
+                                        error_reason = %e,
+                                        "Failed to decode embedded queue message during redelivery"
                                     );
+                                    self.schedule_inflight_retry(id, &inflight);
                                     return;
                                 }
                             }
@@ -3394,14 +3538,24 @@ impl QueueActor {
                             txn.put(header_key.clone(), value, None)
                         }
                         Ok(None) => {
-                            eprintln!("WARN: Message {} disappeared during redelivery", id);
+                            tracing::warn!(
+                                queue = ?self.queue_key,
+                                route_family = self.queue_key.family.as_u64(),
+                                message_id = id.as_u64(),
+                                "Queue message disappeared during redelivery"
+                            );
+                            self.schedule_inflight_retry(id, &inflight);
                             return;
                         }
                         Err(e) => {
-                            eprintln!(
-                                "WARN: Failed to read message {} during redelivery: {:?}",
-                                id, e
+                            tracing::warn!(
+                                queue = ?self.queue_key,
+                                route_family = self.queue_key.family.as_u64(),
+                                message_id = id.as_u64(),
+                                error = ?e,
+                                "Failed to read queue message during redelivery"
                             );
+                            self.schedule_inflight_retry(id, &inflight);
                             return;
                         }
                     }
@@ -3415,39 +3569,65 @@ impl QueueActor {
                                 txn.put(legacy_key.clone(), value, None)
                             }
                             Err(e) => {
-                                eprintln!(
-                                    "WARN: Failed to decode legacy message {} during redelivery: {}",
-                                    id, e
+                                tracing::warn!(
+                                    queue = ?self.queue_key,
+                                    route_family = self.queue_key.family.as_u64(),
+                                    message_id = id.as_u64(),
+                                    error_reason = %e,
+                                    "Failed to decode legacy queue message during redelivery"
                                 );
+                                self.schedule_inflight_retry(id, &inflight);
                                 return;
                             }
                         },
                         Ok(None) => {
-                            eprintln!("WARN: Legacy message {} disappeared during redelivery", id);
+                            tracing::warn!(
+                                queue = ?self.queue_key,
+                                route_family = self.queue_key.family.as_u64(),
+                                message_id = id.as_u64(),
+                                "Legacy queue message disappeared during redelivery"
+                            );
+                            self.schedule_inflight_retry(id, &inflight);
                             return;
                         }
                         Err(e) => {
-                            eprintln!(
-                                "WARN: Failed to read legacy message {} during redelivery: {:?}",
-                                id, e
+                            tracing::warn!(
+                                queue = ?self.queue_key,
+                                route_family = self.queue_key.family.as_u64(),
+                                message_id = id.as_u64(),
+                                error = ?e,
+                                "Failed to read legacy queue message during redelivery"
                             );
+                            self.schedule_inflight_retry(id, &inflight);
                             return;
                         }
                     }
                 };
 
                 if let Err(e) = write_result {
-                    eprintln!(
-                        "WARN: Failed to increment attempts for message {}: {:?}",
-                        id, e
+                    tracing::warn!(
+                        queue = ?self.queue_key,
+                        route_family = self.queue_key.family.as_u64(),
+                        message_id = id.as_u64(),
+                        error = ?e,
+                        "Failed to persist queue redelivery attempt update"
                     );
+                    self.schedule_inflight_retry(id, &inflight);
+                    return;
                 } else {
                     let update_start = Instant::now();
-                    if let Err(e) = txn.commit(self.commit_write_options) {
-                        eprintln!(
-                            "WARN: Failed to commit retry txn for message {}: {:?}",
-                            id, e
+                    if let Err(e) =
+                        Self::commit_redelivery_transaction(txn, self.commit_write_options)
+                    {
+                        tracing::warn!(
+                            queue = ?self.queue_key,
+                            route_family = self.queue_key.family.as_u64(),
+                            message_id = id.as_u64(),
+                            error = ?e,
+                            "Failed to commit queue redelivery retry transaction"
                         );
+                        self.schedule_inflight_retry(id, &inflight);
+                        return;
                     } else {
                         Self::observe_elapsed_us(
                             obs::METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY,
@@ -3458,18 +3638,32 @@ impl QueueActor {
                 }
             }
             Err(e) => {
-                eprintln!(
-                    "WARN: Failed to begin txn for redelivery for message {}: {:?}",
-                    id, e
+                tracing::warn!(
+                    queue = ?self.queue_key,
+                    route_family = self.queue_key.family.as_u64(),
+                    message_id = id.as_u64(),
+                    error = ?e,
+                    "Failed to begin queue redelivery transaction"
                 );
+                self.schedule_inflight_retry(id, &inflight);
                 return;
             }
         }
+
+        // Redelivery path succeeded — now safe to remove inflight entry (V-004 Fix)
+        self.inflight.remove(&id);
 
         self.cache_record(
             id,
             QueueRecord::metadata_only(record.attempts, record.visible_at_ms),
             record_layout,
+        );
+        self.update_cached_inflight_metadata(
+            id,
+            inflight.inflight_epoch,
+            None,
+            None,
+            record.last_inflight_at_ms,
         );
 
         // Re-enqueue to ready queue (back of queue for FIFO)
@@ -3491,6 +3685,13 @@ impl QueueActor {
             // Pop expired timer
             let expiry = self.timers.pop().unwrap().0;
 
+            // Skip stale timers from prior extends or prior inflight assignments.
+            if let Some(inflight) = self.inflight.get(&expiry.id) {
+                if inflight.inflight_epoch != expiry.inflight_epoch {
+                    continue;
+                }
+            }
+
             // Handle expiration
             self.handle_inflight_expired(expiry.id);
         }
@@ -3498,6 +3699,26 @@ impl QueueActor {
         // If no more timers, set deadline to far future
         if self.timers.is_empty() {
             self.next_expiration_deadline = now + Duration::from_secs(3600); // 1 hour
+        }
+    }
+
+    /// Schedule a retry timer for an inflight message whose expiry processing failed.
+    ///
+    /// When a storage operation fails during `handle_inflight_expired`, the inflight entry
+    /// is intentionally left intact (not removed) so the message isn't lost. This method
+    /// re-pushes a timer to the heap so `process_expired_timers` will retry on the next sweep.
+    /// A 1-second delay prevents tight retry loops on persistent storage failures.
+    fn schedule_inflight_retry(&mut self, id: MessageId, inflight: &Inflight) {
+        let retry_at = self.clock.now_instant() + Duration::from_secs(1);
+        self.timers.push(Reverse(InflightExpiry {
+            id,
+            inflight_epoch: inflight.inflight_epoch,
+            expires_at: retry_at,
+            expires_at_ms: inflight.expires_at_epoch_ms,
+        }));
+        // Update cached deadline so the retry is picked up
+        if retry_at < self.next_expiration_deadline {
+            self.next_expiration_deadline = retry_at;
         }
     }
 
@@ -4092,9 +4313,11 @@ impl QueueActor {
             .max(fallback_next_id);
 
         if let Err(e) = self.rewrite_index_from_memory(rebuild_next_id) {
-            eprintln!(
-                "WARN: Failed to rewrite queue recovery index for queue {:?}: {}",
-                self.queue_key, e
+            tracing::warn!(
+                queue = ?self.queue_key,
+                route_family = self.queue_key.family.as_u64(),
+                error_reason = %e,
+                "Failed to rewrite queue recovery index"
             );
         }
         Ok(max_id)
@@ -4141,9 +4364,11 @@ impl QueueActor {
                 let max_id = match self.recover_from_scan_and_rebuild_index(next_id) {
                     Ok(max_id) => max_id,
                     Err(e) => {
-                        eprintln!(
-                            "WARN: Failed to rebuild queue index for queue {:?}: {}",
-                            self.queue_key, e
+                        tracing::warn!(
+                            queue = ?self.queue_key,
+                            route_family = self.queue_key.family.as_u64(),
+                            error_reason = %e,
+                            "Failed to rebuild missing queue index from scan"
                         );
                         None
                     }
@@ -4151,17 +4376,21 @@ impl QueueActor {
                 (next_id, max_id)
             }
             IndexRecoveryAttempt::Invalid { next_id, reason } => {
-                eprintln!(
-                    "WARN: Queue index recovery found invalid index for queue {:?}: {}, falling back to full scan",
-                    self.queue_key, reason
+                tracing::warn!(
+                    queue = ?self.queue_key,
+                    route_family = self.queue_key.family.as_u64(),
+                    recovery_reason = %reason,
+                    "Queue index recovery found invalid state; falling back to full scan"
                 );
                 self.recovery_path = RecoveryPath::IndexInvalidFallback;
                 let max_id = match self.recover_from_scan_and_rebuild_index(next_id) {
                     Ok(max_id) => max_id,
                     Err(scan_err) => {
-                        eprintln!(
-                            "WARN: Queue fallback recovery failed for queue {:?}: {}",
-                            self.queue_key, scan_err
+                        tracing::warn!(
+                            queue = ?self.queue_key,
+                            route_family = self.queue_key.family.as_u64(),
+                            error_reason = %scan_err,
+                            "Queue fallback recovery scan failed after invalid index"
                         );
                         None
                     }
@@ -4169,17 +4398,21 @@ impl QueueActor {
                 (next_id, max_id)
             }
             IndexRecoveryAttempt::Error { next_id, reason } => {
-                eprintln!(
-                    "WARN: Queue index recovery failed for queue {:?}: {}, falling back to full scan",
-                    self.queue_key, reason
+                tracing::warn!(
+                    queue = ?self.queue_key,
+                    route_family = self.queue_key.family.as_u64(),
+                    recovery_reason = %reason,
+                    "Queue index recovery failed; falling back to full scan"
                 );
                 self.recovery_path = RecoveryPath::IndexErrorFallback;
                 let max_id = match self.recover_from_scan_and_rebuild_index(next_id) {
                     Ok(max_id) => max_id,
                     Err(scan_err) => {
-                        eprintln!(
-                            "WARN: Queue fallback recovery failed for queue {:?}: {}",
-                            self.queue_key, scan_err
+                        tracing::warn!(
+                            queue = ?self.queue_key,
+                            route_family = self.queue_key.family.as_u64(),
+                            error_reason = %scan_err,
+                            "Queue fallback recovery scan failed after index recovery error"
                         );
                         None
                     }
@@ -4985,6 +5218,69 @@ pub mod tests {
     }
 
     #[test]
+    fn should_keep_inflight_message_when_redelivery_commit_fails() {
+        // Arrange
+        let clock = MockClock::new();
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-redelivery-commit-fail");
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let (msg_id, _) = send_and_reserve_single_message(&mut actor, "test message");
+        clock.advance(Duration::from_secs(31));
+        QueueActor::fail_next_redelivery_commit_for_tests();
+
+        // Act
+        actor.process_expired_timers();
+
+        // Assert
+        assert_eq!(actor.ready_len(), 0);
+        assert_eq!(actor.inflight.len(), 1);
+        assert!(actor.inflight.contains_key(&msg_id));
+        assert!(!actor.ready_contains(msg_id));
+    }
+
+    #[test]
+    fn should_redeliver_message_on_retry_sweep_after_redelivery_commit_failure() {
+        // Arrange
+        let clock = MockClock::new();
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-redelivery-retry");
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let (msg_id, _) = send_and_reserve_single_message(&mut actor, "test message");
+        clock.advance(Duration::from_secs(31));
+        QueueActor::fail_next_redelivery_commit_for_tests();
+        actor.process_expired_timers();
+        clock.advance(Duration::from_secs(1));
+
+        // Act
+        actor.process_expired_timers();
+
+        // Assert
+        assert_eq!(actor.ready_len(), 1);
+        assert_eq!(actor.inflight.len(), 0);
+        assert!(actor.ready_contains(msg_id));
+    }
+
+    #[test]
     fn should_reject_complete_with_invalid_token() {
         // Arrange
         let store = Arc::new(
@@ -5352,16 +5648,19 @@ pub mod tests {
             QueueResponse::Received { messages } => (messages[0].id, messages[0].token),
             _ => panic!("Expected Received response"),
         };
+        let initial_epoch = actor.inflight.get(&msg_id).unwrap().inflight_epoch;
 
         // Act - Extend before first timer expires
         clock.advance(Duration::from_secs(15));
         actor.handle_extend(msg_id, token, 60);
+        let extended_epoch = actor.inflight.get(&msg_id).unwrap().inflight_epoch;
 
         // Advance to first timer expiration (30s total)
         clock.advance(Duration::from_secs(15));
         actor.process_expired_timers();
 
         // Assert - Message still inflight (stale timer ignored)
+        assert!(extended_epoch > initial_epoch);
         assert_eq!(actor.ready_len(), 0);
         assert_eq!(actor.inflight.len(), 1);
     }

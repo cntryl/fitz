@@ -370,6 +370,7 @@ mod tests {
                     route,
                     cron: "* * * * *",
                     payload: &payload,
+                    claimed_at_ms: claimed_fire_ms,
                     next_fire_ms,
                     previous_fire_ms: claimed_fire_ms,
                     last_fire_ms,

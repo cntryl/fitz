@@ -265,3 +265,69 @@ fn should_return_empty_success_when_reading_past_committed_stream_watermark() {
     assert!(area_records.is_empty());
     assert!(realm_records.is_empty());
 }
+
+#[test]
+fn should_preserve_watermark_when_set_watermark_regresses() {
+    // Arrange
+    let engine = create_test_engine_with_cfs(vec![1]);
+    let store = StreamStore::new(engine);
+    store
+        .set_watermark(1, "test", "events", 10)
+        .expect("set initial watermark");
+
+    // Act
+    store
+        .set_watermark(1, "test", "events", 5)
+        .expect("ignore regressed watermark");
+    let watermark = store
+        .get_watermark(1, "test", "events")
+        .expect("read guarded watermark");
+
+    // Assert
+    assert_eq!(watermark, 10);
+}
+
+#[test]
+fn should_restore_watermark_after_reopening_store() {
+    // Arrange
+    let engine = create_test_engine_with_cfs(vec![1]);
+    let store = StreamStore::new(engine.clone());
+    store
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "orders",
+            expected_resource_next_offset: 0,
+            events: &[EventPayload {
+                body: Bytes::from_static(b"one"),
+                metadata: None,
+            }],
+            ingest_metadata: None,
+            mode: StreamWriteMode::Sync,
+        })
+        .expect("commit initial record");
+
+    // Act
+    let reopened = StreamStore::new(engine);
+    let area_watermark = reopened
+        .get_watermark(1, "test", "events")
+        .expect("read reopened area watermark");
+    let realm_watermark = reopened
+        .get_realm_watermark(1, "test")
+        .expect("read reopened realm watermark");
+    let area_records = reopened
+        .read_area(1, "test", "events", 1, 10, None)
+        .expect("read past reopened area watermark")
+        .0;
+    let realm_records = reopened
+        .read_realm(1, "test", 1, 10, None)
+        .expect("read past reopened realm watermark")
+        .0;
+
+    // Assert
+    assert_eq!(area_watermark, 0);
+    assert_eq!(realm_watermark, 0);
+    assert!(area_records.is_empty());
+    assert!(realm_records.is_empty());
+}

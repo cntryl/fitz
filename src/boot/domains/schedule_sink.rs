@@ -9,6 +9,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const SCHEDULE_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
+const SCHEDULE_PENDING_CLAIM_TTL_MS: u64 = 24 * 60 * 60 * 1000;
+const SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS: u64 = 60_000;
 
 fn schedule_admin_snapshot_due(
     snapshot_dirty: bool,
@@ -112,22 +114,24 @@ impl ScheduleSubscriptionSet {
             return false;
         };
 
-        let session_routes_empty = if let Some(routes) = self.session_routes.get_mut(&subscription.session_id) {
-            routes.remove(subscription.route.as_str());
-            routes.is_empty()
-        } else {
-            false
-        };
+        let session_routes_empty =
+            if let Some(routes) = self.session_routes.get_mut(&subscription.session_id) {
+                routes.remove(subscription.route.as_str());
+                routes.is_empty()
+            } else {
+                false
+            };
         if session_routes_empty {
             self.session_routes.remove(&subscription.session_id);
         }
 
-        let route_entries_empty = if let Some(route_entries) = self.exact_routes.get_mut(subscription.route.as_str()) {
-            route_entries.retain(|id| *id != subscription_id);
-            route_entries.is_empty()
-        } else {
-            false
-        };
+        let route_entries_empty =
+            if let Some(route_entries) = self.exact_routes.get_mut(subscription.route.as_str()) {
+                route_entries.retain(|id| *id != subscription_id);
+                route_entries.is_empty()
+            } else {
+                false
+            };
         if route_entries_empty {
             self.exact_routes.remove(subscription.route.as_str());
         }
@@ -154,6 +158,10 @@ pub struct ScheduleDomainSink {
     live_publish_failures: AtomicU64,
     /// Total number of pending-fire acknowledgement persistence failures.
     ack_failures: AtomicU64,
+    /// Maximum age for a pending claimed fire before cleanup removes it.
+    pending_claim_ttl_ms: u64,
+    /// Last monotonic cleanup sweep time, measured relative to `snapshot_epoch`.
+    last_pending_claim_cleanup_elapsed_ms: AtomicU64,
     /// Rolling window of acknowledged handoff timestamps for the legacy
     /// executions-per-minute metric.
     recent_acknowledgement_ms: Mutex<VecDeque<u64>>,
@@ -180,6 +188,8 @@ impl ScheduleDomainSink {
             snapshot_epoch: Instant::now(),
             live_publish_failures: AtomicU64::new(0),
             ack_failures: AtomicU64::new(0),
+            pending_claim_ttl_ms: SCHEDULE_PENDING_CLAIM_TTL_MS,
+            last_pending_claim_cleanup_elapsed_ms: AtomicU64::new(0),
             recent_acknowledgement_ms: Mutex::new(VecDeque::new()),
             metrics: None,
         }
@@ -276,9 +286,32 @@ impl ScheduleDomainSink {
     fn scan_due_schedules(&self) {
         let mut live_publish_candidates = Vec::new();
         let mut snapshot_dirty = false;
+        let cleanup_due = self.pending_claim_cleanup_due();
         {
             let mut actors = self.actors.lock();
             for (family, actor) in actors.iter_mut() {
+                if cleanup_due {
+                    match actor.cleanup_stale_pending_claims(self.pending_claim_ttl_ms) {
+                        Ok(expired) if expired > 0 => {
+                            snapshot_dirty = true;
+                            if let Some(metrics) = &self.metrics {
+                                metrics.record_pending_claims_expired(expired);
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            if let Some(metrics) = &self.metrics {
+                                metrics.record_pending_claim_cleanup_failure();
+                            }
+                            tracing::warn!(
+                                route_family = family.as_u64(),
+                                error = %error,
+                                "Failed to cleanup stale pending schedule fires"
+                            );
+                        }
+                    }
+                }
+
                 let claimed = actor.claim_due_fires();
                 if !claimed.is_empty() {
                     snapshot_dirty = true;
@@ -505,6 +538,47 @@ impl ScheduleDomainSink {
         if let Some(metrics) = &self.metrics {
             metrics.set_schedule_count(self.schedule_count());
             metrics.set_pending_fire_count(self.pending_fire_count());
+        }
+    }
+
+    fn pending_claim_cleanup_due(&self) -> bool {
+        let now_elapsed_ms = self.snapshot_epoch.elapsed().as_millis() as u64;
+        let mut last_elapsed_ms = self
+            .last_pending_claim_cleanup_elapsed_ms
+            .load(Ordering::Relaxed);
+
+        loop {
+            if last_elapsed_ms == 0 {
+                let first_elapsed_ms = now_elapsed_ms.max(1);
+                match self.last_pending_claim_cleanup_elapsed_ms.compare_exchange(
+                    0,
+                    first_elapsed_ms,
+                    Ordering::AcqRel,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => return true,
+                    Err(observed) => {
+                        last_elapsed_ms = observed;
+                        continue;
+                    }
+                }
+            }
+
+            if now_elapsed_ms.saturating_sub(last_elapsed_ms)
+                < SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS
+            {
+                return false;
+            }
+
+            match self.last_pending_claim_cleanup_elapsed_ms.compare_exchange(
+                last_elapsed_ms,
+                now_elapsed_ms,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => last_elapsed_ms = observed,
+            }
         }
     }
 
@@ -839,6 +913,9 @@ impl MailboxSink for ScheduleDomainSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domains::schedule::metrics::METRIC_PENDING_CLAIMS_EXPIRED_TOTAL;
+    use crate::runtime::clock::Clock;
+    use crate::observability::metrics::MetricsCollector;
     use crate::protocol::frame::ChannelId;
     use crate::protocol::frame_context::FrameContext;
     use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
@@ -847,6 +924,44 @@ mod tests {
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
     use bytes::Bytes;
     use std::sync::Arc;
+
+    #[derive(Clone)]
+    struct MockClock {
+        state: Arc<std::sync::Mutex<MockClockState>>,
+    }
+
+    #[derive(Clone, Copy)]
+    struct MockClockState {
+        instant: Instant,
+        epoch_ms: u64,
+    }
+
+    impl MockClock {
+        fn new(epoch_ms: u64) -> Self {
+            Self {
+                state: Arc::new(std::sync::Mutex::new(MockClockState {
+                    instant: Instant::now(),
+                    epoch_ms,
+                })),
+            }
+        }
+
+        fn advance(&self, duration: Duration) {
+            let mut state = self.state.lock().expect("lock mock clock");
+            state.instant += duration;
+            state.epoch_ms = state.epoch_ms.saturating_add(duration.as_millis() as u64);
+        }
+    }
+
+    impl Clock for MockClock {
+        fn now_instant(&self) -> Instant {
+            self.state.lock().expect("lock mock clock").instant
+        }
+
+        fn now_epoch_ms(&self) -> u64 {
+            self.state.lock().expect("lock mock clock").epoch_ms
+        }
+    }
 
     fn encode_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Bytes {
         let mut encoder = PayloadEncoder::new();
@@ -1074,6 +1189,59 @@ mod tests {
         assert!(
             subscriber_mailbox.receiver().try_recv().is_err(),
             "pending claimed occurrence should be acknowledged after a successful live handoff retry"
+        );
+    }
+
+    #[test]
+    fn should_increment_expired_pending_claim_metric_when_cleanup_removes_orphans() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let clock = Arc::new(MockClock::new(1_700_000_000_000));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let metrics = MetricsCollector::new();
+        let mut sink = ScheduleDomainSink::new(store.clone(), router, admin_read_model)
+            .with_metrics(metrics.clone());
+        let mut actor = crate::domains::schedule::ScheduleActor::new_with_clock(
+            family,
+            store,
+            cntryl_midge::WriteOptions::buffered(),
+            clock.clone(),
+        );
+        let create_response = actor.handle(crate::domains::schedule::ScheduleMessage::Create {
+            route: "schedule://acme/jobs/cleanup/run".to_string(),
+            cron: "* * * * *".to_string(),
+            payload: Bytes::from_static(b"cleanup"),
+        });
+        assert!(matches!(
+            create_response,
+            crate::domains::schedule::ScheduleResponse::Ok
+        ));
+        actor.bench_prepare_scan(1);
+        let claimed = actor.bench_claim_due_fires();
+        assert_eq!(claimed.len(), 1);
+        clock.advance(Duration::from_millis(11));
+        sink.pending_claim_ttl_ms = 10;
+        let now_elapsed_ms = sink.snapshot_epoch.elapsed().as_millis() as u64;
+        sink.last_pending_claim_cleanup_elapsed_ms.store(
+            now_elapsed_ms.saturating_sub(SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS),
+            Ordering::Relaxed,
+        );
+        sink.actors.lock().insert(family, actor);
+
+        // Act
+        sink.scan_due_schedules();
+
+        // Assert
+        assert_eq!(metrics.counter_get(METRIC_PENDING_CLAIMS_EXPIRED_TOTAL), 1);
+        let actors = sink.actors.lock();
+        assert_eq!(
+            actors
+                .get(&family)
+                .expect("schedule actor")
+                .pending_fire_count(),
+            0
         );
     }
 

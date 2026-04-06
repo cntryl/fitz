@@ -1241,12 +1241,9 @@ impl RuntimeIngress {
                         "schedule",
                         Route::new(route),
                     ))),
-                    Ok(crate::domains::schedule::ScheduleMessage::Subscribe {
-                        route, ..
-                    }) => Ok(Some(Self::canonicalize_domain_route(
-                        "schedule",
-                        route.clone(),
-                    ))),
+                    Ok(crate::domains::schedule::ScheduleMessage::Subscribe { route, .. }) => Ok(
+                        Some(Self::canonicalize_domain_route("schedule", route.clone())),
+                    ),
                     Ok(crate::domains::schedule::ScheduleMessage::Unsubscribe {
                         route, ..
                     }) => Ok(Some(Self::canonicalize_domain_route(

@@ -127,7 +127,7 @@ pub trait Actor: Send + 'static {
 
     /// Called when an error occurs during message processing
     fn on_error(&mut self, error: ActorError, _ctx: &mut Context<Self>) {
-        eprintln!("Actor error: {}", error);
+        tracing::error!(error_reason = %error, "Actor error");
     }
 
     /// Called when a timer fires (timer scheduling via `Context::timer_manager()`)

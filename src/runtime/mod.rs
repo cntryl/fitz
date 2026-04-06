@@ -22,6 +22,7 @@
 
 pub mod actor;
 pub mod cf_validation;
+pub mod clock;
 pub mod context;
 pub mod domain_event;
 pub mod envelope;
@@ -35,6 +36,9 @@ pub mod supervision;
 
 // Re-export commonly used types
 pub use actor::{Actor, ActorError, ActorId, ActorRef, ActorState, Context, SendError};
+pub use clock::{
+	Clock, SystemClock, epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
+};
 pub use context::{Timer, TimerId, TimerManager};
 pub use domain_event::{DomainPublishEvent, SessionCleanup};
 pub use envelope::{Envelope, MessageId};

@@ -2,8 +2,8 @@ use bytes::Bytes;
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
-use fitz::boot::domains::ScheduleDomainSink;
 use fitz::benchkit::{create_bench_schedule_sink, register_session_counting_sink, route_frame};
+use fitz::boot::domains::ScheduleDomainSink;
 use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::protocol::frame::ChannelId;
@@ -128,10 +128,7 @@ fn bench_claim_due_persistence(c: &mut Criterion) {
     for count in [100usize, 1000usize] {
         let partial_ready = (count / 10).max(1);
 
-        for (label, ready_count) in [
-            ("partial_ready", partial_ready),
-            ("all_ready", count),
-        ] {
+        for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
             group.throughput(Throughput::Elements(ready_count as u64));
             group.bench_function(format!("claim_due_{}_{}_mixed_crons", label, count), |b| {
                 b.iter_batched(
@@ -155,10 +152,7 @@ fn bench_ack_persistence(c: &mut Criterion) {
     for count in [100usize, 1000usize] {
         let partial_ready = (count / 10).max(1);
 
-        for (label, ready_count) in [
-            ("partial_ready", partial_ready),
-            ("all_ready", count),
-        ] {
+        for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
             group.throughput(Throughput::Elements(ready_count as u64));
             group.bench_function(format!("ack_claims_{}_{}_mixed_crons", label, count), |b| {
                 b.iter_batched(

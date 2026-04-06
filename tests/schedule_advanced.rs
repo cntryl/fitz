@@ -9,7 +9,7 @@
 use bytes::Bytes;
 use chrono::TimeZone;
 use fitz::domains::schedule::protocol::{Clock, CronSchedule};
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage};
+use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleStore};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::{Arc, Mutex};
@@ -90,6 +90,19 @@ fn make_schedule_actor_with_clock(clock: Arc<dyn Clock>) -> ScheduleActor {
         cntryl_midge::WriteOptions::buffered(),
         clock,
     )
+}
+
+fn make_schedule_actor_and_store_with_clock(
+    clock: Arc<dyn Clock>,
+) -> (Arc<cntryl_midge::Engine>, ScheduleActor) {
+    let store = create_test_engine_with_cfs(vec![1, 2, 3]);
+    let actor = ScheduleActor::new_with_clock(
+        RouteFamily::new(1),
+        store.clone(),
+        cntryl_midge::WriteOptions::buffered(),
+        clock,
+    );
+    (store, actor)
 }
 
 // ========== Next Fire Time Calculation Tests ==========
@@ -326,6 +339,43 @@ fn should_not_fire_given_backward_epoch_jump_before_due_time() {
     // Assert
     assert!(before_due.is_empty());
     assert_eq!(after_due.len(), 1);
+}
+
+#[test]
+fn should_cleanup_pending_fire_claim_after_ttl() {
+    // Arrange
+    let clock = Arc::new(MockClock::new(epoch_ms(2026, 3, 31, 5, 59, 30)));
+    let (store, mut actor) = make_schedule_actor_and_store_with_clock(clock.clone());
+    let create_response = actor.handle(ScheduleMessage::Create {
+        route: "schedule://acme/system/cleanup/run".to_string(),
+        cron: "* * * * *".to_string(),
+        payload: Bytes::from("cleanup"),
+    });
+    assert!(matches!(
+        create_response,
+        fitz::domains::schedule::ScheduleResponse::Ok
+    ));
+    actor.bench_prepare_scan(1);
+    let claimed = actor.bench_claim_due_fires();
+    assert_eq!(claimed.len(), 1);
+    let ttl_ms = 5 * 60 * 1000;
+    clock.advance(Duration::from_millis(ttl_ms + 1));
+    let schedule_store = ScheduleStore::new(store);
+
+    // Act
+    let expired = actor
+        .bench_cleanup_stale_pending_claims(ttl_ms)
+        .expect("cleanup stale pending claims");
+    let persisted = schedule_store
+        .load_pending_fire_claims(1)
+        .expect("load pending fire claims");
+
+    // Assert
+    assert_eq!(expired, 1);
+    assert!(actor
+        .bench_pending_claimed_occurrences_for_publish()
+        .is_empty());
+    assert!(persisted.is_empty());
 }
 
 // ========== Schedule Replacement Tests ==========

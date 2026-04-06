@@ -245,9 +245,13 @@ mod tests {
         }
     }
 
-    impl crate::domains::lease::Clock for MockClock {
-        fn now(&self) -> Instant {
+    impl crate::runtime::clock::Clock for MockClock {
+        fn now_instant(&self) -> Instant {
             *self.now.lock()
+        }
+
+        fn now_epoch_ms(&self) -> u64 {
+            0
         }
     }
 

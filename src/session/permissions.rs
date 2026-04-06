@@ -125,13 +125,17 @@ impl SessionPermissions {
 
         perms
             .into_iter()
-            .map(|permission| CompiledPermission::from_permission(permission, pattern_cache.as_mut()))
+            .map(|permission| {
+                CompiledPermission::from_permission(permission, pattern_cache.as_mut())
+            })
             .collect()
     }
 
     fn cached_authorization(&self, route: &str, access_bits: u8) -> Option<bool> {
         let cache = self.check_cache.read();
-        cache.get(&access_bits).and_then(|routes| routes.get(route).copied())
+        cache
+            .get(&access_bits)
+            .and_then(|routes| routes.get(route).copied())
     }
 
     fn evaluate_route_access(&self, route: &str, access: Access) -> bool {

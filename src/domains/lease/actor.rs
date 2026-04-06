@@ -14,7 +14,7 @@
 //!
 //! 1. **Exclusive ownership**: At most one owner per lease at any time
 //! 2. **Monotonic tokens**: Fencing tokens never decrease within a running process, but restart resets the lineage
-//! 3. **Expiration semantics**: Lease with expiry <= now() is expired and can be taken
+//! 3. **Expiration semantics**: Lease with expiry <= now_instant() is expired and can be taken
 //! 4. **Idempotency**: Same operation by same owner produces same result
 //!
 //! # State Model
@@ -29,24 +29,11 @@
 
 use super::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
 use crate::runtime::actor::{Actor, Context};
+use crate::runtime::clock::{Clock, SystemClock};
 use crate::runtime::context::TimerId;
 use crate::runtime::routing::RouteAddress;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
-
-/// Clock abstraction for testable time
-pub trait Clock: Send + Sync {
-    fn now(&self) -> Instant;
-}
-
-/// System clock using Instant::now()
-pub struct SystemClock;
-
-impl Clock for SystemClock {
-    fn now(&self) -> Instant {
-        Instant::now()
-    }
-}
 
 /// Pending lease acquisition waiting for lease to become available
 #[derive(Debug, Clone)]
@@ -297,7 +284,7 @@ impl LeaseActor {
         source: Option<RouteAddress>,
         ctx: &mut Context<LeaseActor>,
     ) -> LeaseResponse {
-        let now = self.clock.now();
+        let now = self.clock.now_instant();
         let ttl = Duration::from_secs(ttl_secs);
 
         // Validate wait_seconds against max limit
@@ -433,7 +420,7 @@ impl LeaseActor {
 
             // Generate new fencing token
             let token = waiter.queued_token;
-            let now = self.clock.now();
+            let now = self.clock.now_instant();
             let expiry = now + Duration::from_secs(waiter.ttl_secs);
 
             // Insert into leases
@@ -474,7 +461,7 @@ impl LeaseActor {
         fencing_token: u64,
         ttl_secs: u64,
     ) -> LeaseResponse {
-        let now = self.clock.now();
+        let now = self.clock.now_instant();
         let ttl = Duration::from_secs(ttl_secs);
 
         enum ExtendDecision {
@@ -523,7 +510,7 @@ impl LeaseActor {
         owner_id: String,
         fencing_token: u64,
     ) -> LeaseResponse {
-        let now = self.clock.now();
+        let now = self.clock.now_instant();
 
         let response = match self.leases.get(&key) {
             None => {
@@ -555,7 +542,7 @@ impl LeaseActor {
 
     /// Handle lease query (for testing/debugging)
     fn handle_query(&self, key: LeaseKey) -> LeaseResponse {
-        let now = self.clock.now();
+        let now = self.clock.now_instant();
 
         match self.leases.get(&key) {
             None => LeaseResponse::NotFound,
@@ -701,7 +688,7 @@ impl LeaseActor {
     /// This removes expired leases from state without waiting for
     /// them to be accessed. Enables runtime-driven expiration.
     fn expire_old_leases(&mut self, ctx: &mut Context<LeaseActor>) {
-        let now = self.clock.now();
+        let now = self.clock.now_instant();
         let expired_keys: Vec<LeaseKey> = self
             .leases
             .iter()
@@ -761,8 +748,12 @@ mod tests {
     }
 
     impl Clock for MockClock {
-        fn now(&self) -> Instant {
+        fn now_instant(&self) -> Instant {
             *self.now.lock()
+        }
+
+        fn now_epoch_ms(&self) -> u64 {
+            0
         }
     }
 
