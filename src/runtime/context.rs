@@ -128,7 +128,11 @@ pub struct TimerManager {
 
 impl TimerManager {
     pub fn new() -> Self {
-        let start_instant = Instant::now();
+        Self::new_at(Instant::now())
+    }
+
+    #[doc(hidden)]
+    pub fn new_at(start_instant: Instant) -> Self {
         Self {
             next_timer_id: 1,
             timers: FxHashMap::default(),
@@ -254,10 +258,15 @@ impl TimerManager {
     /// Schedule a one-time timer
     #[inline]
     pub fn schedule_once(&mut self, delay: Duration) -> TimerId {
+        self.schedule_once_at(Instant::now(), delay)
+    }
+
+    #[doc(hidden)]
+    pub fn schedule_once_at(&mut self, now: Instant, delay: Duration) -> TimerId {
         let timer_id = TimerId::new(self.next_timer_id);
         self.next_timer_id += 1;
 
-        let deadline = Instant::now() + delay;
+        let deadline = now + delay;
         let timer = Timer::new(timer_id, deadline, None);
         self.insert_entry(timer_id, timer);
 
@@ -267,10 +276,20 @@ impl TimerManager {
     /// Schedule a repeating timer
     #[inline]
     pub fn schedule_repeat(&mut self, delay: Duration, interval: Duration) -> TimerId {
+        self.schedule_repeat_at(Instant::now(), delay, interval)
+    }
+
+    #[doc(hidden)]
+    pub fn schedule_repeat_at(
+        &mut self,
+        now: Instant,
+        delay: Duration,
+        interval: Duration,
+    ) -> TimerId {
         let timer_id = TimerId::new(self.next_timer_id);
         self.next_timer_id += 1;
 
-        let deadline = Instant::now() + delay;
+        let deadline = now + delay;
         let timer = Timer::new(timer_id, deadline, Some(interval));
         self.insert_entry(timer_id, timer);
 
@@ -297,7 +316,11 @@ impl TimerManager {
     /// Get all fired timers and reschedule repeating ones
     #[inline]
     pub fn fired_timers(&mut self) -> Vec<TimerId> {
-        let now = Instant::now();
+        self.fired_timers_at(Instant::now())
+    }
+
+    #[doc(hidden)]
+    pub fn fired_timers_at(&mut self, now: Instant) -> Vec<TimerId> {
         let start_instant = self.start_instant;
         let now_tick = self.ticks_from_instant(now);
 
