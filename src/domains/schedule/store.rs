@@ -6,9 +6,12 @@ use cntryl_midge::WriteOptions;
 
 const DEFINITION_VALUE_VERSION_V1: u8 = 1;
 const DEFINITION_VALUE_VERSION_V2: u8 = 2;
+const DEFINITION_VALUE_VERSION_V3: u8 = 3;
+const BODY_VALUE_VERSION_V1: u8 = 1;
 const PENDING_FIRE_VALUE_VERSION_V1: u8 = 1;
 const PENDING_FIRE_VALUE_VERSION_V2: u8 = 2;
 const DEFINITION_PREFIX: &[u8] = b"sched:def:";
+const BODY_PREFIX: &[u8] = b"sched:body:";
 const DUE_PREFIX: &[u8] = b"sched:due:";
 const PENDING_FIRE_PREFIX: &[u8] = b"sched:pending:";
 const DUE_INDEX_VALUE: &[u8] = &[1];
@@ -84,6 +87,22 @@ pub struct ScheduleStore {
     fail_next_commit: Arc<std::sync::atomic::AtomicBool>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DecodedDefinitionRow {
+    Inline {
+        next_fire_ms: u64,
+        cron: String,
+        payload: Bytes,
+        last_fire_ms: Option<u64>,
+        executions_total: u64,
+    },
+    Metadata {
+        next_fire_ms: u64,
+        last_fire_ms: Option<u64>,
+        executions_total: u64,
+    },
+}
+
 impl ScheduleStore {
     pub fn new(db: Arc<cntryl_midge::Engine>) -> Self {
         Self {
@@ -96,6 +115,13 @@ impl ScheduleStore {
     pub(crate) fn encode_definition_key(route: &str) -> Vec<u8> {
         let mut key = Vec::with_capacity(DEFINITION_PREFIX.len() + route.len());
         key.extend_from_slice(DEFINITION_PREFIX);
+        key.extend_from_slice(route.as_bytes());
+        key
+    }
+
+    pub(crate) fn encode_body_key(route: &str) -> Vec<u8> {
+        let mut key = Vec::with_capacity(BODY_PREFIX.len() + route.len());
+        key.extend_from_slice(BODY_PREFIX);
         key.extend_from_slice(route.as_bytes());
         key
     }
@@ -134,6 +160,15 @@ impl ScheduleStore {
         }
 
         String::from_utf8(key[DEFINITION_PREFIX.len()..].to_vec())
+            .map_err(|e| format!("Invalid schedule route encoding: {}", e))
+    }
+
+    fn decode_body_key(key: &[u8]) -> Result<String, String> {
+        if !key.starts_with(BODY_PREFIX) {
+            return Err("Invalid schedule body key prefix".to_string());
+        }
+
+        String::from_utf8(key[BODY_PREFIX.len()..].to_vec())
             .map_err(|e| format!("Invalid schedule route encoding: {}", e))
     }
 
@@ -207,18 +242,22 @@ impl ScheduleStore {
         Self::decode_due_key_with_prefix(key, PENDING_FIRE_PREFIX)
     }
 
-    fn encode_definition_value(
+    fn encode_definition_metadata_value(
         next_fire_ms: u64,
-        cron: &str,
-        payload: &Bytes,
         last_fire_ms: Option<u64>,
         executions_total: u64,
     ) -> Vec<u8> {
-        let mut value = Vec::with_capacity(1 + 8 + 8 + 8 + 4 + cron.len() + 4 + payload.len());
-        value.push(DEFINITION_VALUE_VERSION_V2);
+        let mut value = Vec::with_capacity(1 + 8 + 8 + 8);
+        value.push(DEFINITION_VALUE_VERSION_V3);
         value.extend_from_slice(&next_fire_ms.to_be_bytes());
         value.extend_from_slice(&last_fire_ms.unwrap_or(0).to_be_bytes());
         value.extend_from_slice(&executions_total.to_be_bytes());
+        value
+    }
+
+    fn encode_definition_body_value(cron: &str, payload: &Bytes) -> Vec<u8> {
+        let mut value = Vec::with_capacity(1 + 4 + cron.len() + 4 + payload.len());
+        value.push(BODY_VALUE_VERSION_V1);
         value.extend_from_slice(&(cron.len() as u32).to_be_bytes());
         value.extend_from_slice(cron.as_bytes());
         value.extend_from_slice(&(payload.len() as u32).to_be_bytes());
@@ -226,9 +265,7 @@ impl ScheduleStore {
         value
     }
 
-    fn decode_definition_value(
-        value: &[u8],
-    ) -> Result<(u64, String, Bytes, Option<u64>, u64), String> {
+    fn decode_definition_value(value: &[u8]) -> Result<DecodedDefinitionRow, String> {
         if value.is_empty() {
             return Err("Schedule definition value too short".to_string());
         }
@@ -257,13 +294,13 @@ impl ScheduleStore {
                     return Err("Schedule definition value has invalid payload length".to_string());
                 }
 
-                Ok((
+                Ok(DecodedDefinitionRow::Inline {
                     next_fire_ms,
                     cron,
-                    Bytes::copy_from_slice(&value[payload_start..payload_end]),
-                    None,
-                    0,
-                ))
+                    payload: Bytes::copy_from_slice(&value[payload_start..payload_end]),
+                    last_fire_ms: None,
+                    executions_total: 0,
+                })
             }
             DEFINITION_VALUE_VERSION_V2 => {
                 if value.len() < 33 {
@@ -290,16 +327,71 @@ impl ScheduleStore {
                     return Err("Schedule definition value has invalid payload length".to_string());
                 }
 
-                Ok((
+                Ok(DecodedDefinitionRow::Inline {
                     next_fire_ms,
                     cron,
-                    Bytes::copy_from_slice(&value[payload_start..payload_end]),
-                    (last_fire_ms != 0).then_some(last_fire_ms),
+                    payload: Bytes::copy_from_slice(&value[payload_start..payload_end]),
+                    last_fire_ms: (last_fire_ms != 0).then_some(last_fire_ms),
                     executions_total,
-                ))
+                })
+            }
+            DEFINITION_VALUE_VERSION_V3 => {
+                if value.len() != 25 {
+                    return Err("Schedule definition metadata value has invalid length".to_string());
+                }
+
+                let next_fire_ms = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                let last_fire_ms = u64::from_be_bytes(value[9..17].try_into().unwrap());
+                let executions_total = u64::from_be_bytes(value[17..25].try_into().unwrap());
+                Ok(DecodedDefinitionRow::Metadata {
+                    next_fire_ms,
+                    last_fire_ms: (last_fire_ms != 0).then_some(last_fire_ms),
+                    executions_total,
+                })
             }
             other => Err(format!(
                 "Unsupported schedule definition value version: {}",
+                other
+            )),
+        }
+    }
+
+    fn decode_definition_body_value(value: &[u8]) -> Result<(String, Bytes), String> {
+        if value.is_empty() {
+            return Err("Schedule definition body value too short".to_string());
+        }
+
+        match value[0] {
+            BODY_VALUE_VERSION_V1 => {
+                if value.len() < 9 {
+                    return Err("Schedule definition body value too short".to_string());
+                }
+
+                let cron_len = u32::from_be_bytes(value[1..5].try_into().unwrap()) as usize;
+                let cron_start = 5;
+                let cron_end = cron_start + cron_len;
+                if value.len() < cron_end + 4 {
+                    return Err("Schedule definition body value truncated before cron".to_string());
+                }
+
+                let cron = String::from_utf8(value[cron_start..cron_end].to_vec())
+                    .map_err(|e| format!("Invalid cron encoding: {}", e))?;
+                let payload_len =
+                    u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap())
+                        as usize;
+                let payload_start = cron_end + 4;
+                let payload_end = payload_start + payload_len;
+                if value.len() != payload_end {
+                    return Err("Schedule definition body value has invalid payload length".to_string());
+                }
+
+                Ok((
+                    cron,
+                    Bytes::copy_from_slice(&value[payload_start..payload_end]),
+                ))
+            }
+            other => Err(format!(
+                "Unsupported schedule definition body value version: {}",
                 other
             )),
         }
@@ -349,29 +441,70 @@ impl ScheduleStore {
         }
     }
 
+    fn put_definition_metadata(
+        txn: &mut cntryl_midge::Transaction,
+        route: &str,
+        next_fire_ms: u64,
+        last_fire_ms: Option<u64>,
+        executions_total: u64,
+    ) -> Result<(), String> {
+        txn.put(
+            Self::encode_definition_key(route),
+            Self::encode_definition_metadata_value(next_fire_ms, last_fire_ms, executions_total),
+            None,
+        )
+        .map_err(|e| format!("put schedule definition failed: {:?}", e))
+    }
+
+    fn put_definition_body(
+        txn: &mut cntryl_midge::Transaction,
+        route: &str,
+        cron: &str,
+        payload: &Bytes,
+    ) -> Result<(), String> {
+        txn.put(
+            Self::encode_body_key(route),
+            Self::encode_definition_body_value(cron, payload),
+            None,
+        )
+        .map_err(|e| format!("put schedule body failed: {:?}", e))
+    }
+
+    fn put_schedule_definition(
+        txn: &mut cntryl_midge::Transaction,
+        route: &str,
+        next_fire_ms: u64,
+        last_fire_ms: Option<u64>,
+        executions_total: u64,
+        cron: &str,
+        payload: &Bytes,
+    ) -> Result<(), String> {
+        Self::put_definition_metadata(txn, route, next_fire_ms, last_fire_ms, executions_total)?;
+        Self::put_definition_body(txn, route, cron, payload)
+    }
+
     pub fn insert(
         &self,
         cf_id: u64,
         schedule: ScheduleInsert<'_>,
         write_options: WriteOptions,
     ) -> Result<Vec<u8>, String> {
-        let definition_key = Self::encode_definition_key(schedule.route);
         let due_key = Self::encode_due_key(schedule.next_fire_ms, schedule.route);
-        let definition_value = Self::encode_definition_value(
-            schedule.next_fire_ms,
-            schedule.cron,
-            schedule.payload,
-            schedule.last_fire_ms,
-            schedule.executions_total,
-        );
 
         let mut txn = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        txn.put(definition_key, definition_value, None)
-            .map_err(|e| format!("put schedule definition failed: {:?}", e))?;
+        Self::put_schedule_definition(
+            &mut txn,
+            schedule.route,
+            schedule.next_fire_ms,
+            schedule.last_fire_ms,
+            schedule.executions_total,
+            schedule.cron,
+            schedule.payload,
+        )?;
 
         if let Some(previous_fire_ms) = schedule.previous_fire_ms {
             if previous_fire_ms != schedule.next_fire_ms {
@@ -403,18 +536,16 @@ impl ScheduleStore {
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         for item in items {
-            let definition_key = Self::encode_definition_key(&item.route);
-            let definition_value = Self::encode_definition_value(
+            Self::put_schedule_definition(
+                &mut txn,
+                &item.route,
                 item.next_fire_ms,
-                &item.cron,
-                &item.payload,
                 item.last_fire_ms,
                 item.executions_total,
-            );
+                &item.cron,
+                &item.payload,
+            )?;
             let due_key = Self::encode_due_key(item.next_fire_ms, &item.route);
-
-            txn.put(definition_key, definition_value, None)
-                .map_err(|e| format!("put schedule definition failed: {:?}", e))?;
 
             if let Some(previous_fire_ms) = item.previous_fire_ms {
                 if previous_fire_ms != item.next_fire_ms {
@@ -446,19 +577,15 @@ impl ScheduleStore {
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         for item in items {
-            let definition_key = Self::encode_definition_key(item.route);
-            let definition_value = Self::encode_definition_value(
+            Self::put_definition_metadata(
+                &mut txn,
+                item.route,
                 item.next_fire_ms,
-                item.cron,
-                item.payload,
                 item.last_fire_ms,
                 item.executions_total,
-            );
+            )?;
             let due_key = Self::encode_due_key(item.next_fire_ms, item.route);
             let pending_fire_key = Self::encode_pending_fire_key(item.previous_fire_ms, item.route);
-
-            txn.put(definition_key, definition_value, None)
-                .map_err(|e| format!("put schedule definition failed: {:?}", e))?;
 
             if item.previous_fire_ms != item.next_fire_ms {
                 txn.delete(Self::encode_due_key(item.previous_fire_ms, item.route))
@@ -498,18 +625,16 @@ impl ScheduleStore {
                 .map_err(|e| format!("delete pending fire failed: {:?}", e))?;
 
             if let Some(definition) = &item.definition {
-                txn.put(
-                    Self::encode_definition_key(item.route),
-                    Self::encode_definition_value(
-                        definition.next_fire_ms,
-                        definition.cron,
-                        definition.payload,
-                        Some(item.acknowledged_at_ms),
-                        definition.executions_total,
-                    ),
-                    None,
+                Self::put_definition_metadata(
+                    &mut txn,
+                    item.route,
+                    definition.next_fire_ms,
+                    Some(item.acknowledged_at_ms),
+                    definition.executions_total,
                 )
-                .map_err(|e| format!("update schedule acknowledgement state failed: {:?}", e))?;
+                .map_err(|error| {
+                    format!("update schedule acknowledgement state failed: {}", error)
+                })?;
             }
         }
 
@@ -530,6 +655,8 @@ impl ScheduleStore {
 
         txn.delete(Self::encode_definition_key(route))
             .map_err(|e| format!("delete schedule definition failed: {:?}", e))?;
+        txn.delete(Self::encode_body_key(route))
+            .map_err(|e| format!("delete schedule body failed: {:?}", e))?;
         txn.delete(Self::encode_due_key(next_fire_ms, route))
             .map_err(|e| format!("delete schedule due index failed: {:?}", e))?;
 
@@ -550,29 +677,58 @@ impl ScheduleStore {
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         let mut schedules = BTreeMap::<String, PersistedSchedule>::new();
-        let mut imported_definitions = Vec::<PersistedSchedule>::new();
+        let mut normalized_definitions = Vec::<PersistedSchedule>::new();
+        let mut metadata_rows = BTreeMap::<String, (u64, Option<u64>, u64)>::new();
 
         let definition_rows = read_tx
             .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(DEFINITION_PREFIX)))
             .map_err(|e| format!("scan definitions failed: {:?}", e))?
             .collect_all();
+        let body_rows = read_tx
+            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(BODY_PREFIX)))
+            .map_err(|e| format!("scan schedule bodies failed: {:?}", e))?
+            .collect_all();
+
+        let legacy_rows = read_tx
+            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(LEGACY_PREFIX)))
+            .map_err(|e| format!("scan legacy schedule rows failed: {:?}", e))?
+            .collect_all();
+
         for (key, value) in definition_rows {
             match (
                 Self::decode_definition_key(&key),
                 Self::decode_definition_value(&value),
             ) {
-                (Ok(route), Ok((next_fire_ms, cron, payload, last_fire_ms, executions_total))) => {
-                    schedules.insert(
-                        route.clone(),
-                        PersistedSchedule {
-                            route,
-                            cron,
-                            payload,
-                            next_fire_ms,
-                            last_fire_ms,
-                            executions_total,
-                        },
-                    );
+                (
+                    Ok(route),
+                    Ok(DecodedDefinitionRow::Inline {
+                        next_fire_ms,
+                        cron,
+                        payload,
+                        last_fire_ms,
+                        executions_total,
+                    }),
+                ) => {
+                    let persisted = PersistedSchedule {
+                        route: route.clone(),
+                        cron,
+                        payload,
+                        next_fire_ms,
+                        last_fire_ms,
+                        executions_total,
+                    };
+                    normalized_definitions.push(persisted.clone());
+                    schedules.insert(route, persisted);
+                }
+                (
+                    Ok(route),
+                    Ok(DecodedDefinitionRow::Metadata {
+                        next_fire_ms,
+                        last_fire_ms,
+                        executions_total,
+                    }),
+                ) => {
+                    metadata_rows.insert(route, (next_fire_ms, last_fire_ms, executions_total));
                 }
                 (Err(error), _) | (_, Err(error)) => {
                     tracing::warn!("Failed to decode persisted schedule definition: {}", error);
@@ -580,10 +736,44 @@ impl ScheduleStore {
             }
         }
 
-        let legacy_rows = read_tx
-            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(LEGACY_PREFIX)))
-            .map_err(|e| format!("scan legacy schedule rows failed: {:?}", e))?
-            .collect_all();
+        let mut body_definitions = BTreeMap::<String, (String, Bytes)>::new();
+        for (key, value) in body_rows {
+            match (
+                Self::decode_body_key(&key),
+                Self::decode_definition_body_value(&value),
+            ) {
+                (Ok(route), Ok((cron, payload))) => {
+                    body_definitions.insert(route, (cron, payload));
+                }
+                (Err(error), _) | (_, Err(error)) => {
+                    tracing::warn!("Failed to decode persisted schedule body: {}", error);
+                }
+            }
+        }
+
+        for (route, (next_fire_ms, last_fire_ms, executions_total)) in metadata_rows {
+            match body_definitions.get(&route) {
+                Some((cron, payload)) => {
+                    schedules.insert(
+                        route.clone(),
+                        PersistedSchedule {
+                            route,
+                            cron: cron.clone(),
+                            payload: payload.clone(),
+                            next_fire_ms,
+                            last_fire_ms,
+                            executions_total,
+                        },
+                    );
+                }
+                None => {
+                    tracing::warn!(
+                        "Missing schedule body row for persisted schedule definition: {}",
+                        route
+                    );
+                }
+            }
+        }
 
         for (key, value) in &legacy_rows {
             match (
@@ -603,7 +793,7 @@ impl ScheduleStore {
                         last_fire_ms: None,
                         executions_total: 0,
                     };
-                    imported_definitions.push(persisted.clone());
+                    normalized_definitions.push(persisted.clone());
                     schedules.insert(route.clone(), persisted);
                 }
                 (Err(error), _) | (_, Err(error)) => {
@@ -627,20 +817,17 @@ impl ScheduleStore {
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin migration tx failed: {:?}", e))?;
 
-        for schedule in &imported_definitions {
-            write_tx
-                .put(
-                    Self::encode_definition_key(&schedule.route),
-                    Self::encode_definition_value(
-                        schedule.next_fire_ms,
-                        &schedule.cron,
-                        &schedule.payload,
-                        schedule.last_fire_ms,
-                        schedule.executions_total,
-                    ),
-                    None,
-                )
-                .map_err(|e| format!("import legacy schedule definition failed: {:?}", e))?;
+        for schedule in &normalized_definitions {
+            Self::put_schedule_definition(
+                &mut write_tx,
+                &schedule.route,
+                schedule.next_fire_ms,
+                schedule.last_fire_ms,
+                schedule.executions_total,
+                &schedule.cron,
+                &schedule.payload,
+            )
+            .map_err(|error| format!("import schedule definition failed: {}", error))?;
         }
 
         for (key, _) in due_rows {
@@ -817,6 +1004,26 @@ mod tests {
             .len()
     }
 
+    fn encode_inline_definition_value_v2(
+        next_fire_ms: u64,
+        cron: &str,
+        payload: &Bytes,
+        last_fire_ms: Option<u64>,
+        executions_total: u64,
+    ) -> Vec<u8> {
+        let mut value =
+            Vec::with_capacity(1 + 8 + 8 + 8 + 4 + cron.len() + 4 + payload.len());
+        value.push(DEFINITION_VALUE_VERSION_V2);
+        value.extend_from_slice(&next_fire_ms.to_be_bytes());
+        value.extend_from_slice(&last_fire_ms.unwrap_or(0).to_be_bytes());
+        value.extend_from_slice(&executions_total.to_be_bytes());
+        value.extend_from_slice(&(cron.len() as u32).to_be_bytes());
+        value.extend_from_slice(cron.as_bytes());
+        value.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        value.extend_from_slice(payload);
+        value
+    }
+
     #[test]
     fn should_persist_definition_with_due_index_for_inserted_schedule() {
         // Arrange
@@ -845,18 +1052,35 @@ mod tests {
 
         let definition_key = ScheduleStore::encode_definition_key(route);
         let definition_value = read_raw_value(&db, 1, &definition_key).expect("definition row");
+        let body_key = ScheduleStore::encode_body_key(route);
+        let body_value = read_raw_value(&db, 1, &body_key).expect("body row");
 
         // Assert
         assert_eq!(stored_due_key, expected_due_key);
         assert_eq!(
             ScheduleStore::decode_definition_value(&definition_value).unwrap(),
-            (
+            DecodedDefinitionRow::Metadata {
                 next_fire_ms,
+                last_fire_ms: None,
+                executions_total: 0,
+            }
+        );
+        assert_eq!(
+            ScheduleStore::decode_definition_body_value(&body_value).unwrap(),
+            (
                 "* * * * *".to_string(),
                 Bytes::from_static(b"payload"),
-                None,
-                0,
             )
+        );
+        assert_eq!(
+            count_prefix(&db, 1, BODY_PREFIX),
+            1,
+            "body row should be persisted alongside metadata"
+        );
+        assert_eq!(
+            count_prefix(&db, 1, DEFINITION_PREFIX),
+            1,
+            "definition metadata row should be persisted"
         );
         assert_eq!(
             read_raw_value(&db, 1, &expected_due_key),
@@ -927,6 +1151,72 @@ mod tests {
             read_raw_value(&db, 1, &ScheduleStore::encode_definition_key(route)).is_some(),
             "definition row should exist after legacy import"
         );
+        assert!(
+            read_raw_value(&db, 1, &ScheduleStore::encode_body_key(route)).is_some(),
+            "body row should exist after legacy import"
+        );
+    }
+
+    #[test]
+    fn should_split_inline_definition_rows_on_load() {
+        // Arrange
+        let (store, db) = make_store();
+        let route = "schedule://acme/jobs/migrate/run";
+        let payload = Bytes::from_static(b"payload");
+        let next_fire_ms = 1_700_000_003_000_u64;
+        let last_fire_ms = Some(1_700_000_002_500_u64);
+        let executions_total = 7;
+
+        put_raw(
+            &db,
+            1,
+            ScheduleStore::encode_definition_key(route),
+            encode_inline_definition_value_v2(
+                next_fire_ms,
+                "*/10 * * * *",
+                &payload,
+                last_fire_ms,
+                executions_total,
+            ),
+        )
+        .expect("write inline definition row");
+        put_raw(
+            &db,
+            1,
+            ScheduleStore::encode_due_key(next_fire_ms, route),
+            DUE_INDEX_VALUE.to_vec(),
+        )
+        .expect("write due row");
+
+        // Act
+        let loaded = store
+            .load_all(1, WriteOptions::buffered())
+            .expect("load schedules");
+        let metadata = read_raw_value(&db, 1, &ScheduleStore::encode_definition_key(route))
+            .expect("definition metadata row");
+        let body =
+            read_raw_value(&db, 1, &ScheduleStore::encode_body_key(route)).expect("body row");
+
+        // Assert
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].route, route);
+        assert_eq!(loaded[0].cron, "*/10 * * * *");
+        assert_eq!(loaded[0].payload, payload);
+        assert_eq!(loaded[0].next_fire_ms, next_fire_ms);
+        assert_eq!(loaded[0].last_fire_ms, last_fire_ms);
+        assert_eq!(loaded[0].executions_total, executions_total);
+        assert_eq!(
+            ScheduleStore::decode_definition_value(&metadata).unwrap(),
+            DecodedDefinitionRow::Metadata {
+                next_fire_ms,
+                last_fire_ms,
+                executions_total,
+            }
+        );
+        assert_eq!(
+            ScheduleStore::decode_definition_body_value(&body).unwrap(),
+            ("*/10 * * * *".to_string(), Bytes::from_static(b"payload"))
+        );
     }
 
     #[test]
@@ -961,6 +1251,10 @@ mod tests {
         assert!(
             read_raw_value(&db, 1, &ScheduleStore::encode_definition_key(route)).is_none(),
             "definition row should be deleted"
+        );
+        assert!(
+            read_raw_value(&db, 1, &ScheduleStore::encode_body_key(route)).is_none(),
+            "body row should be deleted"
         );
         assert!(
             read_raw_value(&db, 1, &ScheduleStore::encode_due_key(next_fire_ms, route)).is_none(),
@@ -1045,6 +1339,14 @@ mod tests {
             )
             .is_some(),
             "pending fire should be persisted after claim"
+        );
+        assert_eq!(
+            ScheduleStore::decode_definition_body_value(
+                &read_raw_value(&db, 1, &ScheduleStore::encode_body_key(route))
+                    .expect("body row should remain after claim"),
+            )
+            .unwrap(),
+            ("* * * * *".to_string(), Bytes::from_static(b"payload"))
         );
     }
 
