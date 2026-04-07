@@ -2048,8 +2048,7 @@ impl QueueActor {
         let mut messages = Vec::with_capacity(batch_size);
 
         for _ in 0..batch_size {
-            // Pop from ready queue
-            let id = match self.pop_ready() {
+            let id = match self.ready.front().map(|entry| entry.id) {
                 Some(id) => id,
                 None => break, // No more messages
             };
@@ -2064,8 +2063,13 @@ impl QueueActor {
                         error_reason = %e,
                         "Failed to hydrate queue record for receive"
                     );
-                    continue;
+                    break;
                 }
+            };
+
+            let id = match self.pop_ready() {
+                Some(id) => id,
+                None => break,
             };
 
             // Generate inflight token
@@ -2219,8 +2223,8 @@ impl QueueActor {
                 "Queue COMPLETE deduplicated (returning cached response)"
             );
             // Deserialize cached response
-            return match bincode::deserialize(&cached_response) {
-                Ok(resp) => resp,
+            match bincode::deserialize(&cached_response) {
+                Ok(resp) => return resp,
                 Err(e) => {
                     tracing::warn!(
                         message_id = id.as_u64(),
@@ -2228,10 +2232,8 @@ impl QueueActor {
                         error = ?e,
                         "Failed to deserialize cached COMPLETE response, processing normally"
                     );
-                    // Fall through to normal processing if deserialization fails
-                    QueueResponse::NotFound
                 }
-            };
+            }
         }
 
         // Check if message is inflight
@@ -3421,6 +3423,91 @@ pub mod tests {
 
         // Assert
         assert!(matches!(response, QueueResponse::Error { .. }));
+    }
+
+    #[test]
+    fn should_keep_message_ready_when_receive_hydration_fails() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-hydrate-failure");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let message_id = match actor.handle_send(Bytes::from("test message"), None) {
+            QueueResponse::Sent { id } => id,
+            other => panic!("Expected Sent response, found {other:?}"),
+        };
+        actor.evict_cached_record(message_id);
+        actor.evict_cached_body(message_id);
+        let mut txn = store
+            .begin_tx(
+                queue_key.family.id(),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
+            .expect("begin write tx");
+        txn.delete(QueueActor::header_key(&queue_key, message_id))
+            .expect("delete queue header");
+        txn.commit(cntryl_midge::WriteOptions::buffered())
+            .expect("commit queue header delete");
+
+        // Act
+        let response = actor.handle_receive(30, Some(1));
+
+        // Assert
+        match response {
+            QueueResponse::Received { messages } => assert!(messages.is_empty()),
+            other => panic!("Expected empty Received response, found {other:?}"),
+        }
+        assert_eq!(actor.ready_len(), 1);
+        assert_eq!(actor.inflight.len(), 0);
+        assert!(actor.ready_contains(message_id));
+    }
+
+    #[test]
+    fn should_complete_message_when_cached_complete_response_is_invalid() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let dedup_store = crate::utils::idempotency::default_dedup_store();
+        let queue_key = unique_queue_key("jobs-invalid-complete-cache");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store,
+            None,
+            dedup_store.clone(),
+        );
+        let (message_id, token) = send_and_reserve_single_message(&mut actor, "test message");
+        dedup_store.record(
+            crate::utils::idempotency::DedupKey {
+                realm: queue_key.realm.clone(),
+                domain: crate::utils::idempotency::Domain::Queue,
+                identifier: crate::utils::idempotency::DedupIdentifier::QueueComplete {
+                    family: queue_key.family.as_u64(),
+                    area: queue_key.area.clone(),
+                    resource: queue_key.resource.clone(),
+                    message_id: message_id.as_u64(),
+                    token,
+                },
+            },
+            vec![0xFF, 0xAA, 0x55],
+        );
+
+        // Act
+        let response = actor.handle_ack(message_id, token);
+
+        // Assert
+        assert_eq!(response, QueueResponse::Acked);
+        assert_eq!(actor.inflight.len(), 0);
     }
 
     #[test]

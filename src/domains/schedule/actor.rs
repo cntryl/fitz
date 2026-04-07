@@ -1072,6 +1072,11 @@ impl ScheduleActor {
     }
 
     #[cfg(test)]
+    pub(crate) fn fail_next_store_commit_for_tests(&self) {
+        self.store.fail_next_commit_for_tests();
+    }
+
+    #[cfg(test)]
     fn current_epoch_ms() -> u64 {
         Self::current_epoch_ms_with_clock(&SystemClock)
     }

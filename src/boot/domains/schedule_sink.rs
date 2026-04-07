@@ -3,7 +3,7 @@ use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 const SCHEDULE_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
 const SCHEDULE_PENDING_CLAIM_TTL_MS: u64 = 24 * 60 * 60 * 1000;
 const SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS: u64 = 60_000;
+
+type PendingFireKey = (u64, String);
 
 fn schedule_admin_snapshot_due(
     snapshot_dirty: bool,
@@ -158,6 +160,9 @@ pub struct ScheduleDomainSink {
     live_publish_failures: AtomicU64,
     /// Total number of pending-fire acknowledgement persistence failures.
     ack_failures: AtomicU64,
+    /// Pending fire claims already handed off to the live publish path in this
+    /// broker process but still waiting for durable acknowledgement retry.
+    pending_ack_retries: Mutex<HashMap<u64, HashSet<PendingFireKey>>>,
     /// Maximum age for a pending claimed fire before cleanup removes it.
     pending_claim_ttl_ms: u64,
     /// Last monotonic cleanup sweep time, measured relative to `snapshot_epoch`.
@@ -188,6 +193,7 @@ impl ScheduleDomainSink {
             snapshot_epoch: Instant::now(),
             live_publish_failures: AtomicU64::new(0),
             ack_failures: AtomicU64::new(0),
+            pending_ack_retries: Mutex::new(HashMap::new()),
             pending_claim_ttl_ms: SCHEDULE_PENDING_CLAIM_TTL_MS,
             last_pending_claim_cleanup_elapsed_ms: AtomicU64::new(0),
             recent_acknowledgement_ms: Mutex::new(VecDeque::new()),
@@ -285,10 +291,13 @@ impl ScheduleDomainSink {
 
     fn scan_due_schedules(&self) {
         let mut live_publish_candidates = Vec::new();
+        let mut ack_retry_candidates =
+            HashMap::<crate::runtime::routing::RouteFamily, Vec<PendingFireKey>>::new();
         let mut snapshot_dirty = false;
         let cleanup_due = self.pending_claim_cleanup_due();
         {
             let mut actors = self.actors.lock();
+            let mut pending_ack_retries = self.pending_ack_retries.lock();
             for (family, actor) in actors.iter_mut() {
                 if cleanup_due {
                     match actor.cleanup_stale_pending_claims(self.pending_claim_ttl_ms) {
@@ -316,19 +325,43 @@ impl ScheduleDomainSink {
                 if !claimed.is_empty() {
                     snapshot_dirty = true;
                 }
-                for pending_fire in actor.pending_claimed_occurrences_for_publish() {
-                    live_publish_candidates.push((
-                        *family,
-                        pending_fire.fire_ms,
-                        pending_fire.route,
-                        pending_fire.payload,
-                    ));
+
+                let family_id = family.as_u64();
+                let pending_fires = actor.pending_claimed_occurrences_for_publish();
+                let mut pending_keys = HashSet::with_capacity(pending_fires.len());
+                let remove_retry_entry = {
+                    let tracked_retries = pending_ack_retries.entry(family_id).or_default();
+                    for pending_fire in pending_fires {
+                        let pending_key = (pending_fire.fire_ms, pending_fire.route.clone());
+                        pending_keys.insert(pending_key.clone());
+
+                        if tracked_retries.contains(&pending_key) {
+                            ack_retry_candidates
+                                .entry(*family)
+                                .or_default()
+                                .push(pending_key);
+                            continue;
+                        }
+
+                        live_publish_candidates.push((
+                            *family,
+                            pending_fire.fire_ms,
+                            pending_fire.route,
+                            pending_fire.payload,
+                        ));
+                    }
+
+                    tracked_retries.retain(|pending_key| pending_keys.contains(pending_key));
+                    tracked_retries.is_empty()
+                };
+
+                if remove_retry_entry {
+                    pending_ack_retries.remove(&family_id);
                 }
             }
         }
 
-        let mut handed_off_occurrences =
-            HashMap::<crate::runtime::routing::RouteFamily, Vec<(u64, String)>>::new();
+        let mut had_live_handoffs = false;
         for (family, fire_ms, route, payload) in live_publish_candidates {
             let route_value = crate::runtime::routing::Route::new(route.clone());
             let event =
@@ -337,7 +370,8 @@ impl ScheduleDomainSink {
             // Ack is keyed to a successful handoff into the live publish path,
             // not to downstream subscriber receipt.
             if self.router.route(Envelope::new(destination, event)).is_ok() {
-                handed_off_occurrences
+                had_live_handoffs = true;
+                ack_retry_candidates
                     .entry(family)
                     .or_default()
                     .push((fire_ms, route));
@@ -346,14 +380,31 @@ impl ScheduleDomainSink {
             }
         }
 
-        let had_handoffs = !handed_off_occurrences.is_empty();
+        let mut acknowledged_handoffs = false;
 
-        if !handed_off_occurrences.is_empty() {
+        if !ack_retry_candidates.is_empty() {
             let mut actors = self.actors.lock();
-            for (family, handed_off_fires) in handed_off_occurrences {
+            let mut pending_ack_retries = self.pending_ack_retries.lock();
+            for (family, ack_candidates) in ack_retry_candidates {
                 if let Some(actor) = actors.get_mut(&family) {
-                    match actor.ack_pending_fire_claims(&handed_off_fires) {
+                    let family_id = family.as_u64();
+                    match actor.ack_pending_fire_claims(&ack_candidates) {
                         Ok((acked, acknowledged_at_ms)) if acked > 0 => {
+                            let remove_retry_entry = if let Some(tracked_retries) =
+                                pending_ack_retries.get_mut(&family_id)
+                            {
+                                for pending_key in &ack_candidates {
+                                    tracked_retries.remove(pending_key);
+                                }
+                                tracked_retries.is_empty()
+                            } else {
+                                false
+                            };
+                            if remove_retry_entry {
+                                pending_ack_retries.remove(&family_id);
+                            }
+
+                            acknowledged_handoffs = true;
                             let mut deque = self.recent_acknowledgement_ms.lock();
                             let cutoff = acknowledged_at_ms.saturating_sub(60_000);
                             while deque.front().copied().is_some_and(|t| t < cutoff) {
@@ -363,9 +414,27 @@ impl ScheduleDomainSink {
                                 deque.push_back(acknowledged_at_ms);
                             }
                         }
-                        Ok(_) => {}
+                        Ok(_) => {
+                            let remove_retry_entry = if let Some(tracked_retries) =
+                                pending_ack_retries.get_mut(&family_id)
+                            {
+                                for pending_key in &ack_candidates {
+                                    tracked_retries.remove(pending_key);
+                                }
+                                tracked_retries.is_empty()
+                            } else {
+                                false
+                            };
+                            if remove_retry_entry {
+                                pending_ack_retries.remove(&family_id);
+                            }
+                        }
                         Err(error) => {
                             self.ack_failures.fetch_add(1, Ordering::Relaxed);
+                            let tracked_retries = pending_ack_retries.entry(family_id).or_default();
+                            for pending_key in ack_candidates {
+                                tracked_retries.insert(pending_key);
+                            }
                             tracing::warn!(
                                 route_family = family.as_u64(),
                                 error = %error,
@@ -377,7 +446,7 @@ impl ScheduleDomainSink {
             }
         }
 
-        if snapshot_dirty || had_handoffs {
+        if snapshot_dirty || had_live_handoffs || acknowledged_handoffs {
             self.schedule_admin_snapshot(false);
         }
 
@@ -1189,6 +1258,95 @@ mod tests {
         assert!(
             subscriber_mailbox.receiver().try_recv().is_err(),
             "pending claimed occurrence should be acknowledged after a successful live handoff retry"
+        );
+    }
+
+    #[test]
+    fn should_retry_ack_without_republishing_given_same_broker_ack_persist_failure() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let schedule_route = "schedule://acme/jobs/retry/run";
+        let schedule_address = RouteAddress::new(family, Route::new(schedule_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = Arc::new(ScheduleDomainSink::new(
+            store,
+            router.clone(),
+            admin_read_model,
+        ));
+        router.register_domain_pattern("schedule", sink.clone());
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            schedule_address.clone(),
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(700),
+                encode_schedule_create(schedule_route, "* * * * *", b"retry"),
+                family,
+            ),
+        ))
+        .expect("create schedule");
+        drain_mailbox(&subscriber_mailbox);
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            schedule_address,
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(703),
+                encode_schedule_subscribe(schedule_route),
+                family,
+            ),
+        ))
+        .expect("subscribe schedule");
+        let _subscribe_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("subscribe ack envelope");
+        drain_mailbox(&subscriber_mailbox);
+
+        {
+            let mut actors = sink.actors.lock();
+            let actor = actors.get_mut(&family).expect("schedule actor");
+            actor.bench_prepare_scan(1);
+            let claimed = actor.bench_claim_due_fires();
+            assert_eq!(claimed.len(), 1);
+            actor.fail_next_store_commit_for_tests();
+        }
+
+        // Act
+        sink.scan_due_schedules();
+        let first_notify = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("first schedule notify envelope");
+        let pending_after_failed_ack = sink.pending_fire_count();
+        sink.scan_due_schedules();
+
+        // Assert
+        let notify_frame = first_notify
+            .into_payload::<FrameContext>()
+            .expect("first schedule notify frame");
+        assert_eq!(notify_frame.msg_type.as_u16(), 705);
+        let mut notify_decoder = PayloadDecoder::new(&notify_frame.payload);
+        let _subscription_id = notify_decoder.get_u64().expect("notify subscription id");
+        let notified_payload = notify_decoder.get_bytes().expect("notify payload");
+        assert_eq!(notified_payload.as_ref(), b"retry");
+        assert!(notify_decoder.is_complete());
+        assert_eq!(sink.ack_failure_count(), 1);
+        assert_eq!(pending_after_failed_ack, 1);
+        assert_eq!(sink.pending_fire_count(), 0);
+        assert!(
+            subscriber_mailbox.receiver().try_recv().is_err(),
+            "ack retry should not republish a schedule notify on the same broker"
         );
     }
 

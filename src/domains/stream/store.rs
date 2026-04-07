@@ -14,6 +14,12 @@ use super::storage::{
     WatermarkValue,
 };
 
+#[cfg(test)]
+std::thread_local! {
+    static FAIL_NEXT_AREA_WATERMARK_GUARD_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_NEXT_REALM_WATERMARK_GUARD_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 #[derive(Debug, Clone)]
 pub struct EventPayload {
     pub body: Bytes,
@@ -179,6 +185,64 @@ impl StreamStore {
 
     fn event_size_bytes(event: &EventPayload) -> u64 {
         (event.body.len() + event.metadata.as_ref().map(|m| m.len()).unwrap_or(0)) as u64
+    }
+
+    fn load_existing_area_watermark_for_guard(
+        txn: &cntryl_midge::Transaction,
+        key: &[u8],
+    ) -> Result<Option<u64>, String> {
+        #[cfg(test)]
+        {
+            let should_fail = FAIL_NEXT_AREA_WATERMARK_GUARD_READ.with(|cell| {
+                let should_fail = cell.get();
+                if should_fail {
+                    cell.set(false);
+                }
+                should_fail
+            });
+
+            if should_fail {
+                return Err("Injected area watermark guard read failure".to_string());
+            }
+        }
+
+        txn.get(key)
+            .map_err(|e| format!("midge get error: {:?}", e))
+            .map(|existing| existing.map(|bytes| WatermarkValue::decode(&bytes).watermark))
+    }
+
+    fn load_existing_realm_watermark_for_guard(
+        txn: &cntryl_midge::Transaction,
+        key: &[u8],
+    ) -> Result<Option<u64>, String> {
+        #[cfg(test)]
+        {
+            let should_fail = FAIL_NEXT_REALM_WATERMARK_GUARD_READ.with(|cell| {
+                let should_fail = cell.get();
+                if should_fail {
+                    cell.set(false);
+                }
+                should_fail
+            });
+
+            if should_fail {
+                return Err("Injected realm watermark guard read failure".to_string());
+            }
+        }
+
+        txn.get(key)
+            .map_err(|e| format!("midge get error: {:?}", e))
+            .map(|existing| existing.map(|bytes| WatermarkValue::decode(&bytes).watermark))
+    }
+
+    #[cfg(test)]
+    fn fail_next_area_watermark_guard_read_for_tests() {
+        FAIL_NEXT_AREA_WATERMARK_GUARD_READ.with(|cell| cell.set(true));
+    }
+
+    #[cfg(test)]
+    fn fail_next_realm_watermark_guard_read_for_tests() {
+        FAIL_NEXT_REALM_WATERMARK_GUARD_READ.with(|cell| cell.set(true));
     }
 
     fn resource_identity_from_key(
@@ -1329,8 +1393,7 @@ impl StreamStore {
 
         // Monotonicity guard: watermarks must only advance, never regress.
         // If the new value is not strictly greater than the current value, no-op.
-        if let Ok(Some(existing)) = txn.get(&key) {
-            let current = WatermarkValue::decode(&existing).watermark;
+        if let Some(current) = Self::load_existing_area_watermark_for_guard(&txn, &key)? {
             if watermark <= current {
                 return Ok(());
             }
@@ -1379,8 +1442,7 @@ impl StreamStore {
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
 
         // Monotonicity guard: realm watermarks must only advance, never regress.
-        if let Ok(Some(existing)) = txn.get(&key) {
-            let current = WatermarkValue::decode(&existing).watermark;
+        if let Some(current) = Self::load_existing_realm_watermark_for_guard(&txn, &key)? {
             if watermark <= current {
                 return Ok(());
             }
@@ -1521,5 +1583,49 @@ mod tests {
 
         // Assert
         assert!(!Arc::ptr_eq(&left, &right));
+    }
+
+    #[test]
+    fn should_return_error_when_area_watermark_guard_read_fails() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        store
+            .set_watermark(1, "test", "events", 10)
+            .expect("seed area watermark");
+        StreamStore::fail_next_area_watermark_guard_read_for_tests();
+
+        // Act
+        let result = store.set_watermark(1, "test", "events", 11);
+
+        // Assert
+        assert!(result.is_err());
+        assert_eq!(
+            store
+                .get_watermark(1, "test", "events")
+                .expect("read area watermark"),
+            10
+        );
+    }
+
+    #[test]
+    fn should_return_error_when_realm_watermark_guard_read_fails() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        store
+            .set_realm_watermark(1, "test", 10)
+            .expect("seed realm watermark");
+        StreamStore::fail_next_realm_watermark_guard_read_for_tests();
+
+        // Act
+        let result = store.set_realm_watermark(1, "test", 11);
+
+        // Assert
+        assert!(result.is_err());
+        assert_eq!(
+            store
+                .get_realm_watermark(1, "test")
+                .expect("read realm watermark"),
+            10
+        );
     }
 }
