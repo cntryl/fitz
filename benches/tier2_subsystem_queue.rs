@@ -20,6 +20,25 @@ mod criterion_config;
 const CLIENT_SESSION_ID: u64 = 1;
 const RECEIVE_BATCH_SIZE: usize = 50;
 const ROUTE_STR: &str = "queue://bench/subsystem/queue";
+const WATCH_REGISTER_BATCH_SIZE: usize = 64;
+const DEQUEUE_OPERATION_BATCH_SIZE: usize = 32;
+const ACK_OPERATION_BATCH_SIZE: usize = 64;
+
+struct PreparedWatchRegisterCase {
+    router: Arc<Router>,
+    family: RouteFamily,
+    watchers: Vec<(u64, RouteAddress, Arc<FrameQueueSink>)>,
+}
+
+struct PreparedDequeueCase {
+    router: Arc<Router>,
+    family: RouteFamily,
+    source: RouteAddress,
+    inbox: Arc<FrameQueueSink>,
+    dequeue_msg_type: u16,
+    dequeue_payload: Bytes,
+    batch_size: usize,
+}
 
 struct PreparedAckCase {
     router: Arc<Router>,
@@ -27,8 +46,7 @@ struct PreparedAckCase {
     source: RouteAddress,
     inbox: Arc<FrameQueueSink>,
     route: &'static str,
-    ack_msg_type: u16,
-    ack_payload: Bytes,
+    ack_requests: Vec<(u16, Bytes)>,
 }
 
 fn setup_queue_request_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<FrameQueueSink>) {
@@ -144,36 +162,96 @@ fn build_queue_routes(queue_count: usize) -> Vec<String> {
         .collect()
 }
 
+fn prepare_watch_register_case() -> PreparedWatchRegisterCase {
+    let (router, family, _, _) = setup_queue_request_sink();
+    let watchers = (0..WATCH_REGISTER_BATCH_SIZE)
+        .map(|index| {
+            let session_id = 10_000 + index as u64;
+            let (source, inbox) = register_session_queue_sink(&router, family, session_id);
+            (session_id, source, inbox)
+        })
+        .collect();
+
+    PreparedWatchRegisterCase {
+        router,
+        family,
+        watchers,
+    }
+}
+
+fn prepare_dequeue_case(batch_size: usize) -> PreparedDequeueCase {
+    let (router, family, source, inbox) = setup_queue_request_sink();
+    let enqueue_frame = build_queue_enqueue(ROUTE_STR, b"queue dequeue payload");
+    let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
+
+    for _ in 0..(batch_size * DEQUEUE_OPERATION_BATCH_SIZE) {
+        let enqueue_response = request_queue_response(
+            &router,
+            family,
+            &source,
+            &inbox,
+            ROUTE_STR,
+            enqueue_msg_type,
+            enqueue_payload.clone(),
+        );
+        assert_queue_success(&enqueue_response);
+    }
+
+    let dequeue_frame = if batch_size == 1 {
+        build_queue_dequeue(ROUTE_STR)
+    } else {
+        build_queue_dequeue_batch(ROUTE_STR, batch_size as u32)
+    };
+    let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
+
+    PreparedDequeueCase {
+        router,
+        family,
+        source,
+        inbox,
+        dequeue_msg_type,
+        dequeue_payload,
+        batch_size,
+    }
+}
+
 fn prepare_ack_case() -> PreparedAckCase {
     let (router, family, source, inbox) = setup_queue_request_sink();
     let enqueue_frame = build_queue_enqueue(ROUTE_STR, b"queue ack payload");
     let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
-    let enqueue_response = request_queue_response(
-        &router,
-        family,
-        &source,
-        &inbox,
-        ROUTE_STR,
-        enqueue_msg_type,
-        enqueue_payload,
-    );
-    assert_queue_success(&enqueue_response);
-
     let dequeue_frame = build_queue_dequeue(ROUTE_STR);
     let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
-    let dequeue_response = request_queue_response(
-        &router,
-        family,
-        &source,
-        &inbox,
-        ROUTE_STR,
-        dequeue_msg_type,
-        dequeue_payload,
-    );
-    let (message_id, token) = parse_single_received_message(&dequeue_response);
 
-    let ack_frame = build_queue_complete(ROUTE_STR, message_id, token);
-    let (ack_msg_type, ack_payload) = extract_single_tlv_field(&ack_frame);
+    for _ in 0..ACK_OPERATION_BATCH_SIZE {
+        let enqueue_response = request_queue_response(
+            &router,
+            family,
+            &source,
+            &inbox,
+            ROUTE_STR,
+            enqueue_msg_type,
+            enqueue_payload.clone(),
+        );
+        assert_queue_success(&enqueue_response);
+    }
+
+    let ack_requests = (0..ACK_OPERATION_BATCH_SIZE)
+        .map(|_| {
+            let dequeue_response = request_queue_response(
+                &router,
+                family,
+                &source,
+                &inbox,
+                ROUTE_STR,
+                dequeue_msg_type,
+                dequeue_payload.clone(),
+            );
+            let (message_id, token) = parse_single_received_message(&dequeue_response);
+
+            let ack_frame = build_queue_complete(ROUTE_STR, message_id, token);
+            extract_single_tlv_field(&ack_frame)
+        })
+        .collect();
 
     PreparedAckCase {
         router,
@@ -181,27 +259,31 @@ fn prepare_ack_case() -> PreparedAckCase {
         source,
         inbox,
         route: ROUTE_STR,
-        ack_msg_type,
-        ack_payload,
+        ack_requests,
     }
 }
 
 fn bench_queue_wait_register_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_queue");
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
+    group.measurement_time(Duration::from_millis(250));
+    group.throughput(Throughput::Elements(WATCH_REGISTER_BATCH_SIZE as u64));
 
     group.bench_function("watch_register_primary", |b| {
         b.iter_batched(
-            || {
-                let (router, family, source, inbox) = setup_queue_request_sink();
-                (router, family, source, inbox)
-            },
-            |(router, family, source, inbox)| {
-                register_queue_watch(&router, family, &source, ROUTE_STR, CLIENT_SESSION_ID);
+            prepare_watch_register_case,
+            |case| {
+                for (session_id, source, _) in &case.watchers {
+                    register_queue_watch(&case.router, case.family, source, ROUTE_STR, *session_id);
+                }
+
+                let ack_count: usize = case
+                    .watchers
+                    .iter()
+                    .map(|(_, _, inbox)| inbox.drain().len())
+                    .sum();
                 assert_eq!(
-                    inbox.drain().len(),
-                    1,
+                    ack_count, WATCH_REGISTER_BATCH_SIZE,
                     "watch registration should ack immediately"
                 );
             },
@@ -258,62 +340,32 @@ fn bench_queue_enqueue_primary(c: &mut Criterion) {
 fn bench_queue_dequeue_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_queue");
     group.sampling_mode(SamplingMode::Flat);
+    group.measurement_time(Duration::from_millis(400));
 
     for batch_size in [1usize, RECEIVE_BATCH_SIZE] {
-        group.throughput(Throughput::Elements(batch_size as u64));
+        group.throughput(Throughput::Elements(
+            (batch_size * DEQUEUE_OPERATION_BATCH_SIZE) as u64,
+        ));
         group.bench_function(format!("dequeue_batch_{}_primary", batch_size), |b| {
             b.iter_batched(
-                || {
-                    let (router, family, source, inbox) = setup_queue_request_sink();
-                    let enqueue_frame = build_queue_enqueue(ROUTE_STR, b"queue dequeue payload");
-                    let (enqueue_msg_type, enqueue_payload) =
-                        extract_single_tlv_field(&enqueue_frame);
-
-                    for _ in 0..batch_size {
-                        let enqueue_response = request_queue_response(
-                            &router,
-                            family,
-                            &source,
-                            &inbox,
+                || prepare_dequeue_case(batch_size),
+                |case| {
+                    for _ in 0..DEQUEUE_OPERATION_BATCH_SIZE {
+                        let response = request_queue_response(
+                            &case.router,
+                            case.family,
+                            &case.source,
+                            &case.inbox,
                             ROUTE_STR,
-                            enqueue_msg_type,
-                            enqueue_payload.clone(),
+                            case.dequeue_msg_type,
+                            black_box(case.dequeue_payload.clone()),
                         );
-                        assert_queue_success(&enqueue_response);
+                        assert_eq!(
+                            queue_response_message_count(&response),
+                            case.batch_size,
+                            "expected a full queue receive batch"
+                        );
                     }
-
-                    let dequeue_frame = if batch_size == 1 {
-                        build_queue_dequeue(ROUTE_STR)
-                    } else {
-                        build_queue_dequeue_batch(ROUTE_STR, batch_size as u32)
-                    };
-                    let (dequeue_msg_type, dequeue_payload) =
-                        extract_single_tlv_field(&dequeue_frame);
-                    (
-                        router,
-                        family,
-                        source,
-                        inbox,
-                        dequeue_msg_type,
-                        dequeue_payload,
-                        batch_size,
-                    )
-                },
-                |(router, family, source, inbox, dequeue_msg_type, dequeue_payload, batch_size)| {
-                    let response = request_queue_response(
-                        &router,
-                        family,
-                        &source,
-                        &inbox,
-                        ROUTE_STR,
-                        dequeue_msg_type,
-                        black_box(dequeue_payload),
-                    );
-                    assert_eq!(
-                        queue_response_message_count(&response),
-                        batch_size,
-                        "expected a full queue receive batch"
-                    );
                 },
                 BatchSize::SmallInput,
             )
@@ -326,22 +378,25 @@ fn bench_queue_dequeue_primary(c: &mut Criterion) {
 fn bench_queue_ack_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_queue");
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
+    group.measurement_time(Duration::from_millis(400));
+    group.throughput(Throughput::Elements(ACK_OPERATION_BATCH_SIZE as u64));
 
     group.bench_function("ack_single_primary", |b| {
         b.iter_batched(
             prepare_ack_case,
             |case| {
-                let response = request_queue_response(
-                    &case.router,
-                    case.family,
-                    &case.source,
-                    &case.inbox,
-                    case.route,
-                    case.ack_msg_type,
-                    black_box(case.ack_payload),
-                );
-                assert_queue_success(&response);
+                for (ack_msg_type, ack_payload) in &case.ack_requests {
+                    let response = request_queue_response(
+                        &case.router,
+                        case.family,
+                        &case.source,
+                        &case.inbox,
+                        case.route,
+                        *ack_msg_type,
+                        black_box(ack_payload.clone()),
+                    );
+                    assert_queue_success(&response);
+                }
             },
             BatchSize::SmallInput,
         )

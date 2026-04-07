@@ -235,6 +235,8 @@ Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configura
 
 For local PowerShell runs, use the repo helper so Tier 3 and Tier 4 benches always carry the intended stress-sampling flags:
 
+The helper also removes the targeted raw output directories before rerun (`target/criterion/<group>` for Criterion and `target/stress/<suite>` for stress suites) so renamed or deleted cases do not survive into the next summary.
+
 ```powershell
 .\scripts\refresh-benchmarks.ps1
 .\scripts\refresh-benchmarks.ps1 -Tiers tier3,tier4 -StressRuns 5 -StressWarmup 1

@@ -21,6 +21,14 @@ if ($StressWarmup -lt 0) {
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
+function Get-BenchSourcePath {
+    param(
+        [string]$BenchName
+    )
+
+    return Join-Path (Join-Path $repoRoot 'benches') "$BenchName.rs"
+}
+
 function Get-BenchTargetsForTier {
     param(
         [string]$Tier,
@@ -36,6 +44,60 @@ function Get-BenchTargetsForTier {
     }
 
     return @($targets)
+}
+
+function Get-CriterionGroupsForBench {
+    param(
+        [string]$BenchName
+    )
+
+    $benchSource = Get-BenchSourcePath -BenchName $BenchName
+    if (-not (Test-Path $benchSource)) {
+        return @()
+    }
+
+    $matches = Select-String -Path $benchSource -Pattern 'benchmark_group\("([^"]+)"\)' -AllMatches
+    $groups = foreach ($matchInfo in $matches) {
+        foreach ($match in $matchInfo.Matches) {
+            $match.Groups[1].Value
+        }
+    }
+
+    return @($groups | Sort-Object -Unique)
+}
+
+function Convert-BenchNameToStressSuite {
+    param(
+        [string]$BenchName
+    )
+
+    return ($BenchName -replace '_', '-')
+}
+
+function Remove-BenchArtifacts {
+    param(
+        [string]$BenchName,
+        [string]$Tier
+    )
+
+    if ($Tier -in @('tier1', 'tier2')) {
+        foreach ($group in Get-CriterionGroupsForBench -BenchName $BenchName) {
+            $criterionDir = Join-Path (Join-Path $repoRoot 'target\criterion') $group
+            if (Test-Path $criterionDir) {
+                Write-Host "==> removing stale criterion artifacts $criterionDir"
+                Remove-Item -Recurse -Force $criterionDir
+            }
+        }
+    }
+
+    if ($Tier -in @('tier3', 'tier4')) {
+        $stressSuite = Convert-BenchNameToStressSuite -BenchName $BenchName
+        $stressDir = Join-Path (Join-Path $repoRoot 'target\stress') $stressSuite
+        if (Test-Path $stressDir) {
+            Write-Host "==> removing stale stress artifacts $stressDir"
+            Remove-Item -Recurse -Force $stressDir
+        }
+    }
 }
 
 function Invoke-CargoBench {
@@ -66,6 +128,13 @@ try {
             throw "No benchmarks matched tier '$tier'."
         }
         $tierTargets[$tier] = $targets
+    }
+
+    foreach ($entry in $tierTargets.GetEnumerator()) {
+        $tier = $entry.Key
+        foreach ($benchName in $entry.Value) {
+            Remove-BenchArtifacts -BenchName $benchName -Tier $tier
+        }
     }
 
     if (-not $SkipBuild) {
