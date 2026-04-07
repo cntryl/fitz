@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub use crate::runtime::clock::{
-    Clock, SystemClock, epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
+    epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference, Clock, SystemClock,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

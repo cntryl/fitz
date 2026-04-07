@@ -93,7 +93,7 @@ pub struct DedupRecord {
 
 /// Store for tracking and deduplicating context-dependent operations
 ///
-/// Implements expiration and realm-isolated tracking per TODO.md.
+/// Implements expiration with realm-isolated tracking for context-dependent operations.
 pub struct DedupStore {
     records: DashMap<DedupKey, DedupRecord>,
     default_ttl: Duration,

@@ -914,12 +914,12 @@ impl MailboxSink for ScheduleDomainSink {
 mod tests {
     use super::*;
     use crate::domains::schedule::metrics::METRIC_PENDING_CLAIMS_EXPIRED_TOTAL;
-    use crate::runtime::clock::Clock;
     use crate::observability::metrics::MetricsCollector;
     use crate::protocol::frame::ChannelId;
     use crate::protocol::frame_context::FrameContext;
     use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
     use crate::protocol::tlv::MessageType;
+    use crate::runtime::clock::Clock;
     use crate::runtime::mailbox::Mailbox;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
     use bytes::Bytes;

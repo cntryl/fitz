@@ -256,7 +256,10 @@ fn should_restore_committed_kv_value_on_engine_restart() {
             // so we skip instead of failing the test.
             let mem_hint = temp_path.join("target").join("tmp");
             if mem_hint.exists() {
-                eprintln!("SKIP: underlying Midge engine appears memory-backed; skipping disk-restart check (response={:?})", other);
+                println!(
+                    "SKIP: underlying Midge engine appears memory-backed; skipping disk-restart check (response={:?})",
+                    other
+                );
                 return;
             }
 

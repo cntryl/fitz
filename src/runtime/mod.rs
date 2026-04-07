@@ -37,7 +37,7 @@ pub mod supervision;
 // Re-export commonly used types
 pub use actor::{Actor, ActorError, ActorId, ActorRef, ActorState, Context, SendError};
 pub use clock::{
-	Clock, SystemClock, epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
+    epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference, Clock, SystemClock,
 };
 pub use context::{Timer, TimerId, TimerManager};
 pub use domain_event::{DomainPublishEvent, SessionCleanup};

@@ -234,7 +234,7 @@ async fn handle_schedule_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, 
 }
 
 /// Parse realm filter from query string
-#[allow(dead_code)] // TODO: Use for realm-filtered stats queries
+#[allow(dead_code)] // Kept for admin endpoints that need shared realm-filter parsing.
 pub fn parse_realm_filter(query: Option<&str>) -> Option<String> {
     query.and_then(|q| {
         q.split('&').find_map(|pair| {

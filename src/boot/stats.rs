@@ -19,7 +19,7 @@ mod domain_stats;
 #[derive(Clone)]
 pub struct Runtime {
     /// Message router (for route/subscription queries)
-    #[allow(dead_code)] // TODO: Use for querying domain stats
+    #[allow(dead_code)] // Retained for admin/domain stats accessors.
     pub(crate) router: Arc<Router>,
 
     /// Startup timestamp
