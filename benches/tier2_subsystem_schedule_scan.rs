@@ -1,6 +1,6 @@
-//! Criterion benchmark for schedule due-occurrence collection for live publish.
-//! Provides a single Criterion source of truth so report naming is consistent and stale
-//! "schedule_system_collect_due_occurrences" entries can be replaced.
+//! Criterion benchmark for schedule due-occurrence collection on the production scan path.
+//! This intentionally measures only collect_due_occurrences_for_publish and avoids
+//! benchmark-only shortcut paths.
 
 use bytes::Bytes;
 use criterion::{
@@ -10,6 +10,7 @@ use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
+use std::time::Duration;
 
 #[path = "criterion_config.rs"]
 mod criterion_config;
@@ -66,6 +67,7 @@ fn populate_actor(
 fn bench_scan_shapes(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_schedule_scan");
     group.sampling_mode(SamplingMode::Flat);
+    group.measurement_time(Duration::from_millis(400));
 
     for count in [100usize, 1000usize] {
         let (routes, crons, payloads) = precompute_data(count);
@@ -91,24 +93,6 @@ fn bench_scan_shapes(c: &mut Criterion) {
                     BatchSize::SmallInput,
                 )
             });
-
-            group.bench_function(
-                format!("scan_cpu_only_{}_{}_mixed_crons", label, count),
-                |b| {
-                    b.iter_batched(
-                        || {
-                            let mut actor = create_test_actor();
-                            populate_actor(&mut actor, &routes, &crons, &payloads);
-                            actor.bench_prepare_scan(ready_count);
-                            actor
-                        },
-                        |mut actor| {
-                            black_box(actor.collect_due_occurrences_for_publish_cpu_only());
-                        },
-                        BatchSize::SmallInput,
-                    )
-                },
-            );
         }
     }
 

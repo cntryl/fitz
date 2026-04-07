@@ -1004,38 +1004,6 @@ impl ScheduleActor {
     }
 
     #[doc(hidden)]
-    pub fn collect_due_occurrences_for_publish_cpu_only(&mut self) -> Vec<(String, Bytes)> {
-        let now = self.clock.now_instant();
-        if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
-            return Vec::new();
-        }
-        self.last_scan_time = now;
-
-        let now_ms = Self::instant_to_ms_at_with_clock(now, now, self.clock.as_ref());
-        let mut heap_popped = Vec::new();
-
-        while let Some(&(Reverse(fire_ms), _)) = self.ready_heap.peek() {
-            if fire_ms > now_ms {
-                break;
-            }
-            if let Some((Reverse(fire_ms), route)) = self.ready_heap.pop() {
-                heap_popped.push((fire_ms, route));
-            }
-        }
-
-        let mut fired = Vec::new();
-        for (fire_ms, route) in heap_popped {
-            if let Some(def) = self.schedules.get(&route) {
-                if def.next_fire_ms == fire_ms {
-                    fired.push((route.clone(), def.payload.clone()));
-                }
-            }
-        }
-
-        fired
-    }
-
-    #[doc(hidden)]
     pub fn bench_prepare_scan(&mut self, ready_count: usize) {
         let now = self.clock.now_instant();
         let ready_limit = ready_count.min(self.list_entries.len());

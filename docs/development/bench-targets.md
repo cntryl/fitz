@@ -142,8 +142,6 @@ All rows in this section map to `target_class = internal_explainer`. They are ad
 | `subsystem_tlv_pipeline\iter_64b_64subs` | `mean_us` | 10 | 100,000 | 8 | 125,000 | `hard` | n/a |  |
 | `subsystem_tlv_pipeline\iter_16b_64subs` | `mean_us` | 10 | 100,000 | 8 | 125,000 | `hard` | n/a |  |
 | `subsystem_subscriptions\10k_subs_10k_matches` | `mean_us` | 110 | 9,091 | 75 | 13,333 | `hard` | n/a |  |
-| `schedule_scan_and_fire\scan_and_fire_100_cpu_only` | `mean_us` | 650 | 1,538 | 450 | 2,222 | `hard` | n/a |  |
-| `schedule_scan_and_fire\scan_and_fire_100` | `mean_us` | 700 | 1,429 | 500 | 2,000 | `hard` | n/a |  |
 | `subsystem_mailbox\send_to_mailbox` | `mean_us` | 0.55 | 1,818,182 | 0.45 | 2,222,222 | `hard` | n/a |  |
 | `subsystem_mailbox\send_100_messages` | `mean_us` | 50 | 20,000 | 35 | 28,571 | `hard` | n/a |  |
 | `subsystem_subscriptions\insert_100_match_2` | `mean_us` | 30 | 33,333 | 20 | 50,000 | `hard` | n/a |  |

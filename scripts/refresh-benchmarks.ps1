@@ -66,6 +66,21 @@ function Get-CriterionGroupsForBench {
     return @($groups | Sort-Object -Unique)
 }
 
+function Get-LegacyCriterionGroupsForBench {
+    param(
+        [string]$BenchName
+    )
+
+    switch ($BenchName) {
+        'tier2_subsystem_schedule_scan' {
+            return @('schedule_scan_and_fire')
+        }
+        default {
+            return @()
+        }
+    }
+}
+
 function Convert-BenchNameToStressSuite {
     param(
         [string]$BenchName
@@ -81,7 +96,12 @@ function Remove-BenchArtifacts {
     )
 
     if ($Tier -in @('tier1', 'tier2')) {
-        foreach ($group in Get-CriterionGroupsForBench -BenchName $BenchName) {
+        $criterionGroups = @(
+            Get-CriterionGroupsForBench -BenchName $BenchName
+            Get-LegacyCriterionGroupsForBench -BenchName $BenchName
+        ) | Sort-Object -Unique
+
+        foreach ($group in $criterionGroups) {
             $criterionDir = Join-Path (Join-Path $repoRoot 'target\criterion') $group
             if (Test-Path $criterionDir) {
                 Write-Host "==> removing stale criterion artifacts $criterionDir"

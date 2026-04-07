@@ -269,7 +269,7 @@ fn bench_queue_wait_register_primary(c: &mut Criterion) {
     group.measurement_time(Duration::from_millis(250));
     group.throughput(Throughput::Elements(WATCH_REGISTER_BATCH_SIZE as u64));
 
-    group.bench_function("watch_register_primary", |b| {
+    group.bench_function("watch_register_64_sessions_primary", |b| {
         b.iter_batched(
             prepare_watch_register_case,
             |case| {
@@ -301,7 +301,9 @@ fn bench_queue_enqueue_primary(c: &mut Criterion) {
 
     for queue_count in [1usize, 64usize, 256usize] {
         group.throughput(Throughput::Elements(queue_count as u64));
-        group.bench_function(format!("enqueue_{}_queues_primary", queue_count), |b| {
+        group.bench_function(
+            format!("enqueue_1_message_each_{}_queues_primary", queue_count),
+            |b| {
             b.iter_batched(
                 || {
                     let (router, family, source, inbox) = setup_queue_request_sink();
@@ -346,7 +348,9 @@ fn bench_queue_dequeue_primary(c: &mut Criterion) {
         group.throughput(Throughput::Elements(
             (batch_size * DEQUEUE_OPERATION_BATCH_SIZE) as u64,
         ));
-        group.bench_function(format!("dequeue_batch_{}_primary", batch_size), |b| {
+        group.bench_function(
+            format!("dequeue_32_ops_batch_{}_primary", batch_size),
+            |b| {
             b.iter_batched(
                 || prepare_dequeue_case(batch_size),
                 |case| {
@@ -381,7 +385,7 @@ fn bench_queue_ack_primary(c: &mut Criterion) {
     group.measurement_time(Duration::from_millis(400));
     group.throughput(Throughput::Elements(ACK_OPERATION_BATCH_SIZE as u64));
 
-    group.bench_function("ack_single_primary", |b| {
+    group.bench_function("ack_64_messages_primary", |b| {
         b.iter_batched(
             prepare_ack_case,
             |case| {
@@ -411,7 +415,9 @@ fn bench_queue_waiter_wake_primary(c: &mut Criterion) {
 
     for waiter_count in [1usize, 16usize, 64usize] {
         group.throughput(Throughput::Elements(waiter_count as u64));
-        group.bench_function(format!("notify_{}_watchers_primary", waiter_count), |b| {
+        group.bench_function(
+            format!("notify_{}_waiting_receivers_primary", waiter_count),
+            |b| {
             b.iter_batched(
                 || {
                     let family = RouteFamily::new(1);

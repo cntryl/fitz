@@ -460,7 +460,7 @@ fn bench_rpc_worker_subscribe_primary(c: &mut Criterion) {
     group.measurement_time(Duration::from_millis(250));
     group.throughput(Throughput::Elements(WORKER_SUBSCRIBE_BATCH_SIZE as u64));
 
-    group.bench_function("worker_subscribe_primary", |b| {
+    group.bench_function("worker_subscribe_64_sessions_primary", |b| {
         b.iter_batched(
             prepare_worker_subscribe_case,
             |case| {
@@ -514,7 +514,7 @@ fn bench_rpc_dispatch_primary(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(DISPATCH_BATCH_SIZE as u64));
         group.bench_function(
-            format!("dispatch_ack_cleanup_{}_workers_primary", worker_count),
+            format!("dispatch_ack_cleanup_256_ops_{}_workers_primary", worker_count),
             |b| {
                 b.iter(|| {
                     for _ in 0..DISPATCH_BATCH_SIZE {
@@ -563,7 +563,7 @@ fn bench_rpc_dispatch_primary(c: &mut Criterion) {
     let mut next_route_index = 0usize;
 
     group.throughput(Throughput::Elements(DISPATCH_BATCH_SIZE as u64));
-    group.bench_function("dispatch_ack_cleanup_64_routes_primary", |b| {
+    group.bench_function("dispatch_ack_cleanup_256_ops_64_routes_primary", |b| {
         b.iter(|| {
             for _ in 0..DISPATCH_BATCH_SIZE {
                 let route_index = next_route_index;
@@ -598,7 +598,7 @@ fn bench_rpc_response_primary(c: &mut Criterion) {
     group.measurement_time(Duration::from_millis(250));
     group.throughput(Throughput::Elements(RESPONSE_FORWARD_BATCH_SIZE as u64));
 
-    group.bench_function("response_forward_pending_primary", |b| {
+    group.bench_function("response_forward_32_pending_primary", |b| {
         b.iter_batched(
             prepare_response_case,
             |case| {
@@ -627,7 +627,10 @@ fn bench_rpc_response_primary(c: &mut Criterion) {
             (chunk_count * STREAM_RESPONSE_BATCH_SIZE) as u64,
         ));
         group.bench_function(
-            format!("response_forward_stream_{}_chunks_primary", chunk_count),
+            format!(
+                "response_forward_stream_8_workers_{}_chunks_primary",
+                chunk_count
+            ),
             |b| {
                 b.iter_batched(
                     || prepare_streaming_response_case(chunk_count),
@@ -669,8 +672,8 @@ fn bench_rpc_timeout_sweep_primary(c: &mut Criterion) {
         ));
         group.bench_function(
             format!(
-                "dispatch_trigger_timeout_sweep_{}_pending_primary",
-                expired_pending
+                "dispatch_timeout_sweep_{}_expired_pending_x{}_cases_primary",
+                expired_pending, case_batch_size
             ),
             |b| {
                 b.iter_batched(

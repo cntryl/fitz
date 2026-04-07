@@ -1014,34 +1014,6 @@
                                                                                            "target_class":  "service_budget",
                                                                                            "budget_group":  "contention"
                                                                                        },
-                    "criterion:schedule_scan_and_fire\\scan_and_fire_100":  {
-                                                                                "kind":  "criterion",
-                                                                                "domain":  "internal",
-                                                                                "benchmark":  "schedule_scan_and_fire\\scan_and_fire_100",
-                                                                                "metric":  "mean_us",
-                                                                                "current_mean_us":  958.538,
-                                                                                "current_rel_stddev":  0.127122,
-                                                                                "operational_target":  700.0,
-                                                                                "operational_min_ops_sec":  1429,
-                                                                                "stretch_target":  500.0,
-                                                                                "stretch_min_ops_sec":  2000,
-                                                                                "gating":  "hard",
-                                                                                "target_class":  "internal_explainer"
-                                                                            },
-                    "criterion:schedule_scan_and_fire\\scan_and_fire_100_cpu_only":  {
-                                                                                         "kind":  "criterion",
-                                                                                         "domain":  "internal",
-                                                                                         "benchmark":  "schedule_scan_and_fire\\scan_and_fire_100_cpu_only",
-                                                                                         "metric":  "mean_us",
-                                                                                         "current_mean_us":  949.028,
-                                                                                         "current_rel_stddev":  0.134605,
-                                                                                         "operational_target":  650.0,
-                                                                                         "operational_min_ops_sec":  1538,
-                                                                                         "stretch_target":  450.0,
-                                                                                         "stretch_min_ops_sec":  2222,
-                                                                                         "gating":  "hard",
-                                                                                         "target_class":  "internal_explainer"
-                                                                                     },
                     "criterion:subsystem_subscriptions\\10k_subs_10k_matches":  {
                                                                                     "kind":  "criterion",
                                                                                     "domain":  "internal",
