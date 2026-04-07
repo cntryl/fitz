@@ -6,7 +6,8 @@ param(
     [int]$StressRuns = 5,
     [int]$StressWarmup = 1,
     [switch]$SkipBuild,
-    [switch]$SkipSummary
+    [switch]$SkipSummary,
+    [switch]$FreezeBaseline
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +18,10 @@ if ($StressRuns -lt 1) {
 
 if ($StressWarmup -lt 0) {
     throw 'StressWarmup cannot be negative.'
+}
+
+if ($SkipSummary -and $FreezeBaseline) {
+    throw 'FreezeBaseline requires summary generation. Remove -SkipSummary.'
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -133,6 +138,14 @@ function Invoke-CargoBench {
     }
 }
 
+function Invoke-BenchmarkSummary {
+    Write-Host '==> cntryl-tools summarize-benchmarks --product-name Fitz --report-title Fitz Benchmark Report'
+    & cntryl-tools summarize-benchmarks --product-name Fitz --report-title 'Fitz Benchmark Report'
+    if ($LASTEXITCODE -ne 0) {
+        throw 'cntryl-tools summarize-benchmarks failed.'
+    }
+}
+
 Push-Location $repoRoot
 
 try {
@@ -177,10 +190,14 @@ try {
     }
 
     if (-not $SkipSummary) {
-        Write-Host '==> cntryl-tools summarize-benchmarks --product-name Fitz --report-title Fitz Benchmark Report'
-        & cntryl-tools summarize-benchmarks --product-name Fitz --report-title 'Fitz Benchmark Report'
-        if ($LASTEXITCODE -ne 0) {
-            throw 'cntryl-tools summarize-benchmarks failed.'
+        Invoke-BenchmarkSummary
+
+        if ($FreezeBaseline) {
+            $baselinePath = Join-Path (Join-Path $repoRoot 'config') 'bench_baseline.json'
+            $manifestPath = Join-Path (Join-Path $repoRoot 'target') 'bench_results.json'
+            Write-Host "==> freezing benchmark baseline to $baselinePath"
+            Copy-Item -Path $manifestPath -Destination $baselinePath -Force
+            Invoke-BenchmarkSummary
         }
     }
 }

@@ -237,9 +237,12 @@ For local PowerShell runs, use the repo helper so Tier 3 and Tier 4 benches alwa
 
 The helper also removes the targeted raw output directories before rerun (`target/criterion/<group>` for Criterion and `target/stress/<suite>` for stress suites) so renamed or deleted cases do not survive into the next summary.
 
+Use `-FreezeBaseline` only after a trusted cleanup pass. It copies `target/bench_results.json` into `config/bench_baseline.json` and reruns the summary so the current report immediately compares against the frozen baseline.
+
 ```powershell
 .\scripts\refresh-benchmarks.ps1
 .\scripts\refresh-benchmarks.ps1 -Tiers tier3,tier4 -StressRuns 5 -StressWarmup 1
+.\scripts\refresh-benchmarks.ps1 -Tiers tier2 -BenchNames tier2_subsystem_schedule_scan -SkipBuild -FreezeBaseline
 .\scripts\refresh-benchmarks.ps1 -Tiers tier3 -BenchNames tier3_system_kv -SkipSummary
 ```
 

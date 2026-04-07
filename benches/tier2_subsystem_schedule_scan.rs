@@ -4,13 +4,13 @@
 
 use bytes::Bytes;
 use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
+    black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput,
 };
 use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[path = "criterion_config.rs"]
 mod criterion_config;
@@ -64,13 +64,34 @@ fn populate_actor(
     }
 }
 
+fn create_populated_actor(count: usize) -> ScheduleActor {
+    let (routes, crons, payloads) = precompute_data(count);
+    let mut actor = create_test_actor();
+    populate_actor(&mut actor, &routes, &crons, &payloads);
+    actor
+}
+
+fn ack_all_pending_claims(actor: &mut ScheduleActor) {
+    let deliveries: Vec<_> = actor
+        .bench_pending_claimed_occurrences_for_publish()
+        .into_iter()
+        .map(|claim| (claim.fire_ms, claim.route))
+        .collect();
+
+    if deliveries.is_empty() {
+        return;
+    }
+
+    actor
+        .bench_ack_pending_fire_claims(&deliveries)
+        .expect("ack pending fire claims");
+}
+
 fn bench_scan_shapes(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_schedule_scan");
     group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_millis(400));
 
     for count in [100usize, 1000usize] {
-        let (routes, crons, payloads) = precompute_data(count);
         group.throughput(Throughput::Elements(count as u64));
         let partial_ready = (count / 10).max(1);
 
@@ -80,18 +101,20 @@ fn bench_scan_shapes(c: &mut Criterion) {
             ("all_ready", count),
         ] {
             group.bench_function(format!("scan_{}_{}_mixed_crons", label, count), |b| {
-                b.iter_batched(
-                    || {
-                        let mut actor = create_test_actor();
-                        populate_actor(&mut actor, &routes, &crons, &payloads);
+                let mut actor = create_populated_actor(count);
+                b.iter_custom(|iters| {
+                    let mut total = Duration::ZERO;
+
+                    for _ in 0..iters {
                         actor.bench_prepare_scan(ready_count);
-                        actor
-                    },
-                    |mut actor| {
+                        let start = Instant::now();
                         black_box(actor.collect_due_occurrences_for_publish());
-                    },
-                    BatchSize::SmallInput,
-                )
+                        total += start.elapsed();
+                        ack_all_pending_claims(&mut actor);
+                    }
+
+                    total
+                })
             });
         }
     }
