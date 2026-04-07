@@ -12,6 +12,11 @@ use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
+use std::collections::VecDeque;
+
+const SUSTAINED_ACTIVE_SCHEDULES: usize = 1024;
+const MIXED_INITIAL_SCHEDULES: usize = 256;
+const MIXED_LIST_LIMIT: u64 = 128;
 
 fn create_test_actor() -> ScheduleActor {
     let store = create_test_engine_with_cfs(vec![1, 2, 3, 4, 5]);
@@ -26,6 +31,47 @@ fn build_route(index: usize) -> String {
     let route = format!("schedule://acme/jobs/task{:06}/run", index);
     validate_concrete_schedule_route(&route).expect("valid schedule benchmark route");
     route
+}
+
+fn cron_for(index: usize) -> &'static str {
+    let patterns = ["* * * * *", "0 * * * *", "0 0 * * *", "0 2 1 * *"];
+    patterns[index % patterns.len()]
+}
+
+fn create_unique_schedule(actor: &mut ScheduleActor, index: usize) -> String {
+    let route = build_route(index);
+    let changed = actor
+        .create_schedule(
+            route.clone(),
+            cron_for(index).to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("schedule create should succeed");
+    assert!(changed, "schedule bench create must insert a unique route");
+    route
+}
+
+fn populate_live_routes(
+    actor: &mut ScheduleActor,
+    start_index: usize,
+    count: usize,
+) -> VecDeque<String> {
+    (start_index..start_index + count)
+        .map(|index| create_unique_schedule(actor, index))
+        .collect()
+}
+
+fn assert_uncached_list_count(actor: &mut ScheduleActor, limit: u64, expected_count: usize) {
+    let (entries, total_count) = actor.list_entries(0, limit);
+    assert_eq!(
+        entries.len(),
+        expected_count,
+        "unexpected schedule list page size"
+    );
+    assert!(
+        total_count >= expected_count as u64,
+        "total schedule count should cover the uncached page"
+    );
 }
 
 fn precompute_data(count: usize) -> (Vec<String>, Vec<String>, Vec<Bytes>) {
@@ -77,151 +123,162 @@ fn create_scan_actor(count: usize) -> ScheduleActor {
 fn should_complete_system_create(ctx: &mut StressContext) {
     ctx.tag("scenario", "create_operation");
     ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "single_create");
+    ctx.tag("batch_size", "single_unique_create");
 
-    // Setup: Actor + precomputed data
     let mut actor = create_test_actor();
-    let (routes, crons, payloads) = precompute_data(1000);
 
-    let mut idx = 0;
+    let mut next_index = 0usize;
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let _response = actor.handle(ScheduleMessage::Create {
-            route: routes[idx % routes.len()].clone(),
-            cron: crons[idx % crons.len()].clone(),
-            payload: payloads[idx % payloads.len()].clone(),
-        });
-        idx += 1;
+        let _route = create_unique_schedule(&mut actor, next_index);
+        next_index += 1;
     });
     ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
-fn should_complete_system_cancel(ctx: &mut StressContext) {
-    ctx.tag("scenario", "cancel_operation");
+fn should_complete_system_cancel_create_churn(ctx: &mut StressContext) {
+    ctx.tag("scenario", "cancel_create_churn");
     ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "single_cancel");
+    ctx.tag("batch_size", "1_cancel_1_create");
 
-    // Setup: Create actor with pre-populated schedules
-    let (routes, crons, payloads) = precompute_data(1000);
     let mut actor = create_test_actor();
+    let mut live_routes = populate_live_routes(&mut actor, 0, SUSTAINED_ACTIVE_SCHEDULES);
+    let mut next_index = SUSTAINED_ACTIVE_SCHEDULES;
 
-    for i in 0..routes.len() {
-        actor.handle(ScheduleMessage::Create {
-            route: routes[i].clone(),
-            cron: crons[i].clone(),
-            payload: payloads[i].clone(),
-        });
-    }
-
-    let mut idx = 0;
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let _response = actor.handle(ScheduleMessage::Cancel {
-            route: routes[idx % routes.len()].clone(),
-        });
-        idx += 1;
+        let route = live_routes
+            .pop_front()
+            .expect("schedule churn must keep at least one live route");
+        let deleted = actor
+            .delete_schedule(route)
+            .expect("schedule cancel should succeed");
+        assert!(
+            deleted,
+            "schedule churn cancel must remove an existing route"
+        );
+
+        let route = create_unique_schedule(&mut actor, next_index);
+        next_index += 1;
+        live_routes.push_back(route);
     });
-    ctx.set_elements(iterations as u64);
+    ctx.set_elements(2 * iterations as u64);
 }
 
 #[stress_test]
-fn should_complete_system_list_10_schedules(ctx: &mut StressContext) {
-    ctx.tag("scenario", "list_10");
+fn should_complete_system_list_uncached_9_of_10_schedules(ctx: &mut StressContext) {
+    ctx.tag("scenario", "list_uncached_9_of_10");
     ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "10_scanned");
+    ctx.tag("batch_size", "9_scanned_uncached");
 
-    // Setup: Create actor with 10 schedules
     let mut actor = create_test_actor();
     let (routes, crons, payloads) = precompute_data(10);
-
     populate_actor(&mut actor, &routes, &crons, &payloads, 10);
+    assert_uncached_list_count(&mut actor, 9, 9);
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let _response = actor.handle(ScheduleMessage::List {
-            offset: 0,
-            limit: 0,
-        });
+        let (entries, total_count) = actor.list_entries(0, 9);
+        assert_eq!(
+            entries.len(),
+            9,
+            "uncached list should return nine schedules"
+        );
+        assert_eq!(total_count, 10, "total schedule count should remain stable");
     });
-    ctx.set_elements(10 * iterations as u64);
+    ctx.set_elements(9 * iterations as u64);
 }
 
 #[stress_test]
-fn should_complete_system_list_100_schedules(ctx: &mut StressContext) {
-    ctx.tag("scenario", "list_100");
+fn should_complete_system_list_uncached_99_of_100_schedules(ctx: &mut StressContext) {
+    ctx.tag("scenario", "list_uncached_99_of_100");
     ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "100_scanned");
+    ctx.tag("batch_size", "99_scanned_uncached");
 
-    // Setup: Create actor with 100 schedules
     let mut actor = create_test_actor();
     let (routes, crons, payloads) = precompute_data(100);
-
     populate_actor(&mut actor, &routes, &crons, &payloads, 100);
+    assert_uncached_list_count(&mut actor, 99, 99);
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let _response = actor.handle(ScheduleMessage::List {
-            offset: 0,
-            limit: 0,
-        });
+        let (entries, total_count) = actor.list_entries(0, 99);
+        assert_eq!(
+            entries.len(),
+            99,
+            "uncached list should return ninety-nine schedules"
+        );
+        assert_eq!(
+            total_count, 100,
+            "total schedule count should remain stable"
+        );
     });
-    ctx.set_elements(100 * iterations as u64);
+    ctx.set_elements(99 * iterations as u64);
 }
 
 #[stress_test]
-fn should_complete_system_list_1000_schedules(ctx: &mut StressContext) {
-    ctx.tag("scenario", "list_1000");
+fn should_complete_system_list_uncached_999_of_1000_schedules(ctx: &mut StressContext) {
+    ctx.tag("scenario", "list_uncached_999_of_1000");
     ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "1000_scanned");
+    ctx.tag("batch_size", "999_scanned_uncached");
 
-    // Setup: Create actor with 1000 schedules
     let mut actor = create_test_actor();
     let (routes, crons, payloads) = precompute_data(1000);
-
     populate_actor(&mut actor, &routes, &crons, &payloads, 1000);
+    assert_uncached_list_count(&mut actor, 999, 999);
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let _response = actor.handle(ScheduleMessage::List {
-            offset: 0,
-            limit: 0,
-        });
+        let (entries, total_count) = actor.list_entries(0, 999);
+        assert_eq!(
+            entries.len(),
+            999,
+            "uncached list should return nine hundred ninety-nine schedules"
+        );
+        assert_eq!(
+            total_count, 1000,
+            "total schedule count should remain stable"
+        );
     });
-    ctx.set_elements(1000 * iterations as u64);
+    ctx.set_elements(999 * iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_system_mixed_workload(ctx: &mut StressContext) {
     ctx.tag("scenario", "mixed_workload");
     ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "2_create_1_list_1_cancel");
+    ctx.tag("batch_size", "2_create_1_uncached_list_1_cancel");
 
-    // Setup: Create actor with 100 pre-populated schedules
-    let (routes, crons, payloads) = precompute_data(1000);
     let mut actor = create_test_actor();
+    let mut live_routes = populate_live_routes(&mut actor, 0, MIXED_INITIAL_SCHEDULES);
+    let mut next_index = MIXED_INITIAL_SCHEDULES;
 
-    populate_actor(&mut actor, &routes, &crons, &payloads, 100);
-
-    let mut idx = 100;
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
-        let _r1 = actor.handle(ScheduleMessage::Create {
-            route: routes[idx % routes.len()].clone(),
-            cron: crons[idx % crons.len()].clone(),
-            payload: payloads[idx % payloads.len()].clone(),
-        });
+        let first_route = create_unique_schedule(&mut actor, next_index);
+        next_index += 1;
+        live_routes.push_back(first_route);
 
-        let _r2 = actor.handle(ScheduleMessage::List {
-            offset: 0,
-            limit: 0,
-        });
+        let (entries, total_count) = actor.list_entries(0, MIXED_LIST_LIMIT);
+        assert_eq!(
+            entries.len(),
+            MIXED_LIST_LIMIT as usize,
+            "mixed workload list must avoid the shared full-list cache"
+        );
+        assert!(
+            total_count >= MIXED_LIST_LIMIT,
+            "mixed workload list must retain enough schedules for uncached paging"
+        );
 
-        let _r3 = actor.handle(ScheduleMessage::Create {
-            route: routes[(idx + 1) % routes.len()].clone(),
-            cron: crons[(idx + 1) % crons.len()].clone(),
-            payload: payloads[(idx + 1) % payloads.len()].clone(),
-        });
+        let second_route = create_unique_schedule(&mut actor, next_index);
+        next_index += 1;
+        live_routes.push_back(second_route);
 
-        let _r4 = actor.handle(ScheduleMessage::Cancel {
-            route: routes[(idx + 50) % routes.len()].clone(),
-        });
-
-        idx += 2;
+        let route = live_routes
+            .pop_front()
+            .expect("mixed workload must keep at least one live schedule");
+        let deleted = actor
+            .delete_schedule(route)
+            .expect("mixed workload cancel should succeed");
+        assert!(
+            deleted,
+            "mixed workload cancel must remove an existing route"
+        );
     });
     ctx.set_elements(4 * iterations as u64); // CREATE + LIST + CREATE + CANCEL
 }

@@ -180,6 +180,21 @@ name = "tier2_subsystem_rpc"
 harness = false
 path = "benches/tier2_subsystem_rpc.rs"
 
+[[bench]]
+name = "tier2_subsystem_lease"
+harness = false
+path = "benches/tier2_subsystem_lease.rs"
+
+[[bench]]
+name = "tier2_subsystem_notice"
+harness = false
+path = "benches/tier2_subsystem_notice.rs"
+
+[[bench]]
+name = "tier2_subsystem_stream"
+harness = false
+path = "benches/tier2_subsystem_stream.rs"
+
 # Tier 3: System (Domain + plumbing, <10s, sync only - one per domain)
 [[bench]]
 name = "tier3_system_kv"

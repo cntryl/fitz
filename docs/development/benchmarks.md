@@ -233,6 +233,14 @@ Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configura
 - **Output:** Stress results are written under `target/stress/<bench_name>/` (e.g. `target/stress/tier3_system_kv/latest.json`). Run `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` after `cargo bench` and the stress bench binaries to produce `target/bench_summary.md`.
 - **Full refresh:** Run the full tier 3 / tier 4 suites, then run `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` to regenerate the summary in one step.
 
+For local PowerShell runs, use the repo helper so Tier 3 and Tier 4 benches always carry the intended stress-sampling flags:
+
+```powershell
+.\scripts\refresh-benchmarks.ps1
+.\scripts\refresh-benchmarks.ps1 -Tiers tier3,tier4 -StressRuns 5 -StressWarmup 1
+.\scripts\refresh-benchmarks.ps1 -Tiers tier3 -BenchNames tier3_system_kv -SkipSummary
+```
+
 For CI, you can reduce total time by passing `-- --runs 5 --warmup 1` (or lower only if you are intentionally collecting provisional data) when running the full tier3/tier4 suite.
 
 ### Stress benchmark contract (Tier 3/4)

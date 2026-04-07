@@ -7,10 +7,10 @@ use fitz::benchkit::{
     create_bench_rpc_sink, create_bench_rpc_sink_with_timeout, extract_single_tlv_field,
     register_session_queue_sink, FrameQueueSink,
 };
-use fitz::domains::rpc::protocol::RpcMessage;
+use fitz::domains::rpc::protocol::{RpcMessage, RpcResponse};
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::frame_context::FrameContext;
-use fitz::protocol::rpc_codec::parse_request;
+use fitz::protocol::rpc_codec::{encode_response_message, parse_request};
 use fitz::protocol::tlv::MessageType;
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{MailboxSink, Router};
@@ -64,6 +64,18 @@ struct PreparedResponseCase {
     requester_inbox: Arc<FrameQueueSink>,
     response_msg_type: u16,
     response_payload: Bytes,
+}
+
+struct PreparedStreamingResponseCase {
+    router: Arc<Router>,
+    family: RouteFamily,
+    destination: RouteAddress,
+    worker_session_id: u64,
+    worker_source: RouteAddress,
+    worker_inbox: Arc<FrameQueueSink>,
+    requester_inbox: Arc<FrameQueueSink>,
+    response_msg_type: u16,
+    response_payloads: Vec<Bytes>,
 }
 
 struct PreparedTimeoutSweepCase {
@@ -306,6 +318,49 @@ fn prepare_response_case() -> PreparedResponseCase {
     }
 }
 
+fn prepare_streaming_response_case(chunk_count: usize) -> PreparedStreamingResponseCase {
+    let (router, family, requester_source, requester_inbox) = setup_rpc_sink(None);
+    let destination = route_address(family, ROUTE_STR);
+    let (worker_session_id, worker_source, worker_inbox) =
+        register_worker_for_destination(&router, family, 11_000, &destination);
+    let mut request_ring = RequestFrameRing::new(ROUTE_STR, b"stream response payload", 1);
+    let (request_msg_type, request_payload) = request_ring.next_frame();
+
+    dispatch_request_to_destination(
+        &router,
+        family,
+        &requester_source,
+        &destination,
+        request_msg_type,
+        request_payload,
+    );
+
+    let correlation_id = drain_request_correlation(&worker_inbox, family);
+    let response_payloads = (0..chunk_count)
+        .map(|seq| {
+            let response = RpcResponse::chunk(
+                correlation_id,
+                seq as u64,
+                Bytes::from_static(b"stream response payload"),
+                seq + 1 == chunk_count,
+            );
+            Bytes::from(encode_response_message(&response))
+        })
+        .collect();
+
+    PreparedStreamingResponseCase {
+        router,
+        family,
+        destination,
+        worker_session_id,
+        worker_source,
+        worker_inbox,
+        requester_inbox,
+        response_msg_type: 303,
+        response_payloads,
+    }
+}
+
 fn prepare_timeout_sweep_case(expired_pending: usize) -> PreparedTimeoutSweepCase {
     let (router, family, requester_source, requester_inbox) =
         setup_rpc_sink(Some(RPC_REQUEST_TIMEOUT));
@@ -512,6 +567,37 @@ fn bench_rpc_response_primary(c: &mut Criterion) {
             BatchSize::SmallInput,
         )
     });
+
+    for chunk_count in [4usize, 16usize] {
+        group.throughput(Throughput::Elements(chunk_count as u64));
+        group.bench_function(
+            format!("response_forward_stream_{}_chunks_primary", chunk_count),
+            |b| {
+                b.iter_batched(
+                    || prepare_streaming_response_case(chunk_count),
+                    |case| {
+                        for payload in &case.response_payloads {
+                            route_worker_frame_to_destination(
+                                &case.router,
+                                case.family,
+                                case.worker_session_id,
+                                &case.worker_source,
+                                &case.destination,
+                                case.response_msg_type,
+                                black_box(payload.clone()),
+                            );
+                        }
+                        assert_requester_received_worker_responses(
+                            case.requester_inbox.drain(),
+                            case.response_payloads.len(),
+                        );
+                        black_box(case.worker_inbox.drain().len());
+                    },
+                    BatchSize::SmallInput,
+                )
+            },
+        );
+    }
 
     group.finish();
 }
