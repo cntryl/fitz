@@ -4,14 +4,14 @@
 
 use bytes::Bytes;
 use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
+    black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput,
 };
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[path = "criterion_config.rs"]
 mod criterion_config;
@@ -108,24 +108,22 @@ fn bench_scan_shapes(c: &mut Criterion) {
         group.throughput(Throughput::Elements(count as u64));
         let partial_ready = (count / 10).max(1);
 
-        for (label, ready_count) in [
-            ("none_ready", 0usize),
-            ("partial_ready", partial_ready),
-            ("all_ready", count),
-        ] {
+        for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
             group.bench_function(format!("scan_{}_{}_mixed_crons", label, count), |b| {
                 let bench_clock = bench_clock.clone();
-                b.iter_batched_ref(
-                    || {
+                b.iter_custom(|iters| {
+                    let mut total = Duration::ZERO;
+
+                    for _ in 0..iters {
                         let mut actor = create_populated_actor(count, bench_clock.clone());
                         actor.bench_prepare_scan(ready_count);
-                        actor
-                    },
-                    |actor| {
+                        let start = Instant::now();
                         black_box(actor.collect_due_occurrences_for_publish());
-                    },
-                    BatchSize::SmallInput,
-                )
+                        total += start.elapsed();
+                    }
+
+                    total
+                })
             });
         }
     }

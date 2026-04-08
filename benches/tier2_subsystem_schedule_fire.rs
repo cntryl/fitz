@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
+    black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput,
 };
 use fitz::benchkit::{create_bench_schedule_sink, register_session_counting_sink, route_frame};
 use fitz::boot::domains::ScheduleDomainSink;
@@ -12,7 +12,7 @@ use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::runtime::{DomainPublishEvent, Router};
 use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[path = "criterion_config.rs"]
 mod criterion_config;
@@ -159,17 +159,19 @@ fn bench_claim_due_persistence(c: &mut Criterion) {
             group.throughput(Throughput::Elements(ready_count as u64));
             group.bench_function(format!("claim_due_{}_{}_mixed_crons", label, count), |b| {
                 let bench_clock = bench_clock.clone();
-                b.iter_batched_ref(
-                    || {
+                b.iter_custom(|iters| {
+                    let mut total = Duration::ZERO;
+
+                    for _ in 0..iters {
                         let mut actor = create_populated_actor(count, bench_clock.clone());
                         actor.bench_prepare_scan(ready_count);
-                        actor
-                    },
-                    |actor| {
+                        let start = Instant::now();
                         black_box(actor.bench_claim_due_fires());
-                    },
-                    BatchSize::SmallInput,
-                )
+                        total += start.elapsed();
+                    }
+
+                    total
+                })
             });
         }
     }
@@ -189,22 +191,23 @@ fn bench_ack_persistence(c: &mut Criterion) {
             group.throughput(Throughput::Elements(ready_count as u64));
             group.bench_function(format!("ack_claims_{}_{}_mixed_crons", label, count), |b| {
                 let bench_clock = bench_clock.clone();
-                b.iter_batched_ref(
-                    || {
+                b.iter_custom(|iters| {
+                    let mut total = Duration::ZERO;
+
+                    for _ in 0..iters {
                         let mut actor = create_populated_actor(count, bench_clock.clone());
                         let deliveries = claim_due_deliveries(&mut actor, ready_count);
-                        (actor, deliveries)
-                    },
-                    |state| {
-                        let (actor, deliveries) = state;
+                        let start = Instant::now();
                         black_box(
                             actor
                                 .bench_ack_pending_fire_claims(&deliveries)
                                 .expect("ack pending fire claims"),
                         );
-                    },
-                    BatchSize::SmallInput,
-                )
+                        total += start.elapsed();
+                    }
+
+                    total
+                })
             });
         }
     }
