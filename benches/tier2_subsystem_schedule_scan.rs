@@ -17,6 +17,13 @@ use std::time::{Duration, Instant};
 mod criterion_config;
 
 const FIXED_BENCH_EPOCH_MS: u64 = 1_775_200_000_000;
+const TIMED_BATCH_SIZE: u64 = 8;
+
+struct ScheduleFixtures {
+    routes: Vec<String>,
+    crons: Vec<String>,
+    payloads: Vec<Bytes>,
+}
 
 struct FixedClock {
     now_instant: Instant,
@@ -58,45 +65,65 @@ fn build_route(index: usize) -> String {
     route
 }
 
-fn precompute_data(count: usize) -> (Vec<String>, Vec<String>, Vec<Bytes>) {
-    let routes = (0..count).map(build_route).collect();
-    let crons = (0..count)
-        .map(|i| {
-            let patterns = ["* * * * *", "0 * * * *", "0 0 * * *", "0 2 1 * *"];
-            patterns[i % patterns.len()].to_string()
-        })
-        .collect();
-    let payloads = (0..count)
-        .map(|i| Bytes::from(format!("payload-{:06}", i)))
-        .collect();
-    (routes, crons, payloads)
+fn precompute_data(count: usize) -> ScheduleFixtures {
+    ScheduleFixtures {
+        routes: (0..count).map(build_route).collect(),
+        crons: (0..count)
+            .map(|i| {
+                let patterns = ["* * * * *", "0 * * * *", "0 0 * * *", "0 2 1 * *"];
+                patterns[i % patterns.len()].to_string()
+            })
+            .collect(),
+        payloads: (0..count)
+            .map(|i| Bytes::from(format!("payload-{:06}", i)))
+            .collect(),
+    }
 }
 
 fn populate_actor(
     actor: &mut ScheduleActor,
-    routes: &[String],
-    crons: &[String],
-    payloads: &[Bytes],
+    fixtures: &ScheduleFixtures,
 ) {
-    for i in 0..routes.len() {
+    for i in 0..fixtures.routes.len() {
         let response = actor.handle(ScheduleMessage::Create {
-            route: routes[i].clone(),
-            cron: crons[i].clone(),
-            payload: payloads[i].clone(),
+            route: fixtures.routes[i].clone(),
+            cron: fixtures.crons[i].clone(),
+            payload: fixtures.payloads[i].clone(),
         });
         assert!(
             matches!(response, ScheduleResponse::Ok),
             "schedule bench setup create should succeed for {}",
-            routes[i]
+            fixtures.routes[i]
         );
     }
 }
 
-fn create_populated_actor(count: usize, clock: Arc<dyn Clock>) -> ScheduleActor {
-    let (routes, crons, payloads) = precompute_data(count);
+fn create_populated_actor(fixtures: &ScheduleFixtures, clock: Arc<dyn Clock>) -> ScheduleActor {
     let mut actor = create_test_actor(clock);
-    populate_actor(&mut actor, &routes, &crons, &payloads);
+    populate_actor(&mut actor, fixtures);
     actor
+}
+
+fn time_with_fresh_actors<F>(iters: u64, mut create_actor: F, mut measure: impl FnMut(&mut ScheduleActor)) -> Duration
+where
+    F: FnMut() -> ScheduleActor,
+{
+    let mut remaining = iters;
+    let mut total = Duration::ZERO;
+
+    while remaining > 0 {
+        let chunk_len = remaining.min(TIMED_BATCH_SIZE) as usize;
+        let mut actors: Vec<ScheduleActor> =
+            (0..chunk_len).map(|_| create_actor()).collect();
+        let start = Instant::now();
+        for actor in &mut actors {
+            measure(actor);
+        }
+        total += start.elapsed();
+        remaining -= chunk_len as u64;
+    }
+
+    total
 }
 
 fn bench_scan_shapes(c: &mut Criterion) {
@@ -105,24 +132,26 @@ fn bench_scan_shapes(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
 
     for count in [100usize, 1000usize] {
+        let fixtures = precompute_data(count);
         group.throughput(Throughput::Elements(count as u64));
         let partial_ready = (count / 10).max(1);
 
         for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
             group.bench_function(format!("scan_{}_{}_mixed_crons", label, count), |b| {
                 let bench_clock = bench_clock.clone();
+                let fixtures = &fixtures;
                 b.iter_custom(|iters| {
-                    let mut total = Duration::ZERO;
-
-                    for _ in 0..iters {
-                        let mut actor = create_populated_actor(count, bench_clock.clone());
-                        actor.bench_prepare_scan(ready_count);
-                        let start = Instant::now();
-                        black_box(actor.collect_due_occurrences_for_publish());
-                        total += start.elapsed();
-                    }
-
-                    total
+                    time_with_fresh_actors(
+                        iters,
+                        || {
+                            let mut actor = create_populated_actor(fixtures, bench_clock.clone());
+                            actor.bench_prepare_scan(ready_count);
+                            actor
+                        },
+                        |actor| {
+                            black_box(actor.collect_due_occurrences_for_publish());
+                        },
+                    )
                 })
             });
         }

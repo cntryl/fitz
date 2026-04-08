@@ -18,6 +18,13 @@ use std::time::{Duration, Instant};
 mod criterion_config;
 
 const FIXED_BENCH_EPOCH_MS: u64 = 1_775_200_000_000;
+const TIMED_BATCH_SIZE: u64 = 8;
+
+struct ScheduleFixtures {
+    routes: Vec<String>,
+    crons: Vec<String>,
+    payloads: Vec<Bytes>,
+}
 
 struct FixedClock {
     now_instant: Instant,
@@ -59,46 +66,69 @@ fn build_route(index: usize) -> String {
     route
 }
 
-fn precompute_data(count: usize) -> (Vec<String>, Vec<String>, Vec<Bytes>) {
-    let routes = (0..count).map(build_route).collect();
-    let crons = (0..count)
-        .map(|index| {
-            let patterns = ["* * * * *", "0 * * * *", "0 0 * * *", "0 2 1 * *"];
-            patterns[index % patterns.len()].to_string()
-        })
-        .collect();
-    let payloads = (0..count)
-        .map(|index| Bytes::from(format!("payload-{:06}", index)))
-        .collect();
-    (routes, crons, payloads)
+fn precompute_data(count: usize) -> ScheduleFixtures {
+    ScheduleFixtures {
+        routes: (0..count).map(build_route).collect(),
+        crons: (0..count)
+            .map(|index| {
+                let patterns = ["* * * * *", "0 * * * *", "0 0 * * *", "0 2 1 * *"];
+                patterns[index % patterns.len()].to_string()
+            })
+            .collect(),
+        payloads: (0..count)
+            .map(|index| Bytes::from(format!("payload-{:06}", index)))
+            .collect(),
+    }
 }
 
 fn populate_actor(
     actor: &mut ScheduleActor,
-    routes: &[String],
-    crons: &[String],
-    payloads: &[Bytes],
-    count: usize,
+    fixtures: &ScheduleFixtures,
 ) {
-    for index in 0..count {
+    for index in 0..fixtures.routes.len() {
         let response = actor.handle(ScheduleMessage::Create {
-            route: routes[index].clone(),
-            cron: crons[index].clone(),
-            payload: payloads[index].clone(),
+            route: fixtures.routes[index].clone(),
+            cron: fixtures.crons[index].clone(),
+            payload: fixtures.payloads[index].clone(),
         });
         assert!(
             matches!(response, ScheduleResponse::Ok),
             "schedule bench setup create should succeed for {}",
-            routes[index]
+            fixtures.routes[index]
         );
     }
 }
 
-fn create_populated_actor(count: usize, clock: Arc<dyn Clock>) -> ScheduleActor {
-    let (routes, crons, payloads) = precompute_data(count);
+fn create_populated_actor(fixtures: &ScheduleFixtures, clock: Arc<dyn Clock>) -> ScheduleActor {
     let mut actor = create_test_actor(clock);
-    populate_actor(&mut actor, &routes, &crons, &payloads, count);
+    populate_actor(&mut actor, fixtures);
     actor
+}
+
+fn time_with_fresh_inputs<T, FCreate, FMeasure>(
+    iters: u64,
+    mut create_input: FCreate,
+    mut measure: FMeasure,
+) -> Duration
+where
+    FCreate: FnMut() -> T,
+    FMeasure: FnMut(&mut T),
+{
+    let mut remaining = iters;
+    let mut total = Duration::ZERO;
+
+    while remaining > 0 {
+        let chunk_len = remaining.min(TIMED_BATCH_SIZE) as usize;
+        let mut inputs: Vec<T> = (0..chunk_len).map(|_| create_input()).collect();
+        let start = Instant::now();
+        for input in &mut inputs {
+            measure(input);
+        }
+        total += start.elapsed();
+        remaining -= chunk_len as u64;
+    }
+
+    total
 }
 
 fn claim_due_deliveries(actor: &mut ScheduleActor, ready_count: usize) -> Vec<(u64, String)> {
@@ -153,24 +183,26 @@ fn bench_claim_due_persistence(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
 
     for count in [100usize, 1000usize] {
+        let fixtures = precompute_data(count);
         let partial_ready = (count / 10).max(1);
 
         for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
             group.throughput(Throughput::Elements(ready_count as u64));
             group.bench_function(format!("claim_due_{}_{}_mixed_crons", label, count), |b| {
                 let bench_clock = bench_clock.clone();
+                let fixtures = &fixtures;
                 b.iter_custom(|iters| {
-                    let mut total = Duration::ZERO;
-
-                    for _ in 0..iters {
-                        let mut actor = create_populated_actor(count, bench_clock.clone());
-                        actor.bench_prepare_scan(ready_count);
-                        let start = Instant::now();
-                        black_box(actor.bench_claim_due_fires());
-                        total += start.elapsed();
-                    }
-
-                    total
+                    time_with_fresh_inputs(
+                        iters,
+                        || {
+                            let mut actor = create_populated_actor(fixtures, bench_clock.clone());
+                            actor.bench_prepare_scan(ready_count);
+                            actor
+                        },
+                        |actor| {
+                            black_box(actor.bench_claim_due_fires());
+                        },
+                    )
                 })
             });
         }
@@ -185,28 +217,30 @@ fn bench_ack_persistence(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
 
     for count in [100usize, 1000usize] {
+        let fixtures = precompute_data(count);
         let partial_ready = (count / 10).max(1);
 
         for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
             group.throughput(Throughput::Elements(ready_count as u64));
             group.bench_function(format!("ack_claims_{}_{}_mixed_crons", label, count), |b| {
                 let bench_clock = bench_clock.clone();
+                let fixtures = &fixtures;
                 b.iter_custom(|iters| {
-                    let mut total = Duration::ZERO;
-
-                    for _ in 0..iters {
-                        let mut actor = create_populated_actor(count, bench_clock.clone());
-                        let deliveries = claim_due_deliveries(&mut actor, ready_count);
-                        let start = Instant::now();
-                        black_box(
-                            actor
-                                .bench_ack_pending_fire_claims(&deliveries)
-                                .expect("ack pending fire claims"),
-                        );
-                        total += start.elapsed();
-                    }
-
-                    total
+                    time_with_fresh_inputs(
+                        iters,
+                        || {
+                            let mut actor = create_populated_actor(fixtures, bench_clock.clone());
+                            let deliveries = claim_due_deliveries(&mut actor, ready_count);
+                            (actor, deliveries)
+                        },
+                        |(actor, deliveries)| {
+                            black_box(
+                                actor
+                                    .bench_ack_pending_fire_claims(deliveries)
+                                    .expect("ack pending fire claims"),
+                            );
+                        },
+                    )
                 })
             });
         }
