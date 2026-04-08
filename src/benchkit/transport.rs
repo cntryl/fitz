@@ -579,6 +579,51 @@ pub fn parse_stream_session_id(data: &[u8]) -> Result<u64, String> {
     Ok(session_id)
 }
 
+fn decode_stream_ok_data(payload: &[u8]) -> Result<Bytes, String> {
+    use crate::protocol::payload_codec::PayloadDecoder;
+
+    let mut decoder = PayloadDecoder::new(payload);
+    let status = decoder.get_u8()?;
+    if status != 0 {
+        let error = decoder
+            .get_string()
+            .unwrap_or_else(|_| format!("stream response failed with status {}", status));
+        return Err(error);
+    }
+
+    let _session_id = decoder.get_optional_u64()?;
+    let data = decoder.get_bytes()?;
+    if !decoder.is_complete() {
+        return Err("Trailing data in stream success response".to_string());
+    }
+
+    Ok(data)
+}
+
+pub fn count_stream_read_records_from_payload(payload: &[u8]) -> Result<usize, String> {
+    use crate::protocol::payload_codec::PayloadDecoder;
+
+    let data = decode_stream_ok_data(payload)?;
+    let mut decoder = PayloadDecoder::new(&data);
+    let count = decoder.get_u32()? as usize;
+
+    for _ in 0..count {
+        decoder.get_u64()?;
+        decoder.skip_bytes()?;
+    }
+
+    if !decoder.is_complete() {
+        return Err("Trailing data in stream read response".to_string());
+    }
+
+    Ok(count)
+}
+
+pub fn parse_stream_read_record_count(response: &[u8]) -> Result<usize, String> {
+    let (_msg_type, _status, payload) = parse_stream_response(response);
+    count_stream_read_records_from_payload(&payload)
+}
+
 /// Build SCHEDULE CREATE frame (msg_type 700)
 pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();

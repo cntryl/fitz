@@ -11,16 +11,141 @@
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_stream_append, build_stream_begin, create_bench_stream_sink, extract_single_tlv_field,
+    build_stream_append, build_stream_begin, build_stream_commit, build_stream_read,
+    create_bench_stream_sink, extract_single_tlv_field, parse_stream_read_record_count,
     parse_stream_response, parse_stream_session_id, register_session_queue_sink, route_frame,
     shared_bench_runtime,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
-use fitz::runtime::routing::RouteFamily;
+use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+const DIRECT_CLIENT_SESSION_ID: u64 = 1;
+
+struct DirectStreamBenchContext {
+    router: Arc<Router>,
+    family: RouteFamily,
+    source: RouteAddress,
+    inbox: Arc<fitz::benchkit::FrameQueueSink>,
+}
+
+fn setup_direct_stream_context() -> DirectStreamBenchContext {
+    let family = RouteFamily::new(1);
+    let router = Arc::new(Router::new());
+    let sink = create_bench_stream_sink(router.clone());
+    router.register_domain_pattern("stream", sink as Arc<dyn MailboxSink>);
+    let (source, inbox) = register_session_queue_sink(&router, family, DIRECT_CLIENT_SESSION_ID);
+    DirectStreamBenchContext {
+        router,
+        family,
+        source,
+        inbox,
+    }
+}
+
+fn direct_request(
+    context: &DirectStreamBenchContext,
+    destination: &str,
+    msg_type: u16,
+    payload: Bytes,
+) -> Bytes {
+    route_frame(
+        context.router.as_ref(),
+        &context.source,
+        destination,
+        DIRECT_CLIENT_SESSION_ID,
+        ChannelId::Pub,
+        msg_type,
+        payload,
+        context.family,
+    )
+    .expect("stream route");
+    let responses = context.inbox.drain();
+    responses
+        .last()
+        .map(|frame| frame.payload.clone())
+        .expect("stream response")
+}
+
+fn direct_begin_stream(context: &DirectStreamBenchContext, route: &str, expected_offset: u64) -> u64 {
+    let begin_frame = build_stream_begin(route, expected_offset);
+    let (msg_type, payload) = extract_single_tlv_field(&begin_frame);
+    let response = direct_request(context, route, msg_type, payload);
+    parse_stream_session_id(response.as_ref()).expect("stream session id")
+}
+
+fn direct_seed_stream_route(
+    context: &DirectStreamBenchContext,
+    route: &str,
+    event_count: usize,
+    body: &'static [u8],
+) {
+    let session_id = direct_begin_stream(context, route, 0);
+    let append_frame = build_stream_append(session_id, body);
+    let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+    for _ in 0..event_count {
+        let _ = direct_request(context, route, append_msg_type, append_payload.clone());
+    }
+
+    let commit_frame = build_stream_commit(session_id, 0);
+    let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
+    let _ = direct_request(context, route, commit_msg_type, commit_payload);
+}
+
+fn direct_prepare_validated_read(
+    context: &DirectStreamBenchContext,
+    route: &str,
+    expected_count: usize,
+) -> (u16, Bytes) {
+    let read_frame = build_stream_read(route, 0);
+    let (msg_type, payload) = extract_single_tlv_field(&read_frame);
+    let response = direct_request(context, route, msg_type, payload.clone());
+    let count = fitz::benchkit::count_stream_read_records_from_payload(response.as_ref())
+        .expect("direct stream read count");
+    assert_eq!(count, expected_count, "unexpected direct read count for {route}");
+    (msg_type, payload)
+}
+
+async fn tcp_seed_stream_route(
+    client: &mut TestClient,
+    route: &str,
+    event_count: usize,
+    body: &'static [u8],
+) {
+    let begin_response = client.request(&build_stream_begin(route, 0), 2000).await.expect("begin response");
+    let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
+    let session_id = parse_stream_session_id(&begin_data).expect("session_id");
+    let append_frame = build_stream_append(session_id, body);
+
+    for _ in 0..event_count {
+        let _ = client.request(&append_frame, 2000).await.expect("append response");
+    }
+
+    let commit_frame = build_stream_commit(session_id, 0);
+    let _ = client.request(&commit_frame, 2000).await.expect("commit response");
+}
+
+async fn ws_seed_stream_route(
+    client: &mut TestWebSocketClient,
+    route: &str,
+    event_count: usize,
+    body: &'static [u8],
+) {
+    let begin_response = client.request(&build_stream_begin(route, 0), 2000).await.expect("begin response");
+    let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
+    let session_id = parse_stream_session_id(&begin_data).expect("session_id");
+    let append_frame = build_stream_append(session_id, body);
+
+    for _ in 0..event_count {
+        let _ = client.request(&append_frame, 2000).await.expect("append response");
+    }
+
+    let commit_frame = build_stream_commit(session_id, 0);
+    let _ = client.request(&commit_frame, 2000).await.expect("commit response");
+}
 
 #[stress_test]
 fn should_complete_direct_append(ctx: &mut StressContext) {
@@ -80,6 +205,65 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
 }
 
 #[stress_test]
+fn should_complete_direct_area_wildcard_read(ctx: &mut StressContext) {
+    ctx.tag("layer", "direct");
+    ctx.tag("scenario", "read_area_wildcard");
+    ctx.tag("measurement_scope", "direct_inproc");
+    ctx.tag("batch_size", "100_events_scanned");
+
+    let context = setup_direct_stream_context();
+    direct_seed_stream_route(&context, "stream://tier4/stream-area/orders", 50, b"area event");
+    direct_seed_stream_route(&context, "stream://tier4/stream-area/audits", 50, b"area event");
+
+    let read_route = "stream://tier4/stream-area/*";
+    let (read_msg_type, read_payload) = direct_prepare_validated_read(&context, read_route, 100);
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
+    });
+    ctx.set_elements(100 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_direct_resource_read(ctx: &mut StressContext) {
+    ctx.tag("layer", "direct");
+    ctx.tag("scenario", "read_resource_exact");
+    ctx.tag("measurement_scope", "direct_inproc");
+    ctx.tag("batch_size", "100_events_scanned");
+
+    let context = setup_direct_stream_context();
+    let read_route = "stream://tier4/resource/orders";
+    direct_seed_stream_route(&context, read_route, 100, b"resource event");
+
+    let (read_msg_type, read_payload) = direct_prepare_validated_read(&context, read_route, 100);
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
+    });
+    ctx.set_elements(100 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_direct_realm_wildcard_read(ctx: &mut StressContext) {
+    ctx.tag("layer", "direct");
+    ctx.tag("scenario", "read_realm_wildcard");
+    ctx.tag("measurement_scope", "direct_inproc");
+    ctx.tag("batch_size", "100_events_scanned");
+
+    let context = setup_direct_stream_context();
+    direct_seed_stream_route(&context, "stream://tier4/events/orders", 50, b"realm event");
+    direct_seed_stream_route(&context, "stream://tier4/audit/ledger", 50, b"realm event");
+
+    let read_route = "stream://tier4/*/*";
+    let (read_msg_type, read_payload) = direct_prepare_validated_read(&context, read_route, 100);
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
+    });
+    ctx.set_elements(100 * iterations as u64);
+}
+
+#[stress_test]
 fn should_complete_tcp_append(ctx: &mut StressContext) {
     ctx.tag("layer", "tcp");
     ctx.tag("scenario", "append");
@@ -108,6 +292,105 @@ fn should_complete_tcp_append(ctx: &mut StressContext) {
             .expect("append response");
     });
     ctx.set_elements(iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_tcp_resource_read(ctx: &mut StressContext) {
+    ctx.tag("layer", "tcp");
+    ctx.tag("scenario", "read_resource_exact");
+    ctx.tag("measurement_scope", "tcp_e2e");
+    ctx.tag("batch_size", "100_events_scanned");
+
+    let runtime = shared_bench_runtime();
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestClient::new(server.tcp_addr))
+        .expect("connect tcp");
+
+    let read_route = "stream://tier4/resource/orders";
+    runtime.block_on(async {
+        tcp_seed_stream_route(&mut client, read_route, 100, b"resource event").await;
+    });
+
+    let read_frame = build_stream_read(read_route, 0);
+    let validated_response = runtime
+        .block_on(client.request(&read_frame, 2000))
+        .expect("resource read response");
+    let count = parse_stream_read_record_count(&validated_response).expect("resource read count");
+    assert_eq!(count, 100, "unexpected tcp resource read count");
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("resource read response");
+    });
+    ctx.set_elements(100 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_tcp_area_wildcard_read(ctx: &mut StressContext) {
+    ctx.tag("layer", "tcp");
+    ctx.tag("scenario", "read_area_wildcard");
+    ctx.tag("measurement_scope", "tcp_e2e");
+    ctx.tag("batch_size", "100_events_scanned");
+
+    let runtime = shared_bench_runtime();
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestClient::new(server.tcp_addr))
+        .expect("connect tcp");
+
+    runtime.block_on(async {
+        tcp_seed_stream_route(&mut client, "stream://tier4/stream-area/orders", 50, b"area event").await;
+        tcp_seed_stream_route(&mut client, "stream://tier4/stream-area/audits", 50, b"area event").await;
+    });
+
+    let read_frame = build_stream_read("stream://tier4/stream-area/*", 0);
+    let validated_response = runtime
+        .block_on(client.request(&read_frame, 2000))
+        .expect("area read response");
+    let count = parse_stream_read_record_count(&validated_response).expect("area read count");
+    assert_eq!(count, 100, "unexpected tcp area read count");
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("area read response");
+    });
+    ctx.set_elements(100 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_tcp_realm_wildcard_read(ctx: &mut StressContext) {
+    ctx.tag("layer", "tcp");
+    ctx.tag("scenario", "read_realm_wildcard");
+    ctx.tag("measurement_scope", "tcp_e2e");
+    ctx.tag("batch_size", "100_events_scanned");
+
+    let runtime = shared_bench_runtime();
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestClient::new(server.tcp_addr))
+        .expect("connect tcp");
+
+    runtime.block_on(async {
+        tcp_seed_stream_route(&mut client, "stream://tier4/events/orders", 50, b"realm event").await;
+        tcp_seed_stream_route(&mut client, "stream://tier4/audit/ledger", 50, b"realm event").await;
+    });
+
+    let read_frame = build_stream_read("stream://tier4/*/*", 0);
+    let validated_response = runtime
+        .block_on(client.request(&read_frame, 2000))
+        .expect("realm read response");
+    let count = parse_stream_read_record_count(&validated_response).expect("realm read count");
+    assert_eq!(count, 100, "unexpected tcp realm read count");
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("realm read response");
+    });
+    ctx.set_elements(100 * iterations as u64);
 }
 
 #[stress_test]
@@ -142,6 +425,105 @@ fn should_complete_ws_append(ctx: &mut StressContext) {
             .expect("append response");
     });
     ctx.set_elements(iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_ws_resource_read(ctx: &mut StressContext) {
+    ctx.tag("layer", "websocket");
+    ctx.tag("scenario", "read_resource_exact");
+    ctx.tag("measurement_scope", "ws_e2e");
+    ctx.tag("batch_size", "100_events_scanned");
+
+    let runtime = shared_bench_runtime();
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .expect("connect ws");
+
+    let read_route = "stream://tier4/resource/orders";
+    runtime.block_on(async {
+        ws_seed_stream_route(&mut client, read_route, 100, b"resource event").await;
+    });
+
+    let read_frame = build_stream_read(read_route, 0);
+    let validated_response = runtime
+        .block_on(client.request(&read_frame, 2000))
+        .expect("resource read response");
+    let count = parse_stream_read_record_count(&validated_response).expect("resource read count");
+    assert_eq!(count, 100, "unexpected ws resource read count");
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("resource read response");
+    });
+    ctx.set_elements(100 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_ws_area_wildcard_read(ctx: &mut StressContext) {
+    ctx.tag("layer", "websocket");
+    ctx.tag("scenario", "read_area_wildcard");
+    ctx.tag("measurement_scope", "ws_e2e");
+    ctx.tag("batch_size", "100_events_scanned");
+
+    let runtime = shared_bench_runtime();
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .expect("connect ws");
+
+    runtime.block_on(async {
+        ws_seed_stream_route(&mut client, "stream://tier4/stream-area/orders", 50, b"area event").await;
+        ws_seed_stream_route(&mut client, "stream://tier4/stream-area/audits", 50, b"area event").await;
+    });
+
+    let read_frame = build_stream_read("stream://tier4/stream-area/*", 0);
+    let validated_response = runtime
+        .block_on(client.request(&read_frame, 2000))
+        .expect("area read response");
+    let count = parse_stream_read_record_count(&validated_response).expect("area read count");
+    assert_eq!(count, 100, "unexpected ws area read count");
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("area read response");
+    });
+    ctx.set_elements(100 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_ws_realm_wildcard_read(ctx: &mut StressContext) {
+    ctx.tag("layer", "websocket");
+    ctx.tag("scenario", "read_realm_wildcard");
+    ctx.tag("measurement_scope", "ws_e2e");
+    ctx.tag("batch_size", "100_events_scanned");
+
+    let runtime = shared_bench_runtime();
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut client = runtime
+        .block_on(TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr)))
+        .expect("connect ws");
+
+    runtime.block_on(async {
+        ws_seed_stream_route(&mut client, "stream://tier4/events/orders", 50, b"realm event").await;
+        ws_seed_stream_route(&mut client, "stream://tier4/audit/ledger", 50, b"realm event").await;
+    });
+
+    let read_frame = build_stream_read("stream://tier4/*/*", 0);
+    let validated_response = runtime
+        .block_on(client.request(&read_frame, 2000))
+        .expect("realm read response");
+    let count = parse_stream_read_record_count(&validated_response).expect("realm read count");
+    assert_eq!(count, 100, "unexpected ws realm read count");
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("realm read response");
+    });
+    ctx.set_elements(100 * iterations as u64);
 }
 
 #[stress_test]

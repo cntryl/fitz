@@ -190,9 +190,32 @@ Current gaps to keep explicit:
 
 Any attempt to reduce Stream's current triple-write event body storage must stay in research until it proves that the client-visible replay contract does not regress.
 
+For this redesign track, backward compatibility with the current on-disk Stream row format is explicitly out of scope. The work may assume a clean storage epoch break, but it must still define the operator cutover/reset procedure.
+
 - Add separate benchmark coverage for exact resource replay, wildcard area replay, and wildcard realm replay. The current Tier 3 read row exercises a concrete route and is not enough to justify deduplicating the higher-scope covering indexes.
 - Capture a baseline for commit throughput, publish-fanout throughput, exact-resource read throughput, area wildcard read throughput, realm wildcard read throughput, and approximate bytes written per committed event before changing the storage shape.
 - Define candidate storage layouts that keep one canonical durable event body while preserving enough locator data for area and realm replay to recover the right committed record deterministically.
 - Reject any design that turns wildcard replay into an unmeasured per-row lookup cliff. If area or realm replay requires indirection, prove the batched hydration cost with benchmarks before shipping it.
+- The first local proof bench for a canonical-body plus locator layout now exists in [../../benches/tier2_subsystem_stream_replay.rs](../../benches/tier2_subsystem_stream_replay.rs). Its initial local Midge results reject the naive per-stream multi-scan hydration plan: area replay dropped from about 178-184 Kelem/s on the current covering layout to about 38-41 Kelem/s on the hydrated prototype, and realm replay dropped from about 164-181 Kelem/s to about 20-23 Kelem/s.
+- Treat that result as a design constraint, not a benchmark footnote. Any viable deduplicated layout now has to remove or hide most of that locator-to-canonical lookup overhead before the storage cutover proceeds.
+- A second local prototype in the same bench now uses shared realm-ordered replay pages plus tiny area locators. That materially improved realm replay versus the naive locator layout, landing around 125-145 Kelem/s versus about 20-23 Kelem/s for naive hydration and versus about 142-161 Kelem/s for the current covering layout. But area replay still landed only around 25-27 Kelem/s versus about 199-217 Kelem/s for the covering layout and even below the naive per-stream hydration result.
+- Treat that split result as the current frontier: shared replay pages look credible for realm-scope recovery, but area-scope recovery still needs either a cheaper direct read surface or a substantially cheaper area locator-to-page decode path.
+- A follow-on local prototype kept the area path direct and replaced the realm page encoding with a compact manual format in [../../benches/tier2_subsystem_stream_replay.rs](../../benches/tier2_subsystem_stream_replay.rs). On the latest local run, direct area replay stayed fast at about 236-258 Kelem/s while area-paged replay remained poor at about 34-36 Kelem/s, which reinforces that area should keep a direct read surface. Realm replay, however, improved further: the compact realm-page path landed around 305-348 Kelem/s, slightly ahead of the bincode page variant at about 290-349 Kelem/s and clearly ahead of the current covering realm path at about 235-253 Kelem/s.
+- Treat the current leading candidate as: exact resource rows remain canonical, area replay keeps a direct covering read surface, and realm replay moves to compact shared pages. Future experiments should focus on the write-path and storage economics of that hybrid rather than reopening area indirection ideas.
 - Preserve the current ordering and visibility contract: resource offsets remain exact-history offsets, area and realm replay remain commit-ordered and watermark-gated, and reads past the committed boundary still return empty success.
-- Require either backward-compatible decode or an explicit migration plan for any on-disk row-shape change. Storage compaction is not allowed to strand existing committed history.
+- Define the storage epoch break and operator cutover procedure for any row-shape change. This track may choose delete-and-reseed or other non-compatible cutover mechanics, but the reset semantics must be explicit.
+
+## L. Performance Acceptance Budgets
+
+The redesign budget is now explicit: Stream does not need identical throughput across resource, area, and realm replay, but it does need bounded slowdown and no wildcard replay cliff.
+
+- The machine-readable acceptance targets live in [../../config/perf_targets.json](../../config/perf_targets.json).
+- Resource exact replay is the anchor path. It should remain the fastest consume path at every layer.
+- Area wildcard replay may be slower than exact-resource replay, but it must stay in the same throughput class and above its explicit operational floor.
+- Realm wildcard replay may be slower than area replay, but it must stay in the same throughput class and above its explicit operational floor.
+- The redesign fails if write amplification drops by pushing area or realm replay below the new operational floors, even if append throughput improves.
+- The redesign fails if wildcard replay devolves into an unbounded per-row lookup pattern, regardless of whether the average throughput still looks acceptable on tiny benches.
+- Tier 3 engine-core consume floors are: exact resource replay >= 850K records/s, area wildcard replay >= 650K records/s, realm wildcard replay >= 625K records/s.
+- Tier 4 direct consume floors are: resource replay >= 400K records/s, area wildcard replay >= 325K records/s, realm wildcard replay >= 200K records/s.
+- Tier 4 TCP consume floors are: resource replay >= 350K records/s, area wildcard replay >= 180K records/s, realm wildcard replay >= 180K records/s.
+- Tier 4 WebSocket consume floors are: resource replay >= 300K records/s, area wildcard replay >= 180K records/s, realm wildcard replay >= 180K records/s.

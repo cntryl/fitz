@@ -195,6 +195,11 @@ name = "tier2_subsystem_stream"
 harness = false
 path = "benches/tier2_subsystem_stream.rs"
 
+[[bench]]
+name = "tier2_subsystem_stream_replay"
+harness = false
+path = "benches/tier2_subsystem_stream_replay.rs"
+
 # Tier 3: System (Domain + plumbing, <10s, sync only - one per domain)
 [[bench]]
 name = "tier3_system_kv"

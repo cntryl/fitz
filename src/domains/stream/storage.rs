@@ -27,6 +27,12 @@ pub enum KeyPrefix {
     AreaCounter = 0x09,
     /// Realm offset counter: [RF][realm]
     RealmCounter = 0x0A,
+    /// Prototype canonical resource row for storage redesign research: [stream_id][resource_offset]
+    CanonicalResource = 0x0B,
+    /// Prototype area locator row for storage redesign research: [RF][realm][area][area_offset]
+    AreaLocator = 0x0C,
+    /// Prototype realm locator row for storage redesign research: [RF][realm][realm_offset]
+    RealmLocator = 0x0D,
 }
 
 /// Encodes a resource stream key
@@ -143,6 +149,34 @@ pub fn encode_realm_counter_key(realm: &str) -> Vec<u8> {
     key
 }
 
+/// Encodes a prototype canonical resource key.
+pub fn encode_canonical_resource_key(stream_id: u64, resource_offset: u64) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::CanonicalResource as u8];
+    key.extend_from_slice(&stream_id.to_be_bytes());
+    key.extend_from_slice(&resource_offset.to_be_bytes());
+    key
+}
+
+/// Encodes a prototype area locator key.
+pub fn encode_area_locator_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::AreaLocator as u8];
+    key.extend_from_slice(realm.as_bytes());
+    key.push(0);
+    key.extend_from_slice(area.as_bytes());
+    key.push(0);
+    key.extend_from_slice(&area_offset.to_be_bytes());
+    key
+}
+
+/// Encodes a prototype realm locator key.
+pub fn encode_realm_locator_key(realm: &str, realm_offset: u64) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::RealmLocator as u8];
+    key.extend_from_slice(realm.as_bytes());
+    key.push(0);
+    key.extend_from_slice(&realm_offset.to_be_bytes());
+    key
+}
+
 /// Value stored in resource index (full record)
 ///
 /// `area_offset` and `realm_offset` are always written as `Some` at commit time.
@@ -216,6 +250,9 @@ struct LegacyRealmValue {
 const AREA_VALUE_V2_MARKER: [u8; 2] = [0, 0xA1];
 const REALM_VALUE_V2_MARKER: [u8; 2] = [0, 0xB1];
 const RESOURCE_VALUE_V2_MARKER: [u8; 2] = [0, 0x91];
+const CANONICAL_RESOURCE_VALUE_V1_MARKER: [u8; 2] = [0, 0xC1];
+const AREA_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xC2];
+const REALM_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xC3];
 const OPTIONAL_BYTES_ABSENT: u32 = u32::MAX;
 const OPTIONAL_OFFSET_ABSENT: u64 = u64::MAX;
 
@@ -248,6 +285,31 @@ pub struct AreaCounterValue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealmCounterValue {
     pub next_offset: u64,
+}
+
+/// Prototype canonical body row used to benchmark canonical-body plus locator layouts.
+#[derive(Debug, Clone)]
+pub struct CanonicalResourceValue {
+    pub area_offset: u64,
+    pub realm_offset: u64,
+    pub body: Bytes,
+    pub metadata: Option<Bytes>,
+    pub created_at: u64,
+}
+
+/// Prototype area locator row used to benchmark batched wildcard hydration.
+#[derive(Debug, Clone)]
+pub struct AreaLocatorValue {
+    pub stream_id: u64,
+    pub resource_offset: u64,
+}
+
+/// Prototype realm locator row used to benchmark batched wildcard hydration.
+#[derive(Debug, Clone)]
+pub struct RealmLocatorValue {
+    pub area_offset: u64,
+    pub stream_id: u64,
+    pub resource_offset: u64,
 }
 
 impl ResourceValue {
@@ -555,6 +617,137 @@ impl RealmCounterValue {
     }
 }
 
+impl CanonicalResourceValue {
+    pub fn encode(&self) -> Vec<u8> {
+        let metadata_len = self.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let mut buf = Vec::with_capacity(34 + self.body.len() + metadata_len);
+        buf.extend_from_slice(&CANONICAL_RESOURCE_VALUE_V1_MARKER);
+        buf.extend_from_slice(&self.area_offset.to_le_bytes());
+        buf.extend_from_slice(&self.realm_offset.to_le_bytes());
+        buf.extend_from_slice(&self.created_at.to_le_bytes());
+        buf.extend_from_slice(&(self.body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(
+            &self
+                .metadata
+                .as_ref()
+                .map(|m| m.len() as u32)
+                .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                .to_le_bytes(),
+        );
+        buf.extend_from_slice(&self.body);
+        if let Some(metadata) = &self.metadata {
+            buf.extend_from_slice(metadata);
+        }
+        buf
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        Self::decode_v1(bytes).expect("deserialize canonical resource value")
+    }
+
+    fn decode_v1(bytes: &[u8]) -> Result<Self, String> {
+        if !bytes.starts_with(&CANONICAL_RESOURCE_VALUE_V1_MARKER) {
+            return Err("decode canonical resource value: missing marker".to_string());
+        }
+        if bytes.len() < 34 {
+            return Err("decode canonical resource value: header too short".to_string());
+        }
+
+        let area_offset = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
+        let realm_offset = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
+        let created_at = u64::from_le_bytes(bytes[18..26].try_into().unwrap());
+        let body_len = u32::from_le_bytes(bytes[26..30].try_into().unwrap()) as usize;
+        let metadata_len_raw = u32::from_le_bytes(bytes[30..34].try_into().unwrap());
+        let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
+            None
+        } else {
+            Some(metadata_len_raw as usize)
+        };
+
+        let mut offset = 34;
+        if bytes.len() < offset + body_len {
+            return Err("decode canonical resource value: truncated body".to_string());
+        }
+        let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
+        offset += body_len;
+
+        let metadata = if let Some(metadata_len) = metadata_len {
+            if bytes.len() < offset + metadata_len {
+                return Err("decode canonical resource value: truncated metadata".to_string());
+            }
+            Some(Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            area_offset,
+            realm_offset,
+            body,
+            metadata,
+            created_at,
+        })
+    }
+}
+
+impl AreaLocatorValue {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(18);
+        buf.extend_from_slice(&AREA_LOCATOR_VALUE_V1_MARKER);
+        buf.extend_from_slice(&self.stream_id.to_le_bytes());
+        buf.extend_from_slice(&self.resource_offset.to_le_bytes());
+        buf
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        Self::decode_v1(bytes).expect("deserialize area locator value")
+    }
+
+    fn decode_v1(bytes: &[u8]) -> Result<Self, String> {
+        if !bytes.starts_with(&AREA_LOCATOR_VALUE_V1_MARKER) {
+            return Err("decode area locator value: missing marker".to_string());
+        }
+        if bytes.len() < 18 {
+            return Err("decode area locator value: header too short".to_string());
+        }
+
+        Ok(Self {
+            stream_id: u64::from_le_bytes(bytes[2..10].try_into().unwrap()),
+            resource_offset: u64::from_le_bytes(bytes[10..18].try_into().unwrap()),
+        })
+    }
+}
+
+impl RealmLocatorValue {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(26);
+        buf.extend_from_slice(&REALM_LOCATOR_VALUE_V1_MARKER);
+        buf.extend_from_slice(&self.area_offset.to_le_bytes());
+        buf.extend_from_slice(&self.stream_id.to_le_bytes());
+        buf.extend_from_slice(&self.resource_offset.to_le_bytes());
+        buf
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        Self::decode_v1(bytes).expect("deserialize realm locator value")
+    }
+
+    fn decode_v1(bytes: &[u8]) -> Result<Self, String> {
+        if !bytes.starts_with(&REALM_LOCATOR_VALUE_V1_MARKER) {
+            return Err("decode realm locator value: missing marker".to_string());
+        }
+        if bytes.len() < 26 {
+            return Err("decode realm locator value: header too short".to_string());
+        }
+
+        Ok(Self {
+            area_offset: u64::from_le_bytes(bytes[2..10].try_into().unwrap()),
+            stream_id: u64::from_le_bytes(bytes[10..18].try_into().unwrap()),
+            resource_offset: u64::from_le_bytes(bytes[18..26].try_into().unwrap()),
+        })
+    }
+}
+
 /// Create an in-memory Midge database for tests
 #[cfg(test)]
 pub fn create_test_db() -> std::sync::Arc<cntryl_midge::Engine> {
@@ -853,5 +1046,64 @@ mod tests {
         assert_eq!(decoded.body, Bytes::from("body"));
         assert_eq!(decoded.metadata, Some(Bytes::from("meta")));
         assert_eq!(decoded.created_at, 321);
+    }
+
+    #[test]
+    fn should_roundtrip_canonical_resource_value() {
+        // Arrange
+        let value = CanonicalResourceValue {
+            area_offset: 11,
+            realm_offset: 19,
+            body: Bytes::from("body"),
+            metadata: Some(Bytes::from("meta")),
+            created_at: 123,
+        };
+
+        // Act
+        let encoded = value.encode();
+        let decoded = CanonicalResourceValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.area_offset, value.area_offset);
+        assert_eq!(decoded.realm_offset, value.realm_offset);
+        assert_eq!(decoded.body, value.body);
+        assert_eq!(decoded.metadata, value.metadata);
+        assert_eq!(decoded.created_at, value.created_at);
+    }
+
+    #[test]
+    fn should_roundtrip_area_locator_value() {
+        // Arrange
+        let value = AreaLocatorValue {
+            stream_id: 7,
+            resource_offset: 42,
+        };
+
+        // Act
+        let encoded = value.encode();
+        let decoded = AreaLocatorValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.stream_id, value.stream_id);
+        assert_eq!(decoded.resource_offset, value.resource_offset);
+    }
+
+    #[test]
+    fn should_roundtrip_realm_locator_value() {
+        // Arrange
+        let value = RealmLocatorValue {
+            area_offset: 17,
+            stream_id: 9,
+            resource_offset: 42,
+        };
+
+        // Act
+        let encoded = value.encode();
+        let decoded = RealmLocatorValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.area_offset, value.area_offset);
+        assert_eq!(decoded.stream_id, value.stream_id);
+        assert_eq!(decoded.resource_offset, value.resource_offset);
     }
 }

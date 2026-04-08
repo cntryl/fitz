@@ -11,8 +11,8 @@ use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, build_stream_commit, build_stream_last,
     build_stream_read, build_stream_subscribe, create_bench_stream_sink, extract_single_tlv_field,
-    parse_stream_session_id, register_session_counting_sink, register_session_queue_sink,
-    route_frame, FrameQueueSink,
+    count_stream_read_records_from_payload, parse_stream_session_id,
+    register_session_counting_sink, register_session_queue_sink, route_frame, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
@@ -96,6 +96,38 @@ fn subscribe_stream(
     .expect("stream subscribe");
 }
 
+fn seed_committed_stream_route(
+    context: &StreamBenchContext,
+    route: &str,
+    event_count: usize,
+    body: &'static [u8],
+) {
+    let session_id = begin_stream(context, route, 0);
+    let append_frame = build_stream_append(session_id, body);
+    let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+    for _ in 0..event_count {
+        let _ = request(context, route, append_msg_type, append_payload.clone());
+    }
+
+    let commit_frame = build_stream_commit(session_id, 0);
+    let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
+    let _ = request(context, route, commit_msg_type, commit_payload);
+}
+
+fn prepare_validated_read(
+    context: &StreamBenchContext,
+    route: &str,
+    expected_count: usize,
+) -> (u16, Bytes) {
+    let read_frame = build_stream_read(route, 0);
+    let (read_msg_type, read_payload) = extract_single_tlv_field(&read_frame);
+    let response = request(context, route, read_msg_type, read_payload.clone());
+    let count = count_stream_read_records_from_payload(response.as_ref())
+        .expect("stream read response count");
+    assert_eq!(count, expected_count, "unexpected stream read count for {route}");
+    (read_msg_type, read_payload)
+}
+
 #[stress_test]
 fn should_complete_append_sustained_load(ctx: &mut StressContext) {
     ctx.tag("scenario", "sustained_append");
@@ -137,6 +169,56 @@ fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
 
     let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
         let _ = request(&context, route, read_msg_type, read_payload.clone());
+    });
+    ctx.set_elements(100 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_area_wildcard_read_throughput(ctx: &mut StressContext) {
+    ctx.tag("scenario", "read_area_wildcard");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("read_scope", "area");
+    ctx.tag("batch_size", "100_events_scanned");
+
+    let context = setup_stream_sink();
+    seed_committed_stream_route(&context, "stream://bench/area/orders", 50, b"area read event");
+    seed_committed_stream_route(&context, "stream://bench/area/audits", 50, b"area read event");
+
+    let read_route = "stream://bench/area/*";
+    let (read_msg_type, read_payload) = prepare_validated_read(&context, read_route, 100);
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let _ = request(&context, read_route, read_msg_type, read_payload.clone());
+    });
+    ctx.set_elements(100 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_realm_wildcard_read_throughput(ctx: &mut StressContext) {
+    ctx.tag("scenario", "read_realm_wildcard");
+    ctx.tag("measurement_scope", "routed_system");
+    ctx.tag("read_scope", "realm");
+    ctx.tag("batch_size", "100_events_scanned");
+
+    let context = setup_stream_sink();
+    seed_committed_stream_route(
+        &context,
+        "stream://bench/events/orders",
+        50,
+        b"realm read event",
+    );
+    seed_committed_stream_route(
+        &context,
+        "stream://bench/audit/ledger",
+        50,
+        b"realm read event",
+    );
+
+    let read_route = "stream://bench/*/*";
+    let (read_msg_type, read_payload) = prepare_validated_read(&context, read_route, 100);
+
+    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+        let _ = request(&context, read_route, read_msg_type, read_payload.clone());
     });
     ctx.set_elements(100 * iterations as u64);
 }
