@@ -377,12 +377,13 @@ impl ScheduleStore {
                 let cron = String::from_utf8(value[cron_start..cron_end].to_vec())
                     .map_err(|e| format!("Invalid cron encoding: {}", e))?;
                 let payload_len =
-                    u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap())
-                        as usize;
+                    u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap()) as usize;
                 let payload_start = cron_end + 4;
                 let payload_end = payload_start + payload_len;
                 if value.len() != payload_end {
-                    return Err("Schedule definition body value has invalid payload length".to_string());
+                    return Err(
+                        "Schedule definition body value has invalid payload length".to_string()
+                    );
                 }
 
                 Ok((
@@ -1003,8 +1004,7 @@ mod tests {
         last_fire_ms: Option<u64>,
         executions_total: u64,
     ) -> Vec<u8> {
-        let mut value =
-            Vec::with_capacity(1 + 8 + 8 + 8 + 4 + cron.len() + 4 + payload.len());
+        let mut value = Vec::with_capacity(1 + 8 + 8 + 8 + 4 + cron.len() + 4 + payload.len());
         value.push(DEFINITION_VALUE_VERSION_V2);
         value.extend_from_slice(&next_fire_ms.to_be_bytes());
         value.extend_from_slice(&last_fire_ms.unwrap_or(0).to_be_bytes());
@@ -1059,10 +1059,7 @@ mod tests {
         );
         assert_eq!(
             ScheduleStore::decode_definition_body_value(&body_value).unwrap(),
-            (
-                "* * * * *".to_string(),
-                Bytes::from_static(b"payload"),
-            )
+            ("* * * * *".to_string(), Bytes::from_static(b"payload"),)
         );
         assert_eq!(
             count_prefix(&db, 1, BODY_PREFIX),

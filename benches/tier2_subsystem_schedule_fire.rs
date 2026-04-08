@@ -1,7 +1,5 @@
 use bytes::Bytes;
-use criterion::{
-    black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::{create_bench_schedule_sink, register_session_counting_sink, route_frame};
 use fitz::boot::domains::ScheduleDomainSink;
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
@@ -81,10 +79,7 @@ fn precompute_data(count: usize) -> ScheduleFixtures {
     }
 }
 
-fn populate_actor(
-    actor: &mut ScheduleActor,
-    fixtures: &ScheduleFixtures,
-) {
+fn populate_actor(actor: &mut ScheduleActor, fixtures: &ScheduleFixtures) {
     for index in 0..fixtures.routes.len() {
         let response = actor.handle(ScheduleMessage::Create {
             route: fixtures.routes[index].clone(),

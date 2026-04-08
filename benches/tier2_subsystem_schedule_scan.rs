@@ -3,9 +3,7 @@
 //! benchmark-only shortcut paths.
 
 use bytes::Bytes;
-use criterion::{
-    black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
@@ -80,10 +78,7 @@ fn precompute_data(count: usize) -> ScheduleFixtures {
     }
 }
 
-fn populate_actor(
-    actor: &mut ScheduleActor,
-    fixtures: &ScheduleFixtures,
-) {
+fn populate_actor(actor: &mut ScheduleActor, fixtures: &ScheduleFixtures) {
     for i in 0..fixtures.routes.len() {
         let response = actor.handle(ScheduleMessage::Create {
             route: fixtures.routes[i].clone(),
@@ -104,7 +99,11 @@ fn create_populated_actor(fixtures: &ScheduleFixtures, clock: Arc<dyn Clock>) ->
     actor
 }
 
-fn time_with_fresh_actors<F>(iters: u64, mut create_actor: F, mut measure: impl FnMut(&mut ScheduleActor)) -> Duration
+fn time_with_fresh_actors<F>(
+    iters: u64,
+    mut create_actor: F,
+    mut measure: impl FnMut(&mut ScheduleActor),
+) -> Duration
 where
     F: FnMut() -> ScheduleActor,
 {
@@ -113,8 +112,7 @@ where
 
     while remaining > 0 {
         let chunk_len = remaining.min(TIMED_BATCH_SIZE) as usize;
-        let mut actors: Vec<ScheduleActor> =
-            (0..chunk_len).map(|_| create_actor()).collect();
+        let mut actors: Vec<ScheduleActor> = (0..chunk_len).map(|_| create_actor()).collect();
         let start = Instant::now();
         for actor in &mut actors {
             measure(actor);

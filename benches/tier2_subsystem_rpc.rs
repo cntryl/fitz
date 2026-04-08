@@ -514,7 +514,10 @@ fn bench_rpc_dispatch_primary(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(DISPATCH_BATCH_SIZE as u64));
         group.bench_function(
-            format!("dispatch_ack_cleanup_256_ops_{}_workers_primary", worker_count),
+            format!(
+                "dispatch_ack_cleanup_256_ops_{}_workers_primary",
+                worker_count
+            ),
             |b| {
                 b.iter(|| {
                     for _ in 0..DISPATCH_BATCH_SIZE {
