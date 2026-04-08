@@ -3,11 +3,44 @@
 use bytes::Bytes;
 use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::storage::{
-    encode_area_key, encode_offset_counter_key, encode_realm_key, encode_resource_key, AreaValue,
-    OffsetCounterValue, RealmValue, ResourceValue,
+    encode_area_key, encode_offset_counter_key, encode_realm_key, encode_resource_key,
+    OffsetCounterValue,
 };
 use fitz::domains::stream::store::{CommitRecordsParams, EventPayload, StreamStore};
 use fitz::testkit::create_test_engine_with_cfs;
+
+#[derive(serde::Serialize)]
+struct LegacyAreaValue {
+    realm: String,
+    area: String,
+    resource: String,
+    resource_offset: u64,
+    body: Bytes,
+    metadata: Option<Bytes>,
+    created_at: u64,
+}
+
+#[derive(serde::Serialize)]
+struct LegacyResourceValue {
+    resource_offset: u64,
+    body: Bytes,
+    metadata: Option<Bytes>,
+    created_at: u64,
+    area_offset: Option<u64>,
+    realm_offset: Option<u64>,
+}
+
+#[derive(serde::Serialize)]
+struct LegacyRealmValue {
+    realm: String,
+    area: String,
+    area_offset: u64,
+    resource: String,
+    resource_offset: u64,
+    body: Bytes,
+    metadata: Option<Bytes>,
+    created_at: u64,
+}
 
 struct LegacyRecordRef<'a> {
     realm: &'a str,
@@ -43,22 +76,22 @@ fn write_legacy_record(
 
     tx.put(
         encode_resource_key(realm, area, resource, resource_offset),
-        ResourceValue {
+        bincode::serialize(&LegacyResourceValue {
             resource_offset,
             body: body.clone(),
             metadata: None,
             created_at,
             area_offset: Some(area_offset),
             realm_offset: Some(realm_offset),
-        }
-        .encode(),
+        })
+        .expect("encode legacy resource value"),
         None,
     )
     .expect("write resource record");
 
     tx.put(
         encode_area_key(realm, area, area_offset),
-        AreaValue {
+        bincode::serialize(&LegacyAreaValue {
             realm: realm.to_string(),
             area: area.to_string(),
             resource: resource.to_string(),
@@ -66,15 +99,15 @@ fn write_legacy_record(
             body: body.clone(),
             metadata: None,
             created_at,
-        }
-        .encode(),
+        })
+        .expect("encode legacy area value"),
         None,
     )
     .expect("write area record");
 
     tx.put(
         encode_realm_key(realm, realm_offset),
-        RealmValue {
+        bincode::serialize(&LegacyRealmValue {
             realm: realm.to_string(),
             area: area.to_string(),
             area_offset,
@@ -83,8 +116,8 @@ fn write_legacy_record(
             body,
             metadata: None,
             created_at,
-        }
-        .encode(),
+        })
+        .expect("encode legacy realm value"),
         None,
     )
     .expect("write realm record");

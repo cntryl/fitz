@@ -584,9 +584,6 @@ impl StreamStore {
 
             let area_key = encode_area_key(realm, area, area_offset);
             let area_value = AreaValue {
-                realm: realm.to_string(),
-                area: area.to_string(),
-                resource: resource.to_string(),
                 resource_offset,
                 body: event.body.clone(),
                 metadata: event.metadata.clone(),
@@ -597,14 +594,11 @@ impl StreamStore {
 
             let realm_key = encode_realm_key(realm, realm_offset);
             let realm_value = RealmValue {
-                resource: resource.to_string(),
+                area_offset,
                 resource_offset,
                 body: event.body.clone(),
                 metadata: event.metadata.clone(),
                 created_at,
-                realm: realm.to_string(),
-                area: area.to_string(),
-                area_offset,
             };
             txn.put(realm_key, realm_value.encode(), ttl_opt)
                 .map_err(|e| format!("txn put failed: {:?}", e))?;
@@ -637,26 +631,6 @@ impl StreamStore {
             encode_realm_counter_key(realm),
             RealmCounterValue {
                 next_offset: last_realm_offset.saturating_add(1),
-            }
-            .encode(),
-            None,
-        )
-        .map_err(|e| format!("txn put failed: {:?}", e))?;
-
-        txn.put(
-            encode_watermark_key(realm, area),
-            WatermarkValue {
-                watermark: last_area_offset,
-            }
-            .encode(),
-            None,
-        )
-        .map_err(|e| format!("txn put failed: {:?}", e))?;
-
-        txn.put(
-            crate::domains::stream::storage::encode_realm_watermark_key(realm),
-            WatermarkValue {
-                watermark: last_realm_offset,
             }
             .encode(),
             None,
@@ -923,9 +897,6 @@ impl StreamStore {
 
             let area_key = encode_area_key(&realm, &area, area_offset);
             let area_value = AreaValue {
-                realm: realm.clone(),
-                area: area.clone(),
-                resource: resource.clone(),
                 resource_offset,
                 body: event.body.clone(),
                 metadata: event.metadata.clone(),
@@ -936,14 +907,11 @@ impl StreamStore {
 
             let realm_key = encode_realm_key(&realm, realm_offset);
             let realm_value = RealmValue {
-                resource: resource.clone(),
+                area_offset,
                 resource_offset,
                 body: event.body.clone(),
                 metadata: event.metadata.clone(),
                 created_at,
-                realm: realm.clone(),
-                area: area.clone(),
-                area_offset,
             };
             txn.put(realm_key, realm_value.encode(), ttl_opt)
                 .map_err(|e| format!("txn put failed: {:?}", e))?;
@@ -1447,6 +1415,7 @@ impl StreamStore {
 
     pub fn get_watermark(&self, family: u64, realm: &str, area: &str) -> Result<u64, String> {
         let key = encode_watermark_key(realm, area);
+        let counter_key = encode_area_counter_key(realm, area);
 
         let txn = self
             .db
@@ -1460,9 +1429,15 @@ impl StreamStore {
                 let value = WatermarkValue::decode(&bytes);
                 Ok(value.watermark)
             }
-            None => Ok(self
-                .scan_next_area_offset(family, realm, area)?
-                .saturating_sub(1)),
+            None => match txn
+                .get(&counter_key)
+                .map_err(|e| format!("midge get error: {:?}", e))?
+            {
+                Some(bytes) => Ok(AreaCounterValue::decode(&bytes).next_offset.saturating_sub(1)),
+                None => Ok(self
+                    .scan_next_area_offset(family, realm, area)?
+                    .saturating_sub(1)),
+            },
         }
     }
 
@@ -1498,6 +1473,7 @@ impl StreamStore {
 
     pub fn get_realm_watermark(&self, family: u64, realm: &str) -> Result<u64, String> {
         let key = crate::domains::stream::storage::encode_realm_watermark_key(realm);
+        let counter_key = encode_realm_counter_key(realm);
 
         let txn = self
             .db
@@ -1511,9 +1487,15 @@ impl StreamStore {
                 let value = WatermarkValue::decode(&bytes);
                 Ok(value.watermark)
             }
-            None => Ok(self
-                .scan_next_realm_offset(family, realm)?
-                .saturating_sub(1)),
+            None => match txn
+                .get(&counter_key)
+                .map_err(|e| format!("midge get error: {:?}", e))?
+            {
+                Some(bytes) => Ok(RealmCounterValue::decode(&bytes).next_offset.saturating_sub(1)),
+                None => Ok(self
+                    .scan_next_realm_offset(family, realm)?
+                    .saturating_sub(1)),
+            },
         }
     }
 

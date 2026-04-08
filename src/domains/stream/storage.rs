@@ -149,7 +149,7 @@ pub fn encode_realm_counter_key(realm: &str) -> Vec<u8> {
 /// They are typed as `Option<u64>` solely for bincode format compatibility with
 /// existing on-disk data. Changing these to `u64` would be a breaking storage
 /// migration and must not be done without a migration plan.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResourceValue {
     pub resource_offset: u64,
     pub body: Bytes,
@@ -161,12 +161,19 @@ pub struct ResourceValue {
     pub realm_offset: Option<u64>,
 }
 
-/// Value stored in area index (covering index with full event)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyResourceValue {
+    resource_offset: u64,
+    body: Bytes,
+    metadata: Option<Bytes>,
+    created_at: u64,
+    area_offset: Option<u64>,
+    realm_offset: Option<u64>,
+}
+
+/// Value stored in area index (covering index with full event)
+#[derive(Debug, Clone)]
 pub struct AreaValue {
-    pub realm: String,
-    pub area: String,
-    pub resource: String,
     pub resource_offset: u64,
     pub body: Bytes,
     pub metadata: Option<Bytes>,
@@ -174,17 +181,43 @@ pub struct AreaValue {
 }
 
 /// Value stored in realm index (covering index with full event)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RealmValue {
-    pub realm: String,
-    pub area: String,
     pub area_offset: u64,
-    pub resource: String,
     pub resource_offset: u64,
     pub body: Bytes,
     pub metadata: Option<Bytes>,
     pub created_at: u64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyAreaValue {
+    realm: String,
+    area: String,
+    resource: String,
+    resource_offset: u64,
+    body: Bytes,
+    metadata: Option<Bytes>,
+    created_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyRealmValue {
+    realm: String,
+    area: String,
+    area_offset: u64,
+    resource: String,
+    resource_offset: u64,
+    body: Bytes,
+    metadata: Option<Bytes>,
+    created_at: u64,
+}
+
+const AREA_VALUE_V2_MARKER: [u8; 2] = [0, 0xA1];
+const REALM_VALUE_V2_MARKER: [u8; 2] = [0, 0xB1];
+const RESOURCE_VALUE_V2_MARKER: [u8; 2] = [0, 0x91];
+const OPTIONAL_BYTES_ABSENT: u32 = u32::MAX;
+const OPTIONAL_OFFSET_ABSENT: u64 = u64::MAX;
 
 /// Watermark value
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,31 +252,256 @@ pub struct RealmCounterValue {
 
 impl ResourceValue {
     pub fn encode(&self) -> Vec<u8> {
-        serialize(self).expect("serialize resource value")
+        let metadata_len = self.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let mut buf = Vec::with_capacity(42 + self.body.len() + metadata_len);
+        buf.extend_from_slice(&RESOURCE_VALUE_V2_MARKER);
+        buf.extend_from_slice(&self.resource_offset.to_le_bytes());
+        buf.extend_from_slice(&self.created_at.to_le_bytes());
+        buf.extend_from_slice(
+            &self
+                .area_offset
+                .unwrap_or(OPTIONAL_OFFSET_ABSENT)
+                .to_le_bytes(),
+        );
+        buf.extend_from_slice(
+            &self
+                .realm_offset
+                .unwrap_or(OPTIONAL_OFFSET_ABSENT)
+                .to_le_bytes(),
+        );
+        buf.extend_from_slice(&(self.body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(
+            &self
+                .metadata
+                .as_ref()
+                .map(|m| m.len() as u32)
+                .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                .to_le_bytes(),
+        );
+        buf.extend_from_slice(&self.body);
+        if let Some(metadata) = &self.metadata {
+            buf.extend_from_slice(metadata);
+        }
+        buf
     }
 
     pub fn decode(bytes: &[u8]) -> Self {
-        deserialize(bytes).expect("deserialize resource value")
+        if bytes.starts_with(&RESOURCE_VALUE_V2_MARKER) {
+            return Self::decode_v2(bytes).expect("deserialize compact resource value");
+        }
+
+        let legacy: LegacyResourceValue =
+            deserialize(bytes).expect("deserialize legacy resource value");
+        Self {
+            resource_offset: legacy.resource_offset,
+            body: legacy.body,
+            metadata: legacy.metadata,
+            created_at: legacy.created_at,
+            area_offset: legacy.area_offset,
+            realm_offset: legacy.realm_offset,
+        }
+    }
+
+    fn decode_v2(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() < 42 {
+            return Err("decode resource value: header too short".to_string());
+        }
+
+        let resource_offset = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
+        let created_at = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
+        let area_offset_raw = u64::from_le_bytes(bytes[18..26].try_into().unwrap());
+        let realm_offset_raw = u64::from_le_bytes(bytes[26..34].try_into().unwrap());
+        let body_len = u32::from_le_bytes(bytes[34..38].try_into().unwrap()) as usize;
+        let metadata_len_raw = u32::from_le_bytes(bytes[38..42].try_into().unwrap());
+        let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
+            None
+        } else {
+            Some(metadata_len_raw as usize)
+        };
+
+        let mut offset = 42;
+        if bytes.len() < offset + body_len {
+            return Err("decode resource value: truncated body".to_string());
+        }
+        let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
+        offset += body_len;
+
+        let metadata = if let Some(metadata_len) = metadata_len {
+            if bytes.len() < offset + metadata_len {
+                return Err("decode resource value: truncated metadata".to_string());
+            }
+            Some(Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            resource_offset,
+            body,
+            metadata,
+            created_at,
+            area_offset: (area_offset_raw != OPTIONAL_OFFSET_ABSENT).then_some(area_offset_raw),
+            realm_offset: (realm_offset_raw != OPTIONAL_OFFSET_ABSENT)
+                .then_some(realm_offset_raw),
+        })
     }
 }
 
 impl AreaValue {
     pub fn encode(&self) -> Vec<u8> {
-        serialize(self).expect("serialize area value")
+        let metadata_len = self.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let mut buf = Vec::with_capacity(26 + self.body.len() + metadata_len);
+        buf.extend_from_slice(&AREA_VALUE_V2_MARKER);
+        buf.extend_from_slice(&self.resource_offset.to_le_bytes());
+        buf.extend_from_slice(&self.created_at.to_le_bytes());
+        buf.extend_from_slice(&(self.body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(
+            &self
+                .metadata
+                .as_ref()
+                .map(|m| m.len() as u32)
+                .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                .to_le_bytes(),
+        );
+        buf.extend_from_slice(&self.body);
+        if let Some(metadata) = &self.metadata {
+            buf.extend_from_slice(metadata);
+        }
+        buf
     }
 
     pub fn decode(bytes: &[u8]) -> Self {
-        deserialize(bytes).expect("deserialize area value")
+        if bytes.starts_with(&AREA_VALUE_V2_MARKER) {
+            return Self::decode_v2(bytes).expect("deserialize compact area value");
+        }
+
+        let legacy: LegacyAreaValue = deserialize(bytes).expect("deserialize legacy area value");
+        Self {
+            resource_offset: legacy.resource_offset,
+            body: legacy.body,
+            metadata: legacy.metadata,
+            created_at: legacy.created_at,
+        }
+    }
+
+    fn decode_v2(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() < 26 {
+            return Err("decode area value: header too short".to_string());
+        }
+
+        let resource_offset = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
+        let created_at = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
+        let body_len = u32::from_le_bytes(bytes[18..22].try_into().unwrap()) as usize;
+        let metadata_len_raw = u32::from_le_bytes(bytes[22..26].try_into().unwrap());
+        let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
+            None
+        } else {
+            Some(metadata_len_raw as usize)
+        };
+
+        let mut offset = 26;
+        if bytes.len() < offset + body_len {
+            return Err("decode area value: truncated body".to_string());
+        }
+        let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
+        offset += body_len;
+
+        let metadata = if let Some(metadata_len) = metadata_len {
+            if bytes.len() < offset + metadata_len {
+                return Err("decode area value: truncated metadata".to_string());
+            }
+            Some(Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            resource_offset,
+            body,
+            metadata,
+            created_at,
+        })
     }
 }
 
 impl RealmValue {
     pub fn encode(&self) -> Vec<u8> {
-        serialize(self).expect("serialize realm value")
+        let metadata_len = self.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let mut buf = Vec::with_capacity(34 + self.body.len() + metadata_len);
+        buf.extend_from_slice(&REALM_VALUE_V2_MARKER);
+        buf.extend_from_slice(&self.area_offset.to_le_bytes());
+        buf.extend_from_slice(&self.resource_offset.to_le_bytes());
+        buf.extend_from_slice(&self.created_at.to_le_bytes());
+        buf.extend_from_slice(&(self.body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(
+            &self
+                .metadata
+                .as_ref()
+                .map(|m| m.len() as u32)
+                .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                .to_le_bytes(),
+        );
+        buf.extend_from_slice(&self.body);
+        if let Some(metadata) = &self.metadata {
+            buf.extend_from_slice(metadata);
+        }
+        buf
     }
 
     pub fn decode(bytes: &[u8]) -> Self {
-        deserialize(bytes).expect("deserialize realm value")
+        if bytes.starts_with(&REALM_VALUE_V2_MARKER) {
+            return Self::decode_v2(bytes).expect("deserialize compact realm value");
+        }
+
+        let legacy: LegacyRealmValue = deserialize(bytes).expect("deserialize legacy realm value");
+        Self {
+            area_offset: legacy.area_offset,
+            resource_offset: legacy.resource_offset,
+            body: legacy.body,
+            metadata: legacy.metadata,
+            created_at: legacy.created_at,
+        }
+    }
+
+    fn decode_v2(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() < 34 {
+            return Err("decode realm value: header too short".to_string());
+        }
+
+        let area_offset = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
+        let resource_offset = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
+        let created_at = u64::from_le_bytes(bytes[18..26].try_into().unwrap());
+        let body_len = u32::from_le_bytes(bytes[26..30].try_into().unwrap()) as usize;
+        let metadata_len_raw = u32::from_le_bytes(bytes[30..34].try_into().unwrap());
+        let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
+            None
+        } else {
+            Some(metadata_len_raw as usize)
+        };
+
+        let mut offset = 34;
+        if bytes.len() < offset + body_len {
+            return Err("decode realm value: truncated body".to_string());
+        }
+        let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
+        offset += body_len;
+
+        let metadata = if let Some(metadata_len) = metadata_len {
+            if bytes.len() < offset + metadata_len {
+                return Err("decode realm value: truncated metadata".to_string());
+            }
+            Some(Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            area_offset,
+            resource_offset,
+            body,
+            metadata,
+            created_at,
+        })
     }
 }
 
@@ -445,6 +703,31 @@ mod tests {
     }
 
     #[test]
+    fn should_decode_legacy_resource_value() {
+        // Arrange
+        let encoded = serialize(&LegacyResourceValue {
+            resource_offset: 42,
+            body: Bytes::from("test"),
+            metadata: Some(Bytes::from("meta")),
+            created_at: 1234567890,
+            area_offset: Some(10),
+            realm_offset: Some(5),
+        })
+        .expect("serialize legacy resource value");
+
+        // Act
+        let decoded = ResourceValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.resource_offset, 42);
+        assert_eq!(decoded.body, Bytes::from("test"));
+        assert_eq!(decoded.metadata, Some(Bytes::from("meta")));
+        assert_eq!(decoded.created_at, 1234567890);
+        assert_eq!(decoded.area_offset, Some(10));
+        assert_eq!(decoded.realm_offset, Some(5));
+    }
+
+    #[test]
     fn should_roundtrip_staging_value_with_metadata() {
         // Arrange
         let event = EventPayload {
@@ -476,5 +759,99 @@ mod tests {
         // Assert
         assert_eq!(decoded.body, event.body);
         assert_eq!(decoded.metadata, None);
+    }
+
+    #[test]
+    fn should_roundtrip_compact_area_value() {
+        // Arrange
+        let value = AreaValue {
+            resource_offset: 42,
+            body: Bytes::from("body"),
+            metadata: Some(Bytes::from("meta")),
+            created_at: 123,
+        };
+
+        // Act
+        let encoded = value.encode();
+        let decoded = AreaValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.resource_offset, value.resource_offset);
+        assert_eq!(decoded.body, value.body);
+        assert_eq!(decoded.metadata, value.metadata);
+        assert_eq!(decoded.created_at, value.created_at);
+    }
+
+    #[test]
+    fn should_decode_legacy_area_value() {
+        // Arrange
+        let encoded = serialize(&LegacyAreaValue {
+            realm: "realm".to_string(),
+            area: "area".to_string(),
+            resource: "resource".to_string(),
+            resource_offset: 7,
+            body: Bytes::from("body"),
+            metadata: Some(Bytes::from("meta")),
+            created_at: 321,
+        })
+        .expect("serialize legacy area value");
+
+        // Act
+        let decoded = AreaValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.resource_offset, 7);
+        assert_eq!(decoded.body, Bytes::from("body"));
+        assert_eq!(decoded.metadata, Some(Bytes::from("meta")));
+        assert_eq!(decoded.created_at, 321);
+    }
+
+    #[test]
+    fn should_roundtrip_compact_realm_value() {
+        // Arrange
+        let value = RealmValue {
+            area_offset: 11,
+            resource_offset: 42,
+            body: Bytes::from("body"),
+            metadata: Some(Bytes::from("meta")),
+            created_at: 123,
+        };
+
+        // Act
+        let encoded = value.encode();
+        let decoded = RealmValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.area_offset, value.area_offset);
+        assert_eq!(decoded.resource_offset, value.resource_offset);
+        assert_eq!(decoded.body, value.body);
+        assert_eq!(decoded.metadata, value.metadata);
+        assert_eq!(decoded.created_at, value.created_at);
+    }
+
+    #[test]
+    fn should_decode_legacy_realm_value() {
+        // Arrange
+        let encoded = serialize(&LegacyRealmValue {
+            realm: "realm".to_string(),
+            area: "area".to_string(),
+            area_offset: 11,
+            resource: "resource".to_string(),
+            resource_offset: 7,
+            body: Bytes::from("body"),
+            metadata: Some(Bytes::from("meta")),
+            created_at: 321,
+        })
+        .expect("serialize legacy realm value");
+
+        // Act
+        let decoded = RealmValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.area_offset, 11);
+        assert_eq!(decoded.resource_offset, 7);
+        assert_eq!(decoded.body, Bytes::from("body"));
+        assert_eq!(decoded.metadata, Some(Bytes::from("meta")));
+        assert_eq!(decoded.created_at, 321);
     }
 }

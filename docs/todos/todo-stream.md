@@ -185,3 +185,14 @@ Current gaps to keep explicit:
 - Use this sentence in broader docs: `Stream is Fitz's durable append and replay domain. Clients resume from offsets they persist themselves; Fitz does not store broker-side consumer cursors.`
 - Use this sentence when comparing Notice and Stream: `Notice is live-only fanout. Stream is the recovery surface.`
 - Use this sentence when describing commit modes: `Committed stream data survives according to the selected write mode; Sync and Buffered are different durability contracts and must not be described as equivalent.`
+
+## K. Storage Redesign Research Todo
+
+Any attempt to reduce Stream's current triple-write event body storage must stay in research until it proves that the client-visible replay contract does not regress.
+
+- Add separate benchmark coverage for exact resource replay, wildcard area replay, and wildcard realm replay. The current Tier 3 read row exercises a concrete route and is not enough to justify deduplicating the higher-scope covering indexes.
+- Capture a baseline for commit throughput, publish-fanout throughput, exact-resource read throughput, area wildcard read throughput, realm wildcard read throughput, and approximate bytes written per committed event before changing the storage shape.
+- Define candidate storage layouts that keep one canonical durable event body while preserving enough locator data for area and realm replay to recover the right committed record deterministically.
+- Reject any design that turns wildcard replay into an unmeasured per-row lookup cliff. If area or realm replay requires indirection, prove the batched hydration cost with benchmarks before shipping it.
+- Preserve the current ordering and visibility contract: resource offsets remain exact-history offsets, area and realm replay remain commit-ordered and watermark-gated, and reads past the committed boundary still return empty success.
+- Require either backward-compatible decode or an explicit migration plan for any on-disk row-shape change. Storage compaction is not allowed to strand existing committed history.
