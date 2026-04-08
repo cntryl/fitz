@@ -40,6 +40,14 @@ struct AppendSession {
 pub type SessionId = u64;
 type SequenceGuardKey = (u64, String, String, String);
 type SequenceGuard = Arc<Mutex<()>>;
+type RealmSequenceStateKey = (u64, String);
+type RealmSequenceStateHandle = Arc<Mutex<RealmSequenceState>>;
+
+#[derive(Default)]
+struct RealmSequenceState {
+    next_realm_offset: Option<u64>,
+    next_area_offsets: HashMap<String, u64>,
+}
 
 #[derive(Debug, Clone)]
 pub struct BatchLimits {
@@ -125,6 +133,7 @@ pub struct StreamStore {
     ttl: StreamTTL,
     next_session_id: std::sync::atomic::AtomicU64,
     sequencing_guards: Arc<Mutex<HashMap<SequenceGuardKey, SequenceGuard>>>,
+    realm_sequence_states: Arc<Mutex<HashMap<RealmSequenceStateKey, RealmSequenceStateHandle>>>,
 }
 
 impl StreamStore {
@@ -144,6 +153,7 @@ impl StreamStore {
             ttl,
             next_session_id: std::sync::atomic::AtomicU64::new(1),
             sequencing_guards: Arc::new(Mutex::new(HashMap::new())),
+            realm_sequence_states: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -172,6 +182,20 @@ impl StreamStore {
                 let guard = Arc::new(Mutex::new(()));
                 entry.insert(guard.clone());
                 guard
+            }
+        }
+    }
+
+    fn realm_sequence_state(&self, family: u64, realm: &str) -> RealmSequenceStateHandle {
+        let mut states = self.realm_sequence_states.lock();
+        let key = (family, realm.to_string());
+
+        match states.entry(key) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let state = Arc::new(Mutex::new(RealmSequenceState::default()));
+                entry.insert(state.clone());
+                state
             }
         }
     }
@@ -460,10 +484,26 @@ impl StreamStore {
             return Err("ERR_CONCURRENCY_CONFLICT".to_string());
         }
 
-        let (area_next_offset, _persist_area_counter) =
-            self.load_area_next_offset_snapshot(family, realm, area)?;
-        let (realm_next_offset, _persist_realm_counter) =
-            self.load_realm_next_offset_snapshot(family, realm)?;
+        let realm_sequence_state = self.realm_sequence_state(family, realm);
+        let mut realm_sequence_state = realm_sequence_state.lock();
+        let area_next_offset = match realm_sequence_state.next_area_offsets.get(area).copied() {
+            Some(next_offset) => next_offset,
+            None => {
+                let (next_offset, _) = self.load_area_next_offset_snapshot(family, realm, area)?;
+                realm_sequence_state
+                    .next_area_offsets
+                    .insert(area.to_string(), next_offset);
+                next_offset
+            }
+        };
+        let realm_next_offset = match realm_sequence_state.next_realm_offset {
+            Some(next_offset) => next_offset,
+            None => {
+                let (next_offset, _) = self.load_realm_next_offset_snapshot(family, realm)?;
+                realm_sequence_state.next_realm_offset = Some(next_offset);
+                next_offset
+            }
+        };
 
         let created_at = Self::now_epoch_ms();
         let batch_size = events.len();
@@ -591,6 +631,11 @@ impl StreamStore {
         };
         txn.commit(write_options)
             .map_err(|e| format!("midge commit error: {:?}", e))?;
+
+        realm_sequence_state
+            .next_area_offsets
+            .insert(area.to_string(), last_area_offset.saturating_add(1));
+        realm_sequence_state.next_realm_offset = Some(last_realm_offset.saturating_add(1));
 
         Ok(CommitResponse {
             first_resource_offset,
@@ -1557,7 +1602,15 @@ impl StreamStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use crate::testkit::create_test_engine_with_cfs;
+
+    fn single_event(body: &'static [u8]) -> Vec<EventPayload> {
+        vec![EventPayload {
+            body: Bytes::from_static(body),
+            metadata: None,
+        }]
+    }
 
     #[test]
     fn should_reuse_sequence_guard_given_same_resource() {
@@ -1627,5 +1680,85 @@ mod tests {
                 .expect("read realm watermark"),
             10
         );
+    }
+
+    #[test]
+    fn should_allocate_sequential_offsets_given_same_process_commits() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let first_events = single_event(b"first");
+        let second_events = single_event(b"second");
+
+        // Act
+        let first = store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("first commit");
+        let second = store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "audits",
+                expected_resource_next_offset: 0,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit");
+
+        // Assert
+        assert_eq!(first.first_area_offset, 0);
+        assert_eq!(first.first_realm_offset, 0);
+        assert_eq!(second.first_area_offset, 1);
+        assert_eq!(second.first_realm_offset, 1);
+    }
+
+    #[test]
+    fn should_continue_sequential_offsets_given_recreated_store() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        let first_store = StreamStore::new(db.clone());
+        let first_events = single_event(b"first");
+        let second_events = single_event(b"second");
+        first_store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("seed commit");
+        let second_store = StreamStore::new(db);
+
+        // Act
+        let second = second_store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "audits",
+                expected_resource_next_offset: 0,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit");
+
+        // Assert
+        assert_eq!(second.first_area_offset, 1);
+        assert_eq!(second.first_realm_offset, 1);
     }
 }
