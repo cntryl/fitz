@@ -513,8 +513,8 @@ impl ScheduleStore {
             }
         }
 
-        txn.put(due_key.clone(), DUE_INDEX_VALUE.to_vec(), None)
-            .map_err(|e| format!("put due index failed: {:?}", e))?;
+        // The durable definition row is authoritative. Live actors use their in-memory
+        // ready heap and `load_all()` rebuilds the due index on restart.
 
         self.commit_or_inject(txn, write_options)?;
         Ok(due_key)
@@ -545,7 +545,6 @@ impl ScheduleStore {
                 &item.cron,
                 &item.payload,
             )?;
-            let due_key = Self::encode_due_key(item.next_fire_ms, &item.route);
 
             if let Some(previous_fire_ms) = item.previous_fire_ms {
                 if previous_fire_ms != item.next_fire_ms {
@@ -553,9 +552,6 @@ impl ScheduleStore {
                         .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
                 }
             }
-
-            txn.put(due_key, DUE_INDEX_VALUE.to_vec(), None)
-                .map_err(|e| format!("put due index failed: {:?}", e))?;
         }
 
         self.commit_or_inject(txn, write_options)
@@ -584,16 +580,12 @@ impl ScheduleStore {
                 item.last_fire_ms,
                 item.executions_total,
             )?;
-            let due_key = Self::encode_due_key(item.next_fire_ms, item.route);
             let pending_fire_key = Self::encode_pending_fire_key(item.previous_fire_ms, item.route);
 
             if item.previous_fire_ms != item.next_fire_ms {
                 txn.delete(Self::encode_due_key(item.previous_fire_ms, item.route))
                     .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
             }
-
-            txn.put(due_key, DUE_INDEX_VALUE.to_vec(), None)
-                .map_err(|e| format!("put due index failed: {:?}", e))?;
             txn.put(
                 pending_fire_key,
                 Self::encode_pending_fire_value(item.payload, item.claimed_at_ms),
@@ -1025,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn should_persist_definition_with_due_index_for_inserted_schedule() {
+    fn should_persist_definition_without_due_index_for_inserted_schedule() {
         // Arrange
         let (store, db) = make_store();
         let route = "schedule://acme/jobs/backup/run";
@@ -1082,6 +1074,52 @@ mod tests {
             1,
             "definition metadata row should be persisted"
         );
+        assert!(
+            read_raw_value(&db, 1, &expected_due_key).is_none(),
+            "live insert should not persist the derived due index"
+        );
+    }
+
+    #[test]
+    fn should_rebuild_due_index_from_inserted_schedule_definitions_on_load() {
+        // Arrange
+        let (store, db) = make_store();
+        let route = "schedule://acme/jobs/rebuild/run";
+        let payload = Bytes::from_static(b"payload");
+        let next_fire_ms = 1_700_000_001_500_u64;
+        let expected_due_key = ScheduleStore::encode_due_key(next_fire_ms, route);
+
+        store
+            .insert(
+                1,
+                ScheduleInsert {
+                    route,
+                    cron: "*/5 * * * *",
+                    payload: &payload,
+                    next_fire_ms,
+                    previous_fire_ms: None,
+                    last_fire_ms: None,
+                    executions_total: 0,
+                },
+                WriteOptions::buffered(),
+            )
+            .expect("insert schedule");
+        assert!(
+            read_raw_value(&db, 1, &expected_due_key).is_none(),
+            "live insert should not persist the derived due index"
+        );
+
+        // Act
+        let loaded = store
+            .load_all(1, WriteOptions::buffered())
+            .expect("load schedules");
+
+        // Assert
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].route, route);
+        assert_eq!(loaded[0].cron, "*/5 * * * *");
+        assert_eq!(loaded[0].payload, payload);
+        assert_eq!(loaded[0].next_fire_ms, next_fire_ms);
         assert_eq!(
             read_raw_value(&db, 1, &expected_due_key),
             Some(DUE_INDEX_VALUE.to_vec())
@@ -1328,8 +1366,8 @@ mod tests {
             "original due key should be removed after claim"
         );
         assert!(
-            read_raw_value(&db, 1, &ScheduleStore::encode_due_key(next_fire_ms, route)).is_some(),
-            "next due key should be persisted after claim"
+            read_raw_value(&db, 1, &ScheduleStore::encode_due_key(next_fire_ms, route)).is_none(),
+            "live claim should not persist the next due key"
         );
         assert!(
             read_raw_value(

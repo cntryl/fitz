@@ -462,7 +462,7 @@ dependencies = [
 [[package]]
 name = "cntryl-midge"
 version = "0.1.0"
-source = "git+https://github.com/cntryl/midge?branch=main#bab152c522a7dfae4a7fecf676a5f0e8b61cf453"
+source = "git+https://github.com/cntryl/midge?branch=main#e926d9da6c857a6688f689976f55d4467c522258"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -514,7 +514,8 @@ dependencies = [
 [[package]]
 name = "cntryl-stress"
 version = "0.2.1"
-source = "git+https://github.com/cntryl/stress?branch=main#ef21e4caed840d1eba7e54ff7d694b6f83d829c0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b4522632458df80698c143c8ab2995584572e430da7a4bd4341b9b5e8a32cfa"
 dependencies = [
  "anyhow",
  "clap 4.6.0",
@@ -527,7 +528,8 @@ dependencies = [
 [[package]]
 name = "cntryl-stress-macros"
 version = "0.2.0"
-source = "git+https://github.com/cntryl/stress?branch=main#ef21e4caed840d1eba7e54ff7d694b6f83d829c0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3710196ad4f436f4330f999e5d8893fbf0c7ef7fa29473f35f493227bba20fa"
 dependencies = [
  "proc-macro2",
  "quote",

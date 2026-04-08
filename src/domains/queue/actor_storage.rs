@@ -257,7 +257,6 @@ impl QueueActor {
             let start = Instant::now();
             let body = self.load_body_from_store(id)?;
             Self::observe_elapsed_us(obs::METRIC_QUEUE_RECEIVE_HYDRATE_LATENCY, start);
-            self.cache_body(id, body.clone());
             return Ok((body, attempts));
         }
 
@@ -269,7 +268,6 @@ impl QueueActor {
             .clone()
             .ok_or_else(|| format!("Message {} body missing after hydration", id))?;
         self.cache_record(id, record.metadata_only_from(), layout);
-        self.cache_body(id, body.clone());
         Ok((body, record.attempts))
     }
 

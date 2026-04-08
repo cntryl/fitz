@@ -2071,6 +2071,7 @@ impl QueueActor {
                 Some(id) => id,
                 None => break,
             };
+            self.evict_cached_body(id);
 
             // Generate inflight token
             let token = Self::generate_token();
@@ -3284,6 +3285,89 @@ pub mod tests {
         // Assert
         assert_eq!(actor.body_cache.len(), 0);
         assert_eq!(actor.body_cache_bytes, 0);
+    }
+
+    #[test]
+    fn should_preserve_ready_body_cache_when_receiving_uncached_message() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-receive-cache-preserve");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let mut ids = Vec::with_capacity(QueueActor::BODY_CACHE_LIMIT + 1);
+
+        for i in 0..(QueueActor::BODY_CACHE_LIMIT + 1) {
+            let body = Bytes::from(format!("message-{}", i));
+            let response = actor.handle_send(body, None);
+            let id = match response {
+                QueueResponse::Sent { id } => id,
+                _ => panic!("Expected Sent response"),
+            };
+            ids.push(id);
+        }
+
+        let first_id = ids[0];
+        let second_id = ids[1];
+        assert!(!actor.body_cache.contains_key(&first_id));
+        assert!(actor.body_cache.contains_key(&second_id));
+        assert_eq!(actor.body_cache.len(), QueueActor::BODY_CACHE_LIMIT);
+
+        // Act
+        let response = actor.handle_receive(30, Some(1));
+
+        // Assert
+        match response {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].id, first_id);
+            }
+            _ => panic!("Expected Received response"),
+        }
+        assert!(actor.body_cache.contains_key(&second_id));
+        assert_eq!(actor.body_cache.len(), QueueActor::BODY_CACHE_LIMIT);
+    }
+
+    #[test]
+    fn should_evict_reserved_message_body_from_cache_on_receive() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-receive-cache-evict");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let message_id = match actor.handle_send(Bytes::from("cached message"), None) {
+            QueueResponse::Sent { id } => id,
+            _ => panic!("Expected Sent response"),
+        };
+        assert!(actor.body_cache.contains_key(&message_id));
+
+        // Act
+        let response = actor.handle_receive(30, Some(1));
+
+        // Assert
+        match response {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].id, message_id);
+            }
+            _ => panic!("Expected Received response"),
+        }
+        assert!(!actor.body_cache.contains_key(&message_id));
     }
 
     #[test]

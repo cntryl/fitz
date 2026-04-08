@@ -1,10 +1,10 @@
 use bytes::Bytes;
 use criterion::{
-    black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput,
+    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
 use fitz::benchkit::{create_bench_schedule_sink, register_session_counting_sink, route_frame};
 use fitz::boot::domains::ScheduleDomainSink;
-use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
+use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::payload_codec::PayloadEncoder;
@@ -12,17 +12,44 @@ use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::runtime::{DomainPublishEvent, Router};
 use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[path = "criterion_config.rs"]
 mod criterion_config;
 
-fn create_test_actor() -> ScheduleActor {
+const FIXED_BENCH_EPOCH_MS: u64 = 1_775_200_000_000;
+
+struct FixedClock {
+    now_instant: Instant,
+    now_epoch_ms: u64,
+}
+
+impl FixedClock {
+    fn new(now_epoch_ms: u64) -> Self {
+        Self {
+            now_instant: Instant::now(),
+            now_epoch_ms,
+        }
+    }
+}
+
+impl Clock for FixedClock {
+    fn now_instant(&self) -> Instant {
+        self.now_instant
+    }
+
+    fn now_epoch_ms(&self) -> u64 {
+        self.now_epoch_ms
+    }
+}
+
+fn create_test_actor(clock: Arc<dyn Clock>) -> ScheduleActor {
     let store = create_test_engine_with_cfs(vec![1, 2, 3, 4, 5]);
-    ScheduleActor::new(
+    ScheduleActor::new_with_clock(
         RouteFamily::new(1),
         store,
         cntryl_midge::WriteOptions::buffered(),
+        clock,
     )
 }
 
@@ -67,9 +94,9 @@ fn populate_actor(
     }
 }
 
-fn create_populated_actor(count: usize) -> ScheduleActor {
+fn create_populated_actor(count: usize, clock: Arc<dyn Clock>) -> ScheduleActor {
     let (routes, crons, payloads) = precompute_data(count);
-    let mut actor = create_test_actor();
+    let mut actor = create_test_actor(clock);
     populate_actor(&mut actor, &routes, &crons, &payloads, count);
     actor
 }
@@ -81,22 +108,6 @@ fn claim_due_deliveries(actor: &mut ScheduleActor, ready_count: usize) -> Vec<(u
         .into_iter()
         .map(|claim| (claim.fire_ms, claim.route))
         .collect()
-}
-
-fn ack_all_pending_claims(actor: &mut ScheduleActor) {
-    let deliveries: Vec<_> = actor
-        .bench_pending_claimed_occurrences_for_publish()
-        .into_iter()
-        .map(|claim| (claim.fire_ms, claim.route))
-        .collect();
-
-    if deliveries.is_empty() {
-        return;
-    }
-
-    actor
-        .bench_ack_pending_fire_claims(&deliveries)
-        .expect("ack pending fire claims");
 }
 
 fn encode_schedule_subscribe(pattern: &str) -> Bytes {
@@ -137,6 +148,7 @@ fn create_publish_case(subscriber_count: usize) -> (Arc<ScheduleDomainSink>, Dom
 }
 
 fn bench_claim_due_persistence(c: &mut Criterion) {
+    let bench_clock: Arc<dyn Clock> = Arc::new(FixedClock::new(FIXED_BENCH_EPOCH_MS));
     let mut group = c.benchmark_group("subsystem_schedule_fire_claim");
     group.sampling_mode(SamplingMode::Flat);
 
@@ -146,20 +158,18 @@ fn bench_claim_due_persistence(c: &mut Criterion) {
         for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
             group.throughput(Throughput::Elements(ready_count as u64));
             group.bench_function(format!("claim_due_{}_{}_mixed_crons", label, count), |b| {
-                let mut actor = create_populated_actor(count);
-                b.iter_custom(|iters| {
-                    let mut total = Duration::ZERO;
-
-                    for _ in 0..iters {
+                let bench_clock = bench_clock.clone();
+                b.iter_batched_ref(
+                    || {
+                        let mut actor = create_populated_actor(count, bench_clock.clone());
                         actor.bench_prepare_scan(ready_count);
-                        let start = Instant::now();
+                        actor
+                    },
+                    |actor| {
                         black_box(actor.bench_claim_due_fires());
-                        total += start.elapsed();
-                        ack_all_pending_claims(&mut actor);
-                    }
-
-                    total
-                })
+                    },
+                    BatchSize::SmallInput,
+                )
             });
         }
     }
@@ -168,6 +178,7 @@ fn bench_claim_due_persistence(c: &mut Criterion) {
 }
 
 fn bench_ack_persistence(c: &mut Criterion) {
+    let bench_clock: Arc<dyn Clock> = Arc::new(FixedClock::new(FIXED_BENCH_EPOCH_MS));
     let mut group = c.benchmark_group("subsystem_schedule_fire_ack");
     group.sampling_mode(SamplingMode::Flat);
 
@@ -177,23 +188,23 @@ fn bench_ack_persistence(c: &mut Criterion) {
         for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
             group.throughput(Throughput::Elements(ready_count as u64));
             group.bench_function(format!("ack_claims_{}_{}_mixed_crons", label, count), |b| {
-                let mut actor = create_populated_actor(count);
-                b.iter_custom(|iters| {
-                    let mut total = Duration::ZERO;
-
-                    for _ in 0..iters {
+                let bench_clock = bench_clock.clone();
+                b.iter_batched_ref(
+                    || {
+                        let mut actor = create_populated_actor(count, bench_clock.clone());
                         let deliveries = claim_due_deliveries(&mut actor, ready_count);
-                        let start = Instant::now();
+                        (actor, deliveries)
+                    },
+                    |state| {
+                        let (actor, deliveries) = state;
                         black_box(
                             actor
                                 .bench_ack_pending_fire_claims(&deliveries)
                                 .expect("ack pending fire claims"),
                         );
-                        total += start.elapsed();
-                    }
-
-                    total
-                })
+                    },
+                    BatchSize::SmallInput,
+                )
             });
         }
     }
