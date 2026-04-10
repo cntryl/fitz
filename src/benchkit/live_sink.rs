@@ -165,11 +165,25 @@ pub fn create_bench_lease_sink(router: Arc<Router>) -> Arc<LeaseDomainSink> {
 }
 
 pub fn create_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDomainSink> {
-    Arc::new(StreamDomainSink::new(
-        create_bench_store(),
+    create_bench_stream_sink_with_layout(
         router,
-        crate::api::admin::read_model::AdminReadModel::new(),
-    ))
+        crate::domains::stream::StreamStorageLayout::default(),
+    )
+}
+
+pub fn create_bench_stream_sink_with_layout(
+    router: Arc<Router>,
+    stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+) -> Arc<StreamDomainSink> {
+    Arc::new(
+        StreamDomainSink::new_with_layout(
+            create_bench_store(),
+            router,
+            crate::api::admin::read_model::AdminReadModel::new(),
+            stream_storage_layout,
+        )
+        .expect("create bench stream sink"),
+    )
 }
 
 pub fn create_bench_rpc_sink(router: Arc<Router>) -> Arc<RpcDomainSink> {

@@ -30,7 +30,8 @@ fn make_actor_context(
         area.to_string(),
         resource.to_string(),
         store,
-    );
+    )
+    .expect("create stream actor");
     let ctx = Context::new(addr, router);
     (actor, ctx)
 }
@@ -48,6 +49,7 @@ fn make_actor_with_store(
         resource.to_string(),
         store,
     )
+    .expect("create stream actor with store")
 }
 
 fn make_session_with_write_access() -> SessionActor {

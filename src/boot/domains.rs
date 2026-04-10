@@ -83,6 +83,7 @@ pub fn setup(
     admin_read_model: &Arc<crate::api::admin::read_model::AdminReadModel>,
     queue_write_options: cntryl_midge::WriteOptions,
     rpc_request_timeout: Option<std::time::Duration>,
+    stream_storage_layout: crate::domains::stream::StreamStorageLayout,
 ) -> BootResult<DomainHandles> {
     let metrics = (*crate::boot::observability::metrics()).clone();
 
@@ -115,8 +116,13 @@ pub fn setup(
     tracing::info!("Registered Notice domain (handles notice://* across all route families)");
 
     let stream_sink = Arc::new(
-        StreamDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
-            .with_metrics(metrics.clone()),
+        StreamDomainSink::new_with_layout(
+            store.clone(),
+            router.clone(),
+            admin_read_model.clone(),
+            stream_storage_layout,
+        )?
+        .with_metrics(metrics.clone()),
     );
     router.register_domain_pattern("stream", stream_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Stream domain (handles stream://* across all route families)");
@@ -249,6 +255,7 @@ mod tests {
             &admin_read_model,
             cntryl_midge::WriteOptions::best_effort(),
             None,
+            crate::domains::stream::StreamStorageLayout::default(),
         );
 
         // Assert

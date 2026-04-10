@@ -53,12 +53,11 @@ impl StreamActor {
         area: String,
         resource: String,
         store: Arc<StreamStore>,
-    ) -> Self {
-        let next_resource_offset = store
-            .get_next_resource_offset(family_id.as_u64(), &realm, &area, &resource)
-            .unwrap_or(0);
+    ) -> Result<Self, String> {
+        let next_resource_offset =
+            store.get_next_resource_offset(family_id.as_u64(), &realm, &area, &resource)?;
 
-        Self {
+        Ok(Self {
             family_id,
             realm,
             area,
@@ -67,7 +66,7 @@ impl StreamActor {
             next_resource_offset,
             active_session: None,
             next_local_session_id: 1,
-        }
+        })
     }
 
     fn map_error(error: &str) -> StreamError {
@@ -343,5 +342,49 @@ impl Actor for StreamActor {
         };
 
         let _ = ctx.reply(response).ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domains::stream::storage::{
+        encode_stream_layout_marker_key, StreamLayoutMarkerValue,
+    };
+    use crate::domains::stream::store::StreamStorageLayout;
+    use crate::testkit::create_test_engine_with_cfs;
+
+    #[test]
+    fn should_return_error_given_layout_mismatch_during_actor_recovery() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        let mut txn = db
+            .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin write tx");
+        txn.put(
+            encode_stream_layout_marker_key(),
+            StreamLayoutMarkerValue::new(StreamStorageLayout::PromotionFrontier).encode(),
+            None,
+        )
+        .expect("write mismatched layout marker");
+        txn.commit(cntryl_midge::WriteOptions::sync())
+            .expect("commit mismatched layout marker");
+        let store = Arc::new(StreamStore::new(db));
+
+        // Act
+        let result = StreamActor::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "events".to_string(),
+            "orders".to_string(),
+            store,
+        );
+
+        // Assert
+        let error = match result {
+            Ok(_) => panic!("actor recovery should surface layout mismatch"),
+            Err(error) => error,
+        };
+        assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
     }
 }

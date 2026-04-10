@@ -509,11 +509,16 @@ pub fn build_stream_commit(session_id: u64, mode: u8) -> Vec<u8> {
 
 /// Build STREAM READ frame (msg_type 604)
 pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
+    build_stream_read_with_limit(route, start_offset, 1000)
+}
+
+/// Build STREAM READ frame (msg_type 604) with a caller-provided limit.
+pub fn build_stream_read_with_limit(route: &str, start_offset: u64, limit: u64) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(route.len() as u32);
     buf.put_slice(route.as_bytes());
     buf.put_u64(start_offset);
-    buf.put_u64(1000);
+    buf.put_u64(limit);
     buf.put_u8(0);
 
     let mut builder = TlvFrameBuilder::new();

@@ -59,4 +59,4 @@ pub use protocol::{
     StreamRecord,
 };
 pub use session::SessionActor;
-pub use store::StreamStore;
+pub use store::{StreamStorageLayout, StreamStore};

@@ -43,7 +43,13 @@ pub struct TestServer {
 impl TestServer {
     /// Start a test server with auth disabled (backward compatible)
     pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
-        Self::start_with_options(false, None, crate::boot::runtime::StorageMode::Memory).await
+        Self::start_with_options(
+            false,
+            None,
+            crate::boot::runtime::StorageMode::Memory,
+            crate::domains::stream::StreamStorageLayout::default(),
+        )
+        .await
     }
 
     pub async fn start_with_rpc_timeout(
@@ -53,6 +59,7 @@ impl TestServer {
             false,
             Some(rpc_request_timeout),
             crate::boot::runtime::StorageMode::Memory,
+            crate::domains::stream::StreamStorageLayout::default(),
         )
         .await
     }
@@ -63,6 +70,19 @@ impl TestServer {
             auth_required,
             None,
             crate::boot::runtime::StorageMode::Memory,
+            crate::domains::stream::StreamStorageLayout::default(),
+        )
+        .await
+    }
+
+    pub async fn start_with_stream_storage_layout(
+        stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_options(
+            false,
+            None,
+            crate::boot::runtime::StorageMode::Memory,
+            stream_storage_layout,
         )
         .await
     }
@@ -76,6 +96,22 @@ impl TestServer {
             crate::boot::runtime::StorageMode::LocalDisk {
                 db_path: db_path.into(),
             },
+            crate::domains::stream::StreamStorageLayout::default(),
+        )
+        .await
+    }
+
+    pub async fn start_with_local_storage_and_stream_layout(
+        db_path: impl Into<String>,
+        stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_options(
+            false,
+            None,
+            crate::boot::runtime::StorageMode::LocalDisk {
+                db_path: db_path.into(),
+            },
+            stream_storage_layout,
         )
         .await
     }
@@ -84,6 +120,7 @@ impl TestServer {
         auth_required: bool,
         rpc_request_timeout: Option<Duration>,
         storage_mode: crate::boot::runtime::StorageMode,
+        stream_storage_layout: crate::domains::stream::StreamStorageLayout,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let permit = test_server_semaphore()
             .clone()
@@ -116,6 +153,7 @@ impl TestServer {
             tcp_port: tcp_addr.port(),
             http_port: ws_addr.port(), // Use discovered WS port
             storage_mode,
+            stream_storage_layout,
             auth_required,
             auth_config: if auth_required {
                 crate::auth::AuthConfig::hmac("test-secret-key", "fitz")
@@ -152,6 +190,7 @@ impl TestServer {
             &runtime.admin_read_model(),
             queue_write_options,
             rpc_request_timeout,
+            boot_config.stream_storage_layout,
         )?;
         runtime.attach_domains(Arc::new(domains));
 

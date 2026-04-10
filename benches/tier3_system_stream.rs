@@ -10,8 +10,8 @@ use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, build_stream_commit, build_stream_last,
-    build_stream_read, build_stream_subscribe, create_bench_stream_sink, extract_single_tlv_field,
-    count_stream_read_records_from_payload, parse_stream_session_id,
+    build_stream_read, build_stream_subscribe, count_stream_read_records_from_payload,
+    create_bench_stream_sink, extract_single_tlv_field, parse_stream_session_id,
     register_session_counting_sink, register_session_queue_sink, route_frame, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
@@ -21,6 +21,7 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 const CLIENT_SESSION_ID: u64 = 1;
+const STREAM_SYNC_COMMIT_MODE: u8 = 1;
 
 struct StreamBenchContext {
     router: Arc<Router>,
@@ -109,7 +110,7 @@ fn seed_committed_stream_route(
         let _ = request(context, route, append_msg_type, append_payload.clone());
     }
 
-    let commit_frame = build_stream_commit(session_id, 0);
+    let commit_frame = build_stream_commit(session_id, STREAM_SYNC_COMMIT_MODE);
     let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
     let _ = request(context, route, commit_msg_type, commit_payload);
 }
@@ -124,7 +125,10 @@ fn prepare_validated_read(
     let response = request(context, route, read_msg_type, read_payload.clone());
     let count = count_stream_read_records_from_payload(response.as_ref())
         .expect("stream read response count");
-    assert_eq!(count, expected_count, "unexpected stream read count for {route}");
+    assert_eq!(
+        count, expected_count,
+        "unexpected stream read count for {route}"
+    );
     (read_msg_type, read_payload)
 }
 
@@ -160,7 +164,7 @@ fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
     for _ in 0..100 {
         let _ = request(&context, route, append_msg_type, append_payload.clone());
     }
-    let commit_frame = build_stream_commit(session_id, 0);
+    let commit_frame = build_stream_commit(session_id, STREAM_SYNC_COMMIT_MODE);
     let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
     let _ = request(&context, route, commit_msg_type, commit_payload);
 
@@ -181,8 +185,18 @@ fn should_complete_area_wildcard_read_throughput(ctx: &mut StressContext) {
     ctx.tag("batch_size", "100_events_scanned");
 
     let context = setup_stream_sink();
-    seed_committed_stream_route(&context, "stream://bench/area/orders", 50, b"area read event");
-    seed_committed_stream_route(&context, "stream://bench/area/audits", 50, b"area read event");
+    seed_committed_stream_route(
+        &context,
+        "stream://bench/area/orders",
+        50,
+        b"area read event",
+    );
+    seed_committed_stream_route(
+        &context,
+        "stream://bench/area/audits",
+        50,
+        b"area read event",
+    );
 
     let read_route = "stream://bench/area/*";
     let (read_msg_type, read_payload) = prepare_validated_read(&context, read_route, 100);

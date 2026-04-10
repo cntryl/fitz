@@ -1,8 +1,9 @@
 use bincode::{deserialize, serialize};
 use bytes::Bytes;
+use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 use serde::{Deserialize, Serialize};
 
-use super::store::EventPayload;
+use super::store::{EventPayload, StreamStorageLayout};
 
 /// Storage key prefixes for stream data
 #[derive(Debug, Clone, Copy)]
@@ -33,6 +34,14 @@ pub enum KeyPrefix {
     AreaLocator = 0x0C,
     /// Prototype realm locator row for storage redesign research: [RF][realm][realm_offset]
     RealmLocator = 0x0D,
+    /// Stream storage layout marker for the route family
+    LayoutMarker = 0x0E,
+    /// Promotion-frontier area page row: [realm][area][page_start_area_offset]
+    CompactAreaPage = 0xE4,
+    /// Promotion-frontier compressed compact realm page row: [realm][page_start_realm_offset]
+    CompressedCompactRealmPage = 0xE8,
+    /// Promotion-frontier exact-resource mini-page row: [realm][area][resource][page_start_resource_offset]
+    CompactResourcePage = 0xEA,
 }
 
 /// Encodes a resource stream key
@@ -177,6 +186,67 @@ pub fn encode_realm_locator_key(realm: &str, realm_offset: u64) -> Vec<u8> {
     key
 }
 
+/// Encodes a promotion-frontier compact area page key.
+pub fn encode_compact_area_page_key(
+    realm: &str,
+    area: &str,
+    area_page_start_offset: u64,
+) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::CompactAreaPage as u8];
+    key.extend_from_slice(realm.as_bytes());
+    key.push(0);
+    key.extend_from_slice(area.as_bytes());
+    key.push(0);
+    key.extend_from_slice(&area_page_start_offset.to_be_bytes());
+    key
+}
+
+/// Encodes a promotion-frontier compressed compact realm page key.
+pub fn encode_compressed_compact_realm_page_key(
+    realm: &str,
+    page_start_realm_offset: u64,
+) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::CompressedCompactRealmPage as u8];
+    key.extend_from_slice(realm.as_bytes());
+    key.push(0);
+    key.extend_from_slice(&page_start_realm_offset.to_be_bytes());
+    key
+}
+
+/// Encodes a promotion-frontier compact resource mini-page key.
+pub fn encode_compact_resource_page_key(
+    realm: &str,
+    area: &str,
+    resource: &str,
+    page_start_resource_offset: u64,
+) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::CompactResourcePage as u8];
+    key.extend_from_slice(realm.as_bytes());
+    key.push(0);
+    key.extend_from_slice(area.as_bytes());
+    key.push(0);
+    key.extend_from_slice(resource.as_bytes());
+    key.push(0);
+    key.extend_from_slice(&page_start_resource_offset.to_be_bytes());
+    key
+}
+
+/// Decode resource_offset from compact resource page key.
+pub fn decode_resource_offset_from_key(key: &[u8]) -> Result<u64, String> {
+    if key.len() < 8 {
+        return Err("key too short".to_string());
+    }
+    let offset_bytes = &key[key.len() - 8..];
+    let mut arr = [0u8; 8];
+    arr.copy_from_slice(offset_bytes);
+    Ok(u64::from_be_bytes(arr))
+}
+
+/// Encodes the per-family stream storage layout marker key.
+pub fn encode_stream_layout_marker_key() -> Vec<u8> {
+    vec![KeyPrefix::LayoutMarker as u8]
+}
+
 /// Value stored in resource index (full record)
 ///
 /// `area_offset` and `realm_offset` are always written as `Some` at commit time.
@@ -214,7 +284,7 @@ pub struct AreaValue {
     pub created_at: u64,
 }
 
-/// Value stored in realm index (covering index with full event)
+/// Value stored in legacy realm index rows (covering index with full event)
 #[derive(Debug, Clone)]
 pub struct RealmValue {
     pub area_offset: u64,
@@ -222,6 +292,56 @@ pub struct RealmValue {
     pub body: Bytes,
     pub metadata: Option<Bytes>,
     pub created_at: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompactRealmPageRecord {
+    pub area_offset: u64,
+    pub resource_offset: u64,
+    pub body: Bytes,
+    pub metadata: Option<Bytes>,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompactRealmPageValue {
+    pub records: Vec<CompactRealmPageRecord>,
+}
+
+/// Promotion-frontier area wildcard page. Bodies stay local to the area plane.
+#[derive(Debug, Clone)]
+pub struct CompactAreaPageRecord {
+    pub resource_offset: u64,
+    pub body: Bytes,
+    pub metadata: Option<Bytes>,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompactAreaPageValue {
+    pub records: Vec<CompactAreaPageRecord>,
+}
+
+/// Promotion-frontier exact-resource mini-page. Exact replay keeps direct locality.
+#[derive(Debug, Clone)]
+pub struct CompactResourcePageRecord {
+    pub area_offset: u64,
+    pub realm_offset: u64,
+    pub body: Bytes,
+    pub metadata: Option<Bytes>,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompactResourcePageValue {
+    pub records: Vec<CompactResourcePageRecord>,
+}
+
+/// Promotion-frontier compressed realm page. Compression is storage-only and
+/// must not change the replay semantics represented by the underlying page.
+#[derive(Debug, Clone)]
+pub struct CompressedCompactRealmPageValue {
+    pub records: Vec<CompactRealmPageRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,12 +369,19 @@ struct LegacyRealmValue {
 
 const AREA_VALUE_V2_MARKER: [u8; 2] = [0, 0xA1];
 const REALM_VALUE_V2_MARKER: [u8; 2] = [0, 0xB1];
+const COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xB2];
 const RESOURCE_VALUE_V2_MARKER: [u8; 2] = [0, 0x91];
 const CANONICAL_RESOURCE_VALUE_V1_MARKER: [u8; 2] = [0, 0xC1];
 const AREA_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xC2];
 const REALM_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xC3];
+const STREAM_LAYOUT_MARKER_VALUE_V1_MARKER: [u8; 2] = [0, 0xD1];
+const COMPACT_AREA_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xE4];
+const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xE8];
+const COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xEA];
 const OPTIONAL_BYTES_ABSENT: u32 = u32::MAX;
 const OPTIONAL_OFFSET_ABSENT: u64 = u64::MAX;
+
+pub const REALM_PAGE_RECORD_LIMIT: usize = 64;
 
 /// Watermark value
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -310,6 +437,47 @@ pub struct RealmLocatorValue {
     pub area_offset: u64,
     pub stream_id: u64,
     pub resource_offset: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamLayoutMarkerValue {
+    pub layout: StreamStorageLayout,
+}
+
+impl StreamLayoutMarkerValue {
+    pub fn new(layout: StreamStorageLayout) -> Self {
+        Self { layout }
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        vec![
+            STREAM_LAYOUT_MARKER_VALUE_V1_MARKER[0],
+            STREAM_LAYOUT_MARKER_VALUE_V1_MARKER[1],
+            match self.layout {
+                StreamStorageLayout::LegacyCovering => 0,
+                StreamStorageLayout::PromotionFrontier => 1,
+            },
+        ]
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 3 || !bytes.starts_with(&STREAM_LAYOUT_MARKER_VALUE_V1_MARKER) {
+            return Err("decode stream layout marker: invalid encoding".to_string());
+        }
+
+        let layout = match bytes[2] {
+            0 => StreamStorageLayout::LegacyCovering,
+            1 => StreamStorageLayout::PromotionFrontier,
+            other => {
+                return Err(format!(
+                    "decode stream layout marker: unknown layout id {}",
+                    other
+                ))
+            }
+        };
+
+        Ok(Self { layout })
+    }
 }
 
 impl ResourceValue {
@@ -392,7 +560,9 @@ impl ResourceValue {
             if bytes.len() < offset + metadata_len {
                 return Err("decode resource value: truncated metadata".to_string());
             }
-            Some(Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]))
+            Some(Bytes::copy_from_slice(
+                &bytes[offset..offset + metadata_len],
+            ))
         } else {
             None
         };
@@ -403,8 +573,7 @@ impl ResourceValue {
             metadata,
             created_at,
             area_offset: (area_offset_raw != OPTIONAL_OFFSET_ABSENT).then_some(area_offset_raw),
-            realm_offset: (realm_offset_raw != OPTIONAL_OFFSET_ABSENT)
-                .then_some(realm_offset_raw),
+            realm_offset: (realm_offset_raw != OPTIONAL_OFFSET_ABSENT).then_some(realm_offset_raw),
         })
     }
 }
@@ -472,7 +641,9 @@ impl AreaValue {
             if bytes.len() < offset + metadata_len {
                 return Err("decode area value: truncated metadata".to_string());
             }
-            Some(Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]))
+            Some(Bytes::copy_from_slice(
+                &bytes[offset..offset + metadata_len],
+            ))
         } else {
             None
         };
@@ -487,6 +658,22 @@ impl AreaValue {
 }
 
 impl RealmValue {
+    pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.starts_with(&REALM_VALUE_V2_MARKER) {
+            return Self::decode_v2(bytes);
+        }
+
+        let legacy: LegacyRealmValue = deserialize(bytes)
+            .map_err(|error| format!("deserialize legacy realm value: {error}"))?;
+        Ok(Self {
+            area_offset: legacy.area_offset,
+            resource_offset: legacy.resource_offset,
+            body: legacy.body,
+            metadata: legacy.metadata,
+            created_at: legacy.created_at,
+        })
+    }
+
     pub fn encode(&self) -> Vec<u8> {
         let metadata_len = self.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
         let mut buf = Vec::with_capacity(34 + self.body.len() + metadata_len);
@@ -511,18 +698,7 @@ impl RealmValue {
     }
 
     pub fn decode(bytes: &[u8]) -> Self {
-        if bytes.starts_with(&REALM_VALUE_V2_MARKER) {
-            return Self::decode_v2(bytes).expect("deserialize compact realm value");
-        }
-
-        let legacy: LegacyRealmValue = deserialize(bytes).expect("deserialize legacy realm value");
-        Self {
-            area_offset: legacy.area_offset,
-            resource_offset: legacy.resource_offset,
-            body: legacy.body,
-            metadata: legacy.metadata,
-            created_at: legacy.created_at,
-        }
+        Self::try_decode(bytes).expect("deserialize realm value")
     }
 
     fn decode_v2(bytes: &[u8]) -> Result<Self, String> {
@@ -552,7 +728,9 @@ impl RealmValue {
             if bytes.len() < offset + metadata_len {
                 return Err("decode realm value: truncated metadata".to_string());
             }
-            Some(Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]))
+            Some(Bytes::copy_from_slice(
+                &bytes[offset..offset + metadata_len],
+            ))
         } else {
             None
         };
@@ -563,6 +741,389 @@ impl RealmValue {
             body,
             metadata,
             created_at,
+        })
+    }
+}
+
+impl CompactRealmPageValue {
+    pub fn is_encoded(bytes: &[u8]) -> bool {
+        bytes.starts_with(&COMPACT_REALM_PAGE_VALUE_V1_MARKER)
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut total_len = 6;
+        for record in &self.records {
+            total_len += 8 + 8 + 8 + 4 + 4 + record.body.len();
+            total_len += record
+                .metadata
+                .as_ref()
+                .map(|metadata| metadata.len())
+                .unwrap_or(0);
+        }
+
+        let mut bytes = Vec::with_capacity(total_len);
+        bytes.extend_from_slice(&COMPACT_REALM_PAGE_VALUE_V1_MARKER);
+        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+
+        for record in &self.records {
+            bytes.extend_from_slice(&record.area_offset.to_le_bytes());
+            bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
+            bytes.extend_from_slice(&record.created_at.to_le_bytes());
+            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(
+                &record
+                    .metadata
+                    .as_ref()
+                    .map(|metadata| metadata.len() as u32)
+                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .to_le_bytes(),
+            );
+            bytes.extend_from_slice(&record.body);
+            if let Some(metadata) = &record.metadata {
+                bytes.extend_from_slice(metadata);
+            }
+        }
+
+        bytes
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        Self::try_decode(bytes).expect("deserialize compact realm page value")
+    }
+
+    pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
+        if !Self::is_encoded(bytes) {
+            return Err("decode compact realm page value: missing marker".to_string());
+        }
+        if bytes.len() < 6 {
+            return Err("decode compact realm page value: header too short".to_string());
+        }
+
+        let mut offset = 2usize;
+        let record_count =
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+
+        let mut records = Vec::with_capacity(record_count);
+        for _ in 0..record_count {
+            if bytes.len() < offset + 32 {
+                return Err(
+                    "decode compact realm page value: record header truncated".to_string(),
+                );
+            }
+
+            let area_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            let resource_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            let created_at = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            let body_len =
+                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            offset += 4;
+            let metadata_len_raw =
+                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+            offset += 4;
+            let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
+                None
+            } else {
+                Some(metadata_len_raw as usize)
+            };
+
+            if bytes.len() < offset + body_len {
+                return Err("decode compact realm page value: truncated body".to_string());
+            }
+            let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
+            offset += body_len;
+
+            let metadata = if let Some(metadata_len) = metadata_len {
+                if bytes.len() < offset + metadata_len {
+                    return Err(
+                        "decode compact realm page value: truncated metadata".to_string(),
+                    );
+                }
+                let metadata = Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]);
+                offset += metadata_len;
+                Some(metadata)
+            } else {
+                None
+            };
+
+            records.push(CompactRealmPageRecord {
+                area_offset,
+                resource_offset,
+                body,
+                metadata,
+                created_at,
+            });
+        }
+
+        Ok(Self { records })
+    }
+}
+
+impl CompactAreaPageValue {
+    pub fn is_encoded(bytes: &[u8]) -> bool {
+        bytes.starts_with(&COMPACT_AREA_PAGE_VALUE_V1_MARKER)
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut total_len = 6;
+        for record in &self.records {
+            total_len += 8 + 8 + 4 + 4 + record.body.len();
+            total_len += record
+                .metadata
+                .as_ref()
+                .map(|metadata| metadata.len())
+                .unwrap_or(0);
+        }
+
+        let mut bytes = Vec::with_capacity(total_len);
+        bytes.extend_from_slice(&COMPACT_AREA_PAGE_VALUE_V1_MARKER);
+        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+
+        for record in &self.records {
+            bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
+            bytes.extend_from_slice(&record.created_at.to_le_bytes());
+            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(
+                &record
+                    .metadata
+                    .as_ref()
+                    .map(|metadata| metadata.len() as u32)
+                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .to_le_bytes(),
+            );
+            bytes.extend_from_slice(&record.body);
+            if let Some(metadata) = &record.metadata {
+                bytes.extend_from_slice(metadata);
+            }
+        }
+
+        bytes
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        Self::decode_v1(bytes).expect("deserialize compact area page value")
+    }
+
+    fn decode_v1(bytes: &[u8]) -> Result<Self, String> {
+        if !Self::is_encoded(bytes) {
+            return Err("decode compact area page value: missing marker".to_string());
+        }
+        if bytes.len() < 6 {
+            return Err("decode compact area page value: header too short".to_string());
+        }
+
+        let mut offset = 2usize;
+        let record_count =
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+
+        let mut records = Vec::with_capacity(record_count);
+        for _ in 0..record_count {
+            let resource_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            let created_at = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            let body_len =
+                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            offset += 4;
+            let metadata_len_raw =
+                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+            offset += 4;
+            let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
+                None
+            } else {
+                Some(metadata_len_raw as usize)
+            };
+
+            if bytes.len() < offset + body_len {
+                return Err("decode compact area page value: truncated body".to_string());
+            }
+            let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
+            offset += body_len;
+
+            let metadata = if let Some(metadata_len) = metadata_len {
+                if bytes.len() < offset + metadata_len {
+                    return Err("decode compact area page value: truncated metadata".to_string());
+                }
+                let metadata = Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]);
+                offset += metadata_len;
+                Some(metadata)
+            } else {
+                None
+            };
+
+            records.push(CompactAreaPageRecord {
+                resource_offset,
+                body,
+                metadata,
+                created_at,
+            });
+        }
+
+        Ok(Self { records })
+    }
+}
+
+impl CompactResourcePageValue {
+    pub fn is_encoded(bytes: &[u8]) -> bool {
+        bytes.starts_with(&COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER)
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut total_len = 6;
+        for record in &self.records {
+            total_len += 8 + 8 + 8 + 4 + 4 + record.body.len();
+            total_len += record
+                .metadata
+                .as_ref()
+                .map(|metadata| metadata.len())
+                .unwrap_or(0);
+        }
+
+        let mut bytes = Vec::with_capacity(total_len);
+        bytes.extend_from_slice(&COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER);
+        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+
+        for record in &self.records {
+            bytes.extend_from_slice(&record.area_offset.to_le_bytes());
+            bytes.extend_from_slice(&record.realm_offset.to_le_bytes());
+            bytes.extend_from_slice(&record.created_at.to_le_bytes());
+            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(
+                &record
+                    .metadata
+                    .as_ref()
+                    .map(|metadata| metadata.len() as u32)
+                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .to_le_bytes(),
+            );
+            bytes.extend_from_slice(&record.body);
+            if let Some(metadata) = &record.metadata {
+                bytes.extend_from_slice(metadata);
+            }
+        }
+
+        bytes
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        Self::decode_v1(bytes).expect("deserialize compact resource page value")
+    }
+
+    fn decode_v1(bytes: &[u8]) -> Result<Self, String> {
+        if !Self::is_encoded(bytes) {
+            return Err("decode compact resource page value: missing marker".to_string());
+        }
+        if bytes.len() < 6 {
+            return Err("decode compact resource page value: header too short".to_string());
+        }
+
+        let mut offset = 2usize;
+        let record_count =
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+
+        let mut records = Vec::with_capacity(record_count);
+        for _ in 0..record_count {
+            let area_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            let realm_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            let created_at = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+            offset += 8;
+            let body_len =
+                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            offset += 4;
+            let metadata_len_raw =
+                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+            offset += 4;
+            let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
+                None
+            } else {
+                Some(metadata_len_raw as usize)
+            };
+
+            if bytes.len() < offset + body_len {
+                return Err("decode compact resource page value: truncated body".to_string());
+            }
+            let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
+            offset += body_len;
+
+            let metadata = if let Some(metadata_len) = metadata_len {
+                if bytes.len() < offset + metadata_len {
+                    return Err(
+                        "decode compact resource page value: truncated metadata".to_string(),
+                    );
+                }
+                let metadata = Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]);
+                offset += metadata_len;
+                Some(metadata)
+            } else {
+                None
+            };
+
+            records.push(CompactResourcePageRecord {
+                area_offset,
+                realm_offset,
+                body,
+                metadata,
+                created_at,
+            });
+        }
+
+        Ok(Self { records })
+    }
+}
+
+impl CompressedCompactRealmPageValue {
+    pub fn is_encoded(bytes: &[u8]) -> bool {
+        bytes.starts_with(&COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER)
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        let compact_page = CompactRealmPageValue {
+            records: self.records.clone(),
+        };
+        let compressed_payload = compress_prepend_size(&compact_page.encode());
+
+        let mut bytes = Vec::with_capacity(2 + compressed_payload.len());
+        bytes.extend_from_slice(&COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER);
+        bytes.extend_from_slice(&compressed_payload);
+        bytes
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        Self::decode_v1(bytes).expect("deserialize compressed compact realm page value")
+    }
+
+    pub fn into_compact_realm_page(self) -> CompactRealmPageValue {
+        CompactRealmPageValue {
+            records: self.records,
+        }
+    }
+
+    fn decode_v1(bytes: &[u8]) -> Result<Self, String> {
+        if !Self::is_encoded(bytes) {
+            return Err("decode compressed compact realm page value: missing marker".to_string());
+        }
+        if bytes.len() <= 2 {
+            return Err(
+                "decode compressed compact realm page value: payload missing".to_string(),
+            );
+        }
+
+        let decompressed = decompress_size_prepended(&bytes[2..]).map_err(|error| {
+            format!(
+                "decode compressed compact realm page value: decompress failed: {error}"
+            )
+        })?;
+        let page = CompactRealmPageValue::try_decode(&decompressed)?;
+
+        Ok(Self {
+            records: page.records,
         })
     }
 }
@@ -675,7 +1236,9 @@ impl CanonicalResourceValue {
             if bytes.len() < offset + metadata_len {
                 return Err("decode canonical resource value: truncated metadata".to_string());
             }
-            Some(Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]))
+            Some(Bytes::copy_from_slice(
+                &bytes[offset..offset + metadata_len],
+            ))
         } else {
             None
         };
@@ -873,6 +1436,48 @@ mod tests {
     }
 
     #[test]
+    fn should_encode_compact_area_page_key_with_proper_ordering() {
+        // Arrange
+        let key1 = encode_compact_area_page_key("realm", "area", 0);
+        let key2 = encode_compact_area_page_key("realm", "area", 1);
+        let key3 = encode_compact_area_page_key("realm", "area", 10);
+
+        // Act
+        // (keys are already encoded)
+
+        // Assert
+        assert!(key1 < key2);
+        assert!(key2 < key3);
+    }
+
+    #[test]
+    fn should_encode_compact_resource_page_key_with_proper_ordering() {
+        // Arrange
+        let key1 = encode_compact_resource_page_key("realm", "area", "resource", 0);
+        let key2 = encode_compact_resource_page_key("realm", "area", "resource", 1);
+        let key3 = encode_compact_resource_page_key("realm", "area", "resource", 10);
+
+        // Act
+        // (keys are already encoded)
+
+        // Assert
+        assert!(key1 < key2);
+        assert!(key2 < key3);
+    }
+
+    #[test]
+    fn should_decode_resource_offset_from_compact_resource_page_key() {
+        // Arrange
+        let key = encode_compact_resource_page_key("realm", "area", "resource", 42);
+
+        // Act
+        let decoded = decode_resource_offset_from_key(&key).expect("decode resource offset");
+
+        // Assert
+        assert_eq!(decoded, 42);
+    }
+
+    #[test]
     fn should_roundtrip_resource_value() {
         // Arrange
         let value = ResourceValue {
@@ -1046,6 +1651,175 @@ mod tests {
         assert_eq!(decoded.body, Bytes::from("body"));
         assert_eq!(decoded.metadata, Some(Bytes::from("meta")));
         assert_eq!(decoded.created_at, 321);
+    }
+
+    #[test]
+    fn should_roundtrip_compact_realm_page_value() {
+        // Arrange
+        let value = CompactRealmPageValue {
+            records: vec![
+                CompactRealmPageRecord {
+                    area_offset: 11,
+                    resource_offset: 42,
+                    body: Bytes::from("body"),
+                    metadata: Some(Bytes::from("meta")),
+                    created_at: 123,
+                },
+                CompactRealmPageRecord {
+                    area_offset: 12,
+                    resource_offset: 43,
+                    body: Bytes::from("body-2"),
+                    metadata: None,
+                    created_at: 124,
+                },
+            ],
+        };
+
+        // Act
+        let encoded = value.encode();
+        let decoded = CompactRealmPageValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.records.len(), 2);
+        assert_eq!(decoded.records[0].area_offset, 11);
+        assert_eq!(decoded.records[0].resource_offset, 42);
+        assert_eq!(decoded.records[0].body, Bytes::from("body"));
+        assert_eq!(decoded.records[0].metadata, Some(Bytes::from("meta")));
+        assert_eq!(decoded.records[1].area_offset, 12);
+        assert_eq!(decoded.records[1].resource_offset, 43);
+        assert_eq!(decoded.records[1].body, Bytes::from("body-2"));
+        assert_eq!(decoded.records[1].metadata, None);
+    }
+
+    #[test]
+    fn should_return_error_given_truncated_compact_realm_page_value() {
+        // Arrange
+        let encoded = vec![
+            COMPACT_REALM_PAGE_VALUE_V1_MARKER[0],
+            COMPACT_REALM_PAGE_VALUE_V1_MARKER[1],
+            1,
+            0,
+            0,
+            0,
+        ];
+
+        // Act
+        let result = CompactRealmPageValue::try_decode(&encoded);
+
+        // Assert
+        let error = result.expect_err("truncated compact realm page should fail to decode");
+        assert!(error.contains("record header truncated"));
+    }
+
+    #[test]
+    fn should_roundtrip_compact_area_page_value() {
+        // Arrange
+        let value = CompactAreaPageValue {
+            records: vec![
+                CompactAreaPageRecord {
+                    resource_offset: 42,
+                    body: Bytes::from("body"),
+                    metadata: Some(Bytes::from("meta")),
+                    created_at: 123,
+                },
+                CompactAreaPageRecord {
+                    resource_offset: 43,
+                    body: Bytes::from("body-2"),
+                    metadata: None,
+                    created_at: 124,
+                },
+            ],
+        };
+
+        // Act
+        let encoded = value.encode();
+        let decoded = CompactAreaPageValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.records.len(), 2);
+        assert_eq!(decoded.records[0].resource_offset, 42);
+        assert_eq!(decoded.records[0].body, Bytes::from("body"));
+        assert_eq!(decoded.records[0].metadata, Some(Bytes::from("meta")));
+        assert_eq!(decoded.records[1].resource_offset, 43);
+        assert_eq!(decoded.records[1].body, Bytes::from("body-2"));
+        assert_eq!(decoded.records[1].metadata, None);
+    }
+
+    #[test]
+    fn should_roundtrip_compact_resource_page_value() {
+        // Arrange
+        let value = CompactResourcePageValue {
+            records: vec![
+                CompactResourcePageRecord {
+                    area_offset: 11,
+                    realm_offset: 21,
+                    body: Bytes::from("body"),
+                    metadata: Some(Bytes::from("meta")),
+                    created_at: 123,
+                },
+                CompactResourcePageRecord {
+                    area_offset: 12,
+                    realm_offset: 22,
+                    body: Bytes::from("body-2"),
+                    metadata: None,
+                    created_at: 124,
+                },
+            ],
+        };
+
+        // Act
+        let encoded = value.encode();
+        let decoded = CompactResourcePageValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.records.len(), 2);
+        assert_eq!(decoded.records[0].area_offset, 11);
+        assert_eq!(decoded.records[0].realm_offset, 21);
+        assert_eq!(decoded.records[0].body, Bytes::from("body"));
+        assert_eq!(decoded.records[0].metadata, Some(Bytes::from("meta")));
+        assert_eq!(decoded.records[1].area_offset, 12);
+        assert_eq!(decoded.records[1].realm_offset, 22);
+        assert_eq!(decoded.records[1].body, Bytes::from("body-2"));
+        assert_eq!(decoded.records[1].metadata, None);
+    }
+
+    #[test]
+    fn should_roundtrip_compressed_compact_realm_page_value() {
+        // Arrange
+        let value = CompressedCompactRealmPageValue {
+            records: vec![
+                CompactRealmPageRecord {
+                    area_offset: 11,
+                    resource_offset: 42,
+                    body: Bytes::from("body"),
+                    metadata: Some(Bytes::from("meta")),
+                    created_at: 123,
+                },
+                CompactRealmPageRecord {
+                    area_offset: 12,
+                    resource_offset: 43,
+                    body: Bytes::from("body-2"),
+                    metadata: None,
+                    created_at: 124,
+                },
+            ],
+        };
+
+        // Act
+        let encoded = value.encode();
+        let decoded = CompressedCompactRealmPageValue::decode(&encoded);
+        let decoded_page = decoded.into_compact_realm_page();
+
+        // Assert
+        assert_eq!(decoded_page.records.len(), 2);
+        assert_eq!(decoded_page.records[0].area_offset, 11);
+        assert_eq!(decoded_page.records[0].resource_offset, 42);
+        assert_eq!(decoded_page.records[0].body, Bytes::from("body"));
+        assert_eq!(decoded_page.records[0].metadata, Some(Bytes::from("meta")));
+        assert_eq!(decoded_page.records[1].area_offset, 12);
+        assert_eq!(decoded_page.records[1].resource_offset, 43);
+        assert_eq!(decoded_page.records[1].body, Bytes::from("body-2"));
+        assert_eq!(decoded_page.records[1].metadata, None);
     }
 
     #[test]

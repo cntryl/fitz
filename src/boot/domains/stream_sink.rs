@@ -1,7 +1,7 @@
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::domains::stream::store::StreamAdminRecord;
 use crate::domains::stream::StreamMetrics;
-use crate::domains::stream::{StreamActor, StreamRecord, StreamStore};
+use crate::domains::stream::{StreamActor, StreamRecord, StreamStorageLayout, StreamStore};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::PayloadEncoder;
 use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
@@ -85,8 +85,29 @@ impl StreamDomainSink {
         router: Arc<Router>,
         admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     ) -> Self {
-        Self {
-            stream_store: Arc::new(StreamStore::new(store.clone())),
+        Self::new_with_layout(
+            store,
+            router,
+            admin_read_model,
+            StreamStorageLayout::default(),
+        )
+        .expect("create stream domain sink with legacy covering layout")
+    }
+
+    pub fn new_with_layout(
+        store: Arc<cntryl_midge::Engine>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+        stream_storage_layout: StreamStorageLayout,
+    ) -> Result<Self, String> {
+        let stream_store = Arc::new(StreamStore::with_layout(
+            store.clone(),
+            stream_storage_layout,
+        ));
+        stream_store.ensure_layout_activation_for_existing_families()?;
+
+        Ok(Self {
+            stream_store,
             store,
             actors: Mutex::new(HashMap::new()),
             session_owners: Mutex::new(HashMap::new()),
@@ -98,7 +119,7 @@ impl StreamDomainSink {
             admin_snapshot_dirty: AtomicBool::new(true),
             metrics: None,
             active: AtomicBool::new(true),
-        }
+        })
     }
 
     pub fn with_metrics(
@@ -112,6 +133,10 @@ impl StreamDomainSink {
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    pub fn storage_layout(&self) -> StreamStorageLayout {
+        self.stream_store.storage_layout()
     }
 
     fn actor_key_for_route(
@@ -134,12 +159,12 @@ impl StreamDomainSink {
         })
     }
 
-    fn get_or_create_actor(&self, key: &StreamActorKey) -> Arc<Mutex<StreamActor>> {
+    fn get_or_create_actor(&self, key: &StreamActorKey) -> Result<Arc<Mutex<StreamActor>>, String> {
         use std::collections::hash_map::Entry;
 
         let mut actors = self.actors.lock();
         match actors.entry(key.clone()) {
-            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
                 let actor = Arc::new(Mutex::new(StreamActor::new(
                     RouteFamily::new(key.family_id),
@@ -147,9 +172,9 @@ impl StreamDomainSink {
                     key.area.clone(),
                     key.resource.clone(),
                     self.stream_store.clone(),
-                )));
+                )?));
                 entry.insert(actor.clone());
-                actor
+                Ok(actor)
             }
         }
     }
@@ -451,7 +476,7 @@ impl StreamDomainSink {
                 .0
         } else {
             let key = Self::actor_key_for_route(family_id, route)?;
-            let actor = self.get_or_create_actor(&key);
+            let actor = self.get_or_create_actor(&key)?;
             let records = actor.lock().read(from_offset, limit, max_bytes)?.records;
             records
         };
@@ -476,7 +501,7 @@ impl StreamDomainSink {
         }
 
         let key = Self::actor_key_for_route(family_id, route)?;
-        let actor = self.get_or_create_actor(&key);
+        let actor = self.get_or_create_actor(&key)?;
         let data = actor
             .lock()
             .last()?
@@ -499,7 +524,7 @@ impl StreamDomainSink {
         }
 
         let key = Self::actor_key_for_route(family_id, route)?;
-        let actor = self.get_or_create_actor(&key);
+        let actor = self.get_or_create_actor(&key)?;
         let metadata = actor.lock().metadata()?.metadata;
         let Some(last_offset) = metadata.last_resource_offset else {
             return Ok(Vec::new());
@@ -754,35 +779,37 @@ impl MailboxSink for StreamDomainSink {
                 expected_offset,
                 ingest_metadata,
             } => match Self::actor_key_for_route(family_id, &route) {
-                Ok(key) => {
-                    let actor = self.get_or_create_actor(&key);
-                    let stream_session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
-                    let outcome = actor.lock().begin_append_session(
-                        frame_ctx.session_id,
-                        stream_session_id,
-                        expected_offset,
-                        ingest_metadata,
-                    );
-                    match outcome {
-                        Ok(session_id) => {
-                            self.session_owners.lock().insert(session_id, key);
-                            (
-                                StreamResponse::Ok {
-                                    session_id: Some(session_id),
-                                    data: vec![],
-                                },
-                                None,
-                                true,
-                            )
-                        }
-                        Err(error) => {
-                            crate::boot::observability::counter_inc(
-                                "fitz_stream_append_conflicts_total",
-                            );
-                            (Self::stream_error_response(error), None, false)
+                Ok(key) => match self.get_or_create_actor(&key) {
+                    Ok(actor) => {
+                        let stream_session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
+                        let outcome = actor.lock().begin_append_session(
+                            frame_ctx.session_id,
+                            stream_session_id,
+                            expected_offset,
+                            ingest_metadata,
+                        );
+                        match outcome {
+                            Ok(session_id) => {
+                                self.session_owners.lock().insert(session_id, key);
+                                (
+                                    StreamResponse::Ok {
+                                        session_id: Some(session_id),
+                                        data: vec![],
+                                    },
+                                    None,
+                                    true,
+                                )
+                            }
+                            Err(error) => {
+                                crate::boot::observability::counter_inc(
+                                    "fitz_stream_append_conflicts_total",
+                                );
+                                (Self::stream_error_response(error), None, false)
+                            }
                         }
                     }
-                }
+                    Err(error) => (Self::stream_error_response(error), None, false),
+                },
                 Err(error) => (Self::stream_error_response(error), None, false),
             },
             StreamMessage::Append {
@@ -792,25 +819,27 @@ impl MailboxSink for StreamDomainSink {
             } => {
                 let key = self.session_owners.lock().get(&session_id).cloned();
                 match key {
-                    Some(key) => {
-                        let actor = self.get_or_create_actor(&key);
-                        let outcome = actor.lock().append_to_session(session_id, body, metadata);
-                        match outcome {
-                            Ok(assigned_offset) => {
-                                let mut encoder = PayloadEncoder::new();
-                                encoder.put_u64(assigned_offset);
-                                (
-                                    StreamResponse::Ok {
-                                        session_id: None,
-                                        data: encoder.finish(),
-                                    },
-                                    None,
-                                    false,
-                                )
+                    Some(key) => match self.get_or_create_actor(&key) {
+                        Ok(actor) => {
+                            let outcome = actor.lock().append_to_session(session_id, body, metadata);
+                            match outcome {
+                                Ok(assigned_offset) => {
+                                    let mut encoder = PayloadEncoder::new();
+                                    encoder.put_u64(assigned_offset);
+                                    (
+                                        StreamResponse::Ok {
+                                            session_id: None,
+                                            data: encoder.finish(),
+                                        },
+                                        None,
+                                        false,
+                                    )
+                                }
+                                Err(error) => (Self::stream_error_response(error), None, false),
                             }
-                            Err(error) => (Self::stream_error_response(error), None, false),
                         }
-                    }
+                        Err(error) => (Self::stream_error_response(error), None, false),
+                    },
                     None => (
                         Self::stream_error_response("session not found"),
                         None,
@@ -821,33 +850,35 @@ impl MailboxSink for StreamDomainSink {
             StreamMessage::Commit { session_id, mode } => {
                 let key = self.session_owners.lock().get(&session_id).cloned();
                 match key {
-                    Some(key) => {
-                        let actor = self.get_or_create_actor(&key);
-                        let outcome = actor.lock().commit_session(session_id, mode);
-                        match outcome {
-                            Ok(commit) => {
-                                self.session_owners.lock().remove(&session_id);
-                                let payload = Self::encode_stream_commit_notify_payload(
-                                    commit.first_resource_offset,
-                                    commit.last_resource_offset,
-                                    commit.first_area_offset,
-                                    commit.last_area_offset,
-                                    commit.first_realm_offset,
-                                    commit.last_realm_offset,
-                                    commit.batch_size,
-                                );
-                                (
-                                    StreamResponse::Ok {
-                                        session_id: None,
-                                        data: vec![],
-                                    },
-                                    Some((key.resource_route(), payload)),
-                                    true,
-                                )
+                    Some(key) => match self.get_or_create_actor(&key) {
+                        Ok(actor) => {
+                            let outcome = actor.lock().commit_session(session_id, mode);
+                            match outcome {
+                                Ok(commit) => {
+                                    self.session_owners.lock().remove(&session_id);
+                                    let payload = Self::encode_stream_commit_notify_payload(
+                                        commit.first_resource_offset,
+                                        commit.last_resource_offset,
+                                        commit.first_area_offset,
+                                        commit.last_area_offset,
+                                        commit.first_realm_offset,
+                                        commit.last_realm_offset,
+                                        commit.batch_size,
+                                    );
+                                    (
+                                        StreamResponse::Ok {
+                                            session_id: None,
+                                            data: vec![],
+                                        },
+                                        Some((key.resource_route(), payload)),
+                                        true,
+                                    )
+                                }
+                                Err(error) => (Self::stream_error_response(error), None, false),
                             }
-                            Err(error) => (Self::stream_error_response(error), None, false),
                         }
-                    }
+                        Err(error) => (Self::stream_error_response(error), None, false),
+                    },
                     None => (
                         Self::stream_error_response("session not found"),
                         None,
@@ -858,24 +889,26 @@ impl MailboxSink for StreamDomainSink {
             StreamMessage::Rollback { session_id } => {
                 let key = self.session_owners.lock().get(&session_id).cloned();
                 match key {
-                    Some(key) => {
-                        let actor = self.get_or_create_actor(&key);
-                        let outcome = actor.lock().rollback_session(session_id);
-                        match outcome {
-                            Ok(()) => {
-                                self.session_owners.lock().remove(&session_id);
-                                (
-                                    StreamResponse::Ok {
-                                        session_id: None,
-                                        data: vec![],
-                                    },
-                                    None,
-                                    true,
-                                )
+                    Some(key) => match self.get_or_create_actor(&key) {
+                        Ok(actor) => {
+                            let outcome = actor.lock().rollback_session(session_id);
+                            match outcome {
+                                Ok(()) => {
+                                    self.session_owners.lock().remove(&session_id);
+                                    (
+                                        StreamResponse::Ok {
+                                            session_id: None,
+                                            data: vec![],
+                                        },
+                                        None,
+                                        true,
+                                    )
+                                }
+                                Err(error) => (Self::stream_error_response(error), None, false),
                             }
-                            Err(error) => (Self::stream_error_response(error), None, false),
                         }
-                    }
+                        Err(error) => (Self::stream_error_response(error), None, false),
+                    },
                     None => (
                         Self::stream_error_response("session not found"),
                         None,
@@ -970,5 +1003,192 @@ impl MailboxSink for StreamDomainSink {
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         self.deliver(envelope)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::benchkit::{
+        build_stream_append, build_stream_begin, build_stream_commit, build_stream_read,
+        count_stream_read_records_from_payload, extract_single_tlv_field,
+        register_session_queue_sink, route_frame, FrameQueueSink,
+    };
+    use crate::protocol::frame::ChannelId;
+    use bytes::Bytes;
+
+    const TEST_CLIENT_SESSION_ID: u64 = 1;
+
+    struct TestContext {
+        router: Arc<Router>,
+        family: RouteFamily,
+        source: RouteAddress,
+        inbox: Arc<FrameQueueSink>,
+        sink: Arc<StreamDomainSink>,
+    }
+
+    fn setup_test_context() -> TestContext {
+        let family = RouteFamily::new(1);
+        let router = Arc::new(Router::new());
+        let sink = Arc::new(StreamDomainSink::new(
+            crate::benchkit::create_bench_store(),
+            router.clone(),
+            crate::api::admin::read_model::AdminReadModel::new(),
+        ));
+        router.register_domain_pattern("stream", sink.clone() as Arc<dyn MailboxSink>);
+        let (source, inbox) = register_session_queue_sink(&router, family, TEST_CLIENT_SESSION_ID);
+
+        TestContext {
+            router,
+            family,
+            source,
+            inbox,
+            sink,
+        }
+    }
+
+    fn request(context: &TestContext, destination: &str, msg_type: u16, payload: Bytes) -> Bytes {
+        route_frame(
+            context.router.as_ref(),
+            &context.source,
+            destination,
+            TEST_CLIENT_SESSION_ID,
+            ChannelId::Pub,
+            msg_type,
+            payload,
+            context.family,
+        )
+        .expect("stream route");
+
+        let responses = context.inbox.drain();
+        responses
+            .last()
+            .map(|frame| frame.payload.clone())
+            .expect("stream response")
+    }
+
+    fn begin_stream(context: &TestContext, route: &str, expected_offset: u64) -> u64 {
+        let begin_frame = build_stream_begin(route, expected_offset);
+        let (msg_type, payload) = extract_single_tlv_field(&begin_frame);
+        let response = request(context, route, msg_type, payload);
+        crate::benchkit::parse_stream_session_id(response.as_ref()).expect("stream session id")
+    }
+
+    fn seed_committed_stream_route(
+        context: &TestContext,
+        route: &str,
+        event_count: usize,
+        body: &'static [u8],
+    ) {
+        let session_id = begin_stream(context, route, 0);
+        let append_frame = build_stream_append(session_id, body);
+        let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+
+        for _ in 0..event_count {
+            let _ = request(context, route, append_msg_type, append_payload.clone());
+        }
+
+        let commit_frame = build_stream_commit(session_id, 1);
+        let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
+        let _ = request(context, route, commit_msg_type, commit_payload);
+    }
+
+    #[test]
+    fn should_return_all_area_records_given_two_resource_batches_on_direct_sink_path() {
+        // Arrange
+        let context = setup_test_context();
+        seed_committed_stream_route(
+            &context,
+            "stream://bench/area/orders",
+            50,
+            b"area read event",
+        );
+        seed_committed_stream_route(
+            &context,
+            "stream://bench/area/audits",
+            50,
+            b"area read event",
+        );
+
+        // Act
+        let area_records = context
+            .sink
+            .stream_store
+            .read_area(1, "bench", "area", 0, 1000, None)
+            .expect("read area from store")
+            .0;
+
+        let read_frame = build_stream_read("stream://bench/area/*", 0);
+        let (read_msg_type, read_payload) = extract_single_tlv_field(&read_frame);
+        let response = request(
+            &context,
+            "stream://bench/area/*",
+            read_msg_type,
+            read_payload,
+        );
+        let response_count = count_stream_read_records_from_payload(response.as_ref())
+            .expect("count wildcard response records");
+
+        // Assert
+        assert_eq!(area_records.len(), 100);
+        assert_eq!(response_count, 100);
+    }
+
+    #[test]
+    fn should_return_error_given_promotion_frontier_layout_on_real_stream_sink() {
+        // Arrange
+        let router = Arc::new(Router::new());
+
+        // Act
+        let result = StreamDomainSink::new_with_layout(
+            crate::benchkit::create_bench_store(),
+            router,
+            crate::api::admin::read_model::AdminReadModel::new(),
+            StreamStorageLayout::PromotionFrontier,
+        );
+
+        // Assert
+        match result {
+            Ok(_) => panic!("real stream sink should block promotion frontier boot"),
+            Err(error) => {
+                assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_UNSUPPORTED"));
+            }
+        }
+    }
+
+    #[test]
+    fn should_return_all_realm_records_given_two_resource_batches_on_direct_sink_path() {
+        // Arrange
+        let context = setup_test_context();
+        seed_committed_stream_route(
+            &context,
+            "stream://bench/events/orders",
+            50,
+            b"realm read event",
+        );
+        seed_committed_stream_route(
+            &context,
+            "stream://bench/audit/ledger",
+            50,
+            b"realm read event",
+        );
+
+        // Act
+        let realm_records = context
+            .sink
+            .stream_store
+            .read_realm(1, "bench", 0, 1000, None)
+            .expect("read realm from store")
+            .0;
+
+        let read_frame = build_stream_read("stream://bench/*/*", 0);
+        let (read_msg_type, read_payload) = extract_single_tlv_field(&read_frame);
+        let response = request(&context, "stream://bench/*/*", read_msg_type, read_payload);
+        let response_count = count_stream_read_records_from_payload(response.as_ref())
+            .expect("count wildcard response records");
+
+        // Assert
+        assert_eq!(realm_records.len(), 100);
+        assert_eq!(response_count, 100);
     }
 }

@@ -24,6 +24,20 @@ pub fn create_bench_stream_actor(
     area: &str,
     resource: &str,
 ) -> (StreamActor, Context<StreamActor>) {
+    create_bench_stream_actor_with_layout(
+        realm,
+        area,
+        resource,
+        crate::domains::stream::StreamStorageLayout::default(),
+    )
+}
+
+pub fn create_bench_stream_actor_with_layout(
+    realm: &str,
+    area: &str,
+    resource: &str,
+    stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+) -> (StreamActor, Context<StreamActor>) {
     let router = Arc::new(Router::new());
     let family = RouteFamily::new(1);
     let addr = RouteAddress::new(
@@ -32,14 +46,15 @@ pub fn create_bench_stream_actor(
     );
 
     let db = create_bench_store();
-    let store = Arc::new(StreamStore::new(db));
+    let store = Arc::new(StreamStore::with_layout(db, stream_storage_layout));
     let actor = StreamActor::new(
         family,
         realm.to_string(),
         area.to_string(),
         resource.to_string(),
         store,
-    );
+    )
+    .expect("create bench stream actor");
     let ctx = Context::new(addr, router);
 
     (actor, ctx)
@@ -62,6 +77,20 @@ pub fn create_local_bench_stream_actor(
     area: &str,
     resource: &str,
 ) -> (StreamActor, Context<StreamActor>, tempfile::TempDir) {
+    create_local_bench_stream_actor_with_layout(
+        realm,
+        area,
+        resource,
+        crate::domains::stream::StreamStorageLayout::default(),
+    )
+}
+
+pub fn create_local_bench_stream_actor_with_layout(
+    realm: &str,
+    area: &str,
+    resource: &str,
+    stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+) -> (StreamActor, Context<StreamActor>, tempfile::TempDir) {
     let router = Arc::new(Router::new());
     let family = RouteFamily::new(1);
     let addr = RouteAddress::new(
@@ -70,14 +99,15 @@ pub fn create_local_bench_stream_actor(
     );
 
     let (db, temp_dir) = create_local_bench_store();
-    let store = Arc::new(StreamStore::new(db));
+    let store = Arc::new(StreamStore::with_layout(db, stream_storage_layout));
     let actor = StreamActor::new(
         family,
         realm.to_string(),
         area.to_string(),
         resource.to_string(),
         store,
-    );
+    )
+    .expect("create local bench stream actor");
     let ctx = Context::new(addr, router);
 
     (actor, ctx, temp_dir)

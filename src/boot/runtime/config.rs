@@ -1,4 +1,5 @@
 use super::BootResult;
+use crate::domains::stream::StreamStorageLayout;
 use std::path::Path;
 
 /// Storage backend configuration.
@@ -123,6 +124,8 @@ pub struct BootConfig {
     pub bind_addr: String,
     /// Storage mode (memory, local disk, or cloud)
     pub storage_mode: StorageMode,
+    /// Stream storage layout selector
+    pub stream_storage_layout: StreamStorageLayout,
     /// Whether authentication is required (default: true)
     pub auth_required: bool,
     /// Explicit auth configuration for token verification
@@ -168,6 +171,7 @@ impl Default for BootConfig {
             tcp_port,
             bind_addr,
             storage_mode: StorageMode::from_env(),
+            stream_storage_layout: StreamStorageLayout::from_env(),
             auth_required,
             auth_config: crate::auth::AuthConfig::from_env(auth_required),
             max_connections: 10_000,
@@ -218,6 +222,11 @@ impl BootConfig {
         self
     }
 
+    pub fn with_stream_storage_layout(mut self, layout: StreamStorageLayout) -> Self {
+        self.stream_storage_layout = layout;
+        self
+    }
+
     pub fn with_auth_config(mut self, auth_config: crate::auth::AuthConfig) -> Self {
         self.auth_required = !matches!(auth_config, crate::auth::AuthConfig::Disabled);
         self.auth_config = auth_config;
@@ -252,6 +261,10 @@ mod tests {
         assert_eq!(config.http_port, prelude::DEFAULT_HTTP_PORT);
         assert_eq!(config.bind_addr, "0.0.0.0");
         assert_eq!(config.max_connections, 10_000);
+        assert_eq!(
+            config.stream_storage_layout,
+            StreamStorageLayout::LegacyCovering
+        );
     }
 
     #[test]
@@ -268,5 +281,20 @@ mod tests {
         assert_eq!(config.tcp_port, 5091);
         assert_eq!(config.http_port, 5090);
         assert_eq!(config.bind_addr, "127.0.0.1");
+    }
+
+    #[test]
+    fn should_customize_stream_storage_layout() {
+        // Arrange
+
+        // Act
+        let config =
+            BootConfig::new().with_stream_storage_layout(StreamStorageLayout::PromotionFrontier);
+
+        // Assert
+        assert_eq!(
+            config.stream_storage_layout,
+            StreamStorageLayout::PromotionFrontier
+        );
     }
 }

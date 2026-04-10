@@ -931,6 +931,7 @@ dependencies = [
  "hyper 0.14.32",
  "hyper-tungstenite",
  "jsonwebtoken",
+ "lz4_flex",
  "num_cpus",
  "once_cell",
  "opentelemetry",

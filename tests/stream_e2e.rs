@@ -5,7 +5,7 @@ mod fixtures;
 use bytes::Bytes;
 use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::store::StreamStore;
-use fitz::domains::stream::StreamActor;
+use fitz::domains::stream::{StreamActor, StreamStorageLayout};
 use fitz::protocol::payload_codec::PayloadDecoder;
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::TestServer;
@@ -83,6 +83,7 @@ fn make_stream_actor(
         resource.to_string(),
         store,
     )
+    .expect("create stream actor")
 }
 
 async fn commit_stream_record_with_offset<C>(
@@ -775,6 +776,70 @@ async fn should_drop_uncommitted_stream_batch_on_restart() {
         .map(|record| (record.resource_offset, record.body.to_vec()))
         .collect();
     assert_eq!(parsed, vec![(0, b"committed".to_vec())]);
+}
+
+#[tokio::test]
+async fn should_fail_local_stream_boot_given_promotion_frontier_layout_before_real_path_exists() {
+    // Arrange
+    let tempdir = TempDir::new().expect("tempdir");
+    let db_path = tempdir.path().join("fitz-stream-frontier-empty");
+    let db_path = db_path.to_string_lossy().to_string();
+
+    // Act
+    let result = TestServer::start_with_local_storage_and_stream_layout(
+        db_path,
+        StreamStorageLayout::PromotionFrontier,
+    )
+    .await;
+
+    // Assert
+    match result {
+        Ok(_) => panic!("promotion frontier boot should fail before the real path exists"),
+        Err(error) => {
+            assert!(error
+                .to_string()
+                .contains("ERR_STREAM_STORAGE_LAYOUT_UNSUPPORTED"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn should_fail_local_stream_restart_given_mismatched_layout_marker() {
+    // Arrange
+    let tempdir = TempDir::new().expect("tempdir");
+    let db_path = tempdir.path().join("fitz-stream-frontier-mismatch");
+    let db_path = db_path.to_string_lossy().to_string();
+    let engine = open_local_stream_engine(db_path.clone())
+        .await
+        .expect("open local stream engine");
+    let store = Arc::new(StreamStore::new(engine.clone()));
+    let mut actor = make_stream_actor(store.clone(), "test", "events", "orders");
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor
+        .append_to_session(100, Bytes::from_static(b"one"), None)
+        .unwrap();
+    actor.commit_session(100, StreamWriteMode::Sync).unwrap();
+    drop(actor);
+    drop(store);
+    drop(engine);
+    wait_for_stream_storage_release().await;
+
+    // Act
+    let result = TestServer::start_with_local_storage_and_stream_layout(
+        db_path,
+        StreamStorageLayout::PromotionFrontier,
+    )
+    .await;
+
+    // Assert
+    match result {
+        Ok(_) => panic!("mismatched layout marker should fail stream restart"),
+        Err(error) => {
+            assert!(error
+                .to_string()
+                .contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
+        }
+    }
 }
 
 define_transport_tests!(

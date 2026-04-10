@@ -2,16 +2,18 @@
 
 use bytes::Bytes;
 use parking_lot::Mutex;
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 use std::sync::Arc;
 
 use super::protocol::{IngestMetadata, StreamRecord, StreamWriteMode};
 use super::storage::{
     decode_area_offset_from_key, decode_realm_offset_from_key, encode_area_counter_key,
     encode_area_key, encode_offset_counter_key, encode_realm_counter_key, encode_realm_key,
-    encode_resource_key, encode_resource_meta_key, encode_watermark_key, AreaCounterValue,
-    AreaValue, OffsetCounterValue, RealmCounterValue, RealmValue, ResourceMetaValue, ResourceValue,
-    WatermarkValue,
+    encode_resource_key, encode_resource_meta_key, encode_stream_layout_marker_key,
+    encode_watermark_key, AreaCounterValue, AreaValue, CompactRealmPageRecord,
+    CompactRealmPageValue, KeyPrefix, OffsetCounterValue, RealmCounterValue, RealmValue,
+    ResourceMetaValue, ResourceValue, StreamLayoutMarkerValue, WatermarkValue,
+    REALM_PAGE_RECORD_LIMIT,
 };
 
 #[cfg(test)]
@@ -99,6 +101,69 @@ pub struct StreamTTL {
     pub ttl_seconds: Option<u64>,
 }
 
+struct LegacyCoveringWriteRowsParams<'a> {
+    realm: &'a str,
+    area: &'a str,
+    resource: &'a str,
+    first_resource_offset: u64,
+    first_area_offset: u64,
+    first_realm_offset: u64,
+    events: &'a [EventPayload],
+    created_at: u64,
+}
+
+enum LayoutActivationFailure {
+    Unsupported(String),
+    Mismatch(String),
+    ResetRequired(String),
+    Other(String),
+}
+
+impl LayoutActivationFailure {
+    fn into_string(self) -> String {
+        match self {
+            Self::Unsupported(message)
+            | Self::Mismatch(message)
+            | Self::ResetRequired(message)
+            | Self::Other(message) => message,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StreamStorageLayout {
+    #[default]
+    LegacyCovering,
+    PromotionFrontier,
+}
+
+impl StreamStorageLayout {
+    pub fn from_env() -> Self {
+        let raw_value = std::env::var("FITZ_STREAM_STORAGE_LAYOUT")
+            .unwrap_or_else(|_| "legacy-covering".to_string())
+            .to_lowercase();
+
+        match raw_value.as_str() {
+            "legacy" | "legacy-covering" | "covering" => Self::LegacyCovering,
+            "promotion-frontier" | "frontier" => Self::PromotionFrontier,
+            _ => {
+                tracing::warn!(
+                    layout = raw_value,
+                    "Unknown stream storage layout, defaulting to legacy covering layout"
+                );
+                Self::default()
+            }
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::LegacyCovering => "legacy-covering",
+            Self::PromotionFrontier => "promotion-frontier",
+        }
+    }
+}
+
 impl StreamTTL {
     pub fn with_seconds(seconds: u64) -> Self {
         Self {
@@ -135,6 +200,8 @@ pub struct StreamAdminRecord {
 pub struct StreamStore {
     db: Arc<cntryl_midge::Engine>,
     limits: BatchLimits,
+    layout: StreamStorageLayout,
+    activated_layout_families: Arc<Mutex<HashSet<u64>>>,
     sessions: Arc<Mutex<HashMap<SessionId, AppendSession>>>,
     ttl: StreamTTL,
     next_session_id: std::sync::atomic::AtomicU64,
@@ -145,17 +212,42 @@ pub struct StreamStore {
 
 impl StreamStore {
     pub fn new(db: Arc<cntryl_midge::Engine>) -> Self {
-        Self::with_config(db, BatchLimits::default(), StreamTTL::default())
+        Self::with_config_and_layout(
+            db,
+            BatchLimits::default(),
+            StreamTTL::default(),
+            StreamStorageLayout::default(),
+        )
+    }
+
+    pub fn with_layout(db: Arc<cntryl_midge::Engine>, layout: StreamStorageLayout) -> Self {
+        Self::with_config_and_layout(db, BatchLimits::default(), StreamTTL::default(), layout)
     }
 
     pub fn with_limits(db: Arc<cntryl_midge::Engine>, limits: BatchLimits) -> Self {
-        Self::with_config(db, limits, StreamTTL::default())
+        Self::with_config_and_layout(
+            db,
+            limits,
+            StreamTTL::default(),
+            StreamStorageLayout::default(),
+        )
     }
 
     pub fn with_config(db: Arc<cntryl_midge::Engine>, limits: BatchLimits, ttl: StreamTTL) -> Self {
+        Self::with_config_and_layout(db, limits, ttl, StreamStorageLayout::default())
+    }
+
+    pub fn with_config_and_layout(
+        db: Arc<cntryl_midge::Engine>,
+        limits: BatchLimits,
+        ttl: StreamTTL,
+        layout: StreamStorageLayout,
+    ) -> Self {
         Self {
             db,
             limits,
+            layout,
+            activated_layout_families: Arc::new(Mutex::new(HashSet::new())),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             ttl,
             next_session_id: std::sync::atomic::AtomicU64::new(1),
@@ -167,6 +259,341 @@ impl StreamStore {
 
     pub fn batch_limits(&self) -> BatchLimits {
         self.limits.clone()
+    }
+
+    pub fn storage_layout(&self) -> StreamStorageLayout {
+        self.layout
+    }
+
+    pub fn ensure_layout_activation_for_existing_families(&self) -> Result<(), String> {
+        let families = self
+            .db
+            .list_column_families()
+            .map_err(|e| format!("list column families failed: {:?}", e))?;
+
+        if self.layout == StreamStorageLayout::LegacyCovering {
+            for family in families {
+                self.inspect_existing_family_layout_activation(family.id() as u64)
+                    .map_err(LayoutActivationFailure::into_string)?;
+            }
+
+            return Ok(());
+        }
+
+        let mut first_unsupported = None;
+
+        for family in families {
+            match self.inspect_and_activate_layout_for_family_detailed(family.id() as u64) {
+                Ok(()) => {}
+                Err(LayoutActivationFailure::Unsupported(message)) => {
+                    if first_unsupported.is_none() {
+                        first_unsupported = Some(message);
+                    }
+                }
+                Err(failure) => return Err(failure.into_string()),
+            }
+        }
+
+        if let Some(message) = first_unsupported {
+            return Err(message);
+        }
+
+        Ok(())
+    }
+
+    fn ensure_layout_activation_for_family(&self, family: u64) -> Result<(), String> {
+        if self.layout == StreamStorageLayout::LegacyCovering
+            && self.activated_layout_families.lock().contains(&family)
+        {
+            return Ok(());
+        }
+
+        self.inspect_and_activate_layout_for_family(family)?;
+
+        if self.layout == StreamStorageLayout::LegacyCovering {
+            self.activated_layout_families.lock().insert(family);
+        }
+
+        Ok(())
+    }
+
+    fn inspect_existing_family_layout_activation(
+        &self,
+        family: u64,
+    ) -> Result<(), LayoutActivationFailure> {
+        let marker_key = encode_stream_layout_marker_key();
+        let mut txn = self
+            .db
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|e| LayoutActivationFailure::Other(format!("begin_tx failed: {:?}", e)))?;
+
+        if let Some(bytes) = txn
+            .get(&marker_key)
+            .map_err(|e| LayoutActivationFailure::Other(format!("get error: {:?}", e)))?
+        {
+            let marker =
+                StreamLayoutMarkerValue::decode(&bytes).map_err(LayoutActivationFailure::Other)?;
+            if marker.layout != self.layout {
+                return Err(LayoutActivationFailure::Mismatch(
+                    Self::stream_layout_mismatch_error(family, marker.layout, self.layout),
+                ));
+            }
+
+            return Ok(());
+        }
+
+        if !Self::txn_has_stream_data(&txn).map_err(LayoutActivationFailure::Other)? {
+            return Ok(());
+        }
+
+        txn.put(
+            marker_key,
+            StreamLayoutMarkerValue::new(self.layout).encode(),
+            None,
+        )
+        .map_err(|e| LayoutActivationFailure::Other(format!("txn put failed: {:?}", e)))?;
+        txn.commit(cntryl_midge::WriteOptions::sync())
+            .map_err(|e| LayoutActivationFailure::Other(format!("midge commit error: {:?}", e)))?;
+
+        Ok(())
+    }
+
+    fn inspect_and_activate_layout_for_family(&self, family: u64) -> Result<(), String> {
+        self.inspect_and_activate_layout_for_family_detailed(family)
+            .map_err(LayoutActivationFailure::into_string)
+    }
+
+    fn inspect_and_activate_layout_for_family_detailed(
+        &self,
+        family: u64,
+    ) -> Result<(), LayoutActivationFailure> {
+        let marker_key = encode_stream_layout_marker_key();
+        let mut txn = self
+            .db
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|e| LayoutActivationFailure::Other(format!("begin_tx failed: {:?}", e)))?;
+
+        if let Some(bytes) = txn
+            .get(&marker_key)
+            .map_err(|e| LayoutActivationFailure::Other(format!("get error: {:?}", e)))?
+        {
+            let marker = StreamLayoutMarkerValue::decode(&bytes)
+                .map_err(LayoutActivationFailure::Other)?;
+            if marker.layout != self.layout {
+                return Err(LayoutActivationFailure::Mismatch(
+                    Self::stream_layout_mismatch_error(
+                    family,
+                    marker.layout,
+                    self.layout,
+                )));
+            }
+
+            if self.layout == StreamStorageLayout::PromotionFrontier {
+                return Err(LayoutActivationFailure::Unsupported(
+                    Self::stream_layout_unsupported_error(family),
+                ));
+            }
+
+            return Ok(());
+        }
+
+        if self.layout == StreamStorageLayout::PromotionFrontier {
+            if Self::txn_has_stream_data(&txn).map_err(LayoutActivationFailure::Other)? {
+                return Err(LayoutActivationFailure::ResetRequired(
+                    Self::stream_layout_reset_required_error(
+                    family,
+                    self.layout,
+                )));
+            }
+
+            return Err(LayoutActivationFailure::Unsupported(
+                Self::stream_layout_unsupported_error(family),
+            ));
+        }
+
+        txn.put(
+            marker_key,
+            StreamLayoutMarkerValue::new(self.layout).encode(),
+            None,
+        )
+        .map_err(|e| LayoutActivationFailure::Other(format!("txn put failed: {:?}", e)))?;
+        txn.commit(cntryl_midge::WriteOptions::sync())
+            .map_err(|e| LayoutActivationFailure::Other(format!("midge commit error: {:?}", e)))?;
+
+        Ok(())
+    }
+
+    fn txn_has_stream_data(txn: &cntryl_midge::Transaction) -> Result<bool, String> {
+        let stream_prefixes = [
+            KeyPrefix::Resource as u8,
+            KeyPrefix::Area as u8,
+            KeyPrefix::Realm as u8,
+            KeyPrefix::Watermark as u8,
+            KeyPrefix::OffsetCounter as u8,
+            KeyPrefix::RealmWatermark as u8,
+            KeyPrefix::ResourceMeta as u8,
+            KeyPrefix::AreaCounter as u8,
+            KeyPrefix::RealmCounter as u8,
+            KeyPrefix::CanonicalResource as u8,
+            KeyPrefix::AreaLocator as u8,
+            KeyPrefix::RealmLocator as u8,
+            KeyPrefix::CompactAreaPage as u8,
+            KeyPrefix::CompressedCompactRealmPage as u8,
+            KeyPrefix::CompactResourcePage as u8,
+        ];
+
+        for prefix in stream_prefixes {
+            let query = cntryl_midge::Query::new()
+                .prefix(Bytes::from(vec![prefix]))
+                .limit(1);
+            let mut iter = txn
+                .scan(&query)
+                .map_err(|e| format!("scan error: {:?}", e))?;
+            if !iter.collect_all().is_empty() {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn stream_layout_mismatch_error(
+        family: u64,
+        stored_layout: StreamStorageLayout,
+        requested_layout: StreamStorageLayout,
+    ) -> String {
+        format!(
+            "ERR_STREAM_STORAGE_LAYOUT_MISMATCH: family={} stored={} requested={} reset required",
+            family,
+            stored_layout.as_str(),
+            requested_layout.as_str()
+        )
+    }
+
+    fn stream_layout_reset_required_error(
+        family: u64,
+        requested_layout: StreamStorageLayout,
+    ) -> String {
+        format!(
+            "ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED: family={} requested={} existing unmarked stream data must be reopened with legacy-covering or reset before promotion",
+            family,
+            requested_layout.as_str()
+        )
+    }
+
+    fn stream_layout_unsupported_error(family: u64) -> String {
+        format!(
+            "ERR_STREAM_STORAGE_LAYOUT_UNSUPPORTED: family={} promotion-frontier real stream store paths are not implemented yet",
+            family
+        )
+    }
+
+    fn stream_layout_surface_unsupported_error(family: u64, surface: &str) -> String {
+        format!(
+            "ERR_STREAM_STORAGE_LAYOUT_UNSUPPORTED: family={} promotion-frontier {} path is not implemented yet",
+            family, surface
+        )
+    }
+
+    fn unsupported_promotion_frontier_surface<T>(
+        &self,
+        family: u64,
+        surface: &str,
+    ) -> Result<T, String> {
+        Err(Self::stream_layout_surface_unsupported_error(
+            family, surface,
+        ))
+    }
+
+    fn invalid_compact_realm_page_error(realm_offset: u64, error: String) -> String {
+        format!(
+            "ERR_INVALID_COMPACT_REALM_PAGE: realm_offset={} {}",
+            realm_offset, error
+        )
+    }
+
+    fn build_legacy_covering_realm_records(
+        events: &[EventPayload],
+        first_resource_offset: u64,
+        first_area_offset: u64,
+        created_at: u64,
+    ) -> Vec<CompactRealmPageRecord> {
+        let mut realm_records = Vec::with_capacity(events.len());
+
+        for (index, event) in events.iter().enumerate() {
+            let resource_offset = first_resource_offset + index as u64;
+            let area_offset = first_area_offset + index as u64;
+
+            realm_records.push(CompactRealmPageRecord {
+                area_offset,
+                resource_offset,
+                body: event.body.clone(),
+                metadata: event.metadata.clone(),
+                created_at,
+            });
+        }
+
+        realm_records
+    }
+
+    fn write_legacy_covering_event_rows(
+        &self,
+        txn: &mut cntryl_midge::Transaction,
+        params: LegacyCoveringWriteRowsParams<'_>,
+    ) -> Result<(), String> {
+        let LegacyCoveringWriteRowsParams {
+            realm,
+            area,
+            resource,
+            first_resource_offset,
+            first_area_offset,
+            first_realm_offset,
+            events,
+            created_at,
+        } = params;
+        let realm_records = Self::build_legacy_covering_realm_records(
+            events,
+            first_resource_offset,
+            first_area_offset,
+            created_at,
+        );
+        Self::write_compact_realm_records(
+            txn,
+            realm,
+            first_realm_offset,
+            &realm_records,
+            self.ttl.ttl_seconds,
+        )?;
+
+        let ttl_opt = self.ttl.ttl_seconds;
+        for (index, event) in events.iter().enumerate() {
+            let resource_offset = first_resource_offset + index as u64;
+            let area_offset = first_area_offset + index as u64;
+
+            let resource_key = encode_resource_key(realm, area, resource, resource_offset);
+            let resource_value = ResourceValue {
+                resource_offset,
+                area_offset: Some(area_offset),
+                realm_offset: Some(first_realm_offset + index as u64),
+                body: event.body.clone(),
+                metadata: event.metadata.clone(),
+                created_at,
+            };
+            txn.put(resource_key, resource_value.encode(), ttl_opt)
+                .map_err(|e| format!("txn put failed: {:?}", e))?;
+
+            let area_key = encode_area_key(realm, area, area_offset);
+            let area_value = AreaValue {
+                resource_offset,
+                body: event.body.clone(),
+                metadata: event.metadata.clone(),
+                created_at,
+            };
+            txn.put(area_key, area_value.encode(), ttl_opt)
+                .map_err(|e| format!("txn put failed: {:?}", e))?;
+        }
+
+        Ok(())
     }
 
     fn resource_sequence_guard(
@@ -408,11 +835,158 @@ impl StreamStore {
             .map_err(|e| format!("scan error: {:?}", e))?;
         let results = iter.collect_all();
 
-        if let Some((key, _)) = results.last() {
-            Ok(decode_realm_offset_from_key(key)?.saturating_add(1))
+        if let Some((key, value)) = results.last() {
+            let page_start_offset = decode_realm_offset_from_key(key)?;
+            if CompactRealmPageValue::is_encoded(value) {
+                let page = CompactRealmPageValue::try_decode(value).map_err(|error| {
+                    Self::invalid_compact_realm_page_error(page_start_offset, error)
+                })?;
+                Ok(page_start_offset.saturating_add(page.records.len() as u64))
+            } else {
+                Ok(page_start_offset.saturating_add(1))
+            }
         } else {
             Ok(0)
         }
+    }
+
+    fn realm_page_start_offset(realm_offset: u64) -> u64 {
+        realm_offset / REALM_PAGE_RECORD_LIMIT as u64 * REALM_PAGE_RECORD_LIMIT as u64
+    }
+
+    fn load_realm_page_for_write(
+        txn: &cntryl_midge::Transaction,
+        realm: &str,
+        page_start_offset: u64,
+    ) -> Result<(CompactRealmPageValue, Vec<Vec<u8>>), String> {
+        let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Realm as u8];
+        prefix_key.extend_from_slice(realm.as_bytes());
+        prefix_key.push(0);
+
+        let query = cntryl_midge::Query::new()
+            .start_key(Bytes::from(encode_realm_key(realm, page_start_offset)))
+            .prefix(Bytes::from(prefix_key))
+            .limit(REALM_PAGE_RECORD_LIMIT);
+        let mut iter = txn
+            .scan(&query)
+            .map_err(|e| format!("scan error: {:?}", e))?;
+        let results = iter.collect_all();
+
+        let page_end_offset = page_start_offset.saturating_add(REALM_PAGE_RECORD_LIMIT as u64);
+        let mut merged_records = vec![None; REALM_PAGE_RECORD_LIMIT];
+        let mut legacy_keys = Vec::new();
+
+        for (key, value) in results {
+            let realm_offset = decode_realm_offset_from_key(&key)?;
+            if realm_offset < page_start_offset {
+                continue;
+            }
+            if realm_offset >= page_end_offset {
+                break;
+            }
+
+            if realm_offset == page_start_offset && CompactRealmPageValue::is_encoded(&value) {
+                let page = CompactRealmPageValue::try_decode(&value).map_err(|error| {
+                    Self::invalid_compact_realm_page_error(page_start_offset, error)
+                })?;
+                for (index, record) in page.records.into_iter().enumerate() {
+                    merged_records[index] = Some(record);
+                }
+                continue;
+            }
+
+            let slot = (realm_offset - page_start_offset) as usize;
+            let realm_value = RealmValue::try_decode(&value).map_err(|error| {
+                let prefix = value
+                    .iter()
+                    .take(8)
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!(
+                    "ERR_INVALID_REALM_ROW_FORMAT: offset={realm_offset} page_start_offset={page_start_offset} prefix=[{prefix}] {error}"
+                )
+            })?;
+            merged_records[slot] = Some(CompactRealmPageRecord {
+                area_offset: realm_value.area_offset,
+                resource_offset: realm_value.resource_offset,
+                body: realm_value.body,
+                metadata: realm_value.metadata,
+                created_at: realm_value.created_at,
+            });
+            legacy_keys.push(key.to_vec());
+        }
+
+        let contiguous_len = merged_records
+            .iter()
+            .take_while(|record| record.is_some())
+            .count();
+        if merged_records[contiguous_len..]
+            .iter()
+            .any(|record| record.is_some())
+        {
+            return Err("ERR_NON_CONTIGUOUS_REALM_PAGE_STATE".to_string());
+        }
+
+        Ok((
+            CompactRealmPageValue {
+                records: merged_records
+                    .into_iter()
+                    .take(contiguous_len)
+                    .map(|record| record.expect("contiguous compact realm page record"))
+                    .collect(),
+            },
+            legacy_keys,
+        ))
+    }
+
+    fn write_compact_realm_records(
+        txn: &mut cntryl_midge::Transaction,
+        realm: &str,
+        first_realm_offset: u64,
+        realm_records: &[CompactRealmPageRecord],
+        ttl_opt: Option<u64>,
+    ) -> Result<(), String> {
+        if realm_records.is_empty() {
+            return Ok(());
+        }
+
+        let mut next_record_index = 0usize;
+        let mut current_realm_offset = first_realm_offset;
+
+        while next_record_index < realm_records.len() {
+            let page_start_offset = Self::realm_page_start_offset(current_realm_offset);
+            let page_offset = (current_realm_offset - page_start_offset) as usize;
+            let (mut page, legacy_keys) =
+                Self::load_realm_page_for_write(txn, realm, page_start_offset)?;
+
+            if page.records.len() != page_offset {
+                return Err("ERR_OVERLAPPING_REALM_PAGE_APPEND".to_string());
+            }
+
+            let append_count = (REALM_PAGE_RECORD_LIMIT - page_offset)
+                .min(realm_records.len() - next_record_index);
+            page.records.extend_from_slice(
+                &realm_records[next_record_index..next_record_index + append_count],
+            );
+
+            for legacy_key in legacy_keys {
+                txn.delete(legacy_key)
+                    .map_err(|e| format!("txn delete failed: {:?}", e))?;
+            }
+
+            txn.put(
+                encode_realm_key(realm, page_start_offset),
+                page.encode(),
+                ttl_opt,
+            )
+            .map_err(|e| format!("txn put failed: {:?}", e))?;
+
+            next_record_index += append_count;
+            current_realm_offset = current_realm_offset.saturating_add(append_count as u64);
+        }
+
+        Ok(())
     }
 
     fn load_resource_meta_snapshot(
@@ -493,6 +1067,20 @@ impl StreamStore {
         &self,
         params: CommitRecordsParams<'_>,
     ) -> Result<CommitResponse, String> {
+        self.ensure_layout_activation_for_family(params.family)?;
+
+        match self.layout {
+            StreamStorageLayout::LegacyCovering => self.commit_records_legacy_covering(params),
+            StreamStorageLayout::PromotionFrontier => {
+                self.unsupported_promotion_frontier_surface(params.family, "commit_records")
+            }
+        }
+    }
+
+    fn commit_records_legacy_covering(
+        &self,
+        params: CommitRecordsParams<'_>,
+    ) -> Result<CommitResponse, String> {
         let CommitRecordsParams {
             family,
             realm,
@@ -563,46 +1151,19 @@ impl StreamStore {
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
-
-        for (index, event) in events.iter().enumerate() {
-            let resource_offset = first_resource_offset + index as u64;
-            let area_offset = first_area_offset + index as u64;
-            let realm_offset = first_realm_offset + index as u64;
-
-            let resource_key = encode_resource_key(realm, area, resource, resource_offset);
-            let resource_value = ResourceValue {
-                resource_offset,
-                area_offset: Some(area_offset),
-                realm_offset: Some(realm_offset),
-                body: event.body.clone(),
-                metadata: event.metadata.clone(),
+        self.write_legacy_covering_event_rows(
+            &mut txn,
+            LegacyCoveringWriteRowsParams {
+                realm,
+                area,
+                resource,
+                first_resource_offset,
+                first_area_offset,
+                first_realm_offset,
+                events,
                 created_at,
-            };
-            let ttl_opt = self.ttl.ttl_seconds;
-            txn.put(resource_key, resource_value.encode(), ttl_opt)
-                .map_err(|e| format!("txn put failed: {:?}", e))?;
-
-            let area_key = encode_area_key(realm, area, area_offset);
-            let area_value = AreaValue {
-                resource_offset,
-                body: event.body.clone(),
-                metadata: event.metadata.clone(),
-                created_at,
-            };
-            txn.put(area_key, area_value.encode(), ttl_opt)
-                .map_err(|e| format!("txn put failed: {:?}", e))?;
-
-            let realm_key = encode_realm_key(realm, realm_offset);
-            let realm_value = RealmValue {
-                area_offset,
-                resource_offset,
-                body: event.body.clone(),
-                metadata: event.metadata.clone(),
-                created_at,
-            };
-            txn.put(realm_key, realm_value.encode(), ttl_opt)
-                .map_err(|e| format!("txn put failed: {:?}", e))?;
-        }
+            },
+        )?;
 
         let resource_meta_after = ResourceMetaValue {
             next_offset: last_resource_offset.saturating_add(1),
@@ -668,6 +1229,22 @@ impl StreamStore {
     }
 
     pub fn list_resource_metadata(&self, family: u64) -> Result<Vec<StreamAdminRecord>, String> {
+        self.ensure_layout_activation_for_family(family)?;
+
+        match self.layout {
+            StreamStorageLayout::LegacyCovering => {
+                self.list_resource_metadata_legacy_covering(family)
+            }
+            StreamStorageLayout::PromotionFrontier => {
+                self.unsupported_promotion_frontier_surface(family, "list_resource_metadata")
+            }
+        }
+    }
+
+    fn list_resource_metadata_legacy_covering(
+        &self,
+        family: u64,
+    ) -> Result<Vec<StreamAdminRecord>, String> {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
@@ -827,6 +1404,32 @@ impl StreamStore {
         first_realm_offset: u64,
         mode: StreamWriteMode,
     ) -> Result<CommitResponse, String> {
+        self.ensure_layout_activation_for_family(family)?;
+
+        match self.layout {
+            StreamStorageLayout::LegacyCovering => self.commit_session_legacy_covering(
+                family,
+                session_id,
+                first_resource_offset,
+                first_area_offset,
+                first_realm_offset,
+                mode,
+            ),
+            StreamStorageLayout::PromotionFrontier => {
+                self.unsupported_promotion_frontier_surface(family, "commit_session")
+            }
+        }
+    }
+
+    fn commit_session_legacy_covering(
+        &self,
+        family: u64,
+        session_id: &SessionId,
+        first_resource_offset: u64,
+        first_area_offset: u64,
+        first_realm_offset: u64,
+        mode: StreamWriteMode,
+    ) -> Result<CommitResponse, String> {
         let session = {
             let mut sessions = self.sessions.lock();
             sessions
@@ -876,46 +1479,19 @@ impl StreamStore {
                 return Err(format!("begin_tx failed: {:?}", e));
             }
         };
-
-        for (i, event) in staged_events.iter().enumerate() {
-            let resource_offset = first_resource_offset + i as u64;
-            let area_offset = first_area_offset + i as u64;
-            let realm_offset = first_realm_offset + i as u64;
-
-            let resource_key = encode_resource_key(&realm, &area, &resource, resource_offset);
-            let resource_value = ResourceValue {
-                resource_offset,
-                area_offset: Some(area_offset),
-                realm_offset: Some(realm_offset),
-                body: event.body.clone(),
-                metadata: event.metadata.clone(),
+        self.write_legacy_covering_event_rows(
+            &mut txn,
+            LegacyCoveringWriteRowsParams {
+                realm: &realm,
+                area: &area,
+                resource: &resource,
+                first_resource_offset,
+                first_area_offset,
+                first_realm_offset,
+                events: &staged_events,
                 created_at,
-            };
-            let ttl_opt = self.ttl.ttl_seconds;
-            txn.put(resource_key, resource_value.encode(), ttl_opt)
-                .map_err(|e| format!("txn put failed: {:?}", e))?;
-
-            let area_key = encode_area_key(&realm, &area, area_offset);
-            let area_value = AreaValue {
-                resource_offset,
-                body: event.body.clone(),
-                metadata: event.metadata.clone(),
-                created_at,
-            };
-            txn.put(area_key, area_value.encode(), ttl_opt)
-                .map_err(|e| format!("txn put failed: {:?}", e))?;
-
-            let realm_key = encode_realm_key(&realm, realm_offset);
-            let realm_value = RealmValue {
-                area_offset,
-                resource_offset,
-                body: event.body.clone(),
-                metadata: event.metadata.clone(),
-                created_at,
-            };
-            txn.put(realm_key, realm_value.encode(), ttl_opt)
-                .map_err(|e| format!("txn put failed: {:?}", e))?;
-        }
+            },
+        )?;
 
         // **CRITICAL**: Persist offset counter metadata (no TTL!)
         // This ensures next_resource_offset survives TTL expiry and restarts
@@ -976,6 +1552,25 @@ impl StreamStore {
     /// **NO WATERMARK GATING**: Resource reads are strictly ordered by StreamActor.
     /// Watermark is for area/realm dimensions only.
     pub fn peek_resource(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<StreamRecord>, String> {
+        self.ensure_layout_activation_for_family(family)?;
+
+        match self.layout {
+            StreamStorageLayout::LegacyCovering => {
+                self.peek_resource_legacy_covering(family, realm, area, resource)
+            }
+            StreamStorageLayout::PromotionFrontier => {
+                self.unsupported_promotion_frontier_surface(family, "peek_resource")
+            }
+        }
+    }
+
+    fn peek_resource_legacy_covering(
         &self,
         family: u64,
         realm: &str,
@@ -1065,9 +1660,23 @@ impl StreamStore {
         &self,
         params: &ReadResourceParams,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
+        self.ensure_layout_activation_for_family(params.family)?;
+
+        match self.layout {
+            StreamStorageLayout::LegacyCovering => self.read_resource_legacy_covering(params),
+            StreamStorageLayout::PromotionFrontier => {
+                self.unsupported_promotion_frontier_surface(params.family, "read_resource")
+            }
+        }
+    }
+
+    fn read_resource_legacy_covering(
+        &self,
+        params: &ReadResourceParams,
+    ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
         // Fast path for single-record reads (limit=1, no byte limit)
         if params.limit == 1 && params.max_bytes.is_none() {
-            return self.read_resource_single(
+            return self.read_resource_single_legacy_covering(
                 params.family,
                 params.realm,
                 params.area,
@@ -1163,7 +1772,7 @@ impl StreamStore {
 
     /// Optimized fast-path for single-record reads (limit=1, no byte limit)
     /// Avoids scan overhead by using direct get with inline key buffer
-    fn read_resource_single(
+    fn read_resource_single_legacy_covering(
         &self,
         family: u64,
         realm: &str,
@@ -1244,6 +1853,27 @@ impl StreamStore {
     }
 
     pub fn read_area(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        from_offset: u64,
+        limit: u64,
+        max_bytes: Option<usize>,
+    ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
+        self.ensure_layout_activation_for_family(family)?;
+
+        match self.layout {
+            StreamStorageLayout::LegacyCovering => {
+                self.read_area_legacy_covering(family, realm, area, from_offset, limit, max_bytes)
+            }
+            StreamStorageLayout::PromotionFrontier => {
+                self.unsupported_promotion_frontier_surface(family, "read_area")
+            }
+        }
+    }
+
+    fn read_area_legacy_covering(
         &self,
         family: u64,
         realm: &str,
@@ -1337,14 +1967,35 @@ impl StreamStore {
         limit: u64,
         max_bytes: Option<usize>,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
+        self.ensure_layout_activation_for_family(family)?;
+
+        match self.layout {
+            StreamStorageLayout::LegacyCovering => {
+                self.read_realm_legacy_covering(family, realm, from_offset, limit, max_bytes)
+            }
+            StreamStorageLayout::PromotionFrontier => {
+                self.unsupported_promotion_frontier_surface(family, "read_realm")
+            }
+        }
+    }
+
+    fn read_realm_legacy_covering(
+        &self,
+        family: u64,
+        realm: &str,
+        from_offset: u64,
+        limit: u64,
+        max_bytes: Option<usize>,
+    ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
         let realm_watermark = self.get_realm_watermark(family, realm)?;
 
-        // Realm index is pre-interleaved by writes - scan sequentially!
+        // Realm index is pre-interleaved by writes - scan sequentially.
+        // Realm rows may be legacy one-record rows or compact realm pages.
         let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Realm as u8];
         prefix_key.extend_from_slice(realm.as_bytes());
         prefix_key.push(0);
 
-        let start_key = encode_realm_key(realm, from_offset);
+        let start_key = encode_realm_key(realm, Self::realm_page_start_offset(from_offset));
 
         let query = cntryl_midge::Query::new()
             .start_key(Bytes::from(start_key))
@@ -1364,38 +2015,98 @@ impl StreamStore {
         let mut total_bytes = 0;
         let mut last_realm_offset = from_offset;
         let max_bytes_limit = max_bytes.unwrap_or(usize::MAX);
+        let mut stop_scan = false;
+        let mut reached_limit = false;
+        let mut reached_byte_limit = false;
 
         for (key_bytes, realm_value_bytes) in results {
-            let realm_offset = decode_realm_offset_from_key(&key_bytes)?;
-            let realm_value = RealmValue::decode(&realm_value_bytes);
+            let row_realm_offset = decode_realm_offset_from_key(&key_bytes)?;
 
-            // Watermark enforcement at realm level
-            if realm_offset > realm_watermark {
-                break;
+            if CompactRealmPageValue::is_encoded(&realm_value_bytes) {
+                let page = CompactRealmPageValue::try_decode(&realm_value_bytes).map_err(
+                    |error| Self::invalid_compact_realm_page_error(row_realm_offset, error),
+                )?;
+
+                for (slot, page_record) in page.records.into_iter().enumerate() {
+                    let realm_offset = row_realm_offset + slot as u64;
+                    if realm_offset < from_offset {
+                        continue;
+                    }
+                    if realm_offset > realm_watermark {
+                        stop_scan = true;
+                        break;
+                    }
+
+                    let record_bytes = page_record.body.len()
+                        + page_record.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                    if total_bytes + record_bytes > max_bytes_limit && !records.is_empty() {
+                        reached_byte_limit = true;
+                        break;
+                    }
+
+                    last_realm_offset = realm_offset;
+                    total_bytes += record_bytes;
+                    records.push(StreamRecord {
+                        resource_offset: page_record.resource_offset,
+                        area_offset: Some(page_record.area_offset),
+                        realm_offset: Some(realm_offset),
+                        body: page_record.body,
+                        metadata: page_record.metadata,
+                        created_at: page_record.created_at,
+                    });
+
+                    if records.len() == limit as usize {
+                        reached_limit = true;
+                        break;
+                    }
+                }
+            } else {
+                let realm_offset = row_realm_offset;
+                let realm_value = RealmValue::try_decode(&realm_value_bytes).map_err(|error| {
+                    let prefix = realm_value_bytes
+                        .iter()
+                        .take(8)
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    format!(
+                        "ERR_INVALID_REALM_ROW_FORMAT: offset={realm_offset} prefix=[{prefix}] {error}"
+                    )
+                })?;
+
+                if realm_offset > realm_watermark {
+                    stop_scan = true;
+                } else {
+                    let record_bytes = realm_value.body.len()
+                        + realm_value.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                    if total_bytes + record_bytes > max_bytes_limit && !records.is_empty() {
+                        reached_byte_limit = true;
+                        break;
+                    }
+
+                    last_realm_offset = realm_offset;
+                    total_bytes += record_bytes;
+                    records.push(StreamRecord {
+                        resource_offset: realm_value.resource_offset,
+                        area_offset: Some(realm_value.area_offset),
+                        realm_offset: Some(realm_offset),
+                        body: realm_value.body,
+                        metadata: realm_value.metadata,
+                        created_at: realm_value.created_at,
+                    });
+
+                    if records.len() == limit as usize {
+                        reached_limit = true;
+                    }
+                }
             }
 
-            // Realm index is now a covering index - read directly!
-            let record_bytes = realm_value.body.len()
-                + realm_value.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-
-            if total_bytes + record_bytes > max_bytes_limit && !records.is_empty() {
+            if stop_scan || reached_limit || reached_byte_limit {
                 break;
             }
-
-            last_realm_offset = realm_offset;
-            total_bytes += record_bytes;
-
-            records.push(StreamRecord {
-                resource_offset: realm_value.resource_offset,
-                area_offset: Some(realm_value.area_offset),
-                realm_offset: Some(realm_offset),
-                body: realm_value.body,
-                metadata: realm_value.metadata,
-                created_at: realm_value.created_at,
-            });
         }
 
-        let has_more = records.len() == limit as usize || total_bytes >= max_bytes_limit;
+        let has_more = reached_limit || reached_byte_limit;
 
         let (last_resource_offset, last_area_offset) = if let Some(last_rec) = records.last() {
             (last_rec.resource_offset, last_rec.area_offset)
@@ -1414,6 +2125,8 @@ impl StreamStore {
     }
 
     pub fn get_watermark(&self, family: u64, realm: &str, area: &str) -> Result<u64, String> {
+        self.ensure_layout_activation_for_family(family)?;
+
         let key = encode_watermark_key(realm, area);
         let counter_key = encode_area_counter_key(realm, area);
 
@@ -1433,7 +2146,9 @@ impl StreamStore {
                 .get(&counter_key)
                 .map_err(|e| format!("midge get error: {:?}", e))?
             {
-                Some(bytes) => Ok(AreaCounterValue::decode(&bytes).next_offset.saturating_sub(1)),
+                Some(bytes) => Ok(AreaCounterValue::decode(&bytes)
+                    .next_offset
+                    .saturating_sub(1)),
                 None => Ok(self
                     .scan_next_area_offset(family, realm, area)?
                     .saturating_sub(1)),
@@ -1448,6 +2163,8 @@ impl StreamStore {
         area: &str,
         watermark: u64,
     ) -> Result<(), String> {
+        self.ensure_layout_activation_for_family(family)?;
+
         let key = encode_watermark_key(realm, area);
 
         let mut txn = self
@@ -1472,6 +2189,8 @@ impl StreamStore {
     }
 
     pub fn get_realm_watermark(&self, family: u64, realm: &str) -> Result<u64, String> {
+        self.ensure_layout_activation_for_family(family)?;
+
         let key = crate::domains::stream::storage::encode_realm_watermark_key(realm);
         let counter_key = encode_realm_counter_key(realm);
 
@@ -1491,7 +2210,9 @@ impl StreamStore {
                 .get(&counter_key)
                 .map_err(|e| format!("midge get error: {:?}", e))?
             {
-                Some(bytes) => Ok(RealmCounterValue::decode(&bytes).next_offset.saturating_sub(1)),
+                Some(bytes) => Ok(RealmCounterValue::decode(&bytes)
+                    .next_offset
+                    .saturating_sub(1)),
                 None => Ok(self
                     .scan_next_realm_offset(family, realm)?
                     .saturating_sub(1)),
@@ -1505,6 +2226,8 @@ impl StreamStore {
         realm: &str,
         watermark: u64,
     ) -> Result<(), String> {
+        self.ensure_layout_activation_for_family(family)?;
+
         let key = crate::domains::stream::storage::encode_realm_watermark_key(realm);
 
         let mut txn = self
@@ -1562,6 +2285,25 @@ impl StreamStore {
         area: &str,
         resource: &str,
     ) -> Result<Option<u64>, String> {
+        self.ensure_layout_activation_for_family(family)?;
+
+        match self.layout {
+            StreamStorageLayout::LegacyCovering => {
+                self.get_last_resource_offset_legacy_covering(family, realm, area, resource)
+            }
+            StreamStorageLayout::PromotionFrontier => {
+                self.unsupported_promotion_frontier_surface(family, "get_last_resource_offset")
+            }
+        }
+    }
+
+    fn get_last_resource_offset_legacy_covering(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<u64>, String> {
         // Build prefix for this resource
         let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Resource as u8];
         prefix_key.extend_from_slice(realm.as_bytes());
@@ -1606,6 +2348,25 @@ impl StreamStore {
         area: &str,
         resource: &str,
     ) -> Result<u64, String> {
+        self.ensure_layout_activation_for_family(family)?;
+
+        match self.layout {
+            StreamStorageLayout::LegacyCovering => {
+                self.get_next_resource_offset_legacy_covering(family, realm, area, resource)
+            }
+            StreamStorageLayout::PromotionFrontier => {
+                self.unsupported_promotion_frontier_surface(family, "get_next_resource_offset")
+            }
+        }
+    }
+
+    fn get_next_resource_offset_legacy_covering(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<u64, String> {
         let resource_meta_key = encode_resource_meta_key(realm, area, resource);
         let counter_key = encode_offset_counter_key(realm, area, resource);
 
@@ -1630,6 +2391,40 @@ mod tests {
     use super::*;
     use crate::testkit::create_test_engine_with_cfs;
     use bytes::Bytes;
+
+    fn read_layout_marker(
+        engine: &cntryl_midge::Engine,
+        family: u32,
+    ) -> Option<StreamStorageLayout> {
+        let txn = engine
+            .begin_tx(family, cntryl_midge::TransactionMode::ReadOnly)
+            .expect("begin read tx");
+        txn.get(&encode_stream_layout_marker_key())
+            .expect("read layout marker")
+            .map(|bytes| {
+                StreamLayoutMarkerValue::decode(&bytes)
+                    .expect("decode layout marker")
+                    .layout
+            })
+    }
+
+    fn write_layout_marker(
+        engine: &cntryl_midge::Engine,
+        family: u32,
+        layout: StreamStorageLayout,
+    ) {
+        let mut txn = engine
+            .begin_tx(family, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin write tx");
+        txn.put(
+            encode_stream_layout_marker_key(),
+            StreamLayoutMarkerValue::new(layout).encode(),
+            None,
+        )
+        .expect("write layout marker");
+        txn.commit(cntryl_midge::WriteOptions::sync())
+            .expect("commit layout marker");
+    }
 
     fn single_event(body: &'static [u8]) -> Vec<EventPayload> {
         vec![EventPayload {
@@ -1662,6 +2457,166 @@ mod tests {
 
         // Assert
         assert!(!Arc::ptr_eq(&left, &right));
+    }
+
+    #[test]
+    fn should_use_legacy_stream_storage_layout_by_default() {
+        // Arrange
+
+        // Act
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+
+        // Assert
+        assert_eq!(store.storage_layout(), StreamStorageLayout::LegacyCovering);
+    }
+
+    #[test]
+    fn should_use_selected_stream_storage_layout_given_explicit_layout() {
+        // Arrange
+
+        // Act
+        let store = StreamStore::with_layout(
+            create_test_engine_with_cfs(vec![1]),
+            StreamStorageLayout::PromotionFrontier,
+        );
+
+        // Assert
+        assert_eq!(
+            store.storage_layout(),
+            StreamStorageLayout::PromotionFrontier
+        );
+    }
+
+    #[test]
+    fn should_persist_legacy_stream_layout_marker_given_first_real_store_write() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        let store = StreamStore::new(db.clone());
+        let events = single_event(b"first");
+
+        // Act
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("commit records");
+
+        // Assert
+        assert_eq!(
+            read_layout_marker(db.as_ref(), 1),
+            Some(StreamStorageLayout::LegacyCovering)
+        );
+    }
+
+    #[test]
+    fn should_mark_only_stream_family_given_existing_families_boot_scan() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1, 2]);
+        let mut txn = db
+            .begin_tx(2, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin write tx");
+        txn.put(
+            encode_offset_counter_key("test", "events", "orders"),
+            OffsetCounterValue { next_offset: 1 }.encode(),
+            None,
+        )
+        .expect("write unmarked stream metadata");
+        txn.commit(cntryl_midge::WriteOptions::sync())
+            .expect("commit unmarked stream metadata");
+        let store = StreamStore::new(db.clone());
+
+        // Act
+        store
+            .ensure_layout_activation_for_existing_families()
+            .expect("boot scan should succeed for legacy layout");
+
+        // Assert
+        assert_eq!(read_layout_marker(db.as_ref(), 1), None);
+        assert_eq!(
+            read_layout_marker(db.as_ref(), 2),
+            Some(StreamStorageLayout::LegacyCovering)
+        );
+    }
+
+    #[test]
+    fn should_return_error_given_unmarked_stream_data_and_promotion_frontier_layout() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        let mut txn = db
+            .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin write tx");
+        txn.put(
+            encode_offset_counter_key("test", "events", "orders"),
+            OffsetCounterValue { next_offset: 1 }.encode(),
+            None,
+        )
+        .expect("write unmarked stream metadata");
+        txn.commit(cntryl_midge::WriteOptions::sync())
+            .expect("commit unmarked stream metadata");
+        let store = StreamStore::with_layout(db, StreamStorageLayout::PromotionFrontier);
+
+        // Act
+        let result = store.get_next_resource_offset(1, "test", "events", "orders");
+
+        // Assert
+        let error = result.expect_err("promotion frontier should reject unmarked legacy data");
+        assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED"));
+    }
+
+    #[test]
+    fn should_return_error_given_mismatched_stream_layout_marker() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        write_layout_marker(db.as_ref(), 1, StreamStorageLayout::PromotionFrontier);
+        let store = StreamStore::new(db);
+
+        // Act
+        let result = store.get_next_resource_offset(1, "test", "events", "orders");
+
+        // Assert
+        let error = result.expect_err("legacy store should reject promotion frontier marker");
+        assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
+        assert!(error.contains("promotion-frontier"));
+        assert!(error.contains("legacy-covering"));
+    }
+
+    #[test]
+    fn should_return_mismatch_before_unsupported_given_existing_families_check() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1, 2]);
+        write_layout_marker(db.as_ref(), 2, StreamStorageLayout::LegacyCovering);
+        let store = StreamStore::with_layout(db, StreamStorageLayout::PromotionFrontier);
+
+        // Act
+        let result = store.ensure_layout_activation_for_existing_families();
+
+        // Assert
+        let error = result.expect_err("promotion frontier should report the existing mismatch");
+        assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
+        assert!(error.contains("family=2"));
+    }
+
+    #[test]
+    fn should_return_error_given_promotion_frontier_real_store_access_before_port() {
+        // Arrange
+        let store = StreamStore::with_layout(
+            create_test_engine_with_cfs(vec![1]),
+            StreamStorageLayout::PromotionFrontier,
+        );
+
+        // Act
+        let result = store.get_next_resource_offset(1, "test", "events", "orders");
+
+        // Assert
+        let error = result.expect_err("promotion frontier should be blocked on the real store");
+        assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_UNSUPPORTED"));
     }
 
     #[test]
@@ -1875,5 +2830,74 @@ mod tests {
                 .expect("next resource offset"),
             2
         );
+    }
+
+    #[test]
+    fn should_read_realm_records_given_recreated_partial_compact_page() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        let first_store = StreamStore::new(db.clone());
+        let second_store = StreamStore::new(db);
+        let first_events = single_event(b"first");
+        let second_events = single_event(b"second");
+        first_store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("seed commit");
+        second_store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "audits",
+                expected_resource_next_offset: 0,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit");
+
+        // Act
+        let records = second_store
+            .read_realm(1, "test", 1, 10, None)
+            .expect("read realm from offset one")
+            .0;
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].realm_offset, Some(1));
+        assert_eq!(records[0].body, Bytes::from_static(b"second"));
+    }
+
+    #[test]
+    fn should_return_error_given_malformed_compact_realm_page_when_reading_realm() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        let store = StreamStore::new(db.clone());
+        store
+            .set_realm_watermark(1, "test", 0)
+            .expect("seed realm watermark");
+        let mut txn = db
+            .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin write tx");
+        txn.put(encode_realm_key("test", 0), vec![0, 0xB2, 1, 0, 0, 0], None)
+            .expect("write malformed compact realm page");
+        txn.commit(cntryl_midge::WriteOptions::sync())
+            .expect("commit malformed compact realm page");
+
+        // Act
+        let result = store.read_realm(1, "test", 0, 10, None);
+
+        // Assert
+        let error = result.expect_err("malformed compact realm page should fail read");
+        assert!(error.contains("ERR_INVALID_COMPACT_REALM_PAGE"));
     }
 }

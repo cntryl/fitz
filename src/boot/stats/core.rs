@@ -144,6 +144,10 @@ impl Runtime {
         self.router.len()
     }
 
+    pub fn router(&self) -> Arc<Router> {
+        self.router.clone()
+    }
+
     pub fn authenticated_session_count(&self) -> usize {
         self.ingress
             .read()

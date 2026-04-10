@@ -69,6 +69,7 @@ parking_lot = "0.12"
 smallvec = "1.13"
 bincode = "1.3"
 tempfile = "3"
+lz4_flex = "0.11"
 cntryl-midge = { git = "https://github.com/cntryl/midge", branch = "main", features = ["testkit"] }
 cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", branch = "main" }
 
@@ -200,6 +201,11 @@ name = "tier2_subsystem_stream_replay"
 harness = false
 path = "benches/tier2_subsystem_stream_replay.rs"
 
+[[bench]]
+name = "tier2_subsystem_stream_write_shape"
+harness = false
+path = "benches/tier2_subsystem_stream_write_shape.rs"
+
 # Tier 3: System (Domain + plumbing, <10s, sync only - one per domain)
 [[bench]]
 name = "tier3_system_kv"
@@ -236,6 +242,11 @@ name = "tier3_system_stream"
 harness = false
 path = "benches/tier3_system_stream.rs"
 
+[[bench]]
+name = "tier3_system_stream_storage_model"
+harness = false
+path = "benches/tier3_system_stream_storage_model.rs"
+
 # Tier 4: Integration (Full TCP/WS to domain, full stack - one per domain)
 [[bench]]
 name = "tier4_integration_kv"
@@ -271,6 +282,11 @@ path = "benches/tier4_integration_schedule.rs"
 name = "tier4_integration_stream"
 harness = false
 path = "benches/tier4_integration_stream.rs"
+
+[[bench]]
+name = "tier4_integration_stream_storage_model"
+harness = false
+path = "benches/tier4_integration_stream_storage_model.rs"
 
 [features]
 # Feature flag to skip admin snapshot syncing in RPC domain for benchmarking

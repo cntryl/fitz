@@ -64,7 +64,13 @@ pub fn create_test_db() -> Arc<cntryl_midge::Engine> {
 
 /// Create a StreamStore with in-memory database for tests
 pub fn create_test_store() -> crate::domains::stream::StreamStore {
-    crate::domains::stream::StreamStore::new(create_test_db())
+    create_test_store_with_layout(crate::domains::stream::StreamStorageLayout::default())
+}
+
+pub fn create_test_store_with_layout(
+    stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+) -> crate::domains::stream::StreamStore {
+    crate::domains::stream::StreamStore::with_layout(create_test_db(), stream_storage_layout)
 }
 
 /// Create a StreamActor for testing with in-memory storage
@@ -95,7 +101,8 @@ pub fn create_test_stream_actor(
         area.to_string(),
         resource.to_string(),
         store,
-    );
+    )
+    .expect("create test stream actor");
     let ctx = Context::new(addr, router);
 
     (actor, ctx)

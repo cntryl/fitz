@@ -78,18 +78,21 @@ benches/
 ├── tier3_system_rpc.rs
 ├── tier3_system_schedule.rs
 ├── tier3_system_stream.rs
+├── tier3_system_stream_storage_model.rs
 ├── tier4_integration_kv.rs
 ├── tier4_integration_lease.rs
 ├── tier4_integration_notice.rs
 ├── tier4_integration_queue.rs
 ├── tier4_integration_rpc.rs
 ├── tier4_integration_schedule.rs
-└── tier4_integration_stream.rs
+├── tier4_integration_stream.rs
+└── tier4_integration_stream_storage_model.rs
 ```
 
 ### Organization Principles
 
 - **One file per subsystem/domain** - Tier1/2: one module per file; Tier3/4: one domain per file.
+    - Exception: Stream currently also has a bench-only storage-model prototype file used to evaluate redesign candidates before production porting.
 - **Shared config** - Tier1/2 use `benches/criterion_config.rs` (`criterion_config_for_tier1()` / `criterion_config_for_tier2()`); Tier3/4 use `benches/stress_config.rs` and env vars (see [Stress configuration](#stress-configuration-tier-3-and-4)).
 - **Clear naming** - Files follow `tierN_{hotpath|subsystem|system|integration}_{name}.rs`.
 - **Logical grouping** - Related benchmarks in the same file; use a single Criterion group name per file (e.g. `hotpath_routing`) and `Throughput::Elements(N)` for comparability.
