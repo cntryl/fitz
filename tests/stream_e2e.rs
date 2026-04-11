@@ -2,7 +2,7 @@
 //! Tests both TCP and WebSocket transports
 
 mod fixtures;
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::store::StreamStore;
 use fitz::domains::stream::{StreamActor, StreamStorageLayout};
@@ -42,21 +42,151 @@ fn decode_stream_ok_data(payload: &[u8]) -> Vec<u8> {
     data.to_vec()
 }
 
-fn parse_stream_read_records(frame: &[u8]) -> Vec<(u64, Vec<u8>)> {
+fn build_stream_last(route: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(605, &buf);
+    builder.build()
+}
+
+fn build_stream_get_metadata(route: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(606, &buf);
+    builder.build()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WireStreamRecord {
+    resource_offset: u64,
+    area_offset: Option<u64>,
+    realm_offset: Option<u64>,
+    body: Vec<u8>,
+    metadata: Option<Vec<u8>>,
+    created_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WireReadCursor {
+    last_resource_offset: u64,
+    last_area_offset: Option<u64>,
+    last_realm_offset: Option<u64>,
+    has_more: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WireReadResponse {
+    records: Vec<WireStreamRecord>,
+    cursor: WireReadCursor,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WireStreamMetadata {
+    first_resource_offset: Option<u64>,
+    last_resource_offset: Option<u64>,
+    resource_count: u64,
+    max_batch_events: u64,
+    max_batch_bytes: u64,
+    ttl_seconds: Option<u64>,
+    area_watermark: u64,
+    realm_watermark: u64,
+}
+
+fn decode_wire_stream_record(dec: &mut PayloadDecoder<'_>) -> WireStreamRecord {
+    let resource_offset = dec.get_u64().expect("stream read record offset");
+    let area_offset = dec.get_optional_u64().expect("stream area offset");
+    let realm_offset = dec.get_optional_u64().expect("stream realm offset");
+    let body = dec.get_bytes().expect("stream read record body").to_vec();
+    let metadata = dec
+        .get_optional_bytes()
+        .expect("stream read record metadata")
+        .map(|bytes| bytes.to_vec());
+    let created_at = dec.get_u64().expect("stream read record created_at");
+
+    WireStreamRecord {
+        resource_offset,
+        area_offset,
+        realm_offset,
+        body,
+        metadata,
+        created_at,
+    }
+}
+
+fn parse_stream_read_response(frame: &[u8]) -> WireReadResponse {
     let (_msg_type, status, payload) = parse_stream_response(frame);
     assert_eq!(status, 0, "expected successful stream read");
 
     let data = decode_stream_ok_data(&payload);
     let mut dec = PayloadDecoder::new(&data);
-    let count = dec.get_u32().expect("stream read record count");
-    let mut records = Vec::with_capacity(count as usize);
+    let count = dec.get_u32().expect("stream read record count") as usize;
+    let mut records = Vec::with_capacity(count);
     for _ in 0..count {
-        let offset = dec.get_u64().expect("stream read record offset");
-        let body = dec.get_bytes().expect("stream read record body").to_vec();
-        records.push((offset, body));
+        records.push(decode_wire_stream_record(&mut dec));
     }
+
+    let cursor = WireReadCursor {
+        last_resource_offset: dec.get_u64().expect("stream cursor resource offset"),
+        last_area_offset: dec.get_optional_u64().expect("stream cursor area offset"),
+        last_realm_offset: dec.get_optional_u64().expect("stream cursor realm offset"),
+        has_more: dec.get_u8().expect("stream cursor has_more") == 1,
+    };
     assert!(dec.is_complete(), "expected complete stream read payload");
-    records
+
+    WireReadResponse { records, cursor }
+}
+
+fn parse_stream_last_response(frame: &[u8]) -> Option<WireStreamRecord> {
+    let (_msg_type, status, payload) = parse_stream_response(frame);
+    assert_eq!(status, 0, "expected successful stream last response");
+
+    let data = decode_stream_ok_data(&payload);
+    if data.is_empty() {
+        return None;
+    }
+
+    let mut dec = PayloadDecoder::new(&data);
+    let record = decode_wire_stream_record(&mut dec);
+    assert!(dec.is_complete(), "expected complete stream last payload");
+    Some(record)
+}
+
+fn parse_stream_metadata_response(frame: &[u8]) -> WireStreamMetadata {
+    let (_msg_type, status, payload) = parse_stream_response(frame);
+    assert_eq!(status, 0, "expected successful stream metadata response");
+
+    let data = decode_stream_ok_data(&payload);
+    let mut dec = PayloadDecoder::new(&data);
+    let metadata = WireStreamMetadata {
+        first_resource_offset: dec
+            .get_optional_u64()
+            .expect("first resource metadata offset"),
+        last_resource_offset: dec
+            .get_optional_u64()
+            .expect("last resource metadata offset"),
+        resource_count: dec.get_u64().expect("resource metadata count"),
+        max_batch_events: dec.get_u64().expect("resource max_batch_events"),
+        max_batch_bytes: dec.get_u64().expect("resource max_batch_bytes"),
+        ttl_seconds: dec.get_optional_u64().expect("resource ttl seconds"),
+        area_watermark: dec.get_u64().expect("resource area watermark"),
+        realm_watermark: dec.get_u64().expect("resource realm watermark"),
+    };
+    assert!(dec.is_complete(), "expected complete stream metadata payload");
+    metadata
+}
+
+fn parse_stream_read_records(frame: &[u8]) -> Vec<(u64, Vec<u8>)> {
+    parse_stream_read_response(frame)
+        .records
+        .into_iter()
+        .map(|record| (record.resource_offset, record.body))
+        .collect()
 }
 
 async fn wait_for_stream_storage_release() {
@@ -370,6 +500,111 @@ where
     let records = parse_stream_read_records(&response);
     let bodies: Vec<Vec<u8>> = records.into_iter().map(|(_, body)| body).collect();
     assert_eq!(bodies, vec![b"realm-one".to_vec(), b"realm-two".to_vec()]);
+}
+
+async fn should_expose_exact_resource_record_metadata_on_read<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/events/rich";
+    let begin_response = client
+        .send_and_receive(&build_stream_begin(route, 0), 2000)
+        .await
+        .expect("begin stream session");
+    let (_msg_type, status, data) = parse_stream_response(&begin_response);
+    assert_eq!(status, 0, "Expected success for stream begin");
+    let session_id = parse_stream_session_id(&data).expect("stream session id");
+
+    let append_response = client
+        .send_and_receive(
+            &build_stream_append_with_metadata(session_id, b"payload", Some(b"meta")),
+            2000,
+        )
+        .await
+        .expect("append rich stream event");
+    let (_msg_type, status, _data) = parse_stream_response(&append_response);
+    assert_eq!(status, 0, "Expected success for stream append");
+
+    let commit_response = client
+        .send_and_receive(&build_stream_commit(session_id), 2000)
+        .await
+        .expect("commit rich stream session");
+    let (_msg_type, status, _data) = parse_stream_response(&commit_response);
+    assert_eq!(status, 0, "Expected success for stream commit");
+
+    // Act
+    let read_response = client
+        .send_and_receive(&build_stream_read(route, 0), 2000)
+        .await
+        .expect("read rich stream event");
+    let read = parse_stream_read_response(&read_response);
+
+    // Assert
+    assert_eq!(read.records.len(), 1);
+    assert_eq!(read.records[0].resource_offset, 0);
+    assert_eq!(read.records[0].area_offset, Some(0));
+    assert_eq!(read.records[0].realm_offset, Some(0));
+    assert_eq!(read.records[0].body, b"payload".to_vec());
+    assert_eq!(read.records[0].metadata, Some(b"meta".to_vec()));
+    assert!(read.records[0].created_at > 0);
+    assert_eq!(read.cursor.last_resource_offset, 0);
+    assert_eq!(read.cursor.last_area_offset, Some(0));
+    assert_eq!(read.cursor.last_realm_offset, Some(0));
+    assert!(!read.cursor.has_more);
+}
+
+async fn should_expose_exact_resource_record_metadata_on_last<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/events/last-rich";
+    commit_stream_record(&mut client, route, b"payload").await;
+
+    // Act
+    let last_response = client
+        .send_and_receive(&build_stream_last(route), 2000)
+        .await
+        .expect("read stream tail");
+    let record = parse_stream_last_response(&last_response).expect("expected tail record");
+
+    // Assert
+    assert_eq!(record.resource_offset, 0);
+    assert_eq!(record.area_offset, Some(0));
+    assert_eq!(record.realm_offset, Some(0));
+    assert_eq!(record.body, b"payload".to_vec());
+    assert_eq!(record.metadata, None);
+    assert!(record.created_at > 0);
+}
+
+async fn should_expose_exact_resource_metadata_on_get_metadata<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/events/meta";
+    commit_stream_record(&mut client, route, b"payload").await;
+
+    // Act
+    let metadata_response = client
+        .send_and_receive(&build_stream_get_metadata(route), 2000)
+        .await
+        .expect("read stream metadata");
+    let metadata = parse_stream_metadata_response(&metadata_response);
+
+    // Assert
+    assert_eq!(metadata.first_resource_offset, Some(0));
+    assert_eq!(metadata.last_resource_offset, Some(0));
+    assert_eq!(metadata.resource_count, 1);
+    assert_eq!(metadata.max_batch_events, 10_000);
+    assert_eq!(metadata.max_batch_bytes, 10 * 1024 * 1024);
+    assert_eq!(metadata.ttl_seconds, None);
+    assert_eq!(metadata.area_watermark, 0);
+    assert_eq!(metadata.realm_watermark, 0);
 }
 
 async fn should_retain_other_stream_subscription_after_unsubscribe<C>(server: &TestServer)
@@ -856,6 +1091,9 @@ define_transport_tests!(
     should_isolate_streams_by_route_tcp / should_isolate_streams_by_route_ws => should_isolate_streams_by_route,
     should_read_committed_area_history_given_wildcard_route_tcp / should_read_committed_area_history_given_wildcard_route_ws => should_read_committed_area_history_given_wildcard_route,
     should_read_committed_realm_history_given_wildcard_route_tcp / should_read_committed_realm_history_given_wildcard_route_ws => should_read_committed_realm_history_given_wildcard_route,
+    should_expose_exact_resource_record_metadata_on_read_tcp / should_expose_exact_resource_record_metadata_on_read_ws => should_expose_exact_resource_record_metadata_on_read,
+    should_expose_exact_resource_record_metadata_on_last_tcp / should_expose_exact_resource_record_metadata_on_last_ws => should_expose_exact_resource_record_metadata_on_last,
+    should_expose_exact_resource_metadata_on_get_metadata_tcp / should_expose_exact_resource_metadata_on_get_metadata_ws => should_expose_exact_resource_metadata_on_get_metadata,
     should_abort_uncommitted_stream_session_on_disconnect_tcp / should_abort_uncommitted_stream_session_on_disconnect_ws => should_abort_uncommitted_stream_session_on_disconnect,
     should_remove_stream_subscription_when_subscriber_disconnects_tcp / should_remove_stream_subscription_when_subscriber_disconnects_ws => should_remove_stream_subscription_when_subscriber_disconnects,
     should_not_treat_stream_subscription_as_replay_cursor_given_shared_route_tcp / should_not_treat_stream_subscription_as_replay_cursor_given_shared_route_ws => should_not_treat_stream_subscription_as_replay_cursor_given_shared_route,

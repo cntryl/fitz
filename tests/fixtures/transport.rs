@@ -1185,6 +1185,15 @@ pub fn build_stream_begin(route: &str, expected_offset: u64) -> Vec<u8> {
 
 /// Build STREAM APPEND frame (msg_type 601)
 pub fn build_stream_append(session_id: u64, data: &[u8]) -> Vec<u8> {
+    build_stream_append_with_metadata(session_id, data, None)
+}
+
+/// Build STREAM APPEND frame (msg_type 601) with optional metadata.
+pub fn build_stream_append_with_metadata(
+    session_id: u64,
+    data: &[u8],
+    metadata: Option<&[u8]>,
+) -> Vec<u8> {
     use bytes::BufMut;
 
     // Wire format: [u64 session_id][bytes body][optional metadata]
@@ -1197,8 +1206,14 @@ pub fn build_stream_append(session_id: u64, data: &[u8]) -> Vec<u8> {
     buf.put_u32(data.len() as u32);
     buf.put_slice(data);
 
-    // Optional metadata (flag = 0 for none)
-    buf.put_u8(0);
+    match metadata {
+        Some(metadata) => {
+            buf.put_u8(1);
+            buf.put_u32(metadata.len() as u32);
+            buf.put_slice(metadata);
+        }
+        None => buf.put_u8(0),
+    }
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(601, &buf);
@@ -1272,6 +1287,32 @@ pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(604, &buf);
+    builder.build()
+}
+
+/// Build STREAM LAST frame (msg_type 605)
+pub fn build_stream_last(route: &str) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(605, &buf);
+    builder.build()
+}
+
+/// Build STREAM GET_METADATA frame (msg_type 606)
+pub fn build_stream_get_metadata(route: &str) -> Vec<u8> {
+    use bytes::BufMut;
+
+    let mut buf = Vec::new();
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(606, &buf);
     builder.build()
 }
 

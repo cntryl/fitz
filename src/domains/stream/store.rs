@@ -1028,6 +1028,32 @@ impl StreamStore {
         }
     }
 
+    fn load_next_resource_offset_from_txn(
+        &self,
+        txn: &cntryl_midge::Transaction,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<u64, String> {
+        let resource_meta_key = encode_resource_meta_key(realm, area, resource);
+        let counter_key = encode_offset_counter_key(realm, area, resource);
+
+        match txn
+            .get(&resource_meta_key)
+            .map_err(|e| format!("get error: {:?}", e))?
+        {
+            Some(value_bytes) => Ok(ResourceMetaValue::decode(&value_bytes).next_offset),
+            None => match txn
+                .get(&counter_key)
+                .map_err(|e| format!("get error: {:?}", e))?
+            {
+                Some(value_bytes) => Ok(OffsetCounterValue::decode(&value_bytes).next_offset),
+                None => Ok(self.scan_resource_stats(family, realm, area, resource)?.0),
+            },
+        }
+    }
+
     fn load_area_next_offset_snapshot(
         &self,
         family: u64,
@@ -1582,19 +1608,10 @@ impl StreamStore {
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
 
-        // Use offset counter to find last committed offset without opening a second transaction.
-        let counter_key =
-            crate::domains::stream::storage::encode_offset_counter_key(realm, area, resource);
-        let next_offset = match txn
-            .get(&counter_key)
-            .map_err(|e| format!("get error: {:?}", e))?
-        {
-            Some(value_bytes) => {
-                crate::domains::stream::storage::OffsetCounterValue::decode(&value_bytes)
-                    .next_offset
-            }
-            None => return Ok(None),
-        };
+        // Tail reads must trust the same durable next-offset metadata as replay reads.
+        let next_offset = self.load_next_resource_offset_from_txn(
+            &txn, family, realm, area, resource,
+        )?;
         if next_offset == 0 {
             return Ok(None);
         }
@@ -1675,7 +1692,7 @@ impl StreamStore {
         params: &ReadResourceParams,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
         // Fast path for single-record reads (limit=1, no byte limit)
-        if params.limit == 1 && params.max_bytes.is_none() {
+        if self.ttl.ttl_seconds.is_none() && params.limit == 1 && params.max_bytes.is_none() {
             return self.read_resource_single_legacy_covering(
                 params.family,
                 params.realm,
@@ -1701,10 +1718,11 @@ impl StreamStore {
             params.from_offset,
         );
 
+        let query_limit = params.limit.saturating_add(1).min(usize::MAX as u64) as usize;
         let query = cntryl_midge::Query::new()
             .start_key(Bytes::from(start_key))
             .prefix(Bytes::from(prefix_key))
-            .limit(params.limit as usize);
+            .limit(query_limit);
 
         let txn = self
             .db
@@ -1722,6 +1740,7 @@ impl StreamStore {
         let mut total_bytes = 0;
         let mut last_offset = params.from_offset;
         let max_bytes_limit = params.max_bytes.unwrap_or(usize::MAX);
+        let mut has_more = false;
 
         for (_, value_bytes) in results {
             let resource_value = ResourceValue::decode(&value_bytes);
@@ -1733,8 +1752,14 @@ impl StreamStore {
                     .map(|m| m.len())
                     .unwrap_or(0);
 
+            if records.len() == params.limit as usize {
+                has_more = true;
+                break;
+            }
+
             // Byte limit enforcement
             if total_bytes + record_bytes > max_bytes_limit && !records.is_empty() {
+                has_more = true;
                 break;
             }
 
@@ -1750,8 +1775,6 @@ impl StreamStore {
                 created_at: resource_value.created_at,
             });
         }
-
-        let has_more = records.len() == params.limit as usize || total_bytes >= max_bytes_limit;
 
         // Cache last record to avoid repeated last() lookups
         let (last_area_offset, last_realm_offset) = if let Some(last_rec) = records.last() {
@@ -1820,6 +1843,9 @@ impl StreamStore {
         match txn.get(key).map_err(|e| format!("get error: {:?}", e))? {
             Some(value_bytes) => {
                 let resource_value = ResourceValue::decode(&value_bytes);
+                let next_resource_offset = self.load_next_resource_offset_from_txn(
+                    &txn, family, realm, area, resource,
+                )?;
 
                 let record = StreamRecord {
                     resource_offset: resource_value.resource_offset,
@@ -1834,7 +1860,7 @@ impl StreamStore {
                     last_resource_offset: resource_value.resource_offset,
                     last_area_offset: resource_value.area_offset,
                     last_realm_offset: resource_value.realm_offset,
-                    has_more: false, // Single read never has more
+                    has_more: resource_value.resource_offset.saturating_add(1) < next_resource_offset,
                 };
 
                 Ok((vec![record], cursor))
@@ -1892,10 +1918,11 @@ impl StreamStore {
 
         let start_key = encode_area_key(realm, area, from_offset);
 
+        let query_limit = limit.saturating_add(1).min(usize::MAX as u64) as usize;
         let query = cntryl_midge::Query::new()
             .start_key(Bytes::from(start_key))
             .prefix(Bytes::from(prefix_key))
-            .limit(limit as usize);
+            .limit(query_limit);
 
         let txn = self
             .db
@@ -1910,6 +1937,7 @@ impl StreamStore {
         let mut total_bytes = 0;
         let mut last_area_offset = from_offset;
         let max_bytes_limit = max_bytes.unwrap_or(usize::MAX);
+        let mut has_more = false;
 
         for (key_bytes, area_value_bytes) in results {
             let area_offset = decode_area_offset_from_key(&key_bytes)?;
@@ -1920,11 +1948,17 @@ impl StreamStore {
                 break;
             }
 
+            if records.len() == limit as usize {
+                has_more = true;
+                break;
+            }
+
             // Area index is now a covering index - read directly!
             let record_bytes =
                 area_value.body.len() + area_value.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
 
             if total_bytes + record_bytes > max_bytes_limit && !records.is_empty() {
+                has_more = true;
                 break;
             }
 
@@ -1940,8 +1974,6 @@ impl StreamStore {
                 created_at: area_value.created_at,
             });
         }
-
-        let has_more = records.len() == limit as usize || total_bytes >= max_bytes_limit;
 
         let (last_resource_offset, last_realm_offset) = if let Some(last_rec) = records.last() {
             (last_rec.resource_offset, last_rec.realm_offset)
@@ -1997,10 +2029,11 @@ impl StreamStore {
 
         let start_key = encode_realm_key(realm, Self::realm_page_start_offset(from_offset));
 
+        let query_limit = limit.saturating_add(1).min(usize::MAX as u64) as usize;
         let query = cntryl_midge::Query::new()
             .start_key(Bytes::from(start_key))
             .prefix(Bytes::from(prefix_key))
-            .limit(limit as usize);
+            .limit(query_limit);
 
         let txn = self
             .db
@@ -2016,8 +2049,7 @@ impl StreamStore {
         let mut last_realm_offset = from_offset;
         let max_bytes_limit = max_bytes.unwrap_or(usize::MAX);
         let mut stop_scan = false;
-        let mut reached_limit = false;
-        let mut reached_byte_limit = false;
+        let mut has_more = false;
 
         for (key_bytes, realm_value_bytes) in results {
             let row_realm_offset = decode_realm_offset_from_key(&key_bytes)?;
@@ -2037,10 +2069,15 @@ impl StreamStore {
                         break;
                     }
 
+                    if records.len() == limit as usize {
+                        has_more = true;
+                        break;
+                    }
+
                     let record_bytes = page_record.body.len()
                         + page_record.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
                     if total_bytes + record_bytes > max_bytes_limit && !records.is_empty() {
-                        reached_byte_limit = true;
+                        has_more = true;
                         break;
                     }
 
@@ -2054,11 +2091,6 @@ impl StreamStore {
                         metadata: page_record.metadata,
                         created_at: page_record.created_at,
                     });
-
-                    if records.len() == limit as usize {
-                        reached_limit = true;
-                        break;
-                    }
                 }
             } else {
                 let realm_offset = row_realm_offset;
@@ -2077,10 +2109,15 @@ impl StreamStore {
                 if realm_offset > realm_watermark {
                     stop_scan = true;
                 } else {
+                    if records.len() == limit as usize {
+                        has_more = true;
+                        break;
+                    }
+
                     let record_bytes = realm_value.body.len()
                         + realm_value.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
                     if total_bytes + record_bytes > max_bytes_limit && !records.is_empty() {
-                        reached_byte_limit = true;
+                        has_more = true;
                         break;
                     }
 
@@ -2094,19 +2131,13 @@ impl StreamStore {
                         metadata: realm_value.metadata,
                         created_at: realm_value.created_at,
                     });
-
-                    if records.len() == limit as usize {
-                        reached_limit = true;
-                    }
                 }
             }
 
-            if stop_scan || reached_limit || reached_byte_limit {
+            if stop_scan || has_more {
                 break;
             }
         }
-
-        let has_more = reached_limit || reached_byte_limit;
 
         let (last_resource_offset, last_area_offset) = if let Some(last_rec) = records.last() {
             (last_rec.resource_offset, last_rec.area_offset)
@@ -2260,15 +2291,25 @@ impl StreamStore {
         area: &str,
         resource: &str,
     ) -> Result<super::protocol::StreamMetadata, String> {
+        let first_resource_offset =
+            self.get_first_resource_offset(family, realm, area, resource)?;
         let last_resource_offset = self.get_last_resource_offset(family, realm, area, resource)?;
         let area_watermark = self.get_watermark(family, realm, area)?;
         let realm_watermark = self.get_realm_watermark(family, realm)?;
+        let resource_count = match (first_resource_offset, last_resource_offset) {
+            (Some(first_offset), Some(last_offset)) if last_offset >= first_offset => {
+                last_offset - first_offset + 1
+            }
+            _ => 0,
+        };
 
         Ok(super::protocol::StreamMetadata {
             max_batch_events: self.limits.max_batch_events,
             max_batch_bytes: self.limits.max_batch_bytes,
             ttl_seconds: self.ttl.ttl_seconds,
+            first_resource_offset,
             last_resource_offset,
+            resource_count,
             area_watermark,
             realm_watermark,
         })
@@ -2334,6 +2375,65 @@ impl StreamStore {
         }
     }
 
+    /// Get the first committed resource offset that is still readable.
+    ///
+    /// This is used by exact-resource metadata surfaces that need to remain
+    /// truthful when older resource rows are trimmed from the head.
+    pub fn get_first_resource_offset(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<u64>, String> {
+        self.ensure_layout_activation_for_family(family)?;
+
+        match self.layout {
+            StreamStorageLayout::LegacyCovering => {
+                self.get_first_resource_offset_legacy_covering(family, realm, area, resource)
+            }
+            StreamStorageLayout::PromotionFrontier => {
+                self.unsupported_promotion_frontier_surface(family, "get_first_resource_offset")
+            }
+        }
+    }
+
+    fn get_first_resource_offset_legacy_covering(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<u64>, String> {
+        let mut prefix_key = vec![crate::domains::stream::storage::KeyPrefix::Resource as u8];
+        prefix_key.extend_from_slice(realm.as_bytes());
+        prefix_key.push(0);
+        prefix_key.extend_from_slice(area.as_bytes());
+        prefix_key.push(0);
+        prefix_key.extend_from_slice(resource.as_bytes());
+        prefix_key.push(0);
+
+        let query = cntryl_midge::Query::new()
+            .prefix(Bytes::from(prefix_key))
+            .limit(1);
+
+        let txn = self
+            .db
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+        let mut iter = txn
+            .scan(&query)
+            .map_err(|e| format!("scan error: {:?}", e))?;
+        let results = iter.collect_all();
+
+        if let Some((_, value_bytes)) = results.first() {
+            let resource_value = ResourceValue::decode(value_bytes);
+            Ok(Some(resource_value.resource_offset))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Get the next resource offset from metadata (TTL-safe)
     ///
     /// **CRITICAL**: Reads from OffsetCounter metadata, NOT from scanning
@@ -2367,22 +2467,11 @@ impl StreamStore {
         area: &str,
         resource: &str,
     ) -> Result<u64, String> {
-        let resource_meta_key = encode_resource_meta_key(realm, area, resource);
-        let counter_key = encode_offset_counter_key(realm, area, resource);
-
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-        match txn.get(&resource_meta_key) {
-            Ok(Some(value_bytes)) => Ok(ResourceMetaValue::decode(&value_bytes).next_offset),
-            Ok(None) => match txn.get(&counter_key) {
-                Ok(Some(value_bytes)) => Ok(OffsetCounterValue::decode(&value_bytes).next_offset),
-                Ok(None) => Ok(0),
-                Err(e) => Err(format!("get_next_resource_offset error: {:?}", e)),
-            },
-            Err(e) => Err(format!("get_next_resource_offset error: {:?}", e)),
-        }
+        self.load_next_resource_offset_from_txn(&txn, family, realm, area, resource)
     }
 }
 
@@ -2830,6 +2919,292 @@ mod tests {
                 .expect("next resource offset"),
             2
         );
+    }
+
+    #[test]
+    fn should_report_has_more_given_single_record_resource_fast_path() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let first_events = single_event(b"first");
+        let second_events = single_event(b"second");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("first commit");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 1,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit");
+
+        // Act
+        let (records, cursor) = store
+            .read_resource(&ReadResourceParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                from_offset: 0,
+                limit: 1,
+                max_bytes: None,
+            })
+            .expect("read first resource record");
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].resource_offset, 0);
+        assert!(cursor.has_more);
+        assert_eq!(cursor.last_resource_offset, 0);
+    }
+
+    #[test]
+    fn should_not_report_has_more_given_single_record_resource_fast_path_at_end() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let first_events = single_event(b"first");
+        let second_events = single_event(b"second");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("first commit");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 1,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit");
+
+        // Act
+        let (records, cursor) = store
+            .read_resource(&ReadResourceParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                from_offset: 1,
+                limit: 1,
+                max_bytes: None,
+            })
+            .expect("read last resource record");
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].resource_offset, 1);
+        assert!(!cursor.has_more);
+        assert_eq!(cursor.last_resource_offset, 1);
+    }
+
+    #[test]
+    fn should_return_next_available_resource_record_given_trimmed_head_on_ttl_store() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        let store = StreamStore::with_config(db.clone(), BatchLimits::default(), StreamTTL::with_seconds(1));
+        let first_events = single_event(b"first");
+        let second_events = single_event(b"second");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("first commit");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 1,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit");
+        let mut txn = db
+            .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin ttl trim tx");
+        txn.delete(encode_resource_key("test", "events", "orders", 0))
+            .expect("delete trimmed head row");
+        txn.commit(cntryl_midge::WriteOptions::sync())
+            .expect("commit ttl trim simulation");
+
+        // Act
+        let (records, cursor) = store
+            .read_resource(&ReadResourceParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                from_offset: 0,
+                limit: 1,
+                max_bytes: None,
+            })
+            .expect("read ttl-trimmed resource stream");
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].resource_offset, 1);
+        assert_eq!(cursor.last_resource_offset, 1);
+        assert!(!cursor.has_more);
+    }
+
+    #[test]
+    fn should_peek_resource_given_missing_offset_counter_and_present_resource_meta() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        let store = StreamStore::new(db.clone());
+        let events = single_event(b"first");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("commit record");
+        let mut txn = db
+            .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin cleanup tx");
+        txn.delete(encode_offset_counter_key("test", "events", "orders"))
+            .expect("delete legacy offset counter");
+        txn.commit(cntryl_midge::WriteOptions::sync())
+            .expect("commit legacy offset counter removal");
+
+        // Act
+        let record = store
+            .peek_resource(1, "test", "events", "orders")
+            .expect("peek exact resource")
+            .expect("expected tail record");
+
+        // Assert
+        assert_eq!(record.resource_offset, 0);
+        assert_eq!(record.body, Bytes::from_static(b"first"));
+    }
+
+    #[test]
+    fn should_not_report_has_more_given_area_read_at_end() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let first_events = single_event(b"first");
+        let second_events = single_event(b"second");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("first commit");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "audits",
+                expected_resource_next_offset: 0,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit");
+
+        // Act
+        let (records, cursor) = store
+            .read_area(1, "test", "events", 0, 2, None)
+            .expect("read area stream");
+
+        // Assert
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].area_offset, Some(0));
+        assert_eq!(records[1].area_offset, Some(1));
+        assert_eq!(cursor.last_area_offset, Some(1));
+        assert!(!cursor.has_more);
+    }
+
+    #[test]
+    fn should_not_report_has_more_given_realm_read_at_end() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let first_events = single_event(b"first");
+        let second_events = single_event(b"second");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("first commit");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "audit",
+                resource: "entries",
+                expected_resource_next_offset: 0,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit");
+
+        // Act
+        let (records, cursor) = store
+            .read_realm(1, "test", 0, 2, None)
+            .expect("read realm stream");
+
+        // Assert
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].realm_offset, Some(0));
+        assert_eq!(records[1].realm_offset, Some(1));
+        assert_eq!(cursor.last_realm_offset, Some(1));
+        assert!(!cursor.has_more);
     }
 
     #[test]

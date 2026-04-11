@@ -22,6 +22,7 @@ Clients can rely on the following:
 - Reads are offset-based.
 - Resource reads are exact-history reads for one resource stream.
 - Area and realm reads are gated by committed watermarks.
+- Read responses carry the committed record envelope that was actually read: resource offset, available area or realm offsets, body, optional metadata, and server timestamp.
 - `ReadCursor` is response metadata only. The client owns resume persistence.
 - Stream subscriptions are live change notifications only. They are not durable replay cursors.
 
@@ -46,8 +47,14 @@ Replay and catch-up semantics:
 Tail semantics:
 
 - `Last` is an exact-resource tail operation.
+- `Last` returns the same exact-resource record envelope as `Read` for the tail record when one exists.
 - Wildcard area or realm routes do not expose a wildcard tail contract through `Last`.
 - Stream subscriptions are live notify hints about committed change, not a substitute for reading committed history.
+
+Metadata semantics:
+
+- Exact-resource `GetMetadata` returns first readable resource offset, last readable resource offset, readable record count, batch limits, TTL, and current area or realm watermarks.
+- Wildcard routes do not currently expose a wildcard metadata contract.
 
 Durability modes:
 

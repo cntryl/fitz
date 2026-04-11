@@ -485,11 +485,27 @@ pub fn build_stream_begin(route: &str, expected_offset: u64) -> Vec<u8> {
 
 /// Build STREAM APPEND frame (msg_type 601)
 pub fn build_stream_append(session_id: u64, data: &[u8]) -> Vec<u8> {
+    build_stream_append_with_metadata(session_id, data, None)
+}
+
+/// Build STREAM APPEND frame (msg_type 601) with optional metadata.
+pub fn build_stream_append_with_metadata(
+    session_id: u64,
+    data: &[u8],
+    metadata: Option<&[u8]>,
+) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u64(session_id);
     buf.put_u32(data.len() as u32);
     buf.put_slice(data);
-    buf.put_u8(0);
+    match metadata {
+        Some(metadata) => {
+            buf.put_u8(1);
+            buf.put_u32(metadata.len() as u32);
+            buf.put_slice(metadata);
+        }
+        None => buf.put_u8(0),
+    }
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(601, &buf);
@@ -534,6 +550,17 @@ pub fn build_stream_last(route: &str) -> Vec<u8> {
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(605, &buf);
+    builder.build()
+}
+
+/// Build STREAM GET_METADATA frame (msg_type 606)
+pub fn build_stream_get_metadata(route: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(606, &buf);
     builder.build()
 }
 
@@ -605,6 +632,18 @@ fn decode_stream_ok_data(payload: &[u8]) -> Result<Bytes, String> {
     Ok(data)
 }
 
+fn skip_stream_wire_record(
+    decoder: &mut crate::protocol::payload_codec::PayloadDecoder<'_>,
+) -> Result<(), String> {
+    decoder.get_u64()?;
+    decoder.get_optional_u64()?;
+    decoder.get_optional_u64()?;
+    decoder.skip_bytes()?;
+    decoder.get_optional_bytes()?;
+    decoder.get_u64()?;
+    Ok(())
+}
+
 pub fn count_stream_read_records_from_payload(payload: &[u8]) -> Result<usize, String> {
     use crate::protocol::payload_codec::PayloadDecoder;
 
@@ -613,9 +652,13 @@ pub fn count_stream_read_records_from_payload(payload: &[u8]) -> Result<usize, S
     let count = decoder.get_u32()? as usize;
 
     for _ in 0..count {
-        decoder.get_u64()?;
-        decoder.skip_bytes()?;
+        skip_stream_wire_record(&mut decoder)?;
     }
+
+    decoder.get_u64()?;
+    decoder.get_optional_u64()?;
+    decoder.get_optional_u64()?;
+    decoder.get_u8()?;
 
     if !decoder.is_complete() {
         return Err("Trailing data in stream read response".to_string());

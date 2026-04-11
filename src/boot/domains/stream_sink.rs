@@ -1,7 +1,7 @@
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::domains::stream::store::StreamAdminRecord;
 use crate::domains::stream::StreamMetrics;
-use crate::domains::stream::{StreamActor, StreamRecord, StreamStorageLayout, StreamStore};
+use crate::domains::stream::{ReadResponse, StreamActor, StreamMetadata, StreamRecord, StreamStorageLayout, StreamStore};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::PayloadEncoder;
 use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
@@ -327,6 +327,9 @@ impl StreamDomainSink {
                 key.resource.clone(),
             );
             let committed_snapshot = streams.get(&stream_key);
+            if committed_snapshot.is_none() && last_offset.is_none() {
+                continue;
+            }
             let committed_size_bytes = committed_snapshot.map(|item| item.size_bytes).unwrap_or(0);
             let committed_offset = committed_snapshot.map(|item| item.offset);
             let visible_offset = last_offset.or(committed_offset).unwrap_or(0);
@@ -355,47 +358,64 @@ impl StreamDomainSink {
             .replace_stream_events_total(committed_events_total);
     }
 
+    fn encode_optional_bytes(encoder: &mut PayloadEncoder, value: Option<&bytes::Bytes>) {
+        match value {
+            Some(bytes) => {
+                encoder.put_u8(1);
+                encoder.put_bytes(bytes.as_ref());
+            }
+            None => encoder.put_u8(0),
+        }
+    }
+
+    fn encode_stream_record(encoder: &mut PayloadEncoder, record: &StreamRecord) {
+        encoder.put_u64(record.resource_offset);
+        encoder.put_optional_u64(record.area_offset);
+        encoder.put_optional_u64(record.realm_offset);
+        encoder.put_bytes(record.body.as_ref());
+        Self::encode_optional_bytes(encoder, record.metadata.as_ref());
+        encoder.put_u64(record.created_at);
+    }
+
+    fn encode_stream_cursor(
+        encoder: &mut PayloadEncoder,
+        cursor: &crate::domains::stream::protocol::ReadCursor,
+    ) {
+        encoder.put_u64(cursor.last_resource_offset);
+        encoder.put_optional_u64(cursor.last_area_offset);
+        encoder.put_optional_u64(cursor.last_realm_offset);
+        encoder.put_u8(u8::from(cursor.has_more));
+    }
+
     fn encode_stream_read_data(
         records: &[StreamRecord],
-        from_offset: u64,
-        limit: u64,
-        max_bytes: Option<usize>,
+        cursor: &crate::domains::stream::protocol::ReadCursor,
     ) -> Vec<u8> {
-        let mut selected = Vec::new();
-        let mut total_bytes = 0usize;
-
-        for record in records
-            .iter()
-            .filter(|record| record.resource_offset >= from_offset)
-        {
-            if selected.len() >= limit as usize {
-                break;
-            }
-
-            if let Some(max_bytes) = max_bytes {
-                let projected = total_bytes + record.body.len();
-                if !selected.is_empty() && projected > max_bytes {
-                    break;
-                }
-                total_bytes = projected;
-            }
-
-            selected.push(record);
-        }
-
         let mut encoder = PayloadEncoder::new();
-        encoder.put_u32(selected.len() as u32);
-        for record in selected {
-            encoder.put_u64(record.resource_offset);
-            encoder.put_bytes(record.body.as_ref());
+        encoder.put_u32(records.len() as u32);
+        for record in records {
+            Self::encode_stream_record(&mut encoder, record);
         }
+        Self::encode_stream_cursor(&mut encoder, cursor);
         encoder.finish()
     }
 
     fn encode_stream_last_data(record: &StreamRecord) -> Vec<u8> {
         let mut encoder = PayloadEncoder::new();
-        encoder.put_u64(record.resource_offset);
-        encoder.put_bytes(record.body.as_ref());
+        Self::encode_stream_record(&mut encoder, record);
+        encoder.finish()
+    }
+
+    fn encode_stream_metadata_data(metadata: &StreamMetadata) -> Vec<u8> {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_optional_u64(metadata.first_resource_offset);
+        encoder.put_optional_u64(metadata.last_resource_offset);
+        encoder.put_u64(metadata.resource_count);
+        encoder.put_u64(metadata.max_batch_events as u64);
+        encoder.put_u64(metadata.max_batch_bytes as u64);
+        encoder.put_optional_u64(metadata.ttl_seconds);
+        encoder.put_u64(metadata.area_watermark);
+        encoder.put_u64(metadata.realm_watermark);
         encoder.finish()
     }
 
@@ -423,14 +443,6 @@ impl StreamDomainSink {
         )
     }
 
-    fn encode_stream_metadata_summary(first_offset: u64, last_offset: u64, count: u64) -> Vec<u8> {
-        let mut encoder = PayloadEncoder::new();
-        encoder.put_u64(first_offset);
-        encoder.put_u64(last_offset);
-        encoder.put_u64(count);
-        encoder.finish()
-    }
-
     fn stream_error_response(
         error: impl Into<String>,
     ) -> crate::protocol::stream_codec::StreamResponse {
@@ -446,15 +458,21 @@ impl StreamDomainSink {
         max_bytes: Option<usize>,
     ) -> Result<Vec<u8>, String> {
         if limit == 0 {
-            let mut encoder = PayloadEncoder::new();
-            encoder.put_u32(0);
-            return Ok(encoder.finish());
+            return Ok(Self::encode_stream_read_data(
+                &[],
+                &crate::domains::stream::protocol::ReadCursor {
+                    last_resource_offset: from_offset,
+                    last_area_offset: None,
+                    last_realm_offset: None,
+                    has_more: false,
+                },
+            ));
         }
 
         let parts =
             route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
-        let records = if parts.area == "*" && parts.resource == "*" {
-            self.stream_store
+        let read_response = if parts.area == "*" && parts.resource == "*" {
+            let (records, cursor) = self.stream_store
                 .read_realm(
                     family_id.as_u64(),
                     parts.realm,
@@ -462,9 +480,10 @@ impl StreamDomainSink {
                     limit,
                     max_bytes,
                 )?
-                .0
+                ;
+            ReadResponse { records, cursor }
         } else if parts.resource == "*" {
-            self.stream_store
+            let (records, cursor) = self.stream_store
                 .read_area(
                     family_id.as_u64(),
                     parts.realm,
@@ -473,19 +492,18 @@ impl StreamDomainSink {
                     limit,
                     max_bytes,
                 )?
-                .0
+                ;
+            ReadResponse { records, cursor }
         } else {
             let key = Self::actor_key_for_route(family_id, route)?;
             let actor = self.get_or_create_actor(&key)?;
-            let records = actor.lock().read(from_offset, limit, max_bytes)?.records;
-            records
+            let read_response = actor.lock().read(from_offset, limit, max_bytes)?;
+            read_response
         };
 
         Ok(Self::encode_stream_read_data(
-            &records,
-            from_offset,
-            limit,
-            max_bytes,
+            &read_response.records,
+            &read_response.cursor,
         ))
     }
 
@@ -526,15 +544,8 @@ impl StreamDomainSink {
         let key = Self::actor_key_for_route(family_id, route)?;
         let actor = self.get_or_create_actor(&key)?;
         let metadata = actor.lock().metadata()?.metadata;
-        let Some(last_offset) = metadata.last_resource_offset else {
-            return Ok(Vec::new());
-        };
 
-        Ok(Self::encode_stream_metadata_summary(
-            0,
-            last_offset,
-            last_offset.saturating_add(1),
-        ))
+        Ok(Self::encode_stream_metadata_data(&metadata))
     }
 
     fn handle_domain_publish(
@@ -1010,7 +1021,8 @@ impl MailboxSink for StreamDomainSink {
 mod tests {
     use super::*;
     use crate::benchkit::{
-        build_stream_append, build_stream_begin, build_stream_commit, build_stream_read,
+        build_stream_append, build_stream_append_with_metadata, build_stream_begin,
+        build_stream_commit, build_stream_read,
         count_stream_read_records_from_payload, extract_single_tlv_field,
         register_session_queue_sink, route_frame, FrameQueueSink,
     };
@@ -1065,6 +1077,108 @@ mod tests {
             .last()
             .map(|frame| frame.payload.clone())
             .expect("stream response")
+    }
+
+    #[derive(Debug)]
+    struct DecodedStreamWireRecord {
+        resource_offset: u64,
+        area_offset: Option<u64>,
+        realm_offset: Option<u64>,
+        body: Bytes,
+        metadata: Option<Bytes>,
+        created_at: u64,
+    }
+
+    #[derive(Debug)]
+    struct DecodedStreamReadPayload {
+        records: Vec<DecodedStreamWireRecord>,
+        last_resource_offset: u64,
+        last_area_offset: Option<u64>,
+        last_realm_offset: Option<u64>,
+        has_more: bool,
+    }
+
+    #[derive(Debug)]
+    struct DecodedStreamMetadataPayload {
+        first_resource_offset: Option<u64>,
+        last_resource_offset: Option<u64>,
+        resource_count: u64,
+        max_batch_events: u64,
+        max_batch_bytes: u64,
+        ttl_seconds: Option<u64>,
+        area_watermark: u64,
+        realm_watermark: u64,
+    }
+
+    fn decode_stream_wire_record(
+        decoder: &mut crate::protocol::payload_codec::PayloadDecoder<'_>,
+    ) -> DecodedStreamWireRecord {
+        let resource_offset = decoder.get_u64().expect("stream resource offset");
+        let area_offset = decoder.get_optional_u64().expect("stream area offset");
+        let realm_offset = decoder.get_optional_u64().expect("stream realm offset");
+        let body = decoder.get_bytes().expect("stream body");
+        let metadata = decoder.get_optional_bytes().expect("stream metadata");
+        let created_at = decoder.get_u64().expect("stream created_at");
+
+        DecodedStreamWireRecord {
+            resource_offset,
+            area_offset,
+            realm_offset,
+            body,
+            metadata,
+            created_at,
+        }
+    }
+
+    fn decode_stream_read_payload(data: &[u8]) -> DecodedStreamReadPayload {
+        let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(data);
+        let count = decoder.get_u32().expect("stream read record count") as usize;
+        let mut records = Vec::with_capacity(count);
+        for _ in 0..count {
+            records.push(decode_stream_wire_record(&mut decoder));
+        }
+
+        let last_resource_offset = decoder.get_u64().expect("stream cursor resource offset");
+        let last_area_offset = decoder.get_optional_u64().expect("stream cursor area offset");
+        let last_realm_offset = decoder.get_optional_u64().expect("stream cursor realm offset");
+        let has_more = decoder.get_u8().expect("stream cursor has_more") == 1;
+        assert!(decoder.is_complete(), "expected complete stream read payload");
+
+        DecodedStreamReadPayload {
+            records,
+            last_resource_offset,
+            last_area_offset,
+            last_realm_offset,
+            has_more,
+        }
+    }
+
+    fn decode_stream_metadata_payload(data: &[u8]) -> DecodedStreamMetadataPayload {
+        let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(data);
+        let first_resource_offset = decoder
+            .get_optional_u64()
+            .expect("first stream metadata offset");
+        let last_resource_offset = decoder
+            .get_optional_u64()
+            .expect("last stream metadata offset");
+        let resource_count = decoder.get_u64().expect("stream metadata count");
+        let max_batch_events = decoder.get_u64().expect("stream max_batch_events");
+        let max_batch_bytes = decoder.get_u64().expect("stream max_batch_bytes");
+        let ttl_seconds = decoder.get_optional_u64().expect("stream ttl seconds");
+        let area_watermark = decoder.get_u64().expect("stream area watermark");
+        let realm_watermark = decoder.get_u64().expect("stream realm watermark");
+        assert!(decoder.is_complete(), "expected complete stream metadata payload");
+
+        DecodedStreamMetadataPayload {
+            first_resource_offset,
+            last_resource_offset,
+            resource_count,
+            max_batch_events,
+            max_batch_bytes,
+            ttl_seconds,
+            area_watermark,
+            realm_watermark,
+        }
     }
 
     fn begin_stream(context: &TestContext, route: &str, expected_offset: u64) -> u64 {
@@ -1154,6 +1268,157 @@ mod tests {
                 assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_UNSUPPORTED"));
             }
         }
+    }
+
+    #[test]
+    fn should_exclude_uncommitted_stream_from_admin_snapshot_given_active_session() {
+        // Arrange
+        let context = setup_test_context();
+        let _session_id = begin_stream(&context, "stream://bench/events/pending", 0);
+
+        // Act
+        context.sink.sync_admin_snapshot();
+        let streams = context.sink.admin_read_model.streams(None);
+        let events_total = context.sink.admin_read_model.stream_events_total();
+
+        // Assert
+        assert!(streams.is_empty());
+        assert_eq!(events_total, 0);
+    }
+
+    #[test]
+    fn should_preserve_committed_snapshot_given_active_session_overlay() {
+        // Arrange
+        let context = setup_test_context();
+        seed_committed_stream_route(&context, "stream://bench/events/orders", 1, b"persisted");
+        let _session_id = begin_stream(&context, "stream://bench/events/orders", 1);
+
+        // Act
+        context.sink.sync_admin_snapshot();
+        let streams = context.sink.admin_read_model.streams(None);
+        let stream = streams
+            .iter()
+            .find(|item| {
+                item.realm == "bench" && item.area == "events" && item.resource == "orders"
+            })
+            .expect("committed stream should remain visible");
+        let events_total = context.sink.admin_read_model.stream_events_total();
+
+        // Assert
+        assert_eq!(stream.offset, 0);
+        assert_eq!(stream.watermark, 0);
+        assert_eq!(stream.size_bytes, b"persisted".len() as u64);
+        assert_eq!(stream.sessions_active, 1);
+        assert_eq!(events_total, 1);
+    }
+
+    #[test]
+    fn should_return_trimmed_head_metadata_summary_given_missing_first_resource_row() {
+        // Arrange
+        let context = setup_test_context();
+        seed_committed_stream_route(&context, "stream://bench/events/orders", 2, b"persisted");
+        let mut txn = context
+            .sink
+            .store
+            .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin stream metadata write tx");
+        txn.delete(crate::domains::stream::storage::encode_resource_key(
+            "bench", "events", "orders", 0,
+        ))
+        .expect("delete first resource row");
+        txn.commit(cntryl_midge::WriteOptions::sync())
+            .expect("commit trimmed stream head");
+
+        // Act
+        let payload = context
+            .sink
+            .encode_metadata_response_data(
+                context.family,
+                &Route::new("stream://bench/events/orders"),
+            )
+            .expect("encode stream metadata summary");
+        let metadata = decode_stream_metadata_payload(&payload);
+
+        // Assert
+        assert_eq!(metadata.first_resource_offset, Some(1));
+        assert_eq!(metadata.last_resource_offset, Some(1));
+        assert_eq!(metadata.resource_count, 1);
+    }
+
+    #[test]
+    fn should_encode_exact_resource_read_payload_given_committed_record_with_metadata() {
+        // Arrange
+        let context = setup_test_context();
+        let session_id = begin_stream(&context, "stream://bench/events/orders", 0);
+        let append_frame =
+            build_stream_append_with_metadata(session_id, b"payload", Some(b"meta"));
+        let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+        let _ = request(
+            &context,
+            "stream://bench/events/orders",
+            append_msg_type,
+            append_payload,
+        );
+        let commit_frame = build_stream_commit(session_id, 1);
+        let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
+        let _ = request(
+            &context,
+            "stream://bench/events/orders",
+            commit_msg_type,
+            commit_payload,
+        );
+
+        // Act
+        let payload = context
+            .sink
+            .encode_read_response_data(
+                context.family,
+                &Route::new("stream://bench/events/orders"),
+                0,
+                10,
+                None,
+            )
+            .expect("encode exact stream read payload");
+        let read_payload = decode_stream_read_payload(&payload);
+
+        // Assert
+        assert_eq!(read_payload.records.len(), 1);
+        assert_eq!(read_payload.records[0].resource_offset, 0);
+        assert_eq!(read_payload.records[0].area_offset, Some(0));
+        assert_eq!(read_payload.records[0].realm_offset, Some(0));
+        assert_eq!(read_payload.records[0].body, Bytes::from_static(b"payload"));
+        assert_eq!(read_payload.records[0].metadata, Some(Bytes::from_static(b"meta")));
+        assert!(read_payload.records[0].created_at > 0);
+        assert_eq!(read_payload.last_resource_offset, 0);
+        assert_eq!(read_payload.last_area_offset, Some(0));
+        assert_eq!(read_payload.last_realm_offset, Some(0));
+        assert!(!read_payload.has_more);
+    }
+
+    #[test]
+    fn should_encode_exact_resource_metadata_payload_given_empty_stream() {
+        // Arrange
+        let context = setup_test_context();
+
+        // Act
+        let payload = context
+            .sink
+            .encode_metadata_response_data(
+                context.family,
+                &Route::new("stream://bench/events/empty"),
+            )
+            .expect("encode empty stream metadata payload");
+        let metadata = decode_stream_metadata_payload(&payload);
+
+        // Assert
+        assert_eq!(metadata.first_resource_offset, None);
+        assert_eq!(metadata.last_resource_offset, None);
+        assert_eq!(metadata.resource_count, 0);
+        assert_eq!(metadata.max_batch_events, 10_000);
+        assert_eq!(metadata.max_batch_bytes, 10 * 1024 * 1024);
+        assert_eq!(metadata.ttl_seconds, None);
+        assert_eq!(metadata.area_watermark, 0);
+        assert_eq!(metadata.realm_watermark, 0);
     }
 
     #[test]

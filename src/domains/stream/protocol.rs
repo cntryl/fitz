@@ -356,8 +356,14 @@ pub struct StreamMetadata {
     /// TTL in seconds (None = no expiration)
     pub ttl_seconds: Option<u64>,
 
+    /// First currently readable resource offset (None if stream empty)
+    pub first_resource_offset: Option<u64>,
+
     /// Last committed resource offset (None if stream empty)
     pub last_resource_offset: Option<u64>,
+
+    /// Number of currently readable resource records
+    pub resource_count: u64,
 
     /// Area watermark (highest contiguous area offset)
     pub area_watermark: u64,
