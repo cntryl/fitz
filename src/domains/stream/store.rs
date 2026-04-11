@@ -2804,6 +2804,48 @@ mod tests {
     }
 
     #[test]
+    fn should_reject_future_expected_resource_offset_given_store_commit() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let first_events = single_event(b"first");
+        let future_events = single_event(b"future");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("seed commit");
+
+        // Act
+        let result = store.commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "orders",
+            expected_resource_next_offset: 2,
+            events: &future_events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Buffered,
+        });
+
+        // Assert
+        let error = result.expect_err("future expected offset should fail store commit");
+        assert_eq!(error, "ERR_CONCURRENCY_CONFLICT");
+        assert_eq!(
+            store
+                .get_next_resource_offset(1, "test", "events", "orders")
+                .expect("next resource offset"),
+            1
+        );
+    }
+
+    #[test]
     fn should_report_has_more_given_single_record_resource_fast_path() {
         // Arrange
         let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));

@@ -486,6 +486,26 @@ where
     assert_eq!(bodies, vec![b"client-1-event".to_vec()]);
 }
 
+async fn should_reject_future_expected_offset_given_gap<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/concurrent/future-offset";
+    commit_stream_record(&mut client, route, b"event-0").await;
+
+    // Act
+    let begin_response = client
+        .send_and_receive(&build_stream_begin(route, 2), 2000)
+        .await
+        .expect("begin future-offset stream write");
+    let error = parse_stream_error_message(&begin_response);
+
+    // Assert
+    assert!(error.contains("concurrency conflict"));
+}
+
 // Generic test helper for multiple sequential read operations
 async fn should_handle_sequential_read_operations<C>(server: &TestServer)
 where
@@ -1367,6 +1387,7 @@ define_transport_tests!(
     should_maintain_fifo_order_with_multiple_appends_tcp / should_maintain_fifo_order_with_multiple_appends_ws => should_maintain_fifo_order_with_multiple_appends,
     should_handle_large_stream_payload_tcp / should_handle_large_stream_payload_ws => should_handle_large_stream_payload,
     should_handle_concurrent_appends_from_multiple_clients_tcp / should_handle_concurrent_appends_from_multiple_clients_ws => should_handle_concurrent_appends_from_multiple_clients,
+    should_reject_future_expected_offset_given_gap_tcp / should_reject_future_expected_offset_given_gap_ws => should_reject_future_expected_offset_given_gap,
     should_handle_sequential_read_operations_tcp / should_handle_sequential_read_operations_ws => should_handle_sequential_read_operations,
     should_isolate_streams_by_route_tcp / should_isolate_streams_by_route_ws => should_isolate_streams_by_route,
     should_read_committed_area_history_given_wildcard_route_tcp / should_read_committed_area_history_given_wildcard_route_ws => should_read_committed_area_history_given_wildcard_route,

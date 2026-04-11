@@ -325,6 +325,22 @@ fn should_reject_stale_expected_offset_after_commit() {
 }
 
 #[test]
+fn should_reject_future_expected_offset_given_empty_resource() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let mut actor = make_actor_with_store(store, "realm1", "area1", "orders");
+
+    // Act
+    let error = actor
+        .begin_append_session(10, 101, 1, None)
+        .expect_err("future expected offset should be rejected");
+
+    // Assert
+    assert_eq!(error, "concurrency conflict");
+    assert!(!actor.has_active_session());
+}
+
+#[test]
 fn should_abort_append_session_on_owner_cleanup() {
     // Arrange
     let store = Arc::new(StreamStore::new(create_test_db()));
@@ -402,4 +418,45 @@ fn should_preserve_staged_session_after_commit_conflict() {
 
     // Assert
     assert!(!stale_writer.has_active_session());
+}
+
+#[test]
+fn should_allow_retry_given_recreated_actor_after_commit_conflict() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let mut committed_writer = make_actor_with_store(store.clone(), "realm1", "area1", "orders");
+    let mut stale_writer = make_actor_with_store(store.clone(), "realm1", "area1", "orders");
+
+    committed_writer
+        .begin_append_session(10, 100, 0, None)
+        .unwrap();
+    committed_writer
+        .append_to_session(100, Bytes::from_static(b"committed"), None)
+        .unwrap();
+    committed_writer
+        .commit_session(100, StreamWriteMode::Sync)
+        .unwrap();
+
+    stale_writer.begin_append_session(20, 200, 0, None).unwrap();
+    stale_writer
+        .append_to_session(200, Bytes::from_static(b"stale"), None)
+        .unwrap();
+    stale_writer
+        .commit_session(200, StreamWriteMode::Sync)
+        .expect_err("stale writer should fail optimistic concurrency");
+    stale_writer.rollback_session(200).unwrap();
+
+    // Act
+    let mut retry_writer = make_actor_with_store(store, "realm1", "area1", "orders");
+    retry_writer.begin_append_session(30, 300, 1, None).unwrap();
+    retry_writer
+        .append_to_session(300, Bytes::from_static(b"retried"), None)
+        .unwrap();
+    let commit = retry_writer.commit_session(300, StreamWriteMode::Sync).unwrap();
+    let metadata = retry_writer.metadata().unwrap().metadata;
+
+    // Assert
+    assert_eq!(commit.first_resource_offset, 1);
+    assert_eq!(commit.last_resource_offset, 1);
+    assert_eq!(metadata.last_resource_offset, Some(1));
 }
