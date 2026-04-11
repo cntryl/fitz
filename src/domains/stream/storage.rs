@@ -904,10 +904,10 @@ impl CompactAreaPageValue {
     }
 
     pub fn decode(bytes: &[u8]) -> Self {
-        Self::decode_v1(bytes).expect("deserialize compact area page value")
+        Self::try_decode(bytes).expect("deserialize compact area page value")
     }
 
-    fn decode_v1(bytes: &[u8]) -> Result<Self, String> {
+    pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         if !Self::is_encoded(bytes) {
             return Err("decode compact area page value: missing marker".to_string());
         }
@@ -1010,10 +1010,10 @@ impl CompactResourcePageValue {
     }
 
     pub fn decode(bytes: &[u8]) -> Self {
-        Self::decode_v1(bytes).expect("deserialize compact resource page value")
+        Self::try_decode(bytes).expect("deserialize compact resource page value")
     }
 
-    fn decode_v1(bytes: &[u8]) -> Result<Self, String> {
+    pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         if !Self::is_encoded(bytes) {
             return Err("decode compact resource page value: missing marker".to_string());
         }
@@ -1096,7 +1096,7 @@ impl CompressedCompactRealmPageValue {
     }
 
     pub fn decode(bytes: &[u8]) -> Self {
-        Self::decode_v1(bytes).expect("deserialize compressed compact realm page value")
+        Self::try_decode(bytes).expect("deserialize compressed compact realm page value")
     }
 
     pub fn into_compact_realm_page(self) -> CompactRealmPageValue {
@@ -1105,7 +1105,7 @@ impl CompressedCompactRealmPageValue {
         }
     }
 
-    fn decode_v1(bytes: &[u8]) -> Result<Self, String> {
+    pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         if !Self::is_encoded(bytes) {
             return Err("decode compressed compact realm page value: missing marker".to_string());
         }

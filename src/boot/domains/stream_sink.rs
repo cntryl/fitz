@@ -91,7 +91,7 @@ impl StreamDomainSink {
             admin_read_model,
             StreamStorageLayout::default(),
         )
-        .expect("create stream domain sink with legacy covering layout")
+        .expect("create stream domain sink with default stream layout")
     }
 
     pub fn new_with_layout(
@@ -1249,25 +1249,21 @@ mod tests {
     }
 
     #[test]
-    fn should_return_error_given_promotion_frontier_layout_on_real_stream_sink() {
+    fn should_create_stream_sink_given_promotion_frontier_layout() {
         // Arrange
         let router = Arc::new(Router::new());
 
         // Act
-        let result = StreamDomainSink::new_with_layout(
+        let sink = StreamDomainSink::new_with_layout(
             crate::benchkit::create_bench_store(),
             router,
             crate::api::admin::read_model::AdminReadModel::new(),
             StreamStorageLayout::PromotionFrontier,
-        );
+        )
+        .expect("create stream sink");
 
         // Assert
-        match result {
-            Ok(_) => panic!("real stream sink should block promotion frontier boot"),
-            Err(error) => {
-                assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_UNSUPPORTED"));
-            }
-        }
+        assert_eq!(sink.storage_layout(), StreamStorageLayout::PromotionFrontier);
     }
 
     #[test]

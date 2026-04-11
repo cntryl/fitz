@@ -355,7 +355,7 @@ mod tests {
     use crate::testkit::create_test_engine_with_cfs;
 
     #[test]
-    fn should_return_error_given_layout_mismatch_during_actor_recovery() {
+    fn should_return_error_given_legacy_layout_marker_during_actor_recovery() {
         // Arrange
         let db = create_test_engine_with_cfs(vec![1]);
         let mut txn = db
@@ -363,12 +363,12 @@ mod tests {
             .expect("begin write tx");
         txn.put(
             encode_stream_layout_marker_key(),
-            StreamLayoutMarkerValue::new(StreamStorageLayout::PromotionFrontier).encode(),
+            StreamLayoutMarkerValue::new(StreamStorageLayout::LegacyCovering).encode(),
             None,
         )
-        .expect("write mismatched layout marker");
+        .expect("write legacy layout marker");
         txn.commit(cntryl_midge::WriteOptions::sync())
-            .expect("commit mismatched layout marker");
+            .expect("commit legacy layout marker");
         let store = Arc::new(StreamStore::new(db));
 
         // Act

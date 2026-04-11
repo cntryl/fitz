@@ -4,6 +4,7 @@
 mod fixtures;
 use bytes::{BufMut, Bytes};
 use fitz::domains::stream::protocol::StreamWriteMode;
+use fitz::domains::stream::storage::{encode_stream_layout_marker_key, StreamLayoutMarkerValue};
 use fitz::domains::stream::store::StreamStore;
 use fitz::domains::stream::{StreamActor, StreamStorageLayout};
 use fitz::protocol::payload_codec::PayloadDecoder;
@@ -1014,28 +1015,22 @@ async fn should_drop_uncommitted_stream_batch_on_restart() {
 }
 
 #[tokio::test]
-async fn should_fail_local_stream_boot_given_promotion_frontier_layout_before_real_path_exists() {
+async fn should_start_local_stream_boot_given_promotion_frontier_layout() {
     // Arrange
     let tempdir = TempDir::new().expect("tempdir");
     let db_path = tempdir.path().join("fitz-stream-frontier-empty");
     let db_path = db_path.to_string_lossy().to_string();
 
     // Act
-    let result = TestServer::start_with_local_storage_and_stream_layout(
+    let server = TestServer::start_with_local_storage_and_stream_layout(
         db_path,
         StreamStorageLayout::PromotionFrontier,
     )
-    .await;
+    .await
+    .expect("start promotion-frontier local stream server");
 
     // Assert
-    match result {
-        Ok(_) => panic!("promotion frontier boot should fail before the real path exists"),
-        Err(error) => {
-            assert!(error
-                .to_string()
-                .contains("ERR_STREAM_STORAGE_LAYOUT_UNSUPPORTED"));
-        }
-    }
+    assert_eq!(server.runtime.stream_subscriptions_active(), 0);
 }
 
 #[tokio::test]
@@ -1047,15 +1042,17 @@ async fn should_fail_local_stream_restart_given_mismatched_layout_marker() {
     let engine = open_local_stream_engine(db_path.clone())
         .await
         .expect("open local stream engine");
-    let store = Arc::new(StreamStore::new(engine.clone()));
-    let mut actor = make_stream_actor(store.clone(), "test", "events", "orders");
-    actor.begin_append_session(10, 100, 0, None).unwrap();
-    actor
-        .append_to_session(100, Bytes::from_static(b"one"), None)
-        .unwrap();
-    actor.commit_session(100, StreamWriteMode::Sync).unwrap();
-    drop(actor);
-    drop(store);
+    let mut txn = engine
+        .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+        .expect("begin write tx");
+    txn.put(
+        encode_stream_layout_marker_key(),
+        StreamLayoutMarkerValue::new(StreamStorageLayout::LegacyCovering).encode(),
+        None,
+    )
+    .expect("write legacy layout marker");
+    txn.commit(cntryl_midge::WriteOptions::sync())
+        .expect("commit legacy layout marker");
     drop(engine);
     wait_for_stream_storage_release().await;
 

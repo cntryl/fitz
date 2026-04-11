@@ -223,7 +223,7 @@ impl BootConfig {
     }
 
     pub fn with_stream_storage_layout(mut self, layout: StreamStorageLayout) -> Self {
-        self.stream_storage_layout = layout;
+        self.stream_storage_layout = layout.normalize_requested();
         self
     }
 
@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(config.max_connections, 10_000);
         assert_eq!(
             config.stream_storage_layout,
-            StreamStorageLayout::LegacyCovering
+            StreamStorageLayout::PromotionFrontier
         );
     }
 
@@ -290,6 +290,21 @@ mod tests {
         // Act
         let config =
             BootConfig::new().with_stream_storage_layout(StreamStorageLayout::PromotionFrontier);
+
+        // Assert
+        assert_eq!(
+            config.stream_storage_layout,
+            StreamStorageLayout::PromotionFrontier
+        );
+    }
+
+    #[test]
+    fn should_normalize_legacy_stream_storage_layout_given_explicit_boot_config() {
+        // Arrange
+
+        // Act
+        let config =
+            BootConfig::new().with_stream_storage_layout(StreamStorageLayout::LegacyCovering);
 
         // Assert
         assert_eq!(
