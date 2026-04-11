@@ -62,32 +62,33 @@ Current production shape in one sentence:
 
 `resource covering bodies + area covering bodies + compact realm-body pages`
 
-## Frontier And Research Keyspaces
+## Research Keyspaces
 
-The following prefixes exist for redesign work beyond the current covering live path:
+The following prefixes exist for redesign research and benchmark proofing, not current production behavior:
 
 | Prefix | Purpose |
 | --- | --- |
 | `0x0B` | Canonical resource body row for hydration experiments |
 | `0x0C` | Area locator row |
 | `0x0D` | Realm locator row |
-| `0xE4` | Production frontier contract for compact area page rows, defined in `src/domains/stream/storage.rs` but not yet used by the live store |
-| `0xE8` | Production frontier contract for compressed compact realm page rows, defined in `src/domains/stream/storage.rs` but not yet used by the live store |
-| `0xEA` | Production frontier contract for compact resource mini-page rows, defined in `src/domains/stream/storage.rs` but not yet used by the live store |
-| remaining `0xE0`-`0xEA` variants | Bench-only paged, ref, run-ref, compressed, and locator layouts still used only by the Stream redesign prototype benches |
+| `0xE0`-`0xEA` | Bench-only paged, ref, run-ref, compressed, resource-ref, and resource mini-page layouts used by the Stream redesign prototype benches |
 
-The `0xE4`, `0xE8`, and `0xEA` contracts now exist in production storage code so the real store port can target a stable on-disk shape. The rest still live only in the Tier 2 and bench-only Tier 3 prototype benchmark files.
+These live in the Tier 2 and bench-only Tier 3 prototype benchmark files, not the production Stream store.
 
 ## Frontier Snapshot
 
 ### Current shipped production slice
 
-- 2026-04-10: Added the first durable activation guard for the real Stream path. `StreamStore` now persists a per-family layout marker for legacy-covering access, rejects promotion-frontier selection against unmarked existing stream data with an explicit reset-required error, and causes live `StreamDomainSink` / `TestServer` promotion-frontier boot to fail fast with `ERR_STREAM_STORAGE_LAYOUT_UNSUPPORTED` until the real frontier read/write paths are implemented. Local restart mismatch is now explicit instead of silently reopening under the wrong layout.
-- 2026-04-10: Promoted the frontier row contract into `src/domains/stream/storage.rs` by adding the real compact area page, compact resource mini-page, and compressed compact realm page key prefixes and codecs. This does not change live behavior yet; `StreamStore` and `StreamDomainSink` still block PromotionFrontier until the real read and write paths are ported.
-- 2026-04-10: Refactored `StreamStore` into explicit layout dispatch at the public method boundary. Commit, exact-resource read, wildcard replay, tail, and resource-metadata entry points now route through `LegacyCovering` helpers, while `PromotionFrontier` still fails fast. This keeps the current client-visible behavior unchanged but makes the next write and read parity slices replace helper bodies instead of rewriting actor or sink callers.
+- Resource plane: covering exact rows with bodies.
+- Area plane: covering area rows with bodies.
+- Realm plane: compact shared realm pages with bodies.
+
 This is the current safe production baseline.
 
 ### Bench-only fallback slice
+
+- Compact area pages plus compact realm-body pages.
+- Write shape: about `595.89 B/event`.
 - Meaning: safe but modest write reduction.
 
 ### Bench-only compression slice
