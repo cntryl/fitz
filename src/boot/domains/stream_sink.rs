@@ -1309,19 +1309,26 @@ mod tests {
     }
 
     #[test]
-    fn should_return_trimmed_head_metadata_summary_given_missing_first_resource_row() {
+    fn should_return_trimmed_head_metadata_summary_given_missing_first_resource_page() {
         // Arrange
         let context = setup_test_context();
-        seed_committed_stream_route(&context, "stream://bench/events/orders", 2, b"persisted");
+        seed_committed_stream_route(
+            &context,
+            "stream://bench/events/orders",
+            crate::domains::stream::storage::REALM_PAGE_RECORD_LIMIT + 1,
+            b"persisted",
+        );
         let mut txn = context
             .sink
             .store
             .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
             .expect("begin stream metadata write tx");
-        txn.delete(crate::domains::stream::storage::encode_resource_key(
-            "bench", "events", "orders", 0,
-        ))
-        .expect("delete first resource row");
+        txn.delete(
+            crate::domains::stream::storage::encode_compact_resource_page_key(
+                "bench", "events", "orders", 0,
+            ),
+        )
+        .expect("delete first resource page");
         txn.commit(cntryl_midge::WriteOptions::sync())
             .expect("commit trimmed stream head");
 
@@ -1336,8 +1343,14 @@ mod tests {
         let metadata = decode_stream_metadata_payload(&payload);
 
         // Assert
-        assert_eq!(metadata.first_resource_offset, Some(1));
-        assert_eq!(metadata.last_resource_offset, Some(1));
+        assert_eq!(
+            metadata.first_resource_offset,
+            Some(crate::domains::stream::storage::REALM_PAGE_RECORD_LIMIT as u64)
+        );
+        assert_eq!(
+            metadata.last_resource_offset,
+            Some(crate::domains::stream::storage::REALM_PAGE_RECORD_LIMIT as u64)
+        );
         assert_eq!(metadata.resource_count, 1);
     }
 

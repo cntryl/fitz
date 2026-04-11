@@ -12,6 +12,14 @@ Stream is Fitz's durable append, replay, and catch-up domain.
 - Adjacent overlap: Notice also emits change notifications, but Stream owns durable history and recovery.
 - Strict boundary: if a client needs rebuild, replay, or backfill, it must use Stream rather than Notice.
 
+## A1. Current Shipped Storage Status
+
+- `StreamStorageLayout::PromotionFrontier` is the only live runtime layout.
+- `FITZ_STREAM_STORAGE_LAYOUT` legacy aliases are normalized to `promotion-frontier` with a warning; they do not reopen the old runtime path.
+- Stored legacy layout markers survive only so boot can fail fast with `ERR_STREAM_STORAGE_LAYOUT_MISMATCH`.
+- Unmarked old stream rows survive only so boot can fail fast with `ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED`.
+- Real promotion evidence now comes from [../../benches/tier3_system_stream.rs](../../benches/tier3_system_stream.rs) and [../../benches/tier4_integration_stream.rs](../../benches/tier4_integration_stream.rs). The storage-model benches remain research artifacts, not production gates.
+
 ## B. Semantic Contract
 
 Clients can rely on the following:
@@ -49,12 +57,14 @@ Tail semantics:
 - `Last` is an exact-resource tail operation.
 - `Last` returns the same exact-resource record envelope as `Read` for the tail record when one exists.
 - Wildcard area or realm routes do not expose a wildcard tail contract through `Last`.
+- Current wire behavior for wildcard `Last` is an empty success payload, not a wildcard aggregate.
 - Stream subscriptions are live notify hints about committed change, not a substitute for reading committed history.
 
 Metadata semantics:
 
 - Exact-resource `GetMetadata` returns first readable resource offset, last readable resource offset, readable record count, batch limits, TTL, and current area or realm watermarks.
 - Wildcard routes do not currently expose a wildcard metadata contract.
+- Current wire behavior for wildcard `GetMetadata` is an empty success payload, not a wildcard aggregate.
 
 Durability modes:
 
@@ -85,7 +95,7 @@ Intentionally unsupported:
 - Invariant: replay of committed history does not skip visible committed messages.
 	- Why it matters: Stream is the recovery surface.
 	- How it fails: reads skip committed records, or watermark logic exposes gaps incorrectly.
-	- How to test it: [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_read_appended_data`, `should_preserve_append_order`, `should_maintain_fifo_order_with_multiple_appends`, `should_read_committed_area_history_given_wildcard_route_tcp`, `should_read_committed_realm_history_given_wildcard_route_tcp`, and [tests/stream_advanced.rs](../../tests/stream_advanced.rs) `should_return_empty_success_when_reading_past_committed_stream_watermark`.
+	- How to test it: [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_read_appended_data`, `should_preserve_append_order`, `should_maintain_fifo_order_with_multiple_appends`, `should_read_committed_area_history_given_wildcard_route_tcp`, `should_read_committed_realm_history_given_wildcard_route_tcp`, and [tests/stream_advanced.rs](../../tests/stream_advanced.rs) `should_return_empty_success_given_read_past_area_watermark` plus `should_return_empty_success_given_read_past_realm_watermark`.
 
 - Invariant: one active append session per resource is enforced.
 	- Why it matters: this is the current concurrency contract for predictable expected-offset conflict handling.
@@ -105,7 +115,7 @@ Intentionally unsupported:
 - Invariant: reads past the current committed boundary return empty success instead of speculative data.
 	- Why it matters: a replay client must never confuse not-yet-committed with lost data.
 	- How it fails: area or realm reads leak records beyond watermark, or resource reads fabricate tail data.
-	- How to test it: [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_handle_read_past_end` and [tests/stream_advanced.rs](../../tests/stream_advanced.rs) `should_return_empty_success_when_reading_past_committed_stream_watermark`.
+	- How to test it: [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_handle_read_past_end` and [tests/stream_advanced.rs](../../tests/stream_advanced.rs) `should_return_empty_success_given_read_past_area_watermark` plus `should_return_empty_success_given_read_past_realm_watermark`.
 
 ## D. Anti-Goals / What This Domain Must Not Become
 
@@ -124,6 +134,9 @@ Intentionally unsupported:
 - Read beyond end on an exact resource route: empty success.
 - Read beyond watermark on area or realm routes: empty success.
 - Backpressure on live subscriber notifications: live notify delivery is best-effort and does not change committed stream history.
+- Opening a family with a stored legacy layout marker fails with `ERR_STREAM_STORAGE_LAYOUT_MISMATCH`.
+- Opening a family with unmarked historical stream rows fails with `ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED`.
+- Operator action for either layout failure is explicit cutover or reset: stop Fitz, back up or delete the old stream family data, and restart into a clean promotion-frontier epoch. In-place upgrade is not supported.
 
 ## F. Observability Requirements
 
@@ -159,11 +172,15 @@ Current gaps to keep explicit:
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_append_order`
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_read_committed_area_history_given_wildcard_route_tcp`
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_read_committed_realm_history_given_wildcard_route_tcp`
+	- [tests/stream_advanced.rs](../../tests/stream_advanced.rs) `should_list_stream_metadata_given_committed_records`
+	- [tests/stream_advanced.rs](../../tests/stream_advanced.rs) `should_return_reset_required_given_unmarked_stream_data_when_listing_metadata`
+	- [tests/stream_advanced.rs](../../tests/stream_advanced.rs) `should_return_layout_mismatch_given_legacy_layout_marker_when_listing_metadata`
 - Restart and recovery tests:
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_monotonic_stream_resource_offsets_after_restart`
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_monotonic_stream_area_offsets_after_restart`
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_preserve_monotonic_stream_realm_offsets_after_restart`
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_drop_uncommitted_stream_batch_on_restart`
+	- [tests/stream_advanced.rs](../../tests/stream_advanced.rs) `should_restore_watermarks_given_store_reopen`
 - Race and concurrency tests:
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_handle_concurrent_appends_from_multiple_clients`
 	- [tests/stream_e2e.rs](../../tests/stream_e2e.rs) `should_not_treat_stream_subscription_as_replay_cursor_given_shared_route_tcp`
@@ -193,7 +210,13 @@ Current gaps to keep explicit:
 - Use this sentence when comparing Notice and Stream: `Notice is live-only fanout. Stream is the recovery surface.`
 - Use this sentence when describing commit modes: `Committed stream data survives according to the selected write mode; Sync and Buffered are different durability contracts and must not be described as equivalent.`
 
-## K. Storage Redesign Research Todo
+## K. Historical Storage Redesign Research Log
+
+This section is historical research context, not the current runtime description.
+
+- The shipped runtime already uses the promotion-frontier layout in [../../src/domains/stream/store.rs](../../src/domains/stream/store.rs).
+- Current promotion and regression gates come from [../../benches/tier3_system_stream.rs](../../benches/tier3_system_stream.rs), [../../benches/tier4_integration_stream.rs](../../benches/tier4_integration_stream.rs), and [../../config/perf_targets.json](../../config/perf_targets.json).
+- The storage-model prototype benches remain useful for future redesign work, but they are not evidence that a separate bench-only layout still needs promotion.
 
 Any attempt to reduce Stream's current triple-write event body storage must stay in research until it proves that the client-visible replay contract does not regress.
 
@@ -266,6 +289,8 @@ For this redesign track, backward compatibility with the current on-disk Stream 
 The redesign budget is now explicit: Stream does not need identical throughput across resource, area, and realm replay, but it does need bounded slowdown and no wildcard replay cliff.
 
 - The machine-readable acceptance targets live in [../../config/perf_targets.json](../../config/perf_targets.json).
+- The operational floors below apply to the real routed Stream benches in [../../benches/tier3_system_stream.rs](../../benches/tier3_system_stream.rs) and [../../benches/tier4_integration_stream.rs](../../benches/tier4_integration_stream.rs).
+- Prototype storage-model benches are directional research inputs, not acceptance gates for the shipped runtime.
 - Resource exact replay is the anchor path. It should remain the fastest consume path at every layer.
 - Area wildcard replay may be slower than exact-resource replay, but it must stay in the same throughput class and above its explicit operational floor.
 - Realm wildcard replay may be slower than area replay, but it must stay in the same throughput class and above its explicit operational floor.

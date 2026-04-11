@@ -1,345 +1,243 @@
-//! Stream advanced regression tests for durable metadata and legacy upgrade paths.
+//! Stream advanced regression tests for promotion-frontier metadata, watermarks,
+//! and layout activation failure behavior.
 
 use bytes::Bytes;
 use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::storage::{
-    encode_area_key, encode_offset_counter_key, encode_realm_key, encode_resource_key,
-    OffsetCounterValue,
+    encode_offset_counter_key, encode_stream_layout_marker_key, OffsetCounterValue,
+    StreamLayoutMarkerValue,
 };
-use fitz::domains::stream::store::{CommitRecordsParams, EventPayload, StreamStore};
+use fitz::domains::stream::store::{
+    CommitRecordsParams, EventPayload, StreamAdminRecord, StreamStorageLayout, StreamStore,
+};
 use fitz::testkit::create_test_engine_with_cfs;
 
-#[derive(serde::Serialize)]
-struct LegacyAreaValue {
-    realm: String,
-    area: String,
-    resource: String,
-    resource_offset: u64,
-    body: Bytes,
-    metadata: Option<Bytes>,
-    created_at: u64,
-}
-
-#[derive(serde::Serialize)]
-struct LegacyResourceValue {
-    resource_offset: u64,
-    body: Bytes,
-    metadata: Option<Bytes>,
-    created_at: u64,
-    area_offset: Option<u64>,
-    realm_offset: Option<u64>,
-}
-
-#[derive(serde::Serialize)]
-struct LegacyRealmValue {
-    realm: String,
-    area: String,
-    area_offset: u64,
-    resource: String,
-    resource_offset: u64,
-    body: Bytes,
-    metadata: Option<Bytes>,
-    created_at: u64,
-}
-
-struct LegacyRecordRef<'a> {
-    realm: &'a str,
-    area: &'a str,
-    resource: &'a str,
-    resource_offset: u64,
-    area_offset: u64,
-    realm_offset: u64,
-}
-
-fn write_legacy_record(
-    engine: &cntryl_midge::Engine,
-    family: u32,
-    record: LegacyRecordRef<'_>,
+fn commit_record(
+    store: &StreamStore,
+    family: u64,
+    realm: &str,
+    area: &str,
+    resource: &str,
+    expected_resource_next_offset: u64,
     body: &[u8],
 ) {
-    use cntryl_midge::{TransactionMode, WriteOptions};
+    let events = [EventPayload {
+        body: Bytes::copy_from_slice(body),
+        metadata: None,
+    }];
 
-    let LegacyRecordRef {
-        realm,
-        area,
-        resource,
-        resource_offset,
-        area_offset,
-        realm_offset,
-    } = record;
+    store
+        .commit_records(CommitRecordsParams {
+            family,
+            realm,
+            area,
+            resource,
+            expected_resource_next_offset,
+            events: &events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Sync,
+        })
+        .expect("commit stream record");
+}
 
+fn seed_unmarked_stream_data(engine: &cntryl_midge::Engine, family: u32) {
     let mut tx = engine
-        .begin_tx(family, TransactionMode::ReadWrite)
+        .begin_tx(family, cntryl_midge::TransactionMode::ReadWrite)
         .expect("begin write tx");
-    let body = Bytes::copy_from_slice(body);
-    let created_at = resource_offset + 1;
-
     tx.put(
-        encode_resource_key(realm, area, resource, resource_offset),
-        bincode::serialize(&LegacyResourceValue {
-            resource_offset,
-            body: body.clone(),
-            metadata: None,
-            created_at,
-            area_offset: Some(area_offset),
-            realm_offset: Some(realm_offset),
-        })
-        .expect("encode legacy resource value"),
+        encode_offset_counter_key("test", "events", "orders"),
+        OffsetCounterValue { next_offset: 1 }.encode(),
         None,
     )
-    .expect("write resource record");
+    .expect("write unmarked stream metadata");
+    tx.commit(cntryl_midge::WriteOptions::sync())
+        .expect("commit unmarked stream metadata");
+}
 
+fn seed_layout_marker(
+    engine: &cntryl_midge::Engine,
+    family: u32,
+    layout: StreamStorageLayout,
+) {
+    let mut tx = engine
+        .begin_tx(family, cntryl_midge::TransactionMode::ReadWrite)
+        .expect("begin write tx");
     tx.put(
-        encode_area_key(realm, area, area_offset),
-        bincode::serialize(&LegacyAreaValue {
-            realm: realm.to_string(),
-            area: area.to_string(),
-            resource: resource.to_string(),
-            resource_offset,
-            body: body.clone(),
-            metadata: None,
-            created_at,
-        })
-        .expect("encode legacy area value"),
+        encode_stream_layout_marker_key(),
+        StreamLayoutMarkerValue::new(layout).encode(),
         None,
     )
-    .expect("write area record");
-
-    tx.put(
-        encode_realm_key(realm, realm_offset),
-        bincode::serialize(&LegacyRealmValue {
-            realm: realm.to_string(),
-            area: area.to_string(),
-            area_offset,
-            resource: resource.to_string(),
-            resource_offset,
-            body,
-            metadata: None,
-            created_at,
-        })
-        .expect("encode legacy realm value"),
-        None,
-    )
-    .expect("write realm record");
-
-    tx.put(
-        encode_offset_counter_key(realm, area, resource),
-        OffsetCounterValue {
-            next_offset: resource_offset + 1,
-        }
-        .encode(),
-        None,
-    )
-    .expect("write legacy offset counter");
-
-    tx.commit(WriteOptions::buffered())
-        .expect("commit legacy stream rows");
+    .expect("write layout marker");
+    tx.commit(cntryl_midge::WriteOptions::sync())
+        .expect("commit layout marker");
 }
 
 #[test]
-fn should_list_stream_metadata_from_legacy_resource_counters() {
+fn should_list_stream_metadata_given_committed_records() {
     // Arrange
-    let engine = create_test_engine_with_cfs(vec![1]);
-    write_legacy_record(
-        &engine,
-        1,
-        LegacyRecordRef {
-            realm: "test",
-            area: "events",
-            resource: "orders",
-            resource_offset: 0,
-            area_offset: 0,
-            realm_offset: 0,
-        },
-        b"legacy",
-    );
-
-    let store = StreamStore::new(engine);
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    commit_record(&store, 1, "test", "events", "orders", 0, b"one");
+    commit_record(&store, 1, "test", "events", "audits", 0, b"two");
+    commit_record(&store, 1, "test", "events", "orders", 1, b"three");
 
     // Act
     let records = store
         .list_resource_metadata(1)
-        .expect("list legacy metadata");
+        .expect("list committed stream metadata");
 
     // Assert
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].realm, "test");
-    assert_eq!(records[0].area, "events");
-    assert_eq!(records[0].resource, "orders");
-    assert_eq!(records[0].next_offset, 1);
-    assert_eq!(records[0].committed_size_bytes, 6);
+    assert_eq!(
+        records,
+        vec![
+            StreamAdminRecord {
+                realm: "test".to_string(),
+                area: "events".to_string(),
+                resource: "audits".to_string(),
+                next_offset: 1,
+                committed_size_bytes: 3,
+            },
+            StreamAdminRecord {
+                realm: "test".to_string(),
+                area: "events".to_string(),
+                resource: "orders".to_string(),
+                next_offset: 2,
+                committed_size_bytes: 8,
+            },
+        ]
+    );
 }
 
 #[test]
-fn should_backfill_stream_counters_from_legacy_indexes_on_commit() {
+fn should_return_reset_required_given_unmarked_stream_data_when_listing_metadata() {
     // Arrange
     let engine = create_test_engine_with_cfs(vec![1]);
-    write_legacy_record(
-        &engine,
-        1,
-        LegacyRecordRef {
-            realm: "test",
-            area: "events",
-            resource: "orders",
-            resource_offset: 0,
-            area_offset: 0,
-            realm_offset: 0,
-        },
-        b"one",
-    );
-    write_legacy_record(
-        &engine,
-        1,
-        LegacyRecordRef {
-            realm: "test",
-            area: "events",
-            resource: "audits",
-            resource_offset: 0,
-            area_offset: 1,
-            realm_offset: 1,
-        },
-        b"two",
-    );
-
+    seed_unmarked_stream_data(engine.as_ref(), 1);
     let store = StreamStore::new(engine);
 
     // Act
-    let response = store
-        .commit_records(CommitRecordsParams {
-            family: 1,
-            realm: "test",
-            area: "events",
-            resource: "orders",
-            expected_resource_next_offset: 1,
-            events: &[EventPayload {
-                body: Bytes::from_static(b"three"),
-                metadata: None,
-            }],
-            ingest_metadata: None,
-            mode: StreamWriteMode::Sync,
-        })
-        .expect("commit should backfill counters");
+    let result = store.list_resource_metadata(1);
 
     // Assert
-    assert_eq!(response.first_resource_offset, 1);
-    assert_eq!(response.first_area_offset, 2);
-    assert_eq!(response.first_realm_offset, 2);
-    assert_eq!(
-        store
-            .get_next_resource_offset(1, "test", "events", "orders")
-            .expect("resource next offset"),
-        2
-    );
-    assert_eq!(
-        store
-            .get_watermark(1, "test", "events")
-            .expect("area watermark"),
-        2
-    );
-    assert_eq!(
-        store
-            .get_realm_watermark(1, "test")
-            .expect("realm watermark"),
-        2
-    );
+    let error = result.expect_err("unmarked stream data should fail layout activation");
+    assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED"));
+    assert!(error.contains("promotion-frontier"));
+}
 
-    let area_records = store
+#[test]
+fn should_return_layout_mismatch_given_legacy_layout_marker_when_listing_metadata() {
+    // Arrange
+    let engine = create_test_engine_with_cfs(vec![1]);
+    seed_layout_marker(engine.as_ref(), 1, StreamStorageLayout::LegacyCovering);
+    let store = StreamStore::new(engine);
+
+    // Act
+    let result = store.list_resource_metadata(1);
+
+    // Assert
+    let error = result.expect_err("legacy marker should fail layout activation");
+    assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
+    assert!(error.contains("legacy-covering"));
+    assert!(error.contains("promotion-frontier"));
+}
+
+#[test]
+fn should_preserve_monotonic_area_offsets_given_cross_resource_commits() {
+    // Arrange
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    commit_record(&store, 1, "test", "events", "orders", 0, b"one");
+    commit_record(&store, 1, "test", "events", "audits", 0, b"two");
+    commit_record(&store, 1, "test", "events", "orders", 1, b"three");
+
+    // Act
+    let (records, cursor) = store
         .read_area(1, "test", "events", 0, 10, None)
-        .expect("read area")
-        .0;
-    let area_offsets: Vec<u64> = area_records
+        .expect("read area history");
+
+    // Assert
+    let area_offsets: Vec<u64> = records
         .iter()
         .map(|record| record.area_offset.expect("area offset"))
         .collect();
+    let bodies: Vec<Bytes> = records.into_iter().map(|record| record.body).collect();
     assert_eq!(area_offsets, vec![0, 1, 2]);
+    assert_eq!(bodies, vec![
+        Bytes::from_static(b"one"),
+        Bytes::from_static(b"two"),
+        Bytes::from_static(b"three"),
+    ]);
+    assert_eq!(cursor.last_area_offset, Some(2));
+    assert!(!cursor.has_more);
+}
 
-    let realm_records = store
+#[test]
+fn should_preserve_monotonic_realm_offsets_given_cross_area_commits() {
+    // Arrange
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    commit_record(&store, 1, "test", "events", "orders", 0, b"one");
+    commit_record(&store, 1, "test", "audits", "entries", 0, b"two");
+    commit_record(&store, 1, "test", "events", "orders", 1, b"three");
+
+    // Act
+    let (records, cursor) = store
         .read_realm(1, "test", 0, 10, None)
-        .expect("read realm")
-        .0;
-    let realm_offsets: Vec<u64> = realm_records
+        .expect("read realm history");
+
+    // Assert
+    let realm_offsets: Vec<u64> = records
         .iter()
         .map(|record| record.realm_offset.expect("realm offset"))
         .collect();
+    let bodies: Vec<Bytes> = records.into_iter().map(|record| record.body).collect();
     assert_eq!(realm_offsets, vec![0, 1, 2]);
+    assert_eq!(bodies, vec![
+        Bytes::from_static(b"one"),
+        Bytes::from_static(b"two"),
+        Bytes::from_static(b"three"),
+    ]);
+    assert_eq!(cursor.last_realm_offset, Some(2));
+    assert!(!cursor.has_more);
 }
 
 #[test]
-fn should_return_empty_success_when_reading_past_committed_stream_watermark() {
+fn should_return_empty_success_given_read_past_area_watermark() {
     // Arrange
-    let engine = create_test_engine_with_cfs(vec![1]);
-    write_legacy_record(
-        &engine,
-        1,
-        LegacyRecordRef {
-            realm: "test",
-            area: "events",
-            resource: "orders",
-            resource_offset: 0,
-            area_offset: 0,
-            realm_offset: 0,
-        },
-        b"one",
-    );
-
-    let store = StreamStore::new(engine);
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    commit_record(&store, 1, "test", "events", "orders", 0, b"one");
 
     // Act
-    let area_records = store
-        .read_area(1, "test", "events", 99, 10, None)
-        .expect("read past area watermark")
-        .0;
-    let realm_records = store
-        .read_realm(1, "test", 99, 10, None)
-        .expect("read past realm watermark")
-        .0;
+    let (records, cursor) = store
+        .read_area(1, "test", "events", 1, 10, None)
+        .expect("read past area watermark");
 
     // Assert
-    assert!(area_records.is_empty());
-    assert!(realm_records.is_empty());
+    assert!(records.is_empty());
+    assert_eq!(cursor.last_area_offset, Some(1));
+    assert!(!cursor.has_more);
 }
 
 #[test]
-fn should_preserve_watermark_when_set_watermark_regresses() {
+fn should_return_empty_success_given_read_past_realm_watermark() {
     // Arrange
-    let engine = create_test_engine_with_cfs(vec![1]);
-    let store = StreamStore::new(engine);
-    store
-        .set_watermark(1, "test", "events", 10)
-        .expect("set initial watermark");
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    commit_record(&store, 1, "test", "events", "orders", 0, b"one");
 
     // Act
-    store
-        .set_watermark(1, "test", "events", 5)
-        .expect("ignore regressed watermark");
-    let watermark = store
-        .get_watermark(1, "test", "events")
-        .expect("read guarded watermark");
+    let (records, cursor) = store
+        .read_realm(1, "test", 1, 10, None)
+        .expect("read past realm watermark");
 
     // Assert
-    assert_eq!(watermark, 10);
+    assert!(records.is_empty());
+    assert_eq!(cursor.last_realm_offset, Some(1));
+    assert!(!cursor.has_more);
 }
 
 #[test]
-fn should_restore_watermark_after_reopening_store() {
+fn should_restore_watermarks_given_store_reopen() {
     // Arrange
     let engine = create_test_engine_with_cfs(vec![1]);
     let store = StreamStore::new(engine.clone());
-    store
-        .commit_records(CommitRecordsParams {
-            family: 1,
-            realm: "test",
-            area: "events",
-            resource: "orders",
-            expected_resource_next_offset: 0,
-            events: &[EventPayload {
-                body: Bytes::from_static(b"one"),
-                metadata: None,
-            }],
-            ingest_metadata: None,
-            mode: StreamWriteMode::Sync,
-        })
-        .expect("commit initial record");
+    commit_record(&store, 1, "test", "events", "orders", 0, b"one");
 
     // Act
     let reopened = StreamStore::new(engine);
@@ -349,18 +247,8 @@ fn should_restore_watermark_after_reopening_store() {
     let realm_watermark = reopened
         .get_realm_watermark(1, "test")
         .expect("read reopened realm watermark");
-    let area_records = reopened
-        .read_area(1, "test", "events", 1, 10, None)
-        .expect("read past reopened area watermark")
-        .0;
-    let realm_records = reopened
-        .read_realm(1, "test", 1, 10, None)
-        .expect("read past reopened realm watermark")
-        .0;
 
     // Assert
     assert_eq!(area_watermark, 0);
     assert_eq!(realm_watermark, 0);
-    assert!(area_records.is_empty());
-    assert!(realm_records.is_empty());
 }

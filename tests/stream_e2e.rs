@@ -43,6 +43,24 @@ fn decode_stream_ok_data(payload: &[u8]) -> Vec<u8> {
     data.to_vec()
 }
 
+fn parse_stream_ok_data(frame: &[u8]) -> Vec<u8> {
+    let (_msg_type, status, payload) = parse_stream_response(frame);
+    assert_eq!(status, 0, "expected successful stream response");
+    decode_stream_ok_data(&payload)
+}
+
+fn parse_stream_error_message(frame: &[u8]) -> String {
+    let (_msg_type, status, payload) = parse_stream_response(frame);
+    assert_eq!(status, 1, "expected failing stream response");
+
+    let mut dec = PayloadDecoder::new(&payload);
+    let error_flag = dec.get_u8().expect("stream error flag");
+    assert_eq!(error_flag, 1, "expected stream error payload");
+    let message = dec.get_string().expect("stream error message");
+    assert!(dec.is_complete(), "expected complete stream error payload");
+    message
+}
+
 fn build_stream_last(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(route.len() as u32);
@@ -60,6 +78,30 @@ fn build_stream_get_metadata(route: &str) -> Vec<u8> {
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(606, &buf);
+    builder.build()
+}
+
+fn build_stream_read_with_options(
+    route: &str,
+    start_offset: u64,
+    limit: u64,
+    max_bytes: Option<u64>,
+) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+    buf.put_u64(start_offset);
+    buf.put_u64(limit);
+    match max_bytes {
+        Some(value) => {
+            buf.put_u8(1);
+            buf.put_u64(value);
+        }
+        None => buf.put_u8(0),
+    }
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(604, &buf);
     builder.build()
 }
 
@@ -287,8 +329,14 @@ where
         .expect("read");
 
     // Assert
-    let (_msg_type, status, _data) = parse_stream_response(&response);
-    assert_eq!(status, 0, "Expected success for stream read");
+    let read = parse_stream_read_response(&response);
+    assert_eq!(read.records.len(), 1);
+    assert_eq!(read.records[0].resource_offset, 0);
+    assert_eq!(read.records[0].body, test_data.to_vec());
+    assert_eq!(read.cursor.last_resource_offset, 0);
+    assert_eq!(read.cursor.last_area_offset, Some(0));
+    assert_eq!(read.cursor.last_realm_offset, Some(0));
+    assert!(!read.cursor.has_more);
 }
 
 // Generic test helper for read ordering
@@ -311,8 +359,19 @@ where
         .expect("read");
 
     // Assert
-    let (_msg_type, status, _data) = parse_stream_response(&response);
-    assert_eq!(status, 0, "Expected success for ordered read");
+    let read = parse_stream_read_response(&response);
+    let offsets: Vec<u64> = read.records.iter().map(|record| record.resource_offset).collect();
+    let bodies: Vec<Vec<u8>> = read
+        .records
+        .iter()
+        .map(|record| record.body.clone())
+        .collect();
+    assert_eq!(offsets, vec![0, 1]);
+    assert_eq!(bodies, vec![b"first".to_vec(), b"second".to_vec()]);
+    assert_eq!(read.cursor.last_resource_offset, 1);
+    assert_eq!(read.cursor.last_area_offset, Some(1));
+    assert_eq!(read.cursor.last_realm_offset, Some(1));
+    assert!(!read.cursor.has_more);
 }
 
 // Generic test helper for read past end
@@ -322,15 +381,20 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
-    let frame = build_stream_read("stream://test/sparse/main", 999999);
+    let route = "stream://test/sparse/main";
+    commit_stream_record(&mut client, route, b"present").await;
+    let frame = build_stream_read(route, 1);
 
     // Act
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
 
     // Assert
-    let (_msg_type, _status, _data) = parse_stream_response(&response);
-    // Status can be success (empty read) or not found - both acceptable
-    // Any status is acceptable here - we're just validating the request completes
+    let read = parse_stream_read_response(&response);
+    assert!(read.records.is_empty());
+    assert_eq!(read.cursor.last_resource_offset, 1);
+    assert_eq!(read.cursor.last_area_offset, None);
+    assert_eq!(read.cursor.last_realm_offset, None);
+    assert!(!read.cursor.has_more);
 }
 
 // Generic test helper for FIFO ordering with multiple appends
@@ -348,7 +412,33 @@ where
         commit_stream_record_with_offset(&mut client, route, (i - 1) as u64, &data).await;
     }
 
-    // Assert - Order should be preserved (can't directly verify without GET support for sequence, but test ensures no errors)
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_read(route, 0), 2000)
+        .await
+        .expect("read stream history");
+
+    // Assert
+    let read = parse_stream_read_response(&response);
+    let offsets: Vec<u64> = read.records.iter().map(|record| record.resource_offset).collect();
+    let bodies: Vec<Vec<u8>> = read
+        .records
+        .iter()
+        .map(|record| record.body.clone())
+        .collect();
+    assert_eq!(offsets, vec![0, 1, 2, 3, 4]);
+    assert_eq!(
+        bodies,
+        vec![
+            b"event-1".to_vec(),
+            b"event-2".to_vec(),
+            b"event-3".to_vec(),
+            b"event-4".to_vec(),
+            b"event-5".to_vec(),
+        ]
+    );
+    assert_eq!(read.cursor.last_resource_offset, 4);
+    assert!(!read.cursor.has_more);
 }
 
 // Generic test helper for large stream payloads
@@ -375,9 +465,25 @@ where
     let mut client2 = C::connect(server).await.expect("connect 2");
     let route = "stream://test/concurrent/main";
 
-    // Act - Both clients append
+    // Act
     commit_stream_record_with_offset(&mut client1, route, 0, b"client-1-event").await;
-    commit_stream_record_with_offset(&mut client2, route, 1, b"client-2-event").await;
+
+    let begin_response = client2
+        .send_and_receive(&build_stream_begin(route, 0), 2000)
+        .await
+        .expect("begin stale stream write");
+    let error = parse_stream_error_message(&begin_response);
+
+    let read_response = client1
+        .send_and_receive(&build_stream_read(route, 0), 2000)
+        .await
+        .expect("read committed stream history");
+
+    // Assert
+    assert!(error.contains("concurrency conflict"));
+    let read = parse_stream_read_response(&read_response);
+    let bodies: Vec<Vec<u8>> = read.records.into_iter().map(|record| record.body).collect();
+    assert_eq!(bodies, vec![b"client-1-event".to_vec()]);
 }
 
 // Generic test helper for multiple sequential read operations
@@ -389,39 +495,45 @@ where
     let mut client = C::connect(server).await.expect("connect");
     let route = "stream://test/sequential/main";
 
-    // First, append some data
-    commit_stream_record(&mut client, route, b"event-data").await;
+    commit_stream_record_with_offset(&mut client, route, 0, b"event-1").await;
+    commit_stream_record_with_offset(&mut client, route, 1, b"event-2").await;
+    commit_stream_record_with_offset(&mut client, route, 2, b"event-3").await;
 
-    // Act - Sequential reads
-    let read1_frame = build_stream_read(route, 0);
+    // Act
+    let read1_frame = build_stream_read_with_options(route, 0, 1, None);
     let response1 = client
         .send_and_receive(&read1_frame, 2000)
         .await
         .expect("read 1");
 
-    let (_msg_type, status1, _data) = parse_stream_response(&response1);
-    assert_eq!(status1, 0);
-
-    // Act - Read again with different offset
-    let read2_frame = build_stream_read(route, 0);
+    let read2_frame = build_stream_read_with_options(route, 1, 1, None);
     let response2 = client
         .send_and_receive(&read2_frame, 2000)
         .await
         .expect("read 2");
 
-    let (_msg_type, status2, _data) = parse_stream_response(&response2);
-    assert_eq!(status2, 0);
-
-    // Act - Third read
-    let read3_frame = build_stream_read(route, 0);
+    let read3_frame = build_stream_read_with_options(route, 2, 1, None);
     let response3 = client
         .send_and_receive(&read3_frame, 2000)
         .await
         .expect("read 3");
 
     // Assert
-    let (_msg_type, status3, _data) = parse_stream_response(&response3);
-    assert_eq!(status3, 0, "Sequential reads should all succeed");
+    let read1 = parse_stream_read_response(&response1);
+    let read2 = parse_stream_read_response(&response2);
+    let read3 = parse_stream_read_response(&response3);
+    assert_eq!(read1.records.len(), 1);
+    assert_eq!(read1.records[0].body, b"event-1".to_vec());
+    assert_eq!(read1.cursor.last_resource_offset, 0);
+    assert!(read1.cursor.has_more);
+    assert_eq!(read2.records.len(), 1);
+    assert_eq!(read2.records[0].body, b"event-2".to_vec());
+    assert_eq!(read2.cursor.last_resource_offset, 1);
+    assert!(read2.cursor.has_more);
+    assert_eq!(read3.records.len(), 1);
+    assert_eq!(read3.records[0].body, b"event-3".to_vec());
+    assert_eq!(read3.cursor.last_resource_offset, 2);
+    assert!(!read3.cursor.has_more);
 }
 
 // Generic test helper for stream isolation
@@ -464,19 +576,49 @@ where
     // Act
     commit_stream_record(&mut client, orders_route, b"order-created").await;
     commit_stream_record_with_offset(&mut client, audits_route, 0, b"audit-recorded").await;
+    commit_stream_record_with_offset(&mut client, orders_route, 1, b"order-shipped").await;
 
-    let response = client
-        .send_and_receive(&build_stream_read("stream://test/events/*", 0), 2000)
+    let first_response = client
+        .send_and_receive(
+            &build_stream_read_with_options("stream://test/events/*", 0, 2, None),
+            2000,
+        )
         .await
         .expect("read area history");
+    let second_response = client
+        .send_and_receive(
+            &build_stream_read_with_options("stream://test/events/*", 2, 2, None),
+            2000,
+        )
+        .await
+        .expect("resume area history");
 
     // Assert
-    let records = parse_stream_read_records(&response);
-    let bodies: Vec<Vec<u8>> = records.into_iter().map(|(_, body)| body).collect();
+    let first = parse_stream_read_response(&first_response);
+    let second = parse_stream_read_response(&second_response);
+    let bodies: Vec<Vec<u8>> = first
+        .records
+        .iter()
+        .map(|record| record.body.clone())
+        .collect();
+    let area_offsets: Vec<Option<u64>> = first
+        .records
+        .iter()
+        .map(|record| record.area_offset)
+        .collect();
     assert_eq!(
         bodies,
         vec![b"order-created".to_vec(), b"audit-recorded".to_vec()]
     );
+    assert_eq!(area_offsets, vec![Some(0), Some(1)]);
+    assert_eq!(first.cursor.last_area_offset, Some(1));
+    assert!(first.cursor.has_more);
+
+    assert_eq!(second.records.len(), 1);
+    assert_eq!(second.records[0].body, b"order-shipped".to_vec());
+    assert_eq!(second.records[0].area_offset, Some(2));
+    assert_eq!(second.cursor.last_area_offset, Some(2));
+    assert!(!second.cursor.has_more);
 }
 
 async fn should_read_committed_realm_history_given_wildcard_route<C>(server: &TestServer)
@@ -491,16 +633,46 @@ where
     // Act
     commit_stream_record(&mut client, events_route, b"realm-one").await;
     commit_stream_record_with_offset(&mut client, audit_route, 0, b"realm-two").await;
+    commit_stream_record_with_offset(&mut client, events_route, 1, b"realm-three").await;
 
-    let response = client
-        .send_and_receive(&build_stream_read("stream://test/*/*", 0), 2000)
+    let first_response = client
+        .send_and_receive(
+            &build_stream_read_with_options("stream://test/*/*", 0, 2, None),
+            2000,
+        )
         .await
         .expect("read realm history");
+    let second_response = client
+        .send_and_receive(
+            &build_stream_read_with_options("stream://test/*/*", 2, 2, None),
+            2000,
+        )
+        .await
+        .expect("resume realm history");
 
     // Assert
-    let records = parse_stream_read_records(&response);
-    let bodies: Vec<Vec<u8>> = records.into_iter().map(|(_, body)| body).collect();
+    let first = parse_stream_read_response(&first_response);
+    let second = parse_stream_read_response(&second_response);
+    let bodies: Vec<Vec<u8>> = first
+        .records
+        .iter()
+        .map(|record| record.body.clone())
+        .collect();
+    let realm_offsets: Vec<Option<u64>> = first
+        .records
+        .iter()
+        .map(|record| record.realm_offset)
+        .collect();
     assert_eq!(bodies, vec![b"realm-one".to_vec(), b"realm-two".to_vec()]);
+    assert_eq!(realm_offsets, vec![Some(0), Some(1)]);
+    assert_eq!(first.cursor.last_realm_offset, Some(1));
+    assert!(first.cursor.has_more);
+
+    assert_eq!(second.records.len(), 1);
+    assert_eq!(second.records[0].body, b"realm-three".to_vec());
+    assert_eq!(second.records[0].realm_offset, Some(2));
+    assert_eq!(second.cursor.last_realm_offset, Some(2));
+    assert!(!second.cursor.has_more);
 }
 
 async fn should_expose_exact_resource_record_metadata_on_read<C>(server: &TestServer)
@@ -606,6 +778,117 @@ where
     assert_eq!(metadata.ttl_seconds, None);
     assert_eq!(metadata.area_watermark, 0);
     assert_eq!(metadata.realm_watermark, 0);
+}
+
+async fn should_stop_exact_resource_read_given_max_bytes<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/events/max-bytes";
+    commit_stream_record_with_offset(&mut client, route, 0, b"abcd").await;
+    commit_stream_record_with_offset(&mut client, route, 1, b"efgh").await;
+
+    // Act
+    let first_response = client
+        .send_and_receive(&build_stream_read_with_options(route, 0, 10, Some(4)), 2000)
+        .await
+        .expect("read first byte-limited page");
+    let second_response = client
+        .send_and_receive(&build_stream_read_with_options(route, 1, 10, Some(4)), 2000)
+        .await
+        .expect("read resumed byte-limited page");
+
+    // Assert
+    let first = parse_stream_read_response(&first_response);
+    let second = parse_stream_read_response(&second_response);
+    assert_eq!(first.records.len(), 1);
+    assert_eq!(first.records[0].body, b"abcd".to_vec());
+    assert_eq!(first.cursor.last_resource_offset, 0);
+    assert!(first.cursor.has_more);
+    assert_eq!(second.records.len(), 1);
+    assert_eq!(second.records[0].body, b"efgh".to_vec());
+    assert_eq!(second.cursor.last_resource_offset, 1);
+    assert!(!second.cursor.has_more);
+}
+
+async fn should_return_empty_success_given_area_wildcard_last<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/events/orders";
+    commit_stream_record(&mut client, route, b"payload").await;
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_last("stream://test/events/*"), 2000)
+        .await
+        .expect("read area wildcard last");
+
+    // Assert
+    assert_eq!(parse_stream_ok_data(&response), Vec::<u8>::new());
+    assert!(parse_stream_last_response(&response).is_none());
+}
+
+async fn should_return_empty_success_given_realm_wildcard_last<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/events/orders";
+    commit_stream_record(&mut client, route, b"payload").await;
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_last("stream://test/*/*"), 2000)
+        .await
+        .expect("read realm wildcard last");
+
+    // Assert
+    assert_eq!(parse_stream_ok_data(&response), Vec::<u8>::new());
+    assert!(parse_stream_last_response(&response).is_none());
+}
+
+async fn should_return_empty_success_given_area_wildcard_get_metadata<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/events/orders";
+    commit_stream_record(&mut client, route, b"payload").await;
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_get_metadata("stream://test/events/*"), 2000)
+        .await
+        .expect("read area wildcard metadata");
+
+    // Assert
+    assert_eq!(parse_stream_ok_data(&response), Vec::<u8>::new());
+}
+
+async fn should_return_empty_success_given_realm_wildcard_get_metadata<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/events/orders";
+    commit_stream_record(&mut client, route, b"payload").await;
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_get_metadata("stream://test/*/*"), 2000)
+        .await
+        .expect("read realm wildcard metadata");
+
+    // Assert
+    assert_eq!(parse_stream_ok_data(&response), Vec::<u8>::new());
 }
 
 async fn should_retain_other_stream_subscription_after_unsubscribe<C>(server: &TestServer)
@@ -1091,6 +1374,11 @@ define_transport_tests!(
     should_expose_exact_resource_record_metadata_on_read_tcp / should_expose_exact_resource_record_metadata_on_read_ws => should_expose_exact_resource_record_metadata_on_read,
     should_expose_exact_resource_record_metadata_on_last_tcp / should_expose_exact_resource_record_metadata_on_last_ws => should_expose_exact_resource_record_metadata_on_last,
     should_expose_exact_resource_metadata_on_get_metadata_tcp / should_expose_exact_resource_metadata_on_get_metadata_ws => should_expose_exact_resource_metadata_on_get_metadata,
+    should_stop_exact_resource_read_given_max_bytes_tcp / should_stop_exact_resource_read_given_max_bytes_ws => should_stop_exact_resource_read_given_max_bytes,
+    should_return_empty_success_given_area_wildcard_last_tcp / should_return_empty_success_given_area_wildcard_last_ws => should_return_empty_success_given_area_wildcard_last,
+    should_return_empty_success_given_realm_wildcard_last_tcp / should_return_empty_success_given_realm_wildcard_last_ws => should_return_empty_success_given_realm_wildcard_last,
+    should_return_empty_success_given_area_wildcard_get_metadata_tcp / should_return_empty_success_given_area_wildcard_get_metadata_ws => should_return_empty_success_given_area_wildcard_get_metadata,
+    should_return_empty_success_given_realm_wildcard_get_metadata_tcp / should_return_empty_success_given_realm_wildcard_get_metadata_ws => should_return_empty_success_given_realm_wildcard_get_metadata,
     should_abort_uncommitted_stream_session_on_disconnect_tcp / should_abort_uncommitted_stream_session_on_disconnect_ws => should_abort_uncommitted_stream_session_on_disconnect,
     should_remove_stream_subscription_when_subscriber_disconnects_tcp / should_remove_stream_subscription_when_subscriber_disconnects_ws => should_remove_stream_subscription_when_subscriber_disconnects,
     should_not_treat_stream_subscription_as_replay_cursor_given_shared_route_tcp / should_not_treat_stream_subscription_as_replay_cursor_given_shared_route_ws => should_not_treat_stream_subscription_as_replay_cursor_given_shared_route,
