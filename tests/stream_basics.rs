@@ -1,9 +1,9 @@
 //! Stream domain basic tests for the store-authoritative runtime path.
 
 use bytes::Bytes;
-use fitz::domains::stream::protocol::StreamWriteMode;
+use fitz::domains::stream::protocol::{StreamWriteMode, MAX_EVENT_SIZE};
 use fitz::domains::stream::session::SessionActor;
-use fitz::domains::stream::store::StreamStore;
+use fitz::domains::stream::store::{BatchLimits, StreamStore, StreamTTL};
 use fitz::domains::stream::{StreamActor, StreamMessage};
 use fitz::runtime::actor::Context;
 use fitz::runtime::router::Router;
@@ -50,6 +50,21 @@ fn make_actor_with_store(
         store,
     )
     .expect("create stream actor with store")
+}
+
+fn make_actor_with_limits(
+    limits: BatchLimits,
+    realm: &str,
+    area: &str,
+    resource: &str,
+) -> StreamActor {
+    let store = Arc::new(StreamStore::with_config(
+        create_test_db(),
+        limits,
+        StreamTTL::default(),
+    ));
+
+    make_actor_with_store(store, realm, area, resource)
 }
 
 fn make_session_with_write_access() -> SessionActor {
@@ -341,6 +356,315 @@ fn should_reject_future_expected_offset_given_empty_resource() {
 }
 
 #[test]
+fn should_return_error_given_append_to_nonexistent_session() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let mut actor = make_actor_with_store(store, "realm1", "area1", "orders");
+
+    // Act
+    let error = actor
+        .append_to_session(999, Bytes::from_static(b"event"), None)
+        .expect_err("missing session append should fail");
+
+    // Assert
+    assert_eq!(error, "session not found");
+}
+
+#[test]
+fn should_return_error_given_commit_with_mismatched_session_id() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let mut actor = make_actor_with_store(store, "realm1", "area1", "orders");
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor
+        .append_to_session(100, Bytes::from_static(b"event"), None)
+        .unwrap();
+
+    // Act
+    let error = actor
+        .commit_session(101, StreamWriteMode::Sync)
+        .expect_err("mismatched session commit should fail");
+
+    // Assert
+    assert_eq!(error, "session not found");
+    assert!(actor.has_active_session());
+}
+
+#[test]
+fn should_return_error_given_rollback_with_mismatched_session_id() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let mut actor = make_actor_with_store(store, "realm1", "area1", "orders");
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+
+    // Act
+    let error = actor
+        .rollback_session(101)
+        .expect_err("mismatched session rollback should fail");
+
+    // Assert
+    assert_eq!(error, "session not found");
+    assert!(actor.has_active_session());
+}
+
+#[test]
+fn should_return_error_given_append_after_rollback() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let mut actor = make_actor_with_store(store, "realm1", "area1", "orders");
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor.rollback_session(100).unwrap();
+
+    // Act
+    let error = actor
+        .append_to_session(100, Bytes::from_static(b"event"), None)
+        .expect_err("rolled back session should be gone");
+
+    // Assert
+    assert_eq!(error, "session not found");
+}
+
+#[test]
+fn should_return_none_given_cleanup_for_non_matching_owner() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let mut actor = make_actor_with_store(store, "realm1", "area1", "orders");
+    actor.begin_append_session(77, 555, 0, None).unwrap();
+
+    // Act
+    let removed = actor.cleanup_session(78);
+
+    // Assert
+    assert_eq!(removed, None);
+    assert!(actor.has_active_session());
+}
+
+#[test]
+fn should_return_none_given_cleanup_after_session_already_removed() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let mut actor = make_actor_with_store(store, "realm1", "area1", "orders");
+    actor.begin_append_session(77, 555, 0, None).unwrap();
+    actor.cleanup_session(77);
+
+    // Act
+    let removed = actor.cleanup_session(77);
+
+    // Assert
+    assert_eq!(removed, None);
+    assert!(!actor.has_active_session());
+}
+
+#[test]
+fn should_return_error_given_empty_batch_commit() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let mut actor = make_actor_with_store(store, "realm1", "area1", "orders");
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+
+    // Act
+    let error = actor
+        .commit_session(100, StreamWriteMode::Sync)
+        .expect_err("empty session commit should fail");
+
+    // Assert
+    assert_eq!(error, "empty batch");
+    assert!(actor.has_active_session());
+}
+
+#[test]
+fn should_return_empty_read_given_zero_limit_with_committed_data() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let mut actor = make_actor_with_store(store, "realm1", "area1", "orders");
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor
+        .append_to_session(100, Bytes::from_static(b"event"), None)
+        .unwrap();
+    actor.commit_session(100, StreamWriteMode::Sync).unwrap();
+
+    // Act
+    let response = actor.read(0, 0, None).unwrap();
+
+    // Assert
+    assert!(response.records.is_empty());
+    assert_eq!(response.cursor.last_resource_offset, 0);
+    assert_eq!(response.cursor.last_area_offset, None);
+    assert_eq!(response.cursor.last_realm_offset, None);
+    assert!(!response.cursor.has_more);
+}
+
+#[test]
+fn should_return_none_given_last_on_empty_resource() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let actor = make_actor_with_store(store, "realm1", "area1", "orders");
+
+    // Act
+    let response = actor.last().unwrap();
+
+    // Assert
+    assert!(response.record.is_none());
+}
+
+#[test]
+fn should_return_empty_metadata_given_resource_never_written() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let actor = make_actor_with_store(store, "realm1", "area1", "orders");
+
+    // Act
+    let response = actor.metadata().unwrap();
+
+    // Assert
+    assert_eq!(response.metadata.first_resource_offset, None);
+    assert_eq!(response.metadata.last_resource_offset, None);
+    assert_eq!(response.metadata.resource_count, 0);
+    assert_eq!(response.metadata.area_watermark, 0);
+    assert_eq!(response.metadata.realm_watermark, 0);
+}
+
+#[test]
+fn should_allow_append_given_event_size_exactly_at_max_boundary() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let mut actor = make_actor_with_store(store, "realm1", "area1", "orders");
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    let body = Bytes::from(vec![b'x'; MAX_EVENT_SIZE]);
+
+    // Act
+    let assigned_offset = actor.append_to_session(100, body, None).unwrap();
+
+    // Assert
+    assert_eq!(assigned_offset, 0);
+}
+
+#[test]
+fn should_return_error_given_metadata_and_body_exceed_max_event_size() {
+    // Arrange
+    let store = Arc::new(StreamStore::new(create_test_db()));
+    let mut actor = make_actor_with_store(store, "realm1", "area1", "orders");
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    let body = Bytes::from(vec![b'x'; MAX_EVENT_SIZE - 1]);
+
+    // Act
+    let error = actor
+        .append_to_session(100, body, Some(Bytes::from_static(b"yz")))
+        .expect_err("oversized event should fail");
+
+    // Assert
+    assert_eq!(error, "event too large");
+    assert!(actor.has_active_session());
+}
+
+#[test]
+fn should_allow_append_given_batch_event_count_at_limit() {
+    // Arrange
+    let mut actor = make_actor_with_limits(
+        BatchLimits {
+            max_batch_events: 2,
+            max_batch_bytes: 1024,
+        },
+        "realm1",
+        "area1",
+        "orders",
+    );
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor
+        .append_to_session(100, Bytes::from_static(b"one"), None)
+        .unwrap();
+
+    // Act
+    let assigned_offset = actor
+        .append_to_session(100, Bytes::from_static(b"two"), None)
+        .unwrap();
+
+    // Assert
+    assert_eq!(assigned_offset, 1);
+}
+
+#[test]
+fn should_return_error_given_batch_event_count_over_limit() {
+    // Arrange
+    let mut actor = make_actor_with_limits(
+        BatchLimits {
+            max_batch_events: 2,
+            max_batch_bytes: 1024,
+        },
+        "realm1",
+        "area1",
+        "orders",
+    );
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor
+        .append_to_session(100, Bytes::from_static(b"one"), None)
+        .unwrap();
+    actor
+        .append_to_session(100, Bytes::from_static(b"two"), None)
+        .unwrap();
+
+    // Act
+    let error = actor
+        .append_to_session(100, Bytes::from_static(b"three"), None)
+        .expect_err("batch event overflow should fail");
+
+    // Assert
+    assert_eq!(error, "batch too large");
+}
+
+#[test]
+fn should_allow_append_given_batch_bytes_at_limit() {
+    // Arrange
+    let mut actor = make_actor_with_limits(
+        BatchLimits {
+            max_batch_events: 10,
+            max_batch_bytes: 5,
+        },
+        "realm1",
+        "area1",
+        "orders",
+    );
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor
+        .append_to_session(100, Bytes::from_static(b"ab"), None)
+        .unwrap();
+
+    // Act
+    let assigned_offset = actor
+        .append_to_session(100, Bytes::from_static(b"cde"), None)
+        .unwrap();
+
+    // Assert
+    assert_eq!(assigned_offset, 1);
+}
+
+#[test]
+fn should_return_error_given_batch_bytes_over_limit() {
+    // Arrange
+    let mut actor = make_actor_with_limits(
+        BatchLimits {
+            max_batch_events: 10,
+            max_batch_bytes: 5,
+        },
+        "realm1",
+        "area1",
+        "orders",
+    );
+    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor
+        .append_to_session(100, Bytes::from_static(b"ab"), None)
+        .unwrap();
+
+    // Act
+    let error = actor
+        .append_to_session(100, Bytes::from_static(b"cdef"), None)
+        .expect_err("batch byte overflow should fail");
+
+    // Assert
+    assert_eq!(error, "batch too large");
+}
+
+#[test]
 fn should_abort_append_session_on_owner_cleanup() {
     // Arrange
     let store = Arc::new(StreamStore::new(create_test_db()));
@@ -452,7 +776,9 @@ fn should_allow_retry_given_recreated_actor_after_commit_conflict() {
     retry_writer
         .append_to_session(300, Bytes::from_static(b"retried"), None)
         .unwrap();
-    let commit = retry_writer.commit_session(300, StreamWriteMode::Sync).unwrap();
+    let commit = retry_writer
+        .commit_session(300, StreamWriteMode::Sync)
+        .unwrap();
     let metadata = retry_writer.metadata().unwrap().metadata;
 
     // Assert

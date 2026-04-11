@@ -54,11 +54,7 @@ fn seed_unmarked_stream_data(engine: &cntryl_midge::Engine, family: u32) {
         .expect("commit unmarked stream metadata");
 }
 
-fn seed_layout_marker(
-    engine: &cntryl_midge::Engine,
-    family: u32,
-    layout: StreamStorageLayout,
-) {
+fn seed_layout_marker(engine: &cntryl_midge::Engine, family: u32, layout: StreamStorageLayout) {
     let mut tx = engine
         .begin_tx(family, cntryl_midge::TransactionMode::ReadWrite)
         .expect("begin write tx");
@@ -160,11 +156,14 @@ fn should_preserve_monotonic_area_offsets_given_cross_resource_commits() {
         .collect();
     let bodies: Vec<Bytes> = records.into_iter().map(|record| record.body).collect();
     assert_eq!(area_offsets, vec![0, 1, 2]);
-    assert_eq!(bodies, vec![
-        Bytes::from_static(b"one"),
-        Bytes::from_static(b"two"),
-        Bytes::from_static(b"three"),
-    ]);
+    assert_eq!(
+        bodies,
+        vec![
+            Bytes::from_static(b"one"),
+            Bytes::from_static(b"two"),
+            Bytes::from_static(b"three"),
+        ]
+    );
     assert_eq!(cursor.last_area_offset, Some(2));
     assert!(!cursor.has_more);
 }
@@ -189,11 +188,14 @@ fn should_preserve_monotonic_realm_offsets_given_cross_area_commits() {
         .collect();
     let bodies: Vec<Bytes> = records.into_iter().map(|record| record.body).collect();
     assert_eq!(realm_offsets, vec![0, 1, 2]);
-    assert_eq!(bodies, vec![
-        Bytes::from_static(b"one"),
-        Bytes::from_static(b"two"),
-        Bytes::from_static(b"three"),
-    ]);
+    assert_eq!(
+        bodies,
+        vec![
+            Bytes::from_static(b"one"),
+            Bytes::from_static(b"two"),
+            Bytes::from_static(b"three"),
+        ]
+    );
     assert_eq!(cursor.last_realm_offset, Some(2));
     assert!(!cursor.has_more);
 }
@@ -216,6 +218,25 @@ fn should_return_empty_success_given_read_past_area_watermark() {
 }
 
 #[test]
+fn should_return_record_given_read_at_area_watermark_boundary() {
+    // Arrange
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    commit_record(&store, 1, "test", "events", "orders", 0, b"one");
+
+    // Act
+    let (records, cursor) = store
+        .read_area(1, "test", "events", 0, 10, None)
+        .expect("read at area watermark boundary");
+
+    // Assert
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].area_offset, Some(0));
+    assert_eq!(records[0].body, Bytes::from_static(b"one"));
+    assert_eq!(cursor.last_area_offset, Some(0));
+    assert!(!cursor.has_more);
+}
+
+#[test]
 fn should_return_empty_success_given_read_past_realm_watermark() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
@@ -229,6 +250,25 @@ fn should_return_empty_success_given_read_past_realm_watermark() {
     // Assert
     assert!(records.is_empty());
     assert_eq!(cursor.last_realm_offset, Some(1));
+    assert!(!cursor.has_more);
+}
+
+#[test]
+fn should_return_record_given_read_at_realm_watermark_boundary() {
+    // Arrange
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    commit_record(&store, 1, "test", "events", "orders", 0, b"one");
+
+    // Act
+    let (records, cursor) = store
+        .read_realm(1, "test", 0, 10, None)
+        .expect("read at realm watermark boundary");
+
+    // Assert
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].realm_offset, Some(0));
+    assert_eq!(records[0].body, Bytes::from_static(b"one"));
+    assert_eq!(cursor.last_realm_offset, Some(0));
     assert!(!cursor.has_more);
 }
 

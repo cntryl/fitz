@@ -81,6 +81,15 @@ fn build_stream_get_metadata(route: &str) -> Vec<u8> {
     builder.build()
 }
 
+fn build_stream_rollback(session_id: u64) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u64(session_id);
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(603, &buf);
+    builder.build()
+}
+
 fn build_stream_read_with_options(
     route: &str,
     start_offset: u64,
@@ -220,7 +229,10 @@ fn parse_stream_metadata_response(frame: &[u8]) -> WireStreamMetadata {
         area_watermark: dec.get_u64().expect("resource area watermark"),
         realm_watermark: dec.get_u64().expect("resource realm watermark"),
     };
-    assert!(dec.is_complete(), "expected complete stream metadata payload");
+    assert!(
+        dec.is_complete(),
+        "expected complete stream metadata payload"
+    );
     metadata
 }
 
@@ -360,7 +372,11 @@ where
 
     // Assert
     let read = parse_stream_read_response(&response);
-    let offsets: Vec<u64> = read.records.iter().map(|record| record.resource_offset).collect();
+    let offsets: Vec<u64> = read
+        .records
+        .iter()
+        .map(|record| record.resource_offset)
+        .collect();
     let bodies: Vec<Vec<u8>> = read
         .records
         .iter()
@@ -420,7 +436,11 @@ where
 
     // Assert
     let read = parse_stream_read_response(&response);
-    let offsets: Vec<u64> = read.records.iter().map(|record| record.resource_offset).collect();
+    let offsets: Vec<u64> = read
+        .records
+        .iter()
+        .map(|record| record.resource_offset)
+        .collect();
     let bodies: Vec<Vec<u8>> = read
         .records
         .iter()
@@ -504,6 +524,238 @@ where
 
     // Assert
     assert!(error.contains("concurrency conflict"));
+}
+
+async fn should_return_session_not_found_given_append_to_unknown_session<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_append(999, b"ghost"), 2000)
+        .await
+        .expect("append unknown stream session");
+    let error = parse_stream_error_message(&response);
+
+    // Assert
+    assert!(error.contains("session not found"));
+}
+
+async fn should_return_session_not_found_given_commit_to_unknown_session<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_commit(999), 2000)
+        .await
+        .expect("commit unknown stream session");
+    let error = parse_stream_error_message(&response);
+
+    // Assert
+    assert!(error.contains("session not found"));
+}
+
+async fn should_return_session_not_found_given_rollback_to_unknown_session<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_rollback(999), 2000)
+        .await
+        .expect("rollback unknown stream session");
+    let error = parse_stream_error_message(&response);
+
+    // Assert
+    assert!(error.contains("session not found"));
+}
+
+async fn should_return_error_given_empty_batch_commit<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/errors/empty-batch";
+    let begin_response = client
+        .send_and_receive(&build_stream_begin(route, 0), 2000)
+        .await
+        .expect("begin empty-batch stream session");
+    let (_msg_type, status, data) = parse_stream_response(&begin_response);
+    assert_eq!(status, 0, "Expected success for stream begin");
+    let session_id = parse_stream_session_id(&data).expect("stream session id");
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_commit(session_id), 2000)
+        .await
+        .expect("commit empty stream session");
+    let error = parse_stream_error_message(&response);
+
+    // Assert
+    assert!(error.contains("empty batch"));
+}
+
+async fn should_return_empty_success_given_zero_limit_read<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/limits/zero-read";
+    commit_stream_record(&mut client, route, b"payload").await;
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_read_with_options(route, 0, 0, None), 2000)
+        .await
+        .expect("read zero-limit stream history");
+    let read = parse_stream_read_response(&response);
+
+    // Assert
+    assert!(read.records.is_empty());
+    assert_eq!(read.cursor.last_resource_offset, 0);
+    assert_eq!(read.cursor.last_area_offset, None);
+    assert_eq!(read.cursor.last_realm_offset, None);
+    assert!(!read.cursor.has_more);
+}
+
+async fn should_return_none_given_empty_resource_last<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/empty/last";
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_last(route), 2000)
+        .await
+        .expect("read empty resource tail");
+
+    // Assert
+    assert_eq!(parse_stream_ok_data(&response), Vec::<u8>::new());
+    assert!(parse_stream_last_response(&response).is_none());
+}
+
+async fn should_return_empty_metadata_given_empty_resource<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/empty/meta";
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_get_metadata(route), 2000)
+        .await
+        .expect("read empty resource metadata");
+    let metadata = parse_stream_metadata_response(&response);
+
+    // Assert
+    assert_eq!(metadata.first_resource_offset, None);
+    assert_eq!(metadata.last_resource_offset, None);
+    assert_eq!(metadata.resource_count, 0);
+    assert_eq!(metadata.area_watermark, 0);
+    assert_eq!(metadata.realm_watermark, 0);
+}
+
+async fn should_allow_append_given_empty_body<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/payloads/empty-body";
+    let begin_response = client
+        .send_and_receive(&build_stream_begin(route, 0), 2000)
+        .await
+        .expect("begin empty-body stream session");
+    let (_msg_type, status, data) = parse_stream_response(&begin_response);
+    assert_eq!(status, 0, "Expected success for stream begin");
+    let session_id = parse_stream_session_id(&data).expect("stream session id");
+
+    let append_response = client
+        .send_and_receive(&build_stream_append(session_id, b""), 2000)
+        .await
+        .expect("append empty-body stream event");
+    let (_msg_type, status, _data) = parse_stream_response(&append_response);
+    assert_eq!(status, 0, "Expected success for stream append");
+
+    let commit_response = client
+        .send_and_receive(&build_stream_commit(session_id), 2000)
+        .await
+        .expect("commit empty-body stream session");
+    let (_msg_type, status, _data) = parse_stream_response(&commit_response);
+    assert_eq!(status, 0, "Expected success for stream commit");
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_read(route, 0), 2000)
+        .await
+        .expect("read empty-body stream record");
+    let read = parse_stream_read_response(&response);
+
+    // Assert
+    assert_eq!(read.records.len(), 1);
+    assert_eq!(read.records[0].body, Vec::<u8>::new());
+}
+
+async fn should_allow_append_given_metadata_only<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/payloads/metadata-only";
+    let begin_response = client
+        .send_and_receive(&build_stream_begin(route, 0), 2000)
+        .await
+        .expect("begin metadata-only stream session");
+    let (_msg_type, status, data) = parse_stream_response(&begin_response);
+    assert_eq!(status, 0, "Expected success for stream begin");
+    let session_id = parse_stream_session_id(&data).expect("stream session id");
+
+    let append_response = client
+        .send_and_receive(
+            &build_stream_append_with_metadata(session_id, b"", Some(b"meta")),
+            2000,
+        )
+        .await
+        .expect("append metadata-only stream event");
+    let (_msg_type, status, _data) = parse_stream_response(&append_response);
+    assert_eq!(status, 0, "Expected success for stream append");
+
+    let commit_response = client
+        .send_and_receive(&build_stream_commit(session_id), 2000)
+        .await
+        .expect("commit metadata-only stream session");
+    let (_msg_type, status, _data) = parse_stream_response(&commit_response);
+    assert_eq!(status, 0, "Expected success for stream commit");
+
+    // Act
+    let response = client
+        .send_and_receive(&build_stream_read(route, 0), 2000)
+        .await
+        .expect("read metadata-only stream record");
+    let read = parse_stream_read_response(&response);
+
+    // Assert
+    assert_eq!(read.records.len(), 1);
+    assert_eq!(read.records[0].body, Vec::<u8>::new());
+    assert_eq!(read.records[0].metadata, Some(b"meta".to_vec()));
 }
 
 // Generic test helper for multiple sequential read operations
@@ -692,6 +944,94 @@ where
     assert_eq!(second.records[0].body, b"realm-three".to_vec());
     assert_eq!(second.records[0].realm_offset, Some(2));
     assert_eq!(second.cursor.last_realm_offset, Some(2));
+    assert!(!second.cursor.has_more);
+}
+
+async fn should_stop_area_wildcard_read_given_max_bytes<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let orders_route = "stream://test/events/orders";
+    let audits_route = "stream://test/events/audits";
+
+    commit_stream_record(&mut client, orders_route, b"abcd").await;
+    commit_stream_record_with_offset(&mut client, audits_route, 0, b"efgh").await;
+
+    // Act
+    let first_response = client
+        .send_and_receive(
+            &build_stream_read_with_options("stream://test/events/*", 0, 10, Some(4)),
+            2000,
+        )
+        .await
+        .expect("read first area wildcard page");
+    let second_response = client
+        .send_and_receive(
+            &build_stream_read_with_options("stream://test/events/*", 1, 10, Some(4)),
+            2000,
+        )
+        .await
+        .expect("read second area wildcard page");
+
+    // Assert
+    let first = parse_stream_read_response(&first_response);
+    let second = parse_stream_read_response(&second_response);
+    assert_eq!(first.records.len(), 1);
+    assert_eq!(first.records[0].body, b"abcd".to_vec());
+    assert_eq!(first.records[0].area_offset, Some(0));
+    assert_eq!(first.cursor.last_area_offset, Some(0));
+    assert!(first.cursor.has_more);
+
+    assert_eq!(second.records.len(), 1);
+    assert_eq!(second.records[0].body, b"efgh".to_vec());
+    assert_eq!(second.records[0].area_offset, Some(1));
+    assert_eq!(second.cursor.last_area_offset, Some(1));
+    assert!(!second.cursor.has_more);
+}
+
+async fn should_stop_realm_wildcard_read_given_max_bytes<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let events_route = "stream://test/events/orders";
+    let audit_route = "stream://test/audit/ledger";
+
+    commit_stream_record(&mut client, events_route, b"abcd").await;
+    commit_stream_record_with_offset(&mut client, audit_route, 0, b"efgh").await;
+
+    // Act
+    let first_response = client
+        .send_and_receive(
+            &build_stream_read_with_options("stream://test/*/*", 0, 10, Some(4)),
+            2000,
+        )
+        .await
+        .expect("read first realm wildcard page");
+    let second_response = client
+        .send_and_receive(
+            &build_stream_read_with_options("stream://test/*/*", 1, 10, Some(4)),
+            2000,
+        )
+        .await
+        .expect("read second realm wildcard page");
+
+    // Assert
+    let first = parse_stream_read_response(&first_response);
+    let second = parse_stream_read_response(&second_response);
+    assert_eq!(first.records.len(), 1);
+    assert_eq!(first.records[0].body, b"abcd".to_vec());
+    assert_eq!(first.records[0].realm_offset, Some(0));
+    assert_eq!(first.cursor.last_realm_offset, Some(0));
+    assert!(first.cursor.has_more);
+
+    assert_eq!(second.records.len(), 1);
+    assert_eq!(second.records[0].body, b"efgh".to_vec());
+    assert_eq!(second.records[0].realm_offset, Some(1));
+    assert_eq!(second.cursor.last_realm_offset, Some(1));
     assert!(!second.cursor.has_more);
 }
 
@@ -1388,10 +1728,21 @@ define_transport_tests!(
     should_handle_large_stream_payload_tcp / should_handle_large_stream_payload_ws => should_handle_large_stream_payload,
     should_handle_concurrent_appends_from_multiple_clients_tcp / should_handle_concurrent_appends_from_multiple_clients_ws => should_handle_concurrent_appends_from_multiple_clients,
     should_reject_future_expected_offset_given_gap_tcp / should_reject_future_expected_offset_given_gap_ws => should_reject_future_expected_offset_given_gap,
+    should_return_session_not_found_given_append_to_unknown_session_tcp / should_return_session_not_found_given_append_to_unknown_session_ws => should_return_session_not_found_given_append_to_unknown_session,
+    should_return_session_not_found_given_commit_to_unknown_session_tcp / should_return_session_not_found_given_commit_to_unknown_session_ws => should_return_session_not_found_given_commit_to_unknown_session,
+    should_return_session_not_found_given_rollback_to_unknown_session_tcp / should_return_session_not_found_given_rollback_to_unknown_session_ws => should_return_session_not_found_given_rollback_to_unknown_session,
+    should_return_error_given_empty_batch_commit_tcp / should_return_error_given_empty_batch_commit_ws => should_return_error_given_empty_batch_commit,
+    should_return_empty_success_given_zero_limit_read_tcp / should_return_empty_success_given_zero_limit_read_ws => should_return_empty_success_given_zero_limit_read,
+    should_return_none_given_empty_resource_last_tcp / should_return_none_given_empty_resource_last_ws => should_return_none_given_empty_resource_last,
+    should_return_empty_metadata_given_empty_resource_tcp / should_return_empty_metadata_given_empty_resource_ws => should_return_empty_metadata_given_empty_resource,
+    should_allow_append_given_empty_body_tcp / should_allow_append_given_empty_body_ws => should_allow_append_given_empty_body,
+    should_allow_append_given_metadata_only_tcp / should_allow_append_given_metadata_only_ws => should_allow_append_given_metadata_only,
     should_handle_sequential_read_operations_tcp / should_handle_sequential_read_operations_ws => should_handle_sequential_read_operations,
     should_isolate_streams_by_route_tcp / should_isolate_streams_by_route_ws => should_isolate_streams_by_route,
     should_read_committed_area_history_given_wildcard_route_tcp / should_read_committed_area_history_given_wildcard_route_ws => should_read_committed_area_history_given_wildcard_route,
     should_read_committed_realm_history_given_wildcard_route_tcp / should_read_committed_realm_history_given_wildcard_route_ws => should_read_committed_realm_history_given_wildcard_route,
+    should_stop_area_wildcard_read_given_max_bytes_tcp / should_stop_area_wildcard_read_given_max_bytes_ws => should_stop_area_wildcard_read_given_max_bytes,
+    should_stop_realm_wildcard_read_given_max_bytes_tcp / should_stop_realm_wildcard_read_given_max_bytes_ws => should_stop_realm_wildcard_read_given_max_bytes,
     should_expose_exact_resource_record_metadata_on_read_tcp / should_expose_exact_resource_record_metadata_on_read_ws => should_expose_exact_resource_record_metadata_on_read,
     should_expose_exact_resource_record_metadata_on_last_tcp / should_expose_exact_resource_record_metadata_on_last_ws => should_expose_exact_resource_record_metadata_on_last,
     should_expose_exact_resource_metadata_on_get_metadata_tcp / should_expose_exact_resource_metadata_on_get_metadata_ws => should_expose_exact_resource_metadata_on_get_metadata,

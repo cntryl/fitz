@@ -9,12 +9,11 @@ use super::protocol::{IngestMetadata, StreamRecord, StreamWriteMode};
 use super::storage::{
     decode_area_offset_from_key, decode_realm_offset_from_key, decode_resource_offset_from_key,
     encode_area_counter_key, encode_compact_area_page_key, encode_compact_resource_page_key,
-    encode_compressed_compact_realm_page_key, encode_realm_counter_key,
-    encode_resource_meta_key, encode_stream_layout_marker_key, encode_watermark_key,
-    AreaCounterValue, CompactAreaPageRecord, CompactAreaPageValue, CompactRealmPageRecord,
-    CompactResourcePageRecord, CompactResourcePageValue, CompressedCompactRealmPageValue,
-    KeyPrefix, RealmCounterValue, ResourceMetaValue, StreamLayoutMarkerValue, WatermarkValue,
-    REALM_PAGE_RECORD_LIMIT,
+    encode_compressed_compact_realm_page_key, encode_realm_counter_key, encode_resource_meta_key,
+    encode_stream_layout_marker_key, encode_watermark_key, AreaCounterValue, CompactAreaPageRecord,
+    CompactAreaPageValue, CompactRealmPageRecord, CompactResourcePageRecord,
+    CompactResourcePageValue, CompressedCompactRealmPageValue, KeyPrefix, RealmCounterValue,
+    ResourceMetaValue, StreamLayoutMarkerValue, WatermarkValue, REALM_PAGE_RECORD_LIMIT,
 };
 
 #[cfg(test)]
@@ -136,9 +135,9 @@ enum LayoutActivationFailure {
 impl LayoutActivationFailure {
     fn into_string(self) -> String {
         match self {
-            Self::Mismatch(message)
-            | Self::ResetRequired(message)
-            | Self::Other(message) => message,
+            Self::Mismatch(message) | Self::ResetRequired(message) | Self::Other(message) => {
+                message
+            }
         }
     }
 }
@@ -332,15 +331,12 @@ impl StreamStore {
             .get(&marker_key)
             .map_err(|e| LayoutActivationFailure::Other(format!("get error: {:?}", e)))?
         {
-            let marker = StreamLayoutMarkerValue::decode(&bytes)
-                .map_err(LayoutActivationFailure::Other)?;
+            let marker =
+                StreamLayoutMarkerValue::decode(&bytes).map_err(LayoutActivationFailure::Other)?;
             if marker.layout != self.layout {
                 return Err(LayoutActivationFailure::Mismatch(
-                    Self::stream_layout_mismatch_error(
-                    family,
-                    marker.layout,
-                    self.layout,
-                )));
+                    Self::stream_layout_mismatch_error(family, marker.layout, self.layout),
+                ));
             }
 
             return Ok(());
@@ -348,10 +344,8 @@ impl StreamStore {
 
         if Self::txn_has_stream_data(&txn).map_err(LayoutActivationFailure::Other)? {
             return Err(LayoutActivationFailure::ResetRequired(
-                Self::stream_layout_reset_required_error(
-                    family,
-                    self.layout,
-            )));
+                Self::stream_layout_reset_required_error(family, self.layout),
+            ));
         }
 
         txn.put(
@@ -569,13 +563,19 @@ impl StreamStore {
         page_start_offset: u64,
     ) -> Result<CompactAreaPageValue, String> {
         match txn
-            .get(&encode_compact_area_page_key(realm, area, page_start_offset))
+            .get(&encode_compact_area_page_key(
+                realm,
+                area,
+                page_start_offset,
+            ))
             .map_err(|e| format!("get error: {:?}", e))?
         {
             Some(value_bytes) => CompactAreaPageValue::try_decode(&value_bytes).map_err(|error| {
                 Self::invalid_compact_area_page_error(realm, area, page_start_offset, error)
             }),
-            None => Ok(CompactAreaPageValue { records: Vec::new() }),
+            None => Ok(CompactAreaPageValue {
+                records: Vec::new(),
+            }),
         }
     }
 
@@ -597,15 +597,17 @@ impl StreamStore {
         while next_record_index < records.len() {
             let page_start_offset = Self::page_start_offset(current_area_offset);
             let page_offset = (current_area_offset - page_start_offset) as usize;
-            let mut page = Self::load_compact_area_page_for_write(txn, realm, area, page_start_offset)?;
+            let mut page =
+                Self::load_compact_area_page_for_write(txn, realm, area, page_start_offset)?;
 
             if page.records.len() != page_offset {
                 return Err("ERR_OVERLAPPING_COMPACT_AREA_PAGE_APPEND".to_string());
             }
 
-            let append_count = (REALM_PAGE_RECORD_LIMIT - page_offset)
-                .min(records.len() - next_record_index);
-            page.records.extend_from_slice(&records[next_record_index..next_record_index + append_count]);
+            let append_count =
+                (REALM_PAGE_RECORD_LIMIT - page_offset).min(records.len() - next_record_index);
+            page.records
+                .extend_from_slice(&records[next_record_index..next_record_index + append_count]);
 
             txn.put(
                 encode_compact_area_page_key(realm, area, page_start_offset),
@@ -637,16 +639,20 @@ impl StreamStore {
             ))
             .map_err(|e| format!("get error: {:?}", e))?
         {
-            Some(value_bytes) => CompactResourcePageValue::try_decode(&value_bytes).map_err(|error| {
-                Self::invalid_compact_resource_page_error(
-                    realm,
-                    area,
-                    resource,
-                    page_start_offset,
-                    error,
-                )
+            Some(value_bytes) => {
+                CompactResourcePageValue::try_decode(&value_bytes).map_err(|error| {
+                    Self::invalid_compact_resource_page_error(
+                        realm,
+                        area,
+                        resource,
+                        page_start_offset,
+                        error,
+                    )
+                })
+            }
+            None => Ok(CompactResourcePageValue {
+                records: Vec::new(),
             }),
-            None => Ok(CompactResourcePageValue { records: Vec::new() }),
         }
     }
 
@@ -681,9 +687,10 @@ impl StreamStore {
                 return Err("ERR_OVERLAPPING_COMPACT_RESOURCE_PAGE_APPEND".to_string());
             }
 
-            let append_count = (REALM_PAGE_RECORD_LIMIT - page_offset)
-                .min(records.len() - next_record_index);
-            page.records.extend_from_slice(&records[next_record_index..next_record_index + append_count]);
+            let append_count =
+                (REALM_PAGE_RECORD_LIMIT - page_offset).min(records.len() - next_record_index);
+            page.records
+                .extend_from_slice(&records[next_record_index..next_record_index + append_count]);
 
             txn.put(
                 encode_compact_resource_page_key(realm, area, resource, page_start_offset),
@@ -713,7 +720,9 @@ impl StreamStore {
         {
             Some(value_bytes) => CompressedCompactRealmPageValue::try_decode(&value_bytes)
                 .map_err(|error| Self::invalid_compact_realm_page_error(page_start_offset, error)),
-            None => Ok(CompressedCompactRealmPageValue { records: Vec::new() }),
+            None => Ok(CompressedCompactRealmPageValue {
+                records: Vec::new(),
+            }),
         }
     }
 
@@ -734,19 +743,17 @@ impl StreamStore {
         while next_record_index < records.len() {
             let page_start_offset = Self::page_start_offset(current_realm_offset);
             let page_offset = (current_realm_offset - page_start_offset) as usize;
-            let mut page = Self::load_compressed_compact_realm_page_for_write(
-                txn,
-                realm,
-                page_start_offset,
-            )?;
+            let mut page =
+                Self::load_compressed_compact_realm_page_for_write(txn, realm, page_start_offset)?;
 
             if page.records.len() != page_offset {
                 return Err("ERR_OVERLAPPING_COMPRESSED_COMPACT_REALM_PAGE_APPEND".to_string());
             }
 
-            let append_count = (REALM_PAGE_RECORD_LIMIT - page_offset)
-                .min(records.len() - next_record_index);
-            page.records.extend_from_slice(&records[next_record_index..next_record_index + append_count]);
+            let append_count =
+                (REALM_PAGE_RECORD_LIMIT - page_offset).min(records.len() - next_record_index);
+            page.records
+                .extend_from_slice(&records[next_record_index..next_record_index + append_count]);
 
             txn.put(
                 encode_compressed_compact_realm_page_key(realm, page_start_offset),
@@ -793,11 +800,8 @@ impl StreamStore {
             self.ttl.ttl_seconds,
         )?;
 
-        let area_records = Self::build_promotion_frontier_area_records(
-            events,
-            first_resource_offset,
-            created_at,
-        );
+        let area_records =
+            Self::build_promotion_frontier_area_records(events, first_resource_offset, created_at);
         Self::write_compact_area_records(
             txn,
             realm,
@@ -851,16 +855,19 @@ impl StreamStore {
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
-        self.write_promotion_frontier_event_rows(&mut txn, PromotionFrontierWriteRowsParams {
-            realm,
-            area,
-            resource,
-            first_resource_offset,
-            first_area_offset,
-            first_realm_offset,
-            events,
-            created_at,
-        })?;
+        self.write_promotion_frontier_event_rows(
+            &mut txn,
+            PromotionFrontierWriteRowsParams {
+                realm,
+                area,
+                resource,
+                first_resource_offset,
+                first_area_offset,
+                first_realm_offset,
+                events,
+                created_at,
+            },
+        )?;
 
         let resource_meta_after = ResourceMetaValue {
             next_offset: last_resource_offset.saturating_add(1),
@@ -1101,13 +1108,7 @@ impl StreamStore {
         for (key_bytes, value_bytes) in results {
             let page_start = decode_resource_offset_from_key(&key_bytes)?;
             let page = CompactResourcePageValue::try_decode(&value_bytes).map_err(|error| {
-                Self::invalid_compact_resource_page_error(
-                    realm,
-                    area,
-                    resource,
-                    page_start,
-                    error,
-                )
+                Self::invalid_compact_resource_page_error(realm, area, resource, page_start, error)
             })?;
             next_offset = next_offset.max(page_start.saturating_add(page.records.len() as u64));
             for record in page.records {
@@ -1121,8 +1122,9 @@ impl StreamStore {
     }
 
     fn scan_next_area_offset(&self, family: u64, realm: &str, area: &str) -> Result<u64, String> {
-        let query = cntryl_midge::Query::new()
-            .prefix(Bytes::from(Self::build_compact_area_page_prefix(realm, area)));
+        let query = cntryl_midge::Query::new().prefix(Bytes::from(
+            Self::build_compact_area_page_prefix(realm, area),
+        ));
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
@@ -1144,8 +1146,9 @@ impl StreamStore {
     }
 
     fn scan_next_realm_offset(&self, family: u64, realm: &str) -> Result<u64, String> {
-        let query = cntryl_midge::Query::new()
-            .prefix(Bytes::from(Self::build_compressed_compact_realm_page_prefix(realm)));
+        let query = cntryl_midge::Query::new().prefix(Bytes::from(
+            Self::build_compressed_compact_realm_page_prefix(realm),
+        ));
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
@@ -1158,9 +1161,7 @@ impl StreamStore {
         if let Some((key, value)) = results.last() {
             let page_start_offset = decode_realm_offset_from_key(key)?;
             let page = CompressedCompactRealmPageValue::try_decode(value)
-                .map_err(|error| {
-                    Self::invalid_compact_realm_page_error(page_start_offset, error)
-                })?
+                .map_err(|error| Self::invalid_compact_realm_page_error(page_start_offset, error))?
                 .into_compact_realm_page();
             Ok(page_start_offset.saturating_add(page.records.len() as u64))
         } else {
@@ -1190,13 +1191,7 @@ impl StreamStore {
         if let Some((key, value)) = results.last() {
             let page_start = decode_resource_offset_from_key(key)?;
             let page = CompactResourcePageValue::try_decode(value).map_err(|error| {
-                Self::invalid_compact_resource_page_error(
-                    realm,
-                    area,
-                    resource,
-                    page_start,
-                    error,
-                )
+                Self::invalid_compact_resource_page_error(realm, area, resource, page_start, error)
             })?;
             Ok(page_start.saturating_add(page.records.len() as u64))
         } else {
@@ -1326,7 +1321,8 @@ impl StreamStore {
         let resource_meta_before = match resource_meta_state.snapshot.clone() {
             Some(snapshot) => snapshot,
             None => {
-                let (snapshot, _) = self.load_resource_meta_snapshot(family, realm, area, resource)?;
+                let (snapshot, _) =
+                    self.load_resource_meta_snapshot(family, realm, area, resource)?;
                 resource_meta_state.snapshot = Some(snapshot.clone());
                 snapshot
             }
@@ -1356,8 +1352,8 @@ impl StreamStore {
             }
         };
 
-        let (response, resource_meta_after) = self.commit_promotion_frontier_batch(
-            CommitPromotionFrontierBatchParams {
+        let (response, resource_meta_after) =
+            self.commit_promotion_frontier_batch(CommitPromotionFrontierBatchParams {
                 family,
                 realm,
                 area,
@@ -1369,13 +1365,13 @@ impl StreamStore {
                 committed_size_before: resource_meta_before.committed_size_bytes,
                 ingest_metadata,
                 mode,
-            },
-        )?;
+            })?;
 
         resource_meta_state.snapshot = Some(resource_meta_after);
-        realm_sequence_state
-            .next_area_offsets
-            .insert(area.to_string(), response.last_area_offset.saturating_add(1));
+        realm_sequence_state.next_area_offsets.insert(
+            area.to_string(),
+            response.last_area_offset.saturating_add(1),
+        );
         realm_sequence_state.next_realm_offset = Some(response.last_realm_offset.saturating_add(1));
 
         Ok(response)
@@ -1555,29 +1551,25 @@ impl StreamStore {
             ..
         } = session;
 
-        let committed_size_before = match self.load_resource_meta_snapshot(
-            family,
-            &realm,
-            &area,
-            &resource,
-        ) {
-            Ok((snapshot, _)) => snapshot.committed_size_bytes,
-            Err(error) => {
-                self.sessions.lock().insert(
-                    *session_id,
-                    AppendSession {
-                        realm,
-                        area,
-                        resource,
-                        staged_events,
-                        event_count: batch_size,
-                        total_bytes,
-                        ingest_metadata,
-                    },
-                );
-                return Err(error);
-            }
-        };
+        let committed_size_before =
+            match self.load_resource_meta_snapshot(family, &realm, &area, &resource) {
+                Ok((snapshot, _)) => snapshot.committed_size_bytes,
+                Err(error) => {
+                    self.sessions.lock().insert(
+                        *session_id,
+                        AppendSession {
+                            realm,
+                            area,
+                            resource,
+                            staged_events,
+                            event_count: batch_size,
+                            total_bytes,
+                            ingest_metadata,
+                        },
+                    );
+                    return Err(error);
+                }
+            };
 
         let result = self.commit_promotion_frontier_batch(CommitPromotionFrontierBatchParams {
             family,
@@ -1661,13 +1653,9 @@ impl StreamStore {
         resource: &str,
     ) -> Result<Option<StreamRecord>, String> {
         match self.get_last_resource_offset_promotion_frontier(family, realm, area, resource)? {
-            Some(last_offset) => self.load_compact_resource_record(
-                family,
-                realm,
-                area,
-                resource,
-                last_offset,
-            ),
+            Some(last_offset) => {
+                self.load_compact_resource_record(family, realm, area, resource, last_offset)
+            }
             None => Ok(None),
         }
     }
@@ -1694,11 +1682,7 @@ impl StreamStore {
             Some(value_bytes) => {
                 let page = CompactResourcePageValue::try_decode(&value_bytes).map_err(|error| {
                     Self::invalid_compact_resource_page_error(
-                        realm,
-                        area,
-                        resource,
-                        page_start,
-                        error,
+                        realm, area, resource, page_start, error,
                     )
                 })?;
                 let slot = (resource_offset - page_start) as usize;
@@ -1769,7 +1753,10 @@ impl StreamStore {
                 params.area,
                 params.resource,
             )))
-            .limit(Self::compact_page_query_limit(params.from_offset, params.limit));
+            .limit(Self::compact_page_query_limit(
+                params.from_offset,
+                params.limit,
+            ));
 
         let txn = self
             .db
@@ -1877,7 +1864,9 @@ impl StreamStore {
                 area,
                 Self::page_start_offset(from_offset),
             )))
-            .prefix(Bytes::from(Self::build_compact_area_page_prefix(realm, area)))
+            .prefix(Bytes::from(Self::build_compact_area_page_prefix(
+                realm, area,
+            )))
             .limit(Self::compact_page_query_limit(from_offset, limit));
 
         let txn = self
@@ -1983,7 +1972,9 @@ impl StreamStore {
                 realm,
                 Self::page_start_offset(from_offset),
             )))
-            .prefix(Bytes::from(Self::build_compressed_compact_realm_page_prefix(realm)))
+            .prefix(Bytes::from(
+                Self::build_compressed_compact_realm_page_prefix(realm),
+            ))
             .limit(Self::compact_page_query_limit(from_offset, limit));
 
         let txn = self
@@ -2260,13 +2251,7 @@ impl StreamStore {
         if let Some((key, value)) = results.last() {
             let page_start = decode_resource_offset_from_key(key)?;
             let page = CompactResourcePageValue::try_decode(value).map_err(|error| {
-                Self::invalid_compact_resource_page_error(
-                    realm,
-                    area,
-                    resource,
-                    page_start,
-                    error,
-                )
+                Self::invalid_compact_resource_page_error(realm, area, resource, page_start, error)
             })?;
 
             if page.records.is_empty() {
@@ -2317,13 +2302,7 @@ impl StreamStore {
         for (key, value) in results {
             let page_start = decode_resource_offset_from_key(&key)?;
             let page = CompactResourcePageValue::try_decode(&value).map_err(|error| {
-                Self::invalid_compact_resource_page_error(
-                    realm,
-                    area,
-                    resource,
-                    page_start,
-                    error,
-                )
+                Self::invalid_compact_resource_page_error(realm, area, resource, page_start, error)
             })?;
 
             if !page.records.is_empty() {
@@ -2367,9 +2346,7 @@ impl StreamStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domains::stream::storage::{
-        encode_offset_counter_key, OffsetCounterValue,
-    };
+    use crate::domains::stream::storage::{encode_offset_counter_key, OffsetCounterValue};
     use crate::testkit::create_test_engine_with_cfs;
     use bytes::Bytes;
 
@@ -2448,7 +2425,10 @@ mod tests {
         let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
 
         // Assert
-        assert_eq!(store.storage_layout(), StreamStorageLayout::PromotionFrontier);
+        assert_eq!(
+            store.storage_layout(),
+            StreamStorageLayout::PromotionFrontier
+        );
     }
 
     #[test]
@@ -2479,7 +2459,10 @@ mod tests {
         );
 
         // Assert
-        assert_eq!(store.storage_layout(), StreamStorageLayout::PromotionFrontier);
+        assert_eq!(
+            store.storage_layout(),
+            StreamStorageLayout::PromotionFrontier
+        );
     }
 
     #[test]
@@ -2613,6 +2596,50 @@ mod tests {
     }
 
     #[test]
+    fn should_preserve_area_watermark_given_same_value_update() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        store
+            .set_watermark(1, "test", "events", 10)
+            .expect("seed area watermark");
+
+        // Act
+        store
+            .set_watermark(1, "test", "events", 10)
+            .expect("rewrite same area watermark");
+
+        // Assert
+        assert_eq!(
+            store
+                .get_watermark(1, "test", "events")
+                .expect("read area watermark"),
+            10
+        );
+    }
+
+    #[test]
+    fn should_preserve_area_watermark_given_lower_value_update() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        store
+            .set_watermark(1, "test", "events", 10)
+            .expect("seed area watermark");
+
+        // Act
+        store
+            .set_watermark(1, "test", "events", 9)
+            .expect("rewrite lower area watermark");
+
+        // Assert
+        assert_eq!(
+            store
+                .get_watermark(1, "test", "events")
+                .expect("read area watermark"),
+            10
+        );
+    }
+
+    #[test]
     fn should_return_error_when_realm_watermark_guard_read_fails() {
         // Arrange
         let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
@@ -2626,6 +2653,50 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+        assert_eq!(
+            store
+                .get_realm_watermark(1, "test")
+                .expect("read realm watermark"),
+            10
+        );
+    }
+
+    #[test]
+    fn should_preserve_realm_watermark_given_same_value_update() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        store
+            .set_realm_watermark(1, "test", 10)
+            .expect("seed realm watermark");
+
+        // Act
+        store
+            .set_realm_watermark(1, "test", 10)
+            .expect("rewrite same realm watermark");
+
+        // Assert
+        assert_eq!(
+            store
+                .get_realm_watermark(1, "test")
+                .expect("read realm watermark"),
+            10
+        );
+    }
+
+    #[test]
+    fn should_preserve_realm_watermark_given_lower_value_update() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        store
+            .set_realm_watermark(1, "test", 10)
+            .expect("seed realm watermark");
+
+        // Act
+        store
+            .set_realm_watermark(1, "test", 9)
+            .expect("rewrite lower realm watermark");
+
+        // Assert
         assert_eq!(
             store
                 .get_realm_watermark(1, "test")
@@ -2948,10 +3019,15 @@ mod tests {
     }
 
     #[test]
-    fn should_return_next_available_resource_record_given_trimmed_compact_resource_page_on_ttl_store() {
+    fn should_return_next_available_resource_record_given_trimmed_compact_resource_page_on_ttl_store(
+    ) {
         // Arrange
         let db = create_test_engine_with_cfs(vec![1]);
-        let store = StreamStore::with_config(db.clone(), BatchLimits::default(), StreamTTL::with_seconds(1));
+        let store = StreamStore::with_config(
+            db.clone(),
+            BatchLimits::default(),
+            StreamTTL::with_seconds(1),
+        );
         let first_page_events = vec![
             EventPayload {
                 body: Bytes::from_static(b"first-page"),
@@ -2987,8 +3063,10 @@ mod tests {
         let mut txn = db
             .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
             .expect("begin ttl trim tx");
-        txn.delete(encode_compact_resource_page_key("test", "events", "orders", 0))
-            .expect("delete trimmed resource page");
+        txn.delete(encode_compact_resource_page_key(
+            "test", "events", "orders", 0,
+        ))
+        .expect("delete trimmed resource page");
         txn.commit(cntryl_midge::WriteOptions::sync())
             .expect("commit ttl trim simulation");
 
@@ -3095,6 +3173,124 @@ mod tests {
     }
 
     #[test]
+    fn should_return_record_given_area_read_at_watermark_boundary() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let first_events = single_event(b"first");
+        let second_events = single_event(b"second");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("first commit");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "audits",
+                expected_resource_next_offset: 0,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit");
+
+        // Act
+        let (records, cursor) = store
+            .read_area(1, "test", "events", 1, 1, None)
+            .expect("read area at watermark boundary");
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].area_offset, Some(1));
+        assert_eq!(records[0].body, Bytes::from_static(b"second"));
+        assert_eq!(cursor.last_area_offset, Some(1));
+        assert!(!cursor.has_more);
+    }
+
+    #[test]
+    fn should_truncate_area_read_given_max_bytes() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let first_events = single_event(b"abcd");
+        let second_events = single_event(b"efgh");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("first commit");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "audits",
+                expected_resource_next_offset: 0,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit");
+
+        // Act
+        let (records, cursor) = store
+            .read_area(1, "test", "events", 0, 10, Some(4))
+            .expect("read area with max_bytes");
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].body, Bytes::from_static(b"abcd"));
+        assert_eq!(records[0].area_offset, Some(0));
+        assert_eq!(cursor.last_area_offset, Some(0));
+        assert!(cursor.has_more);
+    }
+
+    #[test]
+    fn should_return_first_area_record_given_max_bytes_below_record_size() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let events = single_event(b"abcde");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("commit record");
+
+        // Act
+        let (records, cursor) = store
+            .read_area(1, "test", "events", 0, 10, Some(4))
+            .expect("read area with tight max_bytes");
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].body, Bytes::from_static(b"abcde"));
+        assert_eq!(cursor.last_area_offset, Some(0));
+        assert!(!cursor.has_more);
+    }
+
+    #[test]
     fn should_not_report_has_more_given_realm_read_at_end() {
         // Arrange
         let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
@@ -3135,6 +3331,124 @@ mod tests {
         assert_eq!(records[0].realm_offset, Some(0));
         assert_eq!(records[1].realm_offset, Some(1));
         assert_eq!(cursor.last_realm_offset, Some(1));
+        assert!(!cursor.has_more);
+    }
+
+    #[test]
+    fn should_return_record_given_realm_read_at_watermark_boundary() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let first_events = single_event(b"first");
+        let second_events = single_event(b"second");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("first commit");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "audit",
+                resource: "entries",
+                expected_resource_next_offset: 0,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit");
+
+        // Act
+        let (records, cursor) = store
+            .read_realm(1, "test", 1, 1, None)
+            .expect("read realm at watermark boundary");
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].realm_offset, Some(1));
+        assert_eq!(records[0].body, Bytes::from_static(b"second"));
+        assert_eq!(cursor.last_realm_offset, Some(1));
+        assert!(!cursor.has_more);
+    }
+
+    #[test]
+    fn should_truncate_realm_read_given_max_bytes() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let first_events = single_event(b"abcd");
+        let second_events = single_event(b"efgh");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("first commit");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "audit",
+                resource: "entries",
+                expected_resource_next_offset: 0,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit");
+
+        // Act
+        let (records, cursor) = store
+            .read_realm(1, "test", 0, 10, Some(4))
+            .expect("read realm with max_bytes");
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].body, Bytes::from_static(b"abcd"));
+        assert_eq!(records[0].realm_offset, Some(0));
+        assert_eq!(cursor.last_realm_offset, Some(0));
+        assert!(cursor.has_more);
+    }
+
+    #[test]
+    fn should_return_first_realm_record_given_max_bytes_below_record_size() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let events = single_event(b"abcde");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("commit record");
+
+        // Act
+        let (records, cursor) = store
+            .read_realm(1, "test", 0, 10, Some(4))
+            .expect("read realm with tight max_bytes");
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].body, Bytes::from_static(b"abcde"));
+        assert_eq!(cursor.last_realm_offset, Some(0));
         assert!(!cursor.has_more);
     }
 
@@ -3199,7 +3513,7 @@ mod tests {
             vec![0, 0xB2, 1, 0, 0, 0],
             None,
         )
-            .expect("write malformed compact realm page");
+        .expect("write malformed compact realm page");
         txn.commit(cntryl_midge::WriteOptions::sync())
             .expect("commit malformed compact realm page");
 

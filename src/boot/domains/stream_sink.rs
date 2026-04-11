@@ -1,7 +1,9 @@
 use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::domains::stream::store::StreamAdminRecord;
 use crate::domains::stream::StreamMetrics;
-use crate::domains::stream::{ReadResponse, StreamActor, StreamMetadata, StreamRecord, StreamStorageLayout, StreamStore};
+use crate::domains::stream::{
+    ReadResponse, StreamActor, StreamMetadata, StreamRecord, StreamStorageLayout, StreamStore,
+};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::PayloadEncoder;
 use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
@@ -472,27 +474,23 @@ impl StreamDomainSink {
         let parts =
             route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
         let read_response = if parts.area == "*" && parts.resource == "*" {
-            let (records, cursor) = self.stream_store
-                .read_realm(
-                    family_id.as_u64(),
-                    parts.realm,
-                    from_offset,
-                    limit,
-                    max_bytes,
-                )?
-                ;
+            let (records, cursor) = self.stream_store.read_realm(
+                family_id.as_u64(),
+                parts.realm,
+                from_offset,
+                limit,
+                max_bytes,
+            )?;
             ReadResponse { records, cursor }
         } else if parts.resource == "*" {
-            let (records, cursor) = self.stream_store
-                .read_area(
-                    family_id.as_u64(),
-                    parts.realm,
-                    parts.area,
-                    from_offset,
-                    limit,
-                    max_bytes,
-                )?
-                ;
+            let (records, cursor) = self.stream_store.read_area(
+                family_id.as_u64(),
+                parts.realm,
+                parts.area,
+                from_offset,
+                limit,
+                max_bytes,
+            )?;
             ReadResponse { records, cursor }
         } else {
             let key = Self::actor_key_for_route(family_id, route)?;
@@ -792,7 +790,8 @@ impl MailboxSink for StreamDomainSink {
             } => match Self::actor_key_for_route(family_id, &route) {
                 Ok(key) => match self.get_or_create_actor(&key) {
                     Ok(actor) => {
-                        let stream_session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
+                        let stream_session_id =
+                            self.next_session_id.fetch_add(1, Ordering::Relaxed);
                         let outcome = actor.lock().begin_append_session(
                             frame_ctx.session_id,
                             stream_session_id,
@@ -832,7 +831,8 @@ impl MailboxSink for StreamDomainSink {
                 match key {
                     Some(key) => match self.get_or_create_actor(&key) {
                         Ok(actor) => {
-                            let outcome = actor.lock().append_to_session(session_id, body, metadata);
+                            let outcome =
+                                actor.lock().append_to_session(session_id, body, metadata);
                             match outcome {
                                 Ok(assigned_offset) => {
                                     let mut encoder = PayloadEncoder::new();
@@ -1022,9 +1022,8 @@ mod tests {
     use super::*;
     use crate::benchkit::{
         build_stream_append, build_stream_append_with_metadata, build_stream_begin,
-        build_stream_commit, build_stream_read,
-        count_stream_read_records_from_payload, extract_single_tlv_field,
-        register_session_queue_sink, route_frame, FrameQueueSink,
+        build_stream_commit, build_stream_read, count_stream_read_records_from_payload,
+        extract_single_tlv_field, register_session_queue_sink, route_frame, FrameQueueSink,
     };
     use crate::protocol::frame::ChannelId;
     use bytes::Bytes;
@@ -1139,10 +1138,17 @@ mod tests {
         }
 
         let last_resource_offset = decoder.get_u64().expect("stream cursor resource offset");
-        let last_area_offset = decoder.get_optional_u64().expect("stream cursor area offset");
-        let last_realm_offset = decoder.get_optional_u64().expect("stream cursor realm offset");
+        let last_area_offset = decoder
+            .get_optional_u64()
+            .expect("stream cursor area offset");
+        let last_realm_offset = decoder
+            .get_optional_u64()
+            .expect("stream cursor realm offset");
         let has_more = decoder.get_u8().expect("stream cursor has_more") == 1;
-        assert!(decoder.is_complete(), "expected complete stream read payload");
+        assert!(
+            decoder.is_complete(),
+            "expected complete stream read payload"
+        );
 
         DecodedStreamReadPayload {
             records,
@@ -1167,7 +1173,10 @@ mod tests {
         let ttl_seconds = decoder.get_optional_u64().expect("stream ttl seconds");
         let area_watermark = decoder.get_u64().expect("stream area watermark");
         let realm_watermark = decoder.get_u64().expect("stream realm watermark");
-        assert!(decoder.is_complete(), "expected complete stream metadata payload");
+        assert!(
+            decoder.is_complete(),
+            "expected complete stream metadata payload"
+        );
 
         DecodedStreamMetadataPayload {
             first_resource_offset,
@@ -1263,7 +1272,10 @@ mod tests {
         .expect("create stream sink");
 
         // Assert
-        assert_eq!(sink.storage_layout(), StreamStorageLayout::PromotionFrontier);
+        assert_eq!(
+            sink.storage_layout(),
+            StreamStorageLayout::PromotionFrontier
+        );
     }
 
     #[test]
@@ -1305,6 +1317,103 @@ mod tests {
         assert_eq!(stream.watermark, 0);
         assert_eq!(stream.size_bytes, b"persisted".len() as u64);
         assert_eq!(stream.sessions_active, 1);
+        assert_eq!(events_total, 1);
+    }
+
+    #[test]
+    fn should_preserve_committed_watermarks_given_uncommitted_append_overlay() {
+        // Arrange
+        let context = setup_test_context();
+        let route = "stream://bench/events/orders";
+        seed_committed_stream_route(&context, route, 1, b"persisted");
+        let session_id = begin_stream(&context, route, 1);
+        let append_frame = build_stream_append(session_id, b"staged");
+        let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+        let _ = request(&context, route, append_msg_type, append_payload);
+
+        // Act
+        context.sink.sync_admin_snapshot();
+        let stream = context
+            .sink
+            .admin_read_model
+            .streams(None)
+            .into_iter()
+            .find(|item| {
+                item.realm == "bench" && item.area == "events" && item.resource == "orders"
+            })
+            .expect("committed stream should remain visible");
+        let area_watermark = context
+            .sink
+            .admin_read_model
+            .stream_area_watermark("bench", "events")
+            .expect("area watermark detail");
+        let realm_watermark = context
+            .sink
+            .admin_read_model
+            .stream_realm_watermark("bench")
+            .expect("realm watermark detail");
+        let events_total = context.sink.admin_read_model.stream_events_total();
+
+        // Assert
+        assert_eq!(stream.offset, 0);
+        assert_eq!(stream.watermark, 0);
+        assert_eq!(stream.size_bytes, b"persisted".len() as u64);
+        assert_eq!(stream.sessions_active, 1);
+        assert_eq!(area_watermark.resource_count, 1);
+        assert_eq!(area_watermark.family_watermarks.len(), 1);
+        assert_eq!(area_watermark.family_watermarks[0].family, 1);
+        assert_eq!(area_watermark.family_watermarks[0].watermark, 0);
+        assert_eq!(realm_watermark.area_count, 1);
+        assert_eq!(realm_watermark.resource_count, 1);
+        assert_eq!(realm_watermark.family_watermarks.len(), 1);
+        assert_eq!(realm_watermark.family_watermarks[0].family, 1);
+        assert_eq!(realm_watermark.family_watermarks[0].watermark, 0);
+        assert_eq!(events_total, 1);
+    }
+
+    #[test]
+    fn should_not_inflate_admin_watermark_counts_given_uncommitted_new_resource_overlay() {
+        // Arrange
+        let context = setup_test_context();
+        seed_committed_stream_route(&context, "stream://bench/events/orders", 1, b"persisted");
+        let session_id = begin_stream(&context, "stream://bench/events/audits", 0);
+        let append_frame = build_stream_append(session_id, b"staged");
+        let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+        let _ = request(
+            &context,
+            "stream://bench/events/audits",
+            append_msg_type,
+            append_payload,
+        );
+
+        // Act
+        context.sink.sync_admin_snapshot();
+        let streams = context.sink.admin_read_model.streams(None);
+        let area_watermark = context
+            .sink
+            .admin_read_model
+            .stream_area_watermark("bench", "events")
+            .expect("area watermark detail");
+        let realm_watermark = context
+            .sink
+            .admin_read_model
+            .stream_realm_watermark("bench")
+            .expect("realm watermark detail");
+        let events_total = context.sink.admin_read_model.stream_events_total();
+
+        // Assert
+        assert_eq!(streams.len(), 1);
+        assert_eq!(streams[0].resource, "orders");
+        assert!(streams.iter().all(|item| item.resource != "audits"));
+        assert_eq!(area_watermark.resource_count, 1);
+        assert_eq!(area_watermark.family_watermarks.len(), 1);
+        assert_eq!(area_watermark.family_watermarks[0].family, 1);
+        assert_eq!(area_watermark.family_watermarks[0].watermark, 0);
+        assert_eq!(realm_watermark.area_count, 1);
+        assert_eq!(realm_watermark.resource_count, 1);
+        assert_eq!(realm_watermark.family_watermarks.len(), 1);
+        assert_eq!(realm_watermark.family_watermarks[0].family, 1);
+        assert_eq!(realm_watermark.family_watermarks[0].watermark, 0);
         assert_eq!(events_total, 1);
     }
 
@@ -1359,8 +1468,7 @@ mod tests {
         // Arrange
         let context = setup_test_context();
         let session_id = begin_stream(&context, "stream://bench/events/orders", 0);
-        let append_frame =
-            build_stream_append_with_metadata(session_id, b"payload", Some(b"meta"));
+        let append_frame = build_stream_append_with_metadata(session_id, b"payload", Some(b"meta"));
         let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
         let _ = request(
             &context,
@@ -1396,7 +1504,10 @@ mod tests {
         assert_eq!(read_payload.records[0].area_offset, Some(0));
         assert_eq!(read_payload.records[0].realm_offset, Some(0));
         assert_eq!(read_payload.records[0].body, Bytes::from_static(b"payload"));
-        assert_eq!(read_payload.records[0].metadata, Some(Bytes::from_static(b"meta")));
+        assert_eq!(
+            read_payload.records[0].metadata,
+            Some(Bytes::from_static(b"meta"))
+        );
         assert!(read_payload.records[0].created_at > 0);
         assert_eq!(read_payload.last_resource_offset, 0);
         assert_eq!(read_payload.last_area_offset, Some(0));

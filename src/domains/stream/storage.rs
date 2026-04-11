@@ -807,9 +807,7 @@ impl CompactRealmPageValue {
         let mut records = Vec::with_capacity(record_count);
         for _ in 0..record_count {
             if bytes.len() < offset + 32 {
-                return Err(
-                    "decode compact realm page value: record header truncated".to_string(),
-                );
+                return Err("decode compact realm page value: record header truncated".to_string());
             }
 
             let area_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
@@ -838,9 +836,7 @@ impl CompactRealmPageValue {
 
             let metadata = if let Some(metadata_len) = metadata_len {
                 if bytes.len() < offset + metadata_len {
-                    return Err(
-                        "decode compact realm page value: truncated metadata".to_string(),
-                    );
+                    return Err("decode compact realm page value: truncated metadata".to_string());
                 }
                 let metadata = Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]);
                 offset += metadata_len;
@@ -1055,7 +1051,7 @@ impl CompactResourcePageValue {
             let metadata = if let Some(metadata_len) = metadata_len {
                 if bytes.len() < offset + metadata_len {
                     return Err(
-                        "decode compact resource page value: truncated metadata".to_string(),
+                        "decode compact resource page value: truncated metadata".to_string()
                     );
                 }
                 let metadata = Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]);
@@ -1110,15 +1106,11 @@ impl CompressedCompactRealmPageValue {
             return Err("decode compressed compact realm page value: missing marker".to_string());
         }
         if bytes.len() <= 2 {
-            return Err(
-                "decode compressed compact realm page value: payload missing".to_string(),
-            );
+            return Err("decode compressed compact realm page value: payload missing".to_string());
         }
 
         let decompressed = decompress_size_prepended(&bytes[2..]).map_err(|error| {
-            format!(
-                "decode compressed compact realm page value: decompress failed: {error}"
-            )
+            format!("decode compressed compact realm page value: decompress failed: {error}")
         })?;
         let page = CompactRealmPageValue::try_decode(&decompressed)?;
 
