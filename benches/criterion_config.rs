@@ -30,7 +30,7 @@ pub fn criterion_config_for_tier1() -> Criterion {
     // ---------------------------------------------------------------
     Criterion::default()
         .warm_up_time(Duration::from_millis(100))
-        .measurement_time(Duration::from_secs(1))
+        .measurement_time(Duration::from_millis(100))
         .sample_size(10)
         .noise_threshold(0.02)
         .without_plots()
@@ -46,7 +46,7 @@ pub fn criterion_config_for_tier2() -> Criterion {
     // ---------------------------------------------------------------
     Criterion::default()
         .warm_up_time(Duration::from_millis(100))
-        .measurement_time(Duration::from_secs(1))
+        .measurement_time(Duration::from_millis(100))
         .sample_size(10)
         .noise_threshold(0.02)
         .without_plots()
