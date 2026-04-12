@@ -141,9 +141,15 @@ struct PrototypeStreamReadSink {
     layout: RoutedReadLayout,
 }
 
+const COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xB2];
+const COMPACT_AREA_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xE4];
+const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xE8];
+const COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xEA];
+const OPTIONAL_BYTES_ABSENT: u32 = u32::MAX;
+
 impl CompactAreaPageValue {
     fn encode(&self) -> Vec<u8> {
-        let mut total_len = 4;
+        let mut total_len = 6;
         for record in &self.records {
             total_len += 8 + 8 + 4 + 4 + record.body.len();
             total_len += record
@@ -154,6 +160,7 @@ impl CompactAreaPageValue {
         }
 
         let mut bytes = Vec::with_capacity(total_len);
+        bytes.extend_from_slice(&COMPACT_AREA_PAGE_VALUE_V1_MARKER);
         bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
 
         for record in &self.records {
@@ -165,7 +172,7 @@ impl CompactAreaPageValue {
                     .metadata
                     .as_ref()
                     .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(u32::MAX)
+                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -178,7 +185,16 @@ impl CompactAreaPageValue {
     }
 
     fn decode(bytes: &[u8]) -> Self {
-        let mut offset = 0usize;
+        assert!(
+            bytes.starts_with(&COMPACT_AREA_PAGE_VALUE_V1_MARKER),
+            "deserialize compact area page value: missing marker"
+        );
+        assert!(
+            bytes.len() >= 6,
+            "deserialize compact area page value: header too short"
+        );
+
+        let mut offset = 2usize;
         let read_u32 = |input: &[u8], cursor: &mut usize| -> u32 {
             let value = u32::from_le_bytes(input[*cursor..*cursor + 4].try_into().unwrap());
             *cursor += 4;
@@ -198,7 +214,7 @@ impl CompactAreaPageValue {
             let created_at = read_u64(bytes, &mut offset);
             let body_len = read_u32(bytes, &mut offset) as usize;
             let metadata_len_raw = read_u32(bytes, &mut offset);
-            let metadata_len = if metadata_len_raw == u32::MAX {
+            let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
                 None
             } else {
                 Some(metadata_len_raw as usize)
@@ -228,7 +244,7 @@ impl CompactAreaPageValue {
 
 impl CompactResourcePageValue {
     fn encode(&self) -> Vec<u8> {
-        let mut total_len = 4;
+        let mut total_len = 6;
         for record in &self.records {
             total_len += 8 + 8 + 8 + 4 + 4 + record.body.len();
             total_len += record
@@ -239,6 +255,7 @@ impl CompactResourcePageValue {
         }
 
         let mut bytes = Vec::with_capacity(total_len);
+        bytes.extend_from_slice(&COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER);
         bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
 
         for record in &self.records {
@@ -251,7 +268,7 @@ impl CompactResourcePageValue {
                     .metadata
                     .as_ref()
                     .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(u32::MAX)
+                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -264,7 +281,16 @@ impl CompactResourcePageValue {
     }
 
     fn decode(bytes: &[u8]) -> Self {
-        let mut offset = 0usize;
+        assert!(
+            bytes.starts_with(&COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER),
+            "deserialize compact resource page value: missing marker"
+        );
+        assert!(
+            bytes.len() >= 6,
+            "deserialize compact resource page value: header too short"
+        );
+
+        let mut offset = 2usize;
         let read_u32 = |input: &[u8], cursor: &mut usize| -> u32 {
             let value = u32::from_le_bytes(input[*cursor..*cursor + 4].try_into().unwrap());
             *cursor += 4;
@@ -285,7 +311,7 @@ impl CompactResourcePageValue {
             let created_at = read_u64(bytes, &mut offset);
             let body_len = read_u32(bytes, &mut offset) as usize;
             let metadata_len_raw = read_u32(bytes, &mut offset);
-            let metadata_len = if metadata_len_raw == u32::MAX {
+            let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
                 None
             } else {
                 Some(metadata_len_raw as usize)
@@ -316,7 +342,7 @@ impl CompactResourcePageValue {
 
 impl CompactPagedRealmValue {
     fn encode(&self) -> Vec<u8> {
-        let mut total_len = 4;
+        let mut total_len = 6;
         for record in &self.records {
             total_len += 8 + 8 + 8 + 4 + 4 + record.body.len();
             total_len += record
@@ -327,11 +353,12 @@ impl CompactPagedRealmValue {
         }
 
         let mut bytes = Vec::with_capacity(total_len);
+        bytes.extend_from_slice(&COMPACT_REALM_PAGE_VALUE_V1_MARKER);
         bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
 
         for record in &self.records {
-            bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
             bytes.extend_from_slice(&record.area_offset.to_le_bytes());
+            bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
             bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
             bytes.extend_from_slice(
@@ -339,7 +366,7 @@ impl CompactPagedRealmValue {
                     .metadata
                     .as_ref()
                     .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(u32::MAX)
+                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -352,7 +379,16 @@ impl CompactPagedRealmValue {
     }
 
     fn decode(bytes: &[u8]) -> Self {
-        let mut offset = 0usize;
+        assert!(
+            bytes.starts_with(&COMPACT_REALM_PAGE_VALUE_V1_MARKER),
+            "deserialize compact realm page value: missing marker"
+        );
+        assert!(
+            bytes.len() >= 6,
+            "deserialize compact realm page value: header too short"
+        );
+
+        let mut offset = 2usize;
         let read_u32 = |input: &[u8], cursor: &mut usize| -> u32 {
             let value = u32::from_le_bytes(input[*cursor..*cursor + 4].try_into().unwrap());
             *cursor += 4;
@@ -368,12 +404,12 @@ impl CompactPagedRealmValue {
         let mut records = Vec::with_capacity(record_count);
 
         for _ in 0..record_count {
-            let resource_offset = read_u64(bytes, &mut offset);
             let area_offset = read_u64(bytes, &mut offset);
+            let resource_offset = read_u64(bytes, &mut offset);
             let created_at = read_u64(bytes, &mut offset);
             let body_len = read_u32(bytes, &mut offset) as usize;
             let metadata_len_raw = read_u32(bytes, &mut offset);
-            let metadata_len = if metadata_len_raw == u32::MAX {
+            let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
                 None
             } else {
                 Some(metadata_len_raw as usize)
@@ -745,21 +781,29 @@ fn seed_replay_case(
     for page in seed_records.chunks(REPLAY_PAGE_RECORD_LIMIT) {
         prototype_rows.push(PrototypeRowWrite {
             key: encode_compressed_compact_paged_realm_key(REALM, page[0].realm_offset),
-            value: compress_prepend_size(
-                &CompactPagedRealmValue {
-                    records: page
-                        .iter()
-                        .map(|record| CompactPagedRealmRecord {
-                            resource_offset: record.resource_offset,
-                            area_offset: record.area_offset,
-                            body: record.body.clone(),
-                            metadata: record.metadata.clone(),
-                            created_at: record.created_at,
-                        })
-                        .collect(),
-                }
-                .encode(),
-            ),
+            value: {
+                let compressed_payload = compress_prepend_size(
+                    &CompactPagedRealmValue {
+                        records: page
+                            .iter()
+                            .map(|record| CompactPagedRealmRecord {
+                                resource_offset: record.resource_offset,
+                                area_offset: record.area_offset,
+                                body: record.body.clone(),
+                                metadata: record.metadata.clone(),
+                                created_at: record.created_at,
+                            })
+                            .collect(),
+                    }
+                    .encode(),
+                );
+                let mut bytes = Vec::with_capacity(
+                    COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER.len() + compressed_payload.len(),
+                );
+                bytes.extend_from_slice(&COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER);
+                bytes.extend_from_slice(&compressed_payload);
+                bytes
+            },
         });
     }
 
@@ -923,7 +967,13 @@ fn read_realm_compressed_compact_paged(case: &ReplayCase) -> Result<Vec<StreamRe
 
     for (key, value) in raw_rows {
         let page_start = decode_realm_offset_from_key(&key)?;
-        let decompressed = decompress_size_prepended(&value)
+        if !value.starts_with(&COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER) {
+            return Err("decode compressed compact realm page value: missing marker".to_string());
+        }
+        if value.len() <= COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER.len() {
+            return Err("decode compressed compact realm page value: payload missing".to_string());
+        }
+        let decompressed = decompress_size_prepended(&value[2..])
             .map_err(|error| format!("lz4 decompress error: {error}"))?;
         let page = CompactPagedRealmValue::decode(&decompressed);
 
@@ -970,6 +1020,25 @@ fn assert_matching_records(left: &[StreamRecord], right: &[StreamRecord]) {
     }
 }
 
+fn encode_optional_bytes(encoder: &mut PayloadEncoder, value: Option<&Bytes>) {
+    match value {
+        Some(bytes) => {
+            encoder.put_u8(1);
+            encoder.put_bytes(bytes.as_ref());
+        }
+        None => encoder.put_u8(0),
+    }
+}
+
+fn encode_stream_record(encoder: &mut PayloadEncoder, record: &StreamRecord) {
+    encoder.put_u64(record.resource_offset);
+    encoder.put_optional_u64(record.area_offset);
+    encoder.put_optional_u64(record.realm_offset);
+    encoder.put_bytes(record.body.as_ref());
+    encode_optional_bytes(encoder, record.metadata.as_ref());
+    encoder.put_u64(record.created_at);
+}
+
 fn encode_stream_read_data(
     records: &[StreamRecord],
     from_offset: u64,
@@ -978,18 +1047,27 @@ fn encode_stream_read_data(
 ) -> Vec<u8> {
     let mut selected = Vec::new();
     let mut total_bytes = 0usize;
+    let mut has_more = false;
 
     for record in records
         .iter()
         .filter(|record| record.resource_offset >= from_offset)
     {
         if selected.len() >= limit as usize {
+            has_more = true;
             break;
         }
 
         if let Some(max_bytes) = max_bytes {
-            let projected = total_bytes + record.body.len();
+            let projected = total_bytes
+                + record.body.len()
+                + record
+                    .metadata
+                    .as_ref()
+                    .map(|metadata| metadata.len())
+                    .unwrap_or(0);
             if !selected.is_empty() && projected > max_bytes {
+                has_more = true;
                 break;
             }
             total_bytes = projected;
@@ -998,12 +1076,22 @@ fn encode_stream_read_data(
         selected.push(record);
     }
 
+    let last_resource_offset = selected
+        .last()
+        .map(|record| record.resource_offset)
+        .unwrap_or(from_offset);
+    let last_area_offset = selected.last().and_then(|record| record.area_offset);
+    let last_realm_offset = selected.last().and_then(|record| record.realm_offset);
+
     let mut encoder = PayloadEncoder::new();
     encoder.put_u32(selected.len() as u32);
     for record in selected {
-        encoder.put_u64(record.resource_offset);
-        encoder.put_bytes(record.body.as_ref());
+        encode_stream_record(&mut encoder, record);
     }
+    encoder.put_u64(last_resource_offset);
+    encoder.put_optional_u64(last_area_offset);
+    encoder.put_optional_u64(last_realm_offset);
+    encoder.put_u8(u8::from(has_more));
     encoder.finish()
 }
 
@@ -1063,9 +1151,7 @@ impl PrototypeStreamReadSink {
         max_bytes: Option<usize>,
     ) -> Result<Vec<u8>, String> {
         if limit == 0 {
-            let mut encoder = PayloadEncoder::new();
-            encoder.put_u32(0);
-            return Ok(encoder.finish());
+            return Ok(encode_stream_read_data(&[], from_offset, 0, max_bytes));
         }
 
         let (realm, area, resource) = parse_stream_read_route(route.as_str())?;
