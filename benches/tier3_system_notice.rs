@@ -7,13 +7,12 @@
 // Each test measures a single operation with all setup/teardown outside the measurement loop.
 // Target: ops/sec via set_elements(count)
 
-#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::BufMut;
 use bytes::Bytes;
-use cntryl_stress::{stress_test, StressContext};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_notice_publish, build_notice_subscribe, create_bench_notice_sink,
     extract_single_tlv_field, parse_notice_subscription_id, register_session_counting_sink,
@@ -305,4 +304,4 @@ fn should_complete_wildcard_subscribe_unsubscribe_cycle(ctx: &mut StressContext)
     ctx.set_elements(2 * iterations as u64);
 }
 
-stress_main_with_env!();
+stress_main!();

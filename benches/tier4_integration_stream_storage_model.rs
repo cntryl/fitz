@@ -8,12 +8,11 @@
 #[path = "support/stream_storage_model.rs"]
 mod stream_storage_model;
 
-#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_test, StressContext};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_stream_read_with_limit, count_stream_read_records_from_payload, extract_single_tlv_field,
     register_session_queue_sink, route_frame, shared_bench_runtime, FrameQueueSink,
@@ -368,4 +367,4 @@ fn should_complete_ws_realm_wildcard_read_promotion_frontier_live_prototype(
     ctx.set_elements(case.expected_count as u64 * iterations as u64);
 }
 
-stress_main_with_env!();
+stress_main!();

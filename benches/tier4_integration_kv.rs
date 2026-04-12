@@ -12,12 +12,11 @@
 //! Each test measures a single operation with all setup/teardown outside the measurement loop.
 //! Target: ops/sec via set_elements(count), reveals performance cliffs at each layer.
 
-#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_test, StressContext};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_kv_begin, build_kv_put, build_kv_rollback, create_local_bench_store, parse_kv_response,
     parse_kv_tx_id, shared_bench_runtime,
@@ -238,4 +237,4 @@ fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) 
     ctx.set_elements(30 * iterations as u64);
 }
 
-stress_main_with_env!();
+stress_main!();

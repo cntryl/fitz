@@ -6,12 +6,11 @@
 //! candidate: compact area pages, compact resource mini-pages, and compressed
 //! compact realm-body pages.
 
-#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::{BufMut, Bytes};
-use cntryl_stress::{stress_test, StressContext};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     count_stream_read_records_from_payload, create_local_bench_store, extract_single_tlv_field,
     register_session_queue_sink, route_frame, FrameQueueSink,
@@ -1621,4 +1620,4 @@ fn should_complete_compressed_realm_replay_production_like_routed_model(ctx: &mu
     ctx.set_elements(case.expected_records as u64 * iterations as u64);
 }
 
-stress_main_with_env!();
+stress_main!();

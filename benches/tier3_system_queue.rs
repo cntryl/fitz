@@ -1,9 +1,8 @@
-#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_test, StressContext};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch, build_queue_enqueue,
     build_queue_watch, create_bench_queue_actor, create_bench_queue_sink, extract_single_tlv_field,
@@ -757,4 +756,4 @@ fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
     ctx.set_elements(((waiter_count * 2) + waiter_count + 1) * iterations as u64);
 }
 
-stress_main_with_env!();
+stress_main!();

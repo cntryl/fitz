@@ -9,12 +9,11 @@
 //! 4. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
 //! 5. **MultiClient** - N concurrent WS clients hitting domain concurrently
 
-#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_test, StressContext};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_queue_enqueue, create_bench_queue_actor, parse_queue_response, shared_bench_runtime,
 };
@@ -212,4 +211,4 @@ fn should_complete_multiclient_concurrent_enqueues_client_scaling_64(ctx: &mut S
     measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues_client_scaling", 64);
 }
 
-stress_main_with_env!();
+stress_main!();

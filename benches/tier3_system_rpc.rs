@@ -3,12 +3,11 @@
 //! Measures the real in-proc path: requester frame -> `RpcDomainSink`
 //! -> worker inbox delivery -> worker response frame -> requester inbox.
 
-#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_test, StressContext};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use criterion::black_box;
 use fitz::benchkit::{
     build_rpc_ack_frame, build_rpc_request, build_rpc_response_frame, build_rpc_subscribe,
@@ -784,4 +783,4 @@ fn should_complete_short_roundtrip_batch(ctx: &mut StressContext) {
     ctx.set_elements(10 * iterations as u64);
 }
 
-stress_main_with_env!();
+stress_main!();
