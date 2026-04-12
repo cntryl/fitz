@@ -1,3 +1,6 @@
+#[path = "stress_config.rs"]
+mod stress_config;
+
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
@@ -230,7 +233,7 @@ fn measure_backlog_depth_steady_state(
         assert!(matches!(response, QueueResponse::Sent { .. }));
     }
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for _ in 0..per_iteration_cycles {
             let message = receive_single_message(&mut actor);
             let response = actor.handle_ack(message.id, message.token);
@@ -256,7 +259,7 @@ fn should_complete_capacity_enqueue_isolated(ctx: &mut StressContext) {
         .collect();
     let mut actor_index = 0usize;
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let response = actors[actor_index].handle_send(payload.clone(), None);
         assert!(matches!(response, QueueResponse::Sent { .. }));
         actor_index = (actor_index + 1) % actors.len();
@@ -278,7 +281,7 @@ fn should_complete_capacity_receive_batch_cleanup(ctx: &mut StressContext) {
         .map(|_| (payload.clone(), None))
         .collect();
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let response = actor.handle_send_batch(&batch);
         assert!(matches!(response, QueueResponse::SentBatch { .. }));
 
@@ -299,7 +302,7 @@ fn should_complete_capacity_ack_roundtrip(ctx: &mut StressContext) {
     let mut actor = create_bench_queue_actor("bench", "ack", "queue", None);
     let payload = Bytes::from_static(b"ack roundtrip message");
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let response = actor.handle_send(payload.clone(), None);
         assert!(matches!(response, QueueResponse::Sent { .. }));
 
@@ -321,7 +324,7 @@ fn should_complete_capacity_extend_roundtrip(ctx: &mut StressContext) {
     let mut actor = create_bench_queue_actor("bench", "extend", "queue", None);
     let payload = Bytes::from_static(b"extend roundtrip message");
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let response = actor.handle_send(payload.clone(), None);
         assert!(matches!(response, QueueResponse::Sent { .. }));
 
@@ -351,7 +354,7 @@ fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
         .map(|p| (p.clone(), None))
         .collect();
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = actor.handle_send_batch(&batch_50);
         for _ in 0..50 {
             let _ = actor.handle_receive(30, Some(1));
@@ -401,7 +404,7 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         .chain(payloads.iter().skip(90).take(10).map(|p| (p.clone(), None)))
         .collect();
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = actor.handle_send_batch(&batch_mixed);
 
         let immediate = match actor.handle_receive(30, Some(80)) {
@@ -481,7 +484,7 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
     }
     drop(pre_actor);
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _actor = QueueActor::new(
             RouteFamily::new(1),
             queue_key.clone(),
@@ -505,7 +508,7 @@ fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
     let payloads: Vec<Bytes> = (0..50).map(|_| payload.clone()).collect();
     let batch_50: Vec<(Bytes, Option<u64>)> = payloads.iter().map(|p| (p.clone(), None)).collect();
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = actor.handle_send_batch(&batch_50);
         for _ in 0..50 {
             let _ = actor.handle_receive(30, Some(1));
@@ -534,7 +537,7 @@ fn should_complete_routed_enqueue_sustained(ctx: &mut StressContext) {
         .collect();
     let mut route_index = 0usize;
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let route = &routes[route_index];
         let (msg_type, payload) = &enqueue_frames[route_index];
         let response = request_queue_response(
@@ -566,7 +569,7 @@ fn should_complete_routed_receive_batch_cleanup(ctx: &mut StressContext) {
     let receive_frame = build_queue_dequeue_batch(route, RECEIVE_BATCH_SIZE as u32);
     let (receive_msg_type, receive_payload) = extract_single_tlv_field(&receive_frame);
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for _ in 0..RECEIVE_BATCH_SIZE {
             let response = request_queue_response(
                 &router,
@@ -628,7 +631,7 @@ fn should_complete_routed_ack_roundtrip(ctx: &mut StressContext) {
     let dequeue_frame = build_queue_dequeue(route);
     let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let enqueue_response = request_queue_response(
             &router,
             family,
@@ -695,7 +698,7 @@ fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
         sink.reset();
     }
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for (_, _, sink) in &waiters {
             sink.reset();
         }

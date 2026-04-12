@@ -8,6 +8,9 @@
 //! 3. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
 //! 4. **MultiClient** - N concurrent WS clients (real concurrency)
 
+#[path = "stress_config.rs"]
+mod stress_config;
+
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
@@ -204,7 +207,7 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
     );
     let (publish_msg_type, publish_payload) = extract_single_tlv_field(&publish_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         route_frame(
             router.as_ref(),
             &publisher_source,
@@ -249,7 +252,7 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
         spawn_tcp_subscriber_counter(runtime, subscriber, delivered.clone());
     let (publish_tx, publisher_handle) = spawn_tcp_publisher(runtime, publisher);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         publish_tx
             .blocking_send(publish_frame.clone())
             .expect("queue publish frame");
@@ -304,7 +307,7 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
         spawn_ws_subscriber_counter(runtime, subscriber, delivered.clone());
     let (publish_tx, publisher_handle) = spawn_ws_publisher(runtime, publisher);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         publish_tx
             .blocking_send(publish_frame.clone())
             .expect("queue publish frame");
@@ -340,7 +343,7 @@ fn should_complete_tcp_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let subscribe_response = runtime
             .block_on(client.request(&subscribe_frame, 2000))
             .expect("subscribe response");
@@ -379,7 +382,7 @@ fn should_complete_ws_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let subscribe_response = runtime
             .block_on(client.request(&subscribe_frame, 2000))
             .expect("subscribe response");
@@ -452,7 +455,7 @@ fn measure_multiclient_fanout_publish(
         subscriber_handles.push(handle);
     }
     let mut expected_deliveries = 0_u64;
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         runtime
             .block_on(publisher.send_frame(publish_frame.as_ref()))
             .expect("publish frame");

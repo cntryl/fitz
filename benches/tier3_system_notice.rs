@@ -7,6 +7,9 @@
 // Each test measures a single operation with all setup/teardown outside the measurement loop.
 // Target: ops/sec via set_elements(count)
 
+#[path = "stress_config.rs"]
+mod stress_config;
+
 use bytes::BufMut;
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
@@ -19,7 +22,6 @@ use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use std::sync::Arc;
-use std::time::Duration;
 
 const PUBLISHER_SESSION_ID: u64 = 10_000;
 const LIFECYCLE_SESSION_ID: u64 = 20_000;
@@ -142,7 +144,7 @@ fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
     let publish_frame = build_notice_publish(case.publish_route, case.payload);
     let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         route_frame(
             router.as_ref(),
             &publisher_source,
@@ -287,7 +289,7 @@ fn should_complete_wildcard_subscribe_unsubscribe_cycle(ctx: &mut StressContext)
     let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
     let harness = setup_notice_request_sink();
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let subscribe_response =
             harness.request(pattern, subscribe_msg_type, subscribe_payload.clone());
         let subscription_id = parse_notice_subscribe_ok(&subscribe_response);

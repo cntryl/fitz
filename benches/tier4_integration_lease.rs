@@ -8,6 +8,9 @@
 //! 3. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
 //! 4. **MultiClient** - N concurrent WS clients (real concurrency)
 
+#[path = "stress_config.rs"]
+mod stress_config;
+
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_lease_acquire_immediate, build_lease_release, create_bench_lease_sink,
@@ -38,7 +41,7 @@ fn should_complete_direct_acquire_release(ctx: &mut StressContext) {
     let acquire_frame = build_lease_acquire_immediate(route, owner, 30);
     let (msg_type, payload) = extract_single_tlv_field(&acquire_frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         route_frame(
             router.as_ref(),
             &source,
@@ -87,7 +90,7 @@ fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let response = runtime
             .block_on(client.request(&acquire_frame, 2000))
             .expect("acquire response");
@@ -120,7 +123,7 @@ fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let response = runtime
             .block_on(client.request(&acquire_frame, 2000))
             .expect("acquire response");
@@ -157,7 +160,7 @@ fn should_complete_multiclient_acquire_release(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _results: Vec<_> = runtime.block_on(futures::future::join_all(
             clients.iter().enumerate().map(|(idx, arc)| {
                 let arc = arc.clone();

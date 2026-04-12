@@ -7,6 +7,9 @@
 //! Each test measures a single operation with all setup/teardown outside the measurement loop.
 //! Target: ops/sec via set_elements(count)
 
+#[path = "stress_config.rs"]
+mod stress_config;
+
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::domains::kv::{KvActor, KvMessage, KvResponse, TxMode};
@@ -48,7 +51,7 @@ fn should_complete_10_puts_same_family(ctx: &mut StressContext) {
         None => return,
     };
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for i in 0..10 {
             actor.handle(KvMessage::Put {
                 tx_id,
@@ -82,7 +85,7 @@ fn should_complete_interleaved_puts_2_families(ctx: &mut StressContext) {
         None => return,
     };
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for i in 0..10 {
             actor.handle(KvMessage::Put {
                 tx_id: tx_id1,
@@ -126,7 +129,7 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for (family_id, tx_id, resource) in &txs {
             for i in 0..10 {
                 actor.handle(KvMessage::Put {
@@ -191,7 +194,7 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
         None => return,
     };
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for i in 0..5 {
             actor.handle(KvMessage::Get {
                 tx_id: read_tx_id,

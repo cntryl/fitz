@@ -9,8 +9,11 @@
 ///
 /// The bench binaries themselves consume these settings via `cargo bench -- --runs ... --warmup ...`.
 ///
+/// - `BENCH_MEASURE_SECS`: Duration in whole seconds passed to `ctx.measure_for` (default: 5).
+///   Use `BenchConfig::default().measure_duration` instead of hardcoding `Duration::from_secs(5)`.
+///
 /// **set_elements(N)** in each `#[stress_test]`: N is the explicit batch size for one timed
-/// iteration inside `ctx.measure_for(Duration::from_secs(5), || { ... })`. The target measured
+/// iteration inside `ctx.measure_for(cfg.measure_duration, || { ... })`. The target measured
 /// run is 5 seconds, with 3 seconds as the minimum acceptable floor, and N must match the
 /// logical number of meaningful operations performed in that batch so throughput
 /// (batch_size / elapsed_time) reported by `cntryl-tools summarize-benchmarks`
@@ -21,6 +24,8 @@
 pub struct BenchConfig {
     pub runs: usize,
     pub warmup: usize,
+    /// Duration passed to `ctx.measure_for`. Controlled by `BENCH_MEASURE_SECS` (default: 5).
+    pub measure_duration: std::time::Duration,
 }
 
 impl Default for BenchConfig {
@@ -35,6 +40,15 @@ impl Default for BenchConfig {
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(1);
 
-        BenchConfig { runs, warmup }
+        let measure_secs = std::env::var("BENCH_MEASURE_SECS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(5);
+
+        BenchConfig {
+            runs,
+            warmup,
+            measure_duration: std::time::Duration::from_secs(measure_secs),
+        }
     }
 }

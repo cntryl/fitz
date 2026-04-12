@@ -8,6 +8,9 @@
 //! 3. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
 //! 4. **MultiClient** - N concurrent WS clients (real concurrency)
 
+#[path = "stress_config.rs"]
+mod stress_config;
+
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
@@ -70,7 +73,7 @@ fn should_complete_direct_create(ctx: &mut StressContext) {
     );
 
     let mut next_index = 1usize;
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let route = &route_ring[next_index % route_ring.len()];
         next_index += 1;
         actor.receive(
@@ -111,7 +114,7 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
     ensure_schedule_ok(&warmup).expect("warmup create should succeed");
 
     let mut next_index = 1usize;
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let frame = &frame_ring[next_index % frame_ring.len()];
         next_index += 1;
         let response = runtime
@@ -151,7 +154,7 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
     ensure_schedule_ok(&warmup).expect("warmup create should succeed");
 
     let mut next_index = 1usize;
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let frame = &frame_ring[next_index % frame_ring.len()];
         next_index += 1;
         let response = runtime
@@ -206,7 +209,7 @@ fn should_complete_ws_batch_create(ctx: &mut StressContext) {
     ensure_schedule_ok(&warmup).expect("warmup batch create should succeed");
 
     let mut next_index = 1usize;
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let frame = &frame_ring[next_index % frame_ring.len()];
         next_index += 1;
         let response = runtime
@@ -270,7 +273,7 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
     ));
 
     let next_indices = Arc::new(std::sync::Mutex::new(vec![1usize; clients.len()]));
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let next_indices = next_indices.clone();
         let _results: Vec<_> = runtime.block_on(futures::future::join_all(
             clients.iter().enumerate().map(|(client_index, arc)| {

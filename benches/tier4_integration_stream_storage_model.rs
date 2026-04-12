@@ -8,6 +8,9 @@
 #[path = "support/stream_storage_model.rs"]
 mod stream_storage_model;
 
+#[path = "stress_config.rs"]
+mod stress_config;
+
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
@@ -19,7 +22,6 @@ use fitz::runtime::router::Router;
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use fitz::testkit::transport::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
-use std::time::Duration;
 use stream_storage_model::{
     install_stream_read_prototype_sink, prepare_area_read_case, prepare_realm_read_case,
     prepare_resource_read_case, PrototypeReadCase, PROTOTYPE_ROUTE_FAMILY,
@@ -111,7 +113,7 @@ fn should_complete_direct_resource_read_promotion_frontier_live_prototype(ctx: &
     let (msg_type, payload) =
         prepare_validated_direct_read(&context, case.route, case.expected_count);
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = direct_request(&context, case.route, msg_type, payload.clone());
     });
     ctx.set_elements(case.expected_count as u64 * iterations as u64);
@@ -132,7 +134,7 @@ fn should_complete_direct_area_wildcard_read_promotion_frontier_live_prototype(
     let (msg_type, payload) =
         prepare_validated_direct_read(&context, case.route, case.expected_count);
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = direct_request(&context, case.route, msg_type, payload.clone());
     });
     ctx.set_elements(case.expected_count as u64 * iterations as u64);
@@ -153,7 +155,7 @@ fn should_complete_direct_realm_wildcard_read_promotion_frontier_live_prototype(
     let (msg_type, payload) =
         prepare_validated_direct_read(&context, case.route, case.expected_count);
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = direct_request(&context, case.route, msg_type, payload.clone());
     });
     ctx.set_elements(case.expected_count as u64 * iterations as u64);
@@ -184,7 +186,7 @@ fn should_complete_tcp_resource_read_promotion_frontier_live_prototype(ctx: &mut
         "unexpected tcp resource read count"
     );
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = runtime
             .block_on(client.request(&read_frame, 2000))
             .expect("resource read response");
@@ -216,7 +218,7 @@ fn should_complete_tcp_area_wildcard_read_promotion_frontier_live_prototype(
         .expect("area read count");
     assert_eq!(count, case.expected_count, "unexpected tcp area read count");
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = runtime
             .block_on(client.request(&read_frame, 2000))
             .expect("area read response");
@@ -251,7 +253,7 @@ fn should_complete_tcp_realm_wildcard_read_promotion_frontier_live_prototype(
         "unexpected tcp realm read count"
     );
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = runtime
             .block_on(client.request(&read_frame, 2000))
             .expect("realm read response");
@@ -287,7 +289,7 @@ fn should_complete_ws_resource_read_promotion_frontier_live_prototype(ctx: &mut 
         "unexpected ws resource read count"
     );
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = runtime
             .block_on(client.request(&read_frame, 2000))
             .expect("resource read response");
@@ -322,7 +324,7 @@ fn should_complete_ws_area_wildcard_read_promotion_frontier_live_prototype(
         .expect("area read count");
     assert_eq!(count, case.expected_count, "unexpected ws area read count");
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = runtime
             .block_on(client.request(&read_frame, 2000))
             .expect("area read response");
@@ -357,7 +359,7 @@ fn should_complete_ws_realm_wildcard_read_promotion_frontier_live_prototype(
         .expect("realm read count");
     assert_eq!(count, case.expected_count, "unexpected ws realm read count");
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = runtime
             .block_on(client.request(&read_frame, 2000))
             .expect("realm read response");

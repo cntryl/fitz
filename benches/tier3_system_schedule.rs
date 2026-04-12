@@ -6,6 +6,9 @@
 // Each test measures a single operation with all setup/teardown outside the measurement loop.
 // Target: ops/sec via set_elements(count)
 
+#[path = "stress_config.rs"]
+mod stress_config;
+
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
@@ -128,7 +131,7 @@ fn should_complete_system_create(ctx: &mut StressContext) {
     let mut actor = create_test_actor();
 
     let mut next_index = 0usize;
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _route = create_unique_schedule(&mut actor, next_index);
         next_index += 1;
     });
@@ -145,7 +148,7 @@ fn should_complete_system_cancel_create_churn(ctx: &mut StressContext) {
     let mut live_routes = populate_live_routes(&mut actor, 0, SUSTAINED_ACTIVE_SCHEDULES);
     let mut next_index = SUSTAINED_ACTIVE_SCHEDULES;
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let route = live_routes
             .pop_front()
             .expect("schedule churn must keep at least one live route");
@@ -175,7 +178,7 @@ fn should_complete_system_list_uncached_9_of_10_schedules(ctx: &mut StressContex
     populate_actor(&mut actor, &routes, &crons, &payloads, 10);
     assert_uncached_list_count(&mut actor, 9, 9);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let (entries, total_count) = actor.list_entries(0, 9);
         assert_eq!(
             entries.len(),
@@ -198,7 +201,7 @@ fn should_complete_system_list_uncached_99_of_100_schedules(ctx: &mut StressCont
     populate_actor(&mut actor, &routes, &crons, &payloads, 100);
     assert_uncached_list_count(&mut actor, 99, 99);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let (entries, total_count) = actor.list_entries(0, 99);
         assert_eq!(
             entries.len(),
@@ -224,7 +227,7 @@ fn should_complete_system_list_uncached_999_of_1000_schedules(ctx: &mut StressCo
     populate_actor(&mut actor, &routes, &crons, &payloads, 1000);
     assert_uncached_list_count(&mut actor, 999, 999);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let (entries, total_count) = actor.list_entries(0, 999);
         assert_eq!(
             entries.len(),
@@ -249,7 +252,7 @@ fn should_complete_system_mixed_workload(ctx: &mut StressContext) {
     let mut live_routes = populate_live_routes(&mut actor, 0, MIXED_INITIAL_SCHEDULES);
     let mut next_index = MIXED_INITIAL_SCHEDULES;
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let first_route = create_unique_schedule(&mut actor, next_index);
         next_index += 1;
         live_routes.push_back(first_route);
@@ -294,7 +297,7 @@ fn should_complete_system_collect_due_occurrences_not_ready_1000_schedules(
 
     let mut actor = create_scan_actor(1000);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         actor.bench_prepare_scan(0);
         let _fired = actor.collect_due_occurrences_for_publish();
     });
@@ -312,7 +315,7 @@ fn should_complete_system_collect_due_occurrences_partially_ready_1000_schedules
 
     let mut actor = create_scan_actor(1000);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         actor.bench_prepare_scan(100);
         let _fired = actor.collect_due_occurrences_for_publish();
     });
@@ -330,7 +333,7 @@ fn should_complete_system_collect_due_occurrences_all_ready_1000_schedules(
 
     let mut actor = create_scan_actor(1000);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         actor.bench_prepare_scan(1000);
         let _fired = actor.collect_due_occurrences_for_publish();
     });

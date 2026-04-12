@@ -5,6 +5,9 @@
 //! Layers: direct, encoded (codec decode path), tcp, websocket, multiclient (concurrent).
 //! RPC tier4 tests full request -> worker dispatch -> response over the wire where applicable.
 
+#[path = "stress_config.rs"]
+mod stress_config;
+
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
@@ -294,7 +297,7 @@ fn measure_multiclient_concurrent_requests(
     let mut next_request_index = 0usize;
     let worker_handles = spawn_rpc_ws_workers(worker_clients, family);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let request_index = next_request_index;
         next_request_index = (next_request_index + 1) % MULTICLIENT_REQUEST_FRAME_RING_SIZE;
 
@@ -427,7 +430,7 @@ fn should_complete_direct_request(ctx: &mut StressContext) {
         setup_rpc_sink();
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request.frame);
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         route_frame(
             router.as_ref(),
             &requester_source,
@@ -463,7 +466,7 @@ fn should_complete_encoded_request(ctx: &mut StressContext) {
         setup_rpc_sink();
     let request_frame = &request.frame;
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let mut parser = TlvFrameParser::new(request_frame);
         let (msg_type, payload) = parser.next_field_ref().expect("one field");
         route_frame(
@@ -532,7 +535,7 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
         })
     };
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         runtime.block_on(request_until_worker_response_tcp(
             &mut requester_client,
             &request_frame,
@@ -594,7 +597,7 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
         })
     };
 
-    let iterations = ctx.measure_for(std::time::Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         runtime.block_on(request_until_worker_response_ws(
             &mut requester_client,
             &request_frame,

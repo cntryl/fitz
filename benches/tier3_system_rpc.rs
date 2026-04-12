@@ -3,6 +3,9 @@
 //! Measures the real in-proc path: requester frame -> `RpcDomainSink`
 //! -> worker inbox delivery -> worker response frame -> requester inbox.
 
+#[path = "stress_config.rs"]
+mod stress_config;
+
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use criterion::black_box;
@@ -17,7 +20,6 @@ use fitz::protocol::rpc_codec::parse_request;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use std::sync::Arc;
-use std::time::Duration;
 
 const ROUTE_STR: &str = "rpc://bench/system/route";
 const REQUESTER_SESSION_ID: u64 = 1;
@@ -349,7 +351,7 @@ fn measure_full_roundtrip_scaling(
         RequestFrameRing::new(ROUTE_STR, b"scaling payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for _ in 0..per_iteration_requests {
             let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
@@ -387,7 +389,7 @@ fn measure_dispatch_only_scaling(
         RequestFrameRing::new(ROUTE_STR, b"scaling payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for _ in 0..per_iteration_requests {
             let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
@@ -439,7 +441,7 @@ fn measure_multi_route_full_roundtrip_scaling(
         .collect();
     let mut next_route_index = 0usize;
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for _ in 0..per_iteration_requests {
             let route_index = next_route_index;
             next_route_index = (next_route_index + 1) % routes.len();
@@ -500,7 +502,7 @@ fn measure_multi_route_dispatch_only_scaling(
         .collect();
     let mut next_route_index = 0usize;
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for _ in 0..per_iteration_requests {
             let route_index = next_route_index;
             next_route_index = (next_route_index + 1) % routes.len();
@@ -561,7 +563,7 @@ fn measure_pending_cardinality_steady_state(
     let mut current_correlation_id = drain_request_correlation(worker_inbox, family);
     let _ = requester_inbox.drain();
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for _ in 0..per_iteration_cycles {
             route_worker_frame_to_route(
                 &router,
@@ -603,7 +605,7 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
         RequestFrameRing::new(ROUTE_STR, b"rpc request payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for _ in 0..ITERS {
             let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
@@ -636,7 +638,7 @@ fn should_complete_single_response_throughput(ctx: &mut StressContext) {
         RequestFrameRing::new(ROUTE_STR, b"streaming request", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for _ in 0..ITERS {
             let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
@@ -731,7 +733,7 @@ fn should_complete_steady_state_request_tracking(ctx: &mut StressContext) {
         RequestFrameRing::new(ROUTE_STR, b"concurrent request", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for _ in 0..ITERS {
             let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
@@ -763,7 +765,7 @@ fn should_complete_short_roundtrip_batch(ctx: &mut StressContext) {
         RequestFrameRing::new(ROUTE_STR, b"mixed workload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(Duration::from_secs(5), || {
+    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for _ in 0..10 {
             let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
