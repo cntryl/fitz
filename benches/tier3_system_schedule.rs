@@ -6,11 +6,12 @@
 // Each test measures a single operation with all setup/teardown outside the measurement loop.
 // Target: ops/sec via set_elements(count)
 
+#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress_test, StressContext};
 use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
@@ -340,4 +341,5 @@ fn should_complete_system_collect_due_occurrences_all_ready_1000_schedules(
     ctx.set_elements(1000 * iterations as u64);
 }
 
-stress_main!();
+stress_main_with_env!();
+

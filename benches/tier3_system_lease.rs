@@ -6,11 +6,12 @@
 //! Each test measures a single operation with all setup/teardown outside the measurement loop.
 //! Target: ops/sec via set_elements(count)
 
+#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress_test, StressContext};
 use fitz::benchkit::{
     create_bench_lease_sink, parse_lease_extend_token_response, parse_lease_token_response,
     register_session_queue_sink, route_frame, FrameQueueSink,
@@ -259,4 +260,4 @@ fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
     ctx.set_elements(iterations as u64);
 }
 
-stress_main!();
+stress_main_with_env!();

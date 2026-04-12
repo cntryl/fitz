@@ -7,11 +7,12 @@
 //! Each test measures a single operation with all setup/teardown outside the measurement loop.
 //! Target: ops/sec via set_elements(count)
 
+#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress_test, StressContext};
 use fitz::domains::kv::{KvActor, KvMessage, KvResponse, TxMode};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
@@ -220,4 +221,4 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
     ctx.set_elements(10 * iterations as u64); // 5 reads + 5 writes (no deletes in measure)
 }
 
-stress_main!();
+stress_main_with_env!();

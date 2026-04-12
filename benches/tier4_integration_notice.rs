@@ -8,11 +8,12 @@
 //! 3. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
 //! 4. **MultiClient** - N concurrent WS clients (real concurrency)
 
+#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress_test, StressContext};
 use fitz::benchkit::{
     build_notice_publish, build_notice_subscribe, build_notice_unsubscribe,
     create_bench_notice_sink, extract_single_tlv_field, parse_notice_response,
@@ -499,4 +500,4 @@ fn should_complete_multiclient_fanout_publish_subscriber_scaling_64(ctx: &mut St
     measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 64);
 }
 
-stress_main!();
+stress_main_with_env!();

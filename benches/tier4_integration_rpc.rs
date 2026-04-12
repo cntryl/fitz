@@ -5,11 +5,12 @@
 //! Layers: direct, encoded (codec decode path), tcp, websocket, multiclient (concurrent).
 //! RPC tier4 tests full request -> worker dispatch -> response over the wire where applicable.
 
+#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress_test, StressContext};
 use fitz::benchkit::{
     build_rpc_request, build_rpc_response_frame, build_rpc_subscribe, create_bench_rpc_sink,
     extract_single_tlv_field, register_session_queue_sink, route_frame, shared_bench_runtime,
@@ -628,4 +629,4 @@ fn should_complete_multiclient_concurrent_requests_8_workers(ctx: &mut StressCon
     measure_multiclient_concurrent_requests(ctx, 8, "concurrent_requests");
 }
 
-stress_main!();
+stress_main_with_env!();

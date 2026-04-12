@@ -6,11 +6,12 @@
 // Each test measures a single operation with all setup/teardown outside the measurement loop.
 // Target: ops/sec via set_elements(count)
 
+#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress_test, StressContext};
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, build_stream_commit, build_stream_last,
     build_stream_read, build_stream_subscribe, count_stream_read_records_from_payload,
@@ -363,4 +364,4 @@ fn should_complete_offset_tracking_overhead(ctx: &mut StressContext) {
     ctx.set_elements(iterations as u64);
 }
 
-stress_main!();
+stress_main_with_env!();

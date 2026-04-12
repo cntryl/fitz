@@ -8,11 +8,12 @@
 //! 3. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
 //! 4. **MultiClient** - N concurrent WS clients (real concurrency)
 
+#[macro_use]
 #[path = "stress_config.rs"]
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress_test, StressContext};
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, build_stream_commit, build_stream_read,
     create_bench_stream_sink, extract_single_tlv_field, parse_stream_read_record_count,
@@ -680,4 +681,4 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
     ctx.set_elements(10 * iterations as u64);
 }
 
-stress_main!();
+stress_main_with_env!();

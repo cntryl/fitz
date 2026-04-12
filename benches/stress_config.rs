@@ -54,3 +54,52 @@ impl Default for BenchConfig {
         }
     }
 }
+
+/// Create a BenchRunnerConfig from environment variables with correct precedence.
+///
+/// This bypasses the stress_main!() macro's hardcoded defaults (runs=1, warmup=0)
+/// and properly respects environment variables. Use this for manual `BenchRunner` setup
+/// in tier3/tier4 benchmarks.
+///
+/// Precedence: CLI args > env vars > defaults
+/// - BENCH_RUNS (default: 3)
+/// - BENCH_WARMUP (default: 1)
+///
+/// **Example:**
+/// ```ignore
+/// fn main() {
+///     let config = stress_config::bench_runner_config_from_env();
+///     let mut runner = cntryl_stress::BenchRunner::with_config("my-suite", config);
+///     // ... build and run tests
+/// }
+/// ```
+pub fn bench_runner_config_from_env() -> cntryl_stress::BenchRunnerConfig {
+    let cfg = BenchConfig::default();
+    cntryl_stress::BenchRunnerConfig::new()
+        .runs(cfg.runs)
+        .warmup(cfg.warmup)
+        .verbose(true)
+}
+
+/// Macro to replace stress_main!() that properly honors BENCH_RUNS and BENCH_WARMUP env vars.
+///
+/// The default stress_main!() macro has hardcoded CLI defaults (runs=1, warmup=0) that
+/// override environment variables. This macro creates a proper main() that uses env vars.
+///
+/// **Usage:** Replace `stress_main!();` at end of file with `stress_main_with_env!();`
+macro_rules! stress_main_with_env {
+    () => {
+        fn main() {
+            use cntryl_stress::run_with_options;
+
+            let cfg = $crate::stress_config::BenchConfig::default();
+            let opts = cntryl_stress::StressRunnerOptions::new()
+                .runs(cfg.runs)
+                .warmup(cfg.warmup)
+                .verbose(true);
+
+            run_with_options(opts);
+        }
+    };
+}
+
