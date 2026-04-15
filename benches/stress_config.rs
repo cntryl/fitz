@@ -33,11 +33,10 @@ impl Default for BenchConfig {
         let measure_secs = std::env::var("BENCH_MEASURE_SECS")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(3);
+            .unwrap_or(5);
 
         BenchConfig {
             measure_duration: std::time::Duration::from_secs(measure_secs),
         }
     }
 }
-
