@@ -785,7 +785,6 @@ impl MailboxSink for StreamDomainSink {
             StreamMessage::Begin {
                 family_id,
                 route,
-                expected_offset,
                 ingest_metadata,
             } => match Self::actor_key_for_route(family_id, &route) {
                 Ok(key) => match self.get_or_create_actor(&key) {
@@ -795,7 +794,6 @@ impl MailboxSink for StreamDomainSink {
                         let outcome = actor.lock().begin_append_session(
                             frame_ctx.session_id,
                             stream_session_id,
-                            expected_offset,
                             ingest_metadata,
                         );
                         match outcome {
@@ -824,6 +822,7 @@ impl MailboxSink for StreamDomainSink {
             },
             StreamMessage::Append {
                 session_id,
+                expected_offset,
                 body,
                 metadata,
             } => {
@@ -832,7 +831,7 @@ impl MailboxSink for StreamDomainSink {
                     Some(key) => match self.get_or_create_actor(&key) {
                         Ok(actor) => {
                             let outcome =
-                                actor.lock().append_to_session(session_id, body, metadata);
+                                actor.lock().append_to_session(session_id, expected_offset, body, metadata);
                             match outcome {
                                 Ok(assigned_offset) => {
                                     let mut encoder = PayloadEncoder::new();
@@ -1190,8 +1189,8 @@ mod tests {
         }
     }
 
-    fn begin_stream(context: &TestContext, route: &str, expected_offset: u64) -> u64 {
-        let begin_frame = build_stream_begin(route, expected_offset);
+    fn begin_stream(context: &TestContext, route: &str) -> u64 {
+        let begin_frame = build_stream_begin(route);
         let (msg_type, payload) = extract_single_tlv_field(&begin_frame);
         let response = request(context, route, msg_type, payload);
         crate::benchkit::parse_stream_session_id(response.as_ref()).expect("stream session id")
@@ -1203,12 +1202,12 @@ mod tests {
         event_count: usize,
         body: &'static [u8],
     ) {
-        let session_id = begin_stream(context, route, 0);
-        let append_frame = build_stream_append(session_id, body);
-        let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+        let session_id = begin_stream(context, route);
 
-        for _ in 0..event_count {
-            let _ = request(context, route, append_msg_type, append_payload.clone());
+        for expected_offset in 0..event_count as u64 {
+            let append_frame = build_stream_append(session_id, expected_offset, body);
+            let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+            let _ = request(context, route, append_msg_type, append_payload);
         }
 
         let commit_frame = build_stream_commit(session_id, 1);
@@ -1282,7 +1281,7 @@ mod tests {
     fn should_exclude_uncommitted_stream_from_admin_snapshot_given_active_session() {
         // Arrange
         let context = setup_test_context();
-        let _session_id = begin_stream(&context, "stream://bench/events/pending", 0);
+        let _session_id = begin_stream(&context, "stream://bench/events/pending");
 
         // Act
         context.sink.sync_admin_snapshot();
@@ -1299,7 +1298,7 @@ mod tests {
         // Arrange
         let context = setup_test_context();
         seed_committed_stream_route(&context, "stream://bench/events/orders", 1, b"persisted");
-        let _session_id = begin_stream(&context, "stream://bench/events/orders", 1);
+        let _session_id = begin_stream(&context, "stream://bench/events/orders");
 
         // Act
         context.sink.sync_admin_snapshot();
@@ -1326,8 +1325,8 @@ mod tests {
         let context = setup_test_context();
         let route = "stream://bench/events/orders";
         seed_committed_stream_route(&context, route, 1, b"persisted");
-        let session_id = begin_stream(&context, route, 1);
-        let append_frame = build_stream_append(session_id, b"staged");
+        let session_id = begin_stream(&context, route);
+        let append_frame = build_stream_append(session_id, 0, b"staged");
         let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
         let _ = request(&context, route, append_msg_type, append_payload);
 
@@ -1376,8 +1375,8 @@ mod tests {
         // Arrange
         let context = setup_test_context();
         seed_committed_stream_route(&context, "stream://bench/events/orders", 1, b"persisted");
-        let session_id = begin_stream(&context, "stream://bench/events/audits", 0);
-        let append_frame = build_stream_append(session_id, b"staged");
+        let session_id = begin_stream(&context, "stream://bench/events/audits");
+        let append_frame = build_stream_append(session_id, 0, b"staged");
         let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
         let _ = request(
             &context,
@@ -1467,8 +1466,9 @@ mod tests {
     fn should_encode_exact_resource_read_payload_given_committed_record_with_metadata() {
         // Arrange
         let context = setup_test_context();
-        let session_id = begin_stream(&context, "stream://bench/events/orders", 0);
-        let append_frame = build_stream_append_with_metadata(session_id, b"payload", Some(b"meta"));
+        let session_id = begin_stream(&context, "stream://bench/events/orders");
+        let append_frame =
+            build_stream_append_with_metadata(session_id, 0, b"payload", Some(b"meta"));
         let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
         let _ = request(
             &context,

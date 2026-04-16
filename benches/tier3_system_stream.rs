@@ -71,8 +71,8 @@ fn request(
         .expect("stream response")
 }
 
-fn begin_stream(context: &StreamBenchContext, route: &str, expected_offset: u64) -> u64 {
-    let begin_frame = build_stream_begin(route, expected_offset);
+fn begin_stream(context: &StreamBenchContext, route: &str) -> u64 {
+    let begin_frame = build_stream_begin(route);
     let (msg_type, payload) = extract_single_tlv_field(&begin_frame);
     let response = request(context, route, msg_type, payload);
     parse_stream_session_id(response.as_ref()).expect("stream session id")
@@ -106,11 +106,11 @@ fn seed_committed_stream_route(
     event_count: usize,
     body: &'static [u8],
 ) {
-    let session_id = begin_stream(context, route, 0);
-    let append_frame = build_stream_append(session_id, body);
-    let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
-    for _ in 0..event_count {
-        let _ = request(context, route, append_msg_type, append_payload.clone());
+    let session_id = begin_stream(context, route);
+    for expected_offset in 0..event_count as u64 {
+        let append_frame = build_stream_append(session_id, expected_offset, body);
+        let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+        let _ = request(context, route, append_msg_type, append_payload);
     }
 
     let commit_frame = build_stream_commit(session_id, STREAM_SYNC_COMMIT_MODE);
@@ -143,8 +143,8 @@ fn should_complete_append_sustained_load(ctx: &mut StressContext) {
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/append/append";
-    let session_id = begin_stream(&context, route, 0);
-    let append_frame = build_stream_append(session_id, b"sustained append event");
+    let session_id = begin_stream(&context, route);
+    let append_frame = build_stream_append(session_id, 0, b"sustained append event");
     let (msg_type, payload) = extract_single_tlv_field(&append_frame);
 
     let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
@@ -161,8 +161,8 @@ fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/read/read";
-    let session_id = begin_stream(&context, route, 0);
-    let append_frame = build_stream_append(session_id, b"read event");
+    let session_id = begin_stream(&context, route);
+    let append_frame = build_stream_append(session_id, 0, b"read event");
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
     for _ in 0..100 {
         let _ = request(&context, route, append_msg_type, append_payload.clone());
@@ -248,8 +248,8 @@ fn should_complete_batch_write_operations(ctx: &mut StressContext) {
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/batch/append";
-    let session_id = begin_stream(&context, route, 0);
-    let append_frame = build_stream_append(session_id, b"batch event");
+    let session_id = begin_stream(&context, route);
+    let append_frame = build_stream_append(session_id, 0, b"batch event");
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
 
     let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
@@ -274,8 +274,8 @@ fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
     let append_requests: Vec<(String, u16, Bytes)> = routes
         .iter()
         .map(|route| {
-            let session_id = begin_stream(&context, route, 0);
-            let append_frame = build_stream_append(session_id, b"concurrent write");
+            let session_id = begin_stream(&context, route);
+            let append_frame = build_stream_append(session_id, 0, b"concurrent write");
             let (msg_type, payload) = extract_single_tlv_field(&append_frame);
             (route.clone(), msg_type, payload)
         })
@@ -322,9 +322,9 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
 
     let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         for (route, expected_offset) in publish_routes.iter().zip(expected_offsets.iter()) {
-            let stream_session = begin_stream(&context, route, expected_offset.get());
+            let stream_session = begin_stream(&context, route);
 
-            let append_frame = build_stream_append(stream_session, b"fanout event");
+            let append_frame = build_stream_append(stream_session, expected_offset.get(), b"fanout event");
             let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
             let _ = request(&context, route, append_msg_type, append_payload);
 
@@ -346,8 +346,8 @@ fn should_complete_offset_tracking_overhead(ctx: &mut StressContext) {
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/offset/append";
-    let session_id = begin_stream(&context, route, 0);
-    let append_frame = build_stream_append(session_id, b"offset event");
+    let session_id = begin_stream(&context, route);
+    let append_frame = build_stream_append(session_id, 0, b"offset event");
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
     let _ = request(&context, route, append_msg_type, append_payload);
     let commit_frame = build_stream_commit(session_id, 0);

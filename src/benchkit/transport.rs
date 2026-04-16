@@ -471,11 +471,10 @@ pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 }
 
 /// Build STREAM BEGIN frame (msg_type 600)
-pub fn build_stream_begin(route: &str, expected_offset: u64) -> Vec<u8> {
+pub fn build_stream_begin(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(route.len() as u32);
     buf.put_slice(route.as_bytes());
-    buf.put_u64(expected_offset);
     buf.put_u8(0);
 
     let mut builder = TlvFrameBuilder::new();
@@ -484,18 +483,20 @@ pub fn build_stream_begin(route: &str, expected_offset: u64) -> Vec<u8> {
 }
 
 /// Build STREAM APPEND frame (msg_type 601)
-pub fn build_stream_append(session_id: u64, data: &[u8]) -> Vec<u8> {
-    build_stream_append_with_metadata(session_id, data, None)
+pub fn build_stream_append(session_id: u64, expected_offset: u64, data: &[u8]) -> Vec<u8> {
+    build_stream_append_with_metadata(session_id, expected_offset, data, None)
 }
 
 /// Build STREAM APPEND frame (msg_type 601) with optional metadata.
 pub fn build_stream_append_with_metadata(
     session_id: u64,
+    expected_offset: u64,
     data: &[u8],
     metadata: Option<&[u8]>,
 ) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u64(session_id);
+    buf.put_u64(expected_offset);
     buf.put_u32(data.len() as u32);
     buf.put_slice(data);
     match metadata {

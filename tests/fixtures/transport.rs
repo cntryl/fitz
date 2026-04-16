@@ -1162,8 +1162,8 @@ impl StreamConnector for WsStreamConnector {
 }
 
 /// Build STREAM BEGIN frame (msg_type 600)
-/// Wire format: [string route][u64 expected_offset][optional bytes ingest_metadata]
-pub fn build_stream_begin(route: &str, expected_offset: u64) -> Vec<u8> {
+/// Wire format: [string route][optional bytes ingest_metadata]
+pub fn build_stream_begin(route: &str) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
@@ -1171,9 +1171,6 @@ pub fn build_stream_begin(route: &str, expected_offset: u64) -> Vec<u8> {
     // Route (length-prefixed string)
     buf.put_u32(route.len() as u32);
     buf.put_slice(route.as_bytes());
-
-    // Expected offset (u64)
-    buf.put_u64(expected_offset);
 
     // Optional ingest metadata (flag = 0 for none)
     buf.put_u8(0);
@@ -1184,23 +1181,27 @@ pub fn build_stream_begin(route: &str, expected_offset: u64) -> Vec<u8> {
 }
 
 /// Build STREAM APPEND frame (msg_type 601)
-pub fn build_stream_append(session_id: u64, data: &[u8]) -> Vec<u8> {
-    build_stream_append_with_metadata(session_id, data, None)
+pub fn build_stream_append(session_id: u64, expected_offset: u64, data: &[u8]) -> Vec<u8> {
+    build_stream_append_with_metadata(session_id, expected_offset, data, None)
 }
 
 /// Build STREAM APPEND frame (msg_type 601) with optional metadata.
 pub fn build_stream_append_with_metadata(
     session_id: u64,
+    expected_offset: u64,
     data: &[u8],
     metadata: Option<&[u8]>,
 ) -> Vec<u8> {
     use bytes::BufMut;
 
-    // Wire format: [u64 session_id][bytes body][optional metadata]
+    // Wire format: [u64 session_id][u64 expected_offset][bytes body][optional metadata]
     let mut buf = Vec::new();
 
     // Session ID
     buf.put_u64(session_id);
+
+    // Expected offset
+    buf.put_u64(expected_offset);
 
     // Body (length-prefixed bytes)
     buf.put_u32(data.len() as u32);
@@ -1262,7 +1263,7 @@ pub fn build_stream_unsubscribe(route_pattern: &str) -> Vec<u8> {
 /// Build STREAM APPEND frame with default session ID (for simple tests)
 /// Uses session_id = 1 by default - tests should call BEGIN first if they need a real session
 pub fn build_stream_append_simple(_route: &str, data: &[u8]) -> Vec<u8> {
-    build_stream_append(1, data)
+    build_stream_append(1, 0, data)
 }
 
 /// Build STREAM READ frame (msg_type 604)

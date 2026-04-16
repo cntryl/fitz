@@ -72,7 +72,6 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
     match msg_type {
         600 => {
             let route = dec.get_string_ref()?;
-            dec.get_u64()?;
             dec.skip_optional_bytes()?;
             if !dec.is_complete() {
                 return Err("Trailing data in message".to_string());
@@ -80,6 +79,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             Ok(Some(route))
         }
         601 => {
+            dec.get_u64()?;
             dec.get_u64()?;
             dec.skip_bytes()?;
             dec.skip_optional_bytes()?;
@@ -145,14 +145,13 @@ pub fn encode_response_into(enc: &mut PayloadEncoder, response: &StreamResponse)
 
 // ===== Helper Parsers =====
 
-/// Wire format: `[string route][u64 expected_offset][optional bytes ingest_metadata]`
+/// Wire format: `[string route][optional bytes ingest_metadata]`
 fn parse_begin(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<StreamMessage, String> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
-    let expected_offset = dec.get_u64()?;
     let ingest_metadata = dec.get_optional_bytes()?.map(|b| IngestMetadata {
         opaque: b.to_vec().into(),
     });
@@ -164,14 +163,14 @@ fn parse_begin(
     Ok(StreamMessage::Begin {
         family_id: route_family,
         route,
-        expected_offset,
         ingest_metadata,
     })
 }
 
-/// Wire format: `[u64 session_id][bytes body][optional bytes metadata]`
+/// Wire format: `[u64 session_id][u64 expected_offset][bytes body][optional bytes metadata]`
 fn parse_append(dec: &mut PayloadDecoder) -> Result<StreamMessage, String> {
     let session_id = dec.get_u64()?;
+    let expected_offset = dec.get_u64()?;
     let body = dec.get_bytes()?;
     let metadata = dec.get_optional_bytes()?.map(|b| b.to_vec().into());
 
@@ -181,6 +180,7 @@ fn parse_append(dec: &mut PayloadDecoder) -> Result<StreamMessage, String> {
 
     Ok(StreamMessage::Append {
         session_id,
+        expected_offset,
         body,
         metadata,
     })

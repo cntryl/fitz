@@ -233,9 +233,9 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 **Given:** Session with `stream://realm/area/resource#write` permission  
 **When:**
 
-1. Client sends `Begin(route="stream://prod/logs/events", expected_offset=0)`
+1. Client sends `Begin(route="stream://prod/logs/events")`
 2. Server returns `session_id`
-3. Client sends `Append(session_id, payload="event1")`
+3. Client sends `Append(session_id, expected_offset=0, payload="event1")`
 4. Client sends `Commit(session_id, mode=Sync)`
 **Then:**
 
@@ -267,12 +267,12 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 ### AC-STREAM-004: Session-Based Writes
 
 **MUST** use session for durable write tracking
-**Given:** Client creates session with `Begin(route, expected_offset=0)`  
+**Given:** Client creates session with `Begin(route)`  
 **When:**
 
 1. Server returns `session_id` (u64)
-2. Client sends `Append(session_id, payload="event1")`
-3. Client sends `Append(session_id, payload="event2")`
+2. Client sends `Append(session_id, expected_offset=0, payload="event1")`
+3. Client sends `Append(session_id, expected_offset=1, payload="event2")`
 4. Client sends `Commit(session_id, mode=Sync)`
    **Then:**
 
@@ -316,16 +316,16 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 
 - Client receives `STREAM_NOTIFY` (609) for both resources
 
-### AC-STREAM-013: Optimistic concurrency (expected_offset) at Begin
+### AC-STREAM-013: Optimistic concurrency (expected_offset) at Append
 
-**MUST** reject Begin when expected_offset does not match server's next offset
+**MUST** reject Append when expected_offset does not match server's next offset
 **Given:** Stream with at least one committed record (server's next offset = 1)  
-**When:** Client sends `Begin(route, expected_offset=99999)`  
+**When:** Client sends `Append(session_id, expected_offset=99999, payload="event2")`  
 **Then:**
 
 - Server returns error (status=1) with message indicating concurrency conflict (e.g. containing "conflict")
-- No new session is created
-- Clients MUST send expected_offset on every Begin; servers MUST enforce it
+- No new record is appended
+- Clients MUST send expected_offset on every Append; servers MUST enforce it
 
 ### AC-STREAM-012: Unsubscribe stops delivery
 

@@ -1586,7 +1586,7 @@ domains may still keep live server-side state where their contract requires it.
 
 **Constraints:**
 - Records are strictly ordered by offset within each resource
-- BEGIN uses optimistic concurrency (`expected_offset`)
+- APPEND uses optimistic concurrency (`expected_offset`)
 - COMMIT order defines the durable area and realm order across resources
 - Offset-based reads only; consumer cursors remain client-managed
 - Watermark tracks committed visible data; reads past it return an empty success
@@ -2449,7 +2449,6 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 ```
 [u32 BE]  route_len
 [bytes]   route
-[u64 BE]  expected_offset
 [u8]      has_ingest_metadata (0 or 1)
 [u32 BE]  ingest_metadata_len (if has_ingest_metadata=1)
 [bytes]   ingest_metadata
@@ -2464,14 +2463,13 @@ Response (status=1):
   [bytes]  error_msg
 ```
 
-**expected_offset (OCC):** Clients MUST send `expected_offset` on every BEGIN. It is the client's view of the stream's next write offset for that route (0 for a new stream). Servers MUST enforce it: if `expected_offset` does not match the server's next offset for that route, the server MUST reject the request with status=1 and an error message (e.g. containing "conflict"). This provides optimistic concurrency control; clients that receive a conflict should re-read the stream and retry with the correct offset.
-
-**Design Note:** The `data` field in Stream responses carries broker-defined metadata (e.g., current watermark, stream info). Clients MUST parse past it (read `data_len` bytes) but SHOULD NOT interpret its contents unless broker documentation specifies a schema.
+BEGIN creates a session only. Optimistic concurrency is enforced when appending records.
 
 #### APPEND Request
 
 ```
 [u64 BE]  session_id
+[u64 BE]  expected_offset
 [u32 BE]  body_len
 [bytes]   body
 [u8]      has_metadata
@@ -2486,6 +2484,10 @@ Response (status=1):
   [u32 BE] error_len
   [bytes]  error_msg
 ```
+
+**expected_offset (OCC):** Clients MUST send `expected_offset` on every APPEND. It is the client's view of the stream's next write offset for that route (0 for a new stream). Servers MUST enforce it: if `expected_offset` does not match the server's next offset for that route, the server MUST reject the append with status=1 and an error message (e.g. containing "conflict"). This provides optimistic concurrency control; clients that receive a conflict should re-read the stream and retry with the correct offset.
+
+**Design Note:** The `data` field in Stream responses carries broker-defined metadata (e.g., current watermark, stream info). Clients MUST parse past it (read `data_len` bytes) but SHOULD NOT interpret its contents unless broker documentation specifies a schema.
 
 **Design Note:** `session_id` is `u64` (not string), returned from BEGIN response.
 
@@ -2559,13 +2561,12 @@ client = FitzClient.connect_tcp("127.0.0.1:4091", jwt_token)
 
 # BEGIN returns a StreamSession object
 session = client.stream_begin(
-    route="stream://prod/app/events",
-    expected_offset=100
+    route="stream://prod/app/events"
 )
 
 # Session methods are slim - no route or session_id needed in API
-session.append(b"event_data_1")
-session.append(b"event_data_2")
+session.append(0, b"event_data_1")
+session.append(1, b"event_data_2")
 session.commit(mode=CommitMode.Sync)
 
 # Or rollback
@@ -2588,11 +2589,12 @@ class StreamSession:
         self._route = route         # Stored internally
         self._session_id = session_id  # Stored internally
 
-    def append(self, body, metadata=None):
+    def append(self, expected_offset, body, metadata=None):
         """Slim API - route/session_id hidden from user"""
-        # Wire protocol: packs session_id + body
+      # Wire protocol: packs session_id + expected_offset + body
         return self._client._send_stream_append(
             self._session_id,
+        expected_offset,
             body,
             metadata
         )
@@ -2615,15 +2617,15 @@ class StreamSession:
 
 **Wire Protocol (what actually happens):**
 
-- `BEGIN`: `[route_len][route][expected_offset][...] → returns session_id`
-- `APPEND`: `[session_id][body_len][body][metadata]`
+- `BEGIN`: `[route_len][route][...] → returns session_id`
+- `APPEND`: `[session_id][expected_offset][body_len][body][metadata]`
 - `COMMIT`: `[session_id][mode]`
 - `ROLLBACK`: `[session_id]`
 - `READ`: `[route_len][route][from_offset][limit][...]` (stateless)
 
 **Key Points:**
 
-- User calls `session.append(data)` - simple, focused on data
+- User calls `session.append(expected_offset, data)` - simple, focused on data and sequencing
 - BEGIN binds `session_id` to exactly one stream resource on the broker
 - APPEND/COMMIT/ROLLBACK are session-scoped, not stateless route-scoped operations
 - Connection loss aborts the append session; clients must begin a new session after reconnect
@@ -2634,7 +2636,7 @@ class StreamSession:
 - **Ordering**: Records strictly ordered by offset within resource
 - **Commit-Time Global Order**: Area and realm offsets are assigned durably at COMMIT time and remain monotonic across restart
 - **Watermarks**: Reads stop at the current committed watermark; reading past it returns an empty success
-- **Optimistic Concurrency**: `expected_offset` prevents lost updates
+- **Optimistic Concurrency**: `expected_offset` on APPEND prevents lost updates
 - **Durability**: All committed data survives broker restart
 - **Isolation**: Only one active append session exists per resource at a time; subscriptions are separate live session-scoped state
 - **Resume Model**: Clients track resume offsets locally; `ReadCursor` is response metadata, not a durable broker cursor

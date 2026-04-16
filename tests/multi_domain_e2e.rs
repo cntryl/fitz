@@ -172,7 +172,7 @@ async fn should_allow_stream_append_with_active_notice_subscription_tcp() {
         .expect("notice connect");
 
     // Act - First create a stream session with BEGIN
-    let begin_frame = build_stream_begin("stream://test/stream/events/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/events/write");
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 3000)
         .await
@@ -181,7 +181,7 @@ async fn should_allow_stream_append_with_active_notice_subscription_tcp() {
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
 
     // Act - Now append to the session
-    let append_frame = build_stream_append(session_id, b"event-1");
+    let append_frame = build_stream_append(session_id, 0, b"event-1");
     let append_response = stream_client
         .send_and_receive(&append_frame, 3000)
         .await
@@ -219,7 +219,7 @@ async fn should_allow_stream_append_with_active_notice_subscription_ws() {
         .expect("notice connect");
 
     // Act - First create a stream session with BEGIN
-    let begin_frame = build_stream_begin("stream://test/stream/events/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/events/write");
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 3000)
         .await
@@ -228,7 +228,7 @@ async fn should_allow_stream_append_with_active_notice_subscription_ws() {
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
 
     // Act - Now append to the session
-    let append_frame = build_stream_append(session_id, b"event-1");
+    let append_frame = build_stream_append(session_id, 0, b"event-1");
     let append_response = stream_client
         .send_and_receive(&append_frame, 3000)
         .await
@@ -271,7 +271,7 @@ async fn should_keep_notice_subscriptions_independent_from_stream_reads_tcp() {
     // Create stream session
     let stream_write_route = "stream://test/stream/data/write";
     let stream_read_route = "stream://test/stream/data";
-    let begin_frame = build_stream_begin(stream_write_route, 0);
+    let begin_frame = build_stream_begin(stream_write_route);
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -279,7 +279,7 @@ async fn should_keep_notice_subscriptions_independent_from_stream_reads_tcp() {
     let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
 
-    let append_frame = build_stream_append(session_id, b"record");
+    let append_frame = build_stream_append(session_id, 0, b"record");
     let append_response = stream_client
         .send_and_receive(&append_frame, 2000)
         .await
@@ -323,7 +323,7 @@ async fn should_keep_notice_subscriptions_independent_from_stream_reads_ws() {
     // Create stream session
     let stream_write_route = "stream://test/stream/data/write";
     let stream_read_route = "stream://test/stream/data";
-    let begin_frame = build_stream_begin(stream_write_route, 0);
+    let begin_frame = build_stream_begin(stream_write_route);
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -331,7 +331,7 @@ async fn should_keep_notice_subscriptions_independent_from_stream_reads_ws() {
     let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
 
-    let append_frame = build_stream_append(session_id, b"record");
+    let append_frame = build_stream_append(session_id, 0, b"record");
     let append_response = stream_client
         .send_and_receive(&append_frame, 2000)
         .await
@@ -402,7 +402,7 @@ async fn should_allow_rpc_requests_alongside_stream_appends_tcp() {
         .expect("rpc request");
 
     // Create stream session
-    let begin_frame = build_stream_begin("stream://test/stream/results/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/results/write");
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -410,7 +410,7 @@ async fn should_allow_rpc_requests_alongside_stream_appends_tcp() {
     let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
 
-    let append_frame = build_stream_append(session_id, b"result-123");
+    let append_frame = build_stream_append(session_id, 0, b"result-123");
     let append_response = stream_client
         .send_and_receive(&append_frame, 2000)
         .await
@@ -474,7 +474,7 @@ async fn should_allow_rpc_requests_alongside_stream_appends_ws() {
         .expect("rpc request");
 
     // Create stream session
-    let begin_frame = build_stream_begin("stream://test/stream/results/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/results/write");
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -482,7 +482,7 @@ async fn should_allow_rpc_requests_alongside_stream_appends_ws() {
     let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
 
-    let append_frame = build_stream_append(session_id, b"result-123");
+    let append_frame = build_stream_append(session_id, 0, b"result-123");
     let append_response = stream_client
         .send_and_receive(&append_frame, 2000)
         .await
@@ -525,7 +525,7 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_tcp() {
 
     // Act
     // Create stream session first
-    let begin_frame = build_stream_begin("stream://test/stream/audit/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/audit/write");
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -550,7 +550,7 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_tcp() {
         .expect("rpc response 1 send");
     let _ = rpc_worker.recv_frame(2000).await;
     let rpc1_response = rpc1_response_handle.await.expect("join").expect("rpc 1");
-    let append1_frame = build_stream_append(session_id, b"config-requested");
+    let append1_frame = build_stream_append(session_id, 0, b"config-requested");
     let append1_response = stream_client
         .send_and_receive(&append1_frame, 2000)
         .await
@@ -576,7 +576,7 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_tcp() {
         .expect("rpc response 2 send");
     let _ = rpc_worker.recv_frame(2000).await;
     let rpc2_response = rpc2_response_handle.await.expect("join").expect("rpc 2");
-    let append2_frame = build_stream_append(session_id, b"config-updated");
+    let append2_frame = build_stream_append(session_id, 1, b"config-updated");
     let append2_response = stream_client
         .send_and_receive(&append2_frame, 2000)
         .await
@@ -617,7 +617,7 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_ws() {
 
     // Act
     // Create stream session first
-    let begin_frame = build_stream_begin("stream://test/stream/audit/write", 0);
+    let begin_frame = build_stream_begin("stream://test/stream/audit/write");
     let begin_response = stream_client
         .send_and_receive(&begin_frame, 2000)
         .await
@@ -642,7 +642,7 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_ws() {
         .expect("rpc response 1 send");
     let _ = rpc_worker.recv_frame(2000).await;
     let rpc1_response = rpc1_response_handle.await.expect("join").expect("rpc 1");
-    let append1_frame = build_stream_append(session_id, b"config-requested");
+    let append1_frame = build_stream_append(session_id, 0, b"config-requested");
     let append1_response = stream_client
         .send_and_receive(&append1_frame, 2000)
         .await
@@ -668,7 +668,7 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_ws() {
         .expect("rpc response 2 send");
     let _ = rpc_worker.recv_frame(2000).await;
     let rpc2_response = rpc2_response_handle.await.expect("join").expect("rpc 2");
-    let append2_frame = build_stream_append(session_id, b"config-updated");
+    let append2_frame = build_stream_append(session_id, 1, b"config-updated");
     let append2_response = stream_client
         .send_and_receive(&append2_frame, 2000)
         .await

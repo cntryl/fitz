@@ -23,7 +23,7 @@
 //! - **Durable committed events**: committed events and offsets survive restart
 //! - **Ephemeral append sessions**: one active append session per resource,
 //!   lost on disconnect cleanup or broker restart
-//! - **Optimistic concurrency**: caller provides `expected_offset` for conflict detection
+//! - **Optimistic concurrency**: caller provides `expected_offset` on each append for conflict detection
 //! - **Client-managed resume**: `ReadCursor` is response metadata only, not a durable broker cursor
 //! - **Watermark-gated reads**: area and realm reads stop at committed watermarks
 //!

@@ -74,12 +74,8 @@ fn direct_request(
         .expect("stream response")
 }
 
-fn direct_begin_stream(
-    context: &DirectStreamBenchContext,
-    route: &str,
-    expected_offset: u64,
-) -> u64 {
-    let begin_frame = build_stream_begin(route, expected_offset);
+fn direct_begin_stream(context: &DirectStreamBenchContext, route: &str) -> u64 {
+    let begin_frame = build_stream_begin(route);
     let (msg_type, payload) = extract_single_tlv_field(&begin_frame);
     let response = direct_request(context, route, msg_type, payload);
     parse_stream_session_id(response.as_ref()).expect("stream session id")
@@ -91,11 +87,11 @@ fn direct_seed_stream_route(
     event_count: usize,
     body: &'static [u8],
 ) {
-    let session_id = direct_begin_stream(context, route, 0);
-    let append_frame = build_stream_append(session_id, body);
-    let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
-    for _ in 0..event_count {
-        let _ = direct_request(context, route, append_msg_type, append_payload.clone());
+    let session_id = direct_begin_stream(context, route);
+    for expected_offset in 0..event_count as u64 {
+        let append_frame = build_stream_append(session_id, expected_offset, body);
+        let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+        let _ = direct_request(context, route, append_msg_type, append_payload);
     }
 
     let commit_frame = build_stream_commit(session_id, STREAM_SYNC_COMMIT_MODE);
@@ -127,14 +123,14 @@ async fn tcp_seed_stream_route(
     body: &'static [u8],
 ) {
     let begin_response = client
-        .request(&build_stream_begin(route, 0), 2000)
+        .request(&build_stream_begin(route), 2000)
         .await
         .expect("begin response");
     let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
-    let append_frame = build_stream_append(session_id, body);
 
-    for _ in 0..event_count {
+    for expected_offset in 0..event_count as u64 {
+        let append_frame = build_stream_append(session_id, expected_offset, body);
         let _ = client
             .request(&append_frame, 2000)
             .await
@@ -155,14 +151,14 @@ async fn ws_seed_stream_route(
     body: &'static [u8],
 ) {
     let begin_response = client
-        .request(&build_stream_begin(route, 0), 2000)
+        .request(&build_stream_begin(route), 2000)
         .await
         .expect("begin response");
     let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
-    let append_frame = build_stream_append(session_id, body);
 
-    for _ in 0..event_count {
+    for expected_offset in 0..event_count as u64 {
+        let append_frame = build_stream_append(session_id, expected_offset, body);
         let _ = client
             .request(&append_frame, 2000)
             .await
@@ -190,7 +186,7 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
     router.register_domain_pattern("stream", sink as Arc<dyn MailboxSink>);
     let (source, inbox) = register_session_queue_sink(&router, family, 1);
 
-    let begin_frame = build_stream_begin(route, 0);
+    let begin_frame = build_stream_begin(route);
     let (begin_msg_type, begin_payload) = extract_single_tlv_field(&begin_frame);
     route_frame(
         router.as_ref(),
@@ -213,7 +209,7 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
     )
     .expect("session_id");
 
-    let append_frame = build_stream_append(session_id, Bytes::from_static(b"event").as_ref());
+    let append_frame = build_stream_append(session_id, 0, Bytes::from_static(b"event").as_ref());
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
 
     let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
@@ -310,7 +306,7 @@ fn should_complete_tcp_append(ctx: &mut StressContext) {
     ctx.tag("batch_size", "single_append");
 
     let route = "stream://tier4/stream/tcp/append";
-    let begin_frame = build_stream_begin(route, 0);
+    let begin_frame = build_stream_begin(route);
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -323,7 +319,7 @@ fn should_complete_tcp_append(ctx: &mut StressContext) {
         .expect("begin response");
     let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
-    let append_frame = build_stream_append(session_id, b"event");
+    let append_frame = build_stream_append(session_id, 0, b"event");
 
     let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = runtime
@@ -464,7 +460,7 @@ fn should_complete_ws_append(ctx: &mut StressContext) {
     ctx.tag("batch_size", "single_append");
 
     let route = "stream://tier4/stream/ws/append";
-    let begin_frame = build_stream_begin(route, 0);
+    let begin_frame = build_stream_begin(route);
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -480,7 +476,7 @@ fn should_complete_ws_append(ctx: &mut StressContext) {
         .expect("begin response");
     let (_msg_type, _status, begin_data) = parse_stream_response(&begin_response);
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
-    let append_frame = build_stream_append(session_id, b"event");
+    let append_frame = build_stream_append(session_id, 0, b"event");
 
     let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
         let _ = runtime
@@ -631,7 +627,7 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
     ctx.tag("client_count", "10");
 
     let begin_frames: Vec<Vec<u8>> = (0..10)
-        .map(|index| build_stream_begin(&format!("stream://tier4/stream/multi-{index}/append"), 0))
+        .map(|index| build_stream_begin(&format!("stream://tier4/stream/multi-{index}/append")))
         .collect();
 
     let runtime = shared_bench_runtime();
@@ -657,7 +653,7 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
                 let response = c.request(&begin, 2000).await.expect("begin");
                 let (_msg_type, _status, data) = parse_stream_response(&response);
                 let session_id = parse_stream_session_id(&data).expect("session_id");
-                build_stream_append(session_id, b"event")
+                build_stream_append(session_id, 0, b"event")
             }
         }),
     ));

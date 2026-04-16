@@ -18,16 +18,13 @@ use super::store::{CommitRecordsParams, EventPayload, StreamStore};
 struct ActiveAppendSession {
     stream_session_id: u64,
     owner_session_id: u64,
-    expected_offset: u64,
+    expected_offset: Option<u64>,
     staged_events: Vec<EventPayload>,
     total_bytes: usize,
     ingest_metadata: Option<IngestMetadata>,
 }
 
 impl ActiveAppendSession {
-    fn next_assigned_offset(&self) -> u64 {
-        self.expected_offset + self.staged_events.len() as u64
-    }
 }
 
 /// Warm in-memory append-session state for a single resource stream.
@@ -98,20 +95,16 @@ impl StreamActor {
         &mut self,
         owner_session_id: u64,
         stream_session_id: u64,
-        expected_offset: u64,
         ingest_metadata: Option<IngestMetadata>,
     ) -> Result<u64, String> {
         if self.active_session.is_some() {
             return Err("session already active".to_string());
         }
-        if expected_offset != self.next_resource_offset {
-            return Err("concurrency conflict".to_string());
-        }
 
         self.active_session = Some(ActiveAppendSession {
             stream_session_id,
             owner_session_id,
-            expected_offset,
+            expected_offset: None,
             staged_events: Vec::new(),
             total_bytes: 0,
             ingest_metadata,
@@ -122,6 +115,7 @@ impl StreamActor {
     pub fn append_to_session(
         &mut self,
         stream_session_id: u64,
+        expected_offset: u64,
         body: Bytes,
         metadata: Option<Bytes>,
     ) -> Result<u64, String> {
@@ -130,6 +124,24 @@ impl StreamActor {
             .as_mut()
             .filter(|session| session.stream_session_id == stream_session_id)
             .ok_or_else(|| "session not found".to_string())?;
+
+        let assigned_offset = match session.expected_offset {
+            Some(base_expected_offset) => {
+                let next_expected_offset =
+                    base_expected_offset + session.staged_events.len() as u64;
+                if expected_offset != next_expected_offset {
+                    return Err("concurrency conflict".to_string());
+                }
+                next_expected_offset
+            }
+            None => {
+                if expected_offset != self.next_resource_offset {
+                    return Err("concurrency conflict".to_string());
+                }
+                session.expected_offset = Some(expected_offset);
+                expected_offset
+            }
+        };
 
         let event_size = body.len() + metadata.as_ref().map(|m| m.len()).unwrap_or(0);
         if event_size > MAX_EVENT_SIZE {
@@ -143,7 +155,6 @@ impl StreamActor {
             return Err("batch too large".to_string());
         }
 
-        let assigned_offset = session.next_assigned_offset();
         session.total_bytes += event_size;
         session.staged_events.push(EventPayload { body, metadata });
         Ok(assigned_offset)
@@ -169,12 +180,16 @@ impl StreamActor {
             return Err("empty batch".to_string());
         }
 
+        let expected_offset = session
+            .expected_offset
+            .ok_or_else(|| "session not initialized".to_string())?;
+
         let response = match self.store.commit_records(CommitRecordsParams {
             family: self.family_id.as_u64(),
             realm: &self.realm,
             area: &self.area,
             resource: &self.resource,
-            expected_resource_next_offset: session.expected_offset,
+            expected_resource_next_offset: expected_offset,
             events: &session.staged_events,
             ingest_metadata: session.ingest_metadata.clone(),
             mode,
@@ -287,28 +302,20 @@ impl Actor for StreamActor {
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         let response = match msg {
-            StreamMessage::Begin {
-                expected_offset,
-                ingest_metadata,
-                ..
-            } => {
+            StreamMessage::Begin { ingest_metadata, .. } => {
                 let stream_session_id = self.next_local_session_id;
                 self.next_local_session_id = self.next_local_session_id.saturating_add(1);
-                match self.begin_append_session(
-                    0,
-                    stream_session_id,
-                    expected_offset,
-                    ingest_metadata,
-                ) {
+                match self.begin_append_session(0, stream_session_id, ingest_metadata) {
                     Ok(session_id) => StreamResponse::BeginOk(BeginSessionResponse { session_id }),
                     Err(error) => StreamResponse::Error(Self::map_error(&error)),
                 }
             }
             StreamMessage::Append {
                 session_id,
+                expected_offset,
                 body,
                 metadata,
-            } => match self.append_to_session(session_id, body, metadata) {
+            } => match self.append_to_session(session_id, expected_offset, body, metadata) {
                 Ok(_) => StreamResponse::AppendOk(AppendResponse { success: true }),
                 Err(error) => StreamResponse::Error(Self::map_error(&error)),
             },

@@ -148,18 +148,19 @@ pub struct IngestMetadata {
 #[derive(Debug, Clone)]
 pub enum StreamMessage {
     /// Begin streaming append session
-    /// Client provides: resource path, expected_offset, optional metadata
+    /// Client provides: resource path, optional metadata
     /// NO client-supplied area/realm offsets
     Begin {
         family_id: RouteFamily,
         route: Route,
-        expected_offset: u64,
         ingest_metadata: Option<IngestMetadata>,
     },
 
     /// Append event to active session
+    /// Client provides: session_id, expected_offset, body, optional metadata
     Append {
         session_id: u64,
+        expected_offset: u64,
         body: Bytes,
         metadata: Option<Bytes>,
     },

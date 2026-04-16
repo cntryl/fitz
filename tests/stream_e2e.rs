@@ -280,7 +280,7 @@ async fn commit_stream_record_with_offset<C>(
     C: StreamConnector,
 {
     let begin_response = client
-        .send_and_receive(&build_stream_begin(route, expected_offset), 2000)
+        .send_and_receive(&build_stream_begin(route), 2000)
         .await
         .expect("begin stream");
     let (_msg_type, status, data) = parse_stream_response(&begin_response);
@@ -288,7 +288,7 @@ async fn commit_stream_record_with_offset<C>(
     let session_id = parse_stream_session_id(&data).expect("stream session id");
 
     let append_response = client
-        .send_and_receive(&build_stream_append(session_id, body), 2000)
+        .send_and_receive(&build_stream_append(session_id, expected_offset, body), 2000)
         .await
         .expect("append stream");
     let (_msg_type, status, _data) = parse_stream_response(&append_response);
@@ -489,7 +489,7 @@ where
     commit_stream_record_with_offset(&mut client1, route, 0, b"client-1-event").await;
 
     let begin_response = client2
-        .send_and_receive(&build_stream_begin(route, 0), 2000)
+        .send_and_receive(&build_stream_begin(route), 2000)
         .await
         .expect("begin stale stream write");
     let error = parse_stream_error_message(&begin_response);
@@ -517,10 +517,18 @@ where
 
     // Act
     let begin_response = client
-        .send_and_receive(&build_stream_begin(route, 2), 2000)
+        .send_and_receive(&build_stream_begin(route), 2000)
         .await
         .expect("begin future-offset stream write");
-    let error = parse_stream_error_message(&begin_response);
+    let (_msg_type, status, data) = parse_stream_response(&begin_response);
+    assert_eq!(status, 0, "Expected success for stream begin");
+    let session_id = parse_stream_session_id(&data).expect("stream session id");
+
+    let append_response = client
+        .send_and_receive(&build_stream_append(session_id, 2, b"gap"), 2000)
+        .await
+        .expect("append future-offset stream write");
+    let error = parse_stream_error_message(&append_response);
 
     // Assert
     assert!(error.contains("concurrency conflict"));
@@ -535,7 +543,7 @@ where
 
     // Act
     let response = client
-        .send_and_receive(&build_stream_append(999, b"ghost"), 2000)
+        .send_and_receive(&build_stream_append(999, 0, b"ghost"), 2000)
         .await
         .expect("append unknown stream session");
     let error = parse_stream_error_message(&response);
@@ -588,7 +596,7 @@ where
     let mut client = C::connect(server).await.expect("connect");
     let route = "stream://test/errors/empty-batch";
     let begin_response = client
-        .send_and_receive(&build_stream_begin(route, 0), 2000)
+        .send_and_receive(&build_stream_begin(route), 2000)
         .await
         .expect("begin empty-batch stream session");
     let (_msg_type, status, data) = parse_stream_response(&begin_response);
@@ -680,7 +688,7 @@ where
     let mut client = C::connect(server).await.expect("connect");
     let route = "stream://test/payloads/empty-body";
     let begin_response = client
-        .send_and_receive(&build_stream_begin(route, 0), 2000)
+        .send_and_receive(&build_stream_begin(route), 2000)
         .await
         .expect("begin empty-body stream session");
     let (_msg_type, status, data) = parse_stream_response(&begin_response);
@@ -688,7 +696,7 @@ where
     let session_id = parse_stream_session_id(&data).expect("stream session id");
 
     let append_response = client
-        .send_and_receive(&build_stream_append(session_id, b""), 2000)
+        .send_and_receive(&build_stream_append(session_id, 0, b""), 2000)
         .await
         .expect("append empty-body stream event");
     let (_msg_type, status, _data) = parse_stream_response(&append_response);
@@ -721,7 +729,7 @@ where
     let mut client = C::connect(server).await.expect("connect");
     let route = "stream://test/payloads/metadata-only";
     let begin_response = client
-        .send_and_receive(&build_stream_begin(route, 0), 2000)
+        .send_and_receive(&build_stream_begin(route), 2000)
         .await
         .expect("begin metadata-only stream session");
     let (_msg_type, status, data) = parse_stream_response(&begin_response);
@@ -730,7 +738,7 @@ where
 
     let append_response = client
         .send_and_receive(
-            &build_stream_append_with_metadata(session_id, b"", Some(b"meta")),
+            &build_stream_append_with_metadata(session_id, 0, b"", Some(b"meta")),
             2000,
         )
         .await
@@ -1043,7 +1051,7 @@ where
     let mut client = C::connect(server).await.expect("connect");
     let route = "stream://test/events/rich";
     let begin_response = client
-        .send_and_receive(&build_stream_begin(route, 0), 2000)
+        .send_and_receive(&build_stream_begin(route), 2000)
         .await
         .expect("begin stream session");
     let (_msg_type, status, data) = parse_stream_response(&begin_response);
@@ -1052,7 +1060,7 @@ where
 
     let append_response = client
         .send_and_receive(
-            &build_stream_append_with_metadata(session_id, b"payload", Some(b"meta")),
+            &build_stream_append_with_metadata(session_id, 0, b"payload", Some(b"meta")),
             2000,
         )
         .await
@@ -1392,7 +1400,7 @@ where
     let session_id = {
         let mut client = C::connect(server).await.expect("connect staging client");
         let begin_response = client
-            .send_and_receive(&build_stream_begin(route, 0), 2000)
+            .send_and_receive(&build_stream_begin(route), 2000)
             .await
             .expect("begin staging stream session");
         let (_msg_type, status, data) = parse_stream_response(&begin_response);
@@ -1400,7 +1408,7 @@ where
         let session_id = parse_stream_session_id(&data).expect("stream session id");
 
         let append_response = client
-            .send_and_receive(&build_stream_append(session_id, b"staged"), 2000)
+            .send_and_receive(&build_stream_append(session_id, 0, b"staged"), 2000)
             .await
             .expect("append staged stream event");
         let (_msg_type, status, _data) = parse_stream_response(&append_response);
@@ -1447,9 +1455,9 @@ async fn should_rebuild_stream_admin_from_durable_metadata_after_restart() {
         .expect("open local stream engine");
     let store = Arc::new(StreamStore::new(engine.clone()));
     let mut actor = make_stream_actor(store.clone(), "test", "events", "admin");
-    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor.begin_append_session(10, 100, None).unwrap();
     actor
-        .append_to_session(100, Bytes::from_static(b"persisted"), None)
+        .append_to_session(100, 0, Bytes::from_static(b"persisted"), None)
         .unwrap();
     actor.commit_session(100, StreamWriteMode::Sync).unwrap();
     drop(actor);
@@ -1484,9 +1492,9 @@ async fn should_preserve_monotonic_stream_resource_offsets_after_restart() {
         .expect("open local stream engine");
     let store = Arc::new(StreamStore::new(engine.clone()));
     let mut actor = make_stream_actor(store.clone(), "test", "events", "orders");
-    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor.begin_append_session(10, 100, None).unwrap();
     actor
-        .append_to_session(100, Bytes::from_static(b"one"), None)
+        .append_to_session(100, 0, Bytes::from_static(b"one"), None)
         .unwrap();
     actor.commit_session(100, StreamWriteMode::Sync).unwrap();
     drop(actor);
@@ -1499,9 +1507,9 @@ async fn should_preserve_monotonic_stream_resource_offsets_after_restart() {
         .expect("reopen local stream engine");
     let store = Arc::new(StreamStore::new(engine));
     let mut actor = make_stream_actor(store, "test", "events", "orders");
-    actor.begin_append_session(10, 101, 1, None).unwrap();
+    actor.begin_append_session(10, 101, None).unwrap();
     actor
-        .append_to_session(101, Bytes::from_static(b"two"), None)
+        .append_to_session(101, 1, Bytes::from_static(b"two"), None)
         .unwrap();
     actor.commit_session(101, StreamWriteMode::Sync).unwrap();
 
@@ -1529,14 +1537,14 @@ async fn should_preserve_monotonic_stream_area_offsets_after_restart() {
     let store = Arc::new(StreamStore::new(engine.clone()));
     let mut orders = make_stream_actor(store.clone(), "test", "events", "orders");
     let mut audits = make_stream_actor(store.clone(), "test", "events", "audits");
-    orders.begin_append_session(10, 100, 0, None).unwrap();
+    orders.begin_append_session(10, 100, None).unwrap();
     orders
-        .append_to_session(100, Bytes::from_static(b"one"), None)
+        .append_to_session(100, 0, Bytes::from_static(b"one"), None)
         .unwrap();
     orders.commit_session(100, StreamWriteMode::Sync).unwrap();
-    audits.begin_append_session(20, 200, 0, None).unwrap();
+    audits.begin_append_session(20, 200, None).unwrap();
     audits
-        .append_to_session(200, Bytes::from_static(b"two"), None)
+        .append_to_session(200, 0, Bytes::from_static(b"two"), None)
         .unwrap();
     audits.commit_session(200, StreamWriteMode::Sync).unwrap();
     drop(orders);
@@ -1550,9 +1558,9 @@ async fn should_preserve_monotonic_stream_area_offsets_after_restart() {
         .expect("reopen local stream engine");
     let store = Arc::new(StreamStore::new(engine));
     let mut orders = make_stream_actor(store.clone(), "test", "events", "orders");
-    orders.begin_append_session(10, 101, 1, None).unwrap();
+    orders.begin_append_session(10, 101, None).unwrap();
     orders
-        .append_to_session(101, Bytes::from_static(b"three"), None)
+        .append_to_session(101, 1, Bytes::from_static(b"three"), None)
         .unwrap();
     orders.commit_session(101, StreamWriteMode::Sync).unwrap();
 
@@ -1578,14 +1586,14 @@ async fn should_preserve_monotonic_stream_realm_offsets_after_restart() {
     let store = Arc::new(StreamStore::new(engine.clone()));
     let mut area_a = make_stream_actor(store.clone(), "test", "area-a", "orders");
     let mut area_b = make_stream_actor(store.clone(), "test", "area-b", "orders");
-    area_a.begin_append_session(10, 100, 0, None).unwrap();
+    area_a.begin_append_session(10, 100, None).unwrap();
     area_a
-        .append_to_session(100, Bytes::from_static(b"one"), None)
+        .append_to_session(100, 0, Bytes::from_static(b"one"), None)
         .unwrap();
     area_a.commit_session(100, StreamWriteMode::Sync).unwrap();
-    area_b.begin_append_session(20, 200, 0, None).unwrap();
+    area_b.begin_append_session(20, 200, None).unwrap();
     area_b
-        .append_to_session(200, Bytes::from_static(b"two"), None)
+        .append_to_session(200, 0, Bytes::from_static(b"two"), None)
         .unwrap();
     area_b.commit_session(200, StreamWriteMode::Sync).unwrap();
     drop(area_a);
@@ -1599,9 +1607,9 @@ async fn should_preserve_monotonic_stream_realm_offsets_after_restart() {
         .expect("reopen local stream engine");
     let store = Arc::new(StreamStore::new(engine));
     let mut area_a = make_stream_actor(store.clone(), "test", "area-a", "orders");
-    area_a.begin_append_session(10, 101, 1, None).unwrap();
+    area_a.begin_append_session(10, 101, None).unwrap();
     area_a
-        .append_to_session(101, Bytes::from_static(b"three"), None)
+        .append_to_session(101, 1, Bytes::from_static(b"three"), None)
         .unwrap();
     area_a.commit_session(101, StreamWriteMode::Sync).unwrap();
 
@@ -1626,9 +1634,9 @@ async fn should_drop_uncommitted_stream_batch_on_restart() {
         .expect("open local stream engine");
     let store = Arc::new(StreamStore::new(engine.clone()));
     let mut actor = make_stream_actor(store.clone(), "test", "events", "restart-loss");
-    actor.begin_append_session(10, 100, 0, None).unwrap();
+    actor.begin_append_session(10, 100, None).unwrap();
     actor
-        .append_to_session(100, Bytes::from_static(b"staged"), None)
+        .append_to_session(100, 0, Bytes::from_static(b"staged"), None)
         .unwrap();
     drop(actor);
     drop(store);
@@ -1640,9 +1648,9 @@ async fn should_drop_uncommitted_stream_batch_on_restart() {
         .expect("reopen local stream engine");
     let store = Arc::new(StreamStore::new(engine));
     let mut actor = make_stream_actor(store, "test", "events", "restart-loss");
-    actor.begin_append_session(10, 101, 0, None).unwrap();
+    actor.begin_append_session(10, 101, None).unwrap();
     actor
-        .append_to_session(101, Bytes::from_static(b"committed"), None)
+        .append_to_session(101, 0, Bytes::from_static(b"committed"), None)
         .unwrap();
     actor.commit_session(101, StreamWriteMode::Sync).unwrap();
 
