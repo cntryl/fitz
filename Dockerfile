@@ -1,7 +1,15 @@
 # syntax=docker/dockerfile:1.4
 
-# Stage 1: Build UI (Askr + Vite)
+# Stage 1: Build UI (Askr + Vite+)
 FROM node:slim as ui-builder
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends bash curl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://vite.plus | bash
+
+ENV PATH="/root/.vite-plus/bin:${PATH}"
 
 WORKDIR /ui
 
@@ -9,13 +17,13 @@ WORKDIR /ui
 COPY ui/package.json ui/package-lock.json* ./
 
 # Install dependencies
-RUN npm install
+RUN vp install
 
 # Copy UI source
 COPY ui/ ./
 
 # Build production UI
-RUN npm run build
+RUN vp build
 
 # Stage 2: Build Rust binary
 FROM rust:slim as builder

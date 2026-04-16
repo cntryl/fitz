@@ -57,18 +57,14 @@ export default function AdminHome() {
           <div class="panel-copy">
             <h1>Welcome, {session.value.username}</h1>
             <p>
-              The Fitz admin SPA is now mounted at the root path and ready for
-              feature work. This baseline confirms the shell, auth flow, and API
-              wiring are in place.
+              The Fitz admin SPA is now mounted at the root path and ready for feature work. This
+              baseline confirms the shell, auth flow, and API wiring are in place.
             </p>
           </div>
 
           <div class="stats-callout">
             <Gauge size={18} />
-            <span>
-              Live broker inspection stays behind the existing authenticated
-              admin API.
-            </span>
+            <span>Live broker inspection stays behind the existing authenticated admin API.</span>
           </div>
 
           <div class="admin-actions">

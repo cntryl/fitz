@@ -1,3 +1,5 @@
+import "@askrjs/askr/jsx-runtime";
+
 export interface IconProps {
   size?: number | string;
   strokeWidth?: number;

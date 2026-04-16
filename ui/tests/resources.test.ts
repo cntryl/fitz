@@ -1,9 +1,5 @@
-import { describe, expect, it } from "vitest";
-import {
-  createSession,
-  deleteSession,
-  fetchSession,
-} from "../src/resources/session";
+import { describe, expect, it } from "vite-plus/test";
+import { createSession, deleteSession, fetchSession } from "../src/resources/session";
 
 describe("Session resources", () => {
   it("exports the session fetcher", () => {

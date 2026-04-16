@@ -1,22 +1,22 @@
 {
-  "name": "fitz-admin-ui",
-  "version": "0.1.0",
+  "name": "fitz-ui",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "test": "vitest",
+    "dev": "vp dev",
+    "build": "vp build",
+    "preview": "vp preview",
+    "test": "vp test",
     "type-check": "tsc --noEmit",
-    "lint": "eslint src tests",
-    "lint:fix": "eslint src tests --fix",
-    "fmt": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx}\" \"*.md\"",
-    "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated.ts"
+    "lint": "vp lint src tests",
+    "lint:fix": "vp lint src tests --fix",
+    "fmt": "vp fmt src tests README.md --write",
+    "gen:adapters": "vp dlx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated.ts"
   },
   "dependencies": {
-    "@askrjs/askr": "^0.0.28",
+    "@askrjs/askr": "github:askrjs/askr#main",
     "@askrjs/askr-themes": "file:./vendor/askr-themes",
     "@askrjs/askr-ui": "file:./vendor/askr-ui",
+    "@askrjs/askr-vite": "github:askrjs/askr-vite#main",
     "@askrjs/icons-lucide": "file:./vendor/icons-lucide",
     "@fgrzl/fetch": "^1.4.2"
   },
@@ -31,7 +31,13 @@
     "jsdom": "^29.0.1",
     "prettier": "^3.8.1",
     "typescript": "^5.9.3",
-    "vite": "^8.0.1",
-    "vitest": "^4.1.0"
-  }
+    "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+    "vite-plus": "latest",
+    "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
+  },
+  "overrides": {
+    "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+    "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
+  },
+  "packageManager": "npm@11.12.1"
 }

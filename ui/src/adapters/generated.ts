@@ -129,10 +129,7 @@ export function createAdapter(client: FetchClient): {
    * @param options - Request options (signal, timeout)
    * @returns Promise resolving to FetchResponse<any>
    */
-  getMetrics: (options?: {
-    signal?: AbortSignal;
-    timeout?: number;
-  }) => Promise<FetchResponse<any>>;
+  getMetrics: (options?: { signal?: AbortSignal; timeout?: number }) => Promise<FetchResponse<any>>;
   /**
    * Readiness probe
    *

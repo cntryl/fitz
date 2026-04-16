@@ -14,14 +14,10 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "jsxImportSource": "@askrjs/askr",
-    "types": ["vitest/globals"],
+    "types": ["vite-plus/test/globals"],
     "paths": {
-      "@askrjs/askr/jsx-runtime": [
-        "./node_modules/@askrjs/askr/dist/jsx/jsx-runtime.d.ts"
-      ],
-      "@askrjs/askr/jsx-dev-runtime": [
-        "./node_modules/@askrjs/askr/dist/jsx/jsx-dev-runtime.d.ts"
-      ]
+      "@askrjs/askr/jsx-runtime": ["./node_modules/@askrjs/askr/dist/jsx/jsx-runtime.d.ts"],
+      "@askrjs/askr/jsx-dev-runtime": ["./node_modules/@askrjs/askr/dist/jsx/jsx-dev-runtime.d.ts"]
     }
   },
   "include": ["src", "tests"],

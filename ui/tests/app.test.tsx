@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import App from "../src/app";
 import AdminHome from "../src/pages/admin-home";
 import AdminLogin from "../src/pages/admin-login";

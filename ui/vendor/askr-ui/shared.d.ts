@@ -1,3 +1,5 @@
+import "@askrjs/askr/jsx-runtime";
+
 export type Children = unknown;
 
 export interface BaseProps {

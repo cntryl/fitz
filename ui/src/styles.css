@@ -19,16 +19,8 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(
-      circle at top left,
-      rgba(12, 122, 101, 0.15),
-      transparent 24%
-    ),
-    radial-gradient(
-      circle at top right,
-      rgba(52, 96, 184, 0.1),
-      transparent 22%
-    ),
+    radial-gradient(circle at top left, rgba(12, 122, 101, 0.15), transparent 24%),
+    radial-gradient(circle at top right, rgba(52, 96, 184, 0.1), transparent 22%),
     linear-gradient(180deg, var(--fitz-warm) 0%, #f8fafc 38%, #eef3f8 100%);
   color: var(--fitz-ink);
   font-family: "Segoe UI Variable Display", "Inter", "Segoe UI", sans-serif;

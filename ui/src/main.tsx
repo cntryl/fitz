@@ -5,7 +5,7 @@ import { getRoutes } from "@askrjs/askr/router";
 import "./routes";
 
 // Create and start the SPA
-createSPA({
+void createSPA({
   root: document.getElementById("app")!,
   routes: getRoutes(),
 });

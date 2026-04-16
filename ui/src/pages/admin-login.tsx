@@ -53,9 +53,7 @@ export default function AdminLogin() {
           <Badge class="shell-badge">Root SPA</Badge>
           <p class="eyebrow">Admin Access</p>
           <h1>Sign in to Fitz Admin</h1>
-          <p>
-            Use your admin credentials to access the REST-backed management UI.
-          </p>
+          <p>Use your admin credentials to access the REST-backed management UI.</p>
         </div>
 
         <div class="auth-points">
@@ -80,9 +78,7 @@ export default function AdminLogin() {
                 name="username"
                 autocomplete="username"
                 value={username()}
-                onInput={(event: Event) =>
-                  username.set((event.target as HTMLInputElement).value)
-                }
+                onInput={(event: Event) => username.set((event.target as HTMLInputElement).value)}
                 placeholder="admin"
               />
             </FieldControl>
@@ -99,9 +95,7 @@ export default function AdminLogin() {
                 name="password"
                 autocomplete="current-password"
                 value={password()}
-                onInput={(event: Event) =>
-                  password.set((event.target as HTMLInputElement).value)
-                }
+                onInput={(event: Event) => password.set((event.target as HTMLInputElement).value)}
                 placeholder="Enter your password"
               />
             </FieldControl>
@@ -112,9 +106,7 @@ export default function AdminLogin() {
               {error()}
             </FieldError>
           ) : null}
-          {session.error ? (
-            <p class="auth-error">Unable to check your current session.</p>
-          ) : null}
+          {session.error ? <p class="auth-error">Unable to check your current session.</p> : null}
 
           <Button type="submit" class="submit-action" aria-busy={submitting()}>
             {submitting() ? "Signing in..." : "Sign in"}

@@ -7,11 +7,11 @@ The `ui/` workspace contains the Askr-based admin SPA for Fitz.
 From `ui/`:
 
 ```bash
-npm install
-npm run dev
+vp install
+vp dev
 ```
 
-This starts the Vite dev server on `http://localhost:5173`.
+This starts the Vite+ dev server on `http://localhost:5173`.
 
 Expected companion services:
 
@@ -21,10 +21,9 @@ Expected companion services:
 ## Build and Verification
 
 ```bash
-npm run build
-npm run type-check
-npm run lint
-npm test -- --run
+vp check
+vp test
+vp build
 ```
 
 Production build output is written to `../public`, which is then served by the Rust HTTP server at `/`.
@@ -43,4 +42,4 @@ The SPA uses the existing admin session endpoints at `/api/v1/session`.
 - `@askrjs/askr-ui` for headless UI primitives
 - `@askrjs/askr-themes` for the default theme baseline
 - `@askrjs/icons-lucide` for icon components
-- Vite + TypeScript + Vitest for build and test tooling
+- Vite+ for build, lint, format, and test tooling

@@ -5,15 +5,7 @@ function mergeStyle(base, style) {
 }
 
 export function Container(props) {
-  const {
-    centered = true,
-    children,
-    fluid = true,
-    maxWidth,
-    padding,
-    style,
-    ...rest
-  } = props;
+  const { centered = true, children, fluid = true, maxWidth, padding, style, ...rest } = props;
 
   const layout = {
     boxSizing: "border-box",

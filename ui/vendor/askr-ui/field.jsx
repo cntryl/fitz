@@ -14,9 +14,7 @@ export function FieldDescription(props) {
 
 export function FieldError(props) {
   const { fieldId, ...rest } = props;
-  return (
-    <div data-slot="field-error" id={`${fieldId}-error`} role="alert" {...rest} />
-  );
+  return <div data-slot="field-error" id={`${fieldId}-error`} role="alert" {...rest} />;
 }
 
 export function FieldControl(props) {
