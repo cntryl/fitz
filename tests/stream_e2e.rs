@@ -492,7 +492,15 @@ where
         .send_and_receive(&build_stream_begin(route), 2000)
         .await
         .expect("begin stale stream write");
-    let error = parse_stream_error_message(&begin_response);
+    let (_msg_type, status, data) = parse_stream_response(&begin_response);
+    assert_eq!(status, 0, "expected success for stream begin");
+    let session_id = parse_stream_session_id(&data).expect("stream session id");
+
+    let append_response = client2
+        .send_and_receive(&build_stream_append(session_id, 0, b"client-2-event"), 2000)
+        .await
+        .expect("append stale stream write");
+    let error = parse_stream_error_message(&append_response);
 
     let read_response = client1
         .send_and_receive(&build_stream_read(route, 0), 2000)

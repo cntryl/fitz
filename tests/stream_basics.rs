@@ -326,9 +326,11 @@ fn should_reject_stale_expected_offset_after_commit() {
         .unwrap();
     actor.commit_session(100, StreamWriteMode::Sync).unwrap();
 
+    actor.begin_append_session(10, 101, None).unwrap();
+
     let error = actor
-        .begin_append_session(10, 101, None)
-        .expect_err("stale expected offset should be rejected");
+        .append_to_session(101, 0, Bytes::from_static(b"event-1"), None)
+        .expect_err("stale expected offset should be rejected at append");
 
     // Assert
     assert_eq!(error, "concurrency conflict");
@@ -341,13 +343,15 @@ fn should_reject_future_expected_offset_given_empty_resource() {
     let mut actor = make_actor_with_store(store, "realm1", "area1", "orders");
 
     // Act
+    actor.begin_append_session(10, 101, None).unwrap();
+
     let error = actor
-        .begin_append_session(10, 101, None)
-        .expect_err("future expected offset should be rejected");
+        .append_to_session(101, 101, Bytes::from_static(b"event"), None)
+        .expect_err("future expected offset should be rejected at append");
 
     // Assert
     assert_eq!(error, "concurrency conflict");
-    assert!(!actor.has_active_session());
+    assert!(actor.has_active_session());
 }
 
 #[test]

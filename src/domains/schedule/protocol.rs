@@ -741,17 +741,17 @@ mod tests {
 /// Schedule errors
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScheduleError {
-    /// Invalid cron expression (3040)
+    /// Invalid cron expression (7002)
     InvalidCron,
-    /// Schedule not found (3041)
+    /// Schedule not found (7001)
     NotFound,
 }
 
 impl ScheduleError {
     pub fn code(&self) -> u16 {
         match self {
-            ScheduleError::InvalidCron => 3040,
-            ScheduleError::NotFound => 3041,
+            ScheduleError::InvalidCron => 7002,
+            ScheduleError::NotFound => 7001,
         }
     }
 }

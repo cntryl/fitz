@@ -5,6 +5,7 @@
 
 use crate::domains::schedule::{ScheduleCreateEntry, ScheduleMessage, ScheduleResponse};
 use crate::protocol::frame_context::FrameContext;
+use crate::protocol::error_codes::schedule as schedule_error_codes;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
@@ -123,11 +124,38 @@ pub fn encode_response_into(enc: &mut PayloadEncoder, response: &ScheduleRespons
         }
         ScheduleResponse::Error(e) => {
             enc.put_u8(1); // error flag
-            enc.put_string(e);
+            if let Some(code) = schedule_error_code_for_message(e) {
+                enc.put_u32(code);
+                enc.put_string(e);
+            } else {
+                enc.put_string(e);
+            }
         }
     }
 
     enc.finish()
+}
+
+fn schedule_error_code_for_message(message: &str) -> Option<u32> {
+    match message {
+        "schedule not found" => Some(schedule_error_codes::ERR_SCHEDULE_NOT_FOUND as u32),
+        "Cron expression must have exactly 5 fields" => {
+            Some(schedule_error_codes::ERR_INVALID_CRON as u32)
+        }
+        "schedule route must be schedule://{realm}/{area}/{resource}/{operation}" => {
+            Some(schedule_error_codes::ERR_INVALID_TARGET as u32)
+        }
+        "schedule route scheme must be schedule" => {
+            Some(schedule_error_codes::ERR_INVALID_TARGET as u32)
+        }
+        "schedule route must not contain wildcards" => {
+            Some(schedule_error_codes::ERR_INVALID_TARGET as u32)
+        }
+        "schedule subscription state is owned by the schedule domain sink" => {
+            Some(schedule_error_codes::ERR_INVALID_TARGET as u32)
+        }
+        _ => None,
+    }
 }
 
 // ===== Helper Parsers =====
@@ -274,6 +302,7 @@ mod tests {
     use super::{encode_notify, encode_response, extract_batch_auth_routes};
     use crate::domains::schedule::ScheduleResponse;
     use crate::protocol::payload_codec::PayloadEncoder;
+    use crate::protocol::error_codes::schedule as schedule_error_codes;
 
     #[test]
     fn should_encode_subscribe_response_with_subscription_id() {
@@ -301,6 +330,18 @@ mod tests {
         assert_eq!(&payload[0..8], &7u64.to_be_bytes());
         assert_eq!(&payload[8..12], &(4u32).to_be_bytes());
         assert_eq!(&payload[12..], b"fire");
+    }
+
+    #[test]
+    fn should_encode_typed_schedule_error_for_known_failure() {
+        // Arrange
+        let payload = encode_response(&ScheduleResponse::Error(
+            "schedule not found".to_string(),
+        ));
+
+        // Assert
+        assert_eq!(payload[0], 1);
+        assert_eq!(&payload[1..5], &(schedule_error_codes::ERR_SCHEDULE_NOT_FOUND as u32).to_be_bytes());
     }
 
     #[test]
