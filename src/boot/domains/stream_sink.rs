@@ -591,6 +591,7 @@ impl StreamDomainSink {
         for (family_id, state) in families.iter_mut() {
             state.remove_session(RouteFamily::new(*family_id), session_id);
         }
+        families.retain(|_, state| !state.is_empty());
         drop(families);
         self.refresh_metrics_gauges();
     }
@@ -736,8 +737,14 @@ impl MailboxSink for StreamDomainSink {
                     ..
                 } => {
                     let mut families = self.families.lock();
-                    if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                    let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
                         state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                        state.is_empty()
+                    } else {
+                        false
+                    };
+                    if remove_family {
+                        families.remove(&family_id.as_u64());
                     }
                     (
                         StreamResponse::Ok {
@@ -830,8 +837,12 @@ impl MailboxSink for StreamDomainSink {
                 match key {
                     Some(key) => match self.get_or_create_actor(&key) {
                         Ok(actor) => {
-                            let outcome =
-                                actor.lock().append_to_session(session_id, expected_offset, body, metadata);
+                            let outcome = actor.lock().append_to_session(
+                                session_id,
+                                expected_offset,
+                                body,
+                                metadata,
+                            );
                             match outcome {
                                 Ok(assigned_offset) => {
                                     let mut encoder = PayloadEncoder::new();

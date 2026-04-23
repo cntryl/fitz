@@ -212,20 +212,23 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
     let append_frame = build_stream_append(session_id, 0, Bytes::from_static(b"event").as_ref());
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        route_frame(
-            router.as_ref(),
-            &source,
-            route,
-            1,
-            ChannelId::Pub,
-            append_msg_type,
-            append_payload.clone(),
-            family,
-        )
-        .expect("stream append");
-        let _ = inbox.drain();
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            route_frame(
+                router.as_ref(),
+                &source,
+                route,
+                1,
+                ChannelId::Pub,
+                append_msg_type,
+                append_payload.clone(),
+                family,
+            )
+            .expect("stream append");
+            let _ = inbox.drain();
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -253,9 +256,12 @@ fn should_complete_direct_area_wildcard_read(ctx: &mut StressContext) {
     let read_route = "stream://tier4/stream-area/*";
     let (read_msg_type, read_payload) = direct_prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -272,9 +278,12 @@ fn should_complete_direct_resource_read(ctx: &mut StressContext) {
 
     let (read_msg_type, read_payload) = direct_prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -292,9 +301,12 @@ fn should_complete_direct_realm_wildcard_read(ctx: &mut StressContext) {
     let read_route = "stream://tier4/*/*";
     let (read_msg_type, read_payload) = direct_prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -321,11 +333,14 @@ fn should_complete_tcp_append(ctx: &mut StressContext) {
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
     let append_frame = build_stream_append(session_id, 0, b"event");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = runtime
-            .block_on(client.request(&append_frame, 2000))
-            .expect("append response");
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = runtime
+                .block_on(client.request(&append_frame, 2000))
+                .expect("append response");
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -354,11 +369,14 @@ fn should_complete_tcp_resource_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("resource read count");
     assert_eq!(count, 100, "unexpected tcp resource read count");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = runtime
-            .block_on(client.request(&read_frame, 2000))
-            .expect("resource read response");
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = runtime
+                .block_on(client.request(&read_frame, 2000))
+                .expect("resource read response");
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -399,11 +417,14 @@ fn should_complete_tcp_area_wildcard_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("area read count");
     assert_eq!(count, 100, "unexpected tcp area read count");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = runtime
-            .block_on(client.request(&read_frame, 2000))
-            .expect("area read response");
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = runtime
+                .block_on(client.request(&read_frame, 2000))
+                .expect("area read response");
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -444,11 +465,14 @@ fn should_complete_tcp_realm_wildcard_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("realm read count");
     assert_eq!(count, 100, "unexpected tcp realm read count");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = runtime
-            .block_on(client.request(&read_frame, 2000))
-            .expect("realm read response");
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = runtime
+                .block_on(client.request(&read_frame, 2000))
+                .expect("realm read response");
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -478,11 +502,14 @@ fn should_complete_ws_append(ctx: &mut StressContext) {
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
     let append_frame = build_stream_append(session_id, 0, b"event");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = runtime
-            .block_on(client.request(&append_frame, 2000))
-            .expect("append response");
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = runtime
+                .block_on(client.request(&append_frame, 2000))
+                .expect("append response");
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -514,11 +541,14 @@ fn should_complete_ws_resource_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("resource read count");
     assert_eq!(count, 100, "unexpected ws resource read count");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = runtime
-            .block_on(client.request(&read_frame, 2000))
-            .expect("resource read response");
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = runtime
+                .block_on(client.request(&read_frame, 2000))
+                .expect("resource read response");
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -562,11 +592,14 @@ fn should_complete_ws_area_wildcard_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("area read count");
     assert_eq!(count, 100, "unexpected ws area read count");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = runtime
-            .block_on(client.request(&read_frame, 2000))
-            .expect("area read response");
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = runtime
+                .block_on(client.request(&read_frame, 2000))
+                .expect("area read response");
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -610,11 +643,14 @@ fn should_complete_ws_realm_wildcard_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("realm read count");
     assert_eq!(count, 100, "unexpected ws realm read count");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = runtime
-            .block_on(client.request(&read_frame, 2000))
-            .expect("realm read response");
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = runtime
+                .block_on(client.request(&read_frame, 2000))
+                .expect("realm read response");
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -658,21 +694,24 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
         }),
     ));
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _results: Vec<_> = runtime.block_on(futures::future::join_all(
-            clients
-                .iter()
-                .zip(append_frames.iter())
-                .map(|(arc, frame)| {
-                    let arc = arc.clone();
-                    let frame = frame.clone();
-                    async move {
-                        let mut c = arc.lock().await;
-                        c.request(&frame, 2000).await.expect("append");
-                    }
-                }),
-        ));
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _results: Vec<_> = runtime.block_on(futures::future::join_all(
+                clients
+                    .iter()
+                    .zip(append_frames.iter())
+                    .map(|(arc, frame)| {
+                        let arc = arc.clone();
+                        let frame = frame.clone();
+                        async move {
+                            let mut c = arc.lock().await;
+                            c.request(&frame, 2000).await.expect("append");
+                        }
+                    }),
+            ));
+        },
+    );
     ctx.set_elements(10 * iterations as u64);
 }
 

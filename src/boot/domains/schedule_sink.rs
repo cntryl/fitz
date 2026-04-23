@@ -48,6 +48,10 @@ impl ScheduleSubscriptionSet {
         }
     }
 
+    fn is_empty(&self) -> bool {
+        self.subscriptions.is_empty()
+    }
+
     fn subscription_count(&self) -> usize {
         self.subscriptions.len()
     }
@@ -531,6 +535,7 @@ impl ScheduleDomainSink {
         for state in families.values_mut() {
             state.remove_session(session_id);
         }
+        families.retain(|_, state| !state.is_empty());
         tracing::debug!(
             domain = "schedule",
             session = session_id,
@@ -933,8 +938,14 @@ impl MailboxSink for ScheduleDomainSink {
                     } else {
                         let fam_id = family_id.as_u64();
                         let mut families = self.sub_families.lock();
-                        if let Some(state) = families.get_mut(&fam_id) {
+                        let remove_family = if let Some(state) = families.get_mut(&fam_id) {
                             state.remove_session_route(session_id, route.as_str());
+                            state.is_empty()
+                        } else {
+                            false
+                        };
+                        if remove_family {
+                            families.remove(&fam_id);
                         }
                         ScheduleResponse::Ok
                     }
@@ -1466,6 +1477,7 @@ mod tests {
         // Assert
         assert_eq!(sink.subscription_count(), 0);
         assert!(subscriber_mailbox.receiver().try_recv().is_err());
+        assert!(sink.sub_families.lock().is_empty());
     }
 
     #[test]

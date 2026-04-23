@@ -24,8 +24,7 @@ struct ActiveAppendSession {
     ingest_metadata: Option<IngestMetadata>,
 }
 
-impl ActiveAppendSession {
-}
+impl ActiveAppendSession {}
 
 /// Warm in-memory append-session state for a single resource stream.
 ///
@@ -302,7 +301,9 @@ impl Actor for StreamActor {
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         let response = match msg {
-            StreamMessage::Begin { ingest_metadata, .. } => {
+            StreamMessage::Begin {
+                ingest_metadata, ..
+            } => {
                 let stream_session_id = self.next_local_session_id;
                 self.next_local_session_id = self.next_local_session_id.saturating_add(1);
                 match self.begin_append_session(0, stream_session_id, ingest_metadata) {

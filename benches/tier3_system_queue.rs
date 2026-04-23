@@ -233,16 +233,19 @@ fn measure_backlog_depth_steady_state(
         assert!(matches!(response, QueueResponse::Sent { .. }));
     }
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for _ in 0..per_iteration_cycles {
-            let message = receive_single_message(&mut actor);
-            let response = actor.handle_ack(message.id, message.token);
-            assert_eq!(response, QueueResponse::Acked);
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for _ in 0..per_iteration_cycles {
+                let message = receive_single_message(&mut actor);
+                let response = actor.handle_ack(message.id, message.token);
+                assert_eq!(response, QueueResponse::Acked);
 
-            let response = actor.handle_send(payload.clone(), None);
-            assert!(matches!(response, QueueResponse::Sent { .. }));
-        }
-    });
+                let response = actor.handle_send(payload.clone(), None);
+                assert!(matches!(response, QueueResponse::Sent { .. }));
+            }
+        },
+    );
     ctx.set_elements((per_iteration_cycles * 3) * iterations as u64);
 }
 
@@ -259,11 +262,14 @@ fn should_complete_capacity_enqueue_isolated(ctx: &mut StressContext) {
         .collect();
     let mut actor_index = 0usize;
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = actors[actor_index].handle_send(payload.clone(), None);
-        assert!(matches!(response, QueueResponse::Sent { .. }));
-        actor_index = (actor_index + 1) % actors.len();
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = actors[actor_index].handle_send(payload.clone(), None);
+            assert!(matches!(response, QueueResponse::Sent { .. }));
+            actor_index = (actor_index + 1) % actors.len();
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -281,13 +287,16 @@ fn should_complete_capacity_receive_batch_cleanup(ctx: &mut StressContext) {
         .map(|_| (payload.clone(), None))
         .collect();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = actor.handle_send_batch(&batch);
-        assert!(matches!(response, QueueResponse::SentBatch { .. }));
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = actor.handle_send_batch(&batch);
+            assert!(matches!(response, QueueResponse::SentBatch { .. }));
 
-        let messages = receive_batch_messages(&mut actor, RECEIVE_BATCH_SIZE);
-        ack_reserved_messages(&mut actor, messages);
-    });
+            let messages = receive_batch_messages(&mut actor, RECEIVE_BATCH_SIZE);
+            ack_reserved_messages(&mut actor, messages);
+        },
+    );
     ctx.set_elements(((RECEIVE_BATCH_SIZE as u64) * 2 + 1) * iterations as u64);
 }
 
@@ -302,14 +311,17 @@ fn should_complete_capacity_ack_roundtrip(ctx: &mut StressContext) {
     let mut actor = create_bench_queue_actor("bench", "ack", "queue", None);
     let payload = Bytes::from_static(b"ack roundtrip message");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = actor.handle_send(payload.clone(), None);
-        assert!(matches!(response, QueueResponse::Sent { .. }));
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = actor.handle_send(payload.clone(), None);
+            assert!(matches!(response, QueueResponse::Sent { .. }));
 
-        let message = receive_single_message(&mut actor);
-        let response = actor.handle_ack(message.id, message.token);
-        assert_eq!(response, QueueResponse::Acked);
-    });
+            let message = receive_single_message(&mut actor);
+            let response = actor.handle_ack(message.id, message.token);
+            assert_eq!(response, QueueResponse::Acked);
+        },
+    );
     ctx.set_elements(3 * iterations as u64);
 }
 
@@ -324,17 +336,20 @@ fn should_complete_capacity_extend_roundtrip(ctx: &mut StressContext) {
     let mut actor = create_bench_queue_actor("bench", "extend", "queue", None);
     let payload = Bytes::from_static(b"extend roundtrip message");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = actor.handle_send(payload.clone(), None);
-        assert!(matches!(response, QueueResponse::Sent { .. }));
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = actor.handle_send(payload.clone(), None);
+            assert!(matches!(response, QueueResponse::Sent { .. }));
 
-        let message = receive_single_message(&mut actor);
-        let response = actor.handle_extend(message.id, message.token, 60);
-        assert_eq!(response, QueueResponse::Extended);
+            let message = receive_single_message(&mut actor);
+            let response = actor.handle_extend(message.id, message.token, 60);
+            assert_eq!(response, QueueResponse::Extended);
 
-        let response = actor.handle_ack(message.id, message.token);
-        assert_eq!(response, QueueResponse::Acked);
-    });
+            let response = actor.handle_ack(message.id, message.token);
+            assert_eq!(response, QueueResponse::Acked);
+        },
+    );
     ctx.set_elements(4 * iterations as u64);
 }
 
@@ -354,12 +369,15 @@ fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
         .map(|p| (p.clone(), None))
         .collect();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = actor.handle_send_batch(&batch_50);
-        for _ in 0..50 {
-            let _ = actor.handle_receive(30, Some(1));
-        }
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = actor.handle_send_batch(&batch_50);
+            for _ in 0..50 {
+                let _ = actor.handle_receive(30, Some(1));
+            }
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -404,32 +422,35 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         .chain(payloads.iter().skip(90).take(10).map(|p| (p.clone(), None)))
         .collect();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = actor.handle_send_batch(&batch_mixed);
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = actor.handle_send_batch(&batch_mixed);
 
-        let immediate = match actor.handle_receive(30, Some(80)) {
-            QueueResponse::Received { messages } => messages,
-            other => panic!("expected received immediate batch, got {:?}", other),
-        };
-        assert_eq!(immediate.len(), 80);
-        for message in immediate {
-            let response = actor.handle_ack(message.id, message.token);
-            assert_eq!(response, QueueResponse::Acked);
-        }
+            let immediate = match actor.handle_receive(30, Some(80)) {
+                QueueResponse::Received { messages } => messages,
+                other => panic!("expected received immediate batch, got {:?}", other),
+            };
+            assert_eq!(immediate.len(), 80);
+            for message in immediate {
+                let response = actor.handle_ack(message.id, message.token);
+                assert_eq!(response, QueueResponse::Acked);
+            }
 
-        clock.advance(Duration::from_secs(6));
-        actor.process_delayed_messages();
+            clock.advance(Duration::from_secs(6));
+            actor.process_delayed_messages();
 
-        let delayed = match actor.handle_receive(30, Some(20)) {
-            QueueResponse::Received { messages } => messages,
-            other => panic!("expected received delayed batch, got {:?}", other),
-        };
-        assert_eq!(delayed.len(), 20);
-        for message in delayed {
-            let response = actor.handle_ack(message.id, message.token);
-            assert_eq!(response, QueueResponse::Acked);
-        }
-    });
+            let delayed = match actor.handle_receive(30, Some(20)) {
+                QueueResponse::Received { messages } => messages,
+                other => panic!("expected received delayed batch, got {:?}", other),
+            };
+            assert_eq!(delayed.len(), 20);
+            for message in delayed {
+                let response = actor.handle_ack(message.id, message.token);
+                assert_eq!(response, QueueResponse::Acked);
+            }
+        },
+    );
     ctx.set_elements(300 * iterations as u64);
 }
 
@@ -484,15 +505,18 @@ fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
     }
     drop(pre_actor);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _actor = QueueActor::new(
-            RouteFamily::new(1),
-            queue_key.clone(),
-            store.clone(),
-            None,
-            fitz::utils::idempotency::default_dedup_store(),
-        );
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _actor = QueueActor::new(
+                RouteFamily::new(1),
+                queue_key.clone(),
+                store.clone(),
+                None,
+                fitz::utils::idempotency::default_dedup_store(),
+            );
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -508,12 +532,15 @@ fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
     let payloads: Vec<Bytes> = (0..50).map(|_| payload.clone()).collect();
     let batch_50: Vec<(Bytes, Option<u64>)> = payloads.iter().map(|p| (p.clone(), None)).collect();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = actor.handle_send_batch(&batch_50);
-        for _ in 0..50 {
-            let _ = actor.handle_receive(30, Some(1));
-        }
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = actor.handle_send_batch(&batch_50);
+            for _ in 0..50 {
+                let _ = actor.handle_receive(30, Some(1));
+            }
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -537,21 +564,24 @@ fn should_complete_routed_enqueue_sustained(ctx: &mut StressContext) {
         .collect();
     let mut route_index = 0usize;
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let route = &routes[route_index];
-        let (msg_type, payload) = &enqueue_frames[route_index];
-        let response = request_queue_response(
-            &router,
-            family,
-            &source,
-            &inbox,
-            route,
-            *msg_type,
-            payload.clone(),
-        );
-        assert_queue_success(&response);
-        route_index = (route_index + 1) % routes.len();
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let route = &routes[route_index];
+            let (msg_type, payload) = &enqueue_frames[route_index];
+            let response = request_queue_response(
+                &router,
+                family,
+                &source,
+                &inbox,
+                route,
+                *msg_type,
+                payload.clone(),
+            );
+            assert_queue_success(&response);
+            route_index = (route_index + 1) % routes.len();
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -569,51 +599,54 @@ fn should_complete_routed_receive_batch_cleanup(ctx: &mut StressContext) {
     let receive_frame = build_queue_dequeue_batch(route, RECEIVE_BATCH_SIZE as u32);
     let (receive_msg_type, receive_payload) = extract_single_tlv_field(&receive_frame);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for _ in 0..RECEIVE_BATCH_SIZE {
-            let response = request_queue_response(
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for _ in 0..RECEIVE_BATCH_SIZE {
+                let response = request_queue_response(
+                    &router,
+                    family,
+                    &source,
+                    &inbox,
+                    route,
+                    enqueue_msg_type,
+                    enqueue_payload.clone(),
+                );
+                assert_queue_success(&response);
+            }
+
+            let receive_response = request_queue_response(
                 &router,
                 family,
                 &source,
                 &inbox,
                 route,
-                enqueue_msg_type,
-                enqueue_payload.clone(),
+                receive_msg_type,
+                receive_payload.clone(),
             );
-            assert_queue_success(&response);
-        }
-
-        let receive_response = request_queue_response(
-            &router,
-            family,
-            &source,
-            &inbox,
-            route,
-            receive_msg_type,
-            receive_payload.clone(),
-        );
-        let messages = parse_received_messages(&receive_response);
-        assert_eq!(
-            messages.len(),
-            RECEIVE_BATCH_SIZE,
-            "expected a full routed receive batch"
-        );
-
-        for (message_id, token) in messages {
-            let ack_frame = build_queue_complete(route, message_id, token);
-            let (ack_msg_type, ack_payload) = extract_single_tlv_field(&ack_frame);
-            let ack_response = request_queue_response(
-                &router,
-                family,
-                &source,
-                &inbox,
-                route,
-                ack_msg_type,
-                ack_payload,
+            let messages = parse_received_messages(&receive_response);
+            assert_eq!(
+                messages.len(),
+                RECEIVE_BATCH_SIZE,
+                "expected a full routed receive batch"
             );
-            assert_queue_success(&ack_response);
-        }
-    });
+
+            for (message_id, token) in messages {
+                let ack_frame = build_queue_complete(route, message_id, token);
+                let (ack_msg_type, ack_payload) = extract_single_tlv_field(&ack_frame);
+                let ack_response = request_queue_response(
+                    &router,
+                    family,
+                    &source,
+                    &inbox,
+                    route,
+                    ack_msg_type,
+                    ack_payload,
+                );
+                assert_queue_success(&ack_response);
+            }
+        },
+    );
     ctx.set_elements(((RECEIVE_BATCH_SIZE as u64) * 2 + 1) * iterations as u64);
 }
 
@@ -631,42 +664,45 @@ fn should_complete_routed_ack_roundtrip(ctx: &mut StressContext) {
     let dequeue_frame = build_queue_dequeue(route);
     let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let enqueue_response = request_queue_response(
-            &router,
-            family,
-            &source,
-            &inbox,
-            route,
-            enqueue_msg_type,
-            enqueue_payload.clone(),
-        );
-        assert_queue_success(&enqueue_response);
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let enqueue_response = request_queue_response(
+                &router,
+                family,
+                &source,
+                &inbox,
+                route,
+                enqueue_msg_type,
+                enqueue_payload.clone(),
+            );
+            assert_queue_success(&enqueue_response);
 
-        let dequeue_response = request_queue_response(
-            &router,
-            family,
-            &source,
-            &inbox,
-            route,
-            dequeue_msg_type,
-            dequeue_payload.clone(),
-        );
-        let (message_id, token) = parse_single_received_message(&dequeue_response);
+            let dequeue_response = request_queue_response(
+                &router,
+                family,
+                &source,
+                &inbox,
+                route,
+                dequeue_msg_type,
+                dequeue_payload.clone(),
+            );
+            let (message_id, token) = parse_single_received_message(&dequeue_response);
 
-        let ack_frame = build_queue_complete(route, message_id, token);
-        let (ack_msg_type, ack_payload) = extract_single_tlv_field(&ack_frame);
-        let ack_response = request_queue_response(
-            &router,
-            family,
-            &source,
-            &inbox,
-            route,
-            ack_msg_type,
-            ack_payload,
-        );
-        assert_queue_success(&ack_response);
-    });
+            let ack_frame = build_queue_complete(route, message_id, token);
+            let (ack_msg_type, ack_payload) = extract_single_tlv_field(&ack_frame);
+            let ack_response = request_queue_response(
+                &router,
+                family,
+                &source,
+                &inbox,
+                route,
+                ack_msg_type,
+                ack_payload,
+            );
+            assert_queue_success(&ack_response);
+        },
+    );
     ctx.set_elements(3 * iterations as u64);
 }
 
@@ -698,61 +734,64 @@ fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
         sink.reset();
     }
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for (_, _, sink) in &waiters {
-            sink.reset();
-        }
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for (_, _, sink) in &waiters {
+                sink.reset();
+            }
 
-        for _ in 0..waiter_count {
-            let response = request_queue_response(
+            for _ in 0..waiter_count {
+                let response = request_queue_response(
+                    &router,
+                    family,
+                    &sender_source,
+                    &sender_inbox,
+                    route,
+                    enqueue_msg_type,
+                    enqueue_payload.clone(),
+                );
+                assert_queue_success(&response);
+            }
+
+            let deliveries: usize = waiters.iter().map(|(_, _, sink)| sink.count()).sum();
+            assert_eq!(
+                deliveries, waiter_count as usize,
+                "expected queue sends to wake all waiting receivers"
+            );
+
+            let dequeue_response = request_queue_response(
                 &router,
                 family,
                 &sender_source,
                 &sender_inbox,
                 route,
-                enqueue_msg_type,
-                enqueue_payload.clone(),
+                dequeue_msg_type,
+                dequeue_payload.clone(),
             );
-            assert_queue_success(&response);
-        }
-
-        let deliveries: usize = waiters.iter().map(|(_, _, sink)| sink.count()).sum();
-        assert_eq!(
-            deliveries, waiter_count as usize,
-            "expected queue sends to wake all waiting receivers"
-        );
-
-        let dequeue_response = request_queue_response(
-            &router,
-            family,
-            &sender_source,
-            &sender_inbox,
-            route,
-            dequeue_msg_type,
-            dequeue_payload.clone(),
-        );
-        let reserved_messages = parse_received_messages(&dequeue_response);
-        assert_eq!(
-            reserved_messages.len(),
-            waiter_count as usize,
-            "expected cleanup receive to drain the ready queue"
-        );
-
-        for (message_id, token) in reserved_messages {
-            let ack_frame = build_queue_complete(route, message_id, token);
-            let (ack_msg_type, ack_payload) = extract_single_tlv_field(&ack_frame);
-            let ack_response = request_queue_response(
-                &router,
-                family,
-                &sender_source,
-                &sender_inbox,
-                route,
-                ack_msg_type,
-                ack_payload,
+            let reserved_messages = parse_received_messages(&dequeue_response);
+            assert_eq!(
+                reserved_messages.len(),
+                waiter_count as usize,
+                "expected cleanup receive to drain the ready queue"
             );
-            assert_queue_success(&ack_response);
-        }
-    });
+
+            for (message_id, token) in reserved_messages {
+                let ack_frame = build_queue_complete(route, message_id, token);
+                let (ack_msg_type, ack_payload) = extract_single_tlv_field(&ack_frame);
+                let ack_response = request_queue_response(
+                    &router,
+                    family,
+                    &sender_source,
+                    &sender_inbox,
+                    route,
+                    ack_msg_type,
+                    ack_payload,
+                );
+                assert_queue_success(&ack_response);
+            }
+        },
+    );
     ctx.set_elements(((waiter_count * 2) + waiter_count + 1) * iterations as u64);
 }
 

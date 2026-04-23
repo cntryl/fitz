@@ -1380,11 +1380,14 @@ fn should_complete_covering_resource_replay_production_like_model(ctx: &mut Stre
 
     let (case, stream, resource_expected_records, _) = prepare_resource_area_case();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let records = read_resource_covering(&case, &stream, resource_expected_records)
-            .expect("covering resource replay");
-        black_box(records);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let records = read_resource_covering(&case, &stream, resource_expected_records)
+                .expect("covering resource replay");
+            black_box(records);
+        },
+    );
     ctx.set_elements(resource_expected_records as u64 * iterations as u64);
 }
 
@@ -1397,11 +1400,14 @@ fn should_complete_resource_mini_page_replay_production_like_model(ctx: &mut Str
 
     let (case, stream, resource_expected_records, _) = prepare_resource_area_case();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let records = read_resource_compact_paged(&case, &stream, resource_expected_records)
-            .expect("resource mini-page replay");
-        black_box(records);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let records = read_resource_compact_paged(&case, &stream, resource_expected_records)
+                .expect("resource mini-page replay");
+            black_box(records);
+        },
+    );
     ctx.set_elements(resource_expected_records as u64 * iterations as u64);
 }
 
@@ -1414,10 +1420,13 @@ fn should_complete_covering_area_replay_production_like_model(ctx: &mut StressCo
 
     let (case, _, _, area) = prepare_resource_area_case();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let records = read_area_covering(&case, &area).expect("covering area replay");
-        black_box(records);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let records = read_area_covering(&case, &area).expect("covering area replay");
+            black_box(records);
+        },
+    );
     ctx.set_elements(case.expected_records as u64 * iterations as u64);
 }
 
@@ -1430,10 +1439,13 @@ fn should_complete_compact_area_page_replay_production_like_model(ctx: &mut Stre
 
     let (case, _, _, area) = prepare_resource_area_case();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let records = read_area_compact_paged(&case, &area).expect("compact area replay");
-        black_box(records);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let records = read_area_compact_paged(&case, &area).expect("compact area replay");
+            black_box(records);
+        },
+    );
     ctx.set_elements(case.expected_records as u64 * iterations as u64);
 }
 
@@ -1446,10 +1458,13 @@ fn should_complete_covering_realm_replay_production_like_model(ctx: &mut StressC
 
     let case = prepare_realm_case();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let records = read_realm_covering(&case).expect("covering realm replay");
-        black_box(records);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let records = read_realm_covering(&case).expect("covering realm replay");
+            black_box(records);
+        },
+    );
     ctx.set_elements(case.expected_records as u64 * iterations as u64);
 }
 
@@ -1462,11 +1477,14 @@ fn should_complete_compressed_realm_replay_production_like_model(ctx: &mut Stres
 
     let case = prepare_realm_case();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let records =
-            read_realm_compressed_compact_paged(&case).expect("compressed compact realm replay");
-        black_box(records);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let records = read_realm_compressed_compact_paged(&case)
+                .expect("compressed compact realm replay");
+            black_box(records);
+        },
+    );
     ctx.set_elements(case.expected_records as u64 * iterations as u64);
 }
 
@@ -1488,10 +1506,13 @@ fn should_complete_covering_resource_replay_production_like_routed_model(ctx: &m
         resource_expected_records as u64,
     );
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = routed_request(&context, &route, read_msg_type, read_payload.clone());
-        black_box(response);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = routed_request(&context, &route, read_msg_type, read_payload.clone());
+            black_box(response);
+        },
+    );
     ctx.set_elements(resource_expected_records as u64 * iterations as u64);
 }
 
@@ -1515,10 +1536,13 @@ fn should_complete_promotion_frontier_resource_replay_production_like_routed_mod
         resource_expected_records as u64,
     );
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = routed_request(&context, &route, read_msg_type, read_payload.clone());
-        black_box(response);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = routed_request(&context, &route, read_msg_type, read_payload.clone());
+            black_box(response);
+        },
+    );
     ctx.set_elements(resource_expected_records as u64 * iterations as u64);
 }
 
@@ -1540,10 +1564,13 @@ fn should_complete_covering_area_replay_production_like_routed_model(ctx: &mut S
         case.expected_records as u64,
     );
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = routed_request(&context, &route, read_msg_type, read_payload.clone());
-        black_box(response);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = routed_request(&context, &route, read_msg_type, read_payload.clone());
+            black_box(response);
+        },
+    );
     ctx.set_elements(case.expected_records as u64 * iterations as u64);
 }
 
@@ -1565,10 +1592,13 @@ fn should_complete_compact_area_page_replay_production_like_routed_model(ctx: &m
         case.expected_records as u64,
     );
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = routed_request(&context, &route, read_msg_type, read_payload.clone());
-        black_box(response);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = routed_request(&context, &route, read_msg_type, read_payload.clone());
+            black_box(response);
+        },
+    );
     ctx.set_elements(case.expected_records as u64 * iterations as u64);
 }
 
@@ -1589,10 +1619,13 @@ fn should_complete_covering_realm_replay_production_like_routed_model(ctx: &mut 
         case.expected_records as u64,
     );
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = routed_request(&context, &route, read_msg_type, read_payload.clone());
-        black_box(response);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = routed_request(&context, &route, read_msg_type, read_payload.clone());
+            black_box(response);
+        },
+    );
     ctx.set_elements(case.expected_records as u64 * iterations as u64);
 }
 
@@ -1613,10 +1646,13 @@ fn should_complete_compressed_realm_replay_production_like_routed_model(ctx: &mu
         case.expected_records as u64,
     );
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = routed_request(&context, &route, read_msg_type, read_payload.clone());
-        black_box(response);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = routed_request(&context, &route, read_msg_type, read_payload.clone());
+            black_box(response);
+        },
+    );
     ctx.set_elements(case.expected_records as u64 * iterations as u64);
 }
 

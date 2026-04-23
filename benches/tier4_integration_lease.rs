@@ -41,37 +41,40 @@ fn should_complete_direct_acquire_release(ctx: &mut StressContext) {
     let acquire_frame = build_lease_acquire_immediate(route, owner, 30);
     let (msg_type, payload) = extract_single_tlv_field(&acquire_frame);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        route_frame(
-            router.as_ref(),
-            &source,
-            route,
-            1,
-            ChannelId::Lease,
-            msg_type,
-            payload.clone(),
-            family,
-        )
-        .expect("lease acquire");
-        let responses = inbox.drain();
-        let response = responses.last().expect("lease acquire response");
-        let token = parse_lease_token_response(response.payload.as_ref()).expect("lease token");
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            route_frame(
+                router.as_ref(),
+                &source,
+                route,
+                1,
+                ChannelId::Lease,
+                msg_type,
+                payload.clone(),
+                family,
+            )
+            .expect("lease acquire");
+            let responses = inbox.drain();
+            let response = responses.last().expect("lease acquire response");
+            let token = parse_lease_token_response(response.payload.as_ref()).expect("lease token");
 
-        let release_frame = build_lease_release(route, owner, token);
-        let (release_msg_type, release_payload) = extract_single_tlv_field(&release_frame);
-        route_frame(
-            router.as_ref(),
-            &source,
-            route,
-            1,
-            ChannelId::Lease,
-            release_msg_type,
-            release_payload,
-            family,
-        )
-        .expect("lease release");
-        let _ = inbox.drain();
-    });
+            let release_frame = build_lease_release(route, owner, token);
+            let (release_msg_type, release_payload) = extract_single_tlv_field(&release_frame);
+            route_frame(
+                router.as_ref(),
+                &source,
+                route,
+                1,
+                ChannelId::Lease,
+                release_msg_type,
+                release_payload,
+                family,
+            )
+            .expect("lease release");
+            let _ = inbox.drain();
+        },
+    );
     ctx.set_elements(2 * iterations as u64);
 }
 
@@ -90,18 +93,21 @@ fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = runtime
-            .block_on(client.request(&acquire_frame, 2000))
-            .expect("acquire response");
-        let (_msg_type, _status, data) = parse_lease_response(&response);
-        let token = parse_lease_token_response(&data).expect("lease token");
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = runtime
+                .block_on(client.request(&acquire_frame, 2000))
+                .expect("acquire response");
+            let (_msg_type, _status, data) = parse_lease_response(&response);
+            let token = parse_lease_token_response(&data).expect("lease token");
 
-        let release_frame = build_lease_release("lease://tier4/locks/primary", "owner1", token);
-        let _ = runtime
-            .block_on(client.request(&release_frame, 2000))
-            .expect("release response");
-    });
+            let release_frame = build_lease_release("lease://tier4/locks/primary", "owner1", token);
+            let _ = runtime
+                .block_on(client.request(&release_frame, 2000))
+                .expect("release response");
+        },
+    );
     ctx.set_elements(2 * iterations as u64);
 }
 
@@ -123,18 +129,21 @@ fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = runtime
-            .block_on(client.request(&acquire_frame, 2000))
-            .expect("acquire response");
-        let (_msg_type, _status, data) = parse_lease_response(&response);
-        let token = parse_lease_token_response(&data).expect("lease token");
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = runtime
+                .block_on(client.request(&acquire_frame, 2000))
+                .expect("acquire response");
+            let (_msg_type, _status, data) = parse_lease_response(&response);
+            let token = parse_lease_token_response(&data).expect("lease token");
 
-        let release_frame = build_lease_release("lease://tier4/locks/primary", "owner1", token);
-        let _ = runtime
-            .block_on(client.request(&release_frame, 2000))
-            .expect("release response");
-    });
+            let release_frame = build_lease_release("lease://tier4/locks/primary", "owner1", token);
+            let _ = runtime
+                .block_on(client.request(&release_frame, 2000))
+                .expect("release response");
+        },
+    );
     ctx.set_elements(2 * iterations as u64);
 }
 
@@ -160,25 +169,28 @@ fn should_complete_multiclient_acquire_release(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _results: Vec<_> = runtime.block_on(futures::future::join_all(
-            clients.iter().enumerate().map(|(idx, arc)| {
-                let arc = arc.clone();
-                async move {
-                    let owner = format!("owner{}", idx);
-                    // Each client uses a distinct lease so all acquires succeed under concurrency.
-                    let route = format!("lease://tier4/locks/primary_{}", idx);
-                    let acquire_frame = build_lease_acquire_immediate(&route, &owner, 30);
-                    let mut c = arc.lock().await;
-                    let response = c.request(&acquire_frame, 2000).await.expect("acquire");
-                    let (_msg_type, _status, data) = parse_lease_response(&response);
-                    let token = parse_lease_token_response(&data).expect("lease token");
-                    let release_frame = build_lease_release(&route, &owner, token);
-                    c.request(&release_frame, 2000).await.expect("release");
-                }
-            }),
-        ));
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _results: Vec<_> = runtime.block_on(futures::future::join_all(
+                clients.iter().enumerate().map(|(idx, arc)| {
+                    let arc = arc.clone();
+                    async move {
+                        let owner = format!("owner{}", idx);
+                        // Each client uses a distinct lease so all acquires succeed under concurrency.
+                        let route = format!("lease://tier4/locks/primary_{}", idx);
+                        let acquire_frame = build_lease_acquire_immediate(&route, &owner, 30);
+                        let mut c = arc.lock().await;
+                        let response = c.request(&acquire_frame, 2000).await.expect("acquire");
+                        let (_msg_type, _status, data) = parse_lease_response(&response);
+                        let token = parse_lease_token_response(&data).expect("lease token");
+                        let release_frame = build_lease_release(&route, &owner, token);
+                        c.request(&release_frame, 2000).await.expect("release");
+                    }
+                }),
+            ));
+        },
+    );
     ctx.set_elements(20 * iterations as u64);
 }
 

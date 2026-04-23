@@ -207,19 +207,22 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
     );
     let (publish_msg_type, publish_payload) = extract_single_tlv_field(&publish_frame);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        route_frame(
-            router.as_ref(),
-            &publisher_source,
-            "notice://test/events",
-            2,
-            ChannelId::Pub,
-            publish_msg_type,
-            publish_payload.clone(),
-            family,
-        )
-        .expect("notice publish");
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            route_frame(
+                router.as_ref(),
+                &publisher_source,
+                "notice://test/events",
+                2,
+                ChannelId::Pub,
+                publish_msg_type,
+                publish_payload.clone(),
+                family,
+            )
+            .expect("notice publish");
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -252,11 +255,14 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
         spawn_tcp_subscriber_counter(runtime, subscriber, delivered.clone());
     let (publish_tx, publisher_handle) = spawn_tcp_publisher(runtime, publisher);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        publish_tx
-            .blocking_send(publish_frame.clone())
-            .expect("queue publish frame");
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            publish_tx
+                .blocking_send(publish_frame.clone())
+                .expect("queue publish frame");
+        },
+    );
     drop(publish_tx);
     wait_for_delivery_count(
         runtime,
@@ -307,11 +313,14 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
         spawn_ws_subscriber_counter(runtime, subscriber, delivered.clone());
     let (publish_tx, publisher_handle) = spawn_ws_publisher(runtime, publisher);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        publish_tx
-            .blocking_send(publish_frame.clone())
-            .expect("queue publish frame");
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            publish_tx
+                .blocking_send(publish_frame.clone())
+                .expect("queue publish frame");
+        },
+    );
     drop(publish_tx);
     wait_for_delivery_count(
         runtime,
@@ -343,23 +352,26 @@ fn should_complete_tcp_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let subscribe_response = runtime
-            .block_on(client.request(&subscribe_frame, 2000))
-            .expect("subscribe response");
-        let (_msg_type, status, data) = parse_notice_response(&subscribe_response);
-        assert_eq!(status, 0, "expected notice subscribe success");
-        let subscription_id = parse_notice_subscription_id(&data)
-            .expect("parse subscribe response")
-            .expect("subscription id");
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let subscribe_response = runtime
+                .block_on(client.request(&subscribe_frame, 2000))
+                .expect("subscribe response");
+            let (_msg_type, status, data) = parse_notice_response(&subscribe_response);
+            assert_eq!(status, 0, "expected notice subscribe success");
+            let subscription_id = parse_notice_subscription_id(&data)
+                .expect("parse subscribe response")
+                .expect("subscription id");
 
-        let unsubscribe_frame = build_notice_unsubscribe(subscription_id);
-        let unsubscribe_response = runtime
-            .block_on(client.request(&unsubscribe_frame, 2000))
-            .expect("unsubscribe response");
-        let (_msg_type, status, _data) = parse_notice_response(&unsubscribe_response);
-        assert_eq!(status, 0, "expected notice unsubscribe success");
-    });
+            let unsubscribe_frame = build_notice_unsubscribe(subscription_id);
+            let unsubscribe_response = runtime
+                .block_on(client.request(&unsubscribe_frame, 2000))
+                .expect("unsubscribe response");
+            let (_msg_type, status, _data) = parse_notice_response(&unsubscribe_response);
+            assert_eq!(status, 0, "expected notice unsubscribe success");
+        },
+    );
     ctx.set_elements(2 * iterations as u64);
 }
 
@@ -382,23 +394,26 @@ fn should_complete_ws_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let subscribe_response = runtime
-            .block_on(client.request(&subscribe_frame, 2000))
-            .expect("subscribe response");
-        let (_msg_type, status, data) = parse_notice_response(&subscribe_response);
-        assert_eq!(status, 0, "expected notice subscribe success");
-        let subscription_id = parse_notice_subscription_id(&data)
-            .expect("parse subscribe response")
-            .expect("subscription id");
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let subscribe_response = runtime
+                .block_on(client.request(&subscribe_frame, 2000))
+                .expect("subscribe response");
+            let (_msg_type, status, data) = parse_notice_response(&subscribe_response);
+            assert_eq!(status, 0, "expected notice subscribe success");
+            let subscription_id = parse_notice_subscription_id(&data)
+                .expect("parse subscribe response")
+                .expect("subscription id");
 
-        let unsubscribe_frame = build_notice_unsubscribe(subscription_id);
-        let unsubscribe_response = runtime
-            .block_on(client.request(&unsubscribe_frame, 2000))
-            .expect("unsubscribe response");
-        let (_msg_type, status, _data) = parse_notice_response(&unsubscribe_response);
-        assert_eq!(status, 0, "expected notice unsubscribe success");
-    });
+            let unsubscribe_frame = build_notice_unsubscribe(subscription_id);
+            let unsubscribe_response = runtime
+                .block_on(client.request(&unsubscribe_frame, 2000))
+                .expect("unsubscribe response");
+            let (_msg_type, status, _data) = parse_notice_response(&unsubscribe_response);
+            assert_eq!(status, 0, "expected notice unsubscribe success");
+        },
+    );
     ctx.set_elements(2 * iterations as u64);
 
     runtime
@@ -455,19 +470,22 @@ fn measure_multiclient_fanout_publish(
         subscriber_handles.push(handle);
     }
     let mut expected_deliveries = 0_u64;
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        runtime
-            .block_on(publisher.send_frame(publish_frame.as_ref()))
-            .expect("publish frame");
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            runtime
+                .block_on(publisher.send_frame(publish_frame.as_ref()))
+                .expect("publish frame");
 
-        expected_deliveries += subscriber_count as u64;
-        wait_for_delivery_count(
-            runtime,
-            &delivered,
-            expected_deliveries,
-            "multiclient notice deliveries",
-        );
-    });
+            expected_deliveries += subscriber_count as u64;
+            wait_for_delivery_count(
+                runtime,
+                &delivered,
+                expected_deliveries,
+                "multiclient notice deliveries",
+            );
+        },
+    );
 
     for stop_tx in subscriber_stops {
         stop_tx.send(true).expect("stop ws subscriber");

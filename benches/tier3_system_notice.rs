@@ -144,19 +144,22 @@ fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
     let publish_frame = build_notice_publish(case.publish_route, case.payload);
     let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        route_frame(
-            router.as_ref(),
-            &publisher_source,
-            case.publish_route,
-            PUBLISHER_SESSION_ID,
-            ChannelId::Pub,
-            msg_type,
-            payload.clone(),
-            family,
-        )
-        .expect("notice publish");
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            route_frame(
+                router.as_ref(),
+                &publisher_source,
+                case.publish_route,
+                PUBLISHER_SESSION_ID,
+                ChannelId::Pub,
+                msg_type,
+                payload.clone(),
+                family,
+            )
+            .expect("notice publish");
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -289,18 +292,21 @@ fn should_complete_wildcard_subscribe_unsubscribe_cycle(ctx: &mut StressContext)
     let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
     let harness = setup_notice_request_sink();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let subscribe_response =
-            harness.request(pattern, subscribe_msg_type, subscribe_payload.clone());
-        let subscription_id = parse_notice_subscribe_ok(&subscribe_response);
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let subscribe_response =
+                harness.request(pattern, subscribe_msg_type, subscribe_payload.clone());
+            let subscription_id = parse_notice_subscribe_ok(&subscribe_response);
 
-        let unsubscribe_response = harness.request(
-            pattern,
-            502,
-            encode_notice_unsubscribe_payload(subscription_id),
-        );
-        assert_notice_success(&unsubscribe_response);
-    });
+            let unsubscribe_response = harness.request(
+                pattern,
+                502,
+                encode_notice_unsubscribe_payload(subscription_id),
+            );
+            assert_notice_success(&unsubscribe_response);
+        },
+    );
     ctx.set_elements(2 * iterations as u64);
 }
 

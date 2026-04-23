@@ -297,24 +297,27 @@ fn measure_multiclient_concurrent_requests(
     let mut next_request_index = 0usize;
     let worker_handles = spawn_rpc_ws_workers(worker_clients, family);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let request_index = next_request_index;
-        next_request_index = (next_request_index + 1) % MULTICLIENT_REQUEST_FRAME_RING_SIZE;
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let request_index = next_request_index;
+            next_request_index = (next_request_index + 1) % MULTICLIENT_REQUEST_FRAME_RING_SIZE;
 
-        runtime.block_on(futures::future::join_all(
-            clients
-                .iter()
-                .zip(request_frames.iter())
-                .map(|(client, frames)| {
-                    let request_frame = &frames[request_index];
-                    async move {
-                        let mut ws_client = client.lock().await;
-                        request_until_worker_response_ws(&mut ws_client, request_frame, family)
-                            .await;
-                    }
-                }),
-        ));
-    });
+            runtime.block_on(futures::future::join_all(
+                clients
+                    .iter()
+                    .zip(request_frames.iter())
+                    .map(|(client, frames)| {
+                        let request_frame = &frames[request_index];
+                        async move {
+                            let mut ws_client = client.lock().await;
+                            request_until_worker_response_ws(&mut ws_client, request_frame, family)
+                                .await;
+                        }
+                    }),
+            ));
+        },
+    );
     ctx.set_elements(MULTICLIENT_COUNT as u64 * iterations as u64);
 
     for worker_handle in worker_handles {
@@ -430,26 +433,29 @@ fn should_complete_direct_request(ctx: &mut StressContext) {
         setup_rpc_sink();
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request.frame);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        route_frame(
-            router.as_ref(),
-            &requester_source,
-            SERVICE_ROUTE,
-            REQUESTER_SESSION_ID,
-            ChannelId::Rpc,
-            request_msg_type,
-            request_payload.clone(),
-            family,
-        )
-        .expect("rpc request");
-        service_worker(&router, family, &worker_source, &worker_inbox);
-        assert_requester_inbox_contains_worker_response(
-            requester_inbox.drain(),
-            family,
-            request.correlation_id,
-            request.body.as_ref(),
-        );
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            route_frame(
+                router.as_ref(),
+                &requester_source,
+                SERVICE_ROUTE,
+                REQUESTER_SESSION_ID,
+                ChannelId::Rpc,
+                request_msg_type,
+                request_payload.clone(),
+                family,
+            )
+            .expect("rpc request");
+            service_worker(&router, family, &worker_source, &worker_inbox);
+            assert_requester_inbox_contains_worker_response(
+                requester_inbox.drain(),
+                family,
+                request.correlation_id,
+                request.body.as_ref(),
+            );
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -466,28 +472,31 @@ fn should_complete_encoded_request(ctx: &mut StressContext) {
         setup_rpc_sink();
     let request_frame = &request.frame;
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let mut parser = TlvFrameParser::new(request_frame);
-        let (msg_type, payload) = parser.next_field_ref().expect("one field");
-        route_frame(
-            router.as_ref(),
-            &requester_source,
-            SERVICE_ROUTE,
-            REQUESTER_SESSION_ID,
-            ChannelId::Rpc,
-            msg_type,
-            Bytes::copy_from_slice(payload),
-            family,
-        )
-        .expect("rpc request");
-        service_worker(&router, family, &worker_source, &worker_inbox);
-        assert_requester_inbox_contains_worker_response(
-            requester_inbox.drain(),
-            family,
-            request.correlation_id,
-            request.body.as_ref(),
-        );
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let mut parser = TlvFrameParser::new(request_frame);
+            let (msg_type, payload) = parser.next_field_ref().expect("one field");
+            route_frame(
+                router.as_ref(),
+                &requester_source,
+                SERVICE_ROUTE,
+                REQUESTER_SESSION_ID,
+                ChannelId::Rpc,
+                msg_type,
+                Bytes::copy_from_slice(payload),
+                family,
+            )
+            .expect("rpc request");
+            service_worker(&router, family, &worker_source, &worker_inbox);
+            assert_requester_inbox_contains_worker_response(
+                requester_inbox.drain(),
+                family,
+                request.correlation_id,
+                request.body.as_ref(),
+            );
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -535,13 +544,16 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
         })
     };
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        runtime.block_on(request_until_worker_response_tcp(
-            &mut requester_client,
-            &request_frame,
-            family,
-        ));
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            runtime.block_on(request_until_worker_response_tcp(
+                &mut requester_client,
+                &request_frame,
+                family,
+            ));
+        },
+    );
     ctx.set_elements(iterations as u64);
 
     worker_handle.abort();
@@ -597,13 +609,16 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
         })
     };
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        runtime.block_on(request_until_worker_response_ws(
-            &mut requester_client,
-            &request_frame,
-            family,
-        ));
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            runtime.block_on(request_until_worker_response_ws(
+                &mut requester_client,
+                &request_frame,
+                family,
+            ));
+        },
+    );
     ctx.set_elements(iterations as u64);
 
     worker_handle.abort();

@@ -53,17 +53,20 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let (mut actor, mut actor_ctx) = setup_queue_actor(route);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        actor.receive(
-            QueueMessage::Send {
-                family_id: family,
-                route: Route::new(route),
-                body: Bytes::from_static(b"msg"),
-                delay_seconds: None,
-            },
-            &mut actor_ctx,
-        );
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            actor.receive(
+                QueueMessage::Send {
+                    family_id: family,
+                    route: Route::new(route),
+                    body: Bytes::from_static(b"msg"),
+                    delay_seconds: None,
+                },
+                &mut actor_ctx,
+            );
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -79,12 +82,15 @@ fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     let enqueue_frame = build_queue_enqueue(route, b"msg");
     let family = RouteFamily::new(1);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let mut parser = TlvFrameParser::new(&enqueue_frame);
-        let (msg_type, payload) = parser.next_field_ref().expect("enqueue field");
-        let msg = queue_parse_request(msg_type, family, payload).expect("parse enqueue");
-        actor.receive(msg, &mut actor_ctx);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let mut parser = TlvFrameParser::new(&enqueue_frame);
+            let (msg_type, payload) = parser.next_field_ref().expect("enqueue field");
+            let msg = queue_parse_request(msg_type, family, payload).expect("parse enqueue");
+            actor.receive(msg, &mut actor_ctx);
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -104,12 +110,15 @@ fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = runtime
-            .block_on(client.request(&enqueue_frame, 2000))
-            .expect("enqueue response");
-        let (_msg_type, _status, _data) = parse_queue_response(&response);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = runtime
+                .block_on(client.request(&enqueue_frame, 2000))
+                .expect("enqueue response");
+            let (_msg_type, _status, _data) = parse_queue_response(&response);
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -132,12 +141,15 @@ fn should_complete_ws_enqueue(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let response = runtime
-            .block_on(client.request(&enqueue_frame, 2000))
-            .expect("enqueue response");
-        let (_msg_type, _status, _data) = parse_queue_response(&response);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let response = runtime
+                .block_on(client.request(&enqueue_frame, 2000))
+                .expect("enqueue response");
+            let (_msg_type, _status, _data) = parse_queue_response(&response);
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -176,18 +188,21 @@ fn measure_multiclient_concurrent_enqueues(
         })
         .collect();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _results: Vec<_> =
-            runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
-                let arc = arc.clone();
-                let frame = enqueue_frame.clone();
-                async move {
-                    let mut c = arc.lock().await;
-                    let response = c.request(&frame, 2000).await.expect("enqueue");
-                    let _ = parse_queue_response(&response);
-                }
-            })));
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _results: Vec<_> =
+                runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+                    let arc = arc.clone();
+                    let frame = enqueue_frame.clone();
+                    async move {
+                        let mut c = arc.lock().await;
+                        let response = c.request(&frame, 2000).await.expect("enqueue");
+                        let _ = parse_queue_response(&response);
+                    }
+                })));
+        },
+    );
     ctx.set_elements(client_count as u64 * iterations as u64);
 }
 
