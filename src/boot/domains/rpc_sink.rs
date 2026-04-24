@@ -30,6 +30,7 @@ const RPC_MAX_PENDING_REQUESTS: usize = 4096;
 const RPC_DEFAULT_ROUTE_PENDING_CAPACITY: usize = 1000;
 // Admin endpoints read from a coalesced in-memory snapshot so hot-path request
 // dispatch does not rewrite the current-process read model on every mutation.
+#[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 const RPC_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
 const RPC_DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const RPC_MIN_TIMEOUT_SWEEP_INTERVAL: Duration = Duration::from_millis(10);
@@ -64,6 +65,7 @@ fn rpc_timeout_sweep_interval(request_timeout: Duration) -> Duration {
         .min(RPC_MAX_TIMEOUT_SWEEP_INTERVAL)
 }
 
+#[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 #[derive(Clone)]
 struct RpcWorker {
     addr: RouteAddress,
@@ -128,6 +130,7 @@ impl RpcWorker {
         self.total_latency_us = self.total_latency_us.saturating_add(latency_us);
     }
 
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     fn average_latency_ms(&self) -> f64 {
         if self.requests_handled == 0 {
             return 0.0;
@@ -137,6 +140,7 @@ impl RpcWorker {
     }
 }
 
+#[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 #[derive(Debug, Clone)]
 struct RpcPendingRequest {
     route: Route,
@@ -208,12 +212,14 @@ impl RpcPendingRequest {
         })
     }
 
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     fn age_seconds(&self, now: Instant) -> u64 {
         now.saturating_duration_since(self.submitted_at_instant)
             .as_secs()
     }
 }
 
+#[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 #[derive(Debug, Clone)]
 struct RpcQueuedRequest {
     request: crate::domains::rpc::protocol::RpcRequest,
@@ -241,6 +247,7 @@ impl RpcQueuedRequest {
         }
     }
 
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     fn age_seconds(&self, now: Instant) -> u64 {
         now.saturating_duration_since(self.submitted_at_instant)
             .as_secs()
@@ -591,6 +598,7 @@ struct RpcState {
     queued_expirations: BinaryHeap<ExpiringPendingRequest>,
 }
 
+#[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 fn rpc_admin_snapshot_due(
     snapshot_dirty: bool,
     force: bool,
@@ -865,13 +873,17 @@ impl RpcState {
 pub struct RpcDomainSink {
     state: Mutex<RpcState>,
     router: Arc<Router>,
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     active: AtomicBool,
     request_timeout: Duration,
     route_pending_capacity: usize,
     snapshot_dirty: AtomicBool,
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     snapshot_syncing: AtomicBool,
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     last_snapshot_elapsed_us: AtomicU64,
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     snapshot_epoch: Instant,
     metrics: Option<crate::domains::rpc::RpcMetrics>,
 }
@@ -1222,6 +1234,7 @@ impl RpcDomainSink {
     /// This snapshot is intentionally coalesced and may lag very recent subscribe,
     /// unsubscribe, timeout, or cleanup mutations by up to the current sync
     /// interval. It is an operational view, not a durable recovery log.
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     fn sync_admin_snapshot(&self) {
         let state = self.state.lock();
         let snapshot_now = Instant::now();
@@ -1411,7 +1424,6 @@ impl RpcDomainSink {
         #[cfg(feature = "bench-no-snapshot")]
         {
             let _ = force;
-            return;
         }
 
         #[cfg(not(feature = "bench-no-snapshot"))]
