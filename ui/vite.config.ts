@@ -4,7 +4,7 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   fmt: {},
   lint: {
-    ignorePatterns: ["dist/**", "coverage/**", "src/adapters/generated.ts"],
+    ignorePatterns: ["dist/**", "coverage/**", "src/adapters/generated/**"],
     options: {
       typeAware: true,
       typeCheck: true,
@@ -47,7 +47,6 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "../public",
     emptyOutDir: false,
     sourcemap: true,
   },

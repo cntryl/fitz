@@ -11,7 +11,7 @@
     "lint:fix": "vp lint src tests --fix",
     "fmt": "vp fmt src tests README.md --write",
     "gen": "npm run gen:adapters && npm run fmt",
-    "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/apiv1.g.ts"
+    "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts"
   },
   "dependencies": {
     "@askrjs/askr": "0.0.31",
