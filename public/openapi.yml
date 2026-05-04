@@ -343,6 +343,7 @@ paths:
     get:
       tags: [KV]
       summary: List KV realms
+      operationId: listKvRealms
       security: [{ sessionCookie: [] }]
       responses:
         "200":
@@ -355,6 +356,7 @@ paths:
     get:
       tags: [KV]
       summary: Get KV realm
+      operationId: getKvRealm
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -373,6 +375,7 @@ paths:
     get:
       tags: [KV]
       summary: List KV areas in a realm
+      operationId: listKvAreas
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -391,6 +394,7 @@ paths:
     get:
       tags: [KV]
       summary: Get KV area
+      operationId: getKvArea
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -414,6 +418,7 @@ paths:
     get:
       tags: [KV]
       summary: List KV resources in an area
+      operationId: listKvResources
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -437,6 +442,7 @@ paths:
     get:
       tags: [KV]
       summary: Get KV resource
+      operationId: getKvResource
       description: Live broker-local KV resource detail. `transactions_active` counts only the current in-memory session-scoped transactions for this resource and resets on disconnect cleanup or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
@@ -466,6 +472,7 @@ paths:
     get:
       tags: [KV]
       summary: List KV transactions for a resource
+      operationId: listKvTransactions
       description: Live in-memory KV transaction snapshots for the current broker process. Transactions are session-scoped, disappear on disconnect or broker restart, and do not represent a durable recovery log.
       security: [{ sessionCookie: [] }]
       parameters:
@@ -496,6 +503,7 @@ paths:
     get:
       tags: [Queue]
       summary: List queue realms
+      operationId: listQueueRealms
       security: [{ sessionCookie: [] }]
       responses:
         "200":
@@ -508,6 +516,7 @@ paths:
     get:
       tags: [Queue]
       summary: Get queue realm
+      operationId: getQueueRealm
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -526,6 +535,7 @@ paths:
     get:
       tags: [Queue]
       summary: List queue areas
+      operationId: listQueueAreas
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -544,6 +554,7 @@ paths:
     get:
       tags: [Queue]
       summary: Get queue area
+      operationId: getQueueArea
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -567,6 +578,7 @@ paths:
     get:
       tags: [Queue]
       summary: List queues in an area
+      operationId: listQueueResources
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -590,6 +602,7 @@ paths:
     get:
       tags: [Queue]
       summary: Get queue resource
+      operationId: getQueueResource
       description: Point-in-time warm-actor Queue detail for the current broker process. Counts are refreshed from live in-memory queue actors only and can disappear after idle eviction or broker restart until traffic rehydrates that queue.
       security: [{ sessionCookie: [] }]
       parameters:
@@ -619,6 +632,7 @@ paths:
     get:
       tags: [Queue]
       summary: List queue inflight entries for a resource
+      operationId: listQueueInflightEntries
       description: Live in-memory queue inflight entries for the current broker process only. Inflight ownership, tokens, and session IDs disappear on disconnect cleanup, idle actor eviction, or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
@@ -649,6 +663,7 @@ paths:
     get:
       tags: [Queue]
       summary: List queue dead-letter entries for a resource
+      operationId: listQueueDeadLetters
       description: Live in-memory dead-letter rows for the current broker process. Rows remain durably stored, but this view only reflects queue actors currently warm on this broker.
       security: [{ sessionCookie: [] }]
       parameters:
@@ -689,6 +704,7 @@ paths:
     post:
       tags: [Queue]
       summary: Replay a queue dead-letter entry
+      operationId: replayQueueDeadLetter
       description: Replays a retained dead-letter row using the current broker-local queue family.
       security: [{ sessionCookie: [] }]
       parameters:
@@ -735,6 +751,7 @@ paths:
     delete:
       tags: [Queue]
       summary: Purge a queue dead-letter entry
+      operationId: purgeQueueDeadLetter
       description: Deletes a retained dead-letter row using the current broker-local queue family.
       security: [{ sessionCookie: [] }]
       parameters:
@@ -781,6 +798,7 @@ paths:
     get:
       tags: [Stream]
       summary: List stream realms
+      operationId: listStreamRealms
       security: [{ sessionCookie: [] }]
       responses:
         "200":
@@ -793,6 +811,7 @@ paths:
     get:
       tags: [Stream]
       summary: Get stream realm
+      operationId: getStreamRealm
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -811,6 +830,7 @@ paths:
     get:
       tags: [Stream]
       summary: List stream areas
+      operationId: listStreamAreas
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -829,6 +849,7 @@ paths:
     get:
       tags: [Stream]
       summary: Get stream area
+      operationId: getStreamArea
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -852,6 +873,7 @@ paths:
     get:
       tags: [Stream]
       summary: List streams in an area
+      operationId: listStreamResources
       description: Lists committed stream resources known from durable stream metadata for the selected area. Resources remain visible after broker restart even when no append session is currently active.
       security: [{ sessionCookie: [] }]
       parameters:
@@ -876,6 +898,7 @@ paths:
     get:
       tags: [Stream]
       summary: Get stream resource
+      operationId: getStreamResource
       description: Returns durable committed stream metadata for this resource plus the current broker process's live append-session count. `sessions_active` resets on disconnect cleanup or broker restart; consumer cursors are client-managed and not stored here.
       security: [{ sessionCookie: [] }]
       parameters:
@@ -906,6 +929,7 @@ paths:
     get:
       tags: [Stream]
       summary: Get stream realm watermarks
+      operationId: getStreamRealmWatermarks
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -929,6 +953,7 @@ paths:
     get:
       tags: [Stream]
       summary: Get stream area watermarks
+      operationId: getStreamAreaWatermarks
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -957,6 +982,7 @@ paths:
     get:
       tags: [Lease]
       summary: List lease realms
+      operationId: listLeaseRealms
       security: [{ sessionCookie: [] }]
       responses:
         "200":
@@ -969,6 +995,7 @@ paths:
     get:
       tags: [Lease]
       summary: Get lease realm
+      operationId: getLeaseRealm
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -987,6 +1014,7 @@ paths:
     get:
       tags: [Lease]
       summary: List lease areas
+      operationId: listLeaseAreas
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1005,6 +1033,7 @@ paths:
     get:
       tags: [Lease]
       summary: Get lease area
+      operationId: getLeaseArea
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1028,6 +1057,7 @@ paths:
     get:
       tags: [Lease]
       summary: List lease resources
+      operationId: listLeaseResources
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1051,6 +1081,7 @@ paths:
     get:
       tags: [Lease]
       summary: Get lease resource
+      operationId: getLeaseResource
       description: Live broker-local lease resource detail. `active_leases` counts only the current in-memory leases for this resource on the running broker process and resets on disconnect cleanup or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
@@ -1081,6 +1112,7 @@ paths:
     get:
       tags: [Schedule]
       summary: List schedule realms
+      operationId: listScheduleRealms
       description: Lists realms with durable schedule definitions preloaded into the current broker process.
       security: [{ sessionCookie: [] }]
       responses:
@@ -1094,6 +1126,7 @@ paths:
     get:
       tags: [Schedule]
       summary: Get schedule realm
+      operationId: getScheduleRealm
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1112,6 +1145,7 @@ paths:
     get:
       tags: [Schedule]
       summary: List schedule areas
+      operationId: listScheduleAreas
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1130,6 +1164,7 @@ paths:
     get:
       tags: [Schedule]
       summary: Get schedule area
+      operationId: getScheduleArea
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1153,6 +1188,7 @@ paths:
     get:
       tags: [Schedule]
       summary: List schedule resources
+      operationId: listScheduleResources
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1176,6 +1212,7 @@ paths:
     get:
       tags: [Schedule]
       summary: Get schedule resource
+      operationId: getScheduleResource
       description: Returns durable schedule definitions for this resource as seen by the current broker after boot preload. Schedule notifications remain live, session-scoped delivery only.
       security: [{ sessionCookie: [] }]
       parameters:
@@ -1206,6 +1243,7 @@ paths:
     get:
       tags: [Notice]
       summary: List notice realms
+      operationId: listNoticeRealms
       security: [{ sessionCookie: [] }]
       responses:
         "200":
@@ -1218,6 +1256,7 @@ paths:
     get:
       tags: [Notice]
       summary: Get notice realm
+      operationId: getNoticeRealm
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1236,6 +1275,7 @@ paths:
     get:
       tags: [Notice]
       summary: List notice areas
+      operationId: listNoticeAreas
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1254,6 +1294,7 @@ paths:
     get:
       tags: [Notice]
       summary: Get notice area
+      operationId: getNoticeArea
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1277,6 +1318,7 @@ paths:
     get:
       tags: [Notice]
       summary: List notice resources
+      operationId: listNoticeResources
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1300,6 +1342,7 @@ paths:
     get:
       tags: [Notice]
       summary: Get notice resource
+      operationId: getNoticeResource
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1328,6 +1371,7 @@ paths:
     get:
       tags: [Notice]
       summary: List notice subscriptions for a resource
+      operationId: listNoticeSubscriptions
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1357,6 +1401,7 @@ paths:
     get:
       tags: [RPC]
       summary: List RPC realms
+      operationId: listRpcRealms
       security: [{ sessionCookie: [] }]
       responses:
         "200":
@@ -1369,6 +1414,7 @@ paths:
     get:
       tags: [RPC]
       summary: Get RPC realm
+      operationId: getRpcRealm
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1387,6 +1433,7 @@ paths:
     get:
       tags: [RPC]
       summary: List RPC areas
+      operationId: listRpcAreas
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1405,6 +1452,7 @@ paths:
     get:
       tags: [RPC]
       summary: Get RPC area
+      operationId: getRpcArea
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1428,6 +1476,7 @@ paths:
     get:
       tags: [RPC]
       summary: List RPC resources
+      operationId: listRpcResources
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1451,6 +1500,7 @@ paths:
     get:
       tags: [RPC]
       summary: Get RPC resource
+      operationId: getRpcResource
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1479,6 +1529,7 @@ paths:
     get:
       tags: [RPC]
       summary: List RPC operations
+      operationId: listRpcOperations
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1507,6 +1558,7 @@ paths:
     get:
       tags: [RPC]
       summary: Get RPC operation
+      operationId: getRpcOperation
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1540,6 +1592,7 @@ paths:
     get:
       tags: [RPC]
       summary: List RPC workers for an operation
+      operationId: listRpcOperationWorkers
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm
@@ -1577,6 +1630,7 @@ paths:
     get:
       tags: [RPC]
       summary: List pending RPC requests
+      operationId: listRpcPendingRequests
       security: [{ sessionCookie: [] }]
       parameters:
         - name: realm

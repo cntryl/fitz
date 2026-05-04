@@ -24,6 +24,95 @@ import { buildQueryParams } from "@fgrzl/fetch";
  */
 export function createAdapter(client: FetchClient): {
   /**
+   * List KV realms
+   *
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmCollection>
+   */
+  listKvRealms: (options?: {
+    signal?: AbortSignal;
+    timeout?: number;
+    operationId?: string;
+  }) => Promise<FetchResponse<RealmCollection>>;
+  /**
+   * Get KV realm
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmDetail>
+   */
+  getKvRealm: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<RealmDetail>>;
+  /**
+   * List KV areas in a realm
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaCollection>
+   */
+  listKvAreas: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaCollection>>;
+  /**
+   * Get KV area
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaDetail>
+   */
+  getKvArea: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaDetail>>;
+  /**
+   * List KV resources in an area
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceCollection>
+   */
+  listKvResources: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceCollection>>;
+  /**
+   * Get KV resource
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<KvResourceDetail>
+   */
+  getKvResource: (
+    realm: string,
+    area: string,
+    resource: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<KvResourceDetail>>;
+  /**
+   * List KV transactions for a resource
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<KvTransactionsList>
+   */
+  listKvTransactions: (
+    realm: string,
+    area: string,
+    resource: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<KvTransactionsList>>;
+  /**
    * Get KV domain statistics
    *
    * @param options - Request options (signal, timeout, operationId)
@@ -34,6 +123,80 @@ export function createAdapter(client: FetchClient): {
     timeout?: number;
     operationId?: string;
   }) => Promise<FetchResponse<KvStats>>;
+  /**
+   * List lease realms
+   *
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmCollection>
+   */
+  listLeaseRealms: (options?: {
+    signal?: AbortSignal;
+    timeout?: number;
+    operationId?: string;
+  }) => Promise<FetchResponse<RealmCollection>>;
+  /**
+   * Get lease realm
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmDetail>
+   */
+  getLeaseRealm: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<RealmDetail>>;
+  /**
+   * List lease areas
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaCollection>
+   */
+  listLeaseAreas: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaCollection>>;
+  /**
+   * Get lease area
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaDetail>
+   */
+  getLeaseArea: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaDetail>>;
+  /**
+   * List lease resources
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceCollection>
+   */
+  listLeaseResources: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceCollection>>;
+  /**
+   * Get lease resource
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<LeaseResourceDetail>
+   */
+  getLeaseResource: (
+    realm: string,
+    area: string,
+    resource: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<LeaseResourceDetail>>;
   /**
    * Get Lease domain statistics
    *
@@ -46,6 +209,95 @@ export function createAdapter(client: FetchClient): {
     operationId?: string;
   }) => Promise<FetchResponse<LeaseStats>>;
   /**
+   * List notice realms
+   *
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmCollection>
+   */
+  listNoticeRealms: (options?: {
+    signal?: AbortSignal;
+    timeout?: number;
+    operationId?: string;
+  }) => Promise<FetchResponse<RealmCollection>>;
+  /**
+   * Get notice realm
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmDetail>
+   */
+  getNoticeRealm: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<RealmDetail>>;
+  /**
+   * List notice areas
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaCollection>
+   */
+  listNoticeAreas: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaCollection>>;
+  /**
+   * Get notice area
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaDetail>
+   */
+  getNoticeArea: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaDetail>>;
+  /**
+   * List notice resources
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceCollection>
+   */
+  listNoticeResources: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceCollection>>;
+  /**
+   * Get notice resource
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<NoticeResourceDetail>
+   */
+  getNoticeResource: (
+    realm: string,
+    area: string,
+    resource: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<NoticeResourceDetail>>;
+  /**
+   * List notice subscriptions for a resource
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<NoticeSubscriptionsList>
+   */
+  listNoticeSubscriptions: (
+    realm: string,
+    area: string,
+    resource: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<NoticeSubscriptionsList>>;
+  /**
    * Get Notice domain statistics
    *
    * @param options - Request options (signal, timeout, operationId)
@@ -56,6 +308,150 @@ export function createAdapter(client: FetchClient): {
     timeout?: number;
     operationId?: string;
   }) => Promise<FetchResponse<NoticeStats>>;
+  /**
+   * List queue realms
+   *
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmCollection>
+   */
+  listQueueRealms: (options?: {
+    signal?: AbortSignal;
+    timeout?: number;
+    operationId?: string;
+  }) => Promise<FetchResponse<RealmCollection>>;
+  /**
+   * Get queue realm
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmDetail>
+   */
+  getQueueRealm: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<RealmDetail>>;
+  /**
+   * List queue areas
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaCollection>
+   */
+  listQueueAreas: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaCollection>>;
+  /**
+   * Get queue area
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaDetail>
+   */
+  getQueueArea: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaDetail>>;
+  /**
+   * List queues in an area
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceCollection>
+   */
+  listQueueResources: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceCollection>>;
+  /**
+   * Get queue resource
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<QueueResourceDetail>
+   */
+  getQueueResource: (
+    realm: string,
+    area: string,
+    resource: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<QueueResourceDetail>>;
+  /**
+   * List queue dead-letter entries for a resource
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<QueueDeadLettersList>
+   */
+  listQueueDeadLetters: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { family?: number },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<QueueDeadLettersList>>;
+  /**
+   * Purge a queue dead-letter entry
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param message_id - message_id parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<boolean>
+   */
+  purgeQueueDeadLetter: (
+    realm: string,
+    area: string,
+    resource: string,
+    message_id: number,
+    query?: { family: number },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<boolean>>;
+  /**
+   * Replay a queue dead-letter entry
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param message_id - message_id parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<boolean>
+   */
+  replayQueueDeadLetter: (
+    realm: string,
+    area: string,
+    resource: string,
+    message_id: number,
+    query?: { family: number },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<boolean>>;
+  /**
+   * List queue inflight entries for a resource
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<QueueInflightList>
+   */
+  listQueueInflightEntries: (
+    realm: string,
+    area: string,
+    resource: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<QueueInflightList>>;
   /**
    * Get Queue domain statistics
    *
@@ -68,6 +464,140 @@ export function createAdapter(client: FetchClient): {
     operationId?: string;
   }) => Promise<FetchResponse<QueueStats>>;
   /**
+   * List pending RPC requests
+   *
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RpcPendingList>
+   */
+  listRpcPendingRequests: (
+    query?: { realm?: string },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<RpcPendingList>>;
+  /**
+   * List RPC realms
+   *
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmCollection>
+   */
+  listRpcRealms: (options?: {
+    signal?: AbortSignal;
+    timeout?: number;
+    operationId?: string;
+  }) => Promise<FetchResponse<RealmCollection>>;
+  /**
+   * Get RPC realm
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmDetail>
+   */
+  getRpcRealm: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<RealmDetail>>;
+  /**
+   * List RPC areas
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaCollection>
+   */
+  listRpcAreas: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaCollection>>;
+  /**
+   * Get RPC area
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaDetail>
+   */
+  getRpcArea: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaDetail>>;
+  /**
+   * List RPC resources
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceCollection>
+   */
+  listRpcResources: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceCollection>>;
+  /**
+   * Get RPC resource
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<OperationCollection>
+   */
+  getRpcResource: (
+    realm: string,
+    area: string,
+    resource: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<OperationCollection>>;
+  /**
+   * List RPC operations
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<OperationCollection>
+   */
+  listRpcOperations: (
+    realm: string,
+    area: string,
+    resource: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<OperationCollection>>;
+  /**
+   * Get RPC operation
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param operation - operation parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RpcOperationDetail>
+   */
+  getRpcOperation: (
+    realm: string,
+    area: string,
+    resource: string,
+    operation: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<RpcOperationDetail>>;
+  /**
+   * List RPC workers for an operation
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param operation - operation parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RpcWorkersList>
+   */
+  listRpcOperationWorkers: (
+    realm: string,
+    area: string,
+    resource: string,
+    operation: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<RpcWorkersList>>;
+  /**
    * Get RPC domain statistics
    *
    * @param options - Request options (signal, timeout, operationId)
@@ -78,6 +608,80 @@ export function createAdapter(client: FetchClient): {
     timeout?: number;
     operationId?: string;
   }) => Promise<FetchResponse<RpcStats>>;
+  /**
+   * List schedule realms
+   *
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmCollection>
+   */
+  listScheduleRealms: (options?: {
+    signal?: AbortSignal;
+    timeout?: number;
+    operationId?: string;
+  }) => Promise<FetchResponse<RealmCollection>>;
+  /**
+   * Get schedule realm
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmDetail>
+   */
+  getScheduleRealm: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<RealmDetail>>;
+  /**
+   * List schedule areas
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaCollection>
+   */
+  listScheduleAreas: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaCollection>>;
+  /**
+   * Get schedule area
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaDetail>
+   */
+  getScheduleArea: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaDetail>>;
+  /**
+   * List schedule resources
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceCollection>
+   */
+  listScheduleResources: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceCollection>>;
+  /**
+   * Get schedule resource
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ScheduleResourceDetail>
+   */
+  getScheduleResource: (
+    realm: string,
+    area: string,
+    resource: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ScheduleResourceDetail>>;
   /**
    * Get Schedule domain statistics
    *
@@ -144,6 +748,104 @@ export function createAdapter(client: FetchClient): {
     timeout?: number;
     operationId?: string;
   }) => Promise<FetchResponse<GlobalStats>>;
+  /**
+   * List stream realms
+   *
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmCollection>
+   */
+  listStreamRealms: (options?: {
+    signal?: AbortSignal;
+    timeout?: number;
+    operationId?: string;
+  }) => Promise<FetchResponse<RealmCollection>>;
+  /**
+   * Get stream realm
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RealmDetail>
+   */
+  getStreamRealm: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<RealmDetail>>;
+  /**
+   * List stream areas
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaCollection>
+   */
+  listStreamAreas: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaCollection>>;
+  /**
+   * Get stream area
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AreaDetail>
+   */
+  getStreamArea: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AreaDetail>>;
+  /**
+   * List streams in an area
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceCollection>
+   */
+  listStreamResources: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceCollection>>;
+  /**
+   * Get stream resource
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<StreamResourceDetail>
+   */
+  getStreamResource: (
+    realm: string,
+    area: string,
+    resource: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<StreamResourceDetail>>;
+  /**
+   * Get stream area watermarks
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<StreamAreaWatermarkDetail>
+   */
+  getStreamAreaWatermarks: (
+    realm: string,
+    area: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<StreamAreaWatermarkDetail>>;
+  /**
+   * Get stream realm watermarks
+   *
+   * @param realm - realm parameter
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<StreamRealmWatermarkDetail>
+   */
+  getStreamRealmWatermarks: (
+    realm: string,
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<StreamRealmWatermarkDetail>>;
   /**
    * Get Stream domain statistics
    *
@@ -212,6 +914,77 @@ export function createAdapter(client: FetchClient): {
   }) => Promise<FetchResponse<StartupStatus>>;
 } {
   return {
+    listKvRealms: (options?: {
+      signal?: AbortSignal;
+      timeout?: number;
+      operationId?: string;
+    }): Promise<FetchResponse<RealmCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listKvRealms" };
+      return client.get(`/api/v1/kv/realms`, undefined, finalOptions);
+    },
+    getKvRealm: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<RealmDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getKvRealm" };
+      return client.get(`/api/v1/kv/realms/${realm}`, undefined, finalOptions);
+    },
+    listKvAreas: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listKvAreas" };
+      return client.get(`/api/v1/kv/realms/${realm}/areas`, undefined, finalOptions);
+    },
+    getKvArea: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getKvArea" };
+      return client.get(`/api/v1/kv/realms/${realm}/areas/${area}`, undefined, finalOptions);
+    },
+    listKvResources: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listKvResources" };
+      return client.get(
+        `/api/v1/kv/realms/${realm}/areas/${area}/resources`,
+        undefined,
+        finalOptions,
+      );
+    },
+    getKvResource: (
+      realm: string,
+      area: string,
+      resource: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<KvResourceDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getKvResource" };
+      return client.get(
+        `/api/v1/kv/realms/${realm}/areas/${area}/resources/${resource}`,
+        undefined,
+        finalOptions,
+      );
+    },
+    listKvTransactions: (
+      realm: string,
+      area: string,
+      resource: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<KvTransactionsList>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listKvTransactions",
+      };
+      return client.get(
+        `/api/v1/kv/realms/${realm}/areas/${area}/resources/${resource}/transactions`,
+        undefined,
+        finalOptions,
+      );
+    },
     getKvStats: (options?: {
       signal?: AbortSignal;
       timeout?: number;
@@ -219,6 +992,64 @@ export function createAdapter(client: FetchClient): {
     }): Promise<FetchResponse<KvStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getKvStats" };
       return client.get(`/api/v1/kv/stats`, undefined, finalOptions);
+    },
+    listLeaseRealms: (options?: {
+      signal?: AbortSignal;
+      timeout?: number;
+      operationId?: string;
+    }): Promise<FetchResponse<RealmCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listLeaseRealms" };
+      return client.get(`/api/v1/lease/realms`, undefined, finalOptions);
+    },
+    getLeaseRealm: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<RealmDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getLeaseRealm" };
+      return client.get(`/api/v1/lease/realms/${realm}`, undefined, finalOptions);
+    },
+    listLeaseAreas: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listLeaseAreas" };
+      return client.get(`/api/v1/lease/realms/${realm}/areas`, undefined, finalOptions);
+    },
+    getLeaseArea: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getLeaseArea" };
+      return client.get(`/api/v1/lease/realms/${realm}/areas/${area}`, undefined, finalOptions);
+    },
+    listLeaseResources: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceCollection>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listLeaseResources",
+      };
+      return client.get(
+        `/api/v1/lease/realms/${realm}/areas/${area}/resources`,
+        undefined,
+        finalOptions,
+      );
+    },
+    getLeaseResource: (
+      realm: string,
+      area: string,
+      resource: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<LeaseResourceDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getLeaseResource" };
+      return client.get(
+        `/api/v1/lease/realms/${realm}/areas/${area}/resources/${resource}`,
+        undefined,
+        finalOptions,
+      );
     },
     getLeaseStats: (options?: {
       signal?: AbortSignal;
@@ -228,6 +1059,80 @@ export function createAdapter(client: FetchClient): {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getLeaseStats" };
       return client.get(`/api/v1/lease/stats`, undefined, finalOptions);
     },
+    listNoticeRealms: (options?: {
+      signal?: AbortSignal;
+      timeout?: number;
+      operationId?: string;
+    }): Promise<FetchResponse<RealmCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listNoticeRealms" };
+      return client.get(`/api/v1/notice/realms`, undefined, finalOptions);
+    },
+    getNoticeRealm: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<RealmDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getNoticeRealm" };
+      return client.get(`/api/v1/notice/realms/${realm}`, undefined, finalOptions);
+    },
+    listNoticeAreas: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listNoticeAreas" };
+      return client.get(`/api/v1/notice/realms/${realm}/areas`, undefined, finalOptions);
+    },
+    getNoticeArea: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getNoticeArea" };
+      return client.get(`/api/v1/notice/realms/${realm}/areas/${area}`, undefined, finalOptions);
+    },
+    listNoticeResources: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceCollection>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listNoticeResources",
+      };
+      return client.get(
+        `/api/v1/notice/realms/${realm}/areas/${area}/resources`,
+        undefined,
+        finalOptions,
+      );
+    },
+    getNoticeResource: (
+      realm: string,
+      area: string,
+      resource: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<NoticeResourceDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getNoticeResource" };
+      return client.get(
+        `/api/v1/notice/realms/${realm}/areas/${area}/resources/${resource}`,
+        undefined,
+        finalOptions,
+      );
+    },
+    listNoticeSubscriptions: (
+      realm: string,
+      area: string,
+      resource: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<NoticeSubscriptionsList>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listNoticeSubscriptions",
+      };
+      return client.get(
+        `/api/v1/notice/realms/${realm}/areas/${area}/resources/${resource}/subscriptions`,
+        undefined,
+        finalOptions,
+      );
+    },
     getNoticeStats: (options?: {
       signal?: AbortSignal;
       timeout?: number;
@@ -235,6 +1140,133 @@ export function createAdapter(client: FetchClient): {
     }): Promise<FetchResponse<NoticeStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getNoticeStats" };
       return client.get(`/api/v1/notice/stats`, undefined, finalOptions);
+    },
+    listQueueRealms: (options?: {
+      signal?: AbortSignal;
+      timeout?: number;
+      operationId?: string;
+    }): Promise<FetchResponse<RealmCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listQueueRealms" };
+      return client.get(`/api/v1/queue/realms`, undefined, finalOptions);
+    },
+    getQueueRealm: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<RealmDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getQueueRealm" };
+      return client.get(`/api/v1/queue/realms/${realm}`, undefined, finalOptions);
+    },
+    listQueueAreas: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listQueueAreas" };
+      return client.get(`/api/v1/queue/realms/${realm}/areas`, undefined, finalOptions);
+    },
+    getQueueArea: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getQueueArea" };
+      return client.get(`/api/v1/queue/realms/${realm}/areas/${area}`, undefined, finalOptions);
+    },
+    listQueueResources: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceCollection>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listQueueResources",
+      };
+      return client.get(
+        `/api/v1/queue/realms/${realm}/areas/${area}/resources`,
+        undefined,
+        finalOptions,
+      );
+    },
+    getQueueResource: (
+      realm: string,
+      area: string,
+      resource: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<QueueResourceDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getQueueResource" };
+      return client.get(
+        `/api/v1/queue/realms/${realm}/areas/${area}/resources/${resource}`,
+        undefined,
+        finalOptions,
+      );
+    },
+    listQueueDeadLetters: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { family?: number },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<QueueDeadLettersList>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listQueueDeadLetters",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/queue/realms/${realm}/areas/${area}/resources/${resource}/dead-letters` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
+    purgeQueueDeadLetter: (
+      realm: string,
+      area: string,
+      resource: string,
+      message_id: number,
+      query?: { family: number },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<boolean>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "purgeQueueDeadLetter",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/queue/realms/${realm}/areas/${area}/resources/${resource}/dead-letters/${message_id}` +
+        (queryString ? "?" + queryString : "");
+      return client.del(url, undefined, finalOptions);
+    },
+    replayQueueDeadLetter: (
+      realm: string,
+      area: string,
+      resource: string,
+      message_id: number,
+      query?: { family: number },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<boolean>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "replayQueueDeadLetter",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/queue/realms/${realm}/areas/${area}/resources/${resource}/dead-letters/${message_id}/replay` +
+        (queryString ? "?" + queryString : "");
+      return client.post(url, undefined, undefined, finalOptions);
+    },
+    listQueueInflightEntries: (
+      realm: string,
+      area: string,
+      resource: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<QueueInflightList>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listQueueInflightEntries",
+      };
+      return client.get(
+        `/api/v1/queue/realms/${realm}/areas/${area}/resources/${resource}/inflight`,
+        undefined,
+        finalOptions,
+      );
     },
     getQueueStats: (options?: {
       signal?: AbortSignal;
@@ -244,6 +1276,117 @@ export function createAdapter(client: FetchClient): {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getQueueStats" };
       return client.get(`/api/v1/queue/stats`, undefined, finalOptions);
     },
+    listRpcPendingRequests: (
+      query?: { realm?: string },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<RpcPendingList>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listRpcPendingRequests",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url = `/api/v1/rpc/pending` + (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
+    listRpcRealms: (options?: {
+      signal?: AbortSignal;
+      timeout?: number;
+      operationId?: string;
+    }): Promise<FetchResponse<RealmCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listRpcRealms" };
+      return client.get(`/api/v1/rpc/realms`, undefined, finalOptions);
+    },
+    getRpcRealm: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<RealmDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getRpcRealm" };
+      return client.get(`/api/v1/rpc/realms/${realm}`, undefined, finalOptions);
+    },
+    listRpcAreas: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listRpcAreas" };
+      return client.get(`/api/v1/rpc/realms/${realm}/areas`, undefined, finalOptions);
+    },
+    getRpcArea: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getRpcArea" };
+      return client.get(`/api/v1/rpc/realms/${realm}/areas/${area}`, undefined, finalOptions);
+    },
+    listRpcResources: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listRpcResources" };
+      return client.get(
+        `/api/v1/rpc/realms/${realm}/areas/${area}/resources`,
+        undefined,
+        finalOptions,
+      );
+    },
+    getRpcResource: (
+      realm: string,
+      area: string,
+      resource: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<OperationCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getRpcResource" };
+      return client.get(
+        `/api/v1/rpc/realms/${realm}/areas/${area}/resources/${resource}`,
+        undefined,
+        finalOptions,
+      );
+    },
+    listRpcOperations: (
+      realm: string,
+      area: string,
+      resource: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<OperationCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listRpcOperations" };
+      return client.get(
+        `/api/v1/rpc/realms/${realm}/areas/${area}/resources/${resource}/operations`,
+        undefined,
+        finalOptions,
+      );
+    },
+    getRpcOperation: (
+      realm: string,
+      area: string,
+      resource: string,
+      operation: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<RpcOperationDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getRpcOperation" };
+      return client.get(
+        `/api/v1/rpc/realms/${realm}/areas/${area}/resources/${resource}/operations/${operation}`,
+        undefined,
+        finalOptions,
+      );
+    },
+    listRpcOperationWorkers: (
+      realm: string,
+      area: string,
+      resource: string,
+      operation: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<RpcWorkersList>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listRpcOperationWorkers",
+      };
+      return client.get(
+        `/api/v1/rpc/realms/${realm}/areas/${area}/resources/${resource}/operations/${operation}/workers`,
+        undefined,
+        finalOptions,
+      );
+    },
     getRpcStats: (options?: {
       signal?: AbortSignal;
       timeout?: number;
@@ -251,6 +1394,70 @@ export function createAdapter(client: FetchClient): {
     }): Promise<FetchResponse<RpcStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getRpcStats" };
       return client.get(`/api/v1/rpc/stats`, undefined, finalOptions);
+    },
+    listScheduleRealms: (options?: {
+      signal?: AbortSignal;
+      timeout?: number;
+      operationId?: string;
+    }): Promise<FetchResponse<RealmCollection>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listScheduleRealms",
+      };
+      return client.get(`/api/v1/schedule/realms`, undefined, finalOptions);
+    },
+    getScheduleRealm: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<RealmDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getScheduleRealm" };
+      return client.get(`/api/v1/schedule/realms/${realm}`, undefined, finalOptions);
+    },
+    listScheduleAreas: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listScheduleAreas" };
+      return client.get(`/api/v1/schedule/realms/${realm}/areas`, undefined, finalOptions);
+    },
+    getScheduleArea: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getScheduleArea" };
+      return client.get(`/api/v1/schedule/realms/${realm}/areas/${area}`, undefined, finalOptions);
+    },
+    listScheduleResources: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceCollection>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listScheduleResources",
+      };
+      return client.get(
+        `/api/v1/schedule/realms/${realm}/areas/${area}/resources`,
+        undefined,
+        finalOptions,
+      );
+    },
+    getScheduleResource: (
+      realm: string,
+      area: string,
+      resource: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ScheduleResourceDetail>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "getScheduleResource",
+      };
+      return client.get(
+        `/api/v1/schedule/realms/${realm}/areas/${area}/resources/${resource}`,
+        undefined,
+        finalOptions,
+      );
     },
     getScheduleStats: (options?: {
       signal?: AbortSignal;
@@ -308,6 +1515,89 @@ export function createAdapter(client: FetchClient): {
     }): Promise<FetchResponse<GlobalStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getGlobalStats" };
       return client.get(`/api/v1/stats`, undefined, finalOptions);
+    },
+    listStreamRealms: (options?: {
+      signal?: AbortSignal;
+      timeout?: number;
+      operationId?: string;
+    }): Promise<FetchResponse<RealmCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listStreamRealms" };
+      return client.get(`/api/v1/stream/realms`, undefined, finalOptions);
+    },
+    getStreamRealm: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<RealmDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getStreamRealm" };
+      return client.get(`/api/v1/stream/realms/${realm}`, undefined, finalOptions);
+    },
+    listStreamAreas: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaCollection>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "listStreamAreas" };
+      return client.get(`/api/v1/stream/realms/${realm}/areas`, undefined, finalOptions);
+    },
+    getStreamArea: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AreaDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getStreamArea" };
+      return client.get(`/api/v1/stream/realms/${realm}/areas/${area}`, undefined, finalOptions);
+    },
+    listStreamResources: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceCollection>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listStreamResources",
+      };
+      return client.get(
+        `/api/v1/stream/realms/${realm}/areas/${area}/resources`,
+        undefined,
+        finalOptions,
+      );
+    },
+    getStreamResource: (
+      realm: string,
+      area: string,
+      resource: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<StreamResourceDetail>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getStreamResource" };
+      return client.get(
+        `/api/v1/stream/realms/${realm}/areas/${area}/resources/${resource}`,
+        undefined,
+        finalOptions,
+      );
+    },
+    getStreamAreaWatermarks: (
+      realm: string,
+      area: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<StreamAreaWatermarkDetail>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "getStreamAreaWatermarks",
+      };
+      return client.get(
+        `/api/v1/stream/realms/${realm}/areas/${area}/watermarks`,
+        undefined,
+        finalOptions,
+      );
+    },
+    getStreamRealmWatermarks: (
+      realm: string,
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<StreamRealmWatermarkDetail>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "getStreamRealmWatermarks",
+      };
+      return client.get(`/api/v1/stream/realms/${realm}/watermarks`, undefined, finalOptions);
     },
     getStreamStats: (options?: {
       signal?: AbortSignal;
