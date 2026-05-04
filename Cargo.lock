@@ -941,7 +941,7 @@ dependencies = [
  "prometheus",
  "proptest",
  "quinn",
- "rand 0.8.6",
+ "rand 0.10.1",
  "rcgen",
  "regex",
  "reqwest 0.11.27",

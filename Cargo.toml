@@ -86,7 +86,7 @@ criterion = { version = "0.4", features = ["async_futures"] }
 cntryl-stress = "0.2.3"
 serial_test = "0.5"
 tempfile = "3"
-rand = "0.8"
+rand = "0.10"
 proptest = "1"
 
 # Tier 1: Hot Path (Infrastructure - Pure sync internals, <1s, <100ns-10µs ops)
