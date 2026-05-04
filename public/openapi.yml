@@ -34,6 +34,7 @@ paths:
     get:
       tags: [Health]
       summary: Liveness probe
+      operationId: getLivenessProbe
       security: []
       responses:
         "200":
@@ -47,6 +48,7 @@ paths:
     get:
       tags: [Health]
       summary: Readiness probe
+      operationId: getReadinessProbe
       security: []
       responses:
         "200":
@@ -66,6 +68,7 @@ paths:
     get:
       tags: [Health]
       summary: Startup probe
+      operationId: getStartupProbe
       security: []
       responses:
         "200":
@@ -85,6 +88,7 @@ paths:
     get:
       tags: [Health]
       summary: Legacy health endpoint
+      operationId: getLegacyHealth
       security: []
       responses:
         "200":
@@ -98,6 +102,7 @@ paths:
     get:
       tags: [Metrics]
       summary: Prometheus metrics
+      operationId: getMetrics
       security:
         - sessionCookie: []
       responses:
@@ -114,6 +119,7 @@ paths:
     post:
       tags: [Auth]
       summary: Create admin session
+      operationId: createAdminSession
       security: []
       requestBody:
         required: true
@@ -133,6 +139,7 @@ paths:
     get:
       tags: [Auth]
       summary: Get current admin session
+      operationId: getAdminSession
       security:
         - sessionCookie: []
       responses:
@@ -141,12 +148,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SessionState"
+                $ref: "#/components/schemas/SessionResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     delete:
       tags: [Auth]
       summary: Delete admin session
+      operationId: deleteAdminSession
       security: []
       responses:
         "204":
@@ -156,10 +166,15 @@ paths:
     get:
       tags: [Sessions]
       summary: List active sessions
+      operationId: listActiveSessions
       security:
         - sessionCookie: []
       parameters:
-        - $ref: "#/components/parameters/RealmQuery"
+        - name: realm
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: Active sessions
@@ -169,6 +184,160 @@ paths:
                 $ref: "#/components/schemas/SessionsList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/stats:
+    get:
+      tags: [Stats]
+      summary: Get global broker and domain statistics
+      operationId: getGlobalStats
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Global broker and domain statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlobalStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/kv/stats:
+    get:
+      tags: [Stats, KV]
+      summary: Get KV domain statistics
+      operationId: getKvStats
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: KV domain statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KvStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/stream/stats:
+    get:
+      tags: [Stats, Stream]
+      summary: Get Stream domain statistics
+      operationId: getStreamStats
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Stream domain statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/notice/stats:
+    get:
+      tags: [Stats, Notice]
+      summary: Get Notice domain statistics
+      operationId: getNoticeStats
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Notice domain statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoticeStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/queue/stats:
+    get:
+      tags: [Stats, Queue]
+      summary: Get Queue domain statistics
+      operationId: getQueueStats
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Queue domain statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/rpc/stats:
+    get:
+      tags: [Stats, RPC]
+      summary: Get RPC domain statistics
+      operationId: getRpcStats
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: RPC domain statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RpcStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/lease/stats:
+    get:
+      tags: [Stats, Lease]
+      summary: Get Lease domain statistics
+      operationId: getLeaseStats
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Lease domain statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaseStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/schedule/stats:
+    get:
+      tags: [Stats, Schedule]
+      summary: Get Schedule domain statistics
+      operationId: getScheduleStats
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Schedule domain statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /api/v1/kv/realms:
     get:
@@ -188,7 +357,11 @@ paths:
       summary: Get KV realm
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: KV realm
@@ -202,7 +375,11 @@ paths:
       summary: List KV areas in a realm
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: KV areas
@@ -216,8 +393,16 @@ paths:
       summary: Get KV area
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: KV area
@@ -231,8 +416,16 @@ paths:
       summary: List KV resources in an area
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: KV resources
@@ -247,9 +440,21 @@ paths:
       description: Live broker-local KV resource detail. `transactions_active` counts only the current in-memory session-scoped transactions for this resource and resets on disconnect cleanup or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: KV resource
@@ -264,9 +469,21 @@ paths:
       description: Live in-memory KV transaction snapshots for the current broker process. Transactions are session-scoped, disappear on disconnect or broker restart, and do not represent a durable recovery log.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: KV transactions
@@ -293,7 +510,11 @@ paths:
       summary: Get queue realm
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Queue realm
@@ -307,7 +528,11 @@ paths:
       summary: List queue areas
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Queue areas
@@ -321,8 +546,16 @@ paths:
       summary: Get queue area
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Queue area
@@ -336,8 +569,16 @@ paths:
       summary: List queues in an area
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Queues
@@ -352,9 +593,21 @@ paths:
       description: Point-in-time warm-actor Queue detail for the current broker process. Counts are refreshed from live in-memory queue actors only and can disappear after idle eviction or broker restart until traffic rehydrates that queue.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Queue resource
@@ -369,9 +622,21 @@ paths:
       description: Live in-memory queue inflight entries for the current broker process only. Inflight ownership, tokens, and session IDs disappear on disconnect cleanup, idle actor eviction, or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Queue inflight entries
@@ -379,6 +644,138 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QueueInflightList"
+
+  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters:
+    get:
+      tags: [Queue]
+      summary: List queue dead-letter entries for a resource
+      description: Live in-memory dead-letter rows for the current broker process. Rows remain durably stored, but this view only reflects queue actors currently warm on this broker.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: family
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Queue dead-letter entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueDeadLettersList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}/replay:
+    post:
+      tags: [Queue]
+      summary: Replay a queue dead-letter entry
+      description: Replays a retained dead-letter row using the current broker-local queue family.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: message_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: family
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "204":
+          description: Dead-letter replay accepted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Dead-letter row not found
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}:
+    delete:
+      tags: [Queue]
+      summary: Purge a queue dead-letter entry
+      description: Deletes a retained dead-letter row using the current broker-local queue family.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: message_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: family
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "204":
+          description: Dead-letter row purged
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Dead-letter row not found
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /api/v1/stream/realms:
     get:
@@ -398,7 +795,11 @@ paths:
       summary: Get stream realm
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Stream realm
@@ -412,7 +813,11 @@ paths:
       summary: List stream areas
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Stream areas
@@ -426,8 +831,16 @@ paths:
       summary: Get stream area
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Stream area
@@ -442,8 +855,16 @@ paths:
       description: Lists committed stream resources known from durable stream metadata for the selected area. Resources remain visible after broker restart even when no append session is currently active.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Streams
@@ -458,9 +879,21 @@ paths:
       description: Returns durable committed stream metadata for this resource plus the current broker process's live append-session count. `sessions_active` resets on disconnect cleanup or broker restart; consumer cursors are client-managed and not stored here.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Stream resource
@@ -468,6 +901,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StreamResourceDetail"
+
+  /api/v1/stream/realms/{realm}/watermarks:
+    get:
+      tags: [Stream]
+      summary: Get stream realm watermarks
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stream realm watermark detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamRealmWatermarkDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/stream/realms/{realm}/areas/{area}/watermarks:
+    get:
+      tags: [Stream]
+      summary: Get stream area watermarks
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stream area watermark detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamAreaWatermarkDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /api/v1/lease/realms:
     get:
@@ -487,7 +971,11 @@ paths:
       summary: Get lease realm
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Lease realm
@@ -501,7 +989,11 @@ paths:
       summary: List lease areas
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Lease areas
@@ -515,8 +1007,16 @@ paths:
       summary: Get lease area
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Lease area
@@ -530,8 +1030,16 @@ paths:
       summary: List lease resources
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Lease resources
@@ -546,9 +1054,21 @@ paths:
       description: Live broker-local lease resource detail. `active_leases` counts only the current in-memory leases for this resource on the running broker process and resets on disconnect cleanup or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Lease resource
@@ -576,7 +1096,11 @@ paths:
       summary: Get schedule realm
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Schedule realm
@@ -590,7 +1114,11 @@ paths:
       summary: List schedule areas
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Schedule areas
@@ -604,8 +1132,16 @@ paths:
       summary: Get schedule area
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Schedule area
@@ -619,8 +1155,16 @@ paths:
       summary: List schedule resources
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Schedule resources
@@ -635,9 +1179,21 @@ paths:
       description: Returns durable schedule definitions for this resource as seen by the current broker after boot preload. Schedule notifications remain live, session-scoped delivery only.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Schedule resource
@@ -664,7 +1220,11 @@ paths:
       summary: Get notice realm
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Notice realm
@@ -678,7 +1238,11 @@ paths:
       summary: List notice areas
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Notice areas
@@ -692,8 +1256,16 @@ paths:
       summary: Get notice area
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Notice area
@@ -707,8 +1279,16 @@ paths:
       summary: List notice resources
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Notice resources
@@ -722,9 +1302,21 @@ paths:
       summary: Get notice resource
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Notice resource
@@ -738,9 +1330,21 @@ paths:
       summary: List notice subscriptions for a resource
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Notice subscriptions
@@ -767,7 +1371,11 @@ paths:
       summary: Get RPC realm
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: RPC realm
@@ -781,7 +1389,11 @@ paths:
       summary: List RPC areas
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: RPC areas
@@ -795,8 +1407,16 @@ paths:
       summary: Get RPC area
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: RPC area
@@ -810,8 +1430,16 @@ paths:
       summary: List RPC resources
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: RPC resources
@@ -825,9 +1453,21 @@ paths:
       summary: Get RPC resource
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: RPC resource
@@ -841,9 +1481,21 @@ paths:
       summary: List RPC operations
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: RPC operations
@@ -857,10 +1509,26 @@ paths:
       summary: Get RPC operation
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
-        - $ref: "#/components/parameters/OperationPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operation
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: RPC operation
@@ -874,10 +1542,26 @@ paths:
       summary: List RPC workers for an operation
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmPath"
-        - $ref: "#/components/parameters/AreaPath"
-        - $ref: "#/components/parameters/ResourcePath"
-        - $ref: "#/components/parameters/OperationPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operation
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: Live in-memory RPC workers for the current broker process. Registrations disappear on disconnect or broker restart.
@@ -885,13 +1569,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RpcWorkersList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /api/v1/rpc/pending:
     get:
       tags: [RPC]
       summary: List pending RPC requests
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RealmQuery"
+        - name: realm
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: Live in-memory pending RPC requests for the current broker process. A restart clears this list immediately.
@@ -899,6 +1591,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RpcPendingList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
 components:
   securitySchemes:
@@ -977,7 +1673,7 @@ components:
         password:
           type: string
 
-    SessionState:
+    SessionResponse:
       type: object
       required: [authenticated, username]
       properties:
@@ -985,6 +1681,164 @@ components:
           type: boolean
         username:
           type: string
+
+    GlobalStats:
+      type: object
+      required: [broker, domains]
+      properties:
+        broker:
+          $ref: "#/components/schemas/BrokerStats"
+        domains:
+          $ref: "#/components/schemas/DomainStats"
+
+    BrokerStats:
+      type: object
+      required:
+        [uptime_seconds, connections, sessions, realms, messages_per_second]
+      properties:
+        uptime_seconds:
+          type: integer
+        connections:
+          type: integer
+        sessions:
+          type: integer
+        realms:
+          type: array
+          items:
+            type: string
+        messages_per_second:
+          type: number
+
+    DomainStats:
+      type: object
+      required: [kv, stream, notice, queue, rpc, lease, schedule]
+      properties:
+        kv:
+          $ref: "#/components/schemas/KvStats"
+        stream:
+          $ref: "#/components/schemas/StreamStats"
+        notice:
+          $ref: "#/components/schemas/NoticeStats"
+        queue:
+          $ref: "#/components/schemas/QueueStats"
+        rpc:
+          $ref: "#/components/schemas/RpcStats"
+        lease:
+          $ref: "#/components/schemas/LeaseStats"
+        schedule:
+          $ref: "#/components/schemas/ScheduleStats"
+
+    KvStats:
+      type: object
+      required: [transactions_active, keys_total, operations_per_second]
+      properties:
+        transactions_active:
+          type: integer
+        keys_total:
+          type: integer
+        operations_per_second:
+          type: number
+
+    StreamStats:
+      type: object
+      required:
+        [
+          streams_active,
+          events_total,
+          operations_per_second,
+          subscriptions_active,
+        ]
+      properties:
+        streams_active:
+          type: integer
+        events_total:
+          type: integer
+        operations_per_second:
+          type: number
+        subscriptions_active:
+          type: integer
+
+    NoticeStats:
+      type: object
+      required: [subscriptions_active, publishes_per_second]
+      properties:
+        subscriptions_active:
+          type: integer
+        publishes_per_second:
+          type: number
+
+    QueueStats:
+      type: object
+      required:
+        [
+          messages_ready,
+          messages_delayed,
+          messages_pending,
+          messages_dead_lettered,
+          inflight_active,
+          operations_per_second,
+        ]
+      properties:
+        messages_ready:
+          type: integer
+        messages_delayed:
+          type: integer
+        messages_pending:
+          type: integer
+        messages_dead_lettered:
+          type: integer
+        inflight_active:
+          type: integer
+        operations_per_second:
+          type: number
+
+    RpcStats:
+      type: object
+      required: [workers_registered, requests_pending, operations_per_second]
+      properties:
+        workers_registered:
+          type: integer
+        requests_pending:
+          type: integer
+        operations_per_second:
+          type: number
+
+    LeaseStats:
+      type: object
+      required: [leases_active, operations_per_second]
+      properties:
+        leases_active:
+          type: integer
+        operations_per_second:
+          type: number
+
+    ScheduleStats:
+      type: object
+      required:
+        [
+          schedules_active,
+          executions_per_minute,
+          subscriptions_active,
+          pending_fire_claims,
+          notify_failures_total,
+          ack_failures_total,
+          overdue_normalizations_total,
+        ]
+      properties:
+        schedules_active:
+          type: integer
+        executions_per_minute:
+          type: number
+        subscriptions_active:
+          type: integer
+        pending_fire_claims:
+          type: integer
+        notify_failures_total:
+          type: integer
+        ack_failures_total:
+          type: integer
+        overdue_normalizations_total:
+          type: integer
 
     RealmEntry:
       type: object
@@ -1067,20 +1921,33 @@ components:
       type: object
       description: Point-in-time Queue resource detail for the current broker process. Counts describe only the queue actor state currently warm in memory and do not represent a durable inventory of every committed queue in storage.
       required:
-        [realm, area, resource, messages_ready, messages_inflight, messages_total, oldest_message_age_seconds]
+        [
+          realm,
+          area,
+          resource,
+          messages_ready,
+          messages_delayed,
+          messages_inflight,
+          messages_dead_lettered,
+          messages_total,
+          oldest_message_age_seconds,
+        ]
       properties:
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
         messages_ready: { type: integer }
+        messages_delayed: { type: integer }
         messages_inflight: { type: integer }
+        messages_dead_lettered: { type: integer }
         messages_total: { type: integer }
         oldest_message_age_seconds: { type: integer }
 
     StreamResourceDetail:
       type: object
       description: Durable committed stream metadata for one resource plus the current broker process's live append-session count. `offset`, `watermark`, and `size_bytes` survive restart; `sessions_active` is ephemeral and resets on disconnect cleanup or broker restart.
-      required: [realm, area, resource, offset, watermark, size_bytes, sessions_active]
+      required:
+        [realm, area, resource, offset, watermark, size_bytes, sessions_active]
       properties:
         realm: { type: string }
         area: { type: string }
@@ -1089,6 +1956,58 @@ components:
         watermark: { type: integer }
         size_bytes: { type: integer }
         sessions_active: { type: integer }
+
+    StreamRealmWatermarkDetail:
+      type: object
+      required: [realm, area_count, resource_count, family_watermarks]
+      properties:
+        realm:
+          type: string
+        area_count:
+          type: integer
+        resource_count:
+          type: integer
+        family_watermarks:
+          type: array
+          items:
+            $ref: "#/components/schemas/StreamRealmWatermark"
+
+    StreamRealmWatermark:
+      type: object
+      required: [family, watermark]
+      properties:
+        family:
+          type: integer
+          format: int64
+        watermark:
+          type: integer
+          format: int64
+
+    StreamAreaWatermarkDetail:
+      type: object
+      required: [realm, area, resource_count, family_watermarks]
+      properties:
+        realm:
+          type: string
+        area:
+          type: string
+        resource_count:
+          type: integer
+        family_watermarks:
+          type: array
+          items:
+            $ref: "#/components/schemas/StreamAreaWatermark"
+
+    StreamAreaWatermark:
+      type: object
+      required: [family, watermark]
+      properties:
+        family:
+          type: integer
+          format: int64
+        watermark:
+          type: integer
+          format: int64
 
     LeaseResourceDetail:
       type: object
@@ -1150,7 +2069,8 @@ components:
     RpcOperationDetail:
       type: object
       description: Point-in-time live in-memory RPC state for a single operation on the current broker process. Worker registrations and pending requests are ephemeral, reset on disconnect cleanup or broker restart, and do not represent durable backlog or recovery state.
-      required: [realm, area, resource, operation, workers_registered, requests_pending]
+      required:
+        [realm, area, resource, operation, workers_registered, requests_pending]
       properties:
         realm: { type: string }
         area: { type: string }
@@ -1187,8 +2107,21 @@ components:
     QueueInflight:
       type: object
       description: Live in-memory Queue inflight entry for the current broker process only. `inflight_token` and `session_id` belong to one active inflight entry and are dropped on disconnect cleanup, idle actor eviction, or broker restart.
+      required:
+        [
+          message_id,
+          family,
+          realm,
+          area,
+          resource,
+          inflight_token,
+          session_id,
+          expires_at,
+          attempts,
+        ]
       properties:
         message_id: { type: integer }
+        family: { type: integer }
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
@@ -1204,6 +2137,49 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QueueInflight"
+
+    QueueDeadLettersList:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueueDeadLetter"
+
+    QueueDeadLetter:
+      type: object
+      description: Live in-memory Queue dead-letter snapshot for the current broker process. Dead-letter rows remain durably stored, but this endpoint only reflects rows for queue actors that are currently warm on this broker.
+      required:
+        [
+          message_id,
+          family,
+          realm,
+          area,
+          resource,
+          dead_lettered_at,
+          attempts,
+          reason,
+        ]
+      properties:
+        message_id:
+          type: integer
+          format: int64
+        family:
+          type: integer
+          format: int64
+        realm:
+          type: string
+        area:
+          type: string
+        resource:
+          type: string
+        dead_lettered_at:
+          type: string
+        attempts:
+          type: integer
+        reason:
+          type: string
 
     NoticeSubscription:
       type: object
@@ -1341,3 +2317,5 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+
+

@@ -10,27 +10,28 @@
     "lint": "vp lint src tests",
     "lint:fix": "vp lint src tests --fix",
     "fmt": "vp fmt src tests README.md --write",
-    "gen:adapters": "vp dlx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated.ts"
+    "gen": "npm run gen:adapters && npm run fmt",
+    "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/apiv1.g.ts"
   },
   "dependencies": {
-    "@askrjs/askr": "github:askrjs/askr#main",
-    "@askrjs/askr-themes": "file:./vendor/askr-themes",
-    "@askrjs/askr-ui": "file:./vendor/askr-ui",
-    "@askrjs/askr-vite": "github:askrjs/askr-vite#main",
-    "@askrjs/icons-lucide": "file:./vendor/icons-lucide",
+    "@askrjs/askr": "0.0.31",
+    "@askrjs/themes": "0.0.1",
+    "@askrjs/ui": "0.0.4",
+    "@askrjs/vite": "0.0.2",
+    "@askrjs/lucide": "0.0.1",
     "@fgrzl/fetch": "^1.4.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^25.5.0",
-    "@typescript-eslint/eslint-plugin": "^8.57.1",
-    "@typescript-eslint/parser": "^8.57.1",
-    "@vitest/ui": "^4.1.0",
-    "eslint": "^10.0.3",
+    "@types/node": "^25.6.0",
+    "@typescript-eslint/eslint-plugin": "^8.59.2",
+    "@typescript-eslint/parser": "^8.59.2",
+    "@vitest/ui": "^4.1.5",
+    "eslint": "^10.3.0",
     "jiti": "^2.6.1",
-    "jsdom": "^29.0.1",
-    "prettier": "^3.8.1",
-    "typescript": "^5.9.3",
+    "jsdom": "^29.1.1",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3",
     "vite": "npm:@voidzero-dev/vite-plus-core@latest",
     "vite-plus": "latest",
     "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
@@ -39,5 +40,5 @@
     "vite": "npm:@voidzero-dev/vite-plus-core@latest",
     "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
   },
-  "packageManager": "npm@11.12.1"
+  "packageManager": "npm@11.13.0"
 }
