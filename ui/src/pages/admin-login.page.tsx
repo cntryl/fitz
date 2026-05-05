@@ -1,16 +1,6 @@
 import { state } from "@askrjs/askr";
-import { Badge } from "@askrjs/askr-ui/badge";
-import { Button } from "@askrjs/askr-ui/button";
-import {
-  Field,
-  FieldControl,
-  FieldDescription,
-  FieldError,
-  FieldLabel,
-} from "@askrjs/askr-ui/field";
-import { Input } from "@askrjs/askr-ui/input";
-import { Stack } from "@askrjs/askr-ui/stack";
-import { LockKeyhole, ShieldCheck } from "@askrjs/icons-lucide";
+import { Button, Input, Label } from "@askrjs/ui";
+import { LockKeyholeIcon, ShieldCheckIcon } from "@askrjs/lucide";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createSignInMutation } from "@/features/session/session-mutation";
 
@@ -49,71 +39,57 @@ export default function AdminLogin() {
 
   return (
     <section class="auth-card">
-      <Stack gap="1.5rem">
-        <div class="auth-intro">
-          <Badge class="shell-badge">Root SPA</Badge>
-          <p class="eyebrow">Admin Access</p>
-          <h1>Sign in to Fitz Admin</h1>
-          <p>Use your admin credentials to access the REST-backed management UI.</p>
+      <div class="auth-intro">
+        <span class="shell-badge">Root SPA</span>
+        <p class="eyebrow">Admin Access</p>
+        <h1>Sign in to Fitz Admin</h1>
+        <p>Use your admin credentials to access the REST-backed management UI.</p>
+      </div>
+
+      <div class="auth-points">
+        <div class="auth-point">
+          <ShieldCheckIcon size={16} />
+          <span>Session-backed admin authentication</span>
+        </div>
+        <div class="auth-point">
+          <LockKeyholeIcon size={16} />
+          <span>Prepared for additional SPA routes and features</span>
+        </div>
+      </div>
+
+      <form class="auth-form" onSubmit={onSubmit}>
+        <div class="auth-field">
+          <Label for="username-field">Username</Label>
+          <Input
+            id="username-field"
+            name="username"
+            autocomplete="username"
+            value={username()}
+            onInput={(event: Event) => username.set((event.target as HTMLInputElement).value)}
+            placeholder="admin"
+          />
         </div>
 
-        <div class="auth-points">
-          <div class="auth-point">
-            <ShieldCheck size={16} />
-            <span>Session-backed admin authentication</span>
-          </div>
-          <div class="auth-point">
-            <LockKeyhole size={16} />
-            <span>Prepared for additional SPA routes and features</span>
-          </div>
+        <div class="auth-field">
+          <Label for="password-field">Password</Label>
+          <Input
+            id="password-field"
+            type="password"
+            name="password"
+            autocomplete="current-password"
+            value={password()}
+            onInput={(event: Event) => password.set((event.target as HTMLInputElement).value)}
+            placeholder="Enter your password"
+          />
         </div>
 
-        <form class="auth-form" onSubmit={onSubmit}>
-          <Field class="auth-field" id="username-field">
-            <FieldLabel fieldId="username-field">Username</FieldLabel>
-            <FieldDescription fieldId="username-field">
-              Use the Fitz admin account configured on the backend.
-            </FieldDescription>
-            <FieldControl asChild fieldId="username-field">
-              <Input
-                name="username"
-                autocomplete="username"
-                value={username()}
-                onInput={(event: Event) => username.set((event.target as HTMLInputElement).value)}
-                placeholder="admin"
-              />
-            </FieldControl>
-          </Field>
+        {error() ? <p class="auth-error">{error()}</p> : null}
+        {session.error ? <p class="auth-error">Unable to check your current session.</p> : null}
 
-          <Field class="auth-field" id="password-field">
-            <FieldLabel fieldId="password-field">Password</FieldLabel>
-            <FieldDescription fieldId="password-field">
-              Your current admin password is sent to the existing session API.
-            </FieldDescription>
-            <FieldControl asChild fieldId="password-field">
-              <Input
-                type="password"
-                name="password"
-                autocomplete="current-password"
-                value={password()}
-                onInput={(event: Event) => password.set((event.target as HTMLInputElement).value)}
-                placeholder="Enter your password"
-              />
-            </FieldControl>
-          </Field>
-
-          {error() ? (
-            <FieldError fieldId="password-field" class="auth-error">
-              {error()}
-            </FieldError>
-          ) : null}
-          {session.error ? <p class="auth-error">Unable to check your current session.</p> : null}
-
-          <Button type="submit" class="submit-action" aria-busy={submitting()}>
-            {submitting() ? "Signing in..." : "Sign in"}
-          </Button>
-        </form>
-      </Stack>
+        <Button type="submit" class="submit-action" aria-busy={submitting()}>
+          {submitting() ? "Signing in..." : "Sign in"}
+        </Button>
+      </form>
     </section>
   );
 }

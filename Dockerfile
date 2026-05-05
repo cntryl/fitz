@@ -59,8 +59,8 @@ WORKDIR /app
 # Copy the binary from builder
 COPY --from=builder /usr/src/fitz/target/release/fitz /app/fitz
 
-# Copy SPA files for admin UI (built from ui/)
-COPY --from=ui-builder /public /app/public
+# Copy SPA files for admin UI (built to ui/dist)
+COPY --from=ui-builder /ui/dist/ /app/public/
 
 # Run as non-root numeric UID
 USER 65532

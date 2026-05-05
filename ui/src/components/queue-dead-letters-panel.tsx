@@ -1,7 +1,5 @@
-import { Badge } from "@askrjs/askr-ui/badge";
-import { Button } from "@askrjs/askr-ui/button";
-import { Stack } from "@askrjs/askr-ui/stack";
-import { Activity, Gauge } from "@askrjs/icons-lucide";
+import { Button } from "@askrjs/ui";
+import { ActivityIcon, GaugeIcon } from "@askrjs/lucide";
 import {
   createQueueDeadLettersQuery,
   type DeadLetterFilters,
@@ -23,6 +21,26 @@ function formatTimestamp(value: string) {
   return date.toLocaleString();
 }
 
+function formatErrorValue(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return `${value}`;
+  }
+
+  if (value == null) {
+    return "Unknown error";
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "Unknown error";
+  }
+}
+
 // Component boundary: consume query state only; no generated DTOs or FetchResponse.
 export default function QueueDeadLettersPanel({
   resourceRef,
@@ -33,17 +51,17 @@ export default function QueueDeadLettersPanel({
 
   return (
     <section class="queue-panel">
-      <Stack gap="1rem">
+      <div>
         <div class="queue-panel-header">
           <div>
-            <Badge class="status-badge">Queue</Badge>
+            <span class="status-badge">Queue</span>
             <h2>Dead letters</h2>
             <p>
               {resourceRef.realm} / {resourceRef.area} / {resourceRef.resource}
             </p>
           </div>
           <Button class="secondary-action" onPress={() => deadLetters.refresh()}>
-            <Activity size={16} />
+            <ActivityIcon size={16} />
             Refresh
           </Button>
         </div>
@@ -56,13 +74,13 @@ export default function QueueDeadLettersPanel({
           <p class="queue-panel-error">
             {deadLetters.error instanceof Error
               ? deadLetters.error.message
-              : String(deadLetters.error)}
+              : formatErrorValue(deadLetters.error)}
           </p>
         ) : null}
 
         {!deadLetters.loading && !deadLetters.error && messages.length === 0 ? (
           <div class="queue-empty-state">
-            <Gauge size={18} />
+            <GaugeIcon size={18} />
             <span>No dead-letter messages are visible for this resource.</span>
           </div>
         ) : null}
@@ -90,7 +108,7 @@ export default function QueueDeadLettersPanel({
             ))}
           </div>
         ) : null}
-      </Stack>
+      </div>
     </section>
   );
 }
