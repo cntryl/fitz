@@ -6,7 +6,7 @@ import {
   createQueueDeadLettersQuery,
   type DeadLetterFilters,
   type QueueResourceRef,
-} from "../queries/queue.query";
+} from "@/features/queue/queue-query";
 
 export interface QueueDeadLettersPanelProps {
   resourceRef: QueueResourceRef;
@@ -29,7 +29,7 @@ export default function QueueDeadLettersPanel({
   filters = {},
 }: QueueDeadLettersPanelProps) {
   const deadLetters = createQueueDeadLettersQuery(resourceRef, filters);
-  const messages = deadLetters.value ?? [];
+  const messages = deadLetters.data ?? [];
 
   return (
     <section class="queue-panel">
@@ -48,13 +48,19 @@ export default function QueueDeadLettersPanel({
           </Button>
         </div>
 
-        {deadLetters.pending ? <p class="queue-panel-state">Loading dead-letter messages...</p> : null}
-
-        {deadLetters.error ? (
-          <p class="queue-panel-error">{deadLetters.error.message}</p>
+        {deadLetters.loading ? (
+          <p class="queue-panel-state">Loading dead-letter messages...</p>
         ) : null}
 
-        {!deadLetters.pending && !deadLetters.error && messages.length === 0 ? (
+        {deadLetters.error ? (
+          <p class="queue-panel-error">
+            {deadLetters.error instanceof Error
+              ? deadLetters.error.message
+              : String(deadLetters.error)}
+          </p>
+        ) : null}
+
+        {!deadLetters.loading && !deadLetters.error && messages.length === 0 ? (
           <div class="queue-empty-state">
             <Gauge size={18} />
             <span>No dead-letter messages are visible for this resource.</span>

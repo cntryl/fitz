@@ -15,7 +15,17 @@
     "jsx": "react-jsx",
     "jsxImportSource": "@askrjs/askr",
     "types": ["vite-plus/test/globals"],
+    "baseUrl": ".",
     "paths": {
+      "@/*": ["./src/*"],
+        "@askrjs/askr-ui/badge": ["./vendor/askr-ui/badge.jsx"],
+        "@askrjs/askr-ui/button": ["./vendor/askr-ui/button.jsx"],
+        "@askrjs/askr-ui/container": ["./vendor/askr-ui/container.jsx"],
+        "@askrjs/askr-ui/field": ["./vendor/askr-ui/field.jsx"],
+        "@askrjs/askr-ui/input": ["./vendor/askr-ui/input.jsx"],
+        "@askrjs/askr-ui/stack": ["./vendor/askr-ui/stack.jsx"],
+        "@askrjs/askr-themes/default": ["./vendor/askr-themes/default.css"],
+        "@askrjs/icons-lucide": ["./vendor/icons-lucide/index.jsx"],
       "@askrjs/askr/jsx-runtime": ["./node_modules/@askrjs/askr/dist/jsx/jsx-runtime.d.ts"],
       "@askrjs/askr/jsx-dev-runtime": ["./node_modules/@askrjs/askr/dist/jsx/jsx-dev-runtime.d.ts"]
     }

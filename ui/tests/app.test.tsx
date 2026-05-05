@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
-import App from "../src/app";
-import QueueDeadLettersPanel from "../src/components/queue-dead-letters-panel";
-import AdminHome from "../src/pages/admin-home";
-import AdminLogin from "../src/pages/admin-login";
+import App from "@/app";
+import QueueDeadLettersPanel from "@/components/queue-dead-letters-panel";
+import AdminHome from "@/pages/admin-home.page";
+import AdminLogin from "@/pages/admin-login.page";
 
 describe("Admin UI", () => {
   it("defines the shared admin shell", () => {

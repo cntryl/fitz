@@ -1,0 +1,76 @@
+.auth-card,
+.admin-panel {
+  max-width: 44rem;
+  margin: 0;
+}
+
+.auth-intro,
+.panel-heading,
+.panel-copy {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.eyebrow {
+  margin: 0;
+}
+
+.auth-intro h1,
+.panel-copy h1 {
+  margin: 0;
+}
+
+.auth-intro p:last-child,
+.panel-copy p {
+  margin: 0;
+}
+
+.auth-points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.auth-point,
+.stats-callout {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.auth-form {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.auth-field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+[data-slot="input"] {
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.9rem 1rem;
+}
+
+.auth-error {
+  margin: 0;
+}
+
+.admin-actions {
+  display: flex;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+}
+
+[data-slot="button"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.9rem;
+  padding: 0.8rem 1.1rem;
+  cursor: pointer;
+  font: inherit;
+}

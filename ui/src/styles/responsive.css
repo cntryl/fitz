@@ -1,0 +1,31 @@
+@media (max-width: 720px) {
+  .shell-bar,
+  .shell-banner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .shell-nav {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .auth-card,
+  .admin-panel {
+    padding: 1rem 0;
+  }
+
+  .shell-main {
+    padding-top: 1.5rem;
+  }
+
+  .queue-panel-header,
+  .queue-message-card > div:first-child {
+    flex-direction: column;
+  }
+
+  .queue-message-card dl {
+    grid-template-columns: 1fr;
+  }
+}

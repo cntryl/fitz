@@ -14,7 +14,7 @@
     "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts"
   },
   "dependencies": {
-    "@askrjs/askr": "0.0.31",
+    "@askrjs/askr": "0.0.33",
     "@askrjs/themes": "0.0.1",
     "@askrjs/ui": "0.0.4",
     "@askrjs/vite": "0.0.2",
