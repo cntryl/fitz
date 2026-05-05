@@ -4,6 +4,24 @@ export interface QueueResourceRef {
   resource: string;
 }
 
+export interface QueueRealmSummary {
+  realm: string;
+}
+
+export interface QueueStatsSummary {
+  inflightActive: number;
+  messagesDeadLettered: number;
+  messagesDelayed: number;
+  messagesPending: number;
+  messagesReady: number;
+  operationsPerSecond: number;
+}
+
+export interface QueueOverview {
+  realms: QueueRealmSummary[];
+  stats: QueueStatsSummary;
+}
+
 export interface DeadLetterFilters {
   family?: number;
 }

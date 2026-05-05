@@ -1,0 +1,87 @@
+.domain-page {
+  display: grid;
+  gap: 1.5rem;
+  width: min(100%, 72rem);
+}
+
+.domain-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.domain-header-copy {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.domain-header-copy h1,
+.domain-section-header h2 {
+  margin: 0;
+}
+
+.domain-header-copy p,
+.domain-state p {
+  margin: 0;
+}
+
+.domain-section {
+  display: grid;
+  gap: 1rem;
+}
+
+.domain-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+}
+
+.domain-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.domain-table {
+  width: 100%;
+}
+
+.domain-table-wrap {
+  overflow-x: auto;
+}
+
+.domain-index {
+  display: grid;
+  gap: 1rem;
+}
+
+.domain-index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.8rem;
+}
+
+.domain-index-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem;
+}
+
+.home-page {
+  display: grid;
+  gap: 2rem;
+  width: min(100%, 72rem);
+}
+
+.hero {
+  display: grid;
+  gap: 1rem;
+}
+
+.hero-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}

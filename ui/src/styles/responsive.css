@@ -20,12 +20,12 @@
     padding-top: 1.5rem;
   }
 
-  .queue-panel-header,
-  .queue-message-card > div:first-child {
+  .domain-header,
+  .domain-section-header {
     flex-direction: column;
   }
 
-  .queue-message-card dl {
-    grid-template-columns: 1fr;
+  .domain-table-wrap {
+    max-width: 100%;
   }
 }

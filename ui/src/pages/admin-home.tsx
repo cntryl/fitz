@@ -1,7 +1,9 @@
 import { Button } from "@askrjs/ui";
 import { ArrowRightIcon, GaugeIcon, LogOutIcon } from "@askrjs/lucide";
+import DomainIndex from "@/components/shared/domain-index";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createSignOutMutation } from "@/features/session/session-mutation";
+import { domainLinks } from "@/shared/navigation/domains";
 
 export default function AdminHome() {
   const session = createCurrentSessionQuery();
@@ -73,6 +75,12 @@ export default function AdminHome() {
           Sign out
         </Button>
       </div>
+
+      <DomainIndex
+        title="Domain workbench"
+        description="Use these pages to inspect each broker domain from the same scaffolded pattern."
+        links={domainLinks}
+      />
     </section>
   );
 }

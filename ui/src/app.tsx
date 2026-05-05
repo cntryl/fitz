@@ -1,6 +1,17 @@
 import "./styles.css";
+import { For } from "@askrjs/askr";
 import { Link } from "@askrjs/askr/router";
 import { ActivityIcon, ShieldIcon } from "@askrjs/lucide";
+import { domainLinks } from "@/shared/navigation/domains";
+
+const shellLinks = [
+  { href: "/admin", label: "Dashboard" },
+  { href: "/login", label: "Sign in" },
+  ...domainLinks.map((link) => ({
+    href: link.href,
+    label: link.title,
+  })),
+];
 
 export default function App({ children }: { children?: unknown }) {
   return (
@@ -18,12 +29,13 @@ export default function App({ children }: { children?: unknown }) {
             </Link>
 
             <nav class="shell-nav" aria-label="Primary">
-              <Link href="/admin" class="shell-nav-link">
-                Dashboard
-              </Link>
-              <Link href="/login" class="shell-nav-link">
-                Sign in
-              </Link>
+              <For each={shellLinks} by={(link) => link.href}>
+                {(link) => (
+                  <Link href={link.href} class="shell-nav-link">
+                    {link.label}
+                  </Link>
+                )}
+              </For>
             </nav>
           </div>
         </div>
@@ -32,7 +44,7 @@ export default function App({ children }: { children?: unknown }) {
       <main class="shell-main">
         <div>
           <div class="shell-banner">
-            <span class="shell-badge">Askr SPA Baseline</span>
+            <span class="shell-badge">Read-only scaffold</span>
             <span class="shell-banner-copy">
               <ActivityIcon size={16} />
               Root-mounted admin UI wired to the live Fitz admin API.

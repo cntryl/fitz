@@ -1,9 +1,26 @@
 import { apiv1 } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
-import { mapQueueDeadLetter } from "./queue-mappers";
-import type { DeadLetterFilters, DeadLetterMessage, QueueResourceRef } from "./queue-models";
+import { mapQueueDeadLetter, mapQueueOverview } from "./queue-mappers";
+import type {
+  DeadLetterFilters,
+  DeadLetterMessage,
+  QueueOverview,
+  QueueResourceRef,
+} from "./queue-models";
 
 export type { DeadLetterFilters, DeadLetterMessage, QueueResourceRef } from "./queue-models";
+
+async function getOverview(options: ServiceRequestOptions = {}): Promise<QueueOverview> {
+  const [realmsResponse, statsResponse] = await Promise.all([
+    apiv1.listQueueRealms(options),
+    apiv1.getQueueStats(options),
+  ]);
+
+  return mapQueueOverview(
+    unwrapResponse(realmsResponse, "Unable to load queue realms").realms,
+    unwrapResponse(statsResponse, "Unable to load queue statistics"),
+  );
+}
 
 async function listDeadLetters(
   resourceRef: QueueResourceRef,
@@ -24,5 +41,6 @@ async function listDeadLetters(
 
 // Services are the app contract boundary: no Askr resources and no FetchResponse leaks.
 export const queueService = {
+  getOverview,
   listDeadLetters,
 };
