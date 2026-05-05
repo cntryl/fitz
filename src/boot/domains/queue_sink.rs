@@ -47,6 +47,7 @@ struct QueueReadyNotification {
 const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_secs(5 * 60);
 const QUEUE_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 const QUEUE_RUNTIME_SWEEP_INTERVAL: Duration = Duration::from_millis(50);
+const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Queue domain sink with per-queue QueueActor instances
 ///
@@ -76,6 +77,7 @@ pub struct QueueDomainSink {
     metrics: Option<QueueMetrics>,
     active: AtomicBool,
     next_idle_sweep_at: Mutex<Instant>,
+    next_dedup_sweep_at: Mutex<Instant>,
 }
 
 impl QueueDomainSink {
@@ -99,6 +101,7 @@ impl QueueDomainSink {
             metrics: None,
             active: AtomicBool::new(true),
             next_idle_sweep_at: Mutex::new(Instant::now()),
+            next_dedup_sweep_at: Mutex::new(Instant::now()),
         }
     }
 
@@ -320,7 +323,28 @@ impl QueueDomainSink {
     }
 
     fn sweep_runtime_state(&self) {
-        self.sweep_idle_actors_at(Instant::now());
+        self.sweep_runtime_state_at(Instant::now());
+    }
+
+    fn sweep_runtime_state_at(&self, now: Instant) {
+        self.sweep_idle_actors_at(now);
+        self.maybe_cleanup_dedup_at(now);
+    }
+
+    fn maybe_cleanup_dedup_at(&self, now: Instant) {
+        let should_cleanup = {
+            let mut next_dedup_sweep_at = self.next_dedup_sweep_at.lock();
+            if now < *next_dedup_sweep_at {
+                false
+            } else {
+                *next_dedup_sweep_at = now + QUEUE_DEDUP_SWEEP_INTERVAL;
+                true
+            }
+        };
+
+        if should_cleanup {
+            self.dedup_store.cleanup();
+        }
     }
 
     fn get_or_create_actor(
@@ -504,6 +528,7 @@ impl QueueDomainSink {
                 session_id,
             );
         }
+        families.retain(|_, state| !state.is_empty());
         drop(families);
 
         if released_any {
@@ -746,8 +771,14 @@ impl MailboxSink for QueueDomainSink {
                     ..
                 } => {
                     let mut families = self.families.lock();
-                    if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                    let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
                         state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                        state.is_empty()
+                    } else {
+                        false
+                    };
+                    if remove_family {
+                        families.remove(&family_id.as_u64());
                     }
                     (crate::domains::queue::QueueResponse::UnwatchOk, None)
                 }
@@ -1560,6 +1591,48 @@ mod tests {
             .try_recv()
             .expect("send ack envelope");
         assert!(subscriber_mailbox.receiver().try_recv().is_err());
+        assert!(sink.families.lock().is_empty());
+    }
+
+    #[test]
+    fn should_cleanup_expired_queue_dedup_entries_during_runtime_sweep() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let dedup_store = Arc::new(crate::utils::idempotency::DedupStore::new(
+            Duration::from_millis(1),
+        ));
+        let sink = QueueDomainSink::new(
+            store,
+            router,
+            admin_read_model,
+            cntryl_midge::WriteOptions::best_effort(),
+            dedup_store.clone(),
+        );
+        let dedup_key = crate::utils::idempotency::DedupKey {
+            realm: "acme".to_string(),
+            domain: crate::utils::idempotency::Domain::Queue,
+            identifier: crate::utils::idempotency::DedupIdentifier::QueueComplete {
+                family: family.as_u64(),
+                area: "jobs".to_string(),
+                resource: "emails".to_string(),
+                message_id: 1,
+                token: 99,
+            },
+        };
+        dedup_store.record(dedup_key, vec![1, 2, 3]);
+        std::thread::sleep(Duration::from_millis(5));
+
+        let now = Instant::now();
+        *sink.next_dedup_sweep_at.lock() = now;
+
+        // Act
+        sink.sweep_runtime_state_at(now);
+
+        // Assert
+        assert!(dedup_store.is_empty());
     }
 
     #[test]

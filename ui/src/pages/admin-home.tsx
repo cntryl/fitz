@@ -1,13 +1,12 @@
-import { resource } from "@askrjs/askr/resources";
 import { Badge } from "@askrjs/askr-ui/badge";
 import { Button } from "@askrjs/askr-ui/button";
 import { Container } from "@askrjs/askr-ui/container";
 import { Stack } from "@askrjs/askr-ui/stack";
 import { ArrowRight, Gauge, LogOut } from "@askrjs/icons-lucide";
-import { deleteSession, fetchSession } from "../resources/session";
+import { createCurrentSessionQuery, signOutAdmin } from "../queries/session.query";
 
 export default function AdminHome() {
-  const session = resource(async () => fetchSession(), []);
+  const session = createCurrentSessionQuery();
 
   if (session.value === null && typeof window !== "undefined") {
     queueMicrotask(() => {
@@ -16,7 +15,7 @@ export default function AdminHome() {
   }
 
   async function onSignOut() {
-    await deleteSession();
+    await signOutAdmin();
     window.location.replace("/login");
   }
 

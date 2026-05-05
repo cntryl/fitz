@@ -56,6 +56,10 @@ fn now_epoch_secs() -> u64 {
         .unwrap_or(0)
 }
 
+fn is_cache_entry_stale(entry: &CachedJwksEntry, now: u64) -> bool {
+    now > entry.fetched_at.saturating_add(entry.ttl_seconds)
+}
+
 /// Parse JWKS JSON and insert into the in-memory cache under the supplied `jwks_url` key.
 /// This allows tests to inject JWKS without running an HTTP server.
 pub fn cache_jwks_from_json(jwks_url: &str, jwks_json: &str) -> Result<(), String> {
@@ -110,7 +114,12 @@ pub fn cache_jwks_from_json_with_ttl(
 pub fn is_jwks_stale(jwks_url: &str) -> bool {
     if let Some(entry) = JWKS_CACHE.get(jwks_url) {
         let now = now_epoch_secs();
-        return now > entry.fetched_at + entry.ttl_seconds;
+        let stale = is_cache_entry_stale(&entry, now);
+        drop(entry);
+        if stale {
+            JWKS_CACHE.remove(jwks_url);
+        }
+        return stale;
     }
     true
 }
@@ -120,6 +129,11 @@ pub fn get_decoding_key_from_cache(jwks_url: &str, kid: &str) -> Option<jsonwebt
     use jsonwebtoken::DecodingKey;
 
     let guard = JWKS_CACHE.get(jwks_url)?;
+    if is_cache_entry_stale(&guard, now_epoch_secs()) {
+        drop(guard);
+        JWKS_CACHE.remove(jwks_url);
+        return None;
+    }
     let m = &guard.keys;
 
     // If a specific kid requested, try it; otherwise, fall back to the first available key.
@@ -213,6 +227,7 @@ mod tests {
 
         // Assert
         assert!(is_jwks_stale("inline://local2"));
+        assert!(!JWKS_CACHE.contains_key("inline://local2"));
     }
 
     #[test]

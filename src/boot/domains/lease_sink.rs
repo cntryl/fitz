@@ -712,6 +712,7 @@ impl LeaseDomainSink {
                 session_id,
             );
         }
+        families.retain(|_, state| !state.is_empty());
         removed
     }
 
@@ -1084,8 +1085,14 @@ impl MailboxSink for LeaseDomainSink {
                     ..
                 } => {
                     let mut families = self.families.lock();
-                    if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                    let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
                         state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                        state.is_empty()
+                    } else {
+                        false
+                    };
+                    if remove_family {
+                        families.remove(&family_id.as_u64());
                     }
                     LeaseResponse::UnsubscribeOk
                 }
@@ -1312,6 +1319,7 @@ mod tests {
         assert_eq!(sink.subscription_count(), 0);
         assert!(admin_read_model.leases(None).is_empty());
         assert!(subscriber_mailbox.receiver().try_recv().is_err());
+        assert!(sink.families.lock().is_empty());
     }
 
     #[test]

@@ -8,12 +8,14 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 const SCHEDULE_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
 const SCHEDULE_PENDING_CLAIM_TTL_MS: u64 = 24 * 60 * 60 * 1000;
 const SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS: u64 = 60_000;
 
 type PendingFireKey = (u64, String);
 
+#[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 fn schedule_admin_snapshot_due(
     snapshot_dirty: bool,
     force: bool,
@@ -46,6 +48,10 @@ impl ScheduleSubscriptionSet {
             session_routes: HashMap::new(),
             exact_routes: HashMap::new(),
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.subscriptions.is_empty()
     }
 
     fn subscription_count(&self) -> usize {
@@ -150,10 +156,13 @@ pub struct ScheduleDomainSink {
     sub_families: Mutex<HashMap<u64, ScheduleSubscriptionSet>>,
     next_sub_id: AtomicU64,
     router: Arc<Router>,
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     active: AtomicBool,
     snapshot_dirty: AtomicBool,
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     snapshot_syncing: AtomicBool,
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     last_snapshot_elapsed_us: AtomicU64,
     snapshot_epoch: Instant,
     /// Total number of live publish handoffs that failed to route.
@@ -531,6 +540,7 @@ impl ScheduleDomainSink {
         for state in families.values_mut() {
             state.remove_session(session_id);
         }
+        families.retain(|_, state| !state.is_empty());
         tracing::debug!(
             domain = "schedule",
             session = session_id,
@@ -589,6 +599,7 @@ impl ScheduleDomainSink {
             .sum()
     }
 
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     fn sync_admin_snapshot(&self) {
         let snapshot = {
             let actors = self.actors.lock();
@@ -667,7 +678,6 @@ impl ScheduleDomainSink {
         #[cfg(feature = "bench-no-snapshot")]
         {
             let _ = force;
-            return;
         }
 
         #[cfg(not(feature = "bench-no-snapshot"))]
@@ -933,8 +943,14 @@ impl MailboxSink for ScheduleDomainSink {
                     } else {
                         let fam_id = family_id.as_u64();
                         let mut families = self.sub_families.lock();
-                        if let Some(state) = families.get_mut(&fam_id) {
+                        let remove_family = if let Some(state) = families.get_mut(&fam_id) {
                             state.remove_session_route(session_id, route.as_str());
+                            state.is_empty()
+                        } else {
+                            false
+                        };
+                        if remove_family {
+                            families.remove(&fam_id);
                         }
                         ScheduleResponse::Ok
                     }
@@ -1466,6 +1482,7 @@ mod tests {
         // Assert
         assert_eq!(sink.subscription_count(), 0);
         assert!(subscriber_mailbox.receiver().try_recv().is_err());
+        assert!(sink.sub_families.lock().is_empty());
     }
 
     #[test]

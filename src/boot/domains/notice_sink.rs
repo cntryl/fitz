@@ -174,6 +174,13 @@ impl NoticeDomainSink {
         }
         drop(families);
         let mut route_stats = self.route_stats.lock();
+        route_stats.retain(|route, stats| {
+            let keep = routes.contains_key(route);
+            if keep {
+                stats.prune_recent_publishes(now);
+            }
+            keep
+        });
         self.admin_read_model
             .replace_notice_subscriptions(subscriptions);
         self.admin_read_model.replace_notice_routes(
@@ -354,6 +361,7 @@ impl NoticeDomainSink {
                 session_id,
             );
         }
+        families.retain(|_, state| !state.is_empty());
         tracing::debug!(
             domain = "notice",
             session = session_id,
@@ -577,11 +585,15 @@ impl MailboxSink for NoticeDomainSink {
                 let family_id = unsub_msg.family_id.as_u64();
                 let mut families = self.families.lock();
                 let removed = if let Some(state) = families.get_mut(&family_id) {
-                    state.remove_subscription_for_session(
+                    let removed = state.remove_subscription_for_session(
                         unsub_msg.family_id,
                         unsub_msg.session_id.0,
                         unsub_msg.subscription_id,
-                    )
+                    );
+                    if state.is_empty() {
+                        families.remove(&family_id);
+                    }
+                    removed
                 } else {
                     false
                 };
@@ -950,6 +962,7 @@ mod tests {
         assert_eq!(sink.subscription_count(), 0);
         assert!(subscriber_mailbox.receiver().try_recv().is_err());
         assert!(publisher_mailbox.receiver().try_recv().is_err());
+        assert!(sink.families.lock().is_empty());
     }
 
     #[test]
@@ -1004,6 +1017,58 @@ mod tests {
         refresh_notice_admin_snapshot(&sink);
         assert!(admin_read_model.notice_subscriptions(None, None).is_empty());
         assert!(admin_read_model.notice_routes(None).is_empty());
+        assert!(sink.families.lock().is_empty());
+    }
+
+    #[test]
+    fn should_prune_notice_route_stats_after_last_subscription_is_removed() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let publisher_session_id = 11;
+        let notice_route = "notice://acme/app/events";
+        let notice_address = RouteAddress::new(family, Route::new(notice_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        let publisher_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        router.register(publisher_address.clone(), publisher_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = NoticeDomainSink::new(router, admin_read_model);
+
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            notice_route,
+            family,
+        );
+        let _subscribe_response = decode_notice_response(&subscriber_mailbox);
+        sink.deliver(Envelope::from_route(
+            publisher_address,
+            notice_address.clone(),
+            FrameContext::new(
+                publisher_session_id,
+                ChannelId::Sub,
+                MessageType::new(500),
+                encode_notice_publish(notice_route, b"hello"),
+                family,
+            ),
+        ))
+        .expect("publish notice event");
+        assert_eq!(sink.route_stats.lock().len(), 1);
+        drain_mailbox(&subscriber_mailbox);
+        drain_mailbox(&publisher_mailbox);
+
+        // Act
+        sink.unsubscribe_all_for_session(session_id);
+        refresh_notice_admin_snapshot(&sink);
+
+        // Assert
+        assert!(sink.route_stats.lock().is_empty());
     }
 
     #[test]

@@ -861,6 +861,7 @@ impl QueueDeadLetter {
 }
 
 impl RpcWorker {
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(crate) fn snapshot(
         session_id: u64,
         realm: &str,
@@ -881,6 +882,7 @@ impl RpcWorker {
 }
 
 impl RpcPendingRequest {
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(crate) fn snapshot(
         correlation_id: String,
         route: &str,

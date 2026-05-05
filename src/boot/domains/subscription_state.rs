@@ -32,6 +32,10 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
         }
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.subscriptions.is_empty()
+    }
+
     pub(crate) fn subscription_count(&self) -> usize {
         self.subscriptions.len()
     }

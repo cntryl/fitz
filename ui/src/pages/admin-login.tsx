@@ -1,5 +1,4 @@
 import { state } from "@askrjs/askr";
-import { resource } from "@askrjs/askr/resources";
 import { Badge } from "@askrjs/askr-ui/badge";
 import { Button } from "@askrjs/askr-ui/button";
 import {
@@ -12,7 +11,7 @@ import {
 import { Input } from "@askrjs/askr-ui/input";
 import { Stack } from "@askrjs/askr-ui/stack";
 import { LockKeyhole, ShieldCheck } from "@askrjs/icons-lucide";
-import { createSession, fetchSession } from "../resources/session";
+import { createCurrentSessionQuery, signInAdmin } from "../queries/session.query";
 
 export default function AdminLogin() {
   const username = state("");
@@ -20,7 +19,7 @@ export default function AdminLogin() {
   const error = state("");
   const submitting = state(false);
 
-  const session = resource(async () => fetchSession(), []);
+  const session = createCurrentSessionQuery();
 
   if (session.value?.authenticated && typeof window !== "undefined") {
     queueMicrotask(() => {
@@ -34,7 +33,7 @@ export default function AdminLogin() {
     submitting.set(true);
 
     try {
-      await createSession({
+      await signInAdmin({
         username: username(),
         password: password(),
       });
