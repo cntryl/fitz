@@ -230,7 +230,7 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 ### AC-STREAM-001: Append to Stream
 
 **MUST** append message to stream through a session
-**Given:** Session with `stream://realm/area/resource#write` permission  
+**Given:** Session with `stream://realm/area/resource#write` permission
 **When:**
 
 1. Client sends `Begin(route="stream://prod/logs/events")`
@@ -289,6 +289,34 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 
 - Server returns error code `2009` (Unauthorized)
 - Message NOT appended to stream
+
+### AC-STREAM-006: Append with discriminator sidecar
+
+**MUST** preserve optional append discriminators for filtered replay
+**Given:** Session with `stream://realm/area/resource#write` permission
+**When:**
+
+1. Client sends `Begin(route="stream://prod/logs/events")`
+2. Server returns `session_id`
+3. Client sends `Append(session_id, expected_offset=0, payload="event1", discriminator="proj.alpha")`
+4. Client sends `Commit(session_id, mode=Sync)`
+5. Client sends `Read(route="stream://prod/logs/events", start_offset=0, limit=10, filter=StreamFilterSet(clauses=[Equals("proj.alpha")]))`
+   **Then:**
+
+- Committed record is readable through the matching filter
+- Discriminator does not affect offset ordering or durability
+- Client APIs MAY omit discriminator when unused
+
+### AC-STREAM-007: Filtered read by discriminator
+
+**MUST** filter replay results by the supplied discriminator clauses
+**Given:** Stream contains records with discriminators `proj.alpha` and `audit.beta`
+**When:** Client sends `Read(route="stream://prod/logs/events", start_offset=0, limit=10, filter=StreamFilterSet(clauses=[StartsWith("proj.")]))`
+**Then:**
+
+- Server returns only matching records in offset order
+- Missing discriminators are treated as empty strings for matching
+- Client APIs MAY omit filter when replay filtering is not needed
 
 ### AC-STREAM-010: Subscribe to resource commit notifications
 
@@ -1141,10 +1169,10 @@ Use this checklist to verify client implementation completeness:
 
 - [ ] AC-KV-001 through AC-KV-011
 
-### Stream Domain (9 criteria)
+### Stream Domain (12 criteria)
 
-- [ ] AC-STREAM-001 through AC-STREAM-005
-- [ ] AC-STREAM-010 through AC-STREAM-013
+- [ ] AC-STREAM-001 through AC-STREAM-007
+- [ ] AC-STREAM-010 through AC-STREAM-014
 
 ### Queue Domain (8 criteria)
 

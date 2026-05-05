@@ -218,6 +218,17 @@ scenarios:
       - "active operations fail predictably"
       - "double-close is safe"
 
+  - id: "CS-016"
+    title: "filtered stream replay"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "client can append an optional discriminator on stream records"
+      - "client can issue a filtered read using StreamFilterSet"
+      - "filtered replay returns only matching records in offset order"
+
 scoring:
   fail_on:
     - "any P0 scenario verdict != pass"

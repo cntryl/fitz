@@ -5,7 +5,9 @@ use parking_lot::Mutex;
 use std::collections::{hash_map::Entry, HashMap};
 use std::sync::Arc;
 
-use super::protocol::{IngestMetadata, StreamRecord, StreamWriteMode};
+use super::protocol::{
+    IngestMetadata, StreamDiscriminator, StreamFilterSet, StreamRecord, StreamWriteMode,
+};
 use super::storage::{
     decode_area_offset_from_key, decode_realm_offset_from_key, decode_resource_offset_from_key,
     encode_area_counter_key, encode_compact_area_page_key, encode_compact_resource_page_key,
@@ -26,6 +28,7 @@ std::thread_local! {
 pub struct EventPayload {
     pub body: Bytes,
     pub metadata: Option<Bytes>,
+    pub discriminator: Option<StreamDiscriminator>,
 }
 
 /// Active append session buffered until commit.
@@ -85,6 +88,16 @@ pub struct ReadResourceParams<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct ReadAreaParams<'a> {
+    pub(crate) family: u64,
+    pub(crate) realm: &'a str,
+    pub(crate) area: &'a str,
+    pub(crate) from_offset: u64,
+    pub(crate) limit: u64,
+    pub(crate) max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
 pub struct CommitRecordsParams<'a> {
     pub family: u64,
     pub realm: &'a str,
@@ -110,6 +123,17 @@ struct PromotionFrontierWriteRowsParams<'a> {
     first_realm_offset: u64,
     events: &'a [EventPayload],
     created_at: u64,
+}
+
+struct DiscriminatorWriteRowsParams<'a> {
+    realm: &'a str,
+    area: &'a str,
+    resource: &'a str,
+    first_resource_offset: u64,
+    first_area_offset: u64,
+    first_realm_offset: u64,
+    events: &'a [EventPayload],
+    ttl_opt: Option<u64>,
 }
 
 struct CommitPromotionFrontierBatchParams<'a> {
@@ -868,6 +892,19 @@ impl StreamStore {
                 created_at,
             },
         )?;
+        Self::write_discriminator_rows(
+            &mut txn,
+            DiscriminatorWriteRowsParams {
+                realm,
+                area,
+                resource,
+                first_resource_offset,
+                first_area_offset,
+                first_realm_offset,
+                events,
+                ttl_opt: self.ttl.ttl_seconds,
+            },
+        )?;
 
         let resource_meta_after = ResourceMetaValue {
             next_offset: last_resource_offset.saturating_add(1),
@@ -994,7 +1031,91 @@ impl StreamStore {
     }
 
     fn event_size_bytes(event: &EventPayload) -> u64 {
-        (event.body.len() + event.metadata.as_ref().map(|m| m.len()).unwrap_or(0)) as u64
+        (event.body.len()
+            + event.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+            + event
+                .discriminator
+                .as_ref()
+                .map(|discriminator| discriminator.as_str().len())
+                .unwrap_or(0)) as u64
+    }
+
+    fn load_optional_discriminator(
+        txn: &cntryl_midge::Transaction,
+        key: &[u8],
+    ) -> Result<Option<String>, String> {
+        match txn.get(key).map_err(|e| format!("get error: {:?}", e))? {
+            Some(value_bytes) => String::from_utf8(value_bytes.to_vec())
+                .map(Some)
+                .map_err(|error| format!("invalid stream discriminator bytes: {:?}", error)),
+            None => Ok(None),
+        }
+    }
+
+    fn write_discriminator_rows(
+        txn: &mut cntryl_midge::Transaction,
+        params: DiscriminatorWriteRowsParams<'_>,
+    ) -> Result<(), String> {
+        let DiscriminatorWriteRowsParams {
+            realm,
+            area,
+            resource,
+            first_resource_offset,
+            first_area_offset,
+            first_realm_offset,
+            events,
+            ttl_opt,
+        } = params;
+        for (index, event) in events.iter().enumerate() {
+            let Some(discriminator) = event.discriminator.as_ref() else {
+                continue;
+            };
+
+            let index = index as u64;
+            let discriminator_bytes = discriminator.as_str().as_bytes().to_vec();
+
+            txn.put(
+                super::storage::encode_resource_discriminator_key(
+                    realm,
+                    area,
+                    resource,
+                    first_resource_offset + index,
+                ),
+                discriminator_bytes.clone(),
+                ttl_opt,
+            )
+            .map_err(|e| format!("txn put failed: {:?}", e))?;
+
+            txn.put(
+                super::storage::encode_area_discriminator_key(
+                    realm,
+                    area,
+                    first_area_offset + index,
+                ),
+                discriminator_bytes.clone(),
+                ttl_opt,
+            )
+            .map_err(|e| format!("txn put failed: {:?}", e))?;
+
+            txn.put(
+                super::storage::encode_realm_discriminator_key(realm, first_realm_offset + index),
+                discriminator_bytes,
+                ttl_opt,
+            )
+            .map_err(|e| format!("txn put failed: {:?}", e))?;
+        }
+
+        Ok(())
+    }
+
+    fn record_matches_filter(
+        filter: Option<&StreamFilterSet>,
+        discriminator: Option<String>,
+    ) -> bool {
+        match filter {
+            Some(filter) => filter.matches(discriminator.as_deref()),
+            None => true,
+        }
     }
 
     fn load_existing_area_watermark_for_guard(
@@ -1708,36 +1829,67 @@ impl StreamStore {
         &self,
         params: &ReadResourceParams,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
+        self.read_resource_with_filter(params, None)
+    }
+
+    pub fn read_resource_with_filter(
+        &self,
+        params: &ReadResourceParams,
+        filter: Option<&StreamFilterSet>,
+    ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
         self.ensure_layout_activation_for_family(params.family)?;
 
-        self.read_resource_promotion_frontier(params)
+        self.read_resource_promotion_frontier(params, filter)
     }
 
     fn read_resource_promotion_frontier(
         &self,
         params: &ReadResourceParams,
+        filter: Option<&StreamFilterSet>,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
         if params.limit == 1 && params.max_bytes.is_none() {
-            if let Some(record) = self.load_compact_resource_record(
-                params.family,
-                params.realm,
-                params.area,
-                params.resource,
-                params.from_offset,
-            )? {
-                let next_resource_offset = self.get_next_resource_offset(
+            let discriminator = if filter.is_some() {
+                let txn = self
+                    .db
+                    .begin_tx(
+                        params.family as u32,
+                        cntryl_midge::TransactionMode::ReadOnly,
+                    )
+                    .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+                Self::load_optional_discriminator(
+                    &txn,
+                    &super::storage::encode_resource_discriminator_key(
+                        params.realm,
+                        params.area,
+                        params.resource,
+                        params.from_offset,
+                    ),
+                )?
+            } else {
+                None
+            };
+            if Self::record_matches_filter(filter, discriminator) {
+                if let Some(record) = self.load_compact_resource_record(
                     params.family,
                     params.realm,
                     params.area,
                     params.resource,
-                )?;
-                let cursor = super::protocol::ReadCursor {
-                    last_resource_offset: record.resource_offset,
-                    last_area_offset: record.area_offset,
-                    last_realm_offset: record.realm_offset,
-                    has_more: record.resource_offset.saturating_add(1) < next_resource_offset,
-                };
-                return Ok((vec![record], cursor));
+                    params.from_offset,
+                )? {
+                    let next_resource_offset = self.get_next_resource_offset(
+                        params.family,
+                        params.realm,
+                        params.area,
+                        params.resource,
+                    )?;
+                    let cursor = super::protocol::ReadCursor {
+                        last_resource_offset: record.resource_offset,
+                        last_area_offset: record.area_offset,
+                        last_realm_offset: record.realm_offset,
+                        has_more: record.resource_offset.saturating_add(1) < next_resource_offset,
+                    };
+                    return Ok((vec![record], cursor));
+                }
             }
         }
 
@@ -1793,6 +1945,22 @@ impl StreamStore {
                 if resource_offset < params.from_offset {
                     continue;
                 }
+                let discriminator = if filter.is_some() {
+                    Self::load_optional_discriminator(
+                        &txn,
+                        &super::storage::encode_resource_discriminator_key(
+                            params.realm,
+                            params.area,
+                            params.resource,
+                            resource_offset,
+                        ),
+                    )?
+                } else {
+                    None
+                };
+                if !Self::record_matches_filter(filter, discriminator) {
+                    continue;
+                }
                 if records.len() == params.limit as usize {
                     has_more = true;
                     break 'page_scan;
@@ -1843,64 +2011,98 @@ impl StreamStore {
         limit: u64,
         max_bytes: Option<usize>,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
-        self.ensure_layout_activation_for_family(family)?;
+        let params = ReadAreaParams {
+            family,
+            realm,
+            area,
+            from_offset,
+            limit,
+            max_bytes,
+        };
+        self.read_area_with_filter(&params, None)
+    }
 
-        self.read_area_promotion_frontier(family, realm, area, from_offset, limit, max_bytes)
+    pub(crate) fn read_area_with_filter(
+        &self,
+        params: &ReadAreaParams<'_>,
+        filter: Option<&StreamFilterSet>,
+    ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
+        self.ensure_layout_activation_for_family(params.family)?;
+
+        self.read_area_promotion_frontier(params, filter)
     }
 
     fn read_area_promotion_frontier(
         &self,
-        family: u64,
-        realm: &str,
-        area: &str,
-        from_offset: u64,
-        limit: u64,
-        max_bytes: Option<usize>,
+        params: &ReadAreaParams<'_>,
+        filter: Option<&StreamFilterSet>,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
-        let watermark = self.get_watermark(family, realm, area)?;
+        let watermark = self.get_watermark(params.family, params.realm, params.area)?;
         let query = cntryl_midge::Query::new()
             .start_key(Bytes::from(encode_compact_area_page_key(
-                realm,
-                area,
-                Self::page_start_offset(from_offset),
+                params.realm,
+                params.area,
+                Self::page_start_offset(params.from_offset),
             )))
             .prefix(Bytes::from(Self::build_compact_area_page_prefix(
-                realm, area,
+                params.realm,
+                params.area,
             )))
-            .limit(Self::compact_page_query_limit(from_offset, limit));
+            .limit(Self::compact_page_query_limit(
+                params.from_offset,
+                params.limit,
+            ));
 
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                params.family as u32,
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
         let mut iter = txn
             .scan(&query)
             .map_err(|e| format!("scan error: {:?}", e))?;
         let results = iter.collect_all();
 
-        let mut records = Vec::with_capacity(limit.min(1000) as usize);
+        let mut records = Vec::with_capacity(params.limit.min(1000) as usize);
         let mut total_bytes = 0usize;
-        let mut last_area_offset = from_offset;
-        let max_bytes_limit = max_bytes.unwrap_or(usize::MAX);
+        let mut last_area_offset = params.from_offset;
+        let max_bytes_limit = params.max_bytes.unwrap_or(usize::MAX);
         let mut stop_scan = false;
         let mut has_more = false;
 
         'page_scan: for (key_bytes, value_bytes) in results {
             let page_start = decode_area_offset_from_key(&key_bytes)?;
             let page = CompactAreaPageValue::try_decode(&value_bytes).map_err(|error| {
-                Self::invalid_compact_area_page_error(realm, area, page_start, error)
+                Self::invalid_compact_area_page_error(params.realm, params.area, page_start, error)
             })?;
 
             for (slot, page_record) in page.records.into_iter().enumerate() {
                 let area_offset = page_start + slot as u64;
-                if area_offset < from_offset {
+                if area_offset < params.from_offset {
                     continue;
                 }
                 if area_offset > watermark {
                     stop_scan = true;
                     break;
                 }
-                if records.len() == limit as usize {
+                let discriminator = if filter.is_some() {
+                    Self::load_optional_discriminator(
+                        &txn,
+                        &super::storage::encode_area_discriminator_key(
+                            params.realm,
+                            params.area,
+                            area_offset,
+                        ),
+                    )?
+                } else {
+                    None
+                };
+                if !Self::record_matches_filter(filter, discriminator) {
+                    continue;
+                }
+                if records.len() == params.limit as usize {
                     has_more = true;
                     break 'page_scan;
                 }
@@ -1953,9 +2155,21 @@ impl StreamStore {
         limit: u64,
         max_bytes: Option<usize>,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
+        self.read_realm_with_filter(family, realm, from_offset, limit, max_bytes, None)
+    }
+
+    pub fn read_realm_with_filter(
+        &self,
+        family: u64,
+        realm: &str,
+        from_offset: u64,
+        limit: u64,
+        max_bytes: Option<usize>,
+        filter: Option<&StreamFilterSet>,
+    ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
         self.ensure_layout_activation_for_family(family)?;
 
-        self.read_realm_promotion_frontier(family, realm, from_offset, limit, max_bytes)
+        self.read_realm_promotion_frontier(family, realm, from_offset, limit, max_bytes, filter)
     }
 
     fn read_realm_promotion_frontier(
@@ -1965,6 +2179,7 @@ impl StreamStore {
         from_offset: u64,
         limit: u64,
         max_bytes: Option<usize>,
+        filter: Option<&StreamFilterSet>,
     ) -> Result<(Vec<StreamRecord>, super::protocol::ReadCursor), String> {
         let realm_watermark = self.get_realm_watermark(family, realm)?;
         let query = cntryl_midge::Query::new()
@@ -2007,6 +2222,17 @@ impl StreamStore {
                 if realm_offset > realm_watermark {
                     stop_scan = true;
                     break;
+                }
+                let discriminator = if filter.is_some() {
+                    Self::load_optional_discriminator(
+                        &txn,
+                        &super::storage::encode_realm_discriminator_key(realm, realm_offset),
+                    )?
+                } else {
+                    None
+                };
+                if !Self::record_matches_filter(filter, discriminator) {
+                    continue;
                 }
                 if records.len() == limit as usize {
                     has_more = true;
@@ -2346,6 +2572,7 @@ impl StreamStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domains::stream::protocol::StreamFilterClause;
     use crate::domains::stream::storage::{encode_offset_counter_key, OffsetCounterValue};
     use crate::testkit::create_test_engine_with_cfs;
     use bytes::Bytes;
@@ -2388,6 +2615,18 @@ mod tests {
         vec![EventPayload {
             body: Bytes::from_static(body),
             metadata: None,
+            discriminator: None,
+        }]
+    }
+
+    fn single_event_with_discriminator(
+        body: &'static [u8],
+        discriminator: &'static str,
+    ) -> Vec<EventPayload> {
+        vec![EventPayload {
+            body: Bytes::from_static(body),
+            metadata: None,
+            discriminator: Some(StreamDiscriminator::from(discriminator)),
         }]
     }
 
@@ -3019,6 +3258,98 @@ mod tests {
     }
 
     #[test]
+    fn should_return_matching_record_given_filtered_resource_read() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let events = single_event_with_discriminator(b"first", "keep");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("commit filtered resource record");
+
+        // Act
+        let filter = StreamFilterSet {
+            clauses: vec![StreamFilterClause::Equals("keep".to_string())],
+        };
+        let (records, cursor) = store
+            .read_resource_with_filter(
+                &ReadResourceParams {
+                    family: 1,
+                    realm: "test",
+                    area: "events",
+                    resource: "orders",
+                    from_offset: 0,
+                    limit: 1,
+                    max_bytes: None,
+                },
+                Some(&filter),
+            )
+            .expect("read filtered resource record");
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].resource_offset, 0);
+        assert_eq!(records[0].body, Bytes::from_static(b"first"));
+        assert!(!cursor.has_more);
+        assert_eq!(cursor.last_resource_offset, 0);
+    }
+
+    #[test]
+    fn should_skip_non_matching_records_given_filtered_realm_read() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let keep_events = single_event_with_discriminator(b"keep", "match");
+        let skip_events = single_event_with_discriminator(b"skip", "ignore");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &keep_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("commit matching realm record");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "audits",
+                resource: "audits",
+                expected_resource_next_offset: 0,
+                events: &skip_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("commit non-matching realm record");
+
+        // Act
+        let filter = StreamFilterSet {
+            clauses: vec![StreamFilterClause::Equals("match".to_string())],
+        };
+        let (records, cursor) = store
+            .read_realm_with_filter(1, "test", 0, 10, None, Some(&filter))
+            .expect("read filtered realm stream");
+
+        // Assert
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].realm_offset, Some(0));
+        assert_eq!(records[0].body, Bytes::from_static(b"keep"));
+        assert!(!cursor.has_more);
+        assert_eq!(cursor.last_realm_offset, Some(0));
+    }
+
+    #[test]
     fn should_return_next_available_resource_record_given_trimmed_compact_resource_page_on_ttl_store(
     ) {
         // Arrange
@@ -3032,6 +3363,7 @@ mod tests {
             EventPayload {
                 body: Bytes::from_static(b"first-page"),
                 metadata: None,
+                discriminator: None,
             };
             REALM_PAGE_RECORD_LIMIT
         ];

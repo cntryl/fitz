@@ -2427,7 +2427,7 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 
 ### Stream Domain (Durable Append-Only Logs)
 
-**Purpose:** Durable append-only records with optimistic concurrency at BEGIN and commit-time sequencing for resource, area, and realm order.
+**Purpose:** Durable append-only records with optimistic concurrency at BEGIN and commit-time sequencing for resource, area, and realm order. Clients MAY attach an optional immutable discriminator to each append for server-side filtered replay.
 
 #### Message Types
 
@@ -2475,6 +2475,9 @@ BEGIN creates a session only. Optimistic concurrency is enforced when appending 
 [u8]      has_metadata
 [u32 BE]  metadata_len (if has_metadata=1)
 [bytes]   metadata
+[u8]      has_discriminator
+[u32 BE]  discriminator_len (if has_discriminator=1)
+[bytes]   discriminator
 Response (status=0):
   [u8]     0
   [u32 BE] data_len
@@ -2486,6 +2489,8 @@ Response (status=1):
 ```
 
 **expected_offset (OCC):** Clients MUST send `expected_offset` on every APPEND. It is the client's view of the stream's next write offset for that route (0 for a new stream). Servers MUST enforce it: if `expected_offset` does not match the server's next offset for that route, the server MUST reject the append with status=1 and an error message (e.g. containing "conflict"). This provides optimistic concurrency control; clients that receive a conflict should re-read the stream and retry with the correct offset.
+
+**Optional discriminator:** Clients MAY include an immutable discriminator string on APPEND. The broker stores it as a replay sidecar and uses it only for filtered reads. Clients that do not need filtered replay SHOULD omit it.
 
 **Design Note:** The `data` field in Stream responses carries broker-defined metadata (e.g., current watermark, stream info). Clients MUST parse past it (read `data_len` bytes) but SHOULD NOT interpret its contents unless broker documentation specifies a schema.
 
@@ -2532,8 +2537,13 @@ Response (status=1):
 [u64 BE]  limit
 [u8]      has_max_bytes
 [u64 BE]  max_bytes (if present)
+[u8]      has_filter
+[u32 BE]  filter_len (if has_filter=1)
+[bytes]   filter (bincode-encoded StreamFilterSet)
 Response: status byte + data
 ```
+
+**Optional filter:** Clients MAY include a `StreamFilterSet` to request server-side replay filtering. The filter is encoded as bincode and is conjunctive: all clauses must match the record discriminator. Missing discriminators are treated as empty strings for matching.
 
 #### LAST Request
 
@@ -2565,7 +2575,7 @@ session = client.stream_begin(
 )
 
 # Session methods are slim - no route or session_id needed in API
-session.append(0, b"event_data_1")
+session.append(0, b"event_data_1", discriminator="proj.alpha")
 session.append(1, b"event_data_2")
 session.commit(mode=CommitMode.Sync)
 
@@ -2576,7 +2586,10 @@ session.rollback()
 records = client.stream_read(
     route="stream://prod/app/events",
     from_offset=100,
-    limit=10
+    limit=10,
+    filter=StreamFilterSet(
+        clauses=[StreamFilterClause.Equals("proj.alpha")]
+    )
 )
 ```
 
@@ -2589,14 +2602,15 @@ class StreamSession:
         self._route = route         # Stored internally
         self._session_id = session_id  # Stored internally
 
-    def append(self, expected_offset, body, metadata=None):
+    def append(self, expected_offset, body, metadata=None, discriminator=None):
         """Slim API - route/session_id hidden from user"""
-      # Wire protocol: packs session_id + expected_offset + body
+        # Wire protocol: packs session_id + expected_offset + body + optional metadata + optional discriminator
         return self._client._send_stream_append(
             self._session_id,
-        expected_offset,
+            expected_offset,
             body,
-            metadata
+            metadata,
+            discriminator,
         )
 
     def commit(self, mode=CommitMode.Sync):
@@ -2618,10 +2632,10 @@ class StreamSession:
 **Wire Protocol (what actually happens):**
 
 - `BEGIN`: `[route_len][route][...] → returns session_id`
-- `APPEND`: `[session_id][expected_offset][body_len][body][metadata]`
+- `APPEND`: `[session_id][expected_offset][body_len][body][optional metadata][optional discriminator]`
 - `COMMIT`: `[session_id][mode]`
 - `ROLLBACK`: `[session_id]`
-- `READ`: `[route_len][route][from_offset][limit][...]` (stateless)
+- `READ`: `[route_len][route][from_offset][limit][optional max_bytes][optional filter]` (stateless)
 
 **Key Points:**
 
@@ -2637,6 +2651,7 @@ class StreamSession:
 - **Commit-Time Global Order**: Area and realm offsets are assigned durably at COMMIT time and remain monotonic across restart
 - **Watermarks**: Reads stop at the current committed watermark; reading past it returns an empty success
 - **Optimistic Concurrency**: `expected_offset` on APPEND prevents lost updates
+- **Filtered Replay**: `StreamFilterSet` clauses are conjunctive and operate on the optional append discriminator sidecar
 - **Durability**: All committed data survives broker restart
 - **Isolation**: Only one active append session exists per resource at a time; subscriptions are separate live session-scoped state
 - **Resume Model**: Clients track resume offsets locally; `ReadCursor` is response metadata, not a durable broker cursor

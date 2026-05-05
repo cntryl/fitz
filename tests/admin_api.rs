@@ -192,6 +192,7 @@ fn seed_stream_snapshot_data(store: Arc<cntryl_midge::Engine>) {
     let logs_application = [EventPayload {
         body: Bytes::from_static(b"app-log"),
         metadata: None,
+        discriminator: None,
     }];
     stream_store
         .commit_records(CommitRecordsParams {
@@ -209,6 +210,7 @@ fn seed_stream_snapshot_data(store: Arc<cntryl_midge::Engine>) {
     let logs_system = [EventPayload {
         body: Bytes::from_static(b"system-log"),
         metadata: None,
+        discriminator: None,
     }];
     stream_store
         .commit_records(CommitRecordsParams {
@@ -226,6 +228,7 @@ fn seed_stream_snapshot_data(store: Arc<cntryl_midge::Engine>) {
     let audit_events = [EventPayload {
         body: Bytes::from_static(b"audit-log"),
         metadata: None,
+        discriminator: None,
     }];
     stream_store
         .commit_records(CommitRecordsParams {

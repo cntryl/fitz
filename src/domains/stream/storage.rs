@@ -28,6 +28,12 @@ pub enum KeyPrefix {
     AreaCounter = 0x09,
     /// Realm offset counter: [RF][realm]
     RealmCounter = 0x0A,
+    /// Resource discriminator sidecar: [RF][realm][area][resource][resource_offset]
+    ResourceDiscriminator = 0x0F,
+    /// Area discriminator sidecar: [RF][realm][area][area_offset]
+    AreaDiscriminator = 0x10,
+    /// Realm discriminator sidecar: [RF][realm][realm_offset]
+    RealmDiscriminator = 0x11,
     /// Prototype canonical resource row for storage redesign research: [stream_id][resource_offset]
     CanonicalResource = 0x0B,
     /// Prototype area locator row for storage redesign research: [RF][realm][area][area_offset]
@@ -155,6 +161,44 @@ pub fn encode_area_counter_key(realm: &str, area: &str) -> Vec<u8> {
 pub fn encode_realm_counter_key(realm: &str) -> Vec<u8> {
     let mut key = vec![KeyPrefix::RealmCounter as u8];
     key.extend_from_slice(realm.as_bytes());
+    key
+}
+
+/// Encodes a resource discriminator sidecar key.
+pub fn encode_resource_discriminator_key(
+    realm: &str,
+    area: &str,
+    resource: &str,
+    resource_offset: u64,
+) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::ResourceDiscriminator as u8];
+    key.extend_from_slice(realm.as_bytes());
+    key.push(0);
+    key.extend_from_slice(area.as_bytes());
+    key.push(0);
+    key.extend_from_slice(resource.as_bytes());
+    key.push(0);
+    key.extend_from_slice(&resource_offset.to_be_bytes());
+    key
+}
+
+/// Encodes an area discriminator sidecar key.
+pub fn encode_area_discriminator_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::AreaDiscriminator as u8];
+    key.extend_from_slice(realm.as_bytes());
+    key.push(0);
+    key.extend_from_slice(area.as_bytes());
+    key.push(0);
+    key.extend_from_slice(&area_offset.to_be_bytes());
+    key
+}
+
+/// Encodes a realm discriminator sidecar key.
+pub fn encode_realm_discriminator_key(realm: &str, realm_offset: u64) -> Vec<u8> {
+    let mut key = vec![KeyPrefix::RealmDiscriminator as u8];
+    key.extend_from_slice(realm.as_bytes());
+    key.push(0);
+    key.extend_from_slice(&realm_offset.to_be_bytes());
     key
 }
 
@@ -1374,6 +1418,7 @@ pub fn decode_staging_value(data: &[u8]) -> Result<EventPayload, String> {
     Ok(EventPayload {
         body: Bytes::from(body),
         metadata: metadata.map(Bytes::from),
+        discriminator: None,
     })
 }
 
@@ -1523,6 +1568,7 @@ mod tests {
         let event = EventPayload {
             body: Bytes::from("body"),
             metadata: Some(Bytes::from("meta")),
+            discriminator: None,
         };
 
         // Act
@@ -1540,6 +1586,7 @@ mod tests {
         let event = EventPayload {
             body: Bytes::from("body"),
             metadata: None,
+            discriminator: None,
         };
 
         // Act

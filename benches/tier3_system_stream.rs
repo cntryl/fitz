@@ -147,9 +147,12 @@ fn should_complete_append_sustained_load(ctx: &mut StressContext) {
     let append_frame = build_stream_append(session_id, 0, b"sustained append event");
     let (msg_type, payload) = extract_single_tlv_field(&append_frame);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = request(&context, route, msg_type, payload.clone());
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = request(&context, route, msg_type, payload.clone());
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 
@@ -174,9 +177,12 @@ fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
     let read_frame = build_stream_read(route, 0);
     let (read_msg_type, read_payload) = extract_single_tlv_field(&read_frame);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = request(&context, route, read_msg_type, read_payload.clone());
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = request(&context, route, read_msg_type, read_payload.clone());
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -204,9 +210,12 @@ fn should_complete_area_wildcard_read_throughput(ctx: &mut StressContext) {
     let read_route = "stream://bench/area/*";
     let (read_msg_type, read_payload) = prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = request(&context, read_route, read_msg_type, read_payload.clone());
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = request(&context, read_route, read_msg_type, read_payload.clone());
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -234,9 +243,12 @@ fn should_complete_realm_wildcard_read_throughput(ctx: &mut StressContext) {
     let read_route = "stream://bench/*/*";
     let (read_msg_type, read_payload) = prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = request(&context, read_route, read_msg_type, read_payload.clone());
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = request(&context, read_route, read_msg_type, read_payload.clone());
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -252,11 +264,14 @@ fn should_complete_batch_write_operations(ctx: &mut StressContext) {
     let append_frame = build_stream_append(session_id, 0, b"batch event");
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for _ in 0..100 {
-            let _ = request(&context, route, append_msg_type, append_payload.clone());
-        }
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for _ in 0..100 {
+                let _ = request(&context, route, append_msg_type, append_payload.clone());
+            }
+        },
+    );
     ctx.set_elements(100 * iterations as u64);
 }
 
@@ -281,11 +296,14 @@ fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for (route, msg_type, payload) in &append_requests {
-            let _ = request(&context, route, *msg_type, payload.clone());
-        }
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for (route, msg_type, payload) in &append_requests {
+                let _ = request(&context, route, *msg_type, payload.clone());
+            }
+        },
+    );
     ctx.set_elements(10 * iterations as u64);
 }
 
@@ -320,21 +338,25 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for (route, expected_offset) in publish_routes.iter().zip(expected_offsets.iter()) {
-            let stream_session = begin_stream(&context, route);
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for (route, expected_offset) in publish_routes.iter().zip(expected_offsets.iter()) {
+                let stream_session = begin_stream(&context, route);
 
-            let append_frame = build_stream_append(stream_session, expected_offset.get(), b"fanout event");
-            let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
-            let _ = request(&context, route, append_msg_type, append_payload);
+                let append_frame =
+                    build_stream_append(stream_session, expected_offset.get(), b"fanout event");
+                let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+                let _ = request(&context, route, append_msg_type, append_payload);
 
-            let commit_frame = build_stream_commit(stream_session, 0);
-            let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
-            let _ = request(&context, route, commit_msg_type, commit_payload);
+                let commit_frame = build_stream_commit(stream_session, 0);
+                let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
+                let _ = request(&context, route, commit_msg_type, commit_payload);
 
-            expected_offset.set(expected_offset.get().saturating_add(1));
-        }
-    });
+                expected_offset.set(expected_offset.get().saturating_add(1));
+            }
+        },
+    );
     ctx.set_elements(publish_routes.len() as u64 * iterations as u64);
 }
 
@@ -357,9 +379,12 @@ fn should_complete_offset_tracking_overhead(ctx: &mut StressContext) {
     let last_frame = build_stream_last(route);
     let (last_msg_type, last_payload) = extract_single_tlv_field(&last_frame);
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        let _ = request(&context, route, last_msg_type, last_payload.clone());
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            let _ = request(&context, route, last_msg_type, last_payload.clone());
+        },
+    );
     ctx.set_elements(iterations as u64);
 }
 

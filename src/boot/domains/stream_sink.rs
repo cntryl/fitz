@@ -458,6 +458,7 @@ impl StreamDomainSink {
         from_offset: u64,
         limit: u64,
         max_bytes: Option<usize>,
+        filter: Option<&crate::domains::stream::protocol::StreamFilterSet>,
     ) -> Result<Vec<u8>, String> {
         if limit == 0 {
             return Ok(Self::encode_stream_read_data(
@@ -474,28 +475,35 @@ impl StreamDomainSink {
         let parts =
             route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
         let read_response = if parts.area == "*" && parts.resource == "*" {
-            let (records, cursor) = self.stream_store.read_realm(
+            let (records, cursor) = self.stream_store.read_realm_with_filter(
                 family_id.as_u64(),
                 parts.realm,
                 from_offset,
                 limit,
                 max_bytes,
+                filter,
             )?;
             ReadResponse { records, cursor }
         } else if parts.resource == "*" {
-            let (records, cursor) = self.stream_store.read_area(
-                family_id.as_u64(),
-                parts.realm,
-                parts.area,
-                from_offset,
-                limit,
-                max_bytes,
+            let (records, cursor) = self.stream_store.read_area_with_filter(
+                &crate::domains::stream::store::ReadAreaParams {
+                    family: family_id.as_u64(),
+                    realm: parts.realm,
+                    area: parts.area,
+                    from_offset,
+                    limit,
+                    max_bytes,
+                },
+                filter,
             )?;
             ReadResponse { records, cursor }
         } else {
             let key = Self::actor_key_for_route(family_id, route)?;
             let actor = self.get_or_create_actor(&key)?;
-            let read_response = actor.lock().read(from_offset, limit, max_bytes)?;
+            let read_response =
+                actor
+                    .lock()
+                    .read_with_filter(from_offset, limit, max_bytes, filter)?;
             read_response
         };
 
@@ -825,13 +833,19 @@ impl MailboxSink for StreamDomainSink {
                 expected_offset,
                 body,
                 metadata,
+                discriminator,
             } => {
                 let key = self.session_owners.lock().get(&session_id).cloned();
                 match key {
                     Some(key) => match self.get_or_create_actor(&key) {
                         Ok(actor) => {
-                            let outcome =
-                                actor.lock().append_to_session(session_id, expected_offset, body, metadata);
+                            let outcome = actor.lock().append_to_session_with_discriminator(
+                                session_id,
+                                expected_offset,
+                                body,
+                                metadata,
+                                discriminator,
+                            );
                             match outcome {
                                 Ok(assigned_offset) => {
                                     let mut encoder = PayloadEncoder::new();
@@ -932,12 +946,14 @@ impl MailboxSink for StreamDomainSink {
                 from_offset,
                 limit,
                 max_bytes,
+                filter,
             } => match self.encode_read_response_data(
                 family_id,
                 &route,
                 from_offset,
                 limit,
                 max_bytes,
+                filter.as_ref(),
             ) {
                 Ok(data) => (
                     StreamResponse::Ok {
@@ -1493,6 +1509,7 @@ mod tests {
                 &Route::new("stream://bench/events/orders"),
                 0,
                 10,
+                None,
                 None,
             )
             .expect("encode exact stream read payload");

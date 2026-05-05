@@ -843,6 +843,7 @@ fn build_production_like_payload(stream_index: usize, record_index: usize) -> Ev
                 body_seed,
             ),
             metadata: None,
+            discriminator: None,
         },
         1 => EventPayload {
             body: build_json_like_bytes(
@@ -858,6 +859,7 @@ fn build_production_like_payload(stream_index: usize, record_index: usize) -> Ev
                 stream_index,
                 record_index,
             )),
+            discriminator: None,
         },
         2 => EventPayload {
             body: build_high_entropy_bytes(PRODUCTION_LIKE_BINARY_BODY_BYTES, body_seed),
@@ -865,6 +867,7 @@ fn build_production_like_payload(stream_index: usize, record_index: usize) -> Ev
                 PRODUCTION_LIKE_BINARY_METADATA_BYTES,
                 metadata_seed,
             )),
+            discriminator: None,
         },
         _ => EventPayload {
             body: build_padded_text(
@@ -881,6 +884,7 @@ fn build_production_like_payload(stream_index: usize, record_index: usize) -> Ev
                 stream_index,
                 record_index,
             )),
+            discriminator: None,
         },
     }
 }
@@ -903,6 +907,7 @@ fn build_event_payload(
                 METADATA_BYTES,
                 deterministic_seed(stream_index, record_index, metadata_seed as u64 ^ 0xA5A5),
             )),
+            discriminator: None,
         },
         PayloadProfile::HighEntropy => EventPayload {
             body: build_high_entropy_bytes(
@@ -913,6 +918,7 @@ fn build_event_payload(
                 METADATA_BYTES,
                 deterministic_seed(stream_index, record_index, metadata_seed as u64 ^ 0xA5A5),
             )),
+            discriminator: None,
         },
         PayloadProfile::ProductionLike => build_production_like_payload(stream_index, record_index),
     }

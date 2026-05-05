@@ -499,6 +499,7 @@ fn build_production_like_payload(stream_index: usize, record_index: usize) -> Ev
                 body_seed,
             ),
             metadata: None,
+            discriminator: None,
         },
         1 => EventPayload {
             body: build_json_like_bytes(
@@ -514,6 +515,7 @@ fn build_production_like_payload(stream_index: usize, record_index: usize) -> Ev
                 stream_index,
                 record_index,
             )),
+            discriminator: None,
         },
         2 => EventPayload {
             body: {
@@ -534,6 +536,7 @@ fn build_production_like_payload(stream_index: usize, record_index: usize) -> Ev
                 }
                 Bytes::from(bytes)
             }),
+            discriminator: None,
         },
         _ => EventPayload {
             body: build_padded_text(
@@ -550,6 +553,7 @@ fn build_production_like_payload(stream_index: usize, record_index: usize) -> Ev
                 stream_index,
                 record_index,
             )),
+            discriminator: None,
         },
     }
 }

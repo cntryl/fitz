@@ -9,8 +9,8 @@ use crate::runtime::routing::RouteFamily;
 
 use super::protocol::{
     AppendResponse, BeginSessionResponse, CommitSessionResponse, GetMetadataResponse,
-    IngestMetadata, PeekResponse, ReadResponse, StreamError, StreamMessage, StreamResponse,
-    StreamWriteMode, MAX_EVENT_SIZE,
+    IngestMetadata, PeekResponse, ReadResponse, StreamDiscriminator, StreamError, StreamFilterSet,
+    StreamMessage, StreamResponse, StreamWriteMode, MAX_EVENT_SIZE,
 };
 use super::store::{CommitRecordsParams, EventPayload, StreamStore};
 
@@ -24,8 +24,7 @@ struct ActiveAppendSession {
     ingest_metadata: Option<IngestMetadata>,
 }
 
-impl ActiveAppendSession {
-}
+impl ActiveAppendSession {}
 
 /// Warm in-memory append-session state for a single resource stream.
 ///
@@ -119,6 +118,23 @@ impl StreamActor {
         body: Bytes,
         metadata: Option<Bytes>,
     ) -> Result<u64, String> {
+        self.append_to_session_with_discriminator(
+            stream_session_id,
+            expected_offset,
+            body,
+            metadata,
+            None,
+        )
+    }
+
+    pub fn append_to_session_with_discriminator(
+        &mut self,
+        stream_session_id: u64,
+        expected_offset: u64,
+        body: Bytes,
+        metadata: Option<Bytes>,
+        discriminator: Option<StreamDiscriminator>,
+    ) -> Result<u64, String> {
         let session = self
             .active_session
             .as_mut()
@@ -143,7 +159,12 @@ impl StreamActor {
             }
         };
 
-        let event_size = body.len() + metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let event_size = body.len()
+            + metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+            + discriminator
+                .as_ref()
+                .map(|value| value.as_str().len())
+                .unwrap_or(0);
         if event_size > MAX_EVENT_SIZE {
             return Err("event too large".to_string());
         }
@@ -156,7 +177,11 @@ impl StreamActor {
         }
 
         session.total_bytes += event_size;
-        session.staged_events.push(EventPayload { body, metadata });
+        session.staged_events.push(EventPayload {
+            body,
+            metadata,
+            discriminator,
+        });
         Ok(assigned_offset)
     }
 
@@ -247,6 +272,16 @@ impl StreamActor {
         limit: u64,
         max_bytes: Option<usize>,
     ) -> Result<ReadResponse, String> {
+        self.read_with_filter(from_offset, limit, max_bytes, None)
+    }
+
+    pub fn read_with_filter(
+        &self,
+        from_offset: u64,
+        limit: u64,
+        max_bytes: Option<usize>,
+        filter: Option<&StreamFilterSet>,
+    ) -> Result<ReadResponse, String> {
         if limit == 0 || from_offset >= self.next_resource_offset {
             return Ok(ReadResponse {
                 records: Vec::new(),
@@ -268,7 +303,7 @@ impl StreamActor {
             limit,
             max_bytes,
         };
-        let (records, cursor) = self.store.read_resource(&params)?;
+        let (records, cursor) = self.store.read_resource_with_filter(&params, filter)?;
         Ok(ReadResponse { records, cursor })
     }
 
@@ -302,7 +337,9 @@ impl Actor for StreamActor {
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         let response = match msg {
-            StreamMessage::Begin { ingest_metadata, .. } => {
+            StreamMessage::Begin {
+                ingest_metadata, ..
+            } => {
                 let stream_session_id = self.next_local_session_id;
                 self.next_local_session_id = self.next_local_session_id.saturating_add(1);
                 match self.begin_append_session(0, stream_session_id, ingest_metadata) {
@@ -315,7 +352,14 @@ impl Actor for StreamActor {
                 expected_offset,
                 body,
                 metadata,
-            } => match self.append_to_session(session_id, expected_offset, body, metadata) {
+                discriminator,
+            } => match self.append_to_session_with_discriminator(
+                session_id,
+                expected_offset,
+                body,
+                metadata,
+                discriminator,
+            ) {
                 Ok(_) => StreamResponse::AppendOk(AppendResponse { success: true }),
                 Err(error) => StreamResponse::Error(Self::map_error(&error)),
             },
@@ -333,8 +377,9 @@ impl Actor for StreamActor {
                 from_offset,
                 limit,
                 max_bytes,
+                filter,
                 ..
-            } => match self.read(from_offset, limit, max_bytes) {
+            } => match self.read_with_filter(from_offset, limit, max_bytes, filter.as_ref()) {
                 Ok(response) => StreamResponse::ReadOk(response),
                 Err(error) => StreamResponse::Error(Self::map_error(&error)),
             },

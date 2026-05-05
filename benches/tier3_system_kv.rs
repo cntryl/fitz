@@ -51,17 +51,20 @@ fn should_complete_10_puts_same_family(ctx: &mut StressContext) {
         None => return,
     };
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for i in 0..10 {
-            actor.handle(KvMessage::Put {
-                tx_id,
-                route_family: RouteFamily::new(1),
-                resource: "intensive".to_string(),
-                key: Bytes::from(format!("key{}", i).into_bytes()),
-                value: Bytes::from(format!("value{}", i).into_bytes()),
-            });
-        }
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for i in 0..10 {
+                actor.handle(KvMessage::Put {
+                    tx_id,
+                    route_family: RouteFamily::new(1),
+                    resource: "intensive".to_string(),
+                    key: Bytes::from(format!("key{}", i).into_bytes()),
+                    value: Bytes::from(format!("value{}", i).into_bytes()),
+                });
+            }
+        },
+    );
 
     actor.handle(KvMessage::Rollback { tx_id });
     ctx.set_elements(10 * iterations as u64);
@@ -85,26 +88,29 @@ fn should_complete_interleaved_puts_2_families(ctx: &mut StressContext) {
         None => return,
     };
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for i in 0..10 {
-            actor.handle(KvMessage::Put {
-                tx_id: tx_id1,
-                route_family: RouteFamily::new(1),
-                resource: "f1".to_string(),
-                key: Bytes::from(format!("k1_{}", i).into_bytes()),
-                value: Bytes::from_static(b"v1"),
-            });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for i in 0..10 {
+                actor.handle(KvMessage::Put {
+                    tx_id: tx_id1,
+                    route_family: RouteFamily::new(1),
+                    resource: "f1".to_string(),
+                    key: Bytes::from(format!("k1_{}", i).into_bytes()),
+                    value: Bytes::from_static(b"v1"),
+                });
 
-            // Put to family 2
-            actor.handle(KvMessage::Put {
-                tx_id: tx_id2,
-                route_family: RouteFamily::new(2),
-                resource: "f2".to_string(),
-                key: Bytes::from(format!("k2_{}", i).into_bytes()),
-                value: Bytes::from_static(b"v2"),
-            });
-        }
-    });
+                // Put to family 2
+                actor.handle(KvMessage::Put {
+                    tx_id: tx_id2,
+                    route_family: RouteFamily::new(2),
+                    resource: "f2".to_string(),
+                    key: Bytes::from(format!("k2_{}", i).into_bytes()),
+                    value: Bytes::from_static(b"v2"),
+                });
+            }
+        },
+    );
 
     actor.handle(KvMessage::Rollback { tx_id: tx_id1 });
     actor.handle(KvMessage::Rollback { tx_id: tx_id2 });
@@ -129,19 +135,22 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for (family_id, tx_id, resource) in &txs {
-            for i in 0..10 {
-                actor.handle(KvMessage::Put {
-                    tx_id: *tx_id,
-                    route_family: RouteFamily::new(*family_id),
-                    resource: resource.clone(),
-                    key: Bytes::from(format!("k{}", i).into_bytes()),
-                    value: Bytes::from_static(b"v"),
-                });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for (family_id, tx_id, resource) in &txs {
+                for i in 0..10 {
+                    actor.handle(KvMessage::Put {
+                        tx_id: *tx_id,
+                        route_family: RouteFamily::new(*family_id),
+                        resource: resource.clone(),
+                        key: Bytes::from(format!("k{}", i).into_bytes()),
+                        value: Bytes::from_static(b"v"),
+                    });
+                }
             }
-        }
-    });
+        },
+    );
 
     for (_, tx_id, _) in txs {
         actor.handle(KvMessage::Rollback { tx_id });
@@ -194,26 +203,29 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
         None => return,
     };
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for i in 0..5 {
-            actor.handle(KvMessage::Get {
-                tx_id: read_tx_id,
-                route_family: RouteFamily::new(1),
-                resource: "setup".to_string(),
-                key: Bytes::from(format!("setup_k{}", i).into_bytes()),
-            });
-        }
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for i in 0..5 {
+                actor.handle(KvMessage::Get {
+                    tx_id: read_tx_id,
+                    route_family: RouteFamily::new(1),
+                    resource: "setup".to_string(),
+                    key: Bytes::from(format!("setup_k{}", i).into_bytes()),
+                });
+            }
 
-        for i in 0..5 {
-            actor.handle(KvMessage::Put {
-                tx_id: write_tx_id,
-                route_family: RouteFamily::new(2),
-                resource: "write_f2".to_string(),
-                key: Bytes::from(format!("new_k{}", i).into_bytes()),
-                value: Bytes::from_static(b"new_v"),
-            });
-        }
-    });
+            for i in 0..5 {
+                actor.handle(KvMessage::Put {
+                    tx_id: write_tx_id,
+                    route_family: RouteFamily::new(2),
+                    resource: "write_f2".to_string(),
+                    key: Bytes::from(format!("new_k{}", i).into_bytes()),
+                    value: Bytes::from_static(b"new_v"),
+                });
+            }
+        },
+    );
 
     actor.handle(KvMessage::Rollback { tx_id: read_tx_id });
     actor.handle(KvMessage::Rollback { tx_id: write_tx_id });

@@ -7,12 +7,14 @@
 //! — it never appears on the wire.
 
 use crate::domains::stream::protocol::{
-    IngestMetadata, StreamMessage, StreamSubscriptionMessage, StreamWriteMode,
+    IngestMetadata, StreamDiscriminator, StreamFilterSet, StreamMessage, StreamSubscriptionMessage,
+    StreamWriteMode,
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
+use bincode::deserialize;
 
 /// A parsed frame from the stream domain wire protocol.
 ///
@@ -103,6 +105,9 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             dec.get_u64()?;
             dec.get_u64()?;
             dec.get_optional_u64()?;
+            if dec.remaining() > 0 {
+                dec.skip_optional_bytes()?;
+            }
             if !dec.is_complete() {
                 return Err("Trailing data in message".to_string());
             }
@@ -173,6 +178,11 @@ fn parse_append(dec: &mut PayloadDecoder) -> Result<StreamMessage, String> {
     let expected_offset = dec.get_u64()?;
     let body = dec.get_bytes()?;
     let metadata = dec.get_optional_bytes()?.map(|b| b.to_vec().into());
+    let discriminator = if dec.remaining() > 0 {
+        dec.get_optional_string()?.map(StreamDiscriminator)
+    } else {
+        None
+    };
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -183,6 +193,7 @@ fn parse_append(dec: &mut PayloadDecoder) -> Result<StreamMessage, String> {
         expected_offset,
         body,
         metadata,
+        discriminator,
     })
 }
 
@@ -224,6 +235,17 @@ fn parse_read(
     let from_offset = dec.get_u64()?;
     let limit = dec.get_u64()?;
     let max_bytes = dec.get_optional_u64()?.map(|u| u as usize);
+    let filter = if dec.remaining() > 0 {
+        match dec.get_optional_bytes()? {
+            Some(bytes) => Some(
+                deserialize::<StreamFilterSet>(bytes.as_ref())
+                    .map_err(|error| format!("Invalid stream filter: {:?}", error))?,
+            ),
+            None => None,
+        }
+    } else {
+        None
+    };
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -235,6 +257,7 @@ fn parse_read(
         from_offset,
         limit,
         max_bytes,
+        filter,
     })
 }
 

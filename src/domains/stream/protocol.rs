@@ -134,6 +134,68 @@ pub struct StreamRecord {
     pub created_at: u64,
 }
 
+/// Server-visible immutable discriminator attached to a committed event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(transparent)]
+pub struct StreamDiscriminator(pub String);
+
+impl StreamDiscriminator {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for StreamDiscriminator {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<String> for StreamDiscriminator {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+/// Simple discriminator predicate supported by the stream broker.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum StreamFilterClause {
+    Equals(String),
+    NotEquals(String),
+    StartsWith(String),
+    AnyOf(Vec<String>),
+}
+
+impl StreamFilterClause {
+    fn matches(&self, discriminator: &str) -> bool {
+        match self {
+            Self::Equals(value) => discriminator == value,
+            Self::NotEquals(value) => discriminator != value,
+            Self::StartsWith(prefix) => discriminator.starts_with(prefix),
+            Self::AnyOf(values) => values.iter().any(|value| value == discriminator),
+        }
+    }
+}
+
+/// Conjunctive set of discriminator clauses.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct StreamFilterSet {
+    pub clauses: Vec<StreamFilterClause>,
+}
+
+impl StreamFilterSet {
+    pub fn matches(&self, discriminator: Option<&str>) -> bool {
+        let discriminator = discriminator.unwrap_or("");
+        self.clauses
+            .iter()
+            .all(|clause| clause.matches(discriminator))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.clauses.is_empty()
+    }
+}
+
 /// Optional metadata attached to an ingest batch
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestMetadata {
@@ -157,12 +219,14 @@ pub enum StreamMessage {
     },
 
     /// Append event to active session
-    /// Client provides: session_id, expected_offset, body, optional metadata
+    /// Client provides: session_id, expected_offset, body, optional metadata,
+    /// and an optional immutable discriminator sidecar.
     Append {
         session_id: u64,
         expected_offset: u64,
         body: Bytes,
         metadata: Option<Bytes>,
+        discriminator: Option<StreamDiscriminator>,
     },
 
     /// Commit session (atomic write)
@@ -182,6 +246,7 @@ pub enum StreamMessage {
         from_offset: u64,
         limit: u64,
         max_bytes: Option<usize>,
+        filter: Option<StreamFilterSet>,
     },
 
     /// Get the last visible entry in the stream (tail operation)
@@ -492,5 +557,37 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_match_discriminator_when_all_clauses_match() {
+        // Arrange
+        let filter = StreamFilterSet {
+            clauses: vec![
+                StreamFilterClause::StartsWith("proj.".to_string()),
+                StreamFilterClause::NotEquals("proj.skip".to_string()),
+                StreamFilterClause::AnyOf(vec!["proj.alpha".to_string(), "proj.beta".to_string()]),
+            ],
+        };
+
+        // Act
+        let result = filter.matches(Some("proj.alpha"));
+
+        // Assert
+        assert!(result);
+    }
+
+    #[test]
+    fn should_reject_discriminator_when_any_clause_fails() {
+        // Arrange
+        let filter = StreamFilterSet {
+            clauses: vec![StreamFilterClause::StartsWith("proj.".to_string())],
+        };
+
+        // Act
+        let result = filter.matches(Some("audit.alpha"));
+
+        // Assert
+        assert!(!result);
     }
 }

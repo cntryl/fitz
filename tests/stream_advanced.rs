@@ -24,6 +24,7 @@ fn commit_record(
     let events = [EventPayload {
         body: Bytes::copy_from_slice(body),
         metadata: None,
+        discriminator: None,
     }];
 
     store

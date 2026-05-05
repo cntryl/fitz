@@ -288,7 +288,10 @@ async fn commit_stream_record_with_offset<C>(
     let session_id = parse_stream_session_id(&data).expect("stream session id");
 
     let append_response = client
-        .send_and_receive(&build_stream_append(session_id, expected_offset, body), 2000)
+        .send_and_receive(
+            &build_stream_append(session_id, expected_offset, body),
+            2000,
+        )
         .await
         .expect("append stream");
     let (_msg_type, status, _data) = parse_stream_response(&append_response);

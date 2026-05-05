@@ -351,21 +351,24 @@ fn measure_full_roundtrip_scaling(
         RequestFrameRing::new(ROUTE_STR, b"scaling payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for _ in 0..per_iteration_requests {
-            let (request_msg_type, request_payload) = request_ring.next_frame();
-            dispatch_request(
-                &router,
-                family,
-                &requester_source,
-                request_msg_type,
-                request_payload,
-            );
-            let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
-            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
-        }
-        black_box(&workers);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for _ in 0..per_iteration_requests {
+                let (request_msg_type, request_payload) = request_ring.next_frame();
+                dispatch_request(
+                    &router,
+                    family,
+                    &requester_source,
+                    request_msg_type,
+                    request_payload,
+                );
+                let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
+                assert_requester_received_worker_responses(requester_inbox.drain(), 1);
+            }
+            black_box(&workers);
+        },
+    );
     ctx.set_elements(per_iteration_requests * iterations as u64);
 }
 
@@ -389,21 +392,24 @@ fn measure_dispatch_only_scaling(
         RequestFrameRing::new(ROUTE_STR, b"scaling payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for _ in 0..per_iteration_requests {
-            let (request_msg_type, request_payload) = request_ring.next_frame();
-            dispatch_request(
-                &router,
-                family,
-                &requester_source,
-                request_msg_type,
-                request_payload,
-            );
-            cleanup_expected_worker_request(&router, family, &workers, &mut next_worker_index);
-            let _ = requester_inbox.drain();
-        }
-        black_box(&workers);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for _ in 0..per_iteration_requests {
+                let (request_msg_type, request_payload) = request_ring.next_frame();
+                dispatch_request(
+                    &router,
+                    family,
+                    &requester_source,
+                    request_msg_type,
+                    request_payload,
+                );
+                cleanup_expected_worker_request(&router, family, &workers, &mut next_worker_index);
+                let _ = requester_inbox.drain();
+            }
+            black_box(&workers);
+        },
+    );
     ctx.set_elements(per_iteration_requests * iterations as u64);
 }
 
@@ -441,30 +447,33 @@ fn measure_multi_route_full_roundtrip_scaling(
         .collect();
     let mut next_route_index = 0usize;
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for _ in 0..per_iteration_requests {
-            let route_index = next_route_index;
-            next_route_index = (next_route_index + 1) % routes.len();
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for _ in 0..per_iteration_requests {
+                let route_index = next_route_index;
+                next_route_index = (next_route_index + 1) % routes.len();
 
-            let (request_msg_type, request_payload) = request_rings[route_index].next_frame();
-            dispatch_request_to_route(
-                &router,
-                family,
-                &requester_source,
-                &routes[route_index],
-                request_msg_type,
-                request_payload,
-            );
-            let _ = service_worker_on_route(
-                &router,
-                family,
-                &routes[route_index],
-                &workers[route_index],
-            );
-            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
-        }
-        black_box((&routes, &workers));
-    });
+                let (request_msg_type, request_payload) = request_rings[route_index].next_frame();
+                dispatch_request_to_route(
+                    &router,
+                    family,
+                    &requester_source,
+                    &routes[route_index],
+                    request_msg_type,
+                    request_payload,
+                );
+                let _ = service_worker_on_route(
+                    &router,
+                    family,
+                    &routes[route_index],
+                    &workers[route_index],
+                );
+                assert_requester_received_worker_responses(requester_inbox.drain(), 1);
+            }
+            black_box((&routes, &workers));
+        },
+    );
     ctx.set_elements(per_iteration_requests * iterations as u64);
 }
 
@@ -502,30 +511,33 @@ fn measure_multi_route_dispatch_only_scaling(
         .collect();
     let mut next_route_index = 0usize;
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for _ in 0..per_iteration_requests {
-            let route_index = next_route_index;
-            next_route_index = (next_route_index + 1) % routes.len();
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for _ in 0..per_iteration_requests {
+                let route_index = next_route_index;
+                next_route_index = (next_route_index + 1) % routes.len();
 
-            let (request_msg_type, request_payload) = request_rings[route_index].next_frame();
-            dispatch_request_to_route(
-                &router,
-                family,
-                &requester_source,
-                &routes[route_index],
-                request_msg_type,
-                request_payload,
-            );
-            cleanup_worker_request_on_route(
-                &router,
-                family,
-                &routes[route_index],
-                &workers[route_index],
-            );
-            let _ = requester_inbox.drain();
-        }
-        black_box((&routes, &workers));
-    });
+                let (request_msg_type, request_payload) = request_rings[route_index].next_frame();
+                dispatch_request_to_route(
+                    &router,
+                    family,
+                    &requester_source,
+                    &routes[route_index],
+                    request_msg_type,
+                    request_payload,
+                );
+                cleanup_worker_request_on_route(
+                    &router,
+                    family,
+                    &routes[route_index],
+                    &workers[route_index],
+                );
+                let _ = requester_inbox.drain();
+            }
+            black_box((&routes, &workers));
+        },
+    );
     ctx.set_elements(per_iteration_requests * iterations as u64);
 }
 
@@ -563,30 +575,36 @@ fn measure_pending_cardinality_steady_state(
     let mut current_correlation_id = drain_request_correlation(worker_inbox, family);
     let _ = requester_inbox.drain();
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for _ in 0..per_iteration_cycles {
-            route_worker_frame_to_route(
-                &router,
-                family,
-                *worker_session_id,
-                worker_source,
-                ROUTE_STR,
-                build_rpc_response_frame(current_correlation_id, b"pending cardinality payload"),
-            );
-            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for _ in 0..per_iteration_cycles {
+                route_worker_frame_to_route(
+                    &router,
+                    family,
+                    *worker_session_id,
+                    worker_source,
+                    ROUTE_STR,
+                    build_rpc_response_frame(
+                        current_correlation_id,
+                        b"pending cardinality payload",
+                    ),
+                );
+                assert_requester_received_worker_responses(requester_inbox.drain(), 1);
 
-            let (request_msg_type, request_payload) = request_ring.next_frame();
-            dispatch_request(
-                &router,
-                family,
-                &requester_source,
-                request_msg_type,
-                request_payload,
-            );
-            current_correlation_id = drain_request_correlation(worker_inbox, family);
-        }
-        black_box(&workers);
-    });
+                let (request_msg_type, request_payload) = request_ring.next_frame();
+                dispatch_request(
+                    &router,
+                    family,
+                    &requester_source,
+                    request_msg_type,
+                    request_payload,
+                );
+                current_correlation_id = drain_request_correlation(worker_inbox, family);
+            }
+            black_box(&workers);
+        },
+    );
     ctx.set_elements(per_iteration_cycles * iterations as u64);
 }
 
@@ -605,21 +623,24 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
         RequestFrameRing::new(ROUTE_STR, b"rpc request payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for _ in 0..ITERS {
-            let (request_msg_type, request_payload) = request_ring.next_frame();
-            dispatch_request(
-                &router,
-                family,
-                &requester_source,
-                request_msg_type,
-                request_payload,
-            );
-            let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
-            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
-        }
-        black_box(&workers);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for _ in 0..ITERS {
+                let (request_msg_type, request_payload) = request_ring.next_frame();
+                dispatch_request(
+                    &router,
+                    family,
+                    &requester_source,
+                    request_msg_type,
+                    request_payload,
+                );
+                let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
+                assert_requester_received_worker_responses(requester_inbox.drain(), 1);
+            }
+            black_box(&workers);
+        },
+    );
     ctx.set_elements(ITERS * iterations as u64);
 }
 
@@ -638,21 +659,24 @@ fn should_complete_single_response_throughput(ctx: &mut StressContext) {
         RequestFrameRing::new(ROUTE_STR, b"streaming request", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for _ in 0..ITERS {
-            let (request_msg_type, request_payload) = request_ring.next_frame();
-            dispatch_request(
-                &router,
-                family,
-                &requester_source,
-                request_msg_type,
-                request_payload,
-            );
-            let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
-            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
-        }
-        black_box(&workers);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for _ in 0..ITERS {
+                let (request_msg_type, request_payload) = request_ring.next_frame();
+                dispatch_request(
+                    &router,
+                    family,
+                    &requester_source,
+                    request_msg_type,
+                    request_payload,
+                );
+                let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
+                assert_requester_received_worker_responses(requester_inbox.drain(), 1);
+            }
+            black_box(&workers);
+        },
+    );
     ctx.set_elements(ITERS * iterations as u64);
 }
 
@@ -733,21 +757,24 @@ fn should_complete_steady_state_request_tracking(ctx: &mut StressContext) {
         RequestFrameRing::new(ROUTE_STR, b"concurrent request", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for _ in 0..ITERS {
-            let (request_msg_type, request_payload) = request_ring.next_frame();
-            dispatch_request(
-                &router,
-                family,
-                &requester_source,
-                request_msg_type,
-                request_payload,
-            );
-            let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
-            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
-        }
-        black_box(&workers);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for _ in 0..ITERS {
+                let (request_msg_type, request_payload) = request_ring.next_frame();
+                dispatch_request(
+                    &router,
+                    family,
+                    &requester_source,
+                    request_msg_type,
+                    request_payload,
+                );
+                let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
+                assert_requester_received_worker_responses(requester_inbox.drain(), 1);
+            }
+            black_box(&workers);
+        },
+    );
     ctx.set_elements(ITERS * iterations as u64);
 }
 
@@ -765,21 +792,24 @@ fn should_complete_short_roundtrip_batch(ctx: &mut StressContext) {
         RequestFrameRing::new(ROUTE_STR, b"mixed workload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_for(stress_config::BenchConfig::default().measure_duration, || {
-        for _ in 0..10 {
-            let (request_msg_type, request_payload) = request_ring.next_frame();
-            dispatch_request(
-                &router,
-                family,
-                &requester_source,
-                request_msg_type,
-                request_payload,
-            );
-            let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
-            assert_requester_received_worker_responses(requester_inbox.drain(), 1);
-        }
-        black_box(&workers);
-    });
+    let iterations = ctx.measure_for(
+        stress_config::BenchConfig::default().measure_duration,
+        || {
+            for _ in 0..10 {
+                let (request_msg_type, request_payload) = request_ring.next_frame();
+                dispatch_request(
+                    &router,
+                    family,
+                    &requester_source,
+                    request_msg_type,
+                    request_payload,
+                );
+                let _ = service_expected_worker(&router, family, &workers, &mut next_worker_index);
+                assert_requester_received_worker_responses(requester_inbox.drain(), 1);
+            }
+            black_box(&workers);
+        },
+    );
     ctx.set_elements(10 * iterations as u64);
 }
 

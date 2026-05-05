@@ -4,8 +4,8 @@
 //! ephemeral live notifications.
 
 use crate::domains::schedule::{ScheduleCreateEntry, ScheduleMessage, ScheduleResponse};
-use crate::protocol::frame_context::FrameContext;
 use crate::protocol::error_codes::schedule as schedule_error_codes;
+use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
@@ -301,8 +301,8 @@ pub fn encode_notify_into(
 mod tests {
     use super::{encode_notify, encode_response, extract_batch_auth_routes};
     use crate::domains::schedule::ScheduleResponse;
-    use crate::protocol::payload_codec::PayloadEncoder;
     use crate::protocol::error_codes::schedule as schedule_error_codes;
+    use crate::protocol::payload_codec::PayloadEncoder;
 
     #[test]
     fn should_encode_subscribe_response_with_subscription_id() {
@@ -335,13 +335,14 @@ mod tests {
     #[test]
     fn should_encode_typed_schedule_error_for_known_failure() {
         // Arrange
-        let payload = encode_response(&ScheduleResponse::Error(
-            "schedule not found".to_string(),
-        ));
+        let payload = encode_response(&ScheduleResponse::Error("schedule not found".to_string()));
 
         // Assert
         assert_eq!(payload[0], 1);
-        assert_eq!(&payload[1..5], &(schedule_error_codes::ERR_SCHEDULE_NOT_FOUND as u32).to_be_bytes());
+        assert_eq!(
+            &payload[1..5],
+            &(schedule_error_codes::ERR_SCHEDULE_NOT_FOUND as u32).to_be_bytes()
+        );
     }
 
     #[test]

@@ -136,6 +136,12 @@ if (result is GetResult.Found(var value)) { ... }
 else if (result is GetResult.NotFound) { ... }
 ```
 
+### 6. Keep Stream Metadata Explicit
+
+Stream clients SHOULD expose an optional discriminator on append and an optional filter object on read. Treat both as ordinary request fields, not client-global state, and default them to omitted/null so older call sites stay compatible.
+
+If your language offers builders, wrap the shared `StreamFilterSet` and `StreamFilterClause` shapes directly instead of inventing a separate filter DSL per SDK.
+
 ---
 
 ## Architecture Patterns
