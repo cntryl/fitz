@@ -1,14 +1,11 @@
-import { createMutation, type Mutation } from "@/shared/query/mutation";
+import { createMutation } from "@askrjs/askr/data";
 import type { LoginPayload } from "./session-models";
 import { sessionService } from "./session-service";
 
 const SESSION_QUERY_PREFIX = "session:";
 
-export type SignInMutation = Mutation<LoginPayload, void>;
-export type SignOutMutation = Mutation<undefined, void>;
-
-export function createSignInMutation(): SignInMutation {
-  return createMutation({
+export function createSignInMutation() {
+  return createMutation<LoginPayload, void>({
     action: async (payload, { signal }) => {
       await sessionService.signIn(payload, { signal });
     },
@@ -17,8 +14,8 @@ export function createSignInMutation(): SignInMutation {
   });
 }
 
-export function createSignOutMutation(): SignOutMutation {
-  return createMutation({
+export function createSignOutMutation() {
+  return createMutation<undefined, void>({
     action: async (_input, { signal }) => {
       await sessionService.signOut({ signal });
     },

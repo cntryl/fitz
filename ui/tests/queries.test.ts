@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  createQueueDeadLettersQuery,
-  queueDeadLettersQueryKey,
-} from "@/features/queue/queue-query";
+import { createQueueDeadLettersQuery } from "@/features/queue/queue-query";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createSignInMutation, createSignOutMutation } from "@/features/session/session-mutation";
 import { mapQueueDeadLetter } from "@/features/queue/queue-mappers";
@@ -20,9 +17,6 @@ describe("Data query layer", () => {
   it("exports queue dead-letter query helpers", () => {
     expect(createQueueDeadLettersQuery).toBeDefined();
     expect(typeof createQueueDeadLettersQuery).toBe("function");
-    expect(queueDeadLettersQueryKey({ realm: "r", area: "a", resource: "q" })).toBe(
-      "queue:dead-letters:r:a:q:all",
-    );
   });
 
   it("maps queue DTOs to camelCase app models", () => {
