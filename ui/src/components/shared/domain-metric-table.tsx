@@ -1,5 +1,6 @@
 import { For } from "@askrjs/askr";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import { Section } from "@askrjs/themes/components";
 
 export interface DomainMetric {
   label: string;
@@ -18,7 +19,7 @@ function formatValue(value: string | number) {
 
 export default function DomainMetricTable({ title, metrics }: DomainMetricTableProps) {
   return (
-    <section class="domain-section">
+    <Section class="domain-section" size="3">
       <div class="domain-section-header">
         <div>
           <p class="eyebrow">{title}</p>
@@ -48,6 +49,6 @@ export default function DomainMetricTable({ title, metrics }: DomainMetricTableP
           </TableBody>
         </Table>
       </div>
-    </section>
+    </Section>
   );
 }

@@ -4,6 +4,7 @@ import AdminHome from "@/pages/admin-home";
 import AdminLogin from "@/pages/admin-login";
 import Home from "@/pages/home";
 import QueuePage from "@/pages/queue";
+import QueueResourcePage from "@/pages/queue-resource";
 import KvPage from "@/pages/kv";
 import LeasePage from "@/pages/lease";
 import NoticePage from "@/pages/notice";
@@ -16,6 +17,7 @@ group({ layout: AppLayout }, () => {
   route("/admin", AdminHome);
   route("/login", AdminLogin);
   route("/queue", QueuePage);
+  route("/queue/{realm}/{area}/{resource}", QueueResourcePage);
   route("/kv", KvPage);
   route("/lease", LeasePage);
   route("/notice", NoticePage);

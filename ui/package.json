@@ -15,10 +15,10 @@
   },
   "dependencies": {
     "@askrjs/askr": "0.0.33",
-    "@askrjs/themes": "0.0.1",
+    "@askrjs/lucide": "0.0.1",
+    "@askrjs/themes": "^0.0.2",
     "@askrjs/ui": "0.0.4",
     "@askrjs/vite": "0.0.2",
-    "@askrjs/lucide": "0.0.1",
     "@fgrzl/fetch": "^1.4.2"
   },
   "devDependencies": {

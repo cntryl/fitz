@@ -3,9 +3,11 @@ import {
   createQueueDeadLettersQuery,
   createQueueOverviewQuery,
 } from "@/features/queue/queue-query";
+import { createQueueResourceQuery } from "@/features/queue/queue-resource-query";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createSignInMutation, createSignOutMutation } from "@/features/session/session-mutation";
 import { mapQueueDeadLetter, mapQueueStats } from "@/features/queue/queue-mappers";
+import { mapQueueInflight, mapQueueResourceDetail } from "@/features/queue/queue-resource-mappers";
 import { createKvOverviewQuery } from "@/features/kv/kv-query";
 import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
 import { createNoticeOverviewQuery } from "@/features/notice/notice-query";
@@ -19,6 +21,7 @@ import { rpcService } from "@/features/rpc/rpc-service";
 import { scheduleService } from "@/features/schedule/schedule-service";
 import { streamService } from "@/features/stream/stream-service";
 import { queueService } from "@/features/queue/queue-service";
+import { queueResourceService } from "@/features/queue/queue-resource-service";
 import { mapKvStats } from "@/features/kv/kv-mappers";
 import { mapLeaseStats } from "@/features/lease/lease-mappers";
 import { mapNoticeStats } from "@/features/notice/notice-mappers";
@@ -41,6 +44,8 @@ describe("Data query layer", () => {
     expect(typeof createQueueDeadLettersQuery).toBe("function");
     expect(createQueueOverviewQuery).toBeDefined();
     expect(typeof createQueueOverviewQuery).toBe("function");
+    expect(createQueueResourceQuery).toBeDefined();
+    expect(typeof createQueueResourceQuery).toBe("function");
   });
 
   it("exports domain overview queries and service boundaries", () => {
@@ -71,6 +76,8 @@ describe("Data query layer", () => {
     expect(typeof streamService.getOverview).toBe("function");
     expect(queueService.getOverview).toBeDefined();
     expect(typeof queueService.getOverview).toBe("function");
+    expect(queueResourceService.getResource).toBeDefined();
+    expect(typeof queueResourceService.getResource).toBe("function");
   });
 
   it("maps queue DTOs to camelCase app models", () => {
@@ -114,6 +121,54 @@ describe("Data query layer", () => {
       messagesPending: 11,
       messagesReady: 12,
       operationsPerSecond: 13.5,
+    });
+
+    expect(
+      mapQueueResourceDetail({
+        area: "a",
+        messages_dead_lettered: 2,
+        messages_delayed: 3,
+        messages_inflight: 4,
+        messages_ready: 5,
+        messages_total: 6,
+        oldest_message_age_seconds: 7,
+        realm: "r",
+        resource: "q",
+      }),
+    ).toEqual({
+      area: "a",
+      realm: "r",
+      resource: "q",
+      messagesReady: 5,
+      messagesInflight: 4,
+      messagesDelayed: 3,
+      messagesDeadLettered: 2,
+      messagesTotal: 6,
+      oldestMessageAgeSeconds: 7,
+    });
+
+    expect(
+      mapQueueInflight({
+        area: "a",
+        attempts: 8,
+        expires_at: "2026-05-04T12:00:00Z",
+        family: 9,
+        inflight_token: "tok",
+        message_id: 10,
+        realm: "r",
+        resource: "q",
+        session_id: "s",
+      }),
+    ).toEqual({
+      area: "a",
+      attempts: 8,
+      expiresAt: "2026-05-04T12:00:00Z",
+      family: 9,
+      inflightToken: "tok",
+      messageId: 10,
+      realm: "r",
+      resource: "q",
+      sessionId: "s",
     });
 
     expect(

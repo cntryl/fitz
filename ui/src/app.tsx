@@ -1,58 +1,96 @@
 import "./styles.css";
 import { For } from "@askrjs/askr";
-import { Link } from "@askrjs/askr/router";
+import { Link, currentRoute } from "@askrjs/askr/router";
 import { ActivityIcon, ShieldIcon } from "@askrjs/lucide";
-import { domainLinks } from "@/shared/navigation/domains";
+import {
+  Card,
+  CardContent,
+  Badge,
+  NavBrand,
+  NavGroup,
+  Navbar,
+  NavLink,
+  SidebarLayout,
+} from "@askrjs/themes/components";
+import { domainLinks, shellLinks } from "@/shared/navigation/domains";
 
-const shellLinks = [
-  { href: "/admin", label: "Dashboard" },
-  { href: "/login", label: "Sign in" },
-  ...domainLinks.map((link) => ({
-    href: link.href,
-    label: link.title,
-  })),
+const shellSections = [
+  {
+    label: "Workspace",
+    links: shellLinks,
+  },
+  {
+    label: "Domains",
+    links: domainLinks,
+  },
 ];
 
+function isCurrentPath(pathname: string, href: string) {
+  return pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
+}
+
 export default function App({ children }: { children?: unknown }) {
+  const pathname = currentRoute().path;
+
   return (
-    <div class="shell">
-      <header class="shell-header">
-        <div>
-          <div class="shell-bar">
-            <Link href="/" class="brand-mark" aria-label="Fitz admin home">
-              <span class="brand-icon">
+    <SidebarLayout
+      class="app-shell"
+      sidebar={
+        <div class="app-shell-sidebar">
+          <NavBrand>
+            <Link href="/" class="app-shell-brand" aria-label="Fitz admin home">
+              <span class="app-shell-brand-icon">
                 <ShieldIcon size={18} />
               </span>
               <span>
                 <strong>Fitz Admin</strong>
               </span>
             </Link>
+          </NavBrand>
 
-            <nav class="shell-nav" aria-label="Primary">
-              <For each={shellLinks} by={(link) => link.href}>
-                {(link) => (
-                  <Link href={link.href} class="shell-nav-link">
-                    {link.label}
-                  </Link>
-                )}
-              </For>
-            </nav>
-          </div>
+          <Navbar aria-label="Primary navigation">
+            <For each={shellSections} by={(section) => section.label}>
+              {(section) => (
+                <NavGroup class="app-shell-nav-group">
+                  <p class="app-shell-nav-label">{section.label}</p>
+                  <For each={section.links} by={(link) => link.href}>
+                    {(link) => (
+                      <NavLink
+                        href={link.href}
+                        aria-current={isCurrentPath(pathname, link.href) ? "page" : undefined}
+                      >
+                        <span class="app-shell-nav-link">
+                          <link.icon size={16} />
+                          <span>{link.title}</span>
+                        </span>
+                      </NavLink>
+                    )}
+                  </For>
+                </NavGroup>
+              )}
+            </For>
+          </Navbar>
         </div>
-      </header>
-
-      <main class="shell-main">
-        <div>
-          <div class="shell-banner">
-            <span class="shell-badge">Read-only scaffold</span>
-            <span class="shell-banner-copy">
-              <ActivityIcon size={16} />
-              Root-mounted admin UI wired to the live Fitz admin API.
-            </span>
-          </div>
+      }
+      sidebarPosition="start"
+      sidebarWidth="18rem"
+      gap="1.5rem"
+      collapseBelow="md"
+    >
+      <div class="app-shell-main">
+        <div class="app-shell-main-inner">
+          <Card class="app-shell-banner" variant="raised">
+            <CardContent class="app-shell-banner-content">
+              <Badge>Read-only scaffold</Badge>
+              <span class="app-shell-banner-copy">
+                <ActivityIcon size={16} />
+                Root-mounted admin UI wired to the live Fitz admin API.
+              </span>
+            </CardContent>
+          </Card>
           {children}
         </div>
-      </main>
-    </div>
+      </div>
+    </SidebarLayout>
   );
 }

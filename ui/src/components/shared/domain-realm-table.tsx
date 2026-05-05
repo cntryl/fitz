@@ -1,5 +1,6 @@
 import { For } from "@askrjs/askr";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import { Section } from "@askrjs/themes/components";
 import DomainState from "@/components/shared/domain-state";
 
 export interface DomainRealm {
@@ -15,7 +16,7 @@ export interface DomainRealmTableProps {
 
 export default function DomainRealmTable({ title, realms, emptyMessage }: DomainRealmTableProps) {
   return (
-    <section class="domain-section">
+    <Section class="domain-section" size="3">
       <div class="domain-section-header">
         <div>
           <p class="eyebrow">{title}</p>
@@ -47,6 +48,6 @@ export default function DomainRealmTable({ title, realms, emptyMessage }: Domain
           </Table>
         </div>
       )}
-    </section>
+    </Section>
   );
 }

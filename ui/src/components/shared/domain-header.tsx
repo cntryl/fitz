@@ -1,4 +1,5 @@
 import { Button } from "@askrjs/ui";
+import { Badge } from "@askrjs/themes/components";
 import { ActivityIcon } from "@askrjs/lucide";
 
 export interface DomainHeaderProps {
@@ -12,7 +13,7 @@ export default function DomainHeader({ domain, title, description, onRefresh }: 
   return (
     <header class="domain-header">
       <div class="domain-header-copy">
-        <span class="status-badge">{domain}</span>
+        <Badge>{domain}</Badge>
         <h1>{title}</h1>
         <p>{description}</p>
       </div>

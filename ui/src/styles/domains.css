@@ -17,12 +17,18 @@
 }
 
 .domain-header-copy h1,
-.domain-section-header h2 {
+.domain-section-header h2,
+.domain-index-card h3,
+.domain-sidebar h3 {
   margin: 0;
 }
 
 .domain-header-copy p,
-.domain-state p {
+.domain-state p,
+.domain-index-card p,
+.domain-sidebar p,
+.domain-sidebar dd,
+.domain-sidebar dt {
   margin: 0;
 }
 
@@ -39,9 +45,7 @@
 }
 
 .domain-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
+  max-width: 32rem;
 }
 
 .domain-table {
@@ -63,10 +67,74 @@
   gap: 0.8rem;
 }
 
+.domain-index-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
 .domain-index-card {
+  height: 100%;
+}
+
+.domain-index-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.domain-index-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.domain-sidebar {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.domain-sidebar-header {
   display: grid;
   gap: 0.35rem;
-  padding: 1rem;
+}
+
+.domain-sidebar-content {
+  display: grid;
+  gap: 1rem;
+}
+
+.domain-sidebar-stats {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.domain-sidebar-stat {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.domain-sidebar-stat dt {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+
+.domain-sidebar-stat dd {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.domain-sidebar-stat p {
+  opacity: 0.7;
+}
+
+.domain-sidebar-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
 }
 
 .home-page {

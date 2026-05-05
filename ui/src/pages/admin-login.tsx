@@ -1,6 +1,7 @@
 import { state } from "@askrjs/askr";
 import { Button, Input, Label } from "@askrjs/ui";
 import { LockKeyholeIcon, ShieldCheckIcon } from "@askrjs/lucide";
+import { Badge } from "@askrjs/themes/components";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createSignInMutation } from "@/features/session/session-mutation";
 
@@ -40,7 +41,7 @@ export default function AdminLogin() {
   return (
     <section class="auth-card">
       <div class="auth-intro">
-        <span class="shell-badge">Root SPA</span>
+        <Badge>Root SPA</Badge>
         <p class="eyebrow">Admin Access</p>
         <h1>Sign in to Fitz Admin</h1>
         <p>Use your admin credentials to access the REST-backed management UI.</p>
