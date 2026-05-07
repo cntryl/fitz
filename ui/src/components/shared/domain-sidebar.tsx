@@ -21,6 +21,14 @@ export interface DomainSidebarProps {
   footer?: unknown;
 }
 
+export interface DomainSidebarConfig<TData> {
+  data: TData | null | undefined;
+  title: string;
+  description: string;
+  stats: (data: TData) => DomainSidebarStat[];
+  footer?: unknown;
+}
+
 function formatValue(value: string | number) {
   return typeof value === "number" ? new Intl.NumberFormat("en-US").format(value) : value;
 }
@@ -47,5 +55,21 @@ export default function DomainSidebar({ title, description, stats, footer }: Dom
       </CardContent>
       {footer ? <CardFooter class="domain-sidebar-footer">{footer}</CardFooter> : null}
     </Card>
+  );
+}
+
+export function createDomainSidebar<TData>({
+  data,
+  title,
+  description,
+  stats,
+  footer,
+}: DomainSidebarConfig<TData>) {
+  if (!data) {
+    return undefined;
+  }
+
+  return (
+    <DomainSidebar title={title} description={description} stats={stats(data)} footer={footer} />
   );
 }

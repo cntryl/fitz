@@ -3,19 +3,30 @@ import {
   type DeadLetterFilters,
   type QueueResourceRef,
 } from "@/features/queue/queue-query";
+import { AlertTriangleIcon, GaugeIcon } from "@askrjs/lucide";
+import { EmptyState, Spinner } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
-import DomainState from "@/components/shared/domain-state";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
+import type { DeadLetterMessage } from "@/features/queue/queue-models";
+import { formatUnknownError } from "@/shared/errors/format";
 
 export interface QueueDeadLettersPanelProps {
   resourceRef: QueueResourceRef;
   filters?: DeadLetterFilters;
+  onPurge?: (message: DeadLetterMessage) => void | Promise<void>;
+  onReplay?: (message: DeadLetterMessage) => void | Promise<void>;
+  pendingAction?: "replay" | "purge" | null;
+  pendingMessageId?: number | null;
 }
 
 // Component boundary: consume query state only; no generated DTOs or FetchResponse.
 export default function QueueDeadLettersPanel({
   resourceRef,
   filters = {},
+  onPurge,
+  onReplay,
+  pendingAction = null,
+  pendingMessageId = null,
 }: QueueDeadLettersPanelProps) {
   const deadLetters = createQueueDeadLettersQuery(resourceRef, filters);
   const messages = deadLetters.data ?? [];
@@ -30,25 +41,38 @@ export default function QueueDeadLettersPanel({
       />
 
       {deadLetters.loading ? (
-        <DomainState kind="loading" message="Loading dead-letter messages..." />
+        <EmptyState
+          class="domain-state"
+          icon={<Spinner label="Loading" />}
+          description="Loading dead-letter messages..."
+        />
       ) : null}
 
       {deadLetters.error ? (
-        <DomainState
-          kind="error"
-          message="Dead-letter messages could not be loaded."
-          error={deadLetters.error}
+        <EmptyState
+          class="domain-state"
+          icon={<AlertTriangleIcon size={18} />}
+          description={formatUnknownError(deadLetters.error)}
         />
       ) : null}
 
       {!deadLetters.loading && !deadLetters.error && messages.length === 0 ? (
-        <DomainState
-          kind="empty"
-          message="No dead-letter messages are visible for this resource."
+        <EmptyState
+          class="domain-state"
+          icon={<GaugeIcon size={18} />}
+          description="No dead-letter messages are visible for this resource."
         />
       ) : null}
 
-      {messages.length > 0 ? <QueueDeadLetterTable messages={messages} /> : null}
+      {messages.length > 0 ? (
+        <QueueDeadLetterTable
+          messages={messages}
+          onPurge={onPurge}
+          onReplay={onReplay}
+          pendingAction={pendingAction}
+          pendingMessageId={pendingMessageId}
+        />
+      ) : null}
     </section>
   );
 }

@@ -3,6 +3,7 @@ import AppLayout from "@/app";
 import AdminHome from "@/pages/admin-home";
 import AdminLogin from "@/pages/admin-login";
 import Home from "@/pages/home";
+import SessionsPage from "@/pages/sessions";
 import QueuePage from "@/pages/queue";
 import QueueResourcePage from "@/pages/queue-resource";
 import KvPage from "@/pages/kv";
@@ -16,6 +17,7 @@ group({ layout: AppLayout }, () => {
   route("/", Home);
   route("/admin", AdminHome);
   route("/login", AdminLogin);
+  route("/sessions", SessionsPage);
   route("/queue", QueuePage);
   route("/queue/{realm}/{area}/{resource}", QueueResourcePage);
   route("/kv", KvPage);

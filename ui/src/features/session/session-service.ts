@@ -5,8 +5,12 @@ import {
   unwrapResponse,
   type ServiceRequestOptions,
 } from "@/shared/errors/api";
-import { mapLoginPayload, mapSessionResponse } from "./session-mappers";
-import type { LoginPayload, SessionState } from "./session-models";
+import { mapActiveSessionsOverview, mapLoginPayload, mapSessionResponse } from "./session-mappers";
+import type {
+  ActiveSessionsOverview,
+  LoginPayload,
+  SessionState,
+} from "./session-models";
 
 export type { LoginPayload, SessionState } from "./session-models";
 
@@ -36,9 +40,22 @@ async function signOut(options: ServiceRequestOptions = {}): Promise<void> {
   ensureResponseOk(await apiv1.deleteAdminSession(options), "Unable to sign out");
 }
 
+async function listActiveSessions(
+  realm: string | undefined = undefined,
+  options: ServiceRequestOptions = {},
+): Promise<ActiveSessionsOverview> {
+  const response = await apiv1.listActiveSessions(realm ? { realm } : undefined, options);
+
+  return mapActiveSessionsOverview(
+    realm,
+    unwrapResponse(response, "Unable to load active sessions").sessions,
+  );
+}
+
 // Services own app-facing method names and return plain promises/models.
 export const sessionService = {
   getCurrentSession,
+  listActiveSessions,
   signIn,
   signOut,
 };

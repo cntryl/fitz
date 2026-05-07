@@ -5,9 +5,8 @@ import DomainHeader from "@/components/shared/domain-header";
 import DomainIndex from "@/components/shared/domain-index";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
-import DomainState from "@/components/shared/domain-state";
 import DomainSidebar from "@/components/shared/domain-sidebar";
-import PageShell from "@/components/shared/page-shell";
+import SessionTable from "@/components/shared/session-table";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
 import AdminHome from "@/pages/admin-home";
 import AdminLogin from "@/pages/admin-login";
@@ -19,6 +18,7 @@ import LeasePage from "@/pages/lease";
 import NoticePage from "@/pages/notice";
 import RpcPage from "@/pages/rpc";
 import SchedulePage from "@/pages/schedule";
+import SessionsPage from "@/pages/sessions";
 import StreamPage from "@/pages/stream";
 import { getRoutes } from "@askrjs/askr/router";
 import {
@@ -74,6 +74,8 @@ describe("Admin UI", () => {
     expect(typeof RpcPage).toBe("function");
     expect(SchedulePage).toBeDefined();
     expect(typeof SchedulePage).toBe("function");
+    expect(SessionsPage).toBeDefined();
+    expect(typeof SessionsPage).toBe("function");
     expect(StreamPage).toBeDefined();
     expect(typeof StreamPage).toBe("function");
   });
@@ -97,12 +99,8 @@ describe("Admin UI", () => {
     expect(typeof DomainMetricTable).toBe("function");
     expect(DomainRealmTable).toBeDefined();
     expect(typeof DomainRealmTable).toBe("function");
-    expect(DomainState).toBeDefined();
-    expect(typeof DomainState).toBe("function");
     expect(DomainSidebar).toBeDefined();
     expect(typeof DomainSidebar).toBe("function");
-    expect(PageShell).toBeDefined();
-    expect(typeof PageShell).toBe("function");
     expect(Section).toBeDefined();
     expect(typeof Section).toBe("function");
     expect(Card).toBeDefined();
@@ -113,6 +111,8 @@ describe("Admin UI", () => {
     expect(typeof QueueDeadLetterTable).toBe("function");
     expect(QueueInflightTable).toBeDefined();
     expect(typeof QueueInflightTable).toBe("function");
+    expect(SessionTable).toBeDefined();
+    expect(typeof SessionTable).toBe("function");
     expect(NavLink).toBeDefined();
     expect(typeof NavLink).toBe("function");
   });
@@ -130,6 +130,7 @@ describe("Admin UI", () => {
         "/",
         "/admin",
         "/login",
+        "/sessions",
         "/queue",
         "/queue/{realm}/{area}/{resource}",
         "/kv",

@@ -13,9 +13,16 @@
 
   .app-shell-banner-content,
   .domain-header,
-  .domain-section-header {
+  .domain-section-header,
+  .session-filter-actions {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .dashboard-status-grid,
+  .dashboard-domain-grid,
+  .dashboard-status-content {
+    grid-template-columns: 1fr;
   }
 
   .domain-table-wrap {

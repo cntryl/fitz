@@ -8,6 +8,7 @@ import {
   RadioTowerIcon,
   TimerResetIcon,
   KeyRoundIcon,
+  UsersIcon,
 } from "@askrjs/lucide";
 
 export interface DomainLink {
@@ -28,6 +29,11 @@ export const shellLinks: ShellLink[] = [
     href: "/admin",
     title: "Dashboard",
     icon: LayoutDashboardIcon,
+  },
+  {
+    href: "/sessions",
+    title: "Sessions",
+    icon: UsersIcon,
   },
   {
     href: "/login",

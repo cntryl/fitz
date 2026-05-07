@@ -1,35 +1,42 @@
+import { SidebarLayout } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
-import DomainState from "@/components/shared/domain-state";
-import DomainSidebar from "@/components/shared/domain-sidebar";
-import PageShell from "@/components/shared/page-shell";
+import { AlertTriangleIcon } from "@askrjs/lucide";
+import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createQueueOverviewQuery } from "@/features/queue/queue-query";
+import { formatUnknownError } from "@/shared/errors/format";
 
 export default function QueuePage() {
   const overview = createQueueOverviewQuery();
   const data = overview.data;
-  const sidebar = data ? (
-    <DomainSidebar
-      title="Queue snapshot"
-      description="Current queue health across messages and broker activity."
-      stats={[
-        { label: "Ready", value: data.stats.messagesReady },
-        { label: "Inflight", value: data.stats.inflightActive },
-        { label: "Pending", value: data.stats.messagesPending },
-        { label: "Dead-lettered", value: data.stats.messagesDeadLettered },
-        { label: "Delayed", value: data.stats.messagesDelayed },
-        {
-          label: "Ops / sec",
-          value: data.stats.operationsPerSecond.toFixed(2),
-          note: "Live broker snapshot",
-        },
-      ]}
-    />
-  ) : undefined;
+  const sidebar = createDomainSidebar({
+    data,
+    title: "Queue snapshot",
+    description: "Current queue health across messages and broker activity.",
+    stats: (current) => [
+      { label: "Ready", value: current.stats.messagesReady },
+      { label: "Inflight", value: current.stats.inflightActive },
+      { label: "Pending", value: current.stats.messagesPending },
+      { label: "Dead-lettered", value: current.stats.messagesDeadLettered },
+      { label: "Delayed", value: current.stats.messagesDelayed },
+      {
+        label: "Ops / sec",
+        value: current.stats.operationsPerSecond.toFixed(2),
+        note: "Live broker snapshot",
+      },
+    ],
+  });
 
   return (
-    <PageShell sidebar={sidebar}>
+    <SidebarLayout
+      sidebar={sidebar}
+      sidebarPosition="end"
+      sidebarWidth="18rem"
+      gap="1.5rem"
+      collapseBelow="md"
+    >
       <section class="domain-page">
         <DomainHeader
           domain="Queue"
@@ -39,14 +46,18 @@ export default function QueuePage() {
         />
 
         {overview.loading ? (
-          <DomainState kind="loading" message="Loading queue overview..." />
+          <EmptyState
+            class="domain-state"
+            icon={<Spinner label="Loading" />}
+            description="Loading queue overview..."
+          />
         ) : null}
 
         {overview.error ? (
-          <DomainState
-            kind="error"
-            message="Queue overview could not be loaded."
-            error={overview.error}
+          <EmptyState
+            class="domain-state"
+            icon={<AlertTriangleIcon size={18} />}
+            description={formatUnknownError(overview.error)}
           />
         ) : null}
 
@@ -75,6 +86,6 @@ export default function QueuePage() {
           </>
         ) : null}
       </section>
-    </PageShell>
+    </SidebarLayout>
   );
 }

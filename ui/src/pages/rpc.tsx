@@ -1,32 +1,39 @@
+import { SidebarLayout } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
-import DomainState from "@/components/shared/domain-state";
-import DomainSidebar from "@/components/shared/domain-sidebar";
-import PageShell from "@/components/shared/page-shell";
+import { AlertTriangleIcon } from "@askrjs/lucide";
+import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
+import { formatUnknownError } from "@/shared/errors/format";
 
 export default function RpcPage() {
   const overview = createRpcOverviewQuery();
   const data = overview.data;
-  const sidebar = data ? (
-    <DomainSidebar
-      title="RPC snapshot"
-      description="Worker registrations and pending request pressure."
-      stats={[
-        { label: "Workers", value: data.stats.workersRegistered },
-        { label: "Requests pending", value: data.stats.requestsPending },
-        {
-          label: "Ops / sec",
-          value: data.stats.operationsPerSecond.toFixed(2),
-          note: "Live broker snapshot",
-        },
-      ]}
-    />
-  ) : undefined;
+  const sidebar = createDomainSidebar({
+    data,
+    title: "RPC snapshot",
+    description: "Worker registrations and pending request pressure.",
+    stats: (current) => [
+      { label: "Workers", value: current.stats.workersRegistered },
+      { label: "Requests pending", value: current.stats.requestsPending },
+      {
+        label: "Ops / sec",
+        value: current.stats.operationsPerSecond.toFixed(2),
+        note: "Live broker snapshot",
+      },
+    ],
+  });
 
   return (
-    <PageShell sidebar={sidebar}>
+    <SidebarLayout
+      sidebar={sidebar}
+      sidebarPosition="end"
+      sidebarWidth="18rem"
+      gap="1.5rem"
+      collapseBelow="md"
+    >
       <section class="domain-page">
         <DomainHeader
           domain="RPC"
@@ -35,13 +42,19 @@ export default function RpcPage() {
           onRefresh={() => overview.refresh()}
         />
 
-        {overview.loading ? <DomainState kind="loading" message="Loading RPC overview..." /> : null}
+        {overview.loading ? (
+          <EmptyState
+            class="domain-state"
+            icon={<Spinner label="Loading" />}
+            description="Loading RPC overview..."
+          />
+        ) : null}
 
         {overview.error ? (
-          <DomainState
-            kind="error"
-            message="RPC overview could not be loaded."
-            error={overview.error}
+          <EmptyState
+            class="domain-state"
+            icon={<AlertTriangleIcon size={18} />}
+            description={formatUnknownError(overview.error)}
           />
         ) : null}
 
@@ -67,6 +80,6 @@ export default function RpcPage() {
           </>
         ) : null}
       </section>
-    </PageShell>
+    </SidebarLayout>
   );
 }

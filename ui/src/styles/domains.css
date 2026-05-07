@@ -4,6 +4,11 @@
   width: min(100%, 72rem);
 }
 
+.admin-hero {
+  display: grid;
+  gap: 1rem;
+}
+
 .domain-header {
   display: flex;
   align-items: flex-start;
@@ -132,9 +137,83 @@
 }
 
 .domain-sidebar-footer {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.dashboard-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1rem;
+}
+
+.dashboard-status-card,
+.dashboard-domain-card {
+  height: 100%;
+}
+
+.dashboard-status-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.9rem;
+}
+
+.dashboard-metric {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.dashboard-metric span {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+
+.dashboard-metric strong {
+  font-size: 1.15rem;
+}
+
+.dashboard-metrics-preview {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.dashboard-metrics-preview pre {
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+}
+
+.dashboard-domains {
+  display: grid;
+  gap: 1rem;
+}
+
+.dashboard-domain-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.9rem;
+}
+
+.session-filter {
+  display: grid;
+  gap: 1rem;
+  max-width: 36rem;
+}
+
+.session-filter-actions {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.queue-action-cell {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
 
 .home-page {

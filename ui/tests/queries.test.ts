@@ -4,7 +4,10 @@ import {
   createQueueOverviewQuery,
 } from "@/features/queue/queue-query";
 import { createQueueResourceQuery } from "@/features/queue/queue-resource-query";
-import { createCurrentSessionQuery } from "@/features/session/session-query";
+import {
+  createActiveSessionsQuery,
+  createCurrentSessionQuery,
+} from "@/features/session/session-query";
 import { createSignInMutation, createSignOutMutation } from "@/features/session/session-mutation";
 import { mapQueueDeadLetter, mapQueueStats } from "@/features/queue/queue-mappers";
 import { mapQueueInflight, mapQueueResourceDetail } from "@/features/queue/queue-resource-mappers";
@@ -14,6 +17,7 @@ import { createNoticeOverviewQuery } from "@/features/notice/notice-query";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
 import { createScheduleOverviewQuery } from "@/features/schedule/schedule-query";
 import { createStreamOverviewQuery } from "@/features/stream/stream-query";
+import { createSystemOverviewQuery } from "@/features/system/system-query";
 import { kvService } from "@/features/kv/kv-service";
 import { leaseService } from "@/features/lease/lease-service";
 import { noticeService } from "@/features/notice/notice-service";
@@ -22,17 +26,29 @@ import { scheduleService } from "@/features/schedule/schedule-service";
 import { streamService } from "@/features/stream/stream-service";
 import { queueService } from "@/features/queue/queue-service";
 import { queueResourceService } from "@/features/queue/queue-resource-service";
+import { systemService } from "@/features/system/system-service";
 import { mapKvStats } from "@/features/kv/kv-mappers";
 import { mapLeaseStats } from "@/features/lease/lease-mappers";
 import { mapNoticeStats } from "@/features/notice/notice-mappers";
 import { mapRpcStats } from "@/features/rpc/rpc-mappers";
 import { mapScheduleStats } from "@/features/schedule/schedule-mappers";
 import { mapStreamStats } from "@/features/stream/stream-mappers";
+import {
+  createPurgeQueueDeadLetterMutation,
+  createReplayQueueDeadLetterMutation,
+} from "@/features/queue/queue-actions";
+import {
+  mapActiveSession,
+  mapActiveSessionsOverview,
+} from "@/features/session/session-mappers";
+import { mapSystemOverview } from "@/features/system/system-mappers";
 
 describe("Data query layer", () => {
   it("exports session query helpers", () => {
     expect(createCurrentSessionQuery).toBeDefined();
     expect(typeof createCurrentSessionQuery).toBe("function");
+    expect(createActiveSessionsQuery).toBeDefined();
+    expect(typeof createActiveSessionsQuery).toBe("function");
     expect(createSignInMutation).toBeDefined();
     expect(typeof createSignInMutation).toBe("function");
     expect(createSignOutMutation).toBeDefined();
@@ -46,6 +62,10 @@ describe("Data query layer", () => {
     expect(typeof createQueueOverviewQuery).toBe("function");
     expect(createQueueResourceQuery).toBeDefined();
     expect(typeof createQueueResourceQuery).toBe("function");
+    expect(createReplayQueueDeadLetterMutation).toBeDefined();
+    expect(typeof createReplayQueueDeadLetterMutation).toBe("function");
+    expect(createPurgeQueueDeadLetterMutation).toBeDefined();
+    expect(typeof createPurgeQueueDeadLetterMutation).toBe("function");
   });
 
   it("exports domain overview queries and service boundaries", () => {
@@ -61,6 +81,8 @@ describe("Data query layer", () => {
     expect(typeof createScheduleOverviewQuery).toBe("function");
     expect(createStreamOverviewQuery).toBeDefined();
     expect(typeof createStreamOverviewQuery).toBe("function");
+    expect(createSystemOverviewQuery).toBeDefined();
+    expect(typeof createSystemOverviewQuery).toBe("function");
 
     expect(kvService.getOverview).toBeDefined();
     expect(typeof kvService.getOverview).toBe("function");
@@ -78,6 +100,8 @@ describe("Data query layer", () => {
     expect(typeof queueService.getOverview).toBe("function");
     expect(queueResourceService.getResource).toBeDefined();
     expect(typeof queueResourceService.getResource).toBe("function");
+    expect(systemService.getOverview).toBeDefined();
+    expect(typeof systemService.getOverview).toBe("function");
   });
 
   it("maps queue DTOs to camelCase app models", () => {
@@ -247,6 +271,165 @@ describe("Data query layer", () => {
       operationsPerSecond: 12.5,
       streamsActive: 13,
       subscriptionsActive: 14,
+    });
+  });
+
+  it("maps sessions and system overview DTOs", () => {
+    expect(
+      mapActiveSession({
+        connected_at: "2026-05-04T12:00:00Z",
+        idle_seconds: 6,
+        messages_received: 7,
+        messages_sent: 8,
+        realm: "r",
+        remote_addr: "127.0.0.1",
+        session_id: "sess-1",
+        transport: "ws",
+      }),
+    ).toEqual({
+      key: "sess-1:r:127.0.0.1:2026-05-04T12:00:00Z",
+      connectedAt: "2026-05-04T12:00:00Z",
+      idleSeconds: 6,
+      messagesReceived: 7,
+      messagesSent: 8,
+      realm: "r",
+      remoteAddress: "127.0.0.1",
+      sessionId: "sess-1",
+      transport: "ws",
+    });
+
+    expect(
+      mapActiveSessionsOverview("r", [
+        {
+          session_id: "sess-1",
+          realm: "r",
+        },
+      ]),
+    ).toEqual({
+      realm: "r",
+      sessions: [
+        {
+          key: "sess-1:r",
+          realm: "r",
+          sessionId: "sess-1",
+        },
+      ],
+    });
+
+    expect(
+      mapSystemOverview(
+        {
+          broker: {
+            connections: 2,
+            messages_per_second: 3.5,
+            realms: ["r"],
+            sessions: 4,
+            uptime_seconds: 5,
+          },
+          domains: {
+            kv: {
+              keys_total: 6,
+              operations_per_second: 7.5,
+              transactions_active: 8,
+            },
+            lease: {
+              leases_active: 9,
+              operations_per_second: 10.5,
+            },
+            notice: {
+              publishes_per_second: 11.5,
+              subscriptions_active: 12,
+            },
+            queue: {
+              inflight_active: 13,
+              messages_dead_lettered: 14,
+              messages_delayed: 15,
+              messages_pending: 16,
+              messages_ready: 17,
+              operations_per_second: 18.5,
+            },
+            rpc: {
+              operations_per_second: 19.5,
+              requests_pending: 20,
+              workers_registered: 21,
+            },
+            schedule: {
+              ack_failures_total: 22,
+              executions_per_minute: 23.5,
+              notify_failures_total: 24,
+              overdue_normalizations_total: 25,
+              pending_fire_claims: 26,
+              schedules_active: 27,
+              subscriptions_active: 28,
+            },
+            stream: {
+              events_total: 29,
+              operations_per_second: 30.5,
+              streams_active: 31,
+              subscriptions_active: 32,
+            },
+          },
+        },
+        { status: "ok" },
+        "line-a\nline-b",
+      ),
+    ).toEqual({
+      broker: {
+        connections: 2,
+        messagesPerSecond: 3.5,
+        realms: ["r"],
+        sessions: 4,
+        uptimeSeconds: 5,
+      },
+      domains: {
+        kv: {
+          keysTotal: 6,
+          operationsPerSecond: 7.5,
+          transactionsActive: 8,
+        },
+        lease: {
+          leasesActive: 9,
+          operationsPerSecond: 10.5,
+        },
+        notice: {
+          publishesPerSecond: 11.5,
+          subscriptionsActive: 12,
+        },
+        queue: {
+          inflightActive: 13,
+          messagesDeadLettered: 14,
+          messagesDelayed: 15,
+          messagesPending: 16,
+          messagesReady: 17,
+          operationsPerSecond: 18.5,
+        },
+        rpc: {
+          operationsPerSecond: 19.5,
+          requestsPending: 20,
+          workersRegistered: 21,
+        },
+        schedule: {
+          ackFailuresTotal: 22,
+          executionsPerMinute: 23.5,
+          notifyFailuresTotal: 24,
+          overdueNormalizationsTotal: 25,
+          pendingFireClaims: 26,
+          schedulesActive: 27,
+          subscriptionsActive: 28,
+        },
+        stream: {
+          eventsTotal: 29,
+          operationsPerSecond: 30.5,
+          streamsActive: 31,
+          subscriptionsActive: 32,
+        },
+      },
+      healthStatus: "ok",
+      metrics: {
+        raw: "line-a\nline-b",
+        lines: ["line-a", "line-b"],
+        lineCount: 2,
+      },
     });
   });
 });

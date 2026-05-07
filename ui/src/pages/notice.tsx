@@ -1,30 +1,37 @@
+import { SidebarLayout } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
-import DomainState from "@/components/shared/domain-state";
-import DomainSidebar from "@/components/shared/domain-sidebar";
-import PageShell from "@/components/shared/page-shell";
+import { AlertTriangleIcon } from "@askrjs/lucide";
+import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createNoticeOverviewQuery } from "@/features/notice/notice-query";
+import { formatUnknownError } from "@/shared/errors/format";
 
 export default function NoticePage() {
   const overview = createNoticeOverviewQuery();
   const data = overview.data;
-  const sidebar = data ? (
-    <DomainSidebar
-      title="Notice snapshot"
-      description="Fanout health and active subscription coverage."
-      stats={[
-        {
-          label: "Publishes / sec",
-          value: data.stats.publishesPerSecond.toFixed(2),
-        },
-        { label: "Subscriptions", value: data.stats.subscriptionsActive },
-      ]}
-    />
-  ) : undefined;
+  const sidebar = createDomainSidebar({
+    data,
+    title: "Notice snapshot",
+    description: "Fanout health and active subscription coverage.",
+    stats: (current) => [
+      {
+        label: "Publishes / sec",
+        value: current.stats.publishesPerSecond.toFixed(2),
+      },
+      { label: "Subscriptions", value: current.stats.subscriptionsActive },
+    ],
+  });
 
   return (
-    <PageShell sidebar={sidebar}>
+    <SidebarLayout
+      sidebar={sidebar}
+      sidebarPosition="end"
+      sidebarWidth="18rem"
+      gap="1.5rem"
+      collapseBelow="md"
+    >
       <section class="domain-page">
         <DomainHeader
           domain="Notice"
@@ -34,14 +41,18 @@ export default function NoticePage() {
         />
 
         {overview.loading ? (
-          <DomainState kind="loading" message="Loading notice overview..." />
+          <EmptyState
+            class="domain-state"
+            icon={<Spinner label="Loading" />}
+            description="Loading notice overview..."
+          />
         ) : null}
 
         {overview.error ? (
-          <DomainState
-            kind="error"
-            message="Notice overview could not be loaded."
-            error={overview.error}
+          <EmptyState
+            class="domain-state"
+            icon={<AlertTriangleIcon size={18} />}
+            description={formatUnknownError(overview.error)}
           />
         ) : null}
 
@@ -66,6 +77,6 @@ export default function NoticePage() {
           </>
         ) : null}
       </section>
-    </PageShell>
+    </SidebarLayout>
   );
 }

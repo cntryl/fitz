@@ -39,8 +39,48 @@ async function listDeadLetters(
   return dto.messages.map(mapQueueDeadLetter);
 }
 
+async function replayDeadLetter(
+  resourceRef: QueueResourceRef,
+  messageId: number,
+  family: number,
+  options: ServiceRequestOptions = {},
+): Promise<boolean> {
+  return unwrapResponse(
+    await apiv1.replayQueueDeadLetter(
+      resourceRef.realm,
+      resourceRef.area,
+      resourceRef.resource,
+      messageId,
+      { family },
+      options,
+    ),
+    "Unable to replay dead-letter message",
+  );
+}
+
+async function purgeDeadLetter(
+  resourceRef: QueueResourceRef,
+  messageId: number,
+  family: number,
+  options: ServiceRequestOptions = {},
+): Promise<boolean> {
+  return unwrapResponse(
+    await apiv1.purgeQueueDeadLetter(
+      resourceRef.realm,
+      resourceRef.area,
+      resourceRef.resource,
+      messageId,
+      { family },
+      options,
+    ),
+    "Unable to purge dead-letter message",
+  );
+}
+
 // Services are the app contract boundary: no Askr resources and no FetchResponse leaks.
 export const queueService = {
   getOverview,
+  purgeDeadLetter,
   listDeadLetters,
+  replayDeadLetter,
 };
