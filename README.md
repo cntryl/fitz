@@ -50,6 +50,11 @@ The repository includes [compose.yml](compose.yml) with two services:
 - fitz-auth: auth required on 4090 and 4091
 - fitz-anon: auth disabled on 4190 and 4191
 
+The compose file also configures admin auth for the local UI and admin API. Use these credentials when signing in:
+
+- Username: `admin`
+- Password: `pwd123`
+
 Run both:
 
 		docker compose up --build

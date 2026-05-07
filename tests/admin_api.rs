@@ -35,7 +35,7 @@ fn configure_admin_auth() {
     std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
     std::env::set_var(
         "FITZ_ADMIN_PASSWORD_HASH",
-        password_hash_for("secret-password"),
+        password_hash_for("pwd123"),
     );
     std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
     std::env::set_var("FITZ_ADMIN_SESSION_TTL_SECS", "3600");
@@ -250,7 +250,7 @@ async fn login_cookie(runtime: Arc<Runtime>) -> String {
         .uri("/api/v1/session")
         .header("Content-Type", "application/json")
         .body(Body::from(
-            r#"{"username":"admin","password":"secret-password"}"#,
+            r#"{"username":"admin","password":"pwd123"}"#,
         ))
         .unwrap();
 
@@ -279,7 +279,7 @@ async fn should_create_admin_session_and_set_cookie() {
         .uri("/api/v1/session")
         .header("Content-Type", "application/json")
         .body(Body::from(
-            r#"{"username":"admin","password":"secret-password"}"#,
+            r#"{"username":"admin","password":"pwd123"}"#,
         ))
         .unwrap();
 

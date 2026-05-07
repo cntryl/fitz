@@ -1,4 +1,17 @@
 @media (max-width: 720px) {
+  .guest-shell-topbar-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .guest-shell-main {
+    padding-top: 1.5rem;
+  }
+
+  .guest-shell-main-inner {
+    padding-inline: 0.75rem;
+  }
+
   .app-shell-sidebar {
     gap: 1rem;
   }

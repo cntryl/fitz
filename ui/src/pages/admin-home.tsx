@@ -46,12 +46,6 @@ export default function AdminHome() {
   const signOut = createSignOutMutation();
   const system = createSystemOverviewQuery();
 
-  if (!session.loading && session.data === null && typeof window !== "undefined") {
-    queueMicrotask(() => {
-      window.location.replace("/login");
-    });
-  }
-
   async function onSignOut() {
     await signOut.execute(undefined);
     if (typeof window !== "undefined") {
@@ -62,7 +56,7 @@ export default function AdminHome() {
   if (session.loading) {
     return (
       <section class="admin-panel">
-        <p>Checking your admin session...</p>
+        <p>Loading admin dashboard...</p>
       </section>
     );
   }
@@ -76,13 +70,7 @@ export default function AdminHome() {
     );
   }
 
-  if (!session.data) {
-    return (
-      <section class="admin-panel">
-        <p>Redirecting to sign in...</p>
-      </section>
-    );
-  }
+  const username = session.data?.username ?? "admin";
 
   const overview = system.data;
 
@@ -129,7 +117,7 @@ export default function AdminHome() {
           </div>
 
           <div class="panel-copy">
-            <h1>Welcome, {session.data.username}</h1>
+            <h1>Welcome, {username}</h1>
             <p>
               This dashboard gives you a broker-level view of system health, throughput, and
               live domain activity so you can see how data is moving through Fitz.

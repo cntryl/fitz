@@ -1,9 +1,19 @@
 import { state } from "@askrjs/askr";
+import { currentRoute } from "@askrjs/askr/router";
 import { Button, Input, Label } from "@askrjs/ui";
 import { LockKeyholeIcon, ShieldCheckIcon } from "@askrjs/lucide";
 import { Badge } from "@askrjs/themes/components";
-import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createSignInMutation } from "@/features/session/session-mutation";
+
+function resolveNextTarget() {
+  const next = currentRoute().query.get("next");
+
+  if (typeof next === "string" && next.startsWith("/") && !next.startsWith("//")) {
+    return next;
+  }
+
+  return "/admin";
+}
 
 export default function AdminLogin() {
   const username = state("");
@@ -11,14 +21,8 @@ export default function AdminLogin() {
   const error = state("");
   const submitting = state(false);
 
-  const session = createCurrentSessionQuery();
   const signIn = createSignInMutation();
-
-  if (!session.loading && session.data?.authenticated && typeof window !== "undefined") {
-    queueMicrotask(() => {
-      window.location.replace("/admin");
-    });
-  }
+  const nextTarget = resolveNextTarget();
 
   async function onSubmit(event: Event) {
     event.preventDefault();
@@ -30,7 +34,9 @@ export default function AdminLogin() {
         username: username(),
         password: password(),
       });
-      window.location.replace("/admin");
+      if (typeof window !== "undefined") {
+        window.location.replace(nextTarget);
+      }
     } catch (err) {
       error.set(err instanceof Error ? err.message : "Unable to sign in");
     } finally {
@@ -85,7 +91,6 @@ export default function AdminLogin() {
         </div>
 
         {error() ? <p class="auth-error">{error()}</p> : null}
-        {session.error ? <p class="auth-error">Unable to check your current session.</p> : null}
 
         <Button type="submit" class="submit-action" aria-busy={submitting()}>
           {submitting() ? "Signing in..." : "Sign in"}
