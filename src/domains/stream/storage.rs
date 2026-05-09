@@ -4,6 +4,7 @@ use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 use serde::{Deserialize, Serialize};
 
 use super::store::{EventPayload, StreamStorageLayout};
+use crate::utils::storage_key::{self, DomainKeyspace};
 
 /// Storage key prefixes for stream data
 #[derive(Debug, Clone, Copy)]
@@ -50,6 +51,21 @@ pub enum KeyPrefix {
     CompactResourcePage = 0xEA,
 }
 
+fn stream_domain_prefix(realm: &str) -> Vec<u8> {
+    storage_key::domain_prefix(realm, DomainKeyspace::Stream)
+}
+
+fn stream_kind_key(realm: &str, kind: KeyPrefix, extra_capacity: usize) -> Vec<u8> {
+    let mut key = stream_domain_prefix(realm);
+    key.reserve(extra_capacity + 1);
+    key.push(kind as u8);
+    key
+}
+
+pub fn stream_key_suffix(key: &[u8]) -> &[u8] {
+    storage_key::strip_domain_prefix(key, DomainKeyspace::Stream).unwrap_or(key)
+}
+
 /// Encodes a resource stream key
 pub fn encode_resource_key(
     realm: &str,
@@ -57,9 +73,7 @@ pub fn encode_resource_key(
     resource: &str,
     resource_offset: u64,
 ) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::Resource as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0); // separator
+    let mut key = stream_kind_key(realm, KeyPrefix::Resource, area.len() + resource.len() + 10);
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(resource.as_bytes());
@@ -70,9 +84,7 @@ pub fn encode_resource_key(
 
 /// Encodes an area index key
 pub fn encode_area_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::Area as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::Area, area.len() + 9);
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(&area_offset.to_be_bytes());
@@ -81,9 +93,7 @@ pub fn encode_area_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
 
 /// Encodes a realm index key
 pub fn encode_realm_key(realm: &str, realm_offset: u64) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::Realm as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::Realm, 9);
     key.extend_from_slice(&realm_offset.to_be_bytes());
     key
 }
@@ -112,18 +122,14 @@ pub fn decode_realm_offset_from_key(key: &[u8]) -> Result<u64, String> {
 
 /// Encodes a watermark key
 pub fn encode_watermark_key(realm: &str, area: &str) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::Watermark as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::Watermark, area.len() + 1);
     key.extend_from_slice(area.as_bytes());
     key
 }
 
 /// Encodes an offset counter key (metadata, independent of TTL)
 pub fn encode_offset_counter_key(realm: &str, area: &str, resource: &str) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::OffsetCounter as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::OffsetCounter, area.len() + resource.len() + 2);
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(resource.as_bytes());
@@ -132,16 +138,12 @@ pub fn encode_offset_counter_key(realm: &str, area: &str, resource: &str) -> Vec
 
 /// Encodes a realm watermark key (metadata, independent of TTL)
 pub fn encode_realm_watermark_key(realm: &str) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::RealmWatermark as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key
+    stream_kind_key(realm, KeyPrefix::RealmWatermark, 0)
 }
 
 /// Encodes a resource metadata key.
 pub fn encode_resource_meta_key(realm: &str, area: &str, resource: &str) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::ResourceMeta as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::ResourceMeta, area.len() + resource.len() + 1);
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(resource.as_bytes());
@@ -150,18 +152,14 @@ pub fn encode_resource_meta_key(realm: &str, area: &str, resource: &str) -> Vec<
 
 /// Encodes an area offset counter key.
 pub fn encode_area_counter_key(realm: &str, area: &str) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::AreaCounter as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::AreaCounter, area.len() + 1);
     key.extend_from_slice(area.as_bytes());
     key
 }
 
 /// Encodes a realm offset counter key.
 pub fn encode_realm_counter_key(realm: &str) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::RealmCounter as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key
+    stream_kind_key(realm, KeyPrefix::RealmCounter, 0)
 }
 
 /// Encodes a resource discriminator sidecar key.
@@ -171,9 +169,7 @@ pub fn encode_resource_discriminator_key(
     resource: &str,
     resource_offset: u64,
 ) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::ResourceDiscriminator as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::ResourceDiscriminator, area.len() + resource.len() + 10);
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(resource.as_bytes());
@@ -184,9 +180,7 @@ pub fn encode_resource_discriminator_key(
 
 /// Encodes an area discriminator sidecar key.
 pub fn encode_area_discriminator_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::AreaDiscriminator as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::AreaDiscriminator, area.len() + 10);
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(&area_offset.to_be_bytes());
@@ -195,9 +189,7 @@ pub fn encode_area_discriminator_key(realm: &str, area: &str, area_offset: u64) 
 
 /// Encodes a realm discriminator sidecar key.
 pub fn encode_realm_discriminator_key(realm: &str, realm_offset: u64) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::RealmDiscriminator as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::RealmDiscriminator, 9);
     key.extend_from_slice(&realm_offset.to_be_bytes());
     key
 }
@@ -212,9 +204,7 @@ pub fn encode_canonical_resource_key(stream_id: u64, resource_offset: u64) -> Ve
 
 /// Encodes a prototype area locator key.
 pub fn encode_area_locator_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::AreaLocator as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::AreaLocator, area.len() + 10);
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(&area_offset.to_be_bytes());
@@ -223,9 +213,7 @@ pub fn encode_area_locator_key(realm: &str, area: &str, area_offset: u64) -> Vec
 
 /// Encodes a prototype realm locator key.
 pub fn encode_realm_locator_key(realm: &str, realm_offset: u64) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::RealmLocator as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::RealmLocator, 9);
     key.extend_from_slice(&realm_offset.to_be_bytes());
     key
 }
@@ -236,9 +224,7 @@ pub fn encode_compact_area_page_key(
     area: &str,
     area_page_start_offset: u64,
 ) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::CompactAreaPage as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::CompactAreaPage, area.len() + 10);
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(&area_page_start_offset.to_be_bytes());
@@ -250,9 +236,7 @@ pub fn encode_compressed_compact_realm_page_key(
     realm: &str,
     page_start_realm_offset: u64,
 ) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::CompressedCompactRealmPage as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::CompressedCompactRealmPage, 9);
     key.extend_from_slice(&page_start_realm_offset.to_be_bytes());
     key
 }
@@ -264,9 +248,7 @@ pub fn encode_compact_resource_page_key(
     resource: &str,
     page_start_resource_offset: u64,
 ) -> Vec<u8> {
-    let mut key = vec![KeyPrefix::CompactResourcePage as u8];
-    key.extend_from_slice(realm.as_bytes());
-    key.push(0);
+    let mut key = stream_kind_key(realm, KeyPrefix::CompactResourcePage, area.len() + resource.len() + 10);
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(resource.as_bytes());
@@ -1467,9 +1449,9 @@ mod tests {
         // (keys are already encoded)
 
         // Assert
-        assert_eq!(resource_key[0], KeyPrefix::Resource as u8);
-        assert_eq!(area_key[0], KeyPrefix::Area as u8);
-        assert_eq!(realm_key[0], KeyPrefix::Realm as u8);
+        assert_eq!(stream_key_suffix(&resource_key)[0], KeyPrefix::Resource as u8);
+        assert_eq!(stream_key_suffix(&area_key)[0], KeyPrefix::Area as u8);
+        assert_eq!(stream_key_suffix(&realm_key)[0], KeyPrefix::Realm as u8);
     }
 
     #[test]

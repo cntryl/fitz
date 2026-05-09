@@ -403,14 +403,17 @@ impl StreamStore {
             KeyPrefix::CompactResourcePage as u8,
         ];
 
-        for prefix in stream_prefixes {
-            let query = cntryl_midge::Query::new()
-                .prefix(Bytes::from(vec![prefix]))
-                .limit(1);
-            let mut iter = txn
-                .scan(&query)
-                .map_err(|e| format!("scan error: {:?}", e))?;
-            if !iter.collect_all().is_empty() {
+        let query = cntryl_midge::Query::new();
+        let mut iter = txn
+            .scan(&query)
+            .map_err(|e| format!("scan error: {:?}", e))?;
+        while let Some((key, _value)) = iter.next() {
+            let suffix = crate::domains::stream::storage::stream_key_suffix(&key);
+            if suffix
+                .first()
+                .map(|prefix| stream_prefixes.contains(prefix))
+                .unwrap_or(false)
+            {
                 return Ok(true);
             }
         }
@@ -475,18 +478,22 @@ impl StreamStore {
     }
 
     fn build_compact_area_page_prefix(realm: &str, area: &str) -> Vec<u8> {
-        let mut prefix = vec![KeyPrefix::CompactAreaPage as u8];
-        prefix.extend_from_slice(realm.as_bytes());
-        prefix.push(0);
+        let mut prefix = crate::utils::storage_key::domain_prefix(
+            realm,
+            crate::utils::storage_key::DomainKeyspace::Stream,
+        );
+        prefix.push(KeyPrefix::CompactAreaPage as u8);
         prefix.extend_from_slice(area.as_bytes());
         prefix.push(0);
         prefix
     }
 
     fn build_compact_resource_page_prefix(realm: &str, area: &str, resource: &str) -> Vec<u8> {
-        let mut prefix = vec![KeyPrefix::CompactResourcePage as u8];
-        prefix.extend_from_slice(realm.as_bytes());
-        prefix.push(0);
+        let mut prefix = crate::utils::storage_key::domain_prefix(
+            realm,
+            crate::utils::storage_key::DomainKeyspace::Stream,
+        );
+        prefix.push(KeyPrefix::CompactResourcePage as u8);
         prefix.extend_from_slice(area.as_bytes());
         prefix.push(0);
         prefix.extend_from_slice(resource.as_bytes());
@@ -495,9 +502,11 @@ impl StreamStore {
     }
 
     fn build_compressed_compact_realm_page_prefix(realm: &str) -> Vec<u8> {
-        let mut prefix = vec![KeyPrefix::CompressedCompactRealmPage as u8];
-        prefix.extend_from_slice(realm.as_bytes());
-        prefix.push(0);
+        let mut prefix = crate::utils::storage_key::domain_prefix(
+            realm,
+            crate::utils::storage_key::DomainKeyspace::Stream,
+        );
+        prefix.push(KeyPrefix::CompressedCompactRealmPage as u8);
         prefix
     }
 
@@ -1180,6 +1189,37 @@ impl StreamStore {
         expected_prefix: u8,
         key: &[u8],
     ) -> Result<(String, String, String), String> {
+        if let Some(body) = crate::utils::storage_key::strip_domain_prefix(
+            key,
+            crate::utils::storage_key::DomainKeyspace::Stream,
+        ) {
+            if body.first().copied() != Some(expected_prefix) {
+                return Err("unexpected stream metadata key prefix".to_string());
+            }
+
+            let realm_end = key
+                .iter()
+                .position(|byte| *byte == 0)
+                .ok_or_else(|| "missing stream realm in key".to_string())?;
+            let realm = &key[..realm_end];
+            let mut parts = body[1..].splitn(2, |byte| *byte == 0);
+            let area = parts
+                .next()
+                .ok_or_else(|| "missing stream area in key".to_string())?;
+            let resource = parts
+                .next()
+                .ok_or_else(|| "missing stream resource in key".to_string())?;
+
+            return Ok((
+                String::from_utf8(realm.to_vec())
+                    .map_err(|_| "invalid stream realm key".to_string())?,
+                String::from_utf8(area.to_vec())
+                    .map_err(|_| "invalid stream area key".to_string())?,
+                String::from_utf8(resource.to_vec())
+                    .map_err(|_| "invalid stream resource key".to_string())?,
+            ));
+        }
+
         if key.first().copied() != Some(expected_prefix) {
             return Err("unexpected stream metadata key prefix".to_string());
         }
@@ -1513,19 +1553,19 @@ impl StreamStore {
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
 
-        let resource_meta_query = cntryl_midge::Query::new().prefix(Bytes::from(vec![
-            crate::domains::stream::storage::KeyPrefix::ResourceMeta as u8,
-        ]));
+        let resource_meta_query = cntryl_midge::Query::new();
         let mut resource_meta_iter = txn
             .scan(&resource_meta_query)
             .map_err(|e| format!("scan error: {:?}", e))?;
 
         let mut values = Vec::new();
         for (key, value) in resource_meta_iter.collect_all() {
-            let (realm, area, resource) = Self::resource_identity_from_key(
+            let Ok((realm, area, resource)) = Self::resource_identity_from_key(
                 crate::domains::stream::storage::KeyPrefix::ResourceMeta as u8,
                 &key,
-            )?;
+            ) else {
+                continue;
+            };
             let meta = ResourceMetaValue::decode(&value);
             if meta.next_offset == 0 {
                 continue;

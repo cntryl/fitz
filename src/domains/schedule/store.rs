@@ -4,6 +4,9 @@ use std::sync::Arc;
 
 use cntryl_midge::WriteOptions;
 
+use crate::domains::schedule::protocol::parse_concrete_schedule_route;
+use crate::utils::storage_key::{self, DomainKeyspace};
+
 const DEFINITION_VALUE_VERSION_V1: u8 = 1;
 const DEFINITION_VALUE_VERSION_V2: u8 = 2;
 const DEFINITION_VALUE_VERSION_V3: u8 = 3;
@@ -87,6 +90,8 @@ pub struct ScheduleStore {
     fail_next_commit: Arc<std::sync::atomic::AtomicBool>,
 }
 
+type ScheduleRows = Vec<(Vec<u8>, Vec<u8>)>;
+
 #[derive(Debug, PartialEq, Eq)]
 enum DecodedDefinitionRow {
     Inline {
@@ -112,72 +117,101 @@ impl ScheduleStore {
         }
     }
 
-    pub(crate) fn encode_definition_key(route: &str) -> Vec<u8> {
-        let mut key = Vec::with_capacity(DEFINITION_PREFIX.len() + route.len());
-        key.extend_from_slice(DEFINITION_PREFIX);
+    fn schedule_storage_prefix(route: &str) -> Vec<u8> {
+        let parsed = parse_concrete_schedule_route(route)
+            .expect("schedule storage key requires a concrete route");
+        storage_key::domain_prefix(&parsed.realm, DomainKeyspace::Schedule)
+    }
+
+    fn schedule_key_suffix(key: &[u8]) -> &[u8] {
+        storage_key::strip_domain_prefix(key, DomainKeyspace::Schedule).unwrap_or(key)
+    }
+
+    fn encode_prefixed_route_key(route: &str, suffix_prefix: &[u8]) -> Vec<u8> {
+        let mut key = Self::schedule_storage_prefix(route);
+        key.reserve(suffix_prefix.len() + route.len());
+        key.extend_from_slice(suffix_prefix);
         key.extend_from_slice(route.as_bytes());
         key
+    }
+
+    fn encode_prefixed_timed_route_key(
+        timestamp_ms: u64,
+        route: &str,
+        suffix_prefix: &[u8],
+    ) -> Vec<u8> {
+        let minute_epoch = timestamp_ms / 60_000;
+        let ms_offset = timestamp_ms % 60_000;
+
+        let mut key = Self::schedule_storage_prefix(route);
+        key.reserve(suffix_prefix.len() + 18 + route.len());
+        key.extend_from_slice(suffix_prefix);
+        key.extend_from_slice(minute_epoch.to_be_bytes().as_slice());
+        key.push(b'/');
+        key.extend_from_slice(ms_offset.to_be_bytes().as_slice());
+        key.push(b':');
+        key.extend_from_slice(route.as_bytes());
+        key
+    }
+
+    fn scan_schedule_rows(
+        tx: &cntryl_midge::Transaction,
+        suffix_prefix: &[u8],
+    ) -> Result<ScheduleRows, String> {
+        let rows = tx
+            .scan(&cntryl_midge::Query::new())
+            .map_err(|e| format!("scan schedule rows failed: {:?}", e))?
+            .collect_all();
+
+        Ok(rows
+            .into_iter()
+            .filter(|(key, _)| Self::schedule_key_suffix(key).starts_with(suffix_prefix))
+            .collect())
+    }
+
+    pub(crate) fn encode_definition_key(route: &str) -> Vec<u8> {
+        Self::encode_prefixed_route_key(route, DEFINITION_PREFIX)
     }
 
     pub(crate) fn encode_body_key(route: &str) -> Vec<u8> {
-        let mut key = Vec::with_capacity(BODY_PREFIX.len() + route.len());
-        key.extend_from_slice(BODY_PREFIX);
-        key.extend_from_slice(route.as_bytes());
-        key
+        Self::encode_prefixed_route_key(route, BODY_PREFIX)
     }
 
     pub(crate) fn encode_due_key(next_fire_ms: u64, route: &str) -> Vec<u8> {
-        let minute_epoch = next_fire_ms / 60_000;
-        let ms_offset = next_fire_ms % 60_000;
-
-        let mut key = Vec::with_capacity(DUE_PREFIX.len() + 18 + route.len());
-        key.extend_from_slice(DUE_PREFIX);
-        key.extend_from_slice(minute_epoch.to_be_bytes().as_slice());
-        key.push(b'/');
-        key.extend_from_slice(ms_offset.to_be_bytes().as_slice());
-        key.push(b':');
-        key.extend_from_slice(route.as_bytes());
-        key
+        Self::encode_prefixed_timed_route_key(next_fire_ms, route, DUE_PREFIX)
     }
 
     pub(crate) fn encode_pending_fire_key(fire_ms: u64, route: &str) -> Vec<u8> {
-        let minute_epoch = fire_ms / 60_000;
-        let ms_offset = fire_ms % 60_000;
-
-        let mut key = Vec::with_capacity(PENDING_FIRE_PREFIX.len() + 18 + route.len());
-        key.extend_from_slice(PENDING_FIRE_PREFIX);
-        key.extend_from_slice(minute_epoch.to_be_bytes().as_slice());
-        key.push(b'/');
-        key.extend_from_slice(ms_offset.to_be_bytes().as_slice());
-        key.push(b':');
-        key.extend_from_slice(route.as_bytes());
-        key
+        Self::encode_prefixed_timed_route_key(fire_ms, route, PENDING_FIRE_PREFIX)
     }
 
     fn decode_definition_key(key: &[u8]) -> Result<String, String> {
-        if !key.starts_with(DEFINITION_PREFIX) {
+        let suffix = Self::schedule_key_suffix(key);
+        if !suffix.starts_with(DEFINITION_PREFIX) {
             return Err("Invalid schedule definition key prefix".to_string());
         }
 
-        String::from_utf8(key[DEFINITION_PREFIX.len()..].to_vec())
+        String::from_utf8(suffix[DEFINITION_PREFIX.len()..].to_vec())
             .map_err(|e| format!("Invalid schedule route encoding: {}", e))
     }
 
     fn decode_body_key(key: &[u8]) -> Result<String, String> {
-        if !key.starts_with(BODY_PREFIX) {
+        let suffix = Self::schedule_key_suffix(key);
+        if !suffix.starts_with(BODY_PREFIX) {
             return Err("Invalid schedule body key prefix".to_string());
         }
 
-        String::from_utf8(key[BODY_PREFIX.len()..].to_vec())
+        String::from_utf8(suffix[BODY_PREFIX.len()..].to_vec())
             .map_err(|e| format!("Invalid schedule route encoding: {}", e))
     }
 
     fn decode_due_key_with_prefix(key: &[u8], prefix: &[u8]) -> Result<(u64, String), String> {
-        if !key.starts_with(prefix) {
+        let suffix = Self::schedule_key_suffix(key);
+        if !suffix.starts_with(prefix) {
             return Err("Invalid schedule due key prefix".to_string());
         }
 
-        let remaining = &key[prefix.len()..];
+        let remaining = &suffix[prefix.len()..];
         if remaining.len() < 18 {
             return Err("Schedule due key too short".to_string());
         }
@@ -673,19 +707,9 @@ impl ScheduleStore {
         let mut normalized_definitions = Vec::<PersistedSchedule>::new();
         let mut metadata_rows = BTreeMap::<String, (u64, Option<u64>, u64)>::new();
 
-        let definition_rows = read_tx
-            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(DEFINITION_PREFIX)))
-            .map_err(|e| format!("scan definitions failed: {:?}", e))?
-            .collect_all();
-        let body_rows = read_tx
-            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(BODY_PREFIX)))
-            .map_err(|e| format!("scan schedule bodies failed: {:?}", e))?
-            .collect_all();
-
-        let legacy_rows = read_tx
-            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(LEGACY_PREFIX)))
-            .map_err(|e| format!("scan legacy schedule rows failed: {:?}", e))?
-            .collect_all();
+        let definition_rows = Self::scan_schedule_rows(&read_tx, DEFINITION_PREFIX)?;
+        let body_rows = Self::scan_schedule_rows(&read_tx, BODY_PREFIX)?;
+        let legacy_rows = Self::scan_schedule_rows(&read_tx, LEGACY_PREFIX)?;
 
         for (key, value) in definition_rows {
             match (
@@ -795,14 +819,8 @@ impl ScheduleStore {
             }
         }
 
-        let due_rows = read_tx
-            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(DUE_PREFIX)))
-            .map_err(|e| format!("scan due index failed: {:?}", e))?
-            .collect_all();
-        let legacy_index_rows = read_tx
-            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(LEGACY_INDEX_PREFIX)))
-            .map_err(|e| format!("scan legacy schedule index failed: {:?}", e))?
-            .collect_all();
+        let due_rows = Self::scan_schedule_rows(&read_tx, DUE_PREFIX)?;
+        let legacy_index_rows = Self::scan_schedule_rows(&read_tx, LEGACY_INDEX_PREFIX)?;
         drop(read_tx);
 
         let mut write_tx = self
@@ -864,10 +882,7 @@ impl ScheduleStore {
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        let rows = read_tx
-            .scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(PENDING_FIRE_PREFIX)))
-            .map_err(|e| format!("scan pending fires failed: {:?}", e))?
-            .collect_all();
+        let rows = Self::scan_schedule_rows(&read_tx, PENDING_FIRE_PREFIX)?;
 
         let mut pending = Vec::with_capacity(rows.len());
         for (key, value) in rows {
@@ -991,9 +1006,8 @@ mod tests {
         let txn = db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
             .expect("begin read tx");
-        txn.scan(&cntryl_midge::Query::new().prefix(Bytes::from_static(prefix)))
+        ScheduleStore::scan_schedule_rows(&txn, prefix)
             .expect("scan prefix")
-            .collect_all()
             .len()
     }
 
