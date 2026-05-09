@@ -14,16 +14,16 @@
     "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts"
   },
   "dependencies": {
-    "@askrjs/askr": "0.0.34",
+    "@askrjs/askr": "0.0.35",
     "@askrjs/lucide": "0.0.1",
     "@askrjs/themes": "^0.0.3",
-    "@askrjs/ui": "0.0.5",
+    "@askrjs/ui": "0.0.6",
     "@askrjs/vite": "0.0.2",
     "@fgrzl/fetch": "^1.4.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^25.6.1",
+    "@types/node": "^25.6.2",
     "@typescript-eslint/eslint-plugin": "^8.59.2",
     "@typescript-eslint/parser": "^8.59.2",
     "@vitest/ui": "^4.1.5",
@@ -40,5 +40,5 @@
     "vite": "npm:@voidzero-dev/vite-plus-core@latest",
     "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
   },
-  "packageManager": "npm@11.14.0"
+  "packageManager": "npm@11.14.1"
 }

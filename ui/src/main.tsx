@@ -3,7 +3,7 @@ import { getManifest } from "@askrjs/askr/router";
 import { sessionRouteAuth } from "@/features/session/session-auth";
 
 // Import routes (they auto-register)
-import "./routes";
+import "./pages/_routes";
 
 // Create and start the SPA
 void createSPA({

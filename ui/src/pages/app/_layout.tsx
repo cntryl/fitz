@@ -1,4 +1,3 @@
-import "./styles.css";
 import { For } from "@askrjs/askr";
 import { Link } from "@askrjs/askr/router";
 import { ActivityIcon, MoonIcon, ShieldIcon, SunIcon } from "@askrjs/lucide";
@@ -11,9 +10,9 @@ import {
   Navbar,
   NavLink,
   SidebarLayout,
-  ThemeProvider,
   ThemeToggle,
 } from "@askrjs/themes/components";
+import RootLayout from "../_layout";
 import { domainLinks, shellLinks } from "@/shared/navigation/domains";
 
 const shellSections = [
@@ -27,9 +26,9 @@ const shellSections = [
   },
 ];
 
-export default function App({ children }: { children?: unknown }) {
+export default function AppLayout({ children }: { children?: unknown }) {
   return (
-    <ThemeProvider defaultTheme="system" storageKey="fitz-admin-theme">
+    <RootLayout>
       <div class="app-shell-frame">
         <div class="app-shell-theme-toggle">
           <ThemeToggle
@@ -97,6 +96,6 @@ export default function App({ children }: { children?: unknown }) {
           </div>
         </SidebarLayout>
       </div>
-    </ThemeProvider>
+    </RootLayout>
   );
 }

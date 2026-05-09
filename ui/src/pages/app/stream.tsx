@@ -5,18 +5,20 @@ import DomainRealmTable from "@/components/shared/domain-realm-table";
 import { AlertTriangleIcon } from "@askrjs/lucide";
 import { EmptyState, Spinner } from "@askrjs/themes/components";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
-import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
+import { createStreamOverviewQuery } from "@/features/stream/stream-query";
 import { formatUnknownError } from "@/shared/errors/format";
 
-export default function LeasePage() {
-  const overview = createLeaseOverviewQuery();
+export default function StreamPage() {
+  const overview = createStreamOverviewQuery();
   const data = overview.data;
   const sidebar = createDomainSidebar({
     data,
-    title: "Lease snapshot",
-    description: "Live lease health and realm coverage.",
+    title: "Stream snapshot",
+    description: "Stream throughput and subscription coverage.",
     stats: (current) => [
-      { label: "Active leases", value: current.stats.leasesActive },
+      { label: "Streams", value: current.stats.streamsActive },
+      { label: "Subscriptions", value: current.stats.subscriptionsActive },
+      { label: "Events", value: current.stats.eventsTotal },
       {
         label: "Ops / sec",
         value: current.stats.operationsPerSecond.toFixed(2),
@@ -35,9 +37,9 @@ export default function LeasePage() {
     >
       <section class="domain-page">
         <DomainHeader
-          domain="Lease"
-          title="Lease overview"
-          description="Lease realm coverage and live lease load."
+          domain="Stream"
+          title="Stream overview"
+          description="Stream throughput, active subscriptions, and live realm inventory."
           onRefresh={() => overview.refresh()}
         />
 
@@ -45,7 +47,7 @@ export default function LeasePage() {
           <EmptyState
             class="domain-state"
             icon={<Spinner label="Loading" />}
-            description="Loading lease overview..."
+            description="Loading stream overview..."
           />
         ) : null}
 
@@ -60,9 +62,11 @@ export default function LeasePage() {
         {data && !overview.loading && !overview.error ? (
           <>
             <DomainMetricTable
-              title="Lease metrics"
+              title="Stream metrics"
               metrics={[
-                { label: "Active leases", value: data.stats.leasesActive },
+                { label: "Streams", value: data.stats.streamsActive },
+                { label: "Subscriptions", value: data.stats.subscriptionsActive },
+                { label: "Events", value: data.stats.eventsTotal },
                 {
                   label: "Ops / sec",
                   value: data.stats.operationsPerSecond.toFixed(2),
@@ -71,9 +75,9 @@ export default function LeasePage() {
             />
 
             <DomainRealmTable
-              title="Lease realms"
+              title="Stream realms"
               realms={data.realms}
-              emptyMessage="No lease realms are currently visible."
+              emptyMessage="No stream realms are currently visible."
             />
           </>
         ) : null}

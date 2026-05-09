@@ -5,19 +5,22 @@ import DomainRealmTable from "@/components/shared/domain-realm-table";
 import { AlertTriangleIcon } from "@askrjs/lucide";
 import { EmptyState, Spinner } from "@askrjs/themes/components";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
-import { createKvOverviewQuery } from "@/features/kv/kv-query";
+import { createQueueOverviewQuery } from "@/features/queue/queue-query";
 import { formatUnknownError } from "@/shared/errors/format";
 
-export default function KvPage() {
-  const overview = createKvOverviewQuery();
+export default function QueuePage() {
+  const overview = createQueueOverviewQuery();
   const data = overview.data;
   const sidebar = createDomainSidebar({
     data,
-    title: "KV snapshot",
-    description: "Current key-value broker state and realm inventory.",
+    title: "Queue snapshot",
+    description: "Current queue health across messages and broker activity.",
     stats: (current) => [
-      { label: "Keys", value: current.stats.keysTotal },
-      { label: "Transactions", value: current.stats.transactionsActive },
+      { label: "Ready", value: current.stats.messagesReady },
+      { label: "Inflight", value: current.stats.inflightActive },
+      { label: "Pending", value: current.stats.messagesPending },
+      { label: "Dead-lettered", value: current.stats.messagesDeadLettered },
+      { label: "Delayed", value: current.stats.messagesDelayed },
       {
         label: "Ops / sec",
         value: current.stats.operationsPerSecond.toFixed(2),
@@ -36,9 +39,9 @@ export default function KvPage() {
     >
       <section class="domain-page">
         <DomainHeader
-          domain="KV"
-          title="KV overview"
-          description="Key-value broker statistics and live realm inventory."
+          domain="Queue"
+          title="Queue overview"
+          description="Live queue statistics and realm inventory. Resource-level dead-letter drill-down comes next."
           onRefresh={() => overview.refresh()}
         />
 
@@ -46,7 +49,7 @@ export default function KvPage() {
           <EmptyState
             class="domain-state"
             icon={<Spinner label="Loading" />}
-            description="Loading KV overview..."
+            description="Loading queue overview..."
           />
         ) : null}
 
@@ -61,10 +64,13 @@ export default function KvPage() {
         {data && !overview.loading && !overview.error ? (
           <>
             <DomainMetricTable
-              title="KV metrics"
+              title="Queue metrics"
               metrics={[
-                { label: "Keys", value: data.stats.keysTotal },
-                { label: "Transactions", value: data.stats.transactionsActive },
+                { label: "Inflight", value: data.stats.inflightActive },
+                { label: "Ready", value: data.stats.messagesReady },
+                { label: "Pending", value: data.stats.messagesPending },
+                { label: "Dead-lettered", value: data.stats.messagesDeadLettered },
+                { label: "Delayed", value: data.stats.messagesDelayed },
                 {
                   label: "Ops / sec",
                   value: data.stats.operationsPerSecond.toFixed(2),
@@ -73,9 +79,9 @@ export default function KvPage() {
             />
 
             <DomainRealmTable
-              title="KV realms"
+              title="Queue realms"
               realms={data.realms}
-              emptyMessage="No KV realms are currently visible."
+              emptyMessage="No queue realms are currently visible."
             />
           </>
         ) : null}

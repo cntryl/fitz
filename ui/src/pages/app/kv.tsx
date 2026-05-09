@@ -5,20 +5,19 @@ import DomainRealmTable from "@/components/shared/domain-realm-table";
 import { AlertTriangleIcon } from "@askrjs/lucide";
 import { EmptyState, Spinner } from "@askrjs/themes/components";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
-import { createStreamOverviewQuery } from "@/features/stream/stream-query";
+import { createKvOverviewQuery } from "@/features/kv/kv-query";
 import { formatUnknownError } from "@/shared/errors/format";
 
-export default function StreamPage() {
-  const overview = createStreamOverviewQuery();
+export default function KvPage() {
+  const overview = createKvOverviewQuery();
   const data = overview.data;
   const sidebar = createDomainSidebar({
     data,
-    title: "Stream snapshot",
-    description: "Stream throughput and subscription coverage.",
+    title: "KV snapshot",
+    description: "Current key-value broker state and realm inventory.",
     stats: (current) => [
-      { label: "Streams", value: current.stats.streamsActive },
-      { label: "Subscriptions", value: current.stats.subscriptionsActive },
-      { label: "Events", value: current.stats.eventsTotal },
+      { label: "Keys", value: current.stats.keysTotal },
+      { label: "Transactions", value: current.stats.transactionsActive },
       {
         label: "Ops / sec",
         value: current.stats.operationsPerSecond.toFixed(2),
@@ -37,9 +36,9 @@ export default function StreamPage() {
     >
       <section class="domain-page">
         <DomainHeader
-          domain="Stream"
-          title="Stream overview"
-          description="Stream throughput, active subscriptions, and live realm inventory."
+          domain="KV"
+          title="KV overview"
+          description="Key-value broker statistics and live realm inventory."
           onRefresh={() => overview.refresh()}
         />
 
@@ -47,7 +46,7 @@ export default function StreamPage() {
           <EmptyState
             class="domain-state"
             icon={<Spinner label="Loading" />}
-            description="Loading stream overview..."
+            description="Loading KV overview..."
           />
         ) : null}
 
@@ -62,11 +61,10 @@ export default function StreamPage() {
         {data && !overview.loading && !overview.error ? (
           <>
             <DomainMetricTable
-              title="Stream metrics"
+              title="KV metrics"
               metrics={[
-                { label: "Streams", value: data.stats.streamsActive },
-                { label: "Subscriptions", value: data.stats.subscriptionsActive },
-                { label: "Events", value: data.stats.eventsTotal },
+                { label: "Keys", value: data.stats.keysTotal },
+                { label: "Transactions", value: data.stats.transactionsActive },
                 {
                   label: "Ops / sec",
                   value: data.stats.operationsPerSecond.toFixed(2),
@@ -75,9 +73,9 @@ export default function StreamPage() {
             />
 
             <DomainRealmTable
-              title="Stream realms"
+              title="KV realms"
               realms={data.realms}
-              emptyMessage="No stream realms are currently visible."
+              emptyMessage="No KV realms are currently visible."
             />
           </>
         ) : null}
