@@ -2,56 +2,24 @@
   min-height: 100vh;
 }
 
-.guest-shell-topbar {
-  padding: 1rem 1rem 0;
-}
-
-.guest-shell-topbar-inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  width: min(100%, 72rem);
-  margin: 0 auto;
+.guest-shell-theme-toggle {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 30;
 }
 
 .guest-shell-brand {
   display: inline-flex;
   align-items: center;
-  gap: 0.75rem;
-}
-
-.guest-shell-brand-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2rem;
-  height: 2rem;
-}
-
-.guest-shell-brand-copy {
-  display: grid;
-  gap: 0.1rem;
-}
-
-.guest-shell-brand-copy span {
-  font-size: 0.85rem;
-  opacity: 0.72;
-}
-
-.guest-shell-theme-toggle-button {
-  min-inline-size: 2.75rem;
-  min-block-size: 2.75rem;
+  gap: 0.5rem;
 }
 
 .guest-shell-main {
-  padding: clamp(1.5rem, 4vw, 3.5rem) 0 4rem;
-}
-
-.guest-shell-main-inner {
   display: grid;
-  gap: 2rem;
-  width: min(100%, 72rem);
-  margin: 0 auto;
-  padding-inline: 1rem;
+  justify-items: center;
+  align-content: center;
+  gap: 1rem;
+  min-height: 100vh;
+  padding: 1rem;
 }

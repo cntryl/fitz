@@ -2,7 +2,6 @@ import {
   BoxesIcon,
   DatabaseIcon,
   LayoutDashboardIcon,
-  LogInIcon,
   MessagesSquareIcon,
   NetworkIcon,
   RadioTowerIcon,
@@ -34,11 +33,6 @@ export const shellLinks: ShellLink[] = [
     href: "/sessions",
     title: "Sessions",
     icon: UsersIcon,
-  },
-  {
-    href: "/login",
-    title: "Sign in",
-    icon: LogInIcon,
   },
 ];
 
