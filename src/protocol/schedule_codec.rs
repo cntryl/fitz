@@ -335,7 +335,10 @@ mod tests {
     #[test]
     fn should_encode_typed_schedule_error_for_known_failure() {
         // Arrange
-        let payload = encode_response(&ScheduleResponse::Error("schedule not found".to_string()));
+        let response = ScheduleResponse::Error("schedule not found".to_string());
+
+        // Act
+        let payload = encode_response(&response);
 
         // Assert
         assert_eq!(payload[0], 1);

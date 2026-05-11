@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import App from "@/app";
+import App from "@/pages/app/_layout";
 import QueueDeadLettersPanel from "@/components/queue-dead-letters-panel";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainIndex from "@/components/shared/domain-index";
@@ -8,18 +8,18 @@ import DomainRealmTable from "@/components/shared/domain-realm-table";
 import DomainSidebar from "@/components/shared/domain-sidebar";
 import SessionTable from "@/components/shared/session-table";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
-import AdminHome from "@/pages/admin-home";
-import AdminLogin from "@/pages/admin-login";
-import Home from "@/pages/home";
-import QueuePage from "@/pages/queue";
-import QueueResourcePage from "@/pages/queue-resource";
-import KvPage from "@/pages/kv";
-import LeasePage from "@/pages/lease";
-import NoticePage from "@/pages/notice";
-import RpcPage from "@/pages/rpc";
-import SchedulePage from "@/pages/schedule";
-import SessionsPage from "@/pages/sessions";
-import StreamPage from "@/pages/stream";
+import AdminHome from "@/pages/app/admin-home";
+import QueuePage from "@/pages/app/queue";
+import QueueResourcePage from "@/pages/app/queue-resource";
+import KvPage from "@/pages/app/kv";
+import LeasePage from "@/pages/app/lease";
+import NoticePage from "@/pages/app/notice";
+import RpcPage from "@/pages/app/rpc";
+import SchedulePage from "@/pages/app/schedule";
+import SessionsPage from "@/pages/app/sessions";
+import StreamPage from "@/pages/app/stream";
+import AdminLogin from "@/pages/public/admin-login";
+import Home from "@/pages/public/home";
 import { getRoutes } from "@askrjs/askr/router";
 import {
   Card,
@@ -34,7 +34,7 @@ import {
 } from "@askrjs/themes/components";
 import { domainLinks, shellLinks } from "@/shared/navigation/domains";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
-import "@/routes";
+import "@/pages/_routes";
 
 describe("Admin UI", () => {
   it("defines the shared admin shell", () => {

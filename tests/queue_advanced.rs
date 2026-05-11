@@ -13,6 +13,7 @@ use fitz::domains::queue::{
     Clock, QueueActor,
 };
 use fitz::runtime::routing::RouteFamily;
+use fitz::utils::storage_key::{self, DomainKeyspace};
 use uuid::Uuid;
 
 fn unique_queue_key(resource_prefix: &str) -> QueueKey {
@@ -554,26 +555,31 @@ fn should_dlq_message_after_max_attempts() {
     }
 
     let cf_id = queue_key.family.id();
-    let header_key = format!(
-        "queue:{}:{}:{}:hdr:{}",
-        queue_key.realm,
-        queue_key.area,
-        queue_key.resource,
-        msg_id.as_u64()
+    let header_key = storage_key::prefixed_key(
+        &queue_key.realm,
+        DomainKeyspace::Queue,
+        format!(
+            "{}:{}:hdr:{}",
+            queue_key.area,
+            queue_key.resource,
+            msg_id.as_u64()
+        )
+        .as_bytes(),
     );
-    let body_key = format!(
-        "queue:{}:{}:{}:body:{}",
-        queue_key.realm,
-        queue_key.area,
-        queue_key.resource,
-        msg_id.as_u64()
+    let body_key = storage_key::prefixed_key(
+        &queue_key.realm,
+        DomainKeyspace::Queue,
+        format!(
+            "{}:{}:body:{}",
+            queue_key.area,
+            queue_key.resource,
+            msg_id.as_u64()
+        )
+        .as_bytes(),
     );
     let txn = store
         .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
         .expect("begin tx");
-    assert!(txn
-        .get(header_key.as_bytes())
-        .expect("read header")
-        .is_some());
-    assert!(txn.get(body_key.as_bytes()).expect("read body").is_some());
+    assert!(txn.get(&header_key).expect("read header").is_some());
+    assert!(txn.get(&body_key).expect("read body").is_some());
 }

@@ -202,6 +202,30 @@ pub struct IngestMetadata {
     pub opaque: Bytes,
 }
 
+/// Reason a committed offset was emitted as a synthetic delivery marker.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamFilteredReason {
+    ServerFilter,
+    Permission,
+    Projection,
+}
+
+/// A delivery item returned from a stream read.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum StreamReadItem {
+    Event(StreamRecord),
+    Filtered {
+        offset: u64,
+        reason: Option<StreamFilteredReason>,
+    },
+    FilteredRange {
+        from_offset: u64,
+        to_offset: u64,
+        reason: Option<StreamFilteredReason>,
+    },
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // EXTERNAL API (Client-facing messages)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -399,7 +423,7 @@ pub struct ReadCursor {
 /// Response for read operation (streaming batch)
 #[derive(Debug, Clone)]
 pub struct ReadResponse {
-    pub records: Vec<StreamRecord>,
+    pub items: Vec<StreamReadItem>,
     pub cursor: ReadCursor,
 }
 

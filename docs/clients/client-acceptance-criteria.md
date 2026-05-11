@@ -304,6 +304,7 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
    **Then:**
 
 - Committed record is readable through the matching filter
+   - Server may emit synthetic filtered markers for skipped committed offsets, and the cursor still advances through them
 - Discriminator does not affect offset ordering or durability
 - Client APIs MAY omit discriminator when unused
 
@@ -314,9 +315,21 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 **When:** Client sends `Read(route="stream://prod/logs/events", start_offset=0, limit=10, filter=StreamFilterSet(clauses=[StartsWith("proj.")]))`
 **Then:**
 
-- Server returns only matching records in offset order
+- Server returns matching records in offset order and may emit synthetic filtered markers for skipped offsets
+- Client cursor progression remains monotonic even when some offsets are filtered out
 - Missing discriminators are treated as empty strings for matching
 - Client APIs MAY omit filter when replay filtering is not needed
+
+### AC-STREAM-008: Filtered replay cursor progression
+
+**MUST** preserve offset progress even when replay hides some committed records
+**Given:** Stream contains committed records where only some match the supplied filter
+**When:** Client sends `Read(route="stream://prod/logs/events", start_offset=0, limit=10, filter=StreamFilterSet(clauses=[Equals("proj.alpha")]))`
+**Then:**
+
+- Returned read page may contain `event`, `filtered`, or `filtered_range` items
+- `filtered.offset` reflects the actual skipped committed offset
+- Event-only convenience APIs MAY flatten filtered items away, but they MUST preserve cursor semantics
 
 ### AC-STREAM-010: Subscribe to resource commit notifications
 

@@ -5,23 +5,22 @@ import DomainRealmTable from "@/components/shared/domain-realm-table";
 import { AlertTriangleIcon } from "@askrjs/lucide";
 import { EmptyState, Spinner } from "@askrjs/themes/components";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
-import { createScheduleOverviewQuery } from "@/features/schedule/schedule-query";
+import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
 import { formatUnknownError } from "@/shared/errors/format";
 
-export default function SchedulePage() {
-  const overview = createScheduleOverviewQuery();
+export default function RpcPage() {
+  const overview = createRpcOverviewQuery();
   const data = overview.data;
   const sidebar = createDomainSidebar({
     data,
-    title: "Schedule snapshot",
-    description: "Execution health and claim pressure across scheduled work.",
+    title: "RPC snapshot",
+    description: "Worker registrations and pending request pressure.",
     stats: (current) => [
-      { label: "Schedules", value: current.stats.schedulesActive },
-      { label: "Subscriptions", value: current.stats.subscriptionsActive },
-      { label: "Pending claims", value: current.stats.pendingFireClaims },
+      { label: "Workers", value: current.stats.workersRegistered },
+      { label: "Requests pending", value: current.stats.requestsPending },
       {
-        label: "Executions / min",
-        value: current.stats.executionsPerMinute.toFixed(2),
+        label: "Ops / sec",
+        value: current.stats.operationsPerSecond.toFixed(2),
         note: "Live broker snapshot",
       },
     ],
@@ -37,9 +36,9 @@ export default function SchedulePage() {
     >
       <section class="domain-page">
         <DomainHeader
-          domain="Schedule"
-          title="Schedule overview"
-          description="Scheduled execution health and live realm inventory."
+          domain="RPC"
+          title="RPC overview"
+          description="Pending RPC work, worker registrations, and live realm inventory."
           onRefresh={() => overview.refresh()}
         />
 
@@ -47,7 +46,7 @@ export default function SchedulePage() {
           <EmptyState
             class="domain-state"
             icon={<Spinner label="Loading" />}
-            description="Loading schedule overview..."
+            description="Loading RPC overview..."
           />
         ) : null}
 
@@ -62,22 +61,21 @@ export default function SchedulePage() {
         {data && !overview.loading && !overview.error ? (
           <>
             <DomainMetricTable
-              title="Schedule metrics"
+              title="RPC metrics"
               metrics={[
-                { label: "Schedules", value: data.stats.schedulesActive },
-                { label: "Subscriptions", value: data.stats.subscriptionsActive },
-                { label: "Pending claims", value: data.stats.pendingFireClaims },
+                { label: "Workers", value: data.stats.workersRegistered },
+                { label: "Requests pending", value: data.stats.requestsPending },
                 {
-                  label: "Executions / min",
-                  value: data.stats.executionsPerMinute.toFixed(2),
+                  label: "Ops / sec",
+                  value: data.stats.operationsPerSecond.toFixed(2),
                 },
               ]}
             />
 
             <DomainRealmTable
-              title="Schedule realms"
+              title="RPC realms"
               realms={data.realms}
-              emptyMessage="No schedule realms are currently visible."
+              emptyMessage="No RPC realms are currently visible."
             />
           </>
         ) : null}

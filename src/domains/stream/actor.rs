@@ -284,7 +284,7 @@ impl StreamActor {
     ) -> Result<ReadResponse, String> {
         if limit == 0 || from_offset >= self.next_resource_offset {
             return Ok(ReadResponse {
-                records: Vec::new(),
+                items: Vec::new(),
                 cursor: super::protocol::ReadCursor {
                     last_resource_offset: from_offset,
                     last_area_offset: None,
@@ -303,8 +303,8 @@ impl StreamActor {
             limit,
             max_bytes,
         };
-        let (records, cursor) = self.store.read_resource_with_filter(&params, filter)?;
-        Ok(ReadResponse { records, cursor })
+        let (items, cursor) = self.store.read_resource_with_filter(&params, filter)?;
+        Ok(ReadResponse { items, cursor })
     }
 
     pub fn last(&self) -> Result<PeekResponse, String> {

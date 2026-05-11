@@ -59,6 +59,7 @@ use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::clock::{Clock, SystemClock};
 use crate::runtime::routing::RouteFamily;
+use crate::utils::storage_key::{self, DomainKeyspace};
 
 use super::{
     MessageId, QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueInflightSnapshot, QueueKey,
@@ -747,21 +748,23 @@ impl QueueActor {
         value ^ (value >> 31)
     }
 
+    fn prefixed_queue_key(queue_key: &QueueKey, suffix: String) -> Vec<u8> {
+        storage_key::prefixed_key(&queue_key.realm, DomainKeyspace::Queue, suffix.as_bytes())
+    }
+
     /// Midge key for queue metadata
     fn meta_key(queue_key: &QueueKey) -> Vec<u8> {
-        format!(
-            "queue:{}:{}:{}:meta",
-            queue_key.realm, queue_key.area, queue_key.resource
+        Self::prefixed_queue_key(
+            queue_key,
+            format!("{}:{}:meta", queue_key.area, queue_key.resource),
         )
-        .into_bytes()
     }
 
     fn index_meta_key(queue_key: &QueueKey) -> Vec<u8> {
-        format!(
-            "queue:{}:{}:{}:idx:meta",
-            queue_key.realm, queue_key.area, queue_key.resource
+        Self::prefixed_queue_key(
+            queue_key,
+            format!("{}:{}:idx:meta", queue_key.area, queue_key.resource),
         )
-        .into_bytes()
     }
 
     /// Midge key for legacy combined message record
@@ -789,67 +792,59 @@ impl QueueActor {
     }
 
     fn header_key_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        format!(
-            "queue:{}:{}:{}:hdr:{}",
-            queue_key.realm, queue_key.area, queue_key.resource, ""
+        Self::prefixed_queue_key(
+            queue_key,
+            format!("{}:{}:hdr:", queue_key.area, queue_key.resource),
         )
-        .into_bytes()
     }
 
     fn body_key_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        format!(
-            "queue:{}:{}:{}:body:{}",
-            queue_key.realm, queue_key.area, queue_key.resource, ""
+        Self::prefixed_queue_key(
+            queue_key,
+            format!("{}:{}:body:", queue_key.area, queue_key.resource),
         )
-        .into_bytes()
     }
 
     fn ready_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        format!(
-            "queue:{}:{}:{}:idx:ready:",
-            queue_key.realm, queue_key.area, queue_key.resource
+        Self::prefixed_queue_key(
+            queue_key,
+            format!("{}:{}:idx:ready:", queue_key.area, queue_key.resource),
         )
-        .into_bytes()
     }
 
     fn delayed_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        format!(
-            "queue:{}:{}:{}:idx:delay:",
-            queue_key.realm, queue_key.area, queue_key.resource
+        Self::prefixed_queue_key(
+            queue_key,
+            format!("{}:{}:idx:delay:", queue_key.area, queue_key.resource),
         )
-        .into_bytes()
     }
 
     fn inflight_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        format!(
-            "queue:{}:{}:{}:idx:inflight:",
-            queue_key.realm, queue_key.area, queue_key.resource
+        Self::prefixed_queue_key(
+            queue_key,
+            format!("{}:{}:idx:inflight:", queue_key.area, queue_key.resource),
         )
-        .into_bytes()
     }
 
     fn dlq_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        format!(
-            "queue:{}:{}:{}:idx:dlq:",
-            queue_key.realm, queue_key.area, queue_key.resource
+        Self::prefixed_queue_key(
+            queue_key,
+            format!("{}:{}:idx:dlq:", queue_key.area, queue_key.resource),
         )
-        .into_bytes()
     }
 
     fn ack_dedup_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        format!(
-            "queue:{}:{}:{}:ack:",
-            queue_key.realm, queue_key.area, queue_key.resource
+        Self::prefixed_queue_key(
+            queue_key,
+            format!("{}:{}:ack:", queue_key.area, queue_key.resource),
         )
-        .into_bytes()
     }
 
     fn legacy_message_key_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        format!(
-            "queue:{}:{}:{}:msg:{}",
-            queue_key.realm, queue_key.area, queue_key.resource, ""
+        Self::prefixed_queue_key(
+            queue_key,
+            format!("{}:{}:msg:", queue_key.area, queue_key.resource),
         )
-        .into_bytes()
     }
 
     fn cached_id_key(prefix: &[u8], id: MessageId) -> Vec<u8> {

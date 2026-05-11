@@ -37,6 +37,7 @@ use crate::auth::validate_realm_format;
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
+use crate::utils::storage_key::{self, DomainKeyspace};
 
 use super::protocol::{KvError, KvMessage, KvPair, KvResponse, ScanQuery, TxMode};
 
@@ -542,13 +543,10 @@ impl KvActor {
     }
 
     fn realm_resource_prefix(realm: &str, area: &str, resource: &str) -> Vec<u8> {
-        let mut prefix = Vec::with_capacity(realm.len() + area.len() + resource.len() + 3);
-        prefix.extend_from_slice(realm.as_bytes());
-        prefix.push(0);
-        prefix.extend_from_slice(area.as_bytes());
-        prefix.push(0);
-        prefix.extend_from_slice(resource.as_bytes());
-        prefix.push(0);
+        let mut prefix = storage_key::domain_prefix(realm, DomainKeyspace::Kv);
+        prefix.reserve(area.len() + resource.len() + 2);
+        storage_key::push_segment(&mut prefix, area);
+        storage_key::push_segment(&mut prefix, resource);
         prefix
     }
 
@@ -584,18 +582,7 @@ impl KvActor {
     }
 
     fn prefix_range_end(prefix: &[u8]) -> Vec<u8> {
-        // Compute exclusive end bound for a prefix scan.
-        // Safe here because our prefix always ends with 0 (so increment succeeds).
-        let mut end = prefix.to_vec();
-        for idx in (0..end.len()).rev() {
-            if end[idx] != 0xFF {
-                end[idx] = end[idx].wrapping_add(1);
-                end.truncate(idx + 1);
-                return end;
-            }
-        }
-        // Fallback: no end bound (should not happen for our prefixes)
-        vec![0xFF]
+        storage_key::prefix_range_end(prefix)
     }
 
     /// Map Midge error to KV domain error

@@ -1,9 +1,9 @@
-import "./styles.css";
 import { For } from "@askrjs/askr";
 import { Link } from "@askrjs/askr/router";
 import { MoonIcon, ShieldIcon, SunIcon } from "@askrjs/lucide";
 import { Button } from "@askrjs/ui";
-import { NavLink, SidebarLayout, ThemeProvider, ThemeToggle } from "@askrjs/themes/components";
+import { NavLink, SidebarLayout, ThemeToggle } from "@askrjs/themes/components";
+import RootLayout from "../_layout";
 import { domainLinks, shellLinks } from "@/shared/navigation/domains";
 import { createSignOutMutation } from "@/features/session/session-mutation";
 
@@ -18,7 +18,7 @@ const shellSections = [
   },
 ];
 
-export default function App({ children }: { children?: unknown }) {
+export default function AppLayout({ children }: { children?: unknown }) {
   const signOut = createSignOutMutation();
 
   async function onSignOut() {
@@ -32,8 +32,8 @@ export default function App({ children }: { children?: unknown }) {
   }
 
   return (
-    <ThemeProvider defaultTheme="system" storageKey="fitz-admin-theme">
-      <div>
+    <RootLayout>
+      <div class="app-shell-frame">
         <div class="app-shell-theme-toggle">
           <ThemeToggle
             aria-label="Toggle color theme"
@@ -70,9 +70,7 @@ export default function App({ children }: { children?: unknown }) {
               </nav>
 
               <div class="app-shell-sidebar-footer">
-                <Button onPress={onSignOut}>
-                  Sign Out
-                </Button>
+                <Button onPress={onSignOut}>Sign Out</Button>
               </div>
             </div>
           }
@@ -83,6 +81,6 @@ export default function App({ children }: { children?: unknown }) {
           {children}
         </SidebarLayout>
       </div>
-    </ThemeProvider>
+    </RootLayout>
   );
 }

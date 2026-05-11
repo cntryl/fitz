@@ -5,24 +5,22 @@ import DomainRealmTable from "@/components/shared/domain-realm-table";
 import { AlertTriangleIcon } from "@askrjs/lucide";
 import { EmptyState, Spinner } from "@askrjs/themes/components";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
-import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
+import { createNoticeOverviewQuery } from "@/features/notice/notice-query";
 import { formatUnknownError } from "@/shared/errors/format";
 
-export default function RpcPage() {
-  const overview = createRpcOverviewQuery();
+export default function NoticePage() {
+  const overview = createNoticeOverviewQuery();
   const data = overview.data;
   const sidebar = createDomainSidebar({
     data,
-    title: "RPC snapshot",
-    description: "Worker registrations and pending request pressure.",
+    title: "Notice snapshot",
+    description: "Fanout health and active subscription coverage.",
     stats: (current) => [
-      { label: "Workers", value: current.stats.workersRegistered },
-      { label: "Requests pending", value: current.stats.requestsPending },
       {
-        label: "Ops / sec",
-        value: current.stats.operationsPerSecond.toFixed(2),
-        note: "Live broker snapshot",
+        label: "Publishes / sec",
+        value: current.stats.publishesPerSecond.toFixed(2),
       },
+      { label: "Subscriptions", value: current.stats.subscriptionsActive },
     ],
   });
 
@@ -36,9 +34,9 @@ export default function RpcPage() {
     >
       <section class="domain-page">
         <DomainHeader
-          domain="RPC"
-          title="RPC overview"
-          description="Pending RPC work, worker registrations, and live realm inventory."
+          domain="Notice"
+          title="Notice overview"
+          description="Notice fanout metrics and live realm inventory."
           onRefresh={() => overview.refresh()}
         />
 
@@ -46,7 +44,7 @@ export default function RpcPage() {
           <EmptyState
             class="domain-state"
             icon={<Spinner label="Loading" />}
-            description="Loading RPC overview..."
+            description="Loading notice overview..."
           />
         ) : null}
 
@@ -61,21 +59,20 @@ export default function RpcPage() {
         {data && !overview.loading && !overview.error ? (
           <>
             <DomainMetricTable
-              title="RPC metrics"
+              title="Notice metrics"
               metrics={[
-                { label: "Workers", value: data.stats.workersRegistered },
-                { label: "Requests pending", value: data.stats.requestsPending },
                 {
-                  label: "Ops / sec",
-                  value: data.stats.operationsPerSecond.toFixed(2),
+                  label: "Publishes / sec",
+                  value: data.stats.publishesPerSecond.toFixed(2),
                 },
+                { label: "Subscriptions", value: data.stats.subscriptionsActive },
               ]}
             />
 
             <DomainRealmTable
-              title="RPC realms"
+              title="Notice realms"
               realms={data.realms}
-              emptyMessage="No RPC realms are currently visible."
+              emptyMessage="No notice realms are currently visible."
             />
           </>
         ) : null}

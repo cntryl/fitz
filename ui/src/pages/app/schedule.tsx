@@ -5,22 +5,25 @@ import DomainRealmTable from "@/components/shared/domain-realm-table";
 import { AlertTriangleIcon } from "@askrjs/lucide";
 import { EmptyState, Spinner } from "@askrjs/themes/components";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
-import { createNoticeOverviewQuery } from "@/features/notice/notice-query";
+import { createScheduleOverviewQuery } from "@/features/schedule/schedule-query";
 import { formatUnknownError } from "@/shared/errors/format";
 
-export default function NoticePage() {
-  const overview = createNoticeOverviewQuery();
+export default function SchedulePage() {
+  const overview = createScheduleOverviewQuery();
   const data = overview.data;
   const sidebar = createDomainSidebar({
     data,
-    title: "Notice snapshot",
-    description: "Fanout health and active subscription coverage.",
+    title: "Schedule snapshot",
+    description: "Execution health and claim pressure across scheduled work.",
     stats: (current) => [
-      {
-        label: "Publishes / sec",
-        value: current.stats.publishesPerSecond.toFixed(2),
-      },
+      { label: "Schedules", value: current.stats.schedulesActive },
       { label: "Subscriptions", value: current.stats.subscriptionsActive },
+      { label: "Pending claims", value: current.stats.pendingFireClaims },
+      {
+        label: "Executions / min",
+        value: current.stats.executionsPerMinute.toFixed(2),
+        note: "Live broker snapshot",
+      },
     ],
   });
 
@@ -34,9 +37,9 @@ export default function NoticePage() {
     >
       <section class="domain-page">
         <DomainHeader
-          domain="Notice"
-          title="Notice overview"
-          description="Notice fanout metrics and live realm inventory."
+          domain="Schedule"
+          title="Schedule overview"
+          description="Scheduled execution health and live realm inventory."
           onRefresh={() => overview.refresh()}
         />
 
@@ -44,7 +47,7 @@ export default function NoticePage() {
           <EmptyState
             class="domain-state"
             icon={<Spinner label="Loading" />}
-            description="Loading notice overview..."
+            description="Loading schedule overview..."
           />
         ) : null}
 
@@ -59,20 +62,22 @@ export default function NoticePage() {
         {data && !overview.loading && !overview.error ? (
           <>
             <DomainMetricTable
-              title="Notice metrics"
+              title="Schedule metrics"
               metrics={[
-                {
-                  label: "Publishes / sec",
-                  value: data.stats.publishesPerSecond.toFixed(2),
-                },
+                { label: "Schedules", value: data.stats.schedulesActive },
                 { label: "Subscriptions", value: data.stats.subscriptionsActive },
+                { label: "Pending claims", value: data.stats.pendingFireClaims },
+                {
+                  label: "Executions / min",
+                  value: data.stats.executionsPerMinute.toFixed(2),
+                },
               ]}
             />
 
             <DomainRealmTable
-              title="Notice realms"
+              title="Schedule realms"
               realms={data.realms}
-              emptyMessage="No notice realms are currently visible."
+              emptyMessage="No schedule realms are currently visible."
             />
           </>
         ) : null}

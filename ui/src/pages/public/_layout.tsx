@@ -1,10 +1,11 @@
 import { Link } from "@askrjs/askr/router";
 import { ShieldIcon, MoonIcon, SunIcon } from "@askrjs/lucide";
-import { ThemeProvider, ThemeToggle } from "@askrjs/themes/components";
+import { ThemeToggle } from "@askrjs/themes/components";
+import RootLayout from "../_layout";
 
-export default function GuestLayout({ children }: { children?: unknown }) {
+export default function PublicLayout({ children }: { children?: unknown }) {
   return (
-    <ThemeProvider defaultTheme="system" storageKey="fitz-admin-theme">
+    <RootLayout>
       <div class="guest-shell">
         <div class="guest-shell-theme-toggle">
           <ThemeToggle
@@ -20,6 +21,6 @@ export default function GuestLayout({ children }: { children?: unknown }) {
           {children}
         </main>
       </div>
-    </ThemeProvider>
+    </RootLayout>
   );
 }

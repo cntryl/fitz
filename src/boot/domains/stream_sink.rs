@@ -2,7 +2,8 @@ use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::domains::stream::store::StreamAdminRecord;
 use crate::domains::stream::StreamMetrics;
 use crate::domains::stream::{
-    ReadResponse, StreamActor, StreamMetadata, StreamRecord, StreamStorageLayout, StreamStore,
+    ReadResponse, StreamActor, StreamFilteredReason, StreamMetadata, StreamReadItem, StreamRecord,
+    StreamStorageLayout, StreamStore,
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::PayloadEncoder;
@@ -379,6 +380,42 @@ impl StreamDomainSink {
         encoder.put_u64(record.created_at);
     }
 
+    fn encode_stream_filtered_reason(
+        encoder: &mut PayloadEncoder,
+        reason: Option<&StreamFilteredReason>,
+    ) {
+        match reason {
+            Some(StreamFilteredReason::ServerFilter) => encoder.put_u8(1),
+            Some(StreamFilteredReason::Permission) => encoder.put_u8(2),
+            Some(StreamFilteredReason::Projection) => encoder.put_u8(3),
+            None => encoder.put_u8(0),
+        }
+    }
+
+    fn encode_stream_read_item(encoder: &mut PayloadEncoder, item: &StreamReadItem) {
+        match item {
+            StreamReadItem::Event(record) => {
+                encoder.put_u8(0);
+                Self::encode_stream_record(encoder, record);
+            }
+            StreamReadItem::Filtered { offset, reason } => {
+                encoder.put_u8(1);
+                encoder.put_u64(*offset);
+                Self::encode_stream_filtered_reason(encoder, reason.as_ref());
+            }
+            StreamReadItem::FilteredRange {
+                from_offset,
+                to_offset,
+                reason,
+            } => {
+                encoder.put_u8(2);
+                encoder.put_u64(*from_offset);
+                encoder.put_u64(*to_offset);
+                Self::encode_stream_filtered_reason(encoder, reason.as_ref());
+            }
+        }
+    }
+
     fn encode_stream_cursor(
         encoder: &mut PayloadEncoder,
         cursor: &crate::domains::stream::protocol::ReadCursor,
@@ -390,13 +427,13 @@ impl StreamDomainSink {
     }
 
     fn encode_stream_read_data(
-        records: &[StreamRecord],
+        items: &[StreamReadItem],
         cursor: &crate::domains::stream::protocol::ReadCursor,
     ) -> Vec<u8> {
         let mut encoder = PayloadEncoder::new();
-        encoder.put_u32(records.len() as u32);
-        for record in records {
-            Self::encode_stream_record(&mut encoder, record);
+        encoder.put_u32(items.len() as u32);
+        for item in items {
+            Self::encode_stream_read_item(&mut encoder, item);
         }
         Self::encode_stream_cursor(&mut encoder, cursor);
         encoder.finish()
@@ -475,7 +512,7 @@ impl StreamDomainSink {
         let parts =
             route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
         let read_response = if parts.area == "*" && parts.resource == "*" {
-            let (records, cursor) = self.stream_store.read_realm_with_filter(
+            let (items, cursor) = self.stream_store.read_realm_with_filter(
                 family_id.as_u64(),
                 parts.realm,
                 from_offset,
@@ -483,9 +520,9 @@ impl StreamDomainSink {
                 max_bytes,
                 filter,
             )?;
-            ReadResponse { records, cursor }
+            ReadResponse { items, cursor }
         } else if parts.resource == "*" {
-            let (records, cursor) = self.stream_store.read_area_with_filter(
+            let (items, cursor) = self.stream_store.read_area_with_filter(
                 &crate::domains::stream::store::ReadAreaParams {
                     family: family_id.as_u64(),
                     realm: parts.realm,
@@ -496,7 +533,7 @@ impl StreamDomainSink {
                 },
                 filter,
             )?;
-            ReadResponse { records, cursor }
+            ReadResponse { items, cursor }
         } else {
             let key = Self::actor_key_for_route(family_id, route)?;
             let actor = self.get_or_create_actor(&key)?;
@@ -508,7 +545,7 @@ impl StreamDomainSink {
         };
 
         Ok(Self::encode_stream_read_data(
-            &read_response.records,
+            &read_response.items,
             &read_response.cursor,
         ))
     }

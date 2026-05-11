@@ -488,7 +488,7 @@ fn should_return_empty_read_given_zero_limit_with_committed_data() {
     let response = actor.read(0, 0, None).unwrap();
 
     // Assert
-    assert!(response.records.is_empty());
+    assert!(response.items.is_empty());
     assert_eq!(response.cursor.last_resource_offset, 0);
     assert_eq!(response.cursor.last_area_offset, None);
     assert_eq!(response.cursor.last_realm_offset, None);
