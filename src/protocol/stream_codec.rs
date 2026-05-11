@@ -85,6 +85,9 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             dec.get_u64()?;
             dec.skip_bytes()?;
             dec.skip_optional_bytes()?;
+            if dec.remaining() > 0 {
+                dec.get_optional_string()?;
+            }
             if !dec.is_complete() {
                 return Err("Trailing data in message".to_string());
             }

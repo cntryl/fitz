@@ -290,10 +290,7 @@ mod tests {
     fn should_authenticate_with_valid_credentials() {
         // Arrange
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
-        std::env::set_var(
-            "FITZ_ADMIN_PASSWORD_HASH",
-            password_hash_for("pwd123"),
-        );
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
         std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
 
         // Act
@@ -308,16 +305,11 @@ mod tests {
     fn should_extract_principal_from_cookie() {
         // Arrange
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
-        std::env::set_var(
-            "FITZ_ADMIN_PASSWORD_HASH",
-            password_hash_for("pwd123"),
-        );
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
         std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
 
         let auth = AdminAuth::from_env();
-        let principal = auth
-            .authenticate_credentials("admin", "pwd123")
-            .unwrap();
+        let principal = auth.authenticate_credentials("admin", "pwd123").unwrap();
         let cookie = auth.issue_session_cookie(&principal).unwrap();
         let cookie_value = cookie.split(';').next().unwrap().to_string();
 

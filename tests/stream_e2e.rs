@@ -6,7 +6,7 @@ use bytes::{BufMut, Bytes};
 use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::storage::{encode_stream_layout_marker_key, StreamLayoutMarkerValue};
 use fitz::domains::stream::store::StreamStore;
-use fitz::domains::stream::{StreamActor, StreamStorageLayout};
+use fitz::domains::stream::{StreamActor, StreamReadItem, StreamRecord, StreamStorageLayout};
 use fitz::protocol::payload_codec::PayloadDecoder;
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::TestServer;
@@ -59,6 +59,16 @@ fn parse_stream_error_message(frame: &[u8]) -> String {
     let message = dec.get_string().expect("stream error message");
     assert!(dec.is_complete(), "expected complete stream error payload");
     message
+}
+
+fn event_records(items: &[StreamReadItem]) -> Vec<StreamRecord> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            StreamReadItem::Event(record) => Some(record.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn build_stream_last(route: &str) -> Vec<u8> {
@@ -180,7 +190,19 @@ fn parse_stream_read_response(frame: &[u8]) -> WireReadResponse {
     let count = dec.get_u32().expect("stream read record count") as usize;
     let mut records = Vec::with_capacity(count);
     for _ in 0..count {
-        records.push(decode_wire_stream_record(&mut dec));
+        match dec.get_u8().expect("stream read item tag") {
+            0 => records.push(decode_wire_stream_record(&mut dec)),
+            1 => {
+                let _offset = dec.get_u64().expect("stream filtered offset");
+                let _reason = dec.get_u8().expect("stream filtered reason");
+            }
+            2 => {
+                let _from_offset = dec.get_u64().expect("stream filtered range from offset");
+                let _to_offset = dec.get_u64().expect("stream filtered range to offset");
+                let _reason = dec.get_u8().expect("stream filtered range reason");
+            }
+            other => panic!("unexpected stream read item tag: {}", other),
+        }
     }
 
     let cursor = WireReadCursor {
@@ -1527,7 +1549,8 @@ async fn should_preserve_monotonic_stream_resource_offsets_after_restart() {
     let records = actor
         .read(0, 10, None)
         .expect("read restarted stream")
-        .records;
+        .items;
+    let records = event_records(&records);
     let resource_offsets: Vec<u64> = records
         .iter()
         .map(|record| record.resource_offset)
@@ -1579,6 +1602,7 @@ async fn should_preserve_monotonic_stream_area_offsets_after_restart() {
         .read_area(1, "test", "events", 0, 10, None)
         .expect("read area stream")
         .0;
+    let records = event_records(&records);
     let area_offsets: Vec<u64> = records
         .iter()
         .map(|record| record.area_offset.expect("area offset"))
@@ -1628,6 +1652,7 @@ async fn should_preserve_monotonic_stream_realm_offsets_after_restart() {
         .read_realm(1, "test", 0, 10, None)
         .expect("read realm stream")
         .0;
+    let records = event_records(&records);
     let realm_offsets: Vec<u64> = records
         .iter()
         .map(|record| record.realm_offset.expect("realm offset"))
@@ -1668,7 +1693,8 @@ async fn should_drop_uncommitted_stream_batch_on_restart() {
     let records = actor
         .read(0, 10, None)
         .expect("read restarted stream")
-        .records;
+        .items;
+    let records = event_records(&records);
     let parsed: Vec<(u64, Vec<u8>)> = records
         .iter()
         .map(|record| (record.resource_offset, record.body.to_vec()))

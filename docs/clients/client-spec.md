@@ -2427,7 +2427,7 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 
 ### Stream Domain (Durable Append-Only Logs)
 
-**Purpose:** Durable append-only records with optimistic concurrency at BEGIN and commit-time sequencing for resource, area, and realm order. Clients MAY attach an optional immutable discriminator to each append for server-side filtered replay.
+**Purpose:** Durable append-only records with optimistic concurrency at BEGIN and commit-time sequencing for resource, area, and realm order. Clients MAY attach an optional immutable discriminator to each append for server-side filtered replay, and replay responses MAY include synthetic delivery markers for skipped committed offsets.
 
 #### Message Types
 
@@ -2544,6 +2544,10 @@ Response: status byte + data
 ```
 
 **Optional filter:** Clients MAY include a `StreamFilterSet` to request server-side replay filtering. The filter is encoded as bincode and is conjunctive: all clauses must match the record discriminator. Missing discriminators are treated as empty strings for matching.
+
+**Read page:** On success, the `data` payload is a count-prefixed sequence of tagged delivery items followed by the read cursor. `event` items contain committed records. `filtered` items contain the skipped committed offset and an optional reason. `filtered_range` may compact contiguous skipped offsets. Clients MAY expose the raw page or flatten event-only results, but they MUST preserve cursor progress.
+
+**Cursor:** `ReadCursor` is response metadata that advances with every committed offset the broker considers during replay, including filtered markers. It is not a durable broker-side resume token.
 
 #### LAST Request
 

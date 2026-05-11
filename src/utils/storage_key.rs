@@ -195,7 +195,11 @@ mod tests {
         let keys = [
             prefixed_key("acme", DomainKeyspace::Kv, b"users\0profile\0alpha"),
             prefixed_key("acme", DomainKeyspace::Queue, b"jobs:mailer:meta"),
-            prefixed_key("acme", DomainKeyspace::Schedule, b"sched:def:schedule://acme/jobs/nightly/run"),
+            prefixed_key(
+                "acme",
+                DomainKeyspace::Schedule,
+                b"sched:def:schedule://acme/jobs/nightly/run",
+            ),
             prefixed_key("acme", DomainKeyspace::Stream, b"\x08orders\0checkout"),
             prefixed_key("beta", DomainKeyspace::Kv, b"users\0profile\0beta"),
         ];
@@ -225,9 +229,17 @@ mod tests {
         // Assert
         assert_eq!(rows.len(), 4);
         assert!(rows.iter().all(|(key, _)| key.starts_with(b"acme\0")));
-        assert!(rows.iter().any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Kv).is_some()));
-        assert!(rows.iter().any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Queue).is_some()));
-        assert!(rows.iter().any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Schedule).is_some()));
-        assert!(rows.iter().any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Stream).is_some()));
+        assert!(rows
+            .iter()
+            .any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Kv).is_some()));
+        assert!(rows
+            .iter()
+            .any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Queue).is_some()));
+        assert!(rows
+            .iter()
+            .any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Schedule).is_some()));
+        assert!(rows
+            .iter()
+            .any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Stream).is_some()));
     }
 }

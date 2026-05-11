@@ -558,7 +558,13 @@ fn should_dlq_message_after_max_attempts() {
     let header_key = storage_key::prefixed_key(
         &queue_key.realm,
         DomainKeyspace::Queue,
-        format!("{}:{}:hdr:{}", queue_key.area, queue_key.resource, msg_id.as_u64()).as_bytes(),
+        format!(
+            "{}:{}:hdr:{}",
+            queue_key.area,
+            queue_key.resource,
+            msg_id.as_u64()
+        )
+        .as_bytes(),
     );
     let body_key = storage_key::prefixed_key(
         &queue_key.realm,
@@ -574,9 +580,6 @@ fn should_dlq_message_after_max_attempts() {
     let txn = store
         .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
         .expect("begin tx");
-    assert!(txn
-        .get(&header_key)
-        .expect("read header")
-        .is_some());
+    assert!(txn.get(&header_key).expect("read header").is_some());
     assert!(txn.get(&body_key).expect("read body").is_some());
 }

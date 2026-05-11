@@ -227,7 +227,8 @@ scenarios:
     expected:
       - "client can append an optional discriminator on stream records"
       - "client can issue a filtered read using StreamFilterSet"
-      - "filtered replay returns only matching records in offset order"
+      - "filtered replay returns matching records and synthetic filtered markers in offset order"
+      - "cursor advances monotonically through filtered offsets"
 
 scoring:
   fail_on:

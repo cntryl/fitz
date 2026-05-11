@@ -129,7 +129,11 @@ pub fn encode_watermark_key(realm: &str, area: &str) -> Vec<u8> {
 
 /// Encodes an offset counter key (metadata, independent of TTL)
 pub fn encode_offset_counter_key(realm: &str, area: &str, resource: &str) -> Vec<u8> {
-    let mut key = stream_kind_key(realm, KeyPrefix::OffsetCounter, area.len() + resource.len() + 2);
+    let mut key = stream_kind_key(
+        realm,
+        KeyPrefix::OffsetCounter,
+        area.len() + resource.len() + 2,
+    );
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(resource.as_bytes());
@@ -143,7 +147,11 @@ pub fn encode_realm_watermark_key(realm: &str) -> Vec<u8> {
 
 /// Encodes a resource metadata key.
 pub fn encode_resource_meta_key(realm: &str, area: &str, resource: &str) -> Vec<u8> {
-    let mut key = stream_kind_key(realm, KeyPrefix::ResourceMeta, area.len() + resource.len() + 1);
+    let mut key = stream_kind_key(
+        realm,
+        KeyPrefix::ResourceMeta,
+        area.len() + resource.len() + 1,
+    );
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(resource.as_bytes());
@@ -169,7 +177,11 @@ pub fn encode_resource_discriminator_key(
     resource: &str,
     resource_offset: u64,
 ) -> Vec<u8> {
-    let mut key = stream_kind_key(realm, KeyPrefix::ResourceDiscriminator, area.len() + resource.len() + 10);
+    let mut key = stream_kind_key(
+        realm,
+        KeyPrefix::ResourceDiscriminator,
+        area.len() + resource.len() + 10,
+    );
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(resource.as_bytes());
@@ -248,7 +260,11 @@ pub fn encode_compact_resource_page_key(
     resource: &str,
     page_start_resource_offset: u64,
 ) -> Vec<u8> {
-    let mut key = stream_kind_key(realm, KeyPrefix::CompactResourcePage, area.len() + resource.len() + 10);
+    let mut key = stream_kind_key(
+        realm,
+        KeyPrefix::CompactResourcePage,
+        area.len() + resource.len() + 10,
+    );
     key.extend_from_slice(area.as_bytes());
     key.push(0);
     key.extend_from_slice(resource.as_bytes());
@@ -1449,7 +1465,10 @@ mod tests {
         // (keys are already encoded)
 
         // Assert
-        assert_eq!(stream_key_suffix(&resource_key)[0], KeyPrefix::Resource as u8);
+        assert_eq!(
+            stream_key_suffix(&resource_key)[0],
+            KeyPrefix::Resource as u8
+        );
         assert_eq!(stream_key_suffix(&area_key)[0], KeyPrefix::Area as u8);
         assert_eq!(stream_key_suffix(&realm_key)[0], KeyPrefix::Realm as u8);
     }
