@@ -1,7 +1,6 @@
 //! Common imports and prelude
 
-pub use crate::runtime::envelope::{Envelope, MessageId};
-pub use crate::runtime::*;
+pub use crate::runtime::actor::Actor;
 
 /// Default HTTP/WebSocket listen port
 pub const DEFAULT_HTTP_PORT: u16 = 4090;
