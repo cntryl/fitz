@@ -1,0 +1,32 @@
+repo,transport,auth_mode,p0_pass_rate,p1_pass_rate,overall_status,artifact_path,must_fix,notes
+fitz-go,websocket,anonymous,1.0,1.0,pass,fitz-go/artifacts/conformance-ws-anonymous.json,no,no non-pass scenarios
+fitz-go,websocket,valid_jwt,1.0,1.0,pass,fitz-go/artifacts/conformance-ws-valid_jwt.json,no,no non-pass scenarios
+fitz-go,tcp,anonymous,1.0,1.0,pass,fitz-go/artifacts/conformance-tcp-anonymous.json,no,no non-pass scenarios
+fitz-go,tcp,valid_jwt,1.0,1.0,pass,fitz-go/artifacts/conformance-tcp-valid_jwt.json,no,no non-pass scenarios
+fitz-go,websocket,invalid_jwt_cs002,,,pass,go test ./test/conformance -run TestConformanceSuite/CS-002_auth_failure (ws),no,focused auth-failure check passed
+fitz-go,tcp,invalid_jwt_cs002,,,pass,go test ./test/conformance -run TestConformanceSuite/CS-002_auth_failure (tcp),no,focused auth-failure check passed
+fitz-ts,websocket,anonymous,1.0,1.0,pass,fitz-ts/artifacts/conformance-ws-anonymous.json,no,no non-pass scenarios
+fitz-ts,websocket,valid_jwt,1.0,1.0,pass,fitz-ts/artifacts/conformance-ws-valid_jwt.json,no,no non-pass scenarios
+fitz-ts,tcp,anonymous,1.0,1.0,pass,fitz-ts/artifacts/conformance-tcp-anonymous.json,no,no non-pass scenarios
+fitz-ts,tcp,valid_jwt,1.0,1.0,pass,fitz-ts/artifacts/conformance-tcp-valid_jwt.json,no,no non-pass scenarios
+fitz-ts,websocket,invalid_jwt_cs002,,,pass,fitz-ts/artifacts/conformance-ws-anonymous.json,no,cs-002 validated in full suite; standalone invalid_jwt mode unsupported
+fitz-ts,tcp,invalid_jwt_cs002,,,pass,fitz-ts/artifacts/conformance-tcp-anonymous.json,no,cs-002 validated in full suite; standalone invalid_jwt mode unsupported
+fitz-py,websocket,anonymous,1.0,1.0,pass,fitz-py/artifacts/conformance-ws-anonymous.json,no,no non-pass scenarios
+fitz-py,websocket,valid_jwt,1.0,1.0,pass,fitz-py/artifacts/conformance-ws-valid_jwt.json,no,no non-pass scenarios
+fitz-py,tcp,anonymous,1.0,1.0,pass,fitz-py/artifacts/conformance-tcp-anonymous.json,no,no non-pass scenarios
+fitz-py,tcp,valid_jwt,1.0,1.0,pass,fitz-py/artifacts/conformance-tcp-valid_jwt.json,no,no non-pass scenarios
+fitz-py,websocket,invalid_jwt_cs002,,,pass,pytest tests/conformance -k cs002 (ws),no,focused auth-failure check passed
+fitz-py,tcp,invalid_jwt_cs002,,,pass,pytest tests/conformance -k cs002 (tcp),no,focused auth-failure check passed
+fitz-rs,websocket,anonymous,0.125,0.0,fail,fitz-rs/artifacts/conformance-ws-anonymous.json,yes,route-shape mismatch plus cs-008/cs-010 not implemented
+fitz-rs,websocket,valid_jwt,0.125,0.0,fail,fitz-rs/artifacts/conformance-ws-valid_jwt.json,yes,route-shape mismatch plus cs-008/cs-010 not implemented
+fitz-rs,tcp,anonymous,0.125,0.0,fail,fitz-rs/artifacts/conformance-tcp-anonymous.json,yes,includes timeout/disconnect stub panic paths
+fitz-rs,tcp,valid_jwt,0.125,0.0,fail,fitz-rs/artifacts/conformance-tcp-valid_jwt.json,yes,includes timeout/disconnect stub panic paths
+fitz-rs,websocket,invalid_jwt_cs002,,,fail,fitz-rs/artifacts/conformance-ws-anonymous.json,yes,cs-002 verdict partial in full suite
+fitz-rs,tcp,invalid_jwt_cs002,,,fail,fitz-rs/artifacts/conformance-tcp-anonymous.json,yes,cs-002 verdict partial in full suite
+fitz-dotnet,websocket,anonymous,1.0,1.0,pass,fitz-dotnet/artifacts/conformance-ws-anonymous.json,no,no non-pass scenarios
+fitz-dotnet,websocket,valid_jwt,1.0,1.0,pass,fitz-dotnet/artifacts/conformance-ws-valid_jwt.json,no,no non-pass scenarios
+fitz-dotnet,tcp,anonymous,1.0,1.0,pass,fitz-dotnet/artifacts/conformance-tcp-anonymous.json,no,no non-pass scenarios
+fitz-dotnet,tcp,valid_jwt,1.0,1.0,pass,fitz-dotnet/artifacts/conformance-tcp-valid_jwt.json,no,no non-pass scenarios
+fitz-dotnet,websocket,invalid_jwt_cs002,,,pass,fitz-dotnet/artifacts/conformance-ws-anonymous.json,no,cs-002 invalid_jwt verdict pass in artifact
+fitz-dotnet,tcp,invalid_jwt_cs002,,,pass,fitz-dotnet/artifacts/conformance-tcp-anonymous.json,no,cs-002 invalid_jwt verdict pass in artifact
+

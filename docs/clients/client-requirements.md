@@ -15,10 +15,12 @@ client-implementation-guide.md      ← Idiomatic patterns per language
 connection-flow.md                  ← Connection lifecycle state machine
 cross-language-conformance-suite.yaml ← Scenario definitions
 cross-language-conformance-runner.md  ← CI harness contract
+client-perfection-scoreboard.md       ← Cross-repo execution ledger (operational)
+client-perfection-scoreboard.csv      ← Machine-friendly matrix template (operational)
 client-requirements.md              ← THIS FILE: grading rubric covering all dimensions
 ```
 
-This document references the above as authoritative sources. It adds requirements for dimensions that the acceptance criteria do not cover: API ergonomics, concurrency safety, resilience, observability, performance, and testing completeness.
+This document references the above as authoritative sources. It adds requirements for dimensions that the acceptance criteria do not cover: API ergonomics, concurrency safety, resilience, observability, performance, and testing completeness. The scoreboard artifacts are operational tracking aids and do not change normative protocol or acceptance requirements.
 
 ---
 
