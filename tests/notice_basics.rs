@@ -363,7 +363,10 @@ fn should_fan_out_one_notification_to_many_subscriptions() {
     }
 
     // Act
-    let mut pubctx = Context::new(addr("notice://realm/area/one/publisher"), Arc::new(router.clone()));
+    let mut pubctx = Context::new(
+        addr("notice://realm/area/one/publisher"),
+        Arc::new(router.clone()),
+    );
     let pubmsg = PublishMessage::new(
         family,
         route("notice://realm/area/one/sink3"),
@@ -402,7 +405,10 @@ fn should_fan_out_many_notifications_to_many_subscriptions() {
     }
 
     // Act
-    let mut pubctx = Context::new(addr("notice://realm/area/many/pub"), Arc::new(router.clone()));
+    let mut pubctx = Context::new(
+        addr("notice://realm/area/many/pub"),
+        Arc::new(router.clone()),
+    );
     for n in 0..4 {
         let pubmsg = PublishMessage::new(
             family,
@@ -469,7 +475,10 @@ fn should_produce_exactly_n_deliveries_for_n_matching_subscriptions() {
     }
 
     // Act
-    let mut pubctx = Context::new(addr("notice://realm/area/exact/p"), Arc::new(router.clone()));
+    let mut pubctx = Context::new(
+        addr("notice://realm/area/exact/p"),
+        Arc::new(router.clone()),
+    );
     let pubmsg = PublishMessage::new(
         family,
         route("notice://realm/area/exact/s3"),

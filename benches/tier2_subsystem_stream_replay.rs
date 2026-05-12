@@ -11,6 +11,7 @@ use fitz::domains::stream::storage::{
 use fitz::domains::stream::store::{
     CommitRecordsParams, EventPayload, ReadResourceParams, StreamStore,
 };
+use fitz::domains::stream::StreamReadItem;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -70,6 +71,16 @@ struct PrototypeStream {
 struct PrototypeRowWrite {
     key: Vec<u8>,
     value: Vec<u8>,
+}
+
+fn event_records(items: Vec<StreamReadItem>) -> Vec<StreamRecord> {
+    items
+        .into_iter()
+        .filter_map(|item| match item {
+            StreamReadItem::Event(record) => Some(record),
+            _ => None,
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -1724,7 +1735,7 @@ fn read_resource_covering(
         max_bytes: None,
     })?;
 
-    Ok(records)
+    Ok(event_records(records))
 }
 
 fn read_resource_compact_paged(
@@ -2739,6 +2750,7 @@ fn validate_area_case(case: &ReplayCase, area: &str) {
         .store
         .read_area(FAMILY, REALM, area, 0, case.expected_records as u64, None)
         .expect("covering area replay");
+    let covering_records = event_records(covering_records);
     let hydrated_records = read_area_hydrated(case, area).expect("hydrated area replay");
     let paged_records = read_area_paged(case, area).expect("paged area replay");
     let compact_paged_records =
@@ -2762,6 +2774,7 @@ fn validate_realm_case(case: &ReplayCase) {
         .store
         .read_realm(FAMILY, REALM, 0, case.expected_records as u64, None)
         .expect("covering realm replay");
+    let covering_records = event_records(covering_records);
     let hydrated_records = read_realm_hydrated(case).expect("hydrated realm replay");
     let paged_records = read_realm_paged(case).expect("paged realm replay");
     let compact_paged_records = read_realm_compact_paged(case).expect("compact paged realm replay");
@@ -2825,6 +2838,7 @@ fn validate_realm_local_body_case(case: &ReplayCase) {
         .store
         .read_realm(FAMILY, REALM, 0, case.expected_records as u64, None)
         .expect("covering realm replay");
+    let covering_records = event_records(covering_records);
     let compact_paged_records = read_realm_compact_paged(case).expect("compact paged realm replay");
     let compressed_compact_paged_records =
         read_realm_compressed_compact_paged(case).expect("compressed compact paged realm replay");

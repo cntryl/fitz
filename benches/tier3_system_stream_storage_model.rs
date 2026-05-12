@@ -20,6 +20,7 @@ use fitz::domains::stream::storage::{decode_area_offset_from_key, decode_realm_o
 use fitz::domains::stream::store::{
     CommitRecordsParams, EventPayload, ReadResourceParams, StreamStore,
 };
+use fitz::domains::stream::{StreamReadItem, StreamRecord as DomainStreamRecord};
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::frame_context::FrameContext;
 use fitz::protocol::payload_codec::PayloadEncoder;
@@ -840,7 +841,7 @@ fn read_resource_covering(
         limit: limit as u64,
         max_bytes: None,
     })?;
-    Ok(records)
+    Ok(event_records(records))
 }
 
 fn read_resource_compact_paged(
@@ -900,7 +901,7 @@ fn read_area_covering(case: &ReplayCase, area: &str) -> Result<Vec<StreamRecord>
     let (records, _) =
         case.store
             .read_area(FAMILY, REALM, area, 0, case.expected_records as u64, None)?;
-    Ok(records)
+    Ok(event_records(records))
 }
 
 fn read_area_compact_paged(case: &ReplayCase, area: &str) -> Result<Vec<StreamRecord>, String> {
@@ -949,7 +950,17 @@ fn read_realm_covering(case: &ReplayCase) -> Result<Vec<StreamRecord>, String> {
     let (records, _) =
         case.store
             .read_realm(FAMILY, REALM, 0, case.expected_records as u64, None)?;
-    Ok(records)
+    Ok(event_records(records))
+}
+
+fn event_records(items: Vec<StreamReadItem>) -> Vec<DomainStreamRecord> {
+    items
+        .into_iter()
+        .filter_map(|item| match item {
+            StreamReadItem::Event(record) => Some(record),
+            _ => None,
+        })
+        .collect()
 }
 
 fn read_realm_compressed_compact_paged(case: &ReplayCase) -> Result<Vec<StreamRecord>, String> {

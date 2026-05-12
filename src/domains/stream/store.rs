@@ -272,6 +272,60 @@ struct ReadCursorState {
     last_realm_offset: Option<u64>,
 }
 
+struct ReadPageState<'a> {
+    from_offset: u64,
+    limit: usize,
+    max_bytes_limit: usize,
+    watermark: Option<u64>,
+    filter: Option<&'a StreamFilterSet>,
+    cursor: &'a mut ReadCursorState,
+    total_bytes: &'a mut usize,
+    items: &'a mut Vec<StreamReadItem>,
+    has_more: &'a mut bool,
+}
+
+fn resource_page_record_bytes(page_record: &CompactResourcePageRecord) -> usize {
+    page_record.body.len() + page_record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+}
+
+fn update_resource_cursor(
+    state: &mut ReadCursorState,
+    resource_offset: u64,
+    page_record: &CompactResourcePageRecord,
+) {
+    state.last_resource_offset = resource_offset;
+    state.last_area_offset = Some(page_record.area_offset);
+    state.last_realm_offset = Some(page_record.realm_offset);
+}
+
+fn area_page_record_bytes(page_record: &CompactAreaPageRecord) -> usize {
+    page_record.body.len() + page_record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+}
+
+fn update_area_cursor(
+    state: &mut ReadCursorState,
+    area_offset: u64,
+    page_record: &CompactAreaPageRecord,
+) {
+    state.last_resource_offset = page_record.resource_offset;
+    state.last_area_offset = Some(area_offset);
+    state.last_realm_offset = None;
+}
+
+fn realm_page_record_bytes(page_record: &CompactRealmPageRecord) -> usize {
+    page_record.body.len() + page_record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+}
+
+fn update_realm_cursor(
+    state: &mut ReadCursorState,
+    realm_offset: u64,
+    page_record: &CompactRealmPageRecord,
+) {
+    state.last_resource_offset = page_record.resource_offset;
+    state.last_area_offset = Some(page_record.area_offset);
+    state.last_realm_offset = Some(realm_offset);
+}
+
 impl ReadCursorState {
     fn into_cursor(self, has_more: bool) -> super::protocol::ReadCursor {
         super::protocol::ReadCursor {
@@ -283,17 +337,17 @@ impl ReadCursorState {
     }
 }
 
-fn collect_filtered_read_page_items<R, I, FLoadDiscriminator, FRecordBytes, FUpdateCursor, FFilteredItem, FEventItem>(
+fn collect_filtered_read_page_items<
+    R,
+    I,
+    FLoadDiscriminator,
+    FRecordBytes,
+    FUpdateCursor,
+    FFilteredItem,
+    FEventItem,
+>(
     records: I,
-    from_offset: u64,
-    limit: usize,
-    max_bytes_limit: usize,
-    watermark: Option<u64>,
-    filter: Option<&StreamFilterSet>,
-    cursor: &mut ReadCursorState,
-    total_bytes: &mut usize,
-    items: &mut Vec<StreamReadItem>,
-    has_more: &mut bool,
+    state: &mut ReadPageState<'_>,
     mut load_discriminator: FLoadDiscriminator,
     mut record_bytes: FRecordBytes,
     mut update_cursor: FUpdateCursor,
@@ -311,48 +365,48 @@ where
     let mut stop_scan = false;
 
     for (offset, record) in records {
-        if offset < from_offset {
+        if offset < state.from_offset {
             continue;
         }
 
-        if let Some(watermark) = watermark {
+        if let Some(watermark) = state.watermark {
             if offset > watermark {
                 stop_scan = true;
                 break;
             }
         }
 
-        let discriminator = if filter.is_some() {
+        let discriminator = if state.filter.is_some() {
             load_discriminator(offset, &record)?
         } else {
             None
         };
 
-        if !StreamStore::record_matches_filter(filter, discriminator) {
-            if items.len() == limit {
-                *has_more = true;
+        if !StreamStore::record_matches_filter(state.filter, discriminator) {
+            if state.items.len() == state.limit {
+                *state.has_more = true;
                 return Ok(true);
             }
 
-            update_cursor(cursor, offset, &record);
-            items.push(filtered_item(offset));
+            update_cursor(state.cursor, offset, &record);
+            state.items.push(filtered_item(offset));
             continue;
         }
 
-        if items.len() == limit {
-            *has_more = true;
+        if state.items.len() == state.limit {
+            *state.has_more = true;
             return Ok(true);
         }
 
         let record_bytes = record_bytes(&record);
-        if *total_bytes + record_bytes > max_bytes_limit && !items.is_empty() {
-            *has_more = true;
+        if *state.total_bytes + record_bytes > state.max_bytes_limit && !state.items.is_empty() {
+            *state.has_more = true;
             return Ok(true);
         }
 
-        update_cursor(cursor, offset, &record);
-        *total_bytes += record_bytes;
-        items.push(event_item(offset, record));
+        update_cursor(state.cursor, offset, &record);
+        *state.total_bytes += record_bytes;
+        state.items.push(event_item(offset, record));
     }
 
     Ok(stop_scan)
@@ -2033,20 +2087,23 @@ impl StreamStore {
                 )
             })?;
 
+            let mut state = ReadPageState {
+                from_offset: params.from_offset,
+                limit,
+                max_bytes_limit,
+                watermark: None,
+                filter,
+                cursor: &mut cursor,
+                total_bytes: &mut total_bytes,
+                items: &mut items,
+                has_more: &mut has_more,
+            };
             let stop_scan = collect_filtered_read_page_items(
                 page.records
                     .into_iter()
                     .enumerate()
                     .map(|(slot, page_record)| (page_start + slot as u64, page_record)),
-                params.from_offset,
-                limit,
-                max_bytes_limit,
-                None,
-                filter,
-                &mut cursor,
-                &mut total_bytes,
-                &mut items,
-                &mut has_more,
+                &mut state,
                 |resource_offset, _page_record| {
                     Self::load_optional_discriminator(
                         &txn,
@@ -2058,15 +2115,8 @@ impl StreamStore {
                         ),
                     )
                 },
-                |page_record| {
-                    page_record.body.len()
-                        + page_record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
-                },
-                |state, resource_offset, page_record| {
-                    state.last_resource_offset = resource_offset;
-                    state.last_area_offset = Some(page_record.area_offset);
-                    state.last_realm_offset = Some(page_record.realm_offset);
-                },
+                resource_page_record_bytes,
+                update_resource_cursor,
                 |offset| StreamReadItem::Filtered {
                     offset,
                     reason: Some(StreamFilteredReason::ServerFilter),
@@ -2171,20 +2221,23 @@ impl StreamStore {
                 Self::invalid_compact_area_page_error(params.realm, params.area, page_start, error)
             })?;
 
+            let mut state = ReadPageState {
+                from_offset: params.from_offset,
+                limit,
+                max_bytes_limit,
+                watermark: Some(watermark),
+                filter,
+                cursor: &mut cursor,
+                total_bytes: &mut total_bytes,
+                items: &mut items,
+                has_more: &mut has_more,
+            };
             let stop_scan = collect_filtered_read_page_items(
                 page.records
                     .into_iter()
                     .enumerate()
                     .map(|(slot, page_record)| (page_start + slot as u64, page_record)),
-                params.from_offset,
-                limit,
-                max_bytes_limit,
-                Some(watermark),
-                filter,
-                &mut cursor,
-                &mut total_bytes,
-                &mut items,
-                &mut has_more,
+                &mut state,
                 |area_offset, _page_record| {
                     Self::load_optional_discriminator(
                         &txn,
@@ -2195,15 +2248,8 @@ impl StreamStore {
                         ),
                     )
                 },
-                |page_record| {
-                    page_record.body.len()
-                        + page_record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
-                },
-                |state, area_offset, page_record| {
-                    state.last_resource_offset = page_record.resource_offset;
-                    state.last_area_offset = Some(area_offset);
-                    state.last_realm_offset = None;
-                },
+                area_page_record_bytes,
+                update_area_cursor,
                 |offset| StreamReadItem::Filtered {
                     offset,
                     reason: Some(StreamFilteredReason::ServerFilter),
@@ -2299,35 +2345,31 @@ impl StreamStore {
                 .map_err(|error| Self::invalid_compact_realm_page_error(page_start, error))?
                 .into_compact_realm_page();
 
+            let mut state = ReadPageState {
+                from_offset,
+                limit,
+                max_bytes_limit,
+                watermark: Some(realm_watermark),
+                filter,
+                cursor: &mut cursor,
+                total_bytes: &mut total_bytes,
+                items: &mut items,
+                has_more: &mut has_more,
+            };
             let stop_scan = collect_filtered_read_page_items(
                 page.records
                     .into_iter()
                     .enumerate()
                     .map(|(slot, page_record)| (page_start + slot as u64, page_record)),
-                from_offset,
-                limit,
-                max_bytes_limit,
-                Some(realm_watermark),
-                filter,
-                &mut cursor,
-                &mut total_bytes,
-                &mut items,
-                &mut has_more,
+                &mut state,
                 |realm_offset, _page_record| {
                     Self::load_optional_discriminator(
                         &txn,
                         &super::storage::encode_realm_discriminator_key(realm, realm_offset),
                     )
                 },
-                |page_record| {
-                    page_record.body.len()
-                        + page_record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
-                },
-                |state, realm_offset, page_record| {
-                    state.last_resource_offset = page_record.resource_offset;
-                    state.last_area_offset = Some(page_record.area_offset);
-                    state.last_realm_offset = Some(realm_offset);
-                },
+                realm_page_record_bytes,
+                update_realm_cursor,
                 |offset| StreamReadItem::Filtered {
                     offset,
                     reason: Some(StreamFilteredReason::ServerFilter),
@@ -2701,6 +2743,17 @@ mod tests {
             metadata: None,
             discriminator: Some(StreamDiscriminator::from(discriminator)),
         }]
+    }
+
+    fn event_record(item: StreamReadItem) -> Option<StreamRecord> {
+        match item {
+            StreamReadItem::Event(record) => Some(record),
+            _ => None,
+        }
+    }
+
+    fn event_records(items: Vec<StreamReadItem>) -> Vec<StreamRecord> {
+        items.into_iter().filter_map(event_record).collect()
     }
 
     #[test]
@@ -3271,6 +3324,7 @@ mod tests {
                 max_bytes: None,
             })
             .expect("read first resource record");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 1);
@@ -3322,6 +3376,7 @@ mod tests {
                 max_bytes: None,
             })
             .expect("read last resource record");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 1);
@@ -3366,6 +3421,7 @@ mod tests {
                 Some(&filter),
             )
             .expect("read filtered resource record");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 1);
@@ -3413,13 +3469,14 @@ mod tests {
         let (records, cursor) = store
             .read_realm_with_filter(1, "test", 0, 10, None, Some(&filter))
             .expect("read filtered realm stream");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].realm_offset, Some(0));
         assert_eq!(records[0].body, Bytes::from_static(b"keep"));
         assert!(!cursor.has_more);
-        assert_eq!(cursor.last_realm_offset, Some(0));
+        assert_eq!(cursor.last_realm_offset, Some(1));
     }
 
     #[test]
@@ -3487,6 +3544,7 @@ mod tests {
                 max_bytes: None,
             })
             .expect("read ttl-trimmed resource stream");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 1);
@@ -3568,6 +3626,7 @@ mod tests {
         let (records, cursor) = store
             .read_area(1, "test", "events", 0, 2, None)
             .expect("read area stream");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 2);
@@ -3612,6 +3671,7 @@ mod tests {
         let (records, cursor) = store
             .read_area(1, "test", "events", 1, 1, None)
             .expect("read area at watermark boundary");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 1);
@@ -3656,6 +3716,7 @@ mod tests {
         let (records, cursor) = store
             .read_area(1, "test", "events", 0, 10, Some(4))
             .expect("read area with max_bytes");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 1);
@@ -3687,6 +3748,7 @@ mod tests {
         let (records, cursor) = store
             .read_area(1, "test", "events", 0, 10, Some(4))
             .expect("read area with tight max_bytes");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 1);
@@ -3730,6 +3792,7 @@ mod tests {
         let (records, cursor) = store
             .read_realm(1, "test", 0, 2, None)
             .expect("read realm stream");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 2);
@@ -3774,6 +3837,7 @@ mod tests {
         let (records, cursor) = store
             .read_realm(1, "test", 1, 1, None)
             .expect("read realm at watermark boundary");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 1);
@@ -3818,6 +3882,7 @@ mod tests {
         let (records, cursor) = store
             .read_realm(1, "test", 0, 10, Some(4))
             .expect("read realm with max_bytes");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 1);
@@ -3849,6 +3914,7 @@ mod tests {
         let (records, cursor) = store
             .read_realm(1, "test", 0, 10, Some(4))
             .expect("read realm with tight max_bytes");
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 1);
@@ -3895,6 +3961,7 @@ mod tests {
             .read_realm(1, "test", 1, 10, None)
             .expect("read realm from offset one")
             .0;
+        let records = event_records(records);
 
         // Assert
         assert_eq!(records.len(), 1);

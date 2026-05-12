@@ -10,6 +10,7 @@ use fitz::domains::stream::storage::{
 use fitz::domains::stream::store::{
     CommitRecordsParams, EventPayload, StreamAdminRecord, StreamStorageLayout, StreamStore,
 };
+use fitz::domains::stream::{StreamReadItem, StreamRecord};
 use fitz::testkit::create_test_engine_with_cfs;
 
 fn commit_record(
@@ -67,6 +68,16 @@ fn seed_layout_marker(engine: &cntryl_midge::Engine, family: u32, layout: Stream
     .expect("write layout marker");
     tx.commit(cntryl_midge::WriteOptions::sync())
         .expect("commit layout marker");
+}
+
+fn event_records(items: &[StreamReadItem]) -> Vec<StreamRecord> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            StreamReadItem::Event(record) => Some(record.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -149,6 +160,7 @@ fn should_preserve_monotonic_area_offsets_given_cross_resource_commits() {
     let (records, cursor) = store
         .read_area(1, "test", "events", 0, 10, None)
         .expect("read area history");
+    let records = event_records(&records);
 
     // Assert
     let area_offsets: Vec<u64> = records
@@ -181,6 +193,7 @@ fn should_preserve_monotonic_realm_offsets_given_cross_area_commits() {
     let (records, cursor) = store
         .read_realm(1, "test", 0, 10, None)
         .expect("read realm history");
+    let records = event_records(&records);
 
     // Assert
     let realm_offsets: Vec<u64> = records
@@ -228,6 +241,7 @@ fn should_return_record_given_read_at_area_watermark_boundary() {
     let (records, cursor) = store
         .read_area(1, "test", "events", 0, 10, None)
         .expect("read at area watermark boundary");
+    let records = event_records(&records);
 
     // Assert
     assert_eq!(records.len(), 1);
@@ -264,6 +278,7 @@ fn should_return_record_given_read_at_realm_watermark_boundary() {
     let (records, cursor) = store
         .read_realm(1, "test", 0, 10, None)
         .expect("read at realm watermark boundary");
+    let records = event_records(&records);
 
     // Assert
     assert_eq!(records.len(), 1);

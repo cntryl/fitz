@@ -5,6 +5,7 @@ use fitz::domains::stream::storage::{decode_area_offset_from_key, decode_realm_o
 use fitz::domains::stream::store::{
     CommitRecordsParams, EventPayload, ReadResourceParams, StreamStore,
 };
+use fitz::domains::stream::StreamReadItem;
 use fitz::protocol::payload_codec::PayloadEncoder;
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{DeliveryError, MailboxSink, Router};
@@ -119,6 +120,16 @@ pub struct PrototypeReadCase {
 struct PrototypeStreamReadSink {
     router: Arc<Router>,
     case: Arc<ReplayCase>,
+}
+
+fn event_records(items: Vec<StreamReadItem>) -> Vec<StreamRecord> {
+    items
+        .into_iter()
+        .filter_map(|item| match item {
+            StreamReadItem::Event(record) => Some(record),
+            _ => None,
+        })
+        .collect()
 }
 
 const COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xB2];
@@ -798,7 +809,7 @@ fn read_resource_covering(
         limit: limit as u64,
         max_bytes: None,
     })?;
-    Ok(records)
+    Ok(event_records(records))
 }
 
 fn read_resource_compact_paged(
@@ -862,7 +873,7 @@ fn read_area_covering(
     let (records, _) = case
         .store
         .read_area(FAMILY, REALM, area, 0, limit as u64, None)?;
-    Ok(records)
+    Ok(event_records(records))
 }
 
 fn read_area_compact_paged(
@@ -918,7 +929,7 @@ fn read_realm_covering(case: &ReplayCase, limit: usize) -> Result<Vec<StreamReco
     let (records, _) = case
         .store
         .read_realm(FAMILY, REALM, 0, limit as u64, None)?;
-    Ok(records)
+    Ok(event_records(records))
 }
 
 fn read_realm_compressed_compact_paged(

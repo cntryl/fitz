@@ -645,6 +645,26 @@ fn skip_stream_wire_record(
     Ok(())
 }
 
+fn skip_stream_read_item(
+    decoder: &mut crate::protocol::payload_codec::PayloadDecoder<'_>,
+) -> Result<(), String> {
+    match decoder.get_u8()? {
+        0 => skip_stream_wire_record(decoder),
+        1 => {
+            decoder.get_u64()?;
+            decoder.get_u8()?;
+            Ok(())
+        }
+        2 => {
+            decoder.get_u64()?;
+            decoder.get_u64()?;
+            decoder.get_u8()?;
+            Ok(())
+        }
+        other => Err(format!("Unknown stream read item kind: {other}")),
+    }
+}
+
 pub fn count_stream_read_records_from_payload(payload: &[u8]) -> Result<usize, String> {
     use crate::protocol::payload_codec::PayloadDecoder;
 
@@ -653,7 +673,7 @@ pub fn count_stream_read_records_from_payload(payload: &[u8]) -> Result<usize, S
     let count = decoder.get_u32()? as usize;
 
     for _ in 0..count {
-        skip_stream_wire_record(&mut decoder)?;
+        skip_stream_read_item(&mut decoder)?;
     }
 
     decoder.get_u64()?;

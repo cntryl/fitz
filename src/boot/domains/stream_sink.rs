@@ -1193,7 +1193,19 @@ mod tests {
         let count = decoder.get_u32().expect("stream read record count") as usize;
         let mut records = Vec::with_capacity(count);
         for _ in 0..count {
-            records.push(decode_stream_wire_record(&mut decoder));
+            match decoder.get_u8().expect("stream read item kind") {
+                0 => records.push(decode_stream_wire_record(&mut decoder)),
+                1 => {
+                    decoder.get_u64().expect("stream filtered offset");
+                    decoder.get_u8().expect("stream filtered reason");
+                }
+                2 => {
+                    decoder.get_u64().expect("stream filtered range start");
+                    decoder.get_u64().expect("stream filtered range end");
+                    decoder.get_u8().expect("stream filtered reason");
+                }
+                kind => panic!("unexpected stream read item kind: {kind}"),
+            }
         }
 
         let last_resource_offset = decoder.get_u64().expect("stream cursor resource offset");
