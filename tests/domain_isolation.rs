@@ -1,3 +1,10 @@
+//! Static source-tree analysis tests.
+//!
+//! These tests read the source files on disk and verify that domain modules
+//! contain no cross-domain import references. They are NOT runtime tests —
+//! they do not start actors or send messages. A failure indicates a
+//! source-level architecture violation (Architectural Law 1).
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

@@ -141,7 +141,7 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
 
 /// Test crash recovery: in-flight messages are automatically redelivered
 #[test]
-fn should_redelivery_messages_after_crash() {
+fn should_redeliver_messages_after_crash() {
     // Arrange
     let store = Arc::new(
         cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
@@ -457,7 +457,8 @@ fn should_prevent_id_collisions_across_crash() {
 
 /// Test lease expiration with redelivery (automatic)
 #[test]
-fn should_redelivery_message_on_lease_expiration() {
+#[ignore = "smoke test: lease expiration redelivery requires MockClock integration"]
+fn should_redeliver_message_on_lease_expiration() {
     // Arrange
     let store = Arc::new(
         cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())

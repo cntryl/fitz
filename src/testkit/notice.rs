@@ -9,7 +9,7 @@ use crate::session::session::SessionId;
 /// Simple test mailbox sink that records delivered envelopes.
 #[derive(Clone)]
 pub struct TestSink {
-    delivered: Arc<Mutex<Vec<Envelope>>>,
+    delivered: Arc<Mutex<Vec<Arc<Envelope>>>>,
 }
 
 impl Default for TestSink {
@@ -28,11 +28,15 @@ impl TestSink {
     pub fn count(&self) -> usize {
         self.delivered.lock().len()
     }
+
+    pub fn delivered(&self) -> Vec<Arc<Envelope>> {
+        self.delivered.lock().clone()
+    }
 }
 
 impl MailboxSink for TestSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), crate::runtime::router::DeliveryError> {
-        self.delivered.lock().push(envelope);
+        self.delivered.lock().push(Arc::new(envelope));
         Ok(())
     }
 

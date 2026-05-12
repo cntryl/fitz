@@ -1,7 +1,11 @@
-//! Multi-domain end-to-end tests
+//! Multi-domain coexistence smoke tests.
 //!
-//! Tests that multiple independent domains can coexist on the same server runtime,
-//! remain isolated where expected, and support application-level composition.
+//! These tests verify that operations across two or more domains can execute
+//! on the same server instance without interference or crash. Each operation
+//! is asserted only to return status 0 (success).
+//!
+//! They do NOT verify payload persistence, retrieval, realm isolation semantics,
+//! or cross-domain ordering. For semantic verification, see the per-domain `*_e2e.rs` files.
 
 mod fixtures;
 use fitz::testkit::TestServer;

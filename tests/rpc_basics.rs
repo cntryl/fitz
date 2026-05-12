@@ -629,7 +629,15 @@ fn should_cleanup_state_after_request_completion() {
     assert_eq!(actor.pending_count(), 0);
 }
 
-// ===== Specification Validation Tests =====
+#[cfg(test)]
+mod protocol_spec {
+    //! Wire format and protocol constant validation.
+    //!
+    //! Structural checks; passing these does not mean the RPC runtime is correct.
+
+    use super::*;
+
+    // ===== Specification Validation Tests =====
 
 #[test]
 fn should_have_correlation_id_in_request() {
@@ -958,4 +966,6 @@ fn should_include_target_route_in_request() {
 
     // Assert
     assert_eq!(&request.route, &route);
+}
+
 }

@@ -8,13 +8,32 @@
 use bytes::Bytes;
 use fitz::auth::Permission;
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
+use fitz::domains::notice::session::SessionActor;
 use fitz::domains::notice::NoticeRouteActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
+use fitz::runtime::routing::RouteFamily;
 use fitz::session::permissions::SessionPermissions;
 use fitz::session::session::SessionId;
 use fitz::testkit::{addr, make_router, route, session_id, TestSink};
 use std::sync::Arc;
+
+fn assert_delivered_payloads(sink: &TestSink, expected_count: usize, expected_payload: &[u8]) {
+    let delivered = sink.delivered();
+    assert_eq!(delivered.len(), expected_count);
+
+    for envelope in delivered {
+        let message = envelope
+            .payload::<NotificationMessage>()
+            .expect("expected NotificationMessage payload");
+        match message {
+            NotificationMessage::Deliver(deliver) => {
+                assert_eq!(deliver.payload.as_ref(), expected_payload);
+            }
+            other => panic!("expected Deliver variant, got {other:?}"),
+        }
+    }
+}
 
 // ===== Tier 1: Authorization Tests =====
 
@@ -26,17 +45,14 @@ fn should_reject_unauthenticated_subscribe() {
     let subscriber = addr("notice://realm/area/sub");
     router.register(subscriber.clone(), sink.clone());
 
-    let mut notice = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut notice = NoticeRouteActor::new(RouteFamily::new(1));
     let mut ctx = Context::new(subscriber.clone(), Arc::new(router));
 
-    let session = fitz::domains::notice::session::SessionActor::new(
-        SessionId(42),
-        SessionPermissions::empty(),
-    );
+    let session = SessionActor::new(SessionId(42), SessionPermissions::empty());
 
     // Act
     let res = session.subscribe(
-        fitz::runtime::routing::RouteFamily::new(1),
+        RouteFamily::new(1),
         route("notice://realm/area/orders/*"),
         &mut notice,
         &mut ctx,
@@ -56,17 +72,16 @@ fn should_reject_unauthorized_publish() {
     let subscriber = addr("notice://prod/orders/recv");
     router.register(subscriber.clone(), sink.clone());
 
-    let mut notice = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut notice = NoticeRouteActor::new(RouteFamily::new(1));
     let mut ctx = Context::new(subscriber.clone(), Arc::new(router));
 
-    // Session has read permission only
     let perms = vec![Permission::parse("notice://prod/orders/**#read").unwrap()];
     let session_perms = SessionPermissions::from_permissions(perms);
-    let session = fitz::domains::notice::session::SessionActor::new(SessionId(43), session_perms);
+    let session = SessionActor::new(SessionId(43), session_perms);
 
     // Act
     let res = session.publish(
-        fitz::runtime::routing::RouteFamily::new(1),
+        RouteFamily::new(1),
         route("notice://prod/orders/create"),
         Bytes::from("payload"),
         &mut notice,
@@ -75,7 +90,6 @@ fn should_reject_unauthorized_publish() {
 
     // Assert
     assert!(res.is_err());
-    // Since publish is unauthorized, nothing should be delivered
     assert_eq!(sink.count(), 0);
 }
 
@@ -89,7 +103,7 @@ fn should_deliver_notification_to_exact_matching_subscription() {
     let subscriber = addr("notice://realm/area/users/recv");
     router.register(subscriber.clone(), sink.clone());
 
-    let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
     let ctx = Context::new(subscriber.clone(), Arc::new(router.clone()));
 
     let family = *ctx.address().family();
@@ -111,7 +125,7 @@ fn should_deliver_notification_to_exact_matching_subscription() {
     actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);
 
     // Assert
-    assert_eq!(sink.count(), 1);
+    assert_delivered_payloads(sink.as_ref(), 1, b"notification");
 }
 
 #[test]
@@ -122,7 +136,7 @@ fn should_not_deliver_notification_when_no_subscription_matches() {
     let subscriber = addr("notice://realm/area/users/recv");
     router.register(subscriber.clone(), sink.clone());
 
-    let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
     let ctx = Context::new(subscriber.clone(), Arc::new(router.clone()));
 
     let family = *ctx.address().family();
@@ -164,9 +178,8 @@ fn should_deliver_notification_to_all_matching_subscriptions() {
     let sub3 = addr("notice://realm/area/users/recv3");
     router.register(sub3.clone(), sink3.clone());
 
-    let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
 
-    // All three subscribe to a wildcard that matches the published route
     let family = *sub1.family();
     let mut ctx1 = Context::new(sub1.clone(), Arc::new(router.clone()));
     let subscribe1 = SubscribeMessage::new(
@@ -205,9 +218,9 @@ fn should_deliver_notification_to_all_matching_subscriptions() {
     actor.receive(NotificationMessage::Publish(pubmsg), &mut pubctx);
 
     // Assert
-    assert_eq!(sink1.count(), 1);
-    assert_eq!(sink2.count(), 1);
-    assert_eq!(sink3.count(), 1);
+    assert_delivered_payloads(sink1.as_ref(), 1, b"broadcast");
+    assert_delivered_payloads(sink2.as_ref(), 1, b"broadcast");
+    assert_delivered_payloads(sink3.as_ref(), 1, b"broadcast");
 }
 
 #[test]
@@ -218,11 +231,10 @@ fn should_not_duplicate_delivery_for_same_subscription() {
     let subscriber = addr("notice://realm/area/users/recv");
     router.register(subscriber.clone(), sink.clone());
 
-    let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
     let ctx = Context::new(subscriber.clone(), Arc::new(router.clone()));
 
     let family = *ctx.address().family();
-    // Subscribe twice with identical session, subscriber and pattern
     let subscribe = SubscribeMessage::new(
         family,
         route("notice://realm/area/users/*"),
@@ -242,7 +254,7 @@ fn should_not_duplicate_delivery_for_same_subscription() {
     actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);
 
     // Assert
-    assert_eq!(sink.count(), 1);
+    assert_delivered_payloads(sink.as_ref(), 1, b"single");
 }
 
 #[test]
@@ -257,7 +269,7 @@ fn should_deliver_notifications_to_overlapping_subscriptions() {
     let sub2 = addr("notice://realm/area/users/recv2");
     router.register(sub2.clone(), sink2.clone());
 
-    let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
 
     let family = *sub1.family();
     let mut ctx1 = Context::new(sub1.clone(), Arc::new(router.clone()));
@@ -288,8 +300,8 @@ fn should_deliver_notifications_to_overlapping_subscriptions() {
     actor.receive(NotificationMessage::Publish(pubmsg), &mut pubctx);
 
     // Assert
-    assert_eq!(sink1.count(), 1);
-    assert_eq!(sink2.count(), 1);
+    assert_delivered_payloads(sink1.as_ref(), 1, b"overlap");
+    assert_delivered_payloads(sink2.as_ref(), 1, b"overlap");
 }
 
 // ===== Tier 1: Fanout Math Tests =====
@@ -302,7 +314,7 @@ fn should_fan_out_one_notification_to_one_subscription() {
     let subscriber = addr("notice://realm/area/one/sink");
     router.register(subscriber.clone(), sink.clone());
 
-    let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
     let mut ctx = Context::new(subscriber.clone(), Arc::new(router.clone()));
 
     let family = *ctx.address().family();
@@ -323,14 +335,14 @@ fn should_fan_out_one_notification_to_one_subscription() {
     actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);
 
     // Assert
-    assert_eq!(sink.count(), 1);
+    assert_delivered_payloads(sink.as_ref(), 1, b"x");
 }
 
 #[test]
 fn should_fan_out_one_notification_to_many_subscriptions() {
     // Arrange
     let router = make_router();
-    let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
 
     let mut sinks = Vec::new();
     let family = *addr("notice://realm/area/one/0").family();
@@ -351,10 +363,7 @@ fn should_fan_out_one_notification_to_many_subscriptions() {
     }
 
     // Act
-    let mut pubctx = Context::new(
-        addr("notice://realm/area/one/publisher"),
-        Arc::new(router.clone()),
-    );
+    let mut pubctx = Context::new(addr("notice://realm/area/one/publisher"), Arc::new(router.clone()));
     let pubmsg = PublishMessage::new(
         family,
         route("notice://realm/area/one/sink3"),
@@ -364,7 +373,7 @@ fn should_fan_out_one_notification_to_many_subscriptions() {
 
     // Assert
     for s in sinks.iter() {
-        assert_eq!(s.count(), 1);
+        assert_delivered_payloads(s.as_ref(), 1, b"payload");
     }
 }
 
@@ -372,7 +381,7 @@ fn should_fan_out_one_notification_to_many_subscriptions() {
 fn should_fan_out_many_notifications_to_many_subscriptions() {
     // Arrange
     let router = make_router();
-    let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
 
     let mut sinks = Vec::new();
     let family = *addr("notice://realm/area/many/0").family();
@@ -393,10 +402,7 @@ fn should_fan_out_many_notifications_to_many_subscriptions() {
     }
 
     // Act
-    let mut pubctx = Context::new(
-        addr("notice://realm/area/many/pub"),
-        Arc::new(router.clone()),
-    );
+    let mut pubctx = Context::new(addr("notice://realm/area/many/pub"), Arc::new(router.clone()));
     for n in 0..4 {
         let pubmsg = PublishMessage::new(
             family,
@@ -408,7 +414,7 @@ fn should_fan_out_many_notifications_to_many_subscriptions() {
 
     // Assert
     for s in sinks.iter() {
-        assert_eq!(s.count(), 4);
+        assert_delivered_payloads(s.as_ref(), 4, b"p");
     }
 }
 
@@ -418,10 +424,9 @@ fn should_produce_zero_deliveries_when_no_subscriptions_exist() {
     let router = make_router();
     let sink = Arc::new(TestSink::new());
     let addr_val = addr("notice://realm/area/none/sink");
-    // register sink but do NOT subscribe
     router.register(addr_val.clone(), sink.clone());
 
-    let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
     let mut ctx = Context::new(addr_val.clone(), Arc::new(router.clone()));
 
     let family = *addr_val.family();
@@ -442,7 +447,7 @@ fn should_produce_zero_deliveries_when_no_subscriptions_exist() {
 fn should_produce_exactly_n_deliveries_for_n_matching_subscriptions() {
     // Arrange
     let router = make_router();
-    let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
 
     let n = 7usize;
     let mut sinks = Vec::new();
@@ -464,10 +469,7 @@ fn should_produce_exactly_n_deliveries_for_n_matching_subscriptions() {
     }
 
     // Act
-    let mut pubctx = Context::new(
-        addr("notice://realm/area/exact/p"),
-        Arc::new(router.clone()),
-    );
+    let mut pubctx = Context::new(addr("notice://realm/area/exact/p"), Arc::new(router.clone()));
     let pubmsg = PublishMessage::new(
         family,
         route("notice://realm/area/exact/s3"),
@@ -477,7 +479,7 @@ fn should_produce_exactly_n_deliveries_for_n_matching_subscriptions() {
 
     // Assert
     for s in sinks.iter() {
-        assert_eq!(s.count(), 1);
+        assert_delivered_payloads(s.as_ref(), 1, b"x");
     }
 }
 
@@ -489,35 +491,30 @@ fn should_deliver_single_notification_to_single_subscription() {
     // Arrange
     let router = make_router();
     let sink = Arc::new(TestSink::new());
-    // proper 4-part route: {scheme}://{realm}/{area}/{resource}/{operation}
     let subscriber = addr("notice://realm/area/users/recv");
     router.register(subscriber.clone(), sink.clone());
 
-    let mut actor = NoticeRouteActor::new(fitz::runtime::routing::RouteFamily::new(1));
+    let mut actor = NoticeRouteActor::new(RouteFamily::new(1));
     let ctx = Context::new(subscriber.clone(), Arc::new(router.clone()));
 
-    // Use public API (Subscribe message) to register
     let family = *ctx.address().family();
     let subscribe = SubscribeMessage::new(
         family,
-        fitz::testkit::notice::route("notice://realm/area/users/*"),
+        route("notice://realm/area/users/*"),
         session_id(1),
         subscriber.clone(),
     );
     let mut ctx = ctx;
     actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
 
-    // Sanity checks (small, public-facing): there should be at least one subscription tracked
-    // (We keep assertions minimal here; harness-level inspection is in unit tests)
-
     // Act
     let pubmsg = PublishMessage::new(
         family,
-        fitz::testkit::notice::route("notice://realm/area/users/recv"),
+        route("notice://realm/area/users/recv"),
         Bytes::from("hi"),
     );
     actor.receive(NotificationMessage::Publish(pubmsg), &mut ctx);
 
     // Assert
-    assert_eq!(sink.count(), 1);
+    assert_delivered_payloads(sink.as_ref(), 1, b"hi");
 }
