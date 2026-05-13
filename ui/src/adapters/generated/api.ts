@@ -1346,10 +1346,15 @@ export interface NoticeStats {
   delivery_drops_total: number;
   diagnostics: DiagnosticSnapshot;
   failure_total: number;
+  /** Peak number of subscribers attached to a single notice route in the current admin snapshot. */
+  max_route_subscribers: number;
   publishes_per_second: number;
   requests_total: number;
+  /** Count of active notice routes currently present in the admin snapshot. */
+  routes_active: number;
   subscriptions_active: number;
   success_total: number;
+  unsubscribes_total: number;
   wildcard_limit_rejects_total: number;
 }
 
@@ -1760,6 +1765,12 @@ export interface StreamResourceDetail {
 /** StreamStats schema */
 export interface StreamStats {
   append_conflicts_total: number;
+  /** Count of live append sessions currently tracked by the broker process. This is ephemeral and resets on disconnect cleanup or broker restart. */
+  append_sessions_active: number;
+  /** Total number of append sessions ended in this broker process, including commit, rollback, and disconnect cleanup. */
+  append_sessions_ended_total: number;
+  /** Total number of append sessions started in this broker process. */
+  append_sessions_started_total: number;
   diagnostics: DiagnosticSnapshot;
   events_total: number;
   failure_total: number;

@@ -180,6 +180,32 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    output.push_str("# HELP fitz_notice_routes_active Active notice routes\n");
+    output.push_str("# TYPE fitz_notice_routes_active gauge\n");
+    output.push_str(&format!(
+        "fitz_notice_routes_active {}\n",
+        runtime.notice_routes_active()
+    ));
+    output.push('\n');
+
+    output.push_str(
+        "# HELP fitz_notice_max_route_subscribers Peak subscribers on a single notice route\n",
+    );
+    output.push_str("# TYPE fitz_notice_max_route_subscribers gauge\n");
+    output.push_str(&format!(
+        "fitz_notice_max_route_subscribers {}\n",
+        runtime.notice_max_route_subscribers()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_notice_unsubscribes_total Total notice unsubscriptions processed by this broker process\n");
+    output.push_str("# TYPE fitz_notice_unsubscribes_total counter\n");
+    output.push_str(&format!(
+        "fitz_notice_unsubscribes_total {}\n",
+        runtime.notice_unsubscribes_total()
+    ));
+    output.push('\n');
+
     // Queue domain
     output.push_str("# HELP fitz_queue_messages_pending Pending queue messages\n");
     output.push_str("# TYPE fitz_queue_messages_pending gauge\n");
@@ -264,11 +290,41 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str(&format!("fitz_stream_active {}\n", runtime.stream_active()));
     output.push('\n');
 
+    output.push_str(
+        "# HELP fitz_stream_append_sessions_active Live append sessions currently tracked by the broker process\n",
+    );
+    output.push_str("# TYPE fitz_stream_append_sessions_active gauge\n");
+    output.push_str(&format!(
+        "fitz_stream_append_sessions_active {}\n",
+        runtime.stream_append_sessions_active()
+    ));
+    output.push('\n');
+
     output.push_str("# HELP fitz_stream_events_total Total committed stream events visible through the admin snapshot\n");
     output.push_str("# TYPE fitz_stream_events_total gauge\n");
     output.push_str(&format!(
         "fitz_stream_events_total {}\n",
         runtime.stream_events_total()
+    ));
+    output.push('\n');
+
+    output.push_str(
+        "# HELP fitz_stream_append_sessions_started_total Total stream append sessions started in this broker process\n",
+    );
+    output.push_str("# TYPE fitz_stream_append_sessions_started_total counter\n");
+    output.push_str(&format!(
+        "fitz_stream_append_sessions_started_total {}\n",
+        runtime.stream_append_sessions_started_total()
+    ));
+    output.push('\n');
+
+    output.push_str(
+        "# HELP fitz_stream_append_sessions_ended_total Total stream append sessions ended in this broker process\n",
+    );
+    output.push_str("# TYPE fitz_stream_append_sessions_ended_total counter\n");
+    output.push_str(&format!(
+        "fitz_stream_append_sessions_ended_total {}\n",
+        runtime.stream_append_sessions_ended_total()
     ));
     output.push('\n');
 

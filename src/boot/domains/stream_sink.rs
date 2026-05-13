@@ -188,10 +188,45 @@ impl StreamDomainSink {
     }
 
     fn refresh_metrics_gauges(&self) {
+        let stream_count = self.stream_count();
+        let subscription_count = self.subscription_count();
+        let append_session_count = self.append_session_count();
+
         if let Some(metrics) = &self.metrics {
-            metrics.set_stream_count(self.stream_count());
-            metrics.set_subscription_count(self.subscription_count());
+            metrics.set_stream_count(stream_count);
+            metrics.set_subscription_count(subscription_count);
+            metrics.set_append_session_count(append_session_count);
+        } else {
+            crate::boot::observability::gauge_set("fitz_stream_active_gauge", stream_count as u64);
+            crate::boot::observability::gauge_set(
+                "fitz_stream_subscriptions_gauge",
+                subscription_count as u64,
+            );
+            crate::boot::observability::gauge_set(
+                "fitz_stream_append_sessions_active",
+                append_session_count as u64,
+            );
         }
+    }
+
+    fn counter_inc(&self, name: &str) {
+        if let Some(metrics) = &self.metrics {
+            metrics.counter_inc(name);
+        } else {
+            crate::boot::observability::counter_inc(name);
+        }
+    }
+
+    fn counter_add(&self, name: &str, amount: u64) {
+        if let Some(metrics) = &self.metrics {
+            metrics.counter_add(name, amount);
+        } else {
+            crate::boot::observability::counter_add(name, amount);
+        }
+    }
+
+    pub fn append_session_count(&self) -> usize {
+        self.session_owners.lock().len()
     }
 
     fn stream_response_is_failure(
@@ -653,10 +688,12 @@ impl StreamDomainSink {
         }
 
         if !removed_sessions.is_empty() {
+            let removed_count = removed_sessions.len() as u64;
             let mut session_owners = self.session_owners.lock();
             for stream_session_id in removed_sessions {
                 session_owners.remove(&stream_session_id);
             }
+            self.counter_add("fitz_stream_append_sessions_ended_total", removed_count);
             self.mark_admin_snapshot_dirty();
         }
     }
@@ -851,6 +888,7 @@ impl MailboxSink for StreamDomainSink {
                         match outcome {
                             Ok(session_id) => {
                                 self.session_owners.lock().insert(session_id, key);
+                                self.counter_inc("fitz_stream_append_sessions_started_total");
                                 (
                                     StreamResponse::Ok {
                                         session_id: Some(session_id),
@@ -924,6 +962,7 @@ impl MailboxSink for StreamDomainSink {
                             match outcome {
                                 Ok(commit) => {
                                     self.session_owners.lock().remove(&session_id);
+                                    self.counter_inc("fitz_stream_append_sessions_ended_total");
                                     let payload = Self::encode_stream_commit_notify_payload(
                                         commit.first_resource_offset,
                                         commit.last_resource_offset,
@@ -963,6 +1002,7 @@ impl MailboxSink for StreamDomainSink {
                             match outcome {
                                 Ok(()) => {
                                     self.session_owners.lock().remove(&session_id);
+                                    self.counter_inc("fitz_stream_append_sessions_ended_total");
                                     (
                                         StreamResponse::Ok {
                                             session_id: None,

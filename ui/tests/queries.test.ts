@@ -267,9 +267,12 @@ describe("Data query layer", () => {
         diagnostics: healthyDiagnostics,
         failure_total: 6,
         publishes_per_second: 1.25,
+        routes_active: 2,
         requests_total: 7,
         success_total: 8,
         subscriptions_active: 9,
+        unsubscribes_total: 10,
+        max_route_subscribers: 5,
         wildcard_limit_rejects_total: 10,
       }),
     ).toEqual({
@@ -328,6 +331,9 @@ describe("Data query layer", () => {
     expect(
       mapStreamStats({
         diagnostics: healthyDiagnostics,
+        append_sessions_active: 0,
+        append_sessions_ended_total: 0,
+        append_sessions_started_total: 0,
         append_conflicts_total: 15,
         failure_total: 16,
         events_total: 11,
@@ -423,10 +429,13 @@ describe("Data query layer", () => {
               delivery_drops_total: 1,
               diagnostics: healthyDiagnostics,
               failure_total: 3,
+              max_route_subscribers: 2,
               publishes_per_second: 11.5,
+              routes_active: 2,
               requests_total: 2,
               success_total: 4,
               subscriptions_active: 12,
+              unsubscribes_total: 13,
               wildcard_limit_rejects_total: 5,
             },
             queue: {
@@ -479,6 +488,9 @@ describe("Data query layer", () => {
               subscriptions_active: 28,
             },
             stream: {
+              append_sessions_active: 0,
+              append_sessions_ended_total: 0,
+              append_sessions_started_total: 0,
               append_conflicts_total: 1,
               diagnostics: healthyDiagnostics,
               failure_total: 3,

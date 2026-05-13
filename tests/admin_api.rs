@@ -6,8 +6,8 @@ use argon2::{
 };
 use bytes::Bytes;
 use fitz::api::admin::{
-    KvTransaction, LeaseInfo, NoticeSubscription, QueueDeadLetter, QueueInfo, RpcPendingRequest,
-    RpcWorker,
+    KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueDeadLetter, QueueInfo,
+    RpcPendingRequest, RpcWorker,
 };
 use fitz::boot::domains::{
     DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
@@ -195,14 +195,46 @@ fn seed_snapshot_data(runtime: &Arc<Runtime>) {
         operations_count: 3,
         idle_seconds: 1,
     }]);
-    read_model.replace_notice_subscriptions(vec![NoticeSubscription {
-        subscription_id: 7,
-        session_id: "123".to_string(),
-        realm: "prod".to_string(),
-        pattern: "notice://prod/events/orders/created".to_string(),
-        created_at: "2026-03-14T12:00:00Z".to_string(),
-        notifications_received: 5,
-    }]);
+    read_model.replace_notice_subscriptions(vec![
+        NoticeSubscription {
+            subscription_id: 7,
+            session_id: "123".to_string(),
+            realm: "prod".to_string(),
+            pattern: "notice://prod/events/orders/created".to_string(),
+            created_at: "2026-03-14T12:00:00Z".to_string(),
+            notifications_received: 5,
+        },
+        NoticeSubscription {
+            subscription_id: 8,
+            session_id: "124".to_string(),
+            realm: "prod".to_string(),
+            pattern: "notice://prod/events/orders/created".to_string(),
+            created_at: "2026-03-14T12:00:05Z".to_string(),
+            notifications_received: 2,
+        },
+        NoticeSubscription {
+            subscription_id: 9,
+            session_id: "125".to_string(),
+            realm: "prod".to_string(),
+            pattern: "notice://prod/events/orders/updated".to_string(),
+            created_at: "2026-03-14T12:00:10Z".to_string(),
+            notifications_received: 1,
+        },
+    ]);
+    read_model.replace_notice_routes(vec![
+        NoticeRouteInfo {
+            route: "notice://prod/events/orders/created".to_string(),
+            subscribers: 2,
+            publishes_total: 0,
+            publishes_per_minute: 0.0,
+        },
+        NoticeRouteInfo {
+            route: "notice://prod/events/orders/updated".to_string(),
+            subscribers: 1,
+            publishes_total: 0,
+            publishes_per_minute: 0.0,
+        },
+    ]);
     read_model.replace_rpc_workers(vec![RpcWorker {
         session_id: "9001".to_string(),
         realm: "prod".to_string(),
@@ -1502,24 +1534,30 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
     let stream_requests_before = metrics.counter_get("fitz_stream_requests_total");
     let stream_success_before = metrics.counter_get("fitz_stream_success_total");
     let stream_failure_before = metrics.counter_get("fitz_stream_failure_total");
+    let stream_started_before = metrics.counter_get("fitz_stream_append_sessions_started_total");
+    let stream_ended_before = metrics.counter_get("fitz_stream_append_sessions_ended_total");
     let stream_conflicts_before = metrics.counter_get("fitz_stream_append_conflicts_total");
     let stream_notify_drops_before = metrics.counter_get("fitz_stream_notify_drops_total");
     let notice_requests_before = metrics.counter_get("fitz_notice_requests_total");
     let notice_success_before = metrics.counter_get("fitz_notice_success_total");
     let notice_failure_before = metrics.counter_get("fitz_notice_failure_total");
     let notice_drops_before = metrics.counter_get("fitz_notice_delivery_drops_total");
+    let notice_unsubscribes_before = metrics.counter_get("fitz_notice_unsubscribes_total");
     let notice_wildcard_before = metrics.counter_get("fitz_notice_wildcard_limit_rejects_total");
 
     metrics.counter_add("fitz_stream_requests_total", 4);
     metrics.counter_add("fitz_stream_success_total", 3);
     metrics.counter_add("fitz_stream_failure_total", 1);
     metrics.counter_add("fitz_stream_operations_total", 6);
+    metrics.counter_add("fitz_stream_append_sessions_started_total", 5);
+    metrics.counter_add("fitz_stream_append_sessions_ended_total", 3);
     metrics.counter_add("fitz_stream_append_conflicts_total", 2);
     metrics.counter_add("fitz_stream_notify_drops_total", 5);
     metrics.counter_add("fitz_notice_requests_total", 7);
     metrics.counter_add("fitz_notice_success_total", 5);
     metrics.counter_add("fitz_notice_failure_total", 2);
     metrics.counter_add("fitz_notice_delivery_drops_total", 3);
+    metrics.counter_add("fitz_notice_unsubscribes_total", 6);
     metrics.counter_add("fitz_notice_wildcard_limit_rejects_total", 4);
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
@@ -1550,10 +1588,19 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
     let stream_body = body::to_bytes(stream_response.into_body()).await.unwrap();
     let stream_payload: serde_json::Value = serde_json::from_slice(&stream_body).unwrap();
     assert_eq!(stream_payload["streams_active"], 0);
+    assert_eq!(stream_payload["append_sessions_active"], 0);
     assert_eq!(stream_payload["events_total"], 3);
     assert_eq!(stream_payload["requests_total"], stream_requests_before + 4);
     assert_eq!(stream_payload["success_total"], stream_success_before + 3);
     assert_eq!(stream_payload["failure_total"], stream_failure_before + 1);
+    assert_eq!(
+        stream_payload["append_sessions_started_total"],
+        stream_started_before + 5
+    );
+    assert_eq!(
+        stream_payload["append_sessions_ended_total"],
+        stream_ended_before + 3
+    );
     assert_eq!(
         stream_payload["append_conflicts_total"],
         stream_conflicts_before + 2
@@ -1572,7 +1619,9 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
     assert_eq!(notice_response.status(), StatusCode::OK);
     let notice_body = body::to_bytes(notice_response.into_body()).await.unwrap();
     let notice_payload: serde_json::Value = serde_json::from_slice(&notice_body).unwrap();
-    assert_eq!(notice_payload["subscriptions_active"], 0);
+    assert_eq!(notice_payload["subscriptions_active"], 3);
+    assert_eq!(notice_payload["routes_active"], 2);
+    assert_eq!(notice_payload["max_route_subscribers"], 2);
     assert_eq!(notice_payload["requests_total"], notice_requests_before + 7);
     assert_eq!(notice_payload["success_total"], notice_success_before + 5);
     assert_eq!(notice_payload["failure_total"], notice_failure_before + 2);
@@ -1581,8 +1630,17 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
         notice_drops_before + 3
     );
     assert_eq!(
+        notice_payload["unsubscribes_total"],
+        notice_unsubscribes_before + 6
+    );
+    assert_eq!(
         notice_payload["wildcard_limit_rejects_total"],
         notice_wildcard_before + 4
+    );
+    assert_eq!(notice_payload["diagnostics"]["current_stage"], "throughput");
+    assert_eq!(
+        notice_payload["diagnostics"]["likely_bottleneck"],
+        "route concentration"
     );
     assert!(
         notice_payload["publishes_per_second"]
@@ -1594,14 +1652,59 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
 
 #[tokio::test]
 #[serial]
+async fn should_export_notice_churn_and_concentration_metrics_given_recorded_notice_metrics() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_snapshot_data(&runtime);
+    let metrics = fitz::boot::observability::metrics();
+    let unsubscribes_before = metrics.counter_get("fitz_notice_unsubscribes_total");
+    metrics.counter_add("fitz_notice_unsubscribes_total", 5);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/metrics")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload = String::from_utf8(body.to_vec()).unwrap();
+    assert!(payload.contains("fitz_notice_subscriptions_active"));
+    assert!(payload.contains("fitz_notice_routes_active"));
+    assert!(payload.contains("fitz_notice_max_route_subscribers"));
+    assert!(payload.contains("fitz_notice_unsubscribes_total"));
+    assert!(payload.contains("fitz_notice_subscriptions_active 3"));
+    assert!(payload.contains(&format!(
+        "fitz_notice_unsubscribes_total {}",
+        unsubscribes_before + 5
+    )));
+    assert!(payload.contains("fitz_notice_routes_active 2"));
+    assert!(payload.contains("fitz_notice_max_route_subscribers 2"));
+}
+
+#[tokio::test]
+#[serial]
 async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics() {
     // Arrange
     let runtime = test_runtime();
     let metrics = fitz::boot::observability::metrics();
     let operations_before = metrics.counter_get("fitz_stream_operations_total");
+    let started_before = metrics.counter_get("fitz_stream_append_sessions_started_total");
+    let ended_before = metrics.counter_get("fitz_stream_append_sessions_ended_total");
     let conflicts_before = metrics.counter_get("fitz_stream_append_conflicts_total");
     let drops_before = metrics.counter_get("fitz_stream_notify_drops_total");
     metrics.counter_add("fitz_stream_operations_total", 3);
+    metrics.counter_add("fitz_stream_append_sessions_started_total", 2);
+    metrics.counter_add("fitz_stream_append_sessions_ended_total", 4);
     metrics.counter_add("fitz_stream_append_conflicts_total", 2);
     metrics.counter_add("fitz_stream_notify_drops_total", 1);
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -1624,11 +1727,22 @@ async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics()
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload = String::from_utf8(body.to_vec()).unwrap();
     assert!(payload.contains("fitz_stream_events_total"));
+    assert!(payload.contains("fitz_stream_append_sessions_active"));
+    assert!(payload.contains("fitz_stream_append_sessions_started_total"));
+    assert!(payload.contains("fitz_stream_append_sessions_ended_total"));
     assert!(payload.contains("fitz_stream_operations_per_second"));
     assert!(payload.contains("fitz_stream_subscriptions_active"));
     assert!(payload.contains(&format!(
         "fitz_stream_operations_total {}",
         operations_before + 3
+    )));
+    assert!(payload.contains(&format!(
+        "fitz_stream_append_sessions_started_total {}",
+        started_before + 2
+    )));
+    assert!(payload.contains(&format!(
+        "fitz_stream_append_sessions_ended_total {}",
+        ended_before + 4
     )));
     assert!(payload.contains(&format!(
         "fitz_stream_append_conflicts_total {}",

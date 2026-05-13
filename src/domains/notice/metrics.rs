@@ -41,6 +41,10 @@ impl NoticeMetrics {
         self.metrics.counter_inc(name);
     }
 
+    pub fn counter_add(&self, name: &str, amount: u64) {
+        self.metrics.counter_add(name, amount);
+    }
+
     pub fn set_subscription_count(&self, count: usize) {
         self.metrics
             .gauge_set(METRIC_SUBSCRIPTIONS_GAUGE, count as u64);

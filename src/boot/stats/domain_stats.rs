@@ -55,11 +55,20 @@ impl Runtime {
     }
 
     pub fn notice_subscriptions_active(&self) -> usize {
-        self.domains
-            .read()
-            .as_ref()
-            .map(|domains| domains.notice.subscription_count())
-            .unwrap_or_else(|| self.admin_read_model.notice_subscriptions(None, None).len())
+        self.admin_read_model.notice_subscriptions(None, None).len()
+    }
+
+    pub fn notice_routes_active(&self) -> usize {
+        self.admin_read_model.notice_routes(None).len()
+    }
+
+    pub fn notice_max_route_subscribers(&self) -> usize {
+        self.admin_read_model
+            .notice_routes(None)
+            .into_iter()
+            .map(|route| route.subscribers)
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn queue_messages_pending(&self) -> usize {
@@ -187,6 +196,20 @@ impl Runtime {
             .unwrap_or_else(|| self.admin_read_model.streams(None).len())
     }
 
+    pub fn stream_append_sessions_active(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.stream.append_session_count())
+            .unwrap_or_else(|| {
+                self.admin_read_model
+                    .streams(None)
+                    .into_iter()
+                    .map(|stream| stream.sessions_active)
+                    .sum()
+            })
+    }
+
     pub fn kv_operations_per_second(&self) -> f64 {
         0.0
     }
@@ -214,6 +237,14 @@ impl Runtime {
 
     pub fn stream_notify_drops_total(&self) -> u64 {
         metric_counter("fitz_stream_notify_drops_total")
+    }
+
+    pub fn stream_append_sessions_started_total(&self) -> u64 {
+        metric_counter("fitz_stream_append_sessions_started_total")
+    }
+
+    pub fn stream_append_sessions_ended_total(&self) -> u64 {
+        metric_counter("fitz_stream_append_sessions_ended_total")
     }
 
     pub fn stream_operations_per_second(&self) -> f64 {
@@ -258,6 +289,10 @@ impl Runtime {
 
     pub fn notice_delivery_drops_total(&self) -> u64 {
         metric_counter("fitz_notice_delivery_drops_total")
+    }
+
+    pub fn notice_unsubscribes_total(&self) -> u64 {
+        metric_counter("fitz_notice_unsubscribes_total")
     }
 
     pub fn notice_wildcard_limit_rejects_total(&self) -> u64 {

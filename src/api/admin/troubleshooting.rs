@@ -1129,6 +1129,12 @@ fn analyze_notice(
             .iter()
             .map(|route| route.subscribers)
             .sum::<usize>();
+        let routes_active = route_items.len();
+        let max_route_subscribers = route_items
+            .iter()
+            .map(|route| route.subscribers)
+            .max()
+            .unwrap_or(0);
         let publishes_per_minute = route_items
             .iter()
             .map(|route| route.publishes_per_minute)
@@ -1144,17 +1150,35 @@ fn analyze_notice(
         } else {
             DiagnosticTrend::Unknown
         };
+        let concentration = routes_active > 1
+            && max_route_subscribers > 0
+            && max_route_subscribers * 2 >= subscribers.max(1);
         let severity = if subscribers > 25 {
             DiagnosticSeverity::High
+        } else if concentration {
+            DiagnosticSeverity::Medium
         } else if subscribers > 0 {
             DiagnosticSeverity::Low
         } else {
             DiagnosticSeverity::Informational
         };
-        let confidence = if subscribers > 0 { 0.64 } else { 1.0 };
+        let confidence = if subscribers > 0 {
+            if concentration {
+                0.68
+            } else {
+                0.64
+            }
+        } else {
+            1.0
+        };
         let mut hints = vec![];
         if subscribers > 0 {
             hints.push(format!("{subscribers} subscriber(s) on route"));
+        }
+        if concentration {
+            hints.push(format!(
+                "route concentration: {max_route_subscribers} subscriber(s) on one route across {routes_active} route(s)"
+            ));
         }
         if publishes_per_minute > 0.0 {
             hints.push(format!("{publishes_per_minute:.1} publish(es)/min"));
@@ -1177,7 +1201,9 @@ fn analyze_notice(
             label,
             trend,
             severity,
-            if subscribers > 0 {
+            if concentration {
+                Some("route concentration".to_string())
+            } else if subscribers > 0 {
                 Some("subscription fanout".to_string())
             } else {
                 None
@@ -1199,7 +1225,9 @@ fn analyze_notice(
         );
 
         hotspots.push(ScoredHotspot {
-            score: subscribers as f64 * 2.0 + publishes_per_minute,
+            score: subscribers as f64 * 2.0
+                + publishes_per_minute
+                + if concentration { 1.0 } else { 0.0 },
             hotspot: DiagnosticHotspot {
                 domain: "notice".to_string(),
                 realm: Some(realm),
@@ -3397,6 +3425,63 @@ mod tests {
         assert_eq!(snapshot.current_stage, "stale_handoff");
         assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::StaleHandoff);
         assert_eq!(snapshot.severity, DiagnosticSeverity::High);
+    }
+
+    #[test]
+    fn should_classify_notice_route_concentration() {
+        let now = Utc::now();
+        let subscriptions = vec![
+            NoticeSubscription {
+                subscription_id: 1,
+                session_id: "sub-1".to_string(),
+                realm: "prod".to_string(),
+                pattern: "notice://prod/events/orders/created".to_string(),
+                created_at: (now - Duration::seconds(5)).to_rfc3339(),
+                notifications_received: 3,
+            },
+            NoticeSubscription {
+                subscription_id: 2,
+                session_id: "sub-2".to_string(),
+                realm: "prod".to_string(),
+                pattern: "notice://prod/events/orders/created".to_string(),
+                created_at: (now - Duration::seconds(3)).to_rfc3339(),
+                notifications_received: 1,
+            },
+            NoticeSubscription {
+                subscription_id: 3,
+                session_id: "sub-3".to_string(),
+                realm: "prod".to_string(),
+                pattern: "notice://prod/events/orders/updated".to_string(),
+                created_at: (now - Duration::seconds(2)).to_rfc3339(),
+                notifications_received: 0,
+            },
+        ];
+        let routes = vec![
+            NoticeRouteInfo {
+                route: "notice://prod/events/orders/created".to_string(),
+                subscribers: 2,
+                publishes_total: 0,
+                publishes_per_minute: 0.0,
+            },
+            NoticeRouteInfo {
+                route: "notice://prod/events/orders/updated".to_string(),
+                subscribers: 1,
+                publishes_total: 0,
+                publishes_per_minute: 0.0,
+            },
+        ];
+
+        let analysis = analyze_notice(&subscriptions, &routes, now);
+        assert_eq!(analysis.diagnostics.snapshot.current_stage, "throughput");
+        assert_eq!(
+            analysis.diagnostics.snapshot.likely_bottleneck.as_deref(),
+            Some("route concentration")
+        );
+        assert_eq!(
+            analysis.diagnostics.snapshot.severity,
+            DiagnosticSeverity::Medium
+        );
+        assert_eq!(analysis.hotspots.len(), 1);
     }
 
     #[test]

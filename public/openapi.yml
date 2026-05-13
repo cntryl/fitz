@@ -2895,10 +2895,13 @@ components:
       required:
         [
           streams_active,
+          append_sessions_active,
           events_total,
           requests_total,
           success_total,
           failure_total,
+          append_sessions_started_total,
+          append_sessions_ended_total,
           append_conflicts_total,
           notify_drops_total,
           operations_per_second,
@@ -2908,6 +2911,9 @@ components:
       properties:
         streams_active:
           type: integer
+        append_sessions_active:
+          type: integer
+          description: Count of live append sessions currently tracked by the broker process. This is ephemeral and resets on disconnect cleanup or broker restart.
         events_total:
           type: integer
         requests_total:
@@ -2919,6 +2925,14 @@ components:
         failure_total:
           type: integer
           format: int64
+        append_sessions_started_total:
+          type: integer
+          format: int64
+          description: Total number of append sessions started in this broker process.
+        append_sessions_ended_total:
+          type: integer
+          format: int64
+          description: Total number of append sessions ended in this broker process, including commit, rollback, and disconnect cleanup.
         append_conflicts_total:
           type: integer
           format: int64
@@ -2937,10 +2951,13 @@ components:
       required:
         [
           subscriptions_active,
+          routes_active,
+          max_route_subscribers,
           requests_total,
           success_total,
           failure_total,
           delivery_drops_total,
+          unsubscribes_total,
           wildcard_limit_rejects_total,
           publishes_per_second,
           diagnostics,
@@ -2948,6 +2965,12 @@ components:
       properties:
         subscriptions_active:
           type: integer
+        routes_active:
+          type: integer
+          description: Count of active notice routes currently present in the admin snapshot.
+        max_route_subscribers:
+          type: integer
+          description: Peak number of subscribers attached to a single notice route in the current admin snapshot.
         requests_total:
           type: integer
           format: int64
@@ -2958,6 +2981,9 @@ components:
           type: integer
           format: int64
         delivery_drops_total:
+          type: integer
+          format: int64
+        unsubscribes_total:
           type: integer
           format: int64
         wildcard_limit_rejects_total:

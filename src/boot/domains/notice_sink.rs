@@ -215,6 +215,14 @@ impl NoticeDomainSink {
         }
     }
 
+    fn counter_add(&self, name: &str, amount: u64) {
+        if let Some(metrics) = &self.metrics {
+            metrics.counter_add(name, amount);
+        } else {
+            crate::boot::observability::counter_add(name, amount);
+        }
+    }
+
     fn notice_response_is_failure(
         response: &crate::protocol::notice_codec::NoticeResponse,
     ) -> bool {
@@ -369,6 +377,7 @@ impl NoticeDomainSink {
         );
         drop(families);
         if removed > 0 {
+            self.counter_add("fitz_notice_unsubscribes_total", removed as u64);
             self.mark_admin_snapshot_dirty();
         }
         removed
@@ -597,6 +606,9 @@ impl MailboxSink for NoticeDomainSink {
                 } else {
                     false
                 };
+                if removed {
+                    self.counter_add("fitz_notice_unsubscribes_total", 1);
+                }
                 (Some(NoticeResponse::Ok), removed)
             }
             NotificationMessage::UnsubscribeAll(unsub_all) => {

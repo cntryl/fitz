@@ -54,10 +54,13 @@ pub struct KvStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamStats {
     pub streams_active: usize,
+    pub append_sessions_active: usize,
     pub events_total: usize,
     pub requests_total: u64,
     pub success_total: u64,
     pub failure_total: u64,
+    pub append_sessions_started_total: u64,
+    pub append_sessions_ended_total: u64,
     pub append_conflicts_total: u64,
     pub notify_drops_total: u64,
     pub operations_per_second: f64,
@@ -68,10 +71,13 @@ pub struct StreamStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoticeStats {
     pub subscriptions_active: usize,
+    pub routes_active: usize,
+    pub max_route_subscribers: usize,
     pub requests_total: u64,
     pub success_total: u64,
     pub failure_total: u64,
     pub delivery_drops_total: u64,
+    pub unsubscribes_total: u64,
     pub wildcard_limit_rejects_total: u64,
     pub publishes_per_second: f64,
     pub diagnostics: troubleshooting::DomainDiagnostics,
@@ -176,10 +182,13 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
             },
             stream: StreamStats {
                 streams_active: runtime.stream_active(),
+                append_sessions_active: runtime.stream_append_sessions_active(),
                 events_total: runtime.stream_events_total(),
                 requests_total: runtime.stream_requests_total(),
                 success_total: runtime.stream_success_total(),
                 failure_total: runtime.stream_failure_total(),
+                append_sessions_started_total: runtime.stream_append_sessions_started_total(),
+                append_sessions_ended_total: runtime.stream_append_sessions_ended_total(),
                 append_conflicts_total: runtime.stream_append_conflicts_total(),
                 notify_drops_total: runtime.stream_notify_drops_total(),
                 operations_per_second: runtime.stream_operations_per_second(),
@@ -188,10 +197,13 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
             },
             notice: NoticeStats {
                 subscriptions_active: runtime.notice_subscriptions_active(),
+                routes_active: runtime.notice_routes_active(),
+                max_route_subscribers: runtime.notice_max_route_subscribers(),
                 requests_total: runtime.notice_requests_total(),
                 success_total: runtime.notice_success_total(),
                 failure_total: runtime.notice_failure_total(),
                 delivery_drops_total: runtime.notice_delivery_drops_total(),
+                unsubscribes_total: runtime.notice_unsubscribes_total(),
                 wildcard_limit_rejects_total: runtime.notice_wildcard_limit_rejects_total(),
                 publishes_per_second: runtime.notice_publishes_per_second(),
                 diagnostics: notice,
@@ -314,10 +326,13 @@ async fn handle_stream_stats(
 ) -> Result<Response<Body>, Infallible> {
     crate::api::admin::json_response(StreamStats {
         streams_active: runtime.stream_active(),
+        append_sessions_active: runtime.stream_append_sessions_active(),
         events_total: runtime.stream_events_total(),
         requests_total: runtime.stream_requests_total(),
         success_total: runtime.stream_success_total(),
         failure_total: runtime.stream_failure_total(),
+        append_sessions_started_total: runtime.stream_append_sessions_started_total(),
+        append_sessions_ended_total: runtime.stream_append_sessions_ended_total(),
         append_conflicts_total: runtime.stream_append_conflicts_total(),
         notify_drops_total: runtime.stream_notify_drops_total(),
         operations_per_second: runtime.stream_operations_per_second(),
@@ -332,10 +347,13 @@ async fn handle_notice_stats(
 ) -> Result<Response<Body>, Infallible> {
     crate::api::admin::json_response(NoticeStats {
         subscriptions_active: runtime.notice_subscriptions_active(),
+        routes_active: runtime.notice_routes_active(),
+        max_route_subscribers: runtime.notice_max_route_subscribers(),
         requests_total: runtime.notice_requests_total(),
         success_total: runtime.notice_success_total(),
         failure_total: runtime.notice_failure_total(),
         delivery_drops_total: runtime.notice_delivery_drops_total(),
+        unsubscribes_total: runtime.notice_unsubscribes_total(),
         wildcard_limit_rejects_total: runtime.notice_wildcard_limit_rejects_total(),
         publishes_per_second: runtime.notice_publishes_per_second(),
         diagnostics,

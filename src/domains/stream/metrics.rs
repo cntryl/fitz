@@ -7,6 +7,7 @@ pub const METRIC_FAILURE_TOTAL: &str = "fitz_stream_failure_total";
 pub const METRIC_LATENCY_MS: &str = "fitz_stream_latency_ms";
 pub const METRIC_ACTIVE_GAUGE: &str = "fitz_stream_active_gauge";
 pub const METRIC_SUBSCRIPTIONS_GAUGE: &str = "fitz_stream_subscriptions_gauge";
+pub const METRIC_APPEND_SESSIONS_GAUGE: &str = "fitz_stream_append_sessions_active";
 
 #[derive(Clone)]
 pub struct StreamMetrics {
@@ -42,6 +43,10 @@ impl StreamMetrics {
         self.metrics.counter_inc(name);
     }
 
+    pub fn counter_add(&self, name: &str, amount: u64) {
+        self.metrics.counter_add(name, amount);
+    }
+
     pub fn set_stream_count(&self, count: usize) {
         self.metrics.gauge_set(METRIC_ACTIVE_GAUGE, count as u64);
     }
@@ -49,5 +54,10 @@ impl StreamMetrics {
     pub fn set_subscription_count(&self, count: usize) {
         self.metrics
             .gauge_set(METRIC_SUBSCRIPTIONS_GAUGE, count as u64);
+    }
+
+    pub fn set_append_session_count(&self, count: usize) {
+        self.metrics
+            .gauge_set(METRIC_APPEND_SESSIONS_GAUGE, count as u64);
     }
 }
