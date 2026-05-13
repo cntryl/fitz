@@ -102,6 +102,7 @@ Goal: define the exact diagnostic questions the product will answer.
 Deliverables:
 
 - a portal troubleshooting taxonomy
+- a canonical diagnosis label set used by `current_stage`
 - domain-by-domain question list
 - severity and priority definitions
 - the first set of explanation templates
@@ -121,7 +122,7 @@ Implementation tasks:
 2. Map each domain to the questions it can answer today versus after enhancements.
 3. Define severity levels for flow issues, contention, backlog growth, and stale state.
 4. Define the portal labels for ephemeral, durable, and mixed-state views.
-5. Write the explanation templates that the UI and MCP will reuse.
+5. Write the explanation templates that the UI and MCP will reuse, including the bounded next query and durability wording.
 
 ### Phase 2: Shared Troubleshooting Read Model
 

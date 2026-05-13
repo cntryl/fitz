@@ -989,6 +989,14 @@ impl ScheduleActor {
         self.pending_claimed_occurrences.len()
     }
 
+    pub(crate) fn oldest_pending_claim_age_seconds(&self, now_epoch_ms: u64) -> u64 {
+        self.pending_claimed_occurrences
+            .values()
+            .map(|claim| now_epoch_ms.saturating_sub(claim.claimed_at_ms) / 1_000)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Returns all acknowledged live-handoff timestamps after `cutoff_ms`.
     /// Used by the sink to seed its rolling-window acknowledgement counter on startup.
     pub(crate) fn last_fire_timestamps_since(&self, cutoff_ms: u64) -> Vec<u64> {
@@ -1407,6 +1415,35 @@ mod tests {
         assert_eq!(snapshot.len(), 1);
         assert_eq!(snapshot[0].executions_total, 1);
         assert!(snapshot[0].last_run.is_some());
+    }
+
+    #[test]
+    fn should_report_oldest_pending_claim_age_given_pending_fire() {
+        // Arrange
+        let clock = Arc::new(MockClock::new(epoch_ms(2026, 3, 31, 5, 59, 30)));
+        let mut actor = make_actor_with_clock(clock.clone());
+        let route = "schedule://acme/jobs/pending/run".to_string();
+
+        actor
+            .create_schedule_at(
+                route.clone(),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"payload"),
+                clock.now_instant(),
+            )
+            .expect("create schedule");
+        actor.bench_prepare_scan(1);
+
+        // Act
+        let claimed = actor.bench_claim_due_fires();
+        assert_eq!(claimed.len(), 1);
+        clock.advance(Duration::from_secs(45));
+
+        // Assert
+        assert_eq!(
+            actor.oldest_pending_claim_age_seconds(clock.now_epoch_ms()),
+            45
+        );
     }
 
     #[test]

@@ -1406,6 +1406,8 @@ pub async fn schedule_events_for_resource(
     crate::api::admin::json_response(troubleshooting::schedule_resource_timeline(
         &schedules,
         runtime.schedule_pending_fire_claims(),
+        runtime.schedule_pending_ack_retries(),
+        runtime.schedule_oldest_pending_claim_age_seconds(),
         runtime.schedule_notify_failures(),
         runtime.schedule_ack_failures(),
         runtime.schedule_overdue_normalizations(),
@@ -1591,6 +1593,7 @@ fn comparison_side(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_resource_comparison(
     domain: &str,
     left_path: &ResourcePath<'_>,

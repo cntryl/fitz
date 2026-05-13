@@ -1677,7 +1677,12 @@ export interface ScheduleStats {
   diagnostics: DiagnosticSnapshot;
   executions_per_minute: number;
   notify_failures_total: number;
+  /** Age in seconds of the oldest pending schedule fire claim in the current broker process. */
+  oldest_pending_claim_age_seconds: number;
   overdue_normalizations_total: number;
+  /** Count of pending schedule live handoffs currently waiting for durable acknowledgement retry. */
+  pending_ack_retries: number;
+  /** Count of durably claimed schedule occurrences that have not yet completed their live handoff acknowledgement. */
   pending_fire_claims: number;
   schedules_active: number;
   subscriptions_active: number;

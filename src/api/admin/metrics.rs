@@ -325,6 +325,22 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    output.push_str("# HELP fitz_schedule_pending_ack_retries Pending schedule live handoffs waiting on durable acknowledgement retry\n");
+    output.push_str("# TYPE fitz_schedule_pending_ack_retries gauge\n");
+    output.push_str(&format!(
+        "fitz_schedule_pending_ack_retries {}\n",
+        runtime.schedule_pending_ack_retries()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_schedule_oldest_pending_claim_age_seconds Oldest pending schedule fire claim age in seconds\n");
+    output.push_str("# TYPE fitz_schedule_oldest_pending_claim_age_seconds gauge\n");
+    output.push_str(&format!(
+        "fitz_schedule_oldest_pending_claim_age_seconds {}\n",
+        runtime.schedule_oldest_pending_claim_age_seconds()
+    ));
+    output.push('\n');
+
     output.push_str("# HELP fitz_schedule_notify_failures_total Total schedule live publish handoffs that failed to route\n");
     output.push_str("# TYPE fitz_schedule_notify_failures_total counter\n");
     output.push_str(&format!(
@@ -473,6 +489,18 @@ mod tests {
         assert!(metrics.contains("fitz_schedule_executions_per_minute 1"));
         assert!(metrics.contains("fitz_schedule_subscriptions_active 0"));
         assert!(metrics.contains("fitz_schedule_pending_fire_claims 1"));
+        assert!(metrics.contains("fitz_schedule_pending_ack_retries 0"));
+        let oldest_pending_claim_age_line = metrics
+            .lines()
+            .find(|line| line.starts_with("fitz_schedule_oldest_pending_claim_age_seconds "))
+            .expect("oldest pending claim age gauge");
+        let oldest_pending_claim_age_seconds: u64 = oldest_pending_claim_age_line
+            .split_whitespace()
+            .nth(1)
+            .expect("pending claim age value")
+            .parse()
+            .expect("valid pending claim age value");
+        assert!(oldest_pending_claim_age_seconds >= 30);
         assert!(metrics.contains("fitz_schedule_notify_failures_total 0"));
         assert!(metrics.contains("fitz_schedule_ack_failures_total 0"));
         assert!(metrics.contains("fitz_schedule_overdue_normalizations_total 0"));

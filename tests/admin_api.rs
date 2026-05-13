@@ -15,6 +15,7 @@ use fitz::boot::domains::{
 };
 use fitz::boot::Runtime;
 use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
+use fitz::domains::schedule::store::{ScheduleFireClaim, ScheduleInsert, ScheduleStore};
 use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::store::{CommitRecordsParams, EventPayload, StreamStore};
 use fitz::runtime::routing::RouteFamily;
@@ -23,6 +24,7 @@ use hyper::header::{COOKIE, SET_COOKIE};
 use hyper::{body, Body, Method, Request, StatusCode};
 use serial_test::serial;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn password_hash_for(password: &str) -> String {
     let salt = SaltString::generate(&mut OsRng);
@@ -88,6 +90,66 @@ fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::Engine>) {
 
     runtime.attach_domains(domains);
     (runtime, store)
+}
+
+fn schedule_runtime_with_domains() -> (
+    Arc<Runtime>,
+    Arc<cntryl_midge::Engine>,
+    Arc<ScheduleDomainSink>,
+) {
+    configure_admin_auth();
+    let router = Arc::new(Router::new());
+    let runtime = Arc::new(Runtime::new(router.clone()));
+    let admin_read_model = runtime.admin_read_model();
+    let store = fitz::testkit::create_test_engine_with_cfs(vec![1]);
+    let schedule = Arc::new(ScheduleDomainSink::new(
+        store.clone(),
+        router,
+        admin_read_model.clone(),
+    ));
+
+    let domains = Arc::new(DomainHandles {
+        kv: Arc::new(KvDomainSink::new(
+            store.clone(),
+            runtime.router(),
+            admin_read_model.clone(),
+        )),
+        queue: Arc::new(QueueDomainSink::new(
+            store.clone(),
+            runtime.router(),
+            admin_read_model.clone(),
+            cntryl_midge::WriteOptions::buffered(),
+            fitz::utils::idempotency::default_dedup_store(),
+        )),
+        notice: Arc::new(NoticeDomainSink::new(
+            runtime.router(),
+            admin_read_model.clone(),
+        )),
+        stream: Arc::new(StreamDomainSink::new(
+            store.clone(),
+            runtime.router(),
+            admin_read_model.clone(),
+        )),
+        rpc: Arc::new(RpcDomainSink::new(
+            runtime.router(),
+            admin_read_model.clone(),
+        )),
+        lease: Arc::new(LeaseDomainSink::new(
+            runtime.router(),
+            admin_read_model.clone(),
+        )),
+        schedule: schedule.clone(),
+    });
+
+    runtime.attach_domains(domains);
+    (runtime, store, schedule)
+}
+
+fn current_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn seed_dead_lettered_queue_message(store: Arc<cntryl_midge::Engine>) -> u64 {
@@ -222,6 +284,48 @@ fn seed_queue_compare_snapshot_data(runtime: &Arc<Runtime>) {
         attempts: 3,
         reason: "max_attempts_exceeded".to_string(),
     }]);
+}
+
+fn seed_pending_schedule_claim(store: Arc<cntryl_midge::Engine>) {
+    let schedule_store = ScheduleStore::new(store);
+    let route = "schedule://prod/jobs/billing/send";
+    let payload = Bytes::from_static(b"billing");
+    let now_ms = current_epoch_ms();
+    let claimed_fire_ms = now_ms.saturating_sub(30_000);
+    let next_fire_ms = now_ms.saturating_add(30_000);
+    let last_fire_ms = Some(now_ms.saturating_sub(1_000));
+
+    schedule_store
+        .insert(
+            1,
+            ScheduleInsert {
+                route,
+                cron: "* * * * *",
+                payload: &payload,
+                next_fire_ms: claimed_fire_ms,
+                previous_fire_ms: None,
+                last_fire_ms,
+                executions_total: 4,
+            },
+            cntryl_midge::WriteOptions::buffered(),
+        )
+        .expect("insert schedule");
+    schedule_store
+        .claim_due_batch(
+            1,
+            &[ScheduleFireClaim {
+                route,
+                cron: "* * * * *",
+                payload: &payload,
+                claimed_at_ms: claimed_fire_ms,
+                next_fire_ms,
+                previous_fire_ms: claimed_fire_ms,
+                last_fire_ms,
+                executions_total: 4,
+            }],
+            cntryl_midge::WriteOptions::buffered(),
+        )
+        .expect("claim schedule fire");
 }
 
 fn seed_stream_snapshot_data(store: Arc<cntryl_midge::Engine>) {
@@ -624,7 +728,7 @@ async fn should_return_lease_detail_with_age_and_diagnostics() {
     assert_eq!(payload["resource"], "cache");
     assert_eq!(payload["active_leases"], 1);
     assert!(payload["oldest_lease_age_seconds"].as_u64().unwrap_or(0) > 0);
-    assert_eq!(payload["diagnostics"]["current_stage"], "claimed");
+    assert_eq!(payload["diagnostics"]["current_stage"], "contention");
     assert_eq!(
         payload["diagnostics"]["likely_bottleneck"],
         "lease ownership"
@@ -632,6 +736,53 @@ async fn should_return_lease_detail_with_age_and_diagnostics() {
     assert_eq!(
         payload["diagnostics"]["age_seconds"],
         payload["oldest_lease_age_seconds"]
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_schedule_stats_with_pending_claim_age() {
+    // Arrange
+    let (runtime, store, schedule) = schedule_runtime_with_domains();
+    seed_pending_schedule_claim(store);
+    schedule
+        .preload_persisted_families()
+        .expect("preload schedules");
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/schedule/stats")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["schedules_active"], 1);
+    assert_eq!(payload["pending_fire_claims"], 1);
+    assert_eq!(payload["pending_ack_retries"], 0);
+    assert!(
+        payload["oldest_pending_claim_age_seconds"]
+            .as_u64()
+            .unwrap_or(0)
+            >= 30
+    );
+    assert_eq!(payload["diagnostics"]["current_stage"], "stale_handoff");
+    assert_eq!(
+        payload["diagnostics"]["likely_bottleneck"],
+        "durable handoff"
+    );
+    assert_eq!(
+        payload["diagnostics"]["age_seconds"],
+        payload["oldest_pending_claim_age_seconds"]
     );
 }
 
@@ -991,7 +1142,7 @@ async fn should_return_rpc_events_with_worker_registration_and_pending_transitio
     assert_eq!(payload["domain"], "rpc");
     assert_eq!(payload["derived"], true);
     assert_eq!(payload["limit"], 3);
-    assert_eq!(payload["diagnostics"]["current_stage"], "active");
+    assert_eq!(payload["diagnostics"]["current_stage"], "throughput");
     let events = payload["events"].as_array().unwrap();
     assert_eq!(events.len(), 3);
     assert!(events
@@ -1612,7 +1763,7 @@ async fn should_return_exact_rpc_operation_detail_counts() {
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["workers_registered"], 1);
     assert_eq!(payload["requests_pending"], 1);
-    assert_eq!(payload["diagnostics"]["current_stage"], "active");
+    assert_eq!(payload["diagnostics"]["current_stage"], "throughput");
 }
 
 #[tokio::test]

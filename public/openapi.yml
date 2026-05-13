@@ -3156,6 +3156,8 @@ components:
           executions_per_minute,
           subscriptions_active,
           pending_fire_claims,
+          pending_ack_retries,
+          oldest_pending_claim_age_seconds,
           notify_failures_total,
           ack_failures_total,
           overdue_normalizations_total,
@@ -3170,6 +3172,14 @@ components:
           type: integer
         pending_fire_claims:
           type: integer
+          description: Count of durably claimed schedule occurrences that have not yet completed their live handoff acknowledgement.
+        pending_ack_retries:
+          type: integer
+          description: Count of pending schedule live handoffs currently waiting for durable acknowledgement retry.
+        oldest_pending_claim_age_seconds:
+          type: integer
+          format: int64
+          description: Age in seconds of the oldest pending schedule fire claim in the current broker process.
         notify_failures_total:
           type: integer
         ack_failures_total:

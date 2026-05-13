@@ -13,6 +13,13 @@ const SCHEDULE_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
 const SCHEDULE_PENDING_CLAIM_TTL_MS: u64 = 24 * 60 * 60 * 1000;
 const SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS: u64 = 60_000;
 
+fn now_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 type PendingFireKey = (u64, String);
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
@@ -571,10 +578,7 @@ impl ScheduleDomainSink {
 
     /// Legacy metric name: counts acknowledged live handoffs over the last minute.
     pub fn executions_per_minute(&self) -> f64 {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let now_ms = now_epoch_ms();
         let cutoff = now_ms.saturating_sub(60_000);
         let mut deque = self.recent_acknowledgement_ms.lock();
         while deque.front().copied().is_some_and(|t| t < cutoff) {
@@ -589,6 +593,24 @@ impl ScheduleDomainSink {
 
     pub fn ack_failure_count(&self) -> u64 {
         self.ack_failures.load(Ordering::Relaxed)
+    }
+
+    pub fn pending_ack_retry_count(&self) -> usize {
+        let pending_ack_retries = self.pending_ack_retries.lock();
+        pending_ack_retries
+            .values()
+            .map(|tracked| tracked.len())
+            .sum()
+    }
+
+    pub fn oldest_pending_claim_age_seconds(&self) -> u64 {
+        let now_ms = now_epoch_ms();
+        let actors = self.actors.lock();
+        actors
+            .values()
+            .map(|actor| actor.oldest_pending_claim_age_seconds(now_ms))
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn overdue_normalization_count(&self) -> u64 {
@@ -1345,6 +1367,7 @@ mod tests {
             .try_recv()
             .expect("first schedule notify envelope");
         let pending_after_failed_ack = sink.pending_fire_count();
+        let pending_ack_retries = sink.pending_ack_retry_count();
         sink.scan_due_schedules();
 
         // Assert
@@ -1359,6 +1382,7 @@ mod tests {
         assert!(notify_decoder.is_complete());
         assert_eq!(sink.ack_failure_count(), 1);
         assert_eq!(pending_after_failed_ack, 1);
+        assert_eq!(pending_ack_retries, 1);
         assert_eq!(sink.pending_fire_count(), 0);
         assert!(
             subscriber_mailbox.receiver().try_recv().is_err(),

@@ -404,6 +404,22 @@ impl Runtime {
             .unwrap_or(0)
     }
 
+    pub fn schedule_pending_ack_retries(&self) -> usize {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.pending_ack_retry_count())
+            .unwrap_or(0)
+    }
+
+    pub fn schedule_oldest_pending_claim_age_seconds(&self) -> u64 {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.oldest_pending_claim_age_seconds())
+            .unwrap_or(0)
+    }
+
     pub fn schedule_notify_failures(&self) -> u64 {
         self.domains
             .read()

@@ -42,6 +42,105 @@ pub enum IncidentStatus {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosisLabel {
+    Healthy,
+    Throughput,
+    Contention,
+    BacklogGrowth,
+    StaleHandoff,
+    DeadLetterPressure,
+    WorkerStarvation,
+    DataLossRisk,
+}
+
+impl DiagnosisLabel {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Healthy => "healthy",
+            Self::Throughput => "throughput",
+            Self::Contention => "contention",
+            Self::BacklogGrowth => "backlog_growth",
+            Self::StaleHandoff => "stale_handoff",
+            Self::DeadLetterPressure => "dead_letter_pressure",
+            Self::WorkerStarvation => "worker_starvation",
+            Self::DataLossRisk => "data_loss_risk",
+        }
+    }
+
+    const fn display_name(self) -> &'static str {
+        match self {
+            Self::Healthy => "healthy",
+            Self::Throughput => "throughput",
+            Self::Contention => "contention",
+            Self::BacklogGrowth => "backlog growth",
+            Self::StaleHandoff => "stale handoff",
+            Self::DeadLetterPressure => "dead-letter pressure",
+            Self::WorkerStarvation => "worker starvation",
+            Self::DataLossRisk => "data-loss risk",
+        }
+    }
+
+    const fn explanation_hint(self) -> &'static str {
+        match self {
+            Self::Healthy => "No active pressure detected",
+            Self::Throughput => "Work is moving, but the surface is lagging demand",
+            Self::Contention => "Multiple actors are contending for the same resource",
+            Self::BacklogGrowth => "Backlog is growing faster than it drains",
+            Self::StaleHandoff => "A durable handoff is overdue",
+            Self::DeadLetterPressure => "Dead letters are accumulating",
+            Self::WorkerStarvation => "Work is waiting for workers or owners",
+            Self::DataLossRisk => "The control plane sees a durability gap",
+        }
+    }
+
+    const fn durability_hint(self) -> Option<&'static str> {
+        match self {
+            Self::Healthy => None,
+            Self::Throughput => Some("Mostly live activity with a durable backlog overlay"),
+            Self::Contention => {
+                Some("Usually live coordination state; durable state may still be intact")
+            }
+            Self::BacklogGrowth => Some("Durable backlog with live processing lag"),
+            Self::StaleHandoff => Some("Durable ownership or schedule state with live lateness"),
+            Self::DeadLetterPressure => Some("Durable failure state plus live retry pressure"),
+            Self::WorkerStarvation => Some("Mostly live capacity pressure"),
+            Self::DataLossRisk => Some("Potential durable-state loss; treat this as critical"),
+        }
+    }
+
+    fn from_stage(stage: &str) -> Option<Self> {
+        Some(match stage {
+            "healthy" => Self::Healthy,
+            "throughput" => Self::Throughput,
+            "contention" => Self::Contention,
+            "backlog_growth" => Self::BacklogGrowth,
+            "stale_handoff" => Self::StaleHandoff,
+            "dead_letter_pressure" => Self::DeadLetterPressure,
+            "worker_starvation" => Self::WorkerStarvation,
+            "data_loss_risk" => Self::DataLossRisk,
+            _ => return None,
+        })
+    }
+}
+
+fn canonical_explanation_hints(
+    label: DiagnosisLabel,
+    explanation_hints: Vec<String>,
+) -> Vec<String> {
+    let mut hints = Vec::with_capacity(2 + explanation_hints.len());
+    hints.push(label.explanation_hint().to_string());
+    if let Some(durability_hint) = label.durability_hint() {
+        hints.push(durability_hint.to_string());
+    }
+    for hint in explanation_hints {
+        if !hints.iter().any(|existing| existing == &hint) {
+            hints.push(hint);
+        }
+    }
+    hints
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiagnosticSnapshot {
     pub current_stage: String,
@@ -65,7 +164,7 @@ pub struct DiagnosticSnapshot {
 impl DiagnosticSnapshot {
     fn healthy() -> Self {
         Self {
-            current_stage: "healthy".to_string(),
+            current_stage: DiagnosisLabel::Healthy.as_str().to_string(),
             trend: DiagnosticTrend::Steady,
             severity: DiagnosticSeverity::Informational,
             likely_bottleneck: None,
@@ -78,14 +177,15 @@ impl DiagnosticSnapshot {
             contention_count: 0,
             waiter_count: 0,
             confidence: 1.0,
-            explanation_hints: vec!["No active pressure detected".to_string()],
+            explanation_hints: canonical_explanation_hints(DiagnosisLabel::Healthy, Vec::new()),
             delta_5m: None,
             delta_1h: None,
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn with_stage(
-        current_stage: impl Into<String>,
+        current_stage: DiagnosisLabel,
         trend: DiagnosticTrend,
         severity: DiagnosticSeverity,
         likely_bottleneck: Option<String>,
@@ -101,7 +201,7 @@ impl DiagnosticSnapshot {
         explanation_hints: Vec<String>,
     ) -> Self {
         Self {
-            current_stage: current_stage.into(),
+            current_stage: current_stage.as_str().to_string(),
             trend,
             severity,
             likely_bottleneck,
@@ -114,17 +214,21 @@ impl DiagnosticSnapshot {
             contention_count,
             waiter_count,
             confidence,
-            explanation_hints,
+            explanation_hints: canonical_explanation_hints(current_stage, explanation_hints),
             delta_5m: None,
             delta_1h: None,
         }
+    }
+
+    fn diagnosis_label(&self) -> DiagnosisLabel {
+        DiagnosisLabel::from_stage(&self.current_stage).unwrap_or(DiagnosisLabel::Healthy)
     }
 
     #[cfg(test)]
     fn is_healthy(&self) -> bool {
         matches!(self.severity, DiagnosticSeverity::Informational)
             && self.likely_bottleneck.is_none()
-            && self.current_stage == "healthy"
+            && self.diagnosis_label() == DiagnosisLabel::Healthy
     }
 }
 
@@ -176,6 +280,28 @@ impl DiagnosticHotspot {
             Some(format!("{}/{}/{}/{}", realm, area, resource, operation))
         } else {
             Some(format!("{}/{}/{}", realm, area, resource))
+        }
+    }
+
+    fn events_query(&self) -> Option<String> {
+        let realm = self.realm.as_ref()?;
+        let area = self.area.as_ref()?;
+        let resource = self.resource.as_ref()?;
+        if let Some(operation) = &self.operation {
+            Some(format!(
+                "inspect /api/v1/{}/realms/{}/areas/{}/resources/{}/operations/{}/events",
+                self.domain, realm, area, resource, operation
+            ))
+        } else if let Some(family) = self.family {
+            Some(format!(
+                "inspect /api/v1/{}/realms/{}/areas/{}/resources/{}/events?family={}",
+                self.domain, realm, area, resource, family
+            ))
+        } else {
+            Some(format!(
+                "inspect /api/v1/{}/realms/{}/areas/{}/resources/{}/events",
+                self.domain, realm, area, resource
+            ))
         }
     }
 }
@@ -256,6 +382,7 @@ pub struct ResourceTimeline {
 }
 
 impl ResourceTimelineEvent {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         domain: &str,
         kind: ResourceTimelineKind,
@@ -292,6 +419,7 @@ impl ResourceTimelineEvent {
 }
 
 impl ResourceTimeline {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         domain: &str,
         path: &ResourcePath<'_>,
@@ -582,7 +710,7 @@ impl DomainAnalysis {
         });
         let last_changed_at = hotspots
             .iter()
-            .filter_map(|candidate| candidate.last_changed_at.clone())
+            .filter_map(|candidate| candidate.last_changed_at)
             .max();
         let diagnostics = hotspots
             .first()
@@ -623,6 +751,8 @@ pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
     let schedule = analyze_schedule(
         &read_model.schedules(None),
         runtime.schedule_pending_fire_claims(),
+        runtime.schedule_pending_ack_retries(),
+        runtime.schedule_oldest_pending_claim_age_seconds(),
         runtime.schedule_notify_failures(),
         runtime.schedule_ack_failures(),
         runtime.schedule_overdue_normalizations(),
@@ -651,17 +781,17 @@ pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
         .map(|candidate| candidate.hotspot.clone());
     let last_significant_transition_at = all_hotspots
         .iter()
-        .filter_map(|candidate| candidate.last_changed_at.clone())
+        .filter_map(|candidate| candidate.last_changed_at)
         .max()
         .or_else(|| {
             [
-                kv.last_changed_at.clone(),
-                stream.last_changed_at.clone(),
-                notice.last_changed_at.clone(),
-                queue.last_changed_at.clone(),
-                rpc.last_changed_at.clone(),
-                lease.last_changed_at.clone(),
-                schedule.last_changed_at.clone(),
+                kv.last_changed_at,
+                stream.last_changed_at,
+                notice.last_changed_at,
+                queue.last_changed_at,
+                rpc.last_changed_at,
+                lease.last_changed_at,
+                schedule.last_changed_at,
             ]
             .into_iter()
             .flatten()
@@ -705,6 +835,7 @@ fn summarize_incident(top_bottleneck: &Option<DiagnosticHotspot>) -> IncidentSum
         };
     };
 
+    let label = top.snapshot.diagnosis_label();
     let status = match top.snapshot.severity {
         DiagnosticSeverity::High | DiagnosticSeverity::Critical => IncidentStatus::Stalled,
         DiagnosticSeverity::Medium | DiagnosticSeverity::Low => IncidentStatus::Degraded,
@@ -713,14 +844,11 @@ fn summarize_incident(top_bottleneck: &Option<DiagnosticHotspot>) -> IncidentSum
 
     let title = format!(
         "{} hotspot in {}",
-        top.domain,
+        label.display_name(),
         top.path().unwrap_or_else(|| "unknown scope".to_string())
     );
     let explanation = if top.snapshot.explanation_hints.is_empty() {
-        format!(
-            "The {} domain is the highest-pressure surface currently visible.",
-            top.domain
-        )
+        label.explanation_hint().to_string()
     } else {
         top.snapshot.explanation_hints.join("; ")
     };
@@ -732,7 +860,7 @@ fn summarize_incident(top_bottleneck: &Option<DiagnosticHotspot>) -> IncidentSum
         severity: top.snapshot.severity.clone(),
         confidence: top.snapshot.confidence,
         explanation,
-        recommended_next_query: top.path().map(|path| format!("inspect {path}")),
+        recommended_next_query: top.events_query(),
     }
 }
 
@@ -763,10 +891,10 @@ fn analyze_kv(transactions: &[KvTransaction], now: DateTime<Utc>) -> DomainAnaly
             .count() as u64;
         let failure_count = 0;
         let contention_count = waiter_count as u64;
-        let stage = if waiter_count > 0 {
-            "open_transactions"
+        let label = if waiter_count > 0 {
+            DiagnosisLabel::Contention
         } else {
-            "healthy"
+            DiagnosisLabel::Healthy
         };
         let trend = trend_from_pressure(waiter_count, age_seconds.unwrap_or(0));
         let confidence = if waiter_count > 0 { 0.78 } else { 1.0 };
@@ -784,7 +912,7 @@ fn analyze_kv(transactions: &[KvTransaction], now: DateTime<Utc>) -> DomainAnaly
         }
 
         let snapshot = DiagnosticSnapshot::with_stage(
-            stage,
+            label,
             trend,
             if waiter_count > 0 {
                 DiagnosticSeverity::Medium
@@ -804,8 +932,8 @@ fn analyze_kv(transactions: &[KvTransaction], now: DateTime<Utc>) -> DomainAnaly
             hints,
         );
 
-        if let Some(candidate_changed_at) = last_change.clone() {
-            let previous = last_changed_at.clone();
+        if let Some(candidate_changed_at) = last_change {
+            let previous = last_changed_at;
             last_changed_at = Some(match previous {
                 Some(current) => current.max(candidate_changed_at),
                 None => candidate_changed_at,
@@ -872,12 +1000,10 @@ fn analyze_stream(streams: &[StreamInfo], _now: DateTime<Utc>) -> DomainAnalysis
             .map(|stream| stream.offset.saturating_sub(stream.watermark))
             .max()
             .unwrap_or(0);
-        let stage = if backlog > 0 {
-            "lagging"
-        } else if workers > 0 {
-            "active"
+        let label = if backlog > 0 || workers > 0 {
+            DiagnosisLabel::Throughput
         } else {
-            "healthy"
+            DiagnosisLabel::Healthy
         };
         let trend = if backlog > 0 {
             DiagnosticTrend::Stalled
@@ -888,10 +1014,18 @@ fn analyze_stream(streams: &[StreamInfo], _now: DateTime<Utc>) -> DomainAnalysis
         };
         let severity = if backlog > 0 {
             DiagnosticSeverity::Medium
+        } else if workers > 0 {
+            DiagnosticSeverity::Low
         } else {
             DiagnosticSeverity::Informational
         };
-        let confidence = if backlog > 0 { 0.68 } else { 1.0 };
+        let confidence = if backlog > 0 {
+            0.68
+        } else if workers > 0 {
+            0.64
+        } else {
+            1.0
+        };
         let mut hints = vec![];
         if backlog > 0 {
             hints.push(format!("stream lag is {max_lag} event(s)"));
@@ -901,11 +1035,13 @@ fn analyze_stream(streams: &[StreamInfo], _now: DateTime<Utc>) -> DomainAnalysis
         }
 
         let snapshot = DiagnosticSnapshot::with_stage(
-            stage,
+            label,
             trend,
             severity,
             if backlog > 0 {
                 Some("append lag".to_string())
+            } else if workers > 0 {
+                Some("append throughput".to_string())
             } else {
                 None
             },
@@ -998,7 +1134,11 @@ fn analyze_notice(
             .map(|route| route.publishes_per_minute)
             .fold(0.0_f64, f64::max);
         let waiter_count = subscribers;
-        let stage = if subscribers > 0 { "fanout" } else { "healthy" };
+        let label = if subscribers > 0 {
+            DiagnosisLabel::Throughput
+        } else {
+            DiagnosisLabel::Healthy
+        };
         let trend = if subscribers > 0 {
             DiagnosticTrend::Steady
         } else {
@@ -1025,8 +1165,8 @@ fn analyze_notice(
             .filter_map(|subscription| parse_rfc3339(&subscription.created_at))
             .filter(|created_at| is_recent(*created_at, now))
             .max();
-        if let Some(candidate_changed_at) = last_change.clone() {
-            let previous = last_changed_at.clone();
+        if let Some(candidate_changed_at) = last_change {
+            let previous = last_changed_at;
             last_changed_at = Some(match previous {
                 Some(current) => current.max(candidate_changed_at),
                 None => candidate_changed_at,
@@ -1034,7 +1174,7 @@ fn analyze_notice(
         }
 
         let snapshot = DiagnosticSnapshot::with_stage(
-            stage,
+            label,
             trend,
             severity,
             if subscribers > 0 {
@@ -1180,32 +1320,56 @@ fn analyze_queue(
         } else {
             dead_letter_count as u64
         };
-        let trend = if dead_letter_count > 0 {
-            DiagnosticTrend::Stalled
+        let (label, trend, severity, bottleneck, confidence) = if dead_letter_count > 0 {
+            (
+                DiagnosisLabel::DeadLetterPressure,
+                DiagnosticTrend::Stalled,
+                DiagnosticSeverity::High,
+                Some("dead-letter pressure".to_string()),
+                0.88,
+            )
         } else if backlog > 0 && inflight_count == 0 {
-            DiagnosticTrend::Growing
-        } else if inflight_count > 0 {
-            DiagnosticTrend::Steady
-        } else {
-            DiagnosticTrend::Unknown
-        };
-        let severity = if dead_letter_count > 0 {
-            DiagnosticSeverity::High
-        } else if backlog > 0 && inflight_count == 0 {
-            DiagnosticSeverity::Medium
+            (
+                DiagnosisLabel::WorkerStarvation,
+                DiagnosticTrend::Growing,
+                DiagnosticSeverity::High,
+                Some("worker starvation".to_string()),
+                0.82,
+            )
+        } else if backlog > 0
+            && (queue.messages_delayed > 0 || queue.oldest_message_age_seconds >= 30)
+        {
+            (
+                DiagnosisLabel::BacklogGrowth,
+                DiagnosticTrend::Growing,
+                DiagnosticSeverity::Medium,
+                Some("backlog growth".to_string()),
+                0.76,
+            )
         } else if backlog > 0 {
-            DiagnosticSeverity::Low
+            (
+                DiagnosisLabel::Throughput,
+                DiagnosticTrend::Steady,
+                DiagnosticSeverity::Low,
+                Some("queue throughput".to_string()),
+                0.72,
+            )
+        } else if inflight_count > 0 {
+            (
+                DiagnosisLabel::Throughput,
+                DiagnosticTrend::Steady,
+                DiagnosticSeverity::Informational,
+                Some("queue throughput".to_string()),
+                0.68,
+            )
         } else {
-            DiagnosticSeverity::Informational
-        };
-        let bottleneck = if dead_letter_count > 0 {
-            Some("dead-letter pressure".to_string())
-        } else if backlog > 0 && inflight_count == 0 {
-            Some("worker starvation".to_string())
-        } else if queue.messages_delayed > 0 {
-            Some("delay backlog".to_string())
-        } else {
-            None
+            (
+                DiagnosisLabel::Healthy,
+                DiagnosticTrend::Steady,
+                DiagnosticSeverity::Informational,
+                None,
+                1.0,
+            )
         };
         let mut hints = vec![];
         if backlog > 0 {
@@ -1225,17 +1389,7 @@ fn analyze_queue(
         }
 
         let snapshot = DiagnosticSnapshot::with_stage(
-            if dead_letter_count > 0 {
-                "dead_letter_pressure"
-            } else if backlog > 0 && inflight_count == 0 {
-                "waiting_for_worker"
-            } else if queue.messages_delayed > 0 {
-                "delayed"
-            } else if inflight_count > 0 {
-                "inflight"
-            } else {
-                "healthy"
-            },
+            label,
             trend,
             severity,
             bottleneck.clone(),
@@ -1247,12 +1401,12 @@ fn analyze_queue(
             dead_letter_count as u64,
             contention_count,
             waiters,
-            if backlog > 0 { 0.82 } else { 1.0 },
+            confidence,
             hints,
         );
 
-        if let Some(candidate_changed_at) = last_changed.clone() {
-            let previous = last_changed_at.clone();
+        if let Some(candidate_changed_at) = last_changed {
+            let previous = last_changed_at;
             last_changed_at = Some(match previous {
                 Some(current) => current.max(candidate_changed_at),
                 None => candidate_changed_at,
@@ -1362,26 +1516,54 @@ fn analyze_rpc(
                 .filter(|ts| is_recent(*ts, now))
                 .count() as u64;
         let contention_count = pending_count.saturating_sub(worker_count) as u64;
-        let trend = if pending_count > worker_count && age_seconds.unwrap_or(0) >= 30 {
-            DiagnosticTrend::Stalled
+        let (label, trend, severity, bottleneck, confidence) = if worker_count == 0
+            && pending_count > 0
+        {
+            (
+                DiagnosisLabel::WorkerStarvation,
+                DiagnosticTrend::Growing,
+                DiagnosticSeverity::High,
+                Some("worker starvation".to_string()),
+                0.82,
+            )
+        } else if pending_count > worker_count
+            && (age_seconds.unwrap_or(0) >= 30 || pending_count >= worker_count.saturating_mul(2))
+        {
+            (
+                DiagnosisLabel::BacklogGrowth,
+                if age_seconds.unwrap_or(0) >= 60 {
+                    DiagnosticTrend::Stalled
+                } else {
+                    DiagnosticTrend::Growing
+                },
+                DiagnosticSeverity::High,
+                Some("route backlog".to_string()),
+                0.82,
+            )
+        } else if pending_count > worker_count {
+            (
+                DiagnosisLabel::Contention,
+                DiagnosticTrend::Growing,
+                DiagnosticSeverity::Medium,
+                Some("route contention".to_string()),
+                0.76,
+            )
         } else if pending_count > 0 {
-            DiagnosticTrend::Growing
+            (
+                DiagnosisLabel::Throughput,
+                DiagnosticTrend::Steady,
+                DiagnosticSeverity::Low,
+                Some("route throughput".to_string()),
+                0.70,
+            )
         } else {
-            DiagnosticTrend::Unknown
-        };
-        let severity = if pending_count > worker_count && age_seconds.unwrap_or(0) >= 30 {
-            DiagnosticSeverity::High
-        } else if pending_count > 0 {
-            DiagnosticSeverity::Medium
-        } else {
-            DiagnosticSeverity::Informational
-        };
-        let bottleneck = if worker_count == 0 && pending_count > 0 {
-            Some("worker starvation".to_string())
-        } else if contention_count > 0 {
-            Some("route contention".to_string())
-        } else {
-            None
+            (
+                DiagnosisLabel::Healthy,
+                DiagnosticTrend::Unknown,
+                DiagnosticSeverity::Informational,
+                None,
+                1.0,
+            )
         };
         let mut hints = vec![];
         if pending_count > 0 {
@@ -1395,15 +1577,7 @@ fn analyze_rpc(
         }
 
         let snapshot = DiagnosticSnapshot::with_stage(
-            if worker_count == 0 && pending_count > 0 {
-                "waiting_for_worker"
-            } else if contention_count > 0 {
-                "contention"
-            } else if pending_count > 0 {
-                "inflight"
-            } else {
-                "healthy"
-            },
+            label,
             trend,
             severity,
             bottleneck.clone(),
@@ -1415,12 +1589,12 @@ fn analyze_rpc(
             0,
             contention_count,
             pending_count,
-            if pending_count > 0 { 0.85 } else { 1.0 },
+            confidence,
             hints,
         );
 
-        if let Some(candidate_changed_at) = last_change.clone() {
-            let previous = last_changed_at.clone();
+        if let Some(candidate_changed_at) = last_change {
+            let previous = last_changed_at;
             last_changed_at = Some(match previous {
                 Some(current) => current.max(candidate_changed_at),
                 None => candidate_changed_at,
@@ -1489,25 +1663,40 @@ fn analyze_lease(leases: &[LeaseInfo], now: DateTime<Utc>) -> DomainAnalysis {
             .filter_map(|lease| parse_rfc3339(&lease.expires_at))
             .map(|expires| (expires - now).num_seconds().max(0) as u64)
             .min();
-        let trend = if remaining_seconds.unwrap_or(0) <= 30 && active_leases > 0 {
-            DiagnosticTrend::Stalled
-        } else if renewals > 0 {
-            DiagnosticTrend::Growing
-        } else {
-            DiagnosticTrend::Steady
-        };
-        let severity = if remaining_seconds.unwrap_or(0) <= 30 {
-            DiagnosticSeverity::Medium
-        } else if renewals > 0 {
-            DiagnosticSeverity::Low
-        } else {
-            DiagnosticSeverity::Informational
-        };
-        let bottleneck = if active_leases > 0 {
-            Some("lease ownership".to_string())
-        } else {
-            None
-        };
+        let (label, trend, severity, bottleneck, confidence) =
+            if remaining_seconds.unwrap_or(0) <= 30 && active_leases > 0 {
+                (
+                    DiagnosisLabel::StaleHandoff,
+                    DiagnosticTrend::Stalled,
+                    DiagnosticSeverity::High,
+                    Some("lease ownership".to_string()),
+                    0.88,
+                )
+            } else if active_leases > 0 {
+                (
+                    DiagnosisLabel::Contention,
+                    if renewals > 0 {
+                        DiagnosticTrend::Growing
+                    } else {
+                        DiagnosticTrend::Steady
+                    },
+                    if renewals > 0 {
+                        DiagnosticSeverity::Medium
+                    } else {
+                        DiagnosticSeverity::Low
+                    },
+                    Some("lease ownership".to_string()),
+                    0.72,
+                )
+            } else {
+                (
+                    DiagnosisLabel::Healthy,
+                    DiagnosticTrend::Steady,
+                    DiagnosticSeverity::Informational,
+                    None,
+                    1.0,
+                )
+            };
         let mut hints = vec![];
         if active_leases > 0 {
             hints.push(format!("{active_leases} active lease(s)"));
@@ -1520,13 +1709,7 @@ fn analyze_lease(leases: &[LeaseInfo], now: DateTime<Utc>) -> DomainAnalysis {
         }
 
         let snapshot = DiagnosticSnapshot::with_stage(
-            if remaining_seconds.unwrap_or(0) <= 30 && active_leases > 0 {
-                "expiring_soon"
-            } else if active_leases > 0 {
-                "claimed"
-            } else {
-                "healthy"
-            },
+            label,
             trend,
             severity,
             bottleneck.clone(),
@@ -1538,12 +1721,12 @@ fn analyze_lease(leases: &[LeaseInfo], now: DateTime<Utc>) -> DomainAnalysis {
             0,
             renewals as u64,
             active_leases,
-            if active_leases > 0 { 0.72 } else { 1.0 },
+            confidence,
             hints,
         );
 
-        if let Some(candidate_changed_at) = last_change.clone() {
-            let previous = last_changed_at.clone();
+        if let Some(candidate_changed_at) = last_change {
+            let previous = last_changed_at;
             last_changed_at = Some(match previous {
                 Some(current) => current.max(candidate_changed_at),
                 None => candidate_changed_at,
@@ -1581,9 +1764,12 @@ fn analyze_lease(leases: &[LeaseInfo], now: DateTime<Utc>) -> DomainAnalysis {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn analyze_schedule(
     schedules: &[ScheduleInfo],
     pending_fire_claims: usize,
+    pending_ack_retries: usize,
+    oldest_pending_claim_age_seconds: u64,
     notify_failures: u64,
     ack_failures: u64,
     overdue_normalizations: u64,
@@ -1624,37 +1810,53 @@ fn analyze_schedule(
                 }
             })
             .or_else(|| last_run.map(|run| (now - run).num_seconds().max(0) as u64));
+        let age_seconds = match (oldest_pending_claim_age_seconds, age_seconds) {
+            (0, age_seconds) => age_seconds,
+            (pending_age, _) => Some(pending_age),
+        };
         let recent_transition_count = items
             .iter()
             .filter_map(|schedule| schedule.last_run.as_deref().and_then(parse_rfc3339))
             .filter(|ts| is_recent(*ts, now))
             .count() as u64;
-        let contention_count =
-            pending_fire_claims.saturating_add(overdue_normalizations as usize) as u64;
+        let contention_count = pending_fire_claims
+            .saturating_add(pending_ack_retries)
+            .saturating_add(overdue_normalizations as usize) as u64;
         let failure_count = notify_failures + ack_failures;
-        let trend = if pending_fire_claims > 0 || overdue_normalizations > 0 {
-            DiagnosticTrend::Stalled
-        } else if enabled {
-            DiagnosticTrend::Steady
-        } else {
-            DiagnosticTrend::Unknown
-        };
-        let severity = if pending_fire_claims > 0 || overdue_normalizations > 0 {
-            DiagnosticSeverity::High
-        } else if failure_count > 0 {
-            DiagnosticSeverity::Medium
-        } else {
-            DiagnosticSeverity::Informational
-        };
-        let bottleneck = if pending_fire_claims > 0 || overdue_normalizations > 0 {
-            Some("durable handoff".to_string())
-        } else if failure_count > 0 {
-            Some("schedule failure".to_string())
-        } else if enabled {
-            Some("scheduled work".to_string())
-        } else {
-            None
-        };
+        let (label, trend, severity, bottleneck, confidence) =
+            if pending_fire_claims > 0 || pending_ack_retries > 0 || overdue_normalizations > 0 {
+                (
+                    DiagnosisLabel::StaleHandoff,
+                    DiagnosticTrend::Stalled,
+                    DiagnosticSeverity::High,
+                    Some("durable handoff".to_string()),
+                    0.88,
+                )
+            } else if failure_count > 0 {
+                (
+                    DiagnosisLabel::Throughput,
+                    DiagnosticTrend::Steady,
+                    DiagnosticSeverity::Medium,
+                    Some("schedule failure".to_string()),
+                    0.66,
+                )
+            } else if enabled {
+                (
+                    DiagnosisLabel::Healthy,
+                    DiagnosticTrend::Steady,
+                    DiagnosticSeverity::Informational,
+                    None,
+                    0.66,
+                )
+            } else {
+                (
+                    DiagnosisLabel::Healthy,
+                    DiagnosticTrend::Unknown,
+                    DiagnosticSeverity::Informational,
+                    None,
+                    1.0,
+                )
+            };
         let mut hints = vec![];
         if let Some(run) = last_run {
             hints.push(format!("last run at {}", rfc3339(run)));
@@ -1665,22 +1867,25 @@ fn analyze_schedule(
         if pending_fire_claims > 0 {
             hints.push(format!("{pending_fire_claims} pending fire claim(s)"));
         }
+        if pending_ack_retries > 0 {
+            hints.push(format!("{pending_ack_retries} pending ack retry(s)"));
+        }
+        if oldest_pending_claim_age_seconds > 0 {
+            hints.push(format!(
+                "oldest pending claim is {oldest_pending_claim_age_seconds}s old"
+            ));
+        }
         if overdue_normalizations > 0 {
             hints.push(format!("{overdue_normalizations} overdue normalization(s)"));
         }
 
+        let last_change = last_run.or(next_run);
         let snapshot = DiagnosticSnapshot::with_stage(
-            if pending_fire_claims > 0 || overdue_normalizations > 0 {
-                "stale_handoff"
-            } else if enabled {
-                "scheduled"
-            } else {
-                "disabled"
-            },
+            label,
             trend,
             severity,
             bottleneck.clone(),
-            last_run.clone().or(next_run.clone()),
+            last_change,
             last_run,
             None,
             age_seconds,
@@ -1688,16 +1893,12 @@ fn analyze_schedule(
             failure_count,
             contention_count,
             pending_fire_claims,
-            if pending_fire_claims > 0 || overdue_normalizations > 0 {
-                0.88
-            } else {
-                1.0
-            },
+            confidence,
             hints,
         );
 
-        if let Some(candidate_changed_at) = last_run.clone().or(next_run.clone()) {
-            let previous = last_changed_at.clone();
+        if let Some(candidate_changed_at) = last_change {
+            let previous = last_changed_at;
             last_changed_at = Some(match previous {
                 Some(current) => current.max(candidate_changed_at),
                 None => candidate_changed_at,
@@ -1706,6 +1907,7 @@ fn analyze_schedule(
 
         hotspots.push(ScoredHotspot {
             score: pending_fire_claims as f64 * 5.0
+                + pending_ack_retries as f64 * 3.5
                 + overdue_normalizations as f64 * 4.0
                 + failure_count as f64 * 1.25
                 + age_seconds.unwrap_or(0) as f64 / 20.0,
@@ -1716,7 +1918,7 @@ fn analyze_schedule(
                 resource: Some(resource),
                 operation: Some(operation),
                 family: None,
-                backlog: Some(pending_fire_claims),
+                backlog: Some(pending_fire_claims.saturating_add(pending_ack_retries)),
                 inflight: None,
                 ready: None,
                 delayed: None,
@@ -1727,7 +1929,7 @@ fn analyze_schedule(
                 worker_session: None,
                 snapshot,
             },
-            last_changed_at: last_run.clone().or(next_run.clone()),
+            last_changed_at: last_change,
         });
     }
 
@@ -1780,7 +1982,7 @@ pub(crate) fn kv_resource_diagnostics(transactions_active: usize) -> DiagnosticS
     }
 
     DiagnosticSnapshot::with_stage(
-        "open_transactions",
+        DiagnosisLabel::Contention,
         if transactions_active > 1 {
             DiagnosticTrend::Growing
         } else {
@@ -1813,9 +2015,9 @@ pub(crate) fn queue_resource_diagnostics(
     let has_backlog = backlog > 0;
     let has_inflight = messages_inflight > 0;
 
-    let (stage, trend, severity, bottleneck, confidence) = if has_dead_letters {
+    let (label, trend, severity, bottleneck, confidence) = if has_dead_letters {
         (
-            "dead_letter_pressure",
+            DiagnosisLabel::DeadLetterPressure,
             DiagnosticTrend::Stalled,
             DiagnosticSeverity::High,
             Some("dead-letter pressure".to_string()),
@@ -1823,35 +2025,35 @@ pub(crate) fn queue_resource_diagnostics(
         )
     } else if has_backlog && !has_inflight {
         (
-            "waiting_for_worker",
+            DiagnosisLabel::WorkerStarvation,
             if oldest_message_age_seconds >= 30 {
                 DiagnosticTrend::Growing
             } else {
                 DiagnosticTrend::Steady
             },
-            DiagnosticSeverity::Medium,
+            DiagnosticSeverity::High,
             Some("worker starvation".to_string()),
             0.82,
         )
-    } else if messages_delayed > 0 {
+    } else if has_backlog && oldest_message_age_seconds >= 30 {
         (
-            "delayed",
-            DiagnosticTrend::Steady,
-            DiagnosticSeverity::Low,
-            Some("delay backlog".to_string()),
-            0.72,
+            DiagnosisLabel::BacklogGrowth,
+            DiagnosticTrend::Growing,
+            DiagnosticSeverity::Medium,
+            Some("backlog growth".to_string()),
+            0.76,
         )
     } else if has_inflight {
         (
-            "inflight",
+            DiagnosisLabel::Throughput,
             DiagnosticTrend::Steady,
-            DiagnosticSeverity::Informational,
-            None,
+            DiagnosticSeverity::Low,
+            Some("queue throughput".to_string()),
             0.68,
         )
     } else {
         (
-            "healthy",
+            DiagnosisLabel::Healthy,
             DiagnosticTrend::Steady,
             DiagnosticSeverity::Informational,
             None,
@@ -1860,7 +2062,7 @@ pub(crate) fn queue_resource_diagnostics(
     };
 
     DiagnosticSnapshot::with_stage(
-        stage,
+        label,
         trend,
         severity,
         bottleneck,
@@ -1908,9 +2110,9 @@ pub(crate) fn stream_resource_diagnostics(
         return DiagnosticSnapshot::healthy();
     }
 
-    let (stage, trend, severity, bottleneck, confidence) = if lag > 0 {
+    let (label, trend, severity, bottleneck, confidence) = if lag > 0 {
         (
-            "lagging",
+            DiagnosisLabel::Throughput,
             DiagnosticTrend::Stalled,
             DiagnosticSeverity::Medium,
             Some("append lag".to_string()),
@@ -1918,16 +2120,16 @@ pub(crate) fn stream_resource_diagnostics(
         )
     } else {
         (
-            "active",
+            DiagnosisLabel::Throughput,
             DiagnosticTrend::Steady,
-            DiagnosticSeverity::Informational,
-            None,
+            DiagnosticSeverity::Low,
+            Some("append throughput".to_string()),
             0.64,
         )
     };
 
     DiagnosticSnapshot::with_stage(
-        stage,
+        label,
         trend,
         severity,
         bottleneck,
@@ -1962,7 +2164,7 @@ pub(crate) fn lease_resource_diagnostics(
     }
 
     DiagnosticSnapshot::with_stage(
-        "claimed",
+        DiagnosisLabel::Contention,
         DiagnosticTrend::Steady,
         if active_leases > 1 {
             DiagnosticSeverity::Medium
@@ -1989,18 +2191,14 @@ pub(crate) fn notice_resource_diagnostics(subscriptions_active: usize) -> Diagno
     }
 
     DiagnosticSnapshot::with_stage(
-        "fanout",
+        DiagnosisLabel::Throughput,
         DiagnosticTrend::Steady,
         if subscriptions_active > 25 {
             DiagnosticSeverity::High
         } else {
             DiagnosticSeverity::Low
         },
-        if subscriptions_active > 25 {
-            Some("subscription fanout".to_string())
-        } else {
-            None
-        },
+        Some("subscription fanout".to_string()),
         None,
         None,
         None,
@@ -2026,17 +2224,25 @@ pub(crate) fn rpc_operation_diagnostics(
         return DiagnosticSnapshot::healthy();
     }
 
-    let (stage, trend, severity, bottleneck, confidence) = if workers_registered == 0 {
+    let (label, trend, severity, bottleneck, confidence) = if workers_registered == 0 {
         (
-            "waiting_for_worker",
+            DiagnosisLabel::WorkerStarvation,
             DiagnosticTrend::Growing,
             DiagnosticSeverity::High,
             Some("worker starvation".to_string()),
             0.82,
         )
+    } else if requests_pending > workers_registered && requests_pending >= workers_registered * 2 {
+        (
+            DiagnosisLabel::BacklogGrowth,
+            DiagnosticTrend::Growing,
+            DiagnosticSeverity::Medium,
+            Some("route backlog".to_string()),
+            0.82,
+        )
     } else if requests_pending > workers_registered {
         (
-            "contention",
+            DiagnosisLabel::Contention,
             DiagnosticTrend::Growing,
             DiagnosticSeverity::Medium,
             Some("route contention".to_string()),
@@ -2044,16 +2250,16 @@ pub(crate) fn rpc_operation_diagnostics(
         )
     } else {
         (
-            "active",
+            DiagnosisLabel::Throughput,
             DiagnosticTrend::Steady,
             DiagnosticSeverity::Low,
-            None,
+            Some("route throughput".to_string()),
             0.70,
         )
     };
 
     DiagnosticSnapshot::with_stage(
-        stage,
+        label,
         trend,
         severity,
         bottleneck,
@@ -2099,25 +2305,33 @@ pub(crate) fn schedule_resource_diagnostics(
         return DiagnosticSnapshot::healthy();
     }
 
-    let (stage, trend, severity, bottleneck, confidence) = if is_overdue {
+    let (label, trend, severity, bottleneck, confidence) = if is_overdue {
         (
-            "stale_handoff",
+            DiagnosisLabel::StaleHandoff,
             DiagnosticTrend::Stalled,
             DiagnosticSeverity::High,
             Some("durable handoff".to_string()),
             0.88,
         )
+    } else if enabled && executions_total > 0 {
+        (
+            DiagnosisLabel::Throughput,
+            DiagnosticTrend::Steady,
+            DiagnosticSeverity::Medium,
+            Some("scheduled work".to_string()),
+            0.66,
+        )
     } else if enabled {
         (
-            "scheduled",
+            DiagnosisLabel::Healthy,
             DiagnosticTrend::Steady,
             DiagnosticSeverity::Informational,
-            Some("scheduled work".to_string()),
+            None,
             0.66,
         )
     } else {
         (
-            "disabled",
+            DiagnosisLabel::Healthy,
             DiagnosticTrend::Unknown,
             DiagnosticSeverity::Informational,
             None,
@@ -2140,7 +2354,7 @@ pub(crate) fn schedule_resource_diagnostics(
     }
 
     DiagnosticSnapshot::with_stage(
-        stage,
+        label,
         trend,
         severity,
         bottleneck,
@@ -2929,9 +3143,12 @@ pub(crate) fn rpc_resource_timeline(
     build_resource_timeline("rpc", path, None, diagnostics, limit, candidates)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn schedule_resource_timeline(
     schedules: &[ScheduleInfo],
     pending_fire_claims: usize,
+    pending_ack_retries: usize,
+    oldest_pending_claim_age_seconds: u64,
     notify_failures: u64,
     ack_failures: u64,
     overdue_normalizations: u64,
@@ -3016,7 +3233,7 @@ pub(crate) fn schedule_resource_timeline(
             .sum(),
     );
     let age_seconds = diagnostics.age_seconds;
-    let overdue = diagnostics.current_stage == "stale_handoff";
+    let overdue = diagnostics.diagnosis_label() == DiagnosisLabel::StaleHandoff;
     if enabled || overdue || pending_fire_claims > 0 || notify_failures > 0 || ack_failures > 0 {
         let mut summary = if overdue {
             match latest_next_run_at {
@@ -3062,6 +3279,15 @@ pub(crate) fn schedule_resource_timeline(
         let mut pressure_notes = Vec::new();
         if pending_fire_claims > 0 {
             pressure_notes.push(format!("{pending_fire_claims} pending fire claim(s)"));
+        }
+        if pending_ack_retries > 0 {
+            pressure_notes.push(format!("{pending_ack_retries} pending ack retry(s)"));
+        }
+        if oldest_pending_claim_age_seconds > 0 {
+            pressure_notes.push(format!(
+                "oldest pending claim {}s old",
+                oldest_pending_claim_age_seconds
+            ));
         }
         if notify_failures > 0 {
             pressure_notes.push(format!("{notify_failures} notify failure(s)"));
@@ -3116,5 +3342,124 @@ mod tests {
         let snapshot = DiagnosticSnapshot::healthy();
         assert!(snapshot.is_healthy());
         assert_eq!(snapshot.current_stage, "healthy");
+        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::Healthy);
+    }
+
+    #[test]
+    fn should_round_trip_canonical_diagnosis_labels() {
+        assert_eq!(
+            DiagnosisLabel::from_stage("data_loss_risk"),
+            Some(DiagnosisLabel::DataLossRisk)
+        );
+        assert_eq!(
+            DiagnosisLabel::from_stage("backlog_growth"),
+            Some(DiagnosisLabel::BacklogGrowth)
+        );
+    }
+
+    #[test]
+    fn should_classify_queue_backlog_growth() {
+        let snapshot = queue_resource_diagnostics(4, 2, 1, 0, 45);
+        assert_eq!(snapshot.current_stage, "backlog_growth");
+        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::BacklogGrowth);
+        assert_eq!(snapshot.severity, DiagnosticSeverity::Medium);
+        assert!(snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("Backlog is growing")));
+    }
+
+    #[test]
+    fn should_classify_rpc_worker_starvation() {
+        let snapshot = rpc_operation_diagnostics(0, 3);
+        assert_eq!(snapshot.current_stage, "worker_starvation");
+        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::WorkerStarvation);
+        assert_eq!(snapshot.severity, DiagnosticSeverity::High);
+    }
+
+    #[test]
+    fn should_classify_lease_contention() {
+        let snapshot = lease_resource_diagnostics(1, Some(120));
+        assert_eq!(snapshot.current_stage, "contention");
+        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::Contention);
+        assert_eq!(snapshot.severity, DiagnosticSeverity::Low);
+    }
+
+    #[test]
+    fn should_classify_schedule_stale_handoff() {
+        let now = Utc::now();
+        let snapshot = schedule_resource_diagnostics(
+            true,
+            Some(&(now - Duration::seconds(45)).to_rfc3339()),
+            Some(&(now - Duration::seconds(90)).to_rfc3339()),
+            4,
+        );
+        assert_eq!(snapshot.current_stage, "stale_handoff");
+        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::StaleHandoff);
+        assert_eq!(snapshot.severity, DiagnosticSeverity::High);
+    }
+
+    #[test]
+    fn should_rank_schedule_with_pending_ack_retry_pressure() {
+        let now = Utc::now();
+        let schedules = vec![ScheduleInfo {
+            realm: "prod".to_string(),
+            area: "jobs".to_string(),
+            resource: "billing".to_string(),
+            operation: "send".to_string(),
+            cron: "0 * * * *".to_string(),
+            next_run: (now - Duration::seconds(45)).to_rfc3339(),
+            last_run: Some((now - Duration::seconds(90)).to_rfc3339()),
+            executions_total: 7,
+            enabled: true,
+        }];
+
+        let analysis = analyze_schedule(&schedules, 2, 1, 45, 0, 1, 0, now);
+        let hotspot = analysis.hotspots.first().expect("schedule hotspot");
+
+        assert_eq!(hotspot.hotspot.snapshot.current_stage, "stale_handoff");
+        assert_eq!(
+            hotspot.hotspot.snapshot.diagnosis_label(),
+            DiagnosisLabel::StaleHandoff
+        );
+        assert_eq!(hotspot.hotspot.backlog, Some(3));
+        assert_eq!(hotspot.hotspot.snapshot.age_seconds, Some(45));
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("pending ack retry")));
+    }
+
+    #[test]
+    fn should_summarize_incident_with_canonical_label_and_next_query() {
+        let hotspot = DiagnosticHotspot {
+            domain: "queue".to_string(),
+            realm: Some("prod".to_string()),
+            area: Some("jobs".to_string()),
+            resource: Some("worker".to_string()),
+            operation: None,
+            family: Some(1),
+            backlog: Some(6),
+            inflight: Some(2),
+            ready: Some(4),
+            delayed: Some(2),
+            dead_letters: Some(0),
+            workers: None,
+            subscriptions: None,
+            owner_session: None,
+            worker_session: None,
+            snapshot: queue_resource_diagnostics(4, 2, 1, 0, 45),
+        };
+
+        let summary = summarize_incident(&Some(hotspot));
+        assert_eq!(summary.status, IncidentStatus::Degraded);
+        assert!(summary.title.contains("backlog growth"));
+        assert!(summary.explanation.contains("Backlog is growing"));
+        assert_eq!(
+            summary.recommended_next_query.as_deref(),
+            Some("inspect /api/v1/queue/realms/prod/areas/jobs/resources/worker/events?family=1")
+        );
     }
 }
