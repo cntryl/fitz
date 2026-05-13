@@ -2305,9 +2305,16 @@ export interface LeaseResourceDetail {
 
 /** LeaseStats schema */
 export interface LeaseStats {
+  acquire_timeouts_total: number;
   diagnostics: DiagnosticSnapshot;
+  failure_total: number;
+  forced_releases_total: number;
+  invalid_token_rejects_total: number;
   leases_active: number;
   operations_per_second: number;
+  requests_total: number;
+  success_total: number;
+  waiter_depth: number;
 }
 
 /** LoginRequest schema */
@@ -2604,10 +2611,20 @@ export interface RpcPendingRequest {
 
 /** RpcStats schema */
 export interface RpcStats {
+  acks_rejected_wrong_worker_total: number;
+  backpressure_rejects_total: number;
   diagnostics: DiagnosticSnapshot;
+  duplicate_correlation_rejects_total: number;
+  failure_total: number;
   operations_per_second: number;
+  request_timeouts_total: number;
   requests_pending: number;
+  requests_total: number;
+  responses_dropped_closed_caller_total: number;
+  responses_missing_pending_total: number;
+  success_total: number;
   workers_registered: number;
+  wrong_worker_rejects_total: number;
 }
 
 /** Live in-memory RPC worker registration for the current broker process. Workers must re-register after disconnect or broker restart. */

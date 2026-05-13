@@ -90,6 +90,16 @@ pub struct QueueStats {
 pub struct RpcStats {
     pub workers_registered: usize,
     pub requests_pending: usize,
+    pub requests_total: u64,
+    pub success_total: u64,
+    pub failure_total: u64,
+    pub request_timeouts_total: u64,
+    pub backpressure_rejects_total: u64,
+    pub duplicate_correlation_rejects_total: u64,
+    pub wrong_worker_rejects_total: u64,
+    pub responses_dropped_closed_caller_total: u64,
+    pub responses_missing_pending_total: u64,
+    pub acks_rejected_wrong_worker_total: u64,
     pub operations_per_second: f64,
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
@@ -97,6 +107,13 @@ pub struct RpcStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeaseStats {
     pub leases_active: usize,
+    pub waiter_depth: usize,
+    pub requests_total: u64,
+    pub success_total: u64,
+    pub failure_total: u64,
+    pub acquire_timeouts_total: u64,
+    pub forced_releases_total: u64,
+    pub invalid_token_rejects_total: u64,
     pub operations_per_second: f64,
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
@@ -172,11 +189,30 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
             rpc: RpcStats {
                 workers_registered: runtime.rpc_workers_registered(),
                 requests_pending: runtime.rpc_requests_pending(),
+                requests_total: runtime.rpc_requests_total(),
+                success_total: runtime.rpc_success_total(),
+                failure_total: runtime.rpc_failure_total(),
+                request_timeouts_total: runtime.rpc_request_timeouts_total(),
+                backpressure_rejects_total: runtime.rpc_backpressure_rejects_total(),
+                duplicate_correlation_rejects_total: runtime
+                    .rpc_duplicate_correlation_rejects_total(),
+                wrong_worker_rejects_total: runtime.rpc_wrong_worker_rejects_total(),
+                responses_dropped_closed_caller_total: runtime
+                    .rpc_responses_dropped_closed_caller_total(),
+                responses_missing_pending_total: runtime.rpc_responses_missing_pending_total(),
+                acks_rejected_wrong_worker_total: runtime.rpc_acks_rejected_wrong_worker_total(),
                 operations_per_second: runtime.rpc_operations_per_second(),
                 diagnostics: rpc,
             },
             lease: LeaseStats {
                 leases_active: runtime.lease_active(),
+                waiter_depth: runtime.lease_waiter_depth(),
+                requests_total: runtime.lease_requests_total(),
+                success_total: runtime.lease_success_total(),
+                failure_total: runtime.lease_failure_total(),
+                acquire_timeouts_total: runtime.lease_acquire_timeouts_total(),
+                forced_releases_total: runtime.lease_forced_releases_total(),
+                invalid_token_rejects_total: runtime.lease_invalid_token_rejects_total(),
                 operations_per_second: runtime.lease_operations_per_second(),
                 diagnostics: lease,
             },
@@ -290,6 +326,16 @@ async fn handle_rpc_stats(
     crate::api::admin::json_response(RpcStats {
         workers_registered: runtime.rpc_workers_registered(),
         requests_pending: runtime.rpc_requests_pending(),
+        requests_total: runtime.rpc_requests_total(),
+        success_total: runtime.rpc_success_total(),
+        failure_total: runtime.rpc_failure_total(),
+        request_timeouts_total: runtime.rpc_request_timeouts_total(),
+        backpressure_rejects_total: runtime.rpc_backpressure_rejects_total(),
+        duplicate_correlation_rejects_total: runtime.rpc_duplicate_correlation_rejects_total(),
+        wrong_worker_rejects_total: runtime.rpc_wrong_worker_rejects_total(),
+        responses_dropped_closed_caller_total: runtime.rpc_responses_dropped_closed_caller_total(),
+        responses_missing_pending_total: runtime.rpc_responses_missing_pending_total(),
+        acks_rejected_wrong_worker_total: runtime.rpc_acks_rejected_wrong_worker_total(),
         operations_per_second: runtime.rpc_operations_per_second(),
         diagnostics,
     })
@@ -301,6 +347,13 @@ async fn handle_lease_stats(
 ) -> Result<Response<Body>, Infallible> {
     crate::api::admin::json_response(LeaseStats {
         leases_active: runtime.lease_active(),
+        waiter_depth: runtime.lease_waiter_depth(),
+        requests_total: runtime.lease_requests_total(),
+        success_total: runtime.lease_success_total(),
+        failure_total: runtime.lease_failure_total(),
+        acquire_timeouts_total: runtime.lease_acquire_timeouts_total(),
+        forced_releases_total: runtime.lease_forced_releases_total(),
+        invalid_token_rejects_total: runtime.lease_invalid_token_rejects_total(),
         operations_per_second: runtime.lease_operations_per_second(),
         diagnostics,
     })

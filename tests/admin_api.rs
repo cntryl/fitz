@@ -6,7 +6,8 @@ use argon2::{
 };
 use bytes::Bytes;
 use fitz::api::admin::{
-    KvTransaction, NoticeSubscription, QueueDeadLetter, QueueInfo, RpcPendingRequest, RpcWorker,
+    KvTransaction, LeaseInfo, NoticeSubscription, QueueDeadLetter, QueueInfo, RpcPendingRequest,
+    RpcWorker,
 };
 use fitz::boot::domains::{
     DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
@@ -1047,6 +1048,166 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     let metrics_payload = String::from_utf8(metrics_body.to_vec()).unwrap();
     assert!(metrics_payload.contains("fitz_queue_complete_total"));
     assert!(metrics_payload.contains("fitz_queue_release_total"));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
+    // Arrange
+    let runtime = test_runtime();
+    let read_model = runtime.admin_read_model();
+    read_model.replace_rpc_workers(vec![RpcWorker {
+        session_id: "9001".to_string(),
+        realm: "prod".to_string(),
+        route: "rpc://prod/api/users/get".to_string(),
+        registered_at: "2026-03-14T12:00:00Z".to_string(),
+        requests_handled: 12,
+        average_latency_ms: 4.5,
+    }]);
+    read_model.replace_rpc_pending(vec![RpcPendingRequest {
+        correlation_id: "corr-abc-123".to_string(),
+        route: "rpc://prod/api/users/get".to_string(),
+        submitted_at: "2026-03-14T12:00:07Z".to_string(),
+        age_seconds: 7,
+        worker_session_id: Some("9001".to_string()),
+    }]);
+    read_model.replace_leases(vec![LeaseInfo {
+        realm: "prod".to_string(),
+        area: "locks".to_string(),
+        resource: "cache".to_string(),
+        owner_session_id: "session-1".to_string(),
+        acquired_at: "2026-03-14T12:00:00Z".to_string(),
+        expires_at: "2026-03-14T12:05:00Z".to_string(),
+        renewals: 2,
+        fencing_token: 17,
+    }]);
+
+    let metrics = fitz::boot::observability::metrics();
+    let rpc_requests_before = metrics.counter_get("fitz_rpc_requests_total");
+    let rpc_success_before = metrics.counter_get("fitz_rpc_success_total");
+    let rpc_failure_before = metrics.counter_get("fitz_rpc_failure_total");
+    let rpc_timeouts_before = metrics.counter_get("rpc_request_timeouts_total");
+    let rpc_backpressure_before = metrics.counter_get("rpc_backpressure_rejects_total");
+    let rpc_duplicate_before =
+        metrics.counter_get("rpc_requests_rejected_duplicate_correlation_total");
+    let rpc_wrong_worker_before = metrics.counter_get("rpc_responses_rejected_wrong_worker_total");
+    let rpc_closed_caller_before = metrics.counter_get("rpc_responses_dropped_closed_caller_total");
+    let rpc_missing_pending_before = metrics.counter_get("rpc_responses_missing_pending_total");
+    let rpc_ack_wrong_worker_before = metrics.counter_get("rpc_acks_rejected_wrong_worker_total");
+    let lease_requests_before = metrics.counter_get("fitz_lease_requests_total");
+    let lease_success_before = metrics.counter_get("fitz_lease_success_total");
+    let lease_failure_before = metrics.counter_get("fitz_lease_failure_total");
+    let lease_timeouts_before = metrics.counter_get("fitz_lease_acquire_timeouts_total");
+    let lease_forced_before = metrics.counter_get("fitz_lease_forced_releases_total");
+    let lease_invalid_before = metrics.counter_get("fitz_lease_invalid_token_rejects_total");
+
+    metrics.counter_add("fitz_rpc_requests_total", 8);
+    metrics.counter_add("fitz_rpc_success_total", 5);
+    metrics.counter_add("fitz_rpc_failure_total", 3);
+    metrics.counter_add("rpc_request_timeouts_total", 2);
+    metrics.counter_add("rpc_backpressure_rejects_total", 4);
+    metrics.counter_add("rpc_requests_rejected_duplicate_correlation_total", 6);
+    metrics.counter_add("rpc_responses_rejected_wrong_worker_total", 7);
+    metrics.counter_add("rpc_responses_dropped_closed_caller_total", 9);
+    metrics.counter_add("rpc_responses_missing_pending_total", 11);
+    metrics.counter_add("rpc_acks_rejected_wrong_worker_total", 13);
+    metrics.counter_add("fitz_lease_requests_total", 4);
+    metrics.counter_add("fitz_lease_success_total", 2);
+    metrics.counter_add("fitz_lease_failure_total", 1);
+    metrics.counter_add("fitz_lease_acquire_timeouts_total", 3);
+    metrics.counter_add("fitz_lease_forced_releases_total", 5);
+    metrics.counter_add("fitz_lease_invalid_token_rejects_total", 7);
+    metrics.gauge_set("fitz_lease_waiters_gauge", 4);
+    metrics.gauge_set("fitz_lease_waiter_depth", 4);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let rpc_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/rpc/stats")
+        .header(COOKIE, cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let lease_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/lease/stats")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let rpc_response = fitz::api::admin::handlers::handle_request(rpc_req, runtime.clone())
+        .await
+        .unwrap();
+    let lease_response = fitz::api::admin::handlers::handle_request(lease_req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(rpc_response.status(), StatusCode::OK);
+    let rpc_body = body::to_bytes(rpc_response.into_body()).await.unwrap();
+    let rpc_payload: serde_json::Value = serde_json::from_slice(&rpc_body).unwrap();
+    assert_eq!(rpc_payload["workers_registered"], 1);
+    assert_eq!(rpc_payload["requests_pending"], 1);
+    assert_eq!(rpc_payload["requests_total"], rpc_requests_before + 8);
+    assert_eq!(rpc_payload["success_total"], rpc_success_before + 5);
+    assert_eq!(rpc_payload["failure_total"], rpc_failure_before + 3);
+    assert_eq!(
+        rpc_payload["request_timeouts_total"],
+        rpc_timeouts_before + 2
+    );
+    assert_eq!(
+        rpc_payload["backpressure_rejects_total"],
+        rpc_backpressure_before + 4
+    );
+    assert_eq!(
+        rpc_payload["duplicate_correlation_rejects_total"],
+        rpc_duplicate_before + 6
+    );
+    assert_eq!(
+        rpc_payload["wrong_worker_rejects_total"],
+        rpc_wrong_worker_before + 7
+    );
+    assert_eq!(
+        rpc_payload["responses_dropped_closed_caller_total"],
+        rpc_closed_caller_before + 9
+    );
+    assert_eq!(
+        rpc_payload["responses_missing_pending_total"],
+        rpc_missing_pending_before + 11
+    );
+    assert_eq!(
+        rpc_payload["acks_rejected_wrong_worker_total"],
+        rpc_ack_wrong_worker_before + 13
+    );
+    assert!(rpc_payload["operations_per_second"].as_f64().unwrap_or(0.0) > 0.0);
+
+    assert_eq!(lease_response.status(), StatusCode::OK);
+    let lease_body = body::to_bytes(lease_response.into_body()).await.unwrap();
+    let lease_payload: serde_json::Value = serde_json::from_slice(&lease_body).unwrap();
+    assert_eq!(lease_payload["leases_active"], 1);
+    assert_eq!(lease_payload["waiter_depth"], 4);
+    assert_eq!(lease_payload["requests_total"], lease_requests_before + 4);
+    assert_eq!(lease_payload["success_total"], lease_success_before + 2);
+    assert_eq!(lease_payload["failure_total"], lease_failure_before + 1);
+    assert_eq!(
+        lease_payload["acquire_timeouts_total"],
+        lease_timeouts_before + 3
+    );
+    assert_eq!(
+        lease_payload["forced_releases_total"],
+        lease_forced_before + 5
+    );
+    assert_eq!(
+        lease_payload["invalid_token_rejects_total"],
+        lease_invalid_before + 7
+    );
+    assert!(
+        lease_payload["operations_per_second"]
+            .as_f64()
+            .unwrap_or(0.0)
+            > 0.0
+    );
 }
 
 #[tokio::test]

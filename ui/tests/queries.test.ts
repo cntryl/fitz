@@ -242,9 +242,16 @@ describe("Data query layer", () => {
 
     expect(
       mapLeaseStats({
+        acquire_timeouts_total: 4,
         diagnostics: healthyDiagnostics,
+        failure_total: 6,
+        forced_releases_total: 5,
         leases_active: 3,
+        invalid_token_rejects_total: 7,
         operations_per_second: 2.5,
+        requests_total: 8,
+        success_total: 9,
+        waiter_depth: 10,
       }),
     ).toEqual({
       leasesActive: 3,
@@ -264,9 +271,19 @@ describe("Data query layer", () => {
 
     expect(
       mapRpcStats({
+        acks_rejected_wrong_worker_total: 14,
+        backpressure_rejects_total: 8,
+        duplicate_correlation_rejects_total: 9,
         diagnostics: healthyDiagnostics,
+        failure_total: 6,
         operations_per_second: 5.5,
+        request_timeouts_total: 7,
         requests_pending: 6,
+        requests_total: 10,
+        responses_dropped_closed_caller_total: 11,
+        responses_missing_pending_total: 12,
+        success_total: 13,
+        wrong_worker_rejects_total: 15,
         workers_registered: 7,
       }),
     ).toEqual({
@@ -373,9 +390,16 @@ describe("Data query layer", () => {
               transactions_active: 8,
             },
             lease: {
+              acquire_timeouts_total: 1,
               diagnostics: healthyDiagnostics,
+              failure_total: 3,
+              forced_releases_total: 2,
               leases_active: 9,
+              invalid_token_rejects_total: 4,
               operations_per_second: 10.5,
+              requests_total: 5,
+              success_total: 6,
+              waiter_depth: 7,
             },
             notice: {
               diagnostics: healthyDiagnostics,
@@ -400,9 +424,19 @@ describe("Data query layer", () => {
               success_total: 40,
             },
             rpc: {
+              acks_rejected_wrong_worker_total: 7,
+              backpressure_rejects_total: 8,
+              duplicate_correlation_rejects_total: 9,
               diagnostics: healthyDiagnostics,
+              failure_total: 10,
               operations_per_second: 19.5,
+              request_timeouts_total: 11,
               requests_pending: 20,
+              requests_total: 12,
+              responses_dropped_closed_caller_total: 13,
+              responses_missing_pending_total: 14,
+              success_total: 15,
+              wrong_worker_rejects_total: 16,
               workers_registered: 21,
             },
             schedule: {
@@ -442,8 +476,15 @@ describe("Data query layer", () => {
           transactionsActive: 8,
         },
         lease: {
+          acquireTimeoutsTotal: 1,
+          failureTotal: 3,
+          forcedReleasesTotal: 2,
           leasesActive: 9,
+          invalidTokenRejectsTotal: 4,
           operationsPerSecond: 10.5,
+          requestsTotal: 5,
+          successTotal: 6,
+          waiterDepth: 7,
         },
         notice: {
           publishesPerSecond: 11.5,
@@ -458,8 +499,18 @@ describe("Data query layer", () => {
           operationsPerSecond: 18.5,
         },
         rpc: {
+          acksRejectedWrongWorkerTotal: 7,
+          backpressureRejectsTotal: 8,
+          duplicateCorrelationRejectsTotal: 9,
           operationsPerSecond: 19.5,
+          failureTotal: 10,
           requestsPending: 20,
+          requestTimeoutsTotal: 11,
+          requestsTotal: 12,
+          responsesDroppedClosedCallerTotal: 13,
+          responsesMissingPendingTotal: 14,
+          successTotal: 15,
+          wrongWorkerRejectsTotal: 16,
           workersRegistered: 21,
         },
         schedule: {

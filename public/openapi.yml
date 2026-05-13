@@ -2985,12 +2985,58 @@ components:
 
     RpcStats:
       type: object
-      required: [workers_registered, requests_pending, operations_per_second, diagnostics]
+      required:
+        [
+          workers_registered,
+          requests_pending,
+          requests_total,
+          success_total,
+          failure_total,
+          request_timeouts_total,
+          backpressure_rejects_total,
+          duplicate_correlation_rejects_total,
+          wrong_worker_rejects_total,
+          responses_dropped_closed_caller_total,
+          responses_missing_pending_total,
+          acks_rejected_wrong_worker_total,
+          operations_per_second,
+          diagnostics,
+        ]
       properties:
         workers_registered:
           type: integer
         requests_pending:
           type: integer
+        requests_total:
+          type: integer
+          format: int64
+        success_total:
+          type: integer
+          format: int64
+        failure_total:
+          type: integer
+          format: int64
+        request_timeouts_total:
+          type: integer
+          format: int64
+        backpressure_rejects_total:
+          type: integer
+          format: int64
+        duplicate_correlation_rejects_total:
+          type: integer
+          format: int64
+        wrong_worker_rejects_total:
+          type: integer
+          format: int64
+        responses_dropped_closed_caller_total:
+          type: integer
+          format: int64
+        responses_missing_pending_total:
+          type: integer
+          format: int64
+        acks_rejected_wrong_worker_total:
+          type: integer
+          format: int64
         operations_per_second:
           type: number
         diagnostics:
@@ -2998,10 +3044,42 @@ components:
 
     LeaseStats:
       type: object
-      required: [leases_active, operations_per_second, diagnostics]
+      required:
+        [
+          leases_active,
+          waiter_depth,
+          requests_total,
+          success_total,
+          failure_total,
+          acquire_timeouts_total,
+          forced_releases_total,
+          invalid_token_rejects_total,
+          operations_per_second,
+          diagnostics,
+        ]
       properties:
         leases_active:
           type: integer
+        waiter_depth:
+          type: integer
+        requests_total:
+          type: integer
+          format: int64
+        success_total:
+          type: integer
+          format: int64
+        failure_total:
+          type: integer
+          format: int64
+        acquire_timeouts_total:
+          type: integer
+          format: int64
+        forced_releases_total:
+          type: integer
+          format: int64
+        invalid_token_rejects_total:
+          type: integer
+          format: int64
         operations_per_second:
           type: number
         diagnostics:
