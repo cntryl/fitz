@@ -3003,6 +3003,8 @@ components:
           messages_pending,
           messages_dead_lettered,
           oldest_message_age_seconds,
+          oldest_backlog_age_seconds,
+          backlog_age_buckets,
           inflight_active,
           requests_total,
           success_total,
@@ -3028,6 +3030,12 @@ components:
           type: integer
         oldest_message_age_seconds:
           type: integer
+          description: Oldest ready queue message age in seconds.
+        oldest_backlog_age_seconds:
+          type: integer
+          description: Oldest ready-or-delayed queue backlog age in seconds.
+        backlog_age_buckets:
+          $ref: "#/components/schemas/QueueAgeBuckets"
         inflight_active:
           type: integer
         requests_total:
@@ -3065,6 +3073,23 @@ components:
           type: number
         diagnostics:
           $ref: "#/components/schemas/DiagnosticSnapshot"
+
+    QueueAgeBuckets:
+      type: object
+      required: [under_1m, under_5m, under_15m, over_15m]
+      properties:
+        under_1m:
+          type: integer
+          description: Count of ready-or-delayed queue messages younger than 1 minute.
+        under_5m:
+          type: integer
+          description: Count of ready-or-delayed queue messages between 1 and 5 minutes old.
+        under_15m:
+          type: integer
+          description: Count of ready-or-delayed queue messages between 5 and 15 minutes old.
+        over_15m:
+          type: integer
+          description: Count of ready-or-delayed queue messages 15 minutes old or older.
 
     RpcStats:
       type: object
@@ -3326,6 +3351,8 @@ components:
           messages_dead_lettered,
           messages_total,
           oldest_message_age_seconds,
+          oldest_backlog_age_seconds,
+          backlog_age_buckets,
           diagnostics,
         ]
       properties:
@@ -3338,6 +3365,11 @@ components:
         messages_dead_lettered: { type: integer }
         messages_total: { type: integer }
         oldest_message_age_seconds: { type: integer }
+        oldest_backlog_age_seconds:
+          type: integer
+          description: Oldest ready-or-delayed queue backlog age in seconds.
+        backlog_age_buckets:
+          $ref: "#/components/schemas/QueueAgeBuckets"
         diagnostics:
           $ref: "#/components/schemas/DiagnosticSnapshot"
 

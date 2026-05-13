@@ -231,6 +231,48 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    let backlog_age_buckets = runtime.queue_backlog_age_buckets();
+
+    output.push_str("# HELP fitz_queue_oldest_backlog_age_seconds Oldest ready-or-delayed queue backlog age in seconds\n");
+    output.push_str("# TYPE fitz_queue_oldest_backlog_age_seconds gauge\n");
+    output.push_str(&format!(
+        "fitz_queue_oldest_backlog_age_seconds {}\n",
+        runtime.queue_oldest_backlog_age_seconds()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_queue_backlog_age_bucket_under_1m Ready-or-delayed queue messages younger than 1 minute\n");
+    output.push_str("# TYPE fitz_queue_backlog_age_bucket_under_1m gauge\n");
+    output.push_str(&format!(
+        "fitz_queue_backlog_age_bucket_under_1m {}\n",
+        backlog_age_buckets.under_1m
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_queue_backlog_age_bucket_under_5m Ready-or-delayed queue messages between 1 and 5 minutes old\n");
+    output.push_str("# TYPE fitz_queue_backlog_age_bucket_under_5m gauge\n");
+    output.push_str(&format!(
+        "fitz_queue_backlog_age_bucket_under_5m {}\n",
+        backlog_age_buckets.under_5m
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_queue_backlog_age_bucket_under_15m Ready-or-delayed queue messages between 5 and 15 minutes old\n");
+    output.push_str("# TYPE fitz_queue_backlog_age_bucket_under_15m gauge\n");
+    output.push_str(&format!(
+        "fitz_queue_backlog_age_bucket_under_15m {}\n",
+        backlog_age_buckets.under_15m
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_queue_backlog_age_bucket_over_15m Ready-or-delayed queue messages 15 minutes old or older\n");
+    output.push_str("# TYPE fitz_queue_backlog_age_bucket_over_15m gauge\n");
+    output.push_str(&format!(
+        "fitz_queue_backlog_age_bucket_over_15m {}\n",
+        backlog_age_buckets.over_15m
+    ));
+    output.push('\n');
+
     output.push_str("# HELP fitz_queue_redeliveries_total Total queue message redeliveries recorded by this broker process\n");
     output.push_str("# TYPE fitz_queue_redeliveries_total counter\n");
     output.push_str(&format!(

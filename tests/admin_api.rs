@@ -6,8 +6,8 @@ use argon2::{
 };
 use bytes::Bytes;
 use fitz::api::admin::{
-    KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueDeadLetter, QueueInfo,
-    RpcPendingRequest, RpcWorker,
+    KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueAgeBuckets,
+    QueueDeadLetter, QueueInfo, RpcPendingRequest, RpcWorker,
 };
 use fitz::boot::domains::{
     DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
@@ -265,6 +265,13 @@ fn seed_queue_snapshot_data(runtime: &Arc<Runtime>) {
         messages_dead_lettered: 4,
         messages_total: 10,
         oldest_message_age_seconds: 9,
+        oldest_backlog_age_seconds: 600,
+        backlog_age_buckets: QueueAgeBuckets {
+            under_1m: 1,
+            under_5m: 1,
+            under_15m: 1,
+            over_15m: 0,
+        },
     }]);
     read_model.replace_queue_dead_letters(vec![QueueDeadLetter {
         message_id: 42,
@@ -292,6 +299,13 @@ fn seed_queue_compare_snapshot_data(runtime: &Arc<Runtime>) {
             messages_dead_lettered: 4,
             messages_total: 10,
             oldest_message_age_seconds: 9,
+            oldest_backlog_age_seconds: 600,
+            backlog_age_buckets: QueueAgeBuckets {
+                under_1m: 1,
+                under_5m: 1,
+                under_15m: 1,
+                over_15m: 0,
+            },
         },
         QueueInfo {
             family: 2,
@@ -304,6 +318,8 @@ fn seed_queue_compare_snapshot_data(runtime: &Arc<Runtime>) {
             messages_dead_lettered: 0,
             messages_total: 0,
             oldest_message_age_seconds: 0,
+            oldest_backlog_age_seconds: 0,
+            backlog_age_buckets: QueueAgeBuckets::default(),
         },
     ]);
     read_model.replace_queue_dead_letters(vec![QueueDeadLetter {
@@ -718,7 +734,7 @@ async fn should_return_queue_detail_with_delayed_and_dead_letter_counts() {
         payload["diagnostics"]["likely_bottleneck"],
         "dead-letter pressure"
     );
-    assert_eq!(payload["diagnostics"]["age_seconds"], 9);
+    assert_eq!(payload["diagnostics"]["age_seconds"], 600);
 }
 
 #[tokio::test]
@@ -1233,8 +1249,13 @@ async fn should_return_queue_domain_stats() {
     assert!(payload.contains(r#""messages_pending":3"#));
     assert!(payload.contains(r#""messages_dead_lettered":4"#));
     assert!(payload.contains(r#""oldest_message_age_seconds":9"#));
+    assert!(payload.contains(r#""oldest_backlog_age_seconds":600"#));
     assert!(payload.contains(r#""inflight_active":0"#));
     let payload_json: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    assert_eq!(payload_json["backlog_age_buckets"]["under_1m"], 1);
+    assert_eq!(payload_json["backlog_age_buckets"]["under_5m"], 1);
+    assert_eq!(payload_json["backlog_age_buckets"]["under_15m"], 1);
+    assert_eq!(payload_json["backlog_age_buckets"]["over_15m"], 0);
     assert_eq!(payload_json["notify_drops_total"], notify_before + 6);
 }
 
@@ -1311,6 +1332,11 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     assert!(metrics_payload.contains("fitz_queue_complete_total"));
     assert!(metrics_payload.contains("fitz_queue_release_total"));
     assert!(metrics_payload.contains("fitz_queue_oldest_message_age_seconds 9"));
+    assert!(metrics_payload.contains("fitz_queue_oldest_backlog_age_seconds 600"));
+    assert!(metrics_payload.contains("fitz_queue_backlog_age_bucket_under_1m 1"));
+    assert!(metrics_payload.contains("fitz_queue_backlog_age_bucket_under_5m 1"));
+    assert!(metrics_payload.contains("fitz_queue_backlog_age_bucket_under_15m 1"));
+    assert!(metrics_payload.contains("fitz_queue_backlog_age_bucket_over_15m 0"));
     assert!(metrics_payload.contains(&format!(
         "fitz_queue_redeliveries_total {}",
         redeliveries_before + 23
@@ -1886,6 +1912,13 @@ async fn should_return_global_stats() {
         messages_dead_lettered: 100,
         messages_total: 110,
         oldest_message_age_seconds: 9,
+        oldest_backlog_age_seconds: 600,
+        backlog_age_buckets: QueueAgeBuckets {
+            under_1m: 1,
+            under_5m: 1,
+            under_15m: 1,
+            over_15m: 0,
+        },
     }]);
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -1907,6 +1940,14 @@ async fn should_return_global_stats() {
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["domains"]["queue"]["messages_dead_lettered"], 100);
     assert_eq!(payload["domains"]["queue"]["oldest_message_age_seconds"], 9);
+    assert_eq!(
+        payload["domains"]["queue"]["oldest_backlog_age_seconds"],
+        600
+    );
+    assert_eq!(
+        payload["domains"]["queue"]["backlog_age_buckets"]["under_1m"],
+        1
+    );
     assert_eq!(
         payload["diagnostics"]["incident_summary"]["status"],
         "stalled"

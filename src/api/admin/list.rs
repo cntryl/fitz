@@ -77,12 +77,43 @@ pub struct KvResourceDetail {
     pub diagnostics: DiagnosticSnapshot,
 }
 
+/// Fixed backlog-age buckets for queue snapshots.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueAgeBuckets {
+    pub under_1m: usize,
+    pub under_5m: usize,
+    pub under_15m: usize,
+    pub over_15m: usize,
+}
+
+impl QueueAgeBuckets {
+    pub(crate) fn record_age_seconds(&mut self, age_seconds: u64) {
+        if age_seconds < 60 {
+            self.under_1m += 1;
+        } else if age_seconds < 300 {
+            self.under_5m += 1;
+        } else if age_seconds < 900 {
+            self.under_15m += 1;
+        } else {
+            self.over_15m += 1;
+        }
+    }
+
+    pub(crate) fn merge(&mut self, other: QueueAgeBuckets) {
+        self.under_1m += other.under_1m;
+        self.under_5m += other.under_5m;
+        self.under_15m += other.under_15m;
+        self.over_15m += other.over_15m;
+    }
+}
+
 /// Point-in-time Queue resource detail for the current broker process.
 ///
 /// Counts reflect only the queue actor state currently warm in memory on this
 /// broker. They are refreshed from live actors, can disappear after idle
 /// eviction or broker restart, and do not represent a durable inventory of all
-/// committed queues.
+/// committed queues. `backlog_age_buckets` groups ready + delayed work by age
+/// so operators can see whether pressure is fresh or stale.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueResourceDetail {
     pub realm: String,
@@ -94,6 +125,8 @@ pub struct QueueResourceDetail {
     pub messages_dead_lettered: usize,
     pub messages_total: usize,
     pub oldest_message_age_seconds: u64,
+    pub oldest_backlog_age_seconds: u64,
+    pub backlog_age_buckets: QueueAgeBuckets,
     pub diagnostics: DiagnosticSnapshot,
 }
 
@@ -246,7 +279,7 @@ impl QueueResourceDetail {
             item.messages_delayed,
             item.messages_inflight,
             item.messages_dead_lettered,
-            item.oldest_message_age_seconds,
+            item.oldest_backlog_age_seconds,
         );
         Self {
             realm: item.realm,
@@ -258,6 +291,8 @@ impl QueueResourceDetail {
             messages_dead_lettered: item.messages_dead_lettered,
             messages_total: item.messages_total,
             oldest_message_age_seconds: item.oldest_message_age_seconds,
+            oldest_backlog_age_seconds: item.oldest_backlog_age_seconds,
+            backlog_age_buckets: item.backlog_age_buckets,
             diagnostics,
         }
     }
@@ -273,6 +308,8 @@ impl QueueResourceDetail {
             messages_dead_lettered: 0,
             messages_total: 0,
             oldest_message_age_seconds: 0,
+            oldest_backlog_age_seconds: 0,
+            backlog_age_buckets: QueueAgeBuckets::default(),
             diagnostics: troubleshooting::queue_resource_diagnostics(0, 0, 0, 0, 0),
         }
     }
@@ -578,6 +615,8 @@ pub struct QueueInfo {
     pub messages_dead_lettered: usize,
     pub messages_total: usize,
     pub oldest_message_age_seconds: u64,
+    pub oldest_backlog_age_seconds: u64,
+    pub backlog_age_buckets: QueueAgeBuckets,
 }
 
 /// Collection of live in-memory Queue inflight snapshots for the current broker
@@ -650,6 +689,8 @@ pub(crate) struct QueueInfoSnapshot<'a> {
     pub(crate) messages_dead_lettered: usize,
     pub(crate) messages_total: usize,
     pub(crate) oldest_message_age_seconds: u64,
+    pub(crate) oldest_backlog_age_seconds: u64,
+    pub(crate) backlog_age_buckets: QueueAgeBuckets,
 }
 
 pub(crate) struct QueueDeadLetterSnapshot<'a> {
@@ -852,6 +893,8 @@ impl QueueInfo {
             messages_dead_lettered,
             messages_total,
             oldest_message_age_seconds,
+            oldest_backlog_age_seconds,
+            backlog_age_buckets,
         } = snapshot;
 
         Self {
@@ -865,6 +908,8 @@ impl QueueInfo {
             messages_dead_lettered,
             messages_total,
             oldest_message_age_seconds,
+            oldest_backlog_age_seconds,
+            backlog_age_buckets,
         }
     }
 }
@@ -1490,6 +1535,10 @@ pub fn queue_detail(
         detail.oldest_message_age_seconds = detail
             .oldest_message_age_seconds
             .max(queue.oldest_message_age_seconds);
+        detail.oldest_backlog_age_seconds = detail
+            .oldest_backlog_age_seconds
+            .max(queue.oldest_backlog_age_seconds);
+        detail.backlog_age_buckets.merge(queue.backlog_age_buckets);
     }
 
     detail.diagnostics = troubleshooting::queue_resource_diagnostics(
@@ -1497,7 +1546,7 @@ pub fn queue_detail(
         detail.messages_delayed,
         detail.messages_inflight,
         detail.messages_dead_lettered,
-        detail.oldest_message_age_seconds,
+        detail.oldest_backlog_age_seconds,
     );
     detail
 }
@@ -1660,7 +1709,7 @@ fn queue_comparison_metrics(detail: &QueueResourceDetail) -> ResourceComparisonM
         workers: None,
         subscriptions: None,
         waiters: None,
-        age_seconds: Some(detail.oldest_message_age_seconds),
+        age_seconds: Some(detail.oldest_backlog_age_seconds),
         recent_transition_count: Some(detail.diagnostics.recent_transition_count),
         failure_count: Some(detail.messages_dead_lettered as u64),
         contention_count: None,
@@ -2164,6 +2213,8 @@ mod tests {
             messages_dead_lettered: 0,
             messages_total: 0,
             oldest_message_age_seconds: 0,
+            oldest_backlog_age_seconds: 0,
+            backlog_age_buckets: QueueAgeBuckets::default(),
         })];
 
         // Act

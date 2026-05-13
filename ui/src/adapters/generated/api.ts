@@ -1394,6 +1394,18 @@ export interface OperationEntry {
   operation: string;
 }
 
+/** QueueAgeBuckets schema */
+export interface QueueAgeBuckets {
+  /** Count of ready-or-delayed queue messages 15 minutes old or older. */
+  over_15m: number;
+  /** Count of ready-or-delayed queue messages between 5 and 15 minutes old. */
+  under_15m: number;
+  /** Count of ready-or-delayed queue messages younger than 1 minute. */
+  under_1m: number;
+  /** Count of ready-or-delayed queue messages between 1 and 5 minutes old. */
+  under_5m: number;
+}
+
 /** Live in-memory Queue dead-letter snapshot for the current broker process. Dead-letter rows remain durably stored, but this endpoint only reflects rows for queue actors that are currently warm on this broker. */
 export interface QueueDeadLetter {
   area: string;
@@ -1432,12 +1444,15 @@ export interface QueueInflightList {
 /** Point-in-time Queue resource detail for the current broker process. Counts describe only the queue actor state currently warm in memory and do not represent a durable inventory of every committed queue in storage. */
 export interface QueueResourceDetail {
   area: string;
+  backlog_age_buckets: QueueAgeBuckets;
   diagnostics: DiagnosticSnapshot;
   messages_dead_lettered: number;
   messages_delayed: number;
   messages_inflight: number;
   messages_ready: number;
   messages_total: number;
+  /** Oldest ready-or-delayed queue backlog age in seconds. */
+  oldest_backlog_age_seconds: number;
   oldest_message_age_seconds: number;
   realm: string;
   resource: string;
@@ -1445,6 +1460,7 @@ export interface QueueResourceDetail {
 
 /** QueueStats schema */
 export interface QueueStats {
+  backlog_age_buckets: QueueAgeBuckets;
   completes_total: number;
   diagnostics: DiagnosticSnapshot;
   enqueues_total: number;
@@ -1456,6 +1472,9 @@ export interface QueueStats {
   messages_pending: number;
   messages_ready: number;
   notify_drops_total: number;
+  /** Oldest ready-or-delayed queue backlog age in seconds. */
+  oldest_backlog_age_seconds: number;
+  /** Oldest ready queue message age in seconds. */
   oldest_message_age_seconds: number;
   operations_per_second: number;
   /** Total queue message redeliveries recorded by this broker process. */

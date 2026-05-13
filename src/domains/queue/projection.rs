@@ -1,7 +1,7 @@
 use crate::api::admin::read_model::AdminReadModel;
 use crate::api::admin::{
-    QueueDeadLetter, QueueDeadLetterSnapshot as AdminQueueDeadLetterSnapshot, QueueInflight,
-    QueueInflightSnapshot as AdminQueueInflightSnapshot, QueueInfo,
+    QueueAgeBuckets, QueueDeadLetter, QueueDeadLetterSnapshot as AdminQueueDeadLetterSnapshot,
+    QueueInflight, QueueInflightSnapshot as AdminQueueInflightSnapshot, QueueInfo,
     QueueInfoSnapshot as AdminQueueInfoSnapshot,
 };
 use crate::domains::queue::core::QueueKey;
@@ -18,6 +18,8 @@ pub struct QueueAdminSnapshot {
     pub messages_dead_lettered: usize,
     pub messages_total: usize,
     pub oldest_message_age_seconds: u64,
+    pub oldest_backlog_age_seconds: u64,
+    pub backlog_age_buckets: QueueAgeBuckets,
 }
 
 /// Point-in-time live inflight snapshot for admin diagnostics.
@@ -70,6 +72,8 @@ impl QueueProjectionState {
                 messages_dead_lettered: entry.snapshot.messages_dead_lettered,
                 messages_total: entry.snapshot.messages_total,
                 oldest_message_age_seconds: entry.snapshot.oldest_message_age_seconds,
+                oldest_backlog_age_seconds: entry.snapshot.oldest_backlog_age_seconds,
+                backlog_age_buckets: entry.snapshot.backlog_age_buckets,
             }));
 
             for inflight_entry in entry.inflight {
@@ -216,6 +220,8 @@ mod tests {
                 messages_dead_lettered: 4,
                 messages_total: 10,
                 oldest_message_age_seconds: 5,
+                oldest_backlog_age_seconds: 6,
+                backlog_age_buckets: QueueAgeBuckets::default(),
             },
             inflight: vec![QueueInflightSnapshot {
                 message_id: 22,

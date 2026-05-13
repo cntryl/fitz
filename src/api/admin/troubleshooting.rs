@@ -1325,8 +1325,8 @@ fn analyze_queue(
             .iter()
             .filter_map(|item| parse_rfc3339(&item.dead_lettered_at))
             .max();
-        let last_change_from_age = if queue.oldest_message_age_seconds > 0 {
-            Some(now - Duration::seconds(queue.oldest_message_age_seconds as i64))
+        let last_change_from_age = if queue.oldest_backlog_age_seconds > 0 {
+            Some(now - Duration::seconds(queue.oldest_backlog_age_seconds as i64))
         } else {
             None
         };
@@ -1374,7 +1374,7 @@ fn analyze_queue(
                 0.82,
             )
         } else if backlog > 0
-            && (queue.messages_delayed > 0 || queue.oldest_message_age_seconds >= 30)
+            && (queue.messages_delayed > 0 || queue.oldest_backlog_age_seconds >= 30)
         {
             (
                 DiagnosisLabel::BacklogGrowth,
@@ -1418,10 +1418,10 @@ fn analyze_queue(
         if dead_letter_count > 0 {
             hints.push(format!("{dead_letter_count} dead-lettered message(s)"));
         }
-        if queue.oldest_message_age_seconds > 0 {
+        if queue.oldest_backlog_age_seconds > 0 {
             hints.push(format!(
-                "oldest message is {}s old",
-                queue.oldest_message_age_seconds
+                "oldest backlog message is {}s old",
+                queue.oldest_backlog_age_seconds
             ));
         }
 
@@ -1433,7 +1433,7 @@ fn analyze_queue(
             last_changed,
             None,
             last_failure_at,
-            Some(queue.oldest_message_age_seconds),
+            Some(queue.oldest_backlog_age_seconds),
             recent_transition_count,
             dead_letter_count as u64,
             contention_count,
@@ -1454,7 +1454,7 @@ fn analyze_queue(
             score: backlog as f64 * 4.0
                 + dead_letter_count as f64 * 8.0
                 + inflight_count as f64 * 1.5
-                + queue.oldest_message_age_seconds as f64 / 12.0,
+                + queue.oldest_backlog_age_seconds as f64 / 12.0,
             hotspot: DiagnosticHotspot {
                 domain: "queue".to_string(),
                 realm: Some(queue.realm.clone()),
@@ -2249,7 +2249,7 @@ pub(crate) fn queue_resource_diagnostics(
     messages_delayed: usize,
     messages_inflight: usize,
     messages_dead_lettered: usize,
-    oldest_message_age_seconds: u64,
+    oldest_backlog_age_seconds: u64,
 ) -> DiagnosticSnapshot {
     let backlog = messages_ready + messages_delayed;
     let has_dead_letters = messages_dead_lettered > 0;
@@ -2267,7 +2267,7 @@ pub(crate) fn queue_resource_diagnostics(
     } else if has_backlog && !has_inflight {
         (
             DiagnosisLabel::WorkerStarvation,
-            if oldest_message_age_seconds >= 30 {
+            if oldest_backlog_age_seconds >= 30 {
                 DiagnosticTrend::Growing
             } else {
                 DiagnosticTrend::Steady
@@ -2276,7 +2276,7 @@ pub(crate) fn queue_resource_diagnostics(
             Some("worker starvation".to_string()),
             0.82,
         )
-    } else if has_backlog && oldest_message_age_seconds >= 30 {
+    } else if has_backlog && oldest_backlog_age_seconds >= 30 {
         (
             DiagnosisLabel::BacklogGrowth,
             DiagnosticTrend::Growing,
@@ -2310,8 +2310,8 @@ pub(crate) fn queue_resource_diagnostics(
         None,
         None,
         None,
-        if oldest_message_age_seconds > 0 {
-            Some(oldest_message_age_seconds)
+        if oldest_backlog_age_seconds > 0 {
+            Some(oldest_backlog_age_seconds)
         } else {
             None
         },
@@ -2331,9 +2331,9 @@ pub(crate) fn queue_resource_diagnostics(
             if messages_dead_lettered > 0 {
                 hints.push(format!("{messages_dead_lettered} dead-lettered message(s)"));
             }
-            if oldest_message_age_seconds > 0 {
+            if oldest_backlog_age_seconds > 0 {
                 hints.push(format!(
-                    "oldest message is {oldest_message_age_seconds}s old"
+                    "oldest backlog message is {oldest_backlog_age_seconds}s old"
                 ));
             }
             hints
@@ -2856,15 +2856,15 @@ pub(crate) fn queue_resource_timeline(
     let mut messages_delayed = 0usize;
     let mut messages_inflight = 0usize;
     let mut messages_dead_lettered = 0usize;
-    let mut oldest_message_age_seconds = 0u64;
+    let mut oldest_backlog_age_seconds = 0u64;
 
     for queue in &matching_queues {
         messages_ready += queue.messages_ready;
         messages_delayed += queue.messages_delayed;
         messages_inflight += queue.messages_inflight;
         messages_dead_lettered += queue.messages_dead_lettered;
-        oldest_message_age_seconds =
-            oldest_message_age_seconds.max(queue.oldest_message_age_seconds);
+        oldest_backlog_age_seconds =
+            oldest_backlog_age_seconds.max(queue.oldest_backlog_age_seconds);
     }
 
     let owner_sessions = matching_inflight
@@ -2881,7 +2881,7 @@ pub(crate) fn queue_resource_timeline(
         messages_delayed,
         inflight_count,
         dead_letter_count,
-        oldest_message_age_seconds,
+        oldest_backlog_age_seconds,
     );
 
     for dead_letter in matching_dead_letters {
@@ -2936,7 +2936,7 @@ pub(crate) fn queue_resource_timeline(
                 path,
                 family,
                 None,
-                Some(oldest_message_age_seconds),
+                Some(oldest_backlog_age_seconds),
                 owner_session.clone(),
                 None,
                 None,
@@ -2955,17 +2955,17 @@ pub(crate) fn queue_resource_timeline(
                 ResourceTimelineKind::Observation,
                 now,
                 format!(
-                    "{} ready, {} delayed, {} inflight, {} dead-lettered; oldest message {}s old",
+                    "{} ready, {} delayed, {} inflight, {} dead-lettered; oldest backlog message {}s old",
                     messages_ready,
                     messages_delayed,
                     inflight_count,
                     dead_letter_count,
-                    oldest_message_age_seconds
+                    oldest_backlog_age_seconds
                 ),
                 path,
                 family,
                 None,
-                Some(oldest_message_age_seconds),
+                Some(oldest_backlog_age_seconds),
                 owner_session,
                 None,
                 None,

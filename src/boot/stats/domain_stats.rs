@@ -156,6 +156,25 @@ impl Runtime {
             .unwrap_or(0)
     }
 
+    pub fn queue_oldest_backlog_age_seconds(&self) -> u64 {
+        self.admin_read_model
+            .queues(None)
+            .into_iter()
+            .map(|queue| queue.oldest_backlog_age_seconds)
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn queue_backlog_age_buckets(&self) -> crate::api::admin::QueueAgeBuckets {
+        self.admin_read_model.queues(None).into_iter().fold(
+            crate::api::admin::QueueAgeBuckets::default(),
+            |mut buckets, queue| {
+                buckets.merge(queue.backlog_age_buckets);
+                buckets
+            },
+        )
+    }
+
     pub fn rpc_workers_registered(&self) -> usize {
         self.domains
             .read()
