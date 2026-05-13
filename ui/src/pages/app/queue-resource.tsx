@@ -73,10 +73,7 @@ export default function QueueResourcePage() {
     ),
   });
 
-  async function runDeadLetterAction(
-    kind: "replay" | "purge",
-    message: DeadLetterMessage,
-  ) {
+  async function runDeadLetterAction(kind: "replay" | "purge", message: DeadLetterMessage) {
     const verb = kind === "replay" ? "replay" : "purge";
     const confirmMessage = `Are you sure you want to ${verb} dead-letter message ${message.messageId} in ${realm} / ${area} / ${resource}?`;
 
@@ -95,7 +92,9 @@ export default function QueueResourcePage() {
         await purgeMutation.execute(message);
       }
     } catch (error) {
-      actionError.set(error instanceof Error ? error.message : "Unable to update dead-letter message");
+      actionError.set(
+        error instanceof Error ? error.message : "Unable to update dead-letter message",
+      );
     } finally {
       actionKind.set(null);
       actionMessageId.set(null);

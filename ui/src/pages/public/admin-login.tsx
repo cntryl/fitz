@@ -52,10 +52,10 @@ export default function AdminLogin() {
   return (
     <Card class="auth-card" variant="raised">
       <CardHeader>
-          <CardTitle>Sign in to Fitz Admin</CardTitle>
-          <CardDescription>
-            Use your admin credentials to access the REST-backed management UI.
-          </CardDescription>
+        <CardTitle>Sign in to Fitz Admin</CardTitle>
+        <CardDescription>
+          Use your admin credentials to access the REST-backed management UI.
+        </CardDescription>
       </CardHeader>
 
       <CardContent>

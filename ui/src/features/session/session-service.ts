@@ -6,11 +6,7 @@ import {
   type ServiceRequestOptions,
 } from "@/shared/errors/api";
 import { mapActiveSessionsOverview, mapLoginPayload, mapSessionResponse } from "./session-mappers";
-import type {
-  ActiveSessionsOverview,
-  LoginPayload,
-  SessionState,
-} from "./session-models";
+import type { ActiveSessionsOverview, LoginPayload, SessionState } from "./session-models";
 
 export type { LoginPayload, SessionState } from "./session-models";
 

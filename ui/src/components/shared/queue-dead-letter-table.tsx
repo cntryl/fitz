@@ -1,5 +1,13 @@
 import { For } from "@askrjs/askr";
-import { Button, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import {
+  Button,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from "@askrjs/ui";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
 
 export interface QueueDeadLetterTableProps {
@@ -55,7 +63,9 @@ export default function QueueDeadLetterTable({
                       {onReplay ? (
                         <Button
                           variant="secondary"
-                          aria-busy={pendingAction === "replay" && pendingMessageId === message.messageId}
+                          aria-busy={
+                            pendingAction === "replay" && pendingMessageId === message.messageId
+                          }
                           onPress={() => onReplay(message)}
                           disabled={pendingMessageId === message.messageId}
                         >
@@ -67,7 +77,9 @@ export default function QueueDeadLetterTable({
                       {onPurge ? (
                         <Button
                           variant="destructive"
-                          aria-busy={pendingAction === "purge" && pendingMessageId === message.messageId}
+                          aria-busy={
+                            pendingAction === "purge" && pendingMessageId === message.messageId
+                          }
                           onPress={() => onPurge(message)}
                           disabled={pendingMessageId === message.messageId}
                         >

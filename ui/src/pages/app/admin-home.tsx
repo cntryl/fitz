@@ -119,8 +119,8 @@ export default function AdminHome() {
           <div class="panel-copy">
             <h1>Welcome, {username}</h1>
             <p>
-              This dashboard gives you a broker-level view of system health, throughput, and
-              live domain activity so you can see how data is moving through Fitz.
+              This dashboard gives you a broker-level view of system health, throughput, and live
+              domain activity so you can see how data is moving through Fitz.
             </p>
           </div>
 
@@ -205,7 +205,9 @@ export default function AdminHome() {
                 <Card class="dashboard-domain-card">
                   <CardHeader>
                     <CardTitle>Queue</CardTitle>
-                    <CardDescription>Ready {formatNumber(overview.domains.queue.messagesReady)}</CardDescription>
+                    <CardDescription>
+                      Ready {formatNumber(overview.domains.queue.messagesReady)}
+                    </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <p>Inflight {formatNumber(overview.domains.queue.inflightActive)}</p>
@@ -217,7 +219,9 @@ export default function AdminHome() {
                 <Card class="dashboard-domain-card">
                   <CardHeader>
                     <CardTitle>KV</CardTitle>
-                    <CardDescription>Keys {formatNumber(overview.domains.kv.keysTotal)}</CardDescription>
+                    <CardDescription>
+                      Keys {formatNumber(overview.domains.kv.keysTotal)}
+                    </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <p>Transactions {formatNumber(overview.domains.kv.transactionsActive)}</p>
@@ -270,8 +274,12 @@ export default function AdminHome() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <p>Pending claims {formatNumber(overview.domains.schedule.pendingFireClaims)}</p>
-                    <p>Executions / min {overview.domains.schedule.executionsPerMinute.toFixed(2)}</p>
+                    <p>
+                      Pending claims {formatNumber(overview.domains.schedule.pendingFireClaims)}
+                    </p>
+                    <p>
+                      Executions / min {overview.domains.schedule.executionsPerMinute.toFixed(2)}
+                    </p>
                   </CardContent>
                 </Card>
 

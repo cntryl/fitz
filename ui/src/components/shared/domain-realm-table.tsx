@@ -25,7 +25,11 @@ export default function DomainRealmTable({ title, realms, emptyMessage }: Domain
       </div>
 
       {realms.length === 0 ? (
-        <EmptyState class="domain-state" icon={<GaugeIcon size={18} />} description={emptyMessage} />
+        <EmptyState
+          class="domain-state"
+          icon={<GaugeIcon size={18} />}
+          description={emptyMessage}
+        />
       ) : (
         <div class="domain-table-wrap">
           <Table class="domain-table">

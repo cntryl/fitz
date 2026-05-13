@@ -24,7 +24,10 @@ fn should_expose_internal_server_modules() {
         "pub mod testkit;",
         "pub mod benchkit;",
     ] {
-        assert!(source.contains(required), "missing feature-gated module fragment: {required}");
+        assert!(
+            source.contains(required),
+            "missing feature-gated module fragment: {required}"
+        );
     }
 
     assert!(!source.contains("feature = \"internal-api\""));

@@ -92,9 +92,7 @@ export default function SessionsPage() {
               <Input
                 id="realm-filter"
                 value={realmInput()}
-                onInput={(event: Event) =>
-                  realmInput.set((event.target as HTMLInputElement).value)
-                }
+                onInput={(event: Event) => realmInput.set((event.target as HTMLInputElement).value)}
                 placeholder="Leave blank for all realms"
               />
             </div>
