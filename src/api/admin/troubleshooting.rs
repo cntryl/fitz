@@ -745,6 +745,13 @@ pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
     let rpc = analyze_rpc(
         &read_model.rpc_workers(None),
         &read_model.rpc_pending(None),
+        runtime.rpc_request_timeouts_total(),
+        runtime.rpc_backpressure_rejects_total(),
+        runtime.rpc_duplicate_correlation_rejects_total(),
+        runtime.rpc_wrong_worker_rejects_total(),
+        runtime.rpc_responses_dropped_closed_caller_total(),
+        runtime.rpc_responses_missing_pending_total(),
+        runtime.rpc_acks_rejected_wrong_worker_total(),
         now,
     );
     let lease = analyze_lease(&read_model.leases(None), now);
@@ -1477,9 +1484,17 @@ fn analyze_queue(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn analyze_rpc(
     workers: &[RpcWorker],
     pending: &[RpcPendingRequest],
+    request_timeouts_total: u64,
+    backpressure_rejects_total: u64,
+    duplicate_correlation_rejects_total: u64,
+    wrong_worker_rejects_total: u64,
+    responses_dropped_closed_caller_total: u64,
+    responses_missing_pending_total: u64,
+    acks_rejected_wrong_worker_total: u64,
     now: DateTime<Utc>,
 ) -> DomainAnalysis {
     let mut worker_by_route: HashMap<(String, String, String, String), Vec<&RpcWorker>> =
@@ -1516,6 +1531,12 @@ fn analyze_rpc(
 
     let mut hotspots = Vec::new();
     let mut last_changed_at: Option<DateTime<Utc>> = None;
+    let late_response_pressure =
+        responses_dropped_closed_caller_total + responses_missing_pending_total;
+    let correlation_pressure = duplicate_correlation_rejects_total
+        + wrong_worker_rejects_total
+        + acks_rejected_wrong_worker_total;
+    let transport_pressure = request_timeouts_total + backpressure_rejects_total;
 
     for (key, pending_items) in pending_by_route {
         let workers = worker_by_route.get(&key).cloned().unwrap_or_default();
@@ -1556,6 +1577,22 @@ fn analyze_rpc(
                 Some("worker starvation".to_string()),
                 0.82,
             )
+        } else if late_response_pressure > 0 && pending_count == 0 {
+            (
+                DiagnosisLabel::DataLossRisk,
+                DiagnosticTrend::Stalled,
+                DiagnosticSeverity::High,
+                Some("late response drop".to_string()),
+                0.86,
+            )
+        } else if correlation_pressure > 0 && pending_count == 0 {
+            (
+                DiagnosisLabel::DataLossRisk,
+                DiagnosticTrend::Stalled,
+                DiagnosticSeverity::High,
+                Some("correlation mismatch".to_string()),
+                0.84,
+            )
         } else if pending_count > worker_count
             && (age_seconds.unwrap_or(0) >= 30 || pending_count >= worker_count.saturating_mul(2))
         {
@@ -1595,6 +1632,17 @@ fn analyze_rpc(
                 1.0,
             )
         };
+        let failure_count = if matches!(label, DiagnosisLabel::DataLossRisk) {
+            if late_response_pressure > 0 {
+                late_response_pressure
+            } else if correlation_pressure > 0 {
+                correlation_pressure
+            } else {
+                0
+            }
+        } else {
+            0
+        };
         let mut hints = vec![];
         if pending_count > 0 {
             hints.push(format!("{pending_count} pending request(s)"));
@@ -1604,6 +1652,24 @@ fn analyze_rpc(
         }
         if let Some(age) = age_seconds {
             hints.push(format!("oldest request is {age}s old"));
+        }
+        if duplicate_correlation_rejects_total > 0 {
+            hints.push(format!(
+                "{duplicate_correlation_rejects_total} duplicate correlation rejection(s)"
+            ));
+        }
+        if wrong_worker_rejects_total > 0 {
+            hints.push(format!(
+                "{wrong_worker_rejects_total} wrong worker rejection(s)"
+            ));
+        }
+        if late_response_pressure > 0 {
+            hints.push(format!("{late_response_pressure} late response drop(s)"));
+        }
+        if transport_pressure > 0 {
+            hints.push(format!(
+                "{transport_pressure} timeout/backpressure rejection(s)"
+            ));
         }
 
         let snapshot = DiagnosticSnapshot::with_stage(
@@ -1616,7 +1682,7 @@ fn analyze_rpc(
             last_failure_at,
             age_seconds,
             recent_transition_count,
-            0,
+            failure_count,
             contention_count,
             pending_count,
             confidence,
@@ -1655,6 +1721,110 @@ fn analyze_rpc(
             },
             last_changed_at: last_change,
         });
+    }
+
+    let has_route_hotspots = !hotspots.is_empty();
+    if !has_route_hotspots {
+        let data_loss_pressure = late_response_pressure + correlation_pressure;
+        if data_loss_pressure > 0 || transport_pressure > 0 {
+            let bottleneck = if late_response_pressure > 0 {
+                "late response drop"
+            } else if correlation_pressure > 0 {
+                "correlation mismatch"
+            } else {
+                "rpc backpressure"
+            };
+            let label = if late_response_pressure > 0 || correlation_pressure > 0 {
+                DiagnosisLabel::DataLossRisk
+            } else {
+                DiagnosisLabel::Throughput
+            };
+            let trend = if late_response_pressure > 0 || correlation_pressure > 0 {
+                DiagnosticTrend::Stalled
+            } else {
+                DiagnosticTrend::Growing
+            };
+            let severity = if late_response_pressure > 0 || correlation_pressure > 0 {
+                DiagnosticSeverity::High
+            } else {
+                DiagnosticSeverity::Medium
+            };
+            let mut hints = vec![];
+            if request_timeouts_total > 0 {
+                hints.push(format!("{request_timeouts_total} request timeout(s)"));
+            }
+            if backpressure_rejects_total > 0 {
+                hints.push(format!(
+                    "{backpressure_rejects_total} backpressure reject(s)"
+                ));
+            }
+            if duplicate_correlation_rejects_total > 0 {
+                hints.push(format!(
+                    "{duplicate_correlation_rejects_total} duplicate correlation rejection(s)"
+                ));
+            }
+            if wrong_worker_rejects_total > 0 {
+                hints.push(format!(
+                    "{wrong_worker_rejects_total} wrong worker rejection(s)"
+                ));
+            }
+            if late_response_pressure > 0 {
+                hints.push(format!("{late_response_pressure} late response drop(s)"));
+            }
+            if correlation_pressure > 0 {
+                hints.push(format!(
+                    "{correlation_pressure} correlation mismatch event(s)"
+                ));
+            }
+            hotspots.push(ScoredHotspot {
+                score: late_response_pressure as f64 * 12.0
+                    + correlation_pressure as f64 * 6.0
+                    + transport_pressure as f64 * 2.0,
+                hotspot: DiagnosticHotspot {
+                    domain: "rpc".to_string(),
+                    realm: None,
+                    area: None,
+                    resource: None,
+                    operation: None,
+                    family: None,
+                    backlog: Some(pending.len()),
+                    inflight: Some(pending.len()),
+                    ready: None,
+                    delayed: None,
+                    dead_letters: None,
+                    workers: Some(workers.len()),
+                    subscriptions: None,
+                    owner_session: None,
+                    worker_session: None,
+                    snapshot: DiagnosticSnapshot::with_stage(
+                        label,
+                        trend,
+                        severity,
+                        Some(bottleneck.to_string()),
+                        None,
+                        None,
+                        None,
+                        Some(
+                            pending
+                                .iter()
+                                .map(|item| item.age_seconds)
+                                .max()
+                                .unwrap_or(0),
+                        ),
+                        data_loss_pressure,
+                        data_loss_pressure,
+                        correlation_pressure,
+                        pending.len(),
+                        if data_loss_pressure > 0 { 0.87 } else { 0.75 },
+                        hints,
+                    ),
+                },
+                last_changed_at: pending
+                    .iter()
+                    .filter_map(|item| parse_rfc3339(&item.submitted_at))
+                    .max(),
+            });
+        }
     }
 
     if hotspots.is_empty() {
@@ -3460,6 +3630,30 @@ mod tests {
         assert_eq!(snapshot.current_stage, "worker_starvation");
         assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::WorkerStarvation);
         assert_eq!(snapshot.severity, DiagnosticSeverity::High);
+    }
+
+    #[test]
+    fn should_classify_rpc_data_loss_risk() {
+        let now = Utc::now();
+        let analysis = analyze_rpc(&[], &[], 0, 0, 0, 0, 3, 2, 0, now);
+        let hotspot = analysis.hotspots.first().expect("rpc hotspot");
+
+        assert_eq!(hotspot.hotspot.snapshot.current_stage, "data_loss_risk");
+        assert_eq!(
+            hotspot.hotspot.snapshot.diagnosis_label(),
+            DiagnosisLabel::DataLossRisk
+        );
+        assert_eq!(
+            hotspot.hotspot.snapshot.likely_bottleneck.as_deref(),
+            Some("late response drop")
+        );
+        assert_eq!(hotspot.hotspot.snapshot.severity, DiagnosticSeverity::High);
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("late response drop")));
     }
 
     #[test]

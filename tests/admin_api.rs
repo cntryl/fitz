@@ -1505,6 +1505,55 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
 
 #[tokio::test]
 #[serial]
+async fn should_return_rpc_data_loss_risk_given_late_response_drops() {
+    // Arrange
+    let runtime = test_runtime();
+    let metrics = fitz::boot::observability::metrics();
+    let late_drops_before = metrics.counter_get("rpc_responses_dropped_closed_caller_total");
+    let missing_before = metrics.counter_get("rpc_responses_missing_pending_total");
+    metrics.counter_add("rpc_responses_dropped_closed_caller_total", 4);
+    metrics.counter_add("rpc_responses_missing_pending_total", 2);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/rpc/stats")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        payload["responses_dropped_closed_caller_total"],
+        late_drops_before + 4
+    );
+    assert_eq!(
+        payload["responses_missing_pending_total"],
+        missing_before + 2
+    );
+    assert_eq!(payload["diagnostics"]["current_stage"], "data_loss_risk");
+    assert_eq!(
+        payload["diagnostics"]["likely_bottleneck"],
+        "late response drop"
+    );
+    assert!(payload["diagnostics"]["explanation_hints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value.as_str().unwrap_or("").contains("late response drop")));
+}
+
+#[tokio::test]
+#[serial]
 async fn should_return_stream_domain_stats_given_recorded_operations() {
     // Arrange
     let (runtime, store) = queue_runtime_with_domains();
