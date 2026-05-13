@@ -29,6 +29,7 @@ struct SinkLeaseState {
     fencing_token: u64,
     expiry: Instant,
     acquired_at: String,
+    renewals: usize,
 }
 
 #[derive(Clone)]
@@ -194,6 +195,7 @@ impl LeaseDomainSink {
             &state.owner_id,
             &state.acquired_at,
             expires_at,
+            state.renewals,
             state.fencing_token,
         )
     }
@@ -514,6 +516,7 @@ impl LeaseDomainSink {
                         fencing_token: waiter.queued_token,
                         expiry: now + Duration::from_secs(waiter.ttl_secs),
                         acquired_at: Utc::now().to_rfc3339(),
+                        renewals: 0,
                     };
                     leases.insert(key.clone(), state.clone());
                     (waiter, state)
@@ -777,6 +780,7 @@ impl LeaseDomainSink {
                         fencing_token: token,
                         expiry: now + ttl,
                         acquired_at: Utc::now().to_rfc3339(),
+                        renewals: 0,
                     };
                     leases.insert(key.clone(), state.clone());
                     acquired_state = Some(state);
@@ -883,6 +887,8 @@ impl LeaseDomainSink {
                     let new_token = self.next_fencing_token();
                     state.expiry = now + ttl;
                     state.fencing_token = new_token;
+                    state.renewals = state.renewals.saturating_add(1);
+                    self.counter_inc("fitz_lease_ownership_churn_total");
                     updated_state = Some(state.clone());
                     LeaseResponse::Extended {
                         fencing_token: new_token,
@@ -1212,6 +1218,20 @@ mod tests {
         Bytes::from(encoder.finish())
     }
 
+    fn encode_lease_extend(
+        route: &str,
+        owner_id: &str,
+        fencing_token: u64,
+        ttl_secs: u64,
+    ) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(route);
+        encoder.put_string(owner_id);
+        encoder.put_u64(fencing_token);
+        encoder.put_u64(ttl_secs);
+        Bytes::from(encoder.finish())
+    }
+
     fn encode_lease_release(route: &str, owner_id: &str, fencing_token: u64) -> Bytes {
         let mut encoder = PayloadEncoder::new();
         encoder.put_string(route);
@@ -1430,5 +1450,75 @@ mod tests {
         // Assert
         assert!(admin_read_model.leases(None).is_empty());
         assert_eq!(sink.lease_count(), 0);
+    }
+
+    #[test]
+    fn should_track_admin_lease_renewals_given_extend() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let lease_route = "lease://acme/locks/resource";
+        let lease_address = RouteAddress::new(family, Route::new(lease_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = LeaseDomainSink::new(router, admin_read_model.clone());
+
+        sink.deliver(Envelope::from_route(
+            subscriber_address.clone(),
+            lease_address.clone(),
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(400),
+                encode_lease_acquire(lease_route, "", 30),
+                family,
+            ),
+        ))
+        .expect("acquire lease");
+        let acquire_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("acquire ack envelope");
+        let frame_ctx = acquire_ack
+            .payload::<FrameContext>()
+            .cloned()
+            .expect("frame context");
+        let fencing_token = u64::from_be_bytes([
+            frame_ctx.payload[2],
+            frame_ctx.payload[3],
+            frame_ctx.payload[4],
+            frame_ctx.payload[5],
+            frame_ctx.payload[6],
+            frame_ctx.payload[7],
+            frame_ctx.payload[8],
+            frame_ctx.payload[9],
+        ]);
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            subscriber_address,
+            lease_address,
+            FrameContext::new(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(401),
+                encode_lease_extend(lease_route, "", fencing_token, 30),
+                family,
+            ),
+        ))
+        .expect("extend lease");
+        let _extend_ack = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("extend ack envelope");
+        let leases = admin_read_model.leases(None);
+
+        // Assert
+        assert_eq!(sink.lease_count(), 1);
+        assert_eq!(leases.len(), 1);
+        assert_eq!(leases[0].renewals, 1);
     }
 }

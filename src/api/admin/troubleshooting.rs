@@ -1863,6 +1863,7 @@ fn analyze_lease(leases: &[LeaseInfo], now: DateTime<Utc>) -> DomainAnalysis {
             .filter_map(|lease| parse_rfc3339(&lease.expires_at))
             .map(|expires| (expires - now).num_seconds().max(0) as u64)
             .min();
+        let churn_pressure = renewals > 0;
         let (label, trend, severity, bottleneck, confidence) =
             if remaining_seconds.unwrap_or(0) <= 30 && active_leases > 0 {
                 (
@@ -1875,18 +1876,22 @@ fn analyze_lease(leases: &[LeaseInfo], now: DateTime<Utc>) -> DomainAnalysis {
             } else if active_leases > 0 {
                 (
                     DiagnosisLabel::Contention,
-                    if renewals > 0 {
+                    if churn_pressure {
                         DiagnosticTrend::Growing
                     } else {
                         DiagnosticTrend::Steady
                     },
-                    if renewals > 0 {
+                    if churn_pressure {
                         DiagnosticSeverity::Medium
                     } else {
                         DiagnosticSeverity::Low
                     },
-                    Some("lease ownership".to_string()),
-                    0.72,
+                    Some(if churn_pressure {
+                        "lease ownership churn".to_string()
+                    } else {
+                        "lease ownership".to_string()
+                    }),
+                    if churn_pressure { 0.82 } else { 0.72 },
                 )
             } else {
                 (
@@ -2394,30 +2399,54 @@ pub(crate) fn stream_resource_diagnostics(
 pub(crate) fn lease_resource_diagnostics(
     active_leases: usize,
     oldest_lease_age_seconds: Option<u64>,
+    renewals_total: usize,
 ) -> DiagnosticSnapshot {
     if active_leases == 0 {
         return DiagnosticSnapshot::healthy();
     }
 
-    DiagnosticSnapshot::with_stage(
-        DiagnosisLabel::Contention,
-        DiagnosticTrend::Steady,
-        if active_leases > 1 {
+    let churn_pressure = renewals_total > 0;
+    let severity = if churn_pressure {
+        if renewals_total > active_leases {
             DiagnosticSeverity::Medium
         } else {
             DiagnosticSeverity::Low
+        }
+    } else if active_leases > 1 {
+        DiagnosticSeverity::Medium
+    } else {
+        DiagnosticSeverity::Low
+    };
+
+    DiagnosticSnapshot::with_stage(
+        DiagnosisLabel::Contention,
+        if churn_pressure {
+            DiagnosticTrend::Growing
+        } else {
+            DiagnosticTrend::Steady
         },
-        Some("lease ownership".to_string()),
+        severity,
+        Some(if churn_pressure {
+            "lease ownership churn".to_string()
+        } else {
+            "lease ownership".to_string()
+        }),
         None,
         None,
         None,
         oldest_lease_age_seconds,
         0,
         0,
-        active_leases as u64,
+        renewals_total as u64,
         active_leases,
-        0.72,
-        vec![format!("{active_leases} active lease(s)")],
+        if churn_pressure { 0.82 } else { 0.72 },
+        {
+            let mut hints = vec![format!("{active_leases} active lease(s)")];
+            if renewals_total > 0 {
+                hints.push(format!("{renewals_total} renewals recorded"));
+            }
+            hints
+        },
     )
 }
 
@@ -3073,7 +3102,8 @@ pub(crate) fn lease_resource_timeline(
         }
     }
 
-    let diagnostics = lease_resource_diagnostics(active_leases, Some(oldest_age_seconds));
+    let diagnostics =
+        lease_resource_diagnostics(active_leases, Some(oldest_age_seconds), renewals_total);
     if active_leases > 0 {
         let summary = match next_expiry_seconds {
             Some(remaining_seconds) => format!(
@@ -3658,10 +3688,56 @@ mod tests {
 
     #[test]
     fn should_classify_lease_contention() {
-        let snapshot = lease_resource_diagnostics(1, Some(120));
+        let snapshot = lease_resource_diagnostics(1, Some(120), 0);
         assert_eq!(snapshot.current_stage, "contention");
         assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::Contention);
         assert_eq!(snapshot.severity, DiagnosticSeverity::Low);
+    }
+
+    #[test]
+    fn should_classify_lease_churn() {
+        let snapshot = lease_resource_diagnostics(1, Some(120), 3);
+        assert_eq!(snapshot.current_stage, "contention");
+        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::Contention);
+        assert_eq!(snapshot.severity, DiagnosticSeverity::Medium);
+        assert_eq!(
+            snapshot.likely_bottleneck.as_deref(),
+            Some("lease ownership churn")
+        );
+        assert_eq!(snapshot.trend, DiagnosticTrend::Growing);
+        assert!(snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("renewals recorded")));
+    }
+
+    #[test]
+    fn should_rank_lease_hotspot_as_churn_when_renewals_present() {
+        let now = Utc::now();
+        let leases = vec![LeaseInfo {
+            realm: "prod".to_string(),
+            area: "locks".to_string(),
+            resource: "cache".to_string(),
+            owner_session_id: "session-1".to_string(),
+            acquired_at: (now - Duration::seconds(40)).to_rfc3339(),
+            expires_at: (now + Duration::seconds(50)).to_rfc3339(),
+            renewals: 4,
+            fencing_token: 11,
+        }];
+
+        let analysis = analyze_lease(&leases, now);
+        let hotspot = analysis.hotspots.first().expect("lease hotspot");
+
+        assert_eq!(analysis.diagnostics.snapshot.current_stage, "contention");
+        assert_eq!(
+            hotspot.hotspot.snapshot.likely_bottleneck.as_deref(),
+            Some("lease ownership churn")
+        );
+        assert_eq!(hotspot.hotspot.snapshot.trend, DiagnosticTrend::Growing);
+        assert_eq!(
+            hotspot.hotspot.snapshot.severity,
+            DiagnosticSeverity::Medium
+        );
     }
 
     #[test]

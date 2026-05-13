@@ -763,8 +763,13 @@ async fn should_return_lease_detail_with_age_and_diagnostics() {
     assert_eq!(payload["diagnostics"]["current_stage"], "contention");
     assert_eq!(
         payload["diagnostics"]["likely_bottleneck"],
-        "lease ownership"
+        "lease ownership churn"
     );
+    assert!(payload["diagnostics"]["explanation_hints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hint| hint.as_str().unwrap_or("").contains("renewals recorded")));
     assert_eq!(
         payload["diagnostics"]["age_seconds"],
         payload["oldest_lease_age_seconds"]
@@ -1368,6 +1373,7 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     let lease_timeouts_before = metrics.counter_get("fitz_lease_acquire_timeouts_total");
     let lease_forced_before = metrics.counter_get("fitz_lease_forced_releases_total");
     let lease_invalid_before = metrics.counter_get("fitz_lease_invalid_token_rejects_total");
+    let lease_churn_before = metrics.counter_get("fitz_lease_ownership_churn_total");
 
     metrics.counter_add("fitz_rpc_requests_total", 8);
     metrics.counter_add("fitz_rpc_success_total", 5);
@@ -1385,6 +1391,7 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     metrics.counter_add("fitz_lease_acquire_timeouts_total", 3);
     metrics.counter_add("fitz_lease_forced_releases_total", 5);
     metrics.counter_add("fitz_lease_invalid_token_rejects_total", 7);
+    metrics.counter_add("fitz_lease_ownership_churn_total", 11);
     metrics.gauge_set("fitz_lease_waiters_gauge", 4);
     metrics.gauge_set("fitz_lease_waiter_depth", 4);
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -1478,6 +1485,10 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
         lease_payload["invalid_token_rejects_total"],
         lease_invalid_before + 7
     );
+    assert_eq!(
+        lease_payload["ownership_churn_total"],
+        lease_churn_before + 11
+    );
     assert!(
         lease_payload["operations_per_second"]
             .as_f64()
@@ -1501,6 +1512,10 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     assert!(metrics_payload.contains("fitz_rpc_oldest_pending_request_age_seconds 13"));
     assert!(metrics_payload.contains("fitz_rpc_pending_routes_active 2"));
     assert!(metrics_payload.contains("fitz_lease_oldest_lease_age_seconds"));
+    assert!(metrics_payload.contains(&format!(
+        "fitz_lease_ownership_churn_total {}",
+        lease_churn_before + 11
+    )));
 }
 
 #[tokio::test]
@@ -1852,6 +1867,19 @@ async fn should_return_global_stats() {
     // Arrange
     let runtime = test_runtime();
     seed_queue_snapshot_data(&runtime);
+    let read_model = runtime.admin_read_model();
+    read_model.replace_queues(vec![QueueInfo {
+        family: 1,
+        realm: "prod".to_string(),
+        area: "jobs".to_string(),
+        resource: "worker".to_string(),
+        messages_ready: 1,
+        messages_delayed: 2,
+        messages_inflight: 3,
+        messages_dead_lettered: 100,
+        messages_total: 110,
+        oldest_message_age_seconds: 9,
+    }]);
     let cookie = login_cookie(runtime.clone()).await;
 
     let req = Request::builder()
@@ -1870,7 +1898,7 @@ async fn should_return_global_stats() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(payload["domains"]["queue"]["messages_dead_lettered"], 4);
+    assert_eq!(payload["domains"]["queue"]["messages_dead_lettered"], 100);
     assert_eq!(payload["domains"]["queue"]["oldest_message_age_seconds"], 9);
     assert_eq!(
         payload["diagnostics"]["incident_summary"]["status"],

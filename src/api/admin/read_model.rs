@@ -494,6 +494,7 @@ mod tests {
             "session:10",
             "2026-03-31T00:00:00Z",
             "2026-03-31T00:00:30Z".to_string(),
+            0,
             7,
         ));
         let leases = read_model.leases(Some("acme"));
@@ -515,6 +516,7 @@ mod tests {
             "session:10",
             "2026-03-31T00:00:00Z",
             "2026-03-31T00:00:30Z".to_string(),
+            0,
             7,
         ));
 
@@ -537,6 +539,7 @@ mod tests {
             "session:10",
             "2026-03-31T00:00:00Z",
             "2026-03-31T00:00:30Z".to_string(),
+            0,
             7,
         ));
 
@@ -548,6 +551,7 @@ mod tests {
             "session:11",
             "2026-03-31T00:00:05Z",
             "2026-03-31T00:00:40Z".to_string(),
+            0,
             8,
         ));
         let leases = read_model.leases(Some("acme"));

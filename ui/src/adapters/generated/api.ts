@@ -1320,6 +1320,8 @@ export interface LeaseStats {
   leases_active: number;
   oldest_lease_age_seconds: number;
   operations_per_second: number;
+  /** Total successful lease renewals and ownership churn events observed by this broker process. */
+  ownership_churn_total: number;
   requests_total: number;
   success_total: number;
   waiter_depth: number;

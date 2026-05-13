@@ -135,6 +135,7 @@ pub struct LeaseStats {
     pub acquire_timeouts_total: u64,
     pub forced_releases_total: u64,
     pub invalid_token_rejects_total: u64,
+    pub ownership_churn_total: u64,
     pub operations_per_second: f64,
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
@@ -260,6 +261,7 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 acquire_timeouts_total: runtime.lease_acquire_timeouts_total(),
                 forced_releases_total: runtime.lease_forced_releases_total(),
                 invalid_token_rejects_total: runtime.lease_invalid_token_rejects_total(),
+                ownership_churn_total: runtime.lease_ownership_churn_total(),
                 operations_per_second: runtime.lease_operations_per_second(),
                 diagnostics: lease,
             },
@@ -428,6 +430,7 @@ async fn handle_lease_stats(
         acquire_timeouts_total: runtime.lease_acquire_timeouts_total(),
         forced_releases_total: runtime.lease_forced_releases_total(),
         invalid_token_rejects_total: runtime.lease_invalid_token_rejects_total(),
+        ownership_churn_total: runtime.lease_ownership_churn_total(),
         operations_per_second: runtime.lease_operations_per_second(),
         diagnostics,
     })

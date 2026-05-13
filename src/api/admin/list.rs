@@ -360,6 +360,7 @@ impl LeaseResourceDetail {
         path: &ResourcePath<'_>,
         active_leases: usize,
         oldest_lease_age_seconds: u64,
+        renewals_total: usize,
     ) -> Self {
         Self {
             realm: path.realm.to_string(),
@@ -370,6 +371,7 @@ impl LeaseResourceDetail {
             diagnostics: troubleshooting::lease_resource_diagnostics(
                 active_leases,
                 Some(oldest_lease_age_seconds),
+                renewals_total,
             ),
         }
     }
@@ -962,6 +964,7 @@ impl RpcPendingRequest {
 }
 
 impl LeaseInfo {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn snapshot(
         realm: &str,
         area: &str,
@@ -969,6 +972,7 @@ impl LeaseInfo {
         owner_session_id: &str,
         acquired_at: &str,
         expires_at: String,
+        renewals: usize,
         fencing_token: u64,
     ) -> Self {
         Self {
@@ -978,7 +982,7 @@ impl LeaseInfo {
             owner_session_id: owner_session_id.to_string(),
             acquired_at: acquired_at.to_string(),
             expires_at,
-            renewals: 0,
+            renewals,
             fencing_token,
         }
     }
@@ -1526,15 +1530,28 @@ pub fn stream_area_watermark_detail(
 }
 
 pub fn lease_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> LeaseResourceDetail {
-    let (active_leases, oldest_lease_age_seconds) = runtime
+    let (active_leases, oldest_lease_age_seconds, renewals_total) = runtime
         .lease_list_leases(Some(path.realm))
         .into_iter()
         .filter(|item| path.matches(&item.realm, &item.area, &item.resource))
-        .fold((0usize, 0u64), |(count, oldest), lease| {
-            let age_seconds = troubleshooting::age_seconds_since(&lease.acquired_at).unwrap_or(0);
-            (count + 1, oldest.max(age_seconds))
-        });
-    LeaseResourceDetail::from_count(path, active_leases, oldest_lease_age_seconds)
+        .fold(
+            (0usize, 0u64, 0usize),
+            |(count, oldest, renewals), lease| {
+                let age_seconds =
+                    troubleshooting::age_seconds_since(&lease.acquired_at).unwrap_or(0);
+                (
+                    count + 1,
+                    oldest.max(age_seconds),
+                    renewals.saturating_add(lease.renewals),
+                )
+            },
+        );
+    LeaseResourceDetail::from_count(
+        path,
+        active_leases,
+        oldest_lease_age_seconds,
+        renewals_total,
+    )
 }
 
 pub fn schedule_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> ScheduleResourceDetail {

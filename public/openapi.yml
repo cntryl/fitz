@@ -3140,6 +3140,7 @@ components:
           acquire_timeouts_total,
           forced_releases_total,
           invalid_token_rejects_total,
+          ownership_churn_total,
           operations_per_second,
           diagnostics,
         ]
@@ -3169,6 +3170,10 @@ components:
         invalid_token_rejects_total:
           type: integer
           format: int64
+        ownership_churn_total:
+          type: integer
+          format: int64
+          description: Total successful lease renewals and ownership churn events observed by this broker process.
         operations_per_second:
           type: number
         diagnostics:

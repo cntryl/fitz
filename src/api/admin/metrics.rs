@@ -284,6 +284,16 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    output.push_str(
+        "# HELP fitz_lease_ownership_churn_total Successful lease renewals and ownership churn events\n",
+    );
+    output.push_str("# TYPE fitz_lease_ownership_churn_total counter\n");
+    output.push_str(&format!(
+        "fitz_lease_ownership_churn_total {}\n",
+        runtime.lease_ownership_churn_total()
+    ));
+    output.push('\n');
+
     // Stream domain
     output.push_str("# HELP fitz_stream_active Active streams\n");
     output.push_str("# TYPE fitz_stream_active gauge\n");

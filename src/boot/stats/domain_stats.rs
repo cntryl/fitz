@@ -396,6 +396,10 @@ impl Runtime {
         metric_counter("fitz_lease_invalid_token_rejects_total")
     }
 
+    pub fn lease_ownership_churn_total(&self) -> u64 {
+        metric_counter("fitz_lease_ownership_churn_total")
+    }
+
     pub fn lease_oldest_lease_age_seconds(&self) -> u64 {
         self.admin_read_model
             .leases(None)
