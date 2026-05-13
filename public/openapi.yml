@@ -3111,6 +3111,23 @@ components:
           type: integer
           description: Count of ready-or-delayed queue messages 15 minutes old or older.
 
+    RpcLatencyBuckets:
+      type: object
+      required: [under_5ms, under_25ms, under_100ms, over_100ms]
+      properties:
+        under_5ms:
+          type: integer
+          description: Count of live RPC workers with an average latency under 5 milliseconds.
+        under_25ms:
+          type: integer
+          description: Count of live RPC workers with an average latency between 5 and 25 milliseconds.
+        under_100ms:
+          type: integer
+          description: Count of live RPC workers with an average latency between 25 and 100 milliseconds.
+        over_100ms:
+          type: integer
+          description: Count of live RPC workers with an average latency of 100 milliseconds or more.
+
     RpcStats:
       type: object
       required:
@@ -3119,6 +3136,8 @@ components:
           requests_pending,
           oldest_pending_request_age_seconds,
           pending_routes_active,
+          slowest_worker_average_latency_ms,
+          worker_latency_buckets,
           requests_total,
           success_total,
           failure_total,
@@ -3142,6 +3161,11 @@ components:
           format: int64
         pending_routes_active:
           type: integer
+        slowest_worker_average_latency_ms:
+          type: number
+          description: Slowest average latency observed across live RPC worker registrations on the current broker process.
+        worker_latency_buckets:
+          $ref: "#/components/schemas/RpcLatencyBuckets"
         requests_total:
           type: integer
           format: int64
@@ -3532,7 +3556,17 @@ components:
       type: object
       description: Point-in-time live in-memory RPC state for a single operation on the current broker process. Worker registrations and pending requests are ephemeral, reset on disconnect cleanup or broker restart, and do not represent durable backlog or recovery state.
       required:
-        [realm, area, resource, operation, workers_registered, requests_pending, diagnostics]
+        [
+          realm,
+          area,
+          resource,
+          operation,
+          workers_registered,
+          requests_pending,
+          slowest_worker_average_latency_ms,
+          worker_latency_buckets,
+          diagnostics,
+        ]
       properties:
         realm: { type: string }
         area: { type: string }
@@ -3544,6 +3578,11 @@ components:
         requests_pending:
           type: integer
           description: Live in-memory pending requests waiting for a worker on this broker process. Not durable across disconnect or restart.
+        slowest_worker_average_latency_ms:
+          type: number
+          description: Slowest average latency observed among live workers for this exact RPC operation on the current broker process.
+        worker_latency_buckets:
+          $ref: "#/components/schemas/RpcLatencyBuckets"
         diagnostics:
           $ref: "#/components/schemas/DiagnosticSnapshot"
 

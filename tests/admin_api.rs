@@ -1515,6 +1515,11 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     assert_eq!(rpc_payload["requests_pending"], 2);
     assert_eq!(rpc_payload["oldest_pending_request_age_seconds"], 13);
     assert_eq!(rpc_payload["pending_routes_active"], 2);
+    assert_eq!(rpc_payload["slowest_worker_average_latency_ms"], 4.5);
+    assert_eq!(rpc_payload["worker_latency_buckets"]["under_5ms"], 1);
+    assert_eq!(rpc_payload["worker_latency_buckets"]["under_25ms"], 0);
+    assert_eq!(rpc_payload["worker_latency_buckets"]["under_100ms"], 0);
+    assert_eq!(rpc_payload["worker_latency_buckets"]["over_100ms"], 0);
     assert_eq!(rpc_payload["requests_total"], rpc_requests_before + 8);
     assert_eq!(rpc_payload["success_total"], rpc_success_before + 5);
     assert_eq!(rpc_payload["failure_total"], rpc_failure_before + 3);
@@ -2088,6 +2093,9 @@ async fn should_return_exact_rpc_operation_detail_counts() {
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["workers_registered"], 1);
     assert_eq!(payload["requests_pending"], 1);
+    assert_eq!(payload["slowest_worker_average_latency_ms"], 4.5);
+    assert_eq!(payload["worker_latency_buckets"]["under_5ms"], 1);
+    assert_eq!(payload["worker_latency_buckets"]["under_25ms"], 0);
     assert_eq!(payload["diagnostics"]["current_stage"], "throughput");
 }
 

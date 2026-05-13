@@ -1613,6 +1613,18 @@ export interface ResourceTimelineEvent {
 /** ResourceTimelineKind schema */
 export type ResourceTimelineKind = "observation" | "transition" | "failure" | "retry" | "ownership_change" | "state_flip" | "registration";
 
+/** RpcLatencyBuckets schema */
+export interface RpcLatencyBuckets {
+  /** Count of live RPC workers with an average latency of 100 milliseconds or more. */
+  over_100ms: number;
+  /** Count of live RPC workers with an average latency between 25 and 100 milliseconds. */
+  under_100ms: number;
+  /** Count of live RPC workers with an average latency between 5 and 25 milliseconds. */
+  under_25ms: number;
+  /** Count of live RPC workers with an average latency under 5 milliseconds. */
+  under_5ms: number;
+}
+
 /** Point-in-time live in-memory RPC state for a single operation on the current broker process. Worker registrations and pending requests are ephemeral, reset on disconnect cleanup or broker restart, and do not represent durable backlog or recovery state. */
 export interface RpcOperationDetail {
   area: string;
@@ -1622,6 +1634,9 @@ export interface RpcOperationDetail {
   /** Live in-memory pending requests waiting for a worker on this broker process. Not durable across disconnect or restart. */
   requests_pending: number;
   resource: string;
+  /** Slowest average latency observed among live workers for this exact RPC operation on the current broker process. */
+  slowest_worker_average_latency_ms: number;
+  worker_latency_buckets: RpcLatencyBuckets;
   /** Live in-memory workers currently registered for this exact operation on this broker process. */
   workers_registered: number;
 }
@@ -1660,7 +1675,10 @@ export interface RpcStats {
   requests_total: number;
   responses_dropped_closed_caller_total: number;
   responses_missing_pending_total: number;
+  /** Slowest average latency observed across live RPC worker registrations on the current broker process. */
+  slowest_worker_average_latency_ms: number;
   success_total: number;
+  worker_latency_buckets: RpcLatencyBuckets;
   workers_registered: number;
   wrong_worker_rejects_total: number;
 }

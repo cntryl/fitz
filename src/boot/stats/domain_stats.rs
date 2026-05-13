@@ -203,6 +203,18 @@ impl Runtime {
             .len()
     }
 
+    pub fn rpc_worker_latency_buckets(&self) -> crate::api::admin::RpcLatencyBuckets {
+        let workers = self.admin_read_model.rpc_workers(None);
+        crate::api::admin::troubleshooting::summarize_rpc_worker_latency(workers.iter())
+            .worker_latency_buckets
+    }
+
+    pub fn rpc_slowest_worker_average_latency_ms(&self) -> f64 {
+        let workers = self.admin_read_model.rpc_workers(None);
+        crate::api::admin::troubleshooting::summarize_rpc_worker_latency(workers.iter())
+            .slowest_worker_average_latency_ms
+    }
+
     pub fn lease_active(&self) -> usize {
         self.domains
             .read()

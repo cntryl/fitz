@@ -318,6 +318,50 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    let rpc_latency_buckets = runtime.rpc_worker_latency_buckets();
+
+    output.push_str(
+        "# HELP fitz_rpc_slowest_worker_average_latency_ms Slowest RPC worker average latency in milliseconds\n",
+    );
+    output.push_str("# TYPE fitz_rpc_slowest_worker_average_latency_ms gauge\n");
+    output.push_str(&format!(
+        "fitz_rpc_slowest_worker_average_latency_ms {:.3}\n",
+        runtime.rpc_slowest_worker_average_latency_ms()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_rpc_worker_latency_bucket_under_5ms RPC workers with average latency under 5 milliseconds\n");
+    output.push_str("# TYPE fitz_rpc_worker_latency_bucket_under_5ms gauge\n");
+    output.push_str(&format!(
+        "fitz_rpc_worker_latency_bucket_under_5ms {}\n",
+        rpc_latency_buckets.under_5ms
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_rpc_worker_latency_bucket_under_25ms RPC workers with average latency between 5 and 25 milliseconds\n");
+    output.push_str("# TYPE fitz_rpc_worker_latency_bucket_under_25ms gauge\n");
+    output.push_str(&format!(
+        "fitz_rpc_worker_latency_bucket_under_25ms {}\n",
+        rpc_latency_buckets.under_25ms
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_rpc_worker_latency_bucket_under_100ms RPC workers with average latency between 25 and 100 milliseconds\n");
+    output.push_str("# TYPE fitz_rpc_worker_latency_bucket_under_100ms gauge\n");
+    output.push_str(&format!(
+        "fitz_rpc_worker_latency_bucket_under_100ms {}\n",
+        rpc_latency_buckets.under_100ms
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_rpc_worker_latency_bucket_over_100ms RPC workers with average latency of 100 milliseconds or more\n");
+    output.push_str("# TYPE fitz_rpc_worker_latency_bucket_over_100ms gauge\n");
+    output.push_str(&format!(
+        "fitz_rpc_worker_latency_bucket_over_100ms {}\n",
+        rpc_latency_buckets.over_100ms
+    ));
+    output.push('\n');
+
     // Lease domain
     output.push_str("# HELP fitz_lease_active Active leases\n");
     output.push_str("# TYPE fitz_lease_active gauge\n");

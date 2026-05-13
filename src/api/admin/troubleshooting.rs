@@ -1,6 +1,6 @@
 use crate::api::admin::list::{
     KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueDeadLetter, QueueInflight,
-    QueueInfo, RpcPendingRequest, RpcWorker, ScheduleInfo, StreamInfo,
+    QueueInfo, RpcLatencyBuckets, RpcPendingRequest, RpcWorker, ScheduleInfo, StreamInfo,
 };
 use crate::api::admin::ResourcePath;
 use crate::boot::Runtime;
@@ -1484,6 +1484,32 @@ fn analyze_queue(
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct RpcLatencySummary {
+    pub worker_latency_buckets: RpcLatencyBuckets,
+    pub slowest_worker_average_latency_ms: f64,
+}
+
+pub(crate) fn summarize_rpc_worker_latency<'a, I>(workers: I) -> RpcLatencySummary
+where
+    I: IntoIterator<Item = &'a RpcWorker>,
+{
+    let mut summary = RpcLatencySummary::default();
+
+    for worker in workers {
+        if worker.average_latency_ms.is_finite() {
+            let latency_ms = worker.average_latency_ms.max(0.0);
+            let mut latency_bucket = RpcLatencyBuckets::default();
+            latency_bucket.record_latency_ms(latency_ms);
+            summary.worker_latency_buckets.merge(latency_bucket);
+            summary.slowest_worker_average_latency_ms =
+                summary.slowest_worker_average_latency_ms.max(latency_ms);
+        }
+    }
+
+    summary
+}
+
 #[allow(clippy::too_many_arguments)]
 fn analyze_rpc(
     workers: &[RpcWorker],
@@ -1537,6 +1563,7 @@ fn analyze_rpc(
         + wrong_worker_rejects_total
         + acks_rejected_wrong_worker_total;
     let transport_pressure = request_timeouts_total + backpressure_rejects_total;
+    let overall_latency_summary = summarize_rpc_worker_latency(workers.iter());
 
     for (key, pending_items) in pending_by_route {
         let workers = worker_by_route.get(&key).cloned().unwrap_or_default();
@@ -1556,6 +1583,8 @@ fn analyze_rpc(
                     .filter_map(|item| parse_rfc3339(&item.registered_at)),
             )
             .max();
+        let latency_summary = summarize_rpc_worker_latency(workers.iter().copied());
+        let slowest_worker_average_latency_ms = latency_summary.slowest_worker_average_latency_ms;
         let recent_transition_count = pending_items
             .iter()
             .filter_map(|item| parse_rfc3339(&item.submitted_at))
@@ -1615,6 +1644,22 @@ fn analyze_rpc(
                 Some("route contention".to_string()),
                 0.76,
             )
+        } else if slowest_worker_average_latency_ms >= 100.0 {
+            (
+                DiagnosisLabel::Throughput,
+                DiagnosticTrend::Steady,
+                if slowest_worker_average_latency_ms >= 250.0 {
+                    DiagnosticSeverity::High
+                } else {
+                    DiagnosticSeverity::Medium
+                },
+                Some("slow worker latency".to_string()),
+                if slowest_worker_average_latency_ms >= 250.0 {
+                    0.79
+                } else {
+                    0.74
+                },
+            )
         } else if pending_count > 0 {
             (
                 DiagnosisLabel::Throughput,
@@ -1649,6 +1694,12 @@ fn analyze_rpc(
         }
         if worker_count > 0 {
             hints.push(format!("{worker_count} registered worker(s)"));
+        }
+        if slowest_worker_average_latency_ms > 0.0 {
+            hints.push(format!(
+                "slowest worker average latency is {:.1}ms",
+                slowest_worker_average_latency_ms
+            ));
         }
         if let Some(age) = age_seconds {
             hints.push(format!("oldest request is {age}s old"));
@@ -1700,7 +1751,8 @@ fn analyze_rpc(
         hotspots.push(ScoredHotspot {
             score: pending_count as f64 * 5.0
                 + contention_count as f64 * 4.0
-                + age_seconds.unwrap_or(0) as f64 / 10.0,
+                + age_seconds.unwrap_or(0) as f64 / 10.0
+                + slowest_worker_average_latency_ms / 10.0,
             hotspot: DiagnosticHotspot {
                 domain: "rpc".to_string(),
                 realm: Some(key.0),
@@ -1823,6 +1875,69 @@ fn analyze_rpc(
                     .iter()
                     .filter_map(|item| parse_rfc3339(&item.submitted_at))
                     .max(),
+            });
+        } else if overall_latency_summary.slowest_worker_average_latency_ms >= 100.0 {
+            let slowest_latency_ms = overall_latency_summary.slowest_worker_average_latency_ms;
+            let severity = if slowest_latency_ms >= 250.0 {
+                DiagnosticSeverity::High
+            } else {
+                DiagnosticSeverity::Medium
+            };
+            let registered_at_times: Vec<_> = workers
+                .iter()
+                .filter_map(|worker| parse_rfc3339(&worker.registered_at))
+                .collect();
+            let mut hints = vec![];
+            if !registered_at_times.is_empty() {
+                hints.push(format!("{} registered worker(s)", workers.len()));
+            }
+            hints.push(format!(
+                "slowest worker average latency is {:.1}ms",
+                slowest_latency_ms
+            ));
+            hotspots.push(ScoredHotspot {
+                score: slowest_latency_ms / 10.0 + workers.len() as f64,
+                hotspot: DiagnosticHotspot {
+                    domain: "rpc".to_string(),
+                    realm: None,
+                    area: None,
+                    resource: None,
+                    operation: None,
+                    family: None,
+                    backlog: Some(pending.len()),
+                    inflight: Some(pending.len()),
+                    ready: None,
+                    delayed: None,
+                    dead_letters: None,
+                    workers: Some(workers.len()),
+                    subscriptions: None,
+                    owner_session: None,
+                    worker_session: workers.first().map(|worker| worker.session_id.clone()),
+                    snapshot: DiagnosticSnapshot::with_stage(
+                        DiagnosisLabel::Throughput,
+                        DiagnosticTrend::Steady,
+                        severity,
+                        Some("slow worker latency".to_string()),
+                        registered_at_times.iter().copied().max(),
+                        None,
+                        None,
+                        None,
+                        registered_at_times
+                            .iter()
+                            .filter(|ts| is_recent(**ts, now))
+                            .count() as u64,
+                        0,
+                        0,
+                        pending.len(),
+                        if slowest_latency_ms >= 250.0 {
+                            0.79
+                        } else {
+                            0.74
+                        },
+                        hints,
+                    ),
+                },
+                last_changed_at: registered_at_times.iter().copied().max(),
             });
         }
     }
@@ -2484,11 +2599,13 @@ pub(crate) fn notice_resource_diagnostics(subscriptions_active: usize) -> Diagno
 pub(crate) fn rpc_operation_diagnostics(
     workers_registered: usize,
     requests_pending: usize,
+    slowest_worker_average_latency_ms: Option<f64>,
 ) -> DiagnosticSnapshot {
     if workers_registered == 0 && requests_pending == 0 {
         return DiagnosticSnapshot::healthy();
     }
 
+    let slowest_worker_average_latency_ms = slowest_worker_average_latency_ms.unwrap_or(0.0);
     let (label, trend, severity, bottleneck, confidence) = if workers_registered == 0 {
         (
             DiagnosisLabel::WorkerStarvation,
@@ -2512,6 +2629,22 @@ pub(crate) fn rpc_operation_diagnostics(
             DiagnosticSeverity::Medium,
             Some("route contention".to_string()),
             0.76,
+        )
+    } else if slowest_worker_average_latency_ms >= 100.0 {
+        (
+            DiagnosisLabel::Throughput,
+            DiagnosticTrend::Steady,
+            if slowest_worker_average_latency_ms >= 250.0 {
+                DiagnosticSeverity::High
+            } else {
+                DiagnosticSeverity::Medium
+            },
+            Some("slow worker latency".to_string()),
+            if slowest_worker_average_latency_ms >= 250.0 {
+                0.80
+            } else {
+                0.74
+            },
         )
     } else {
         (
@@ -2544,6 +2677,12 @@ pub(crate) fn rpc_operation_diagnostics(
             }
             if requests_pending > 0 {
                 hints.push(format!("{requests_pending} pending request(s)"));
+            }
+            if slowest_worker_average_latency_ms > 0.0 {
+                hints.push(format!(
+                    "slowest worker average latency is {:.1}ms",
+                    slowest_worker_average_latency_ms
+                ));
             }
             hints
         },
@@ -3278,7 +3417,12 @@ pub(crate) fn rpc_resource_timeline(
 
     let workers_registered = matching_workers.len();
     let requests_pending = matching_pending.len();
-    let diagnostics = rpc_operation_diagnostics(workers_registered, requests_pending);
+    let latency_summary = summarize_rpc_worker_latency(matching_workers.iter().copied());
+    let diagnostics = rpc_operation_diagnostics(
+        workers_registered,
+        requests_pending,
+        Some(latency_summary.slowest_worker_average_latency_ms),
+    );
     let mut candidates = Vec::new();
     let mut oldest_pending_age = 0u64;
 
@@ -3373,13 +3517,24 @@ pub(crate) fn rpc_resource_timeline(
             ),
         ));
     } else if requests_pending > 0 || workers_registered > 0 {
-        let summary = if requests_pending > 0 {
+        let latency_note = if latency_summary.slowest_worker_average_latency_ms > 0.0 {
             format!(
-                "{} worker(s), {} pending request(s); oldest request {}s old",
-                workers_registered, requests_pending, oldest_pending_age
+                "; slowest worker avg latency {:.1}ms",
+                latency_summary.slowest_worker_average_latency_ms
             )
         } else {
-            format!("{} worker(s) registered", workers_registered)
+            String::new()
+        };
+        let summary = if requests_pending > 0 {
+            format!(
+                "{} worker(s), {} pending request(s); oldest request {}s old{}",
+                workers_registered, requests_pending, oldest_pending_age, latency_note
+            )
+        } else {
+            format!(
+                "{} worker(s) registered{}",
+                workers_registered, latency_note
+            )
         };
         candidates.push(timeline_candidate(
             now,
@@ -3656,10 +3811,71 @@ mod tests {
 
     #[test]
     fn should_classify_rpc_worker_starvation() {
-        let snapshot = rpc_operation_diagnostics(0, 3);
+        let snapshot = rpc_operation_diagnostics(0, 3, None);
         assert_eq!(snapshot.current_stage, "worker_starvation");
         assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::WorkerStarvation);
         assert_eq!(snapshot.severity, DiagnosticSeverity::High);
+    }
+
+    #[test]
+    fn should_summarize_rpc_worker_latency_buckets() {
+        let workers = [
+            RpcWorker {
+                session_id: "9001".to_string(),
+                realm: "prod".to_string(),
+                route: "rpc://prod/api/users/get".to_string(),
+                registered_at: "2026-03-14T12:00:00Z".to_string(),
+                requests_handled: 12,
+                average_latency_ms: 4.5,
+            },
+            RpcWorker {
+                session_id: "9002".to_string(),
+                realm: "prod".to_string(),
+                route: "rpc://prod/api/users/get".to_string(),
+                registered_at: "2026-03-14T12:00:01Z".to_string(),
+                requests_handled: 13,
+                average_latency_ms: 22.0,
+            },
+            RpcWorker {
+                session_id: "9003".to_string(),
+                realm: "prod".to_string(),
+                route: "rpc://prod/api/users/get".to_string(),
+                registered_at: "2026-03-14T12:00:02Z".to_string(),
+                requests_handled: 14,
+                average_latency_ms: 63.0,
+            },
+            RpcWorker {
+                session_id: "9004".to_string(),
+                realm: "prod".to_string(),
+                route: "rpc://prod/api/users/get".to_string(),
+                registered_at: "2026-03-14T12:00:03Z".to_string(),
+                requests_handled: 15,
+                average_latency_ms: 125.0,
+            },
+        ];
+
+        let summary = summarize_rpc_worker_latency(workers.iter());
+        assert_eq!(summary.slowest_worker_average_latency_ms, 125.0);
+        assert_eq!(summary.worker_latency_buckets.under_5ms, 1);
+        assert_eq!(summary.worker_latency_buckets.under_25ms, 1);
+        assert_eq!(summary.worker_latency_buckets.under_100ms, 1);
+        assert_eq!(summary.worker_latency_buckets.over_100ms, 1);
+    }
+
+    #[test]
+    fn should_classify_rpc_worker_latency_pressure() {
+        let snapshot = rpc_operation_diagnostics(3, 0, Some(180.0));
+        assert_eq!(snapshot.current_stage, "throughput");
+        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::Throughput);
+        assert_eq!(snapshot.severity, DiagnosticSeverity::Medium);
+        assert_eq!(
+            snapshot.likely_bottleneck.as_deref(),
+            Some("slow worker latency")
+        );
+        assert!(snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("slowest worker average latency is 180.0ms")));
     }
 
     #[test]

@@ -257,6 +257,8 @@ pub struct RpcOperationDetail {
     pub operation: String,
     pub workers_registered: usize,
     pub requests_pending: usize,
+    pub slowest_worker_average_latency_ms: f64,
+    pub worker_latency_buckets: RpcLatencyBuckets,
     pub diagnostics: DiagnosticSnapshot,
 }
 
@@ -488,6 +490,8 @@ impl RpcOperationDetail {
         path: &RpcOperationPath<'_>,
         workers_registered: usize,
         requests_pending: usize,
+        slowest_worker_average_latency_ms: f64,
+        worker_latency_buckets: RpcLatencyBuckets,
     ) -> Self {
         Self {
             realm: path.realm.to_string(),
@@ -496,9 +500,12 @@ impl RpcOperationDetail {
             operation: path.operation.to_string(),
             workers_registered,
             requests_pending,
+            slowest_worker_average_latency_ms,
+            worker_latency_buckets,
             diagnostics: troubleshooting::rpc_operation_diagnostics(
                 workers_registered,
                 requests_pending,
+                Some(slowest_worker_average_latency_ms),
             ),
         }
     }
@@ -756,6 +763,39 @@ pub struct RpcWorker {
     pub registered_at: String,
     pub requests_handled: u64,
     pub average_latency_ms: f64,
+}
+
+/// Distribution of RPC worker average latencies for the current broker process.
+///
+/// The buckets are read-only and bounded. They summarize the latency profile
+/// across live worker registrations without exposing per-request history.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RpcLatencyBuckets {
+    pub under_5ms: usize,
+    pub under_25ms: usize,
+    pub under_100ms: usize,
+    pub over_100ms: usize,
+}
+
+impl RpcLatencyBuckets {
+    pub(crate) fn record_latency_ms(&mut self, latency_ms: f64) {
+        if latency_ms < 5.0 {
+            self.under_5ms += 1;
+        } else if latency_ms < 25.0 {
+            self.under_25ms += 1;
+        } else if latency_ms < 100.0 {
+            self.under_100ms += 1;
+        } else {
+            self.over_100ms += 1;
+        }
+    }
+
+    pub(crate) fn merge(&mut self, other: RpcLatencyBuckets) {
+        self.under_5ms += other.under_5ms;
+        self.under_25ms += other.under_25ms;
+        self.under_100ms += other.under_100ms;
+        self.over_100ms += other.over_100ms;
+    }
 }
 
 /// Collection of live in-memory pending RPC request snapshots for the current
@@ -1666,17 +1706,24 @@ pub fn notice_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> NoticeResour
 }
 
 pub fn rpc_operation_detail(runtime: &Runtime, path: &RpcOperationPath<'_>) -> RpcOperationDetail {
-    let workers_registered = runtime
+    let workers = runtime
         .rpc_list_workers(Some(path.realm))
         .into_iter()
         .filter(|worker| matches_operation_route(&worker.route, path))
-        .count();
+        .collect::<Vec<_>>();
     let requests_pending = runtime
         .rpc_list_pending(Some(path.realm))
         .into_iter()
         .filter(|request| matches_operation_route(&request.route, path))
-        .count();
-    RpcOperationDetail::from_counts(path, workers_registered, requests_pending)
+        .collect::<Vec<_>>();
+    let latency_summary = troubleshooting::summarize_rpc_worker_latency(workers.iter());
+    RpcOperationDetail::from_counts(
+        path,
+        workers.len(),
+        requests_pending.len(),
+        latency_summary.slowest_worker_average_latency_ms,
+        latency_summary.worker_latency_buckets,
+    )
 }
 
 fn comparison_scope(path: &ResourcePath<'_>, family: Option<u64>) -> ResourceComparisonScope {
@@ -1831,7 +1878,7 @@ fn rpc_resource_comparison_metrics(
     oldest_pending_age: Option<u64>,
 ) -> (DiagnosticSnapshot, ResourceComparisonMetrics) {
     let diagnostics =
-        troubleshooting::rpc_operation_diagnostics(workers_registered, requests_pending);
+        troubleshooting::rpc_operation_diagnostics(workers_registered, requests_pending, None);
     (
         diagnostics,
         ResourceComparisonMetrics {
