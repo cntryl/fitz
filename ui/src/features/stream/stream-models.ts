@@ -2,9 +2,17 @@ export interface StreamRealmSummary {
   realm: string;
 }
 
+export interface StreamLagBucketsSummary {
+  caughtUp: number;
+  over100: number;
+  under10: number;
+  under100: number;
+}
+
 export interface StreamStatsSummary {
   eventsTotal: number;
   operationsPerSecond: number;
+  watermarkLagBuckets: StreamLagBucketsSummary;
   streamsActive: number;
   subscriptionsActive: number;
 }

@@ -7,7 +7,8 @@ use argon2::{
 use bytes::Bytes;
 use fitz::api::admin::{
     KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueAgeBuckets,
-    QueueDeadLetter, QueueInfo, RpcPendingRequest, RpcWorker,
+    QueueDeadLetter, QueueInfo, RpcPendingRequest, RpcWorker, StreamAreaWatermark,
+    StreamAreaWatermarkDetail,
 };
 use fitz::boot::domains::{
     DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
@@ -432,6 +433,61 @@ fn seed_stream_snapshot_data(store: Arc<cntryl_midge::Engine>) {
             mode: StreamWriteMode::Sync,
         })
         .expect("commit audit stream record");
+}
+
+fn seed_stream_watermark_lag_data(runtime: &Arc<Runtime>) {
+    let read_model = runtime.admin_read_model();
+    read_model.replace_stream_area_watermarks(vec![
+        StreamAreaWatermarkDetail {
+            realm: "prod".to_string(),
+            area: "logs".to_string(),
+            resource_count: 3,
+            family_watermarks: vec![
+                StreamAreaWatermark {
+                    family: 1,
+                    watermark: 100,
+                },
+                StreamAreaWatermark {
+                    family: 2,
+                    watermark: 92,
+                },
+                StreamAreaWatermark {
+                    family: 3,
+                    watermark: 50,
+                },
+            ],
+        },
+        StreamAreaWatermarkDetail {
+            realm: "prod".to_string(),
+            area: "audit".to_string(),
+            resource_count: 2,
+            family_watermarks: vec![
+                StreamAreaWatermark {
+                    family: 1,
+                    watermark: 20,
+                },
+                StreamAreaWatermark {
+                    family: 2,
+                    watermark: 0,
+                },
+            ],
+        },
+        StreamAreaWatermarkDetail {
+            realm: "prod".to_string(),
+            area: "infra".to_string(),
+            resource_count: 2,
+            family_watermarks: vec![
+                StreamAreaWatermark {
+                    family: 1,
+                    watermark: 300,
+                },
+                StreamAreaWatermark {
+                    family: 2,
+                    watermark: 150,
+                },
+            ],
+        },
+    ]);
 }
 
 async fn login_cookie(runtime: Arc<Runtime>) -> String {
@@ -1606,6 +1662,7 @@ async fn should_return_stream_domain_stats_given_recorded_operations() {
     // Arrange
     let (runtime, store) = queue_runtime_with_domains();
     seed_stream_snapshot_data(store);
+    seed_stream_watermark_lag_data(&runtime);
     let metrics = fitz::boot::observability::metrics();
     metrics.counter_add("fitz_stream_operations_total", 5);
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -1628,6 +1685,10 @@ async fn should_return_stream_domain_stats_given_recorded_operations() {
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["events_total"], 3);
+    assert_eq!(payload["watermark_lag_buckets"]["caught_up"], 3);
+    assert_eq!(payload["watermark_lag_buckets"]["under_10"], 1);
+    assert_eq!(payload["watermark_lag_buckets"]["under_100"], 2);
+    assert_eq!(payload["watermark_lag_buckets"]["over_100"], 1);
     assert!(payload["operations_per_second"].as_f64().unwrap_or(0.0) > 0.0);
 }
 
@@ -1637,6 +1698,7 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
     // Arrange
     let (runtime, store) = queue_runtime_with_domains();
     seed_stream_snapshot_data(store.clone());
+    seed_stream_watermark_lag_data(&runtime);
     seed_snapshot_data(&runtime);
     let metrics = fitz::boot::observability::metrics();
     let stream_requests_before = metrics.counter_get("fitz_stream_requests_total");
@@ -1717,6 +1779,10 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
         stream_payload["notify_drops_total"],
         stream_notify_drops_before + 5
     );
+    assert_eq!(stream_payload["watermark_lag_buckets"]["caught_up"], 3);
+    assert_eq!(stream_payload["watermark_lag_buckets"]["under_10"], 1);
+    assert_eq!(stream_payload["watermark_lag_buckets"]["under_100"], 2);
+    assert_eq!(stream_payload["watermark_lag_buckets"]["over_100"], 1);
     assert!(
         stream_payload["operations_per_second"]
             .as_f64()
@@ -1804,6 +1870,7 @@ async fn should_export_notice_churn_and_concentration_metrics_given_recorded_not
 async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics() {
     // Arrange
     let runtime = test_runtime();
+    seed_stream_watermark_lag_data(&runtime);
     let metrics = fitz::boot::observability::metrics();
     let operations_before = metrics.counter_get("fitz_stream_operations_total");
     let started_before = metrics.counter_get("fitz_stream_append_sessions_started_total");
@@ -1840,6 +1907,10 @@ async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics()
     assert!(payload.contains("fitz_stream_append_sessions_ended_total"));
     assert!(payload.contains("fitz_stream_operations_per_second"));
     assert!(payload.contains("fitz_stream_subscriptions_active"));
+    assert!(payload.contains("fitz_stream_watermark_lag_bucket_caught_up"));
+    assert!(payload.contains("fitz_stream_watermark_lag_bucket_under_10"));
+    assert!(payload.contains("fitz_stream_watermark_lag_bucket_under_100"));
+    assert!(payload.contains("fitz_stream_watermark_lag_bucket_over_100"));
     assert!(payload.contains(&format!(
         "fitz_stream_operations_total {}",
         operations_before + 3
@@ -1860,6 +1931,10 @@ async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics()
         "fitz_stream_notify_drops_total {}",
         drops_before + 1
     )));
+    assert!(payload.contains("fitz_stream_watermark_lag_bucket_caught_up 3"));
+    assert!(payload.contains("fitz_stream_watermark_lag_bucket_under_10 1"));
+    assert!(payload.contains("fitz_stream_watermark_lag_bucket_under_100 2"));
+    assert!(payload.contains("fitz_stream_watermark_lag_bucket_over_100 1"));
 }
 
 #[tokio::test]

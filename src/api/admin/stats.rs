@@ -63,6 +63,7 @@ pub struct StreamStats {
     pub append_sessions_ended_total: u64,
     pub append_conflicts_total: u64,
     pub notify_drops_total: u64,
+    pub watermark_lag_buckets: crate::api::admin::StreamLagBuckets,
     pub operations_per_second: f64,
     pub subscriptions_active: usize,
     pub diagnostics: troubleshooting::DomainDiagnostics,
@@ -189,6 +190,7 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
             stream: StreamStats {
                 streams_active: runtime.stream_active(),
                 append_sessions_active: runtime.stream_append_sessions_active(),
+                watermark_lag_buckets: runtime.stream_watermark_lag_buckets(),
                 events_total: runtime.stream_events_total(),
                 requests_total: runtime.stream_requests_total(),
                 success_total: runtime.stream_success_total(),
@@ -340,6 +342,7 @@ async fn handle_stream_stats(
     crate::api::admin::json_response(StreamStats {
         streams_active: runtime.stream_active(),
         append_sessions_active: runtime.stream_append_sessions_active(),
+        watermark_lag_buckets: runtime.stream_watermark_lag_buckets(),
         events_total: runtime.stream_events_total(),
         requests_total: runtime.stream_requests_total(),
         success_total: runtime.stream_success_total(),

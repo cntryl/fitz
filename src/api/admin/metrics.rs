@@ -360,6 +360,8 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    let watermark_lag_buckets = runtime.stream_watermark_lag_buckets();
+
     output.push_str("# HELP fitz_stream_events_total Total committed stream events visible through the admin snapshot\n");
     output.push_str("# TYPE fitz_stream_events_total gauge\n");
     output.push_str(&format!(
@@ -403,6 +405,38 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str(&format!(
         "fitz_stream_subscriptions_active {}\n",
         runtime.stream_subscriptions_active()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_stream_watermark_lag_bucket_caught_up Stream family watermarks aligned with the fastest family in their area\n");
+    output.push_str("# TYPE fitz_stream_watermark_lag_bucket_caught_up gauge\n");
+    output.push_str(&format!(
+        "fitz_stream_watermark_lag_bucket_caught_up {}\n",
+        watermark_lag_buckets.caught_up
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_stream_watermark_lag_bucket_under_10 Stream family watermarks trailing the fastest family by fewer than 10 events\n");
+    output.push_str("# TYPE fitz_stream_watermark_lag_bucket_under_10 gauge\n");
+    output.push_str(&format!(
+        "fitz_stream_watermark_lag_bucket_under_10 {}\n",
+        watermark_lag_buckets.under_10
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_stream_watermark_lag_bucket_under_100 Stream family watermarks trailing the fastest family by fewer than 100 events\n");
+    output.push_str("# TYPE fitz_stream_watermark_lag_bucket_under_100 gauge\n");
+    output.push_str(&format!(
+        "fitz_stream_watermark_lag_bucket_under_100 {}\n",
+        watermark_lag_buckets.under_100
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_stream_watermark_lag_bucket_over_100 Stream family watermarks trailing the fastest family by 100 events or more\n");
+    output.push_str("# TYPE fitz_stream_watermark_lag_bucket_over_100 gauge\n");
+    output.push_str(&format!(
+        "fitz_stream_watermark_lag_bucket_over_100 {}\n",
+        watermark_lag_buckets.over_100
     ));
     output.push('\n');
 

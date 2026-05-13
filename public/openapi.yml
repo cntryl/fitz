@@ -2904,6 +2904,7 @@ components:
           append_sessions_ended_total,
           append_conflicts_total,
           notify_drops_total,
+          watermark_lag_buckets,
           operations_per_second,
           subscriptions_active,
           diagnostics,
@@ -2939,12 +2940,31 @@ components:
         notify_drops_total:
           type: integer
           format: int64
+        watermark_lag_buckets:
+          $ref: "#/components/schemas/StreamLagBuckets"
         operations_per_second:
           type: number
         subscriptions_active:
           type: integer
         diagnostics:
           $ref: "#/components/schemas/DiagnosticSnapshot"
+
+    StreamLagBuckets:
+      type: object
+      required: [caught_up, under_10, under_100, over_100]
+      properties:
+        caught_up:
+          type: integer
+          description: Count of stream family watermarks aligned with the fastest family in their area.
+        under_10:
+          type: integer
+          description: Count of stream family watermarks trailing the fastest family by fewer than 10 events.
+        under_100:
+          type: integer
+          description: Count of stream family watermarks trailing the fastest family by fewer than 100 events.
+        over_100:
+          type: integer
+          description: Count of stream family watermarks trailing the fastest family by 100 events or more.
 
     NoticeStats:
       type: object

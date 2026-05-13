@@ -289,6 +289,30 @@ impl Runtime {
             .unwrap_or(0)
     }
 
+    pub fn stream_watermark_lag_buckets(&self) -> crate::api::admin::StreamLagBuckets {
+        self.admin_read_model
+            .stream_area_watermarks()
+            .into_iter()
+            .fold(
+                crate::api::admin::StreamLagBuckets::default(),
+                |mut buckets, detail| {
+                    let max_watermark = detail
+                        .family_watermarks
+                        .iter()
+                        .map(|watermark| watermark.watermark)
+                        .max()
+                        .unwrap_or(0);
+                    let mut area_buckets = crate::api::admin::StreamLagBuckets::default();
+                    for watermark in detail.family_watermarks {
+                        area_buckets
+                            .record_lag_events(max_watermark.saturating_sub(watermark.watermark));
+                    }
+                    buckets.merge(area_buckets);
+                    buckets
+                },
+            )
+    }
+
     pub fn notice_publishes_per_second(&self) -> f64 {
         let uptime_secs = self.uptime().as_secs_f64();
         if uptime_secs < 0.001 {

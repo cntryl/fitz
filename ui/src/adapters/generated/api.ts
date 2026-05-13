@@ -1763,6 +1763,18 @@ export interface StreamAreaWatermarkDetail {
   resource_count: number;
 }
 
+/** StreamLagBuckets schema */
+export interface StreamLagBuckets {
+  /** Count of stream family watermarks aligned with the fastest family in their area. */
+  caught_up: number;
+  /** Count of stream family watermarks trailing the fastest family by 100 events or more. */
+  over_100: number;
+  /** Count of stream family watermarks trailing the fastest family by fewer than 10 events. */
+  under_10: number;
+  /** Count of stream family watermarks trailing the fastest family by fewer than 100 events. */
+  under_100: number;
+}
+
 /** StreamRealmWatermark schema */
 export interface StreamRealmWatermark {
   family: number;
@@ -1807,5 +1819,6 @@ export interface StreamStats {
   streams_active: number;
   subscriptions_active: number;
   success_total: number;
+  watermark_lag_buckets: StreamLagBuckets;
 }
 

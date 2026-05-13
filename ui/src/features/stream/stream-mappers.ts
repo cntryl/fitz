@@ -11,6 +11,12 @@ export function mapStreamStats(dto: StreamStats): StreamStatsSummary {
   return {
     eventsTotal: dto.events_total,
     operationsPerSecond: dto.operations_per_second,
+    watermarkLagBuckets: {
+      caughtUp: dto.watermark_lag_buckets.caught_up,
+      over100: dto.watermark_lag_buckets.over_100,
+      under10: dto.watermark_lag_buckets.under_10,
+      under100: dto.watermark_lag_buckets.under_100,
+    },
     streamsActive: dto.streams_active,
     subscriptionsActive: dto.subscriptions_active,
   };

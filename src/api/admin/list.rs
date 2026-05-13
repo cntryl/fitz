@@ -549,6 +549,41 @@ pub struct StreamInfo {
     pub sessions_active: usize,
 }
 
+/// Distribution of stream family watermark lag within a realm area.
+///
+/// Each bucket counts visible family watermarks relative to the fastest family
+/// watermark in the same area snapshot. The distribution is read-only and
+/// bounded, and it helps operators see whether one family is trailing the rest
+/// of the area.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamLagBuckets {
+    pub caught_up: usize,
+    pub under_10: usize,
+    pub under_100: usize,
+    pub over_100: usize,
+}
+
+impl StreamLagBuckets {
+    pub(crate) fn record_lag_events(&mut self, lag_events: u64) {
+        if lag_events == 0 {
+            self.caught_up += 1;
+        } else if lag_events < 10 {
+            self.under_10 += 1;
+        } else if lag_events < 100 {
+            self.under_100 += 1;
+        } else {
+            self.over_100 += 1;
+        }
+    }
+
+    pub(crate) fn merge(&mut self, other: StreamLagBuckets) {
+        self.caught_up += other.caught_up;
+        self.under_10 += other.under_10;
+        self.under_100 += other.under_100;
+        self.over_100 += other.over_100;
+    }
+}
+
 /// Collection of live in-memory Notice subscriptions for the current broker
 /// process.
 #[derive(Debug, Clone, Serialize, Deserialize)]

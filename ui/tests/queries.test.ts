@@ -357,6 +357,12 @@ describe("Data query layer", () => {
         events_total: 11,
         operations_per_second: 12.5,
         notify_drops_total: 17,
+        watermark_lag_buckets: {
+          caught_up: 18,
+          over_100: 21,
+          under_10: 19,
+          under_100: 20,
+        },
         requests_total: 18,
         success_total: 19,
         streams_active: 13,
@@ -365,6 +371,12 @@ describe("Data query layer", () => {
     ).toEqual({
       eventsTotal: 11,
       operationsPerSecond: 12.5,
+      watermarkLagBuckets: {
+        caughtUp: 18,
+        over100: 21,
+        under10: 19,
+        under100: 20,
+      },
       streamsActive: 13,
       subscriptionsActive: 14,
     });
@@ -526,6 +538,12 @@ describe("Data query layer", () => {
               events_total: 29,
               operations_per_second: 30.5,
               notify_drops_total: 2,
+              watermark_lag_buckets: {
+                caught_up: 24,
+                over_100: 27,
+                under_10: 25,
+                under_100: 26,
+              },
               requests_total: 4,
               success_total: 5,
               streams_active: 31,
