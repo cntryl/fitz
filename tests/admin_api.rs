@@ -780,6 +780,12 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
     schedule
         .preload_persisted_families()
         .expect("preload schedules");
+    let metrics = fitz::boot::observability::metrics();
+    let expired_before = metrics.counter_get("fitz_schedule_pending_claims_expired_total");
+    let cleanup_failures_before =
+        metrics.counter_get("fitz_schedule_pending_claim_cleanup_failure_total");
+    metrics.counter_add("fitz_schedule_pending_claims_expired_total", 2);
+    metrics.counter_add("fitz_schedule_pending_claim_cleanup_failure_total", 1);
     let cookie = login_cookie(runtime.clone()).await;
 
     let req = Request::builder()
@@ -806,6 +812,11 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
             .as_u64()
             .unwrap_or(0)
             >= 30
+    );
+    assert_eq!(payload["pending_claims_expired_total"], expired_before + 2);
+    assert_eq!(
+        payload["pending_claim_cleanup_failures_total"],
+        cleanup_failures_before + 1
     );
     assert_eq!(payload["diagnostics"]["current_stage"], "stale_handoff");
     assert_eq!(

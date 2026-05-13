@@ -3187,6 +3187,8 @@ components:
           notify_failures_total,
           ack_failures_total,
           overdue_normalizations_total,
+          pending_claims_expired_total,
+          pending_claim_cleanup_failures_total,
           diagnostics,
         ]
       properties:
@@ -3212,6 +3214,12 @@ components:
           type: integer
         overdue_normalizations_total:
           type: integer
+        pending_claims_expired_total:
+          type: integer
+          description: Total stale pending schedule claims cleaned up by this broker process.
+        pending_claim_cleanup_failures_total:
+          type: integer
+          description: Total failed pending schedule claim cleanup attempts.
         diagnostics:
           $ref: "#/components/schemas/DiagnosticSnapshot"
 

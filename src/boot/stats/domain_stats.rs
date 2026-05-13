@@ -478,4 +478,12 @@ impl Runtime {
             .map(|domains| domains.schedule.overdue_normalization_count())
             .unwrap_or(0)
     }
+
+    pub fn schedule_pending_claims_expired_total(&self) -> u64 {
+        metric_counter("fitz_schedule_pending_claims_expired_total")
+    }
+
+    pub fn schedule_pending_claim_cleanup_failures_total(&self) -> u64 {
+        metric_counter("fitz_schedule_pending_claim_cleanup_failure_total")
+    }
 }

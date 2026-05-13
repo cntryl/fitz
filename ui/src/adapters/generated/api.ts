@@ -1687,6 +1687,10 @@ export interface ScheduleStats {
   overdue_normalizations_total: number;
   /** Count of pending schedule live handoffs currently waiting for durable acknowledgement retry. */
   pending_ack_retries: number;
+  /** Total failed pending schedule claim cleanup attempts. */
+  pending_claim_cleanup_failures_total: number;
+  /** Total stale pending schedule claims cleaned up by this broker process. */
+  pending_claims_expired_total: number;
   /** Count of durably claimed schedule occurrences that have not yet completed their live handoff acknowledgement. */
   pending_fire_claims: number;
   schedules_active: number;

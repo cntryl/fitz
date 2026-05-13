@@ -756,6 +756,8 @@ pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
         runtime.schedule_notify_failures(),
         runtime.schedule_ack_failures(),
         runtime.schedule_overdue_normalizations(),
+        runtime.schedule_pending_claims_expired_total(),
+        runtime.schedule_pending_claim_cleanup_failures_total(),
         now,
     );
 
@@ -1801,6 +1803,8 @@ fn analyze_schedule(
     notify_failures: u64,
     ack_failures: u64,
     overdue_normalizations: u64,
+    pending_claims_expired_total: u64,
+    pending_claim_cleanup_failures_total: u64,
     now: DateTime<Utc>,
 ) -> DomainAnalysis {
     let mut grouped: HashMap<(String, String, String, String), Vec<&ScheduleInfo>> = HashMap::new();
@@ -1849,42 +1853,64 @@ fn analyze_schedule(
             .count() as u64;
         let contention_count = pending_fire_claims
             .saturating_add(pending_ack_retries)
-            .saturating_add(overdue_normalizations as usize) as u64;
-        let failure_count = notify_failures + ack_failures;
-        let (label, trend, severity, bottleneck, confidence) =
-            if pending_fire_claims > 0 || pending_ack_retries > 0 || overdue_normalizations > 0 {
-                (
-                    DiagnosisLabel::StaleHandoff,
-                    DiagnosticTrend::Stalled,
-                    DiagnosticSeverity::High,
-                    Some("durable handoff".to_string()),
-                    0.88,
-                )
-            } else if failure_count > 0 {
-                (
-                    DiagnosisLabel::Throughput,
-                    DiagnosticTrend::Steady,
-                    DiagnosticSeverity::Medium,
-                    Some("schedule failure".to_string()),
-                    0.66,
-                )
-            } else if enabled {
-                (
-                    DiagnosisLabel::Healthy,
-                    DiagnosticTrend::Steady,
-                    DiagnosticSeverity::Informational,
-                    None,
-                    0.66,
-                )
-            } else {
-                (
-                    DiagnosisLabel::Healthy,
-                    DiagnosticTrend::Unknown,
-                    DiagnosticSeverity::Informational,
-                    None,
-                    1.0,
-                )
-            };
+            .saturating_add(overdue_normalizations as usize)
+            .saturating_add(pending_claims_expired_total as usize)
+            .saturating_add(pending_claim_cleanup_failures_total as usize)
+            as u64;
+        let failure_count = notify_failures + ack_failures + pending_claim_cleanup_failures_total;
+        let handoff_pressure =
+            pending_fire_claims > 0 || pending_ack_retries > 0 || overdue_normalizations > 0;
+        let cleanup_pressure =
+            pending_claims_expired_total > 0 || pending_claim_cleanup_failures_total > 0;
+        let (label, trend, severity, bottleneck, confidence) = if handoff_pressure {
+            (
+                DiagnosisLabel::StaleHandoff,
+                DiagnosticTrend::Stalled,
+                DiagnosticSeverity::High,
+                Some("durable handoff".to_string()),
+                0.88,
+            )
+        } else if cleanup_pressure {
+            (
+                DiagnosisLabel::StaleHandoff,
+                DiagnosticTrend::Stalled,
+                if pending_claim_cleanup_failures_total > 0 {
+                    DiagnosticSeverity::High
+                } else {
+                    DiagnosticSeverity::Medium
+                },
+                Some("claim cleanup".to_string()),
+                if pending_claim_cleanup_failures_total > 0 {
+                    0.85
+                } else {
+                    0.78
+                },
+            )
+        } else if failure_count > 0 {
+            (
+                DiagnosisLabel::Throughput,
+                DiagnosticTrend::Steady,
+                DiagnosticSeverity::Medium,
+                Some("schedule failure".to_string()),
+                0.66,
+            )
+        } else if enabled {
+            (
+                DiagnosisLabel::Healthy,
+                DiagnosticTrend::Steady,
+                DiagnosticSeverity::Informational,
+                None,
+                0.66,
+            )
+        } else {
+            (
+                DiagnosisLabel::Healthy,
+                DiagnosticTrend::Unknown,
+                DiagnosticSeverity::Informational,
+                None,
+                1.0,
+            )
+        };
         let mut hints = vec![];
         if let Some(run) = last_run {
             hints.push(format!("last run at {}", rfc3339(run)));
@@ -1905,6 +1931,16 @@ fn analyze_schedule(
         }
         if overdue_normalizations > 0 {
             hints.push(format!("{overdue_normalizations} overdue normalization(s)"));
+        }
+        if pending_claims_expired_total > 0 {
+            hints.push(format!(
+                "{pending_claims_expired_total} expired pending claim(s)"
+            ));
+        }
+        if pending_claim_cleanup_failures_total > 0 {
+            hints.push(format!(
+                "{pending_claim_cleanup_failures_total} pending claim cleanup failure(s)"
+            ));
         }
 
         let last_change = last_run.or(next_run);
@@ -1937,6 +1973,8 @@ fn analyze_schedule(
             score: pending_fire_claims as f64 * 5.0
                 + pending_ack_retries as f64 * 3.5
                 + overdue_normalizations as f64 * 4.0
+                + pending_claims_expired_total as f64 * 2.5
+                + pending_claim_cleanup_failures_total as f64 * 5.0
                 + failure_count as f64 * 1.25
                 + age_seconds.unwrap_or(0) as f64 / 20.0,
             hotspot: DiagnosticHotspot {
@@ -3180,6 +3218,8 @@ pub(crate) fn schedule_resource_timeline(
     notify_failures: u64,
     ack_failures: u64,
     overdue_normalizations: u64,
+    pending_claims_expired_total: u64,
+    pending_claim_cleanup_failures_total: u64,
     path: &ResourcePath<'_>,
     limit: usize,
 ) -> ResourceTimeline {
@@ -3262,7 +3302,14 @@ pub(crate) fn schedule_resource_timeline(
     );
     let age_seconds = diagnostics.age_seconds;
     let overdue = diagnostics.diagnosis_label() == DiagnosisLabel::StaleHandoff;
-    if enabled || overdue || pending_fire_claims > 0 || notify_failures > 0 || ack_failures > 0 {
+    if enabled
+        || overdue
+        || pending_fire_claims > 0
+        || notify_failures > 0
+        || ack_failures > 0
+        || pending_claims_expired_total > 0
+        || pending_claim_cleanup_failures_total > 0
+    {
         let mut summary = if overdue {
             match latest_next_run_at {
                 Some(next_run) => format!(
@@ -3325,6 +3372,16 @@ pub(crate) fn schedule_resource_timeline(
         }
         if overdue_normalizations > 0 {
             pressure_notes.push(format!("{overdue_normalizations} overdue normalization(s)"));
+        }
+        if pending_claims_expired_total > 0 {
+            pressure_notes.push(format!(
+                "{pending_claims_expired_total} expired pending claim(s)"
+            ));
+        }
+        if pending_claim_cleanup_failures_total > 0 {
+            pressure_notes.push(format!(
+                "{pending_claim_cleanup_failures_total} pending claim cleanup failure(s)"
+            ));
         }
         if !pressure_notes.is_empty() {
             summary.push_str("; ");
@@ -3499,7 +3556,7 @@ mod tests {
             enabled: true,
         }];
 
-        let analysis = analyze_schedule(&schedules, 2, 1, 45, 0, 1, 0, now);
+        let analysis = analyze_schedule(&schedules, 2, 1, 45, 0, 1, 0, 0, 0, now);
         let hotspot = analysis.hotspots.first().expect("schedule hotspot");
 
         assert_eq!(hotspot.hotspot.snapshot.current_stage, "stale_handoff");
@@ -3515,6 +3572,44 @@ mod tests {
             .explanation_hints
             .iter()
             .any(|hint| hint.contains("pending ack retry")));
+    }
+
+    #[test]
+    fn should_classify_schedule_cleanup_pressure() {
+        let now = Utc::now();
+        let schedules = vec![ScheduleInfo {
+            realm: "prod".to_string(),
+            area: "jobs".to_string(),
+            resource: "billing".to_string(),
+            operation: "send".to_string(),
+            cron: "0 * * * *".to_string(),
+            next_run: (now + Duration::seconds(30)).to_rfc3339(),
+            last_run: None,
+            executions_total: 2,
+            enabled: true,
+        }];
+
+        let analysis = analyze_schedule(&schedules, 0, 0, 0, 0, 0, 0, 3, 1, now);
+        let hotspot = analysis.hotspots.first().expect("schedule hotspot");
+
+        assert_eq!(hotspot.hotspot.snapshot.current_stage, "stale_handoff");
+        assert_eq!(
+            hotspot.hotspot.snapshot.likely_bottleneck.as_deref(),
+            Some("claim cleanup")
+        );
+        assert_eq!(hotspot.hotspot.snapshot.severity, DiagnosticSeverity::High);
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("expired pending claim")));
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("cleanup failure")));
     }
 
     #[test]

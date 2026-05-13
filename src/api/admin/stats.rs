@@ -150,6 +150,8 @@ pub struct ScheduleStats {
     pub notify_failures_total: u64,
     pub ack_failures_total: u64,
     pub overdue_normalizations_total: u64,
+    pub pending_claims_expired_total: u64,
+    pub pending_claim_cleanup_failures_total: u64,
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
@@ -272,6 +274,9 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 notify_failures_total: runtime.schedule_notify_failures(),
                 ack_failures_total: runtime.schedule_ack_failures(),
                 overdue_normalizations_total: runtime.schedule_overdue_normalizations(),
+                pending_claims_expired_total: runtime.schedule_pending_claims_expired_total(),
+                pending_claim_cleanup_failures_total: runtime
+                    .schedule_pending_claim_cleanup_failures_total(),
                 diagnostics: schedule,
             },
         },
@@ -442,6 +447,9 @@ async fn handle_schedule_stats(
         notify_failures_total: runtime.schedule_notify_failures(),
         ack_failures_total: runtime.schedule_ack_failures(),
         overdue_normalizations_total: runtime.schedule_overdue_normalizations(),
+        pending_claims_expired_total: runtime.schedule_pending_claims_expired_total(),
+        pending_claim_cleanup_failures_total: runtime
+            .schedule_pending_claim_cleanup_failures_total(),
         diagnostics,
     })
 }

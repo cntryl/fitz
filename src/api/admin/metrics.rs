@@ -420,6 +420,22 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
         runtime.schedule_overdue_normalizations()
     ));
     output.push('\n');
+
+    output.push_str("# HELP fitz_schedule_pending_claims_expired_total Total stale pending schedule claims cleaned up by this broker process\n");
+    output.push_str("# TYPE fitz_schedule_pending_claims_expired_total counter\n");
+    output.push_str(&format!(
+        "fitz_schedule_pending_claims_expired_total {}\n",
+        runtime.schedule_pending_claims_expired_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_schedule_pending_claim_cleanup_failure_total Total failed pending schedule claim cleanup attempts\n");
+    output.push_str("# TYPE fitz_schedule_pending_claim_cleanup_failure_total counter\n");
+    output.push_str(&format!(
+        "fitz_schedule_pending_claim_cleanup_failure_total {}\n",
+        runtime.schedule_pending_claim_cleanup_failures_total()
+    ));
+    output.push('\n');
 }
 
 #[cfg(test)]
@@ -560,5 +576,7 @@ mod tests {
         assert!(metrics.contains("fitz_schedule_notify_failures_total 0"));
         assert!(metrics.contains("fitz_schedule_ack_failures_total 0"));
         assert!(metrics.contains("fitz_schedule_overdue_normalizations_total 0"));
+        assert!(metrics.contains("fitz_schedule_pending_claims_expired_total 0"));
+        assert!(metrics.contains("fitz_schedule_pending_claim_cleanup_failure_total 0"));
     }
 }
