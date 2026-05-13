@@ -3013,6 +3013,7 @@ components:
           releases_total,
           extends_total,
           notify_drops_total,
+          redeliveries_total,
           operations_per_second,
           diagnostics,
         ]
@@ -3056,6 +3057,10 @@ components:
         notify_drops_total:
           type: integer
           format: int64
+        redeliveries_total:
+          type: integer
+          format: int64
+          description: Total queue message redeliveries recorded by this broker process.
         operations_per_second:
           type: number
         diagnostics:

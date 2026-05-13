@@ -1458,6 +1458,8 @@ export interface QueueStats {
   notify_drops_total: number;
   oldest_message_age_seconds: number;
   operations_per_second: number;
+  /** Total queue message redeliveries recorded by this broker process. */
+  redeliveries_total: number;
   releases_total: number;
   requests_total: number;
   reserves_total: number;

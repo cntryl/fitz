@@ -135,6 +135,10 @@ impl Runtime {
         metric_counter("fitz_queue_notify_drops_total")
     }
 
+    pub fn queue_redeliveries_total(&self) -> u64 {
+        metric_counter("fitz_queue_redeliveries_total")
+    }
+
     pub fn queue_inflight_active(&self) -> usize {
         self.domains
             .read()

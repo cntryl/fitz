@@ -1254,6 +1254,7 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     let releases_before = metrics.counter_get("fitz_queue_release_total");
     let extends_before = metrics.counter_get("fitz_queue_extend_total");
     let notify_before = metrics.counter_get("fitz_queue_notify_drops_total");
+    let redeliveries_before = metrics.counter_get("fitz_queue_redeliveries_total");
     metrics.counter_add("fitz_queue_requests_total", 5);
     metrics.counter_add("fitz_queue_success_total", 4);
     metrics.counter_add("fitz_queue_failure_total", 2);
@@ -1263,6 +1264,7 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     metrics.counter_add("fitz_queue_release_total", 13);
     metrics.counter_add("fitz_queue_extend_total", 17);
     metrics.counter_add("fitz_queue_notify_drops_total", 19);
+    metrics.counter_add("fitz_queue_redeliveries_total", 23);
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -1291,6 +1293,7 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     assert_eq!(payload["releases_total"], releases_before + 13);
     assert_eq!(payload["extends_total"], extends_before + 17);
     assert_eq!(payload["notify_drops_total"], notify_before + 19);
+    assert_eq!(payload["redeliveries_total"], redeliveries_before + 23);
     assert!(payload["operations_per_second"].as_f64().unwrap_or(0.0) > 0.0);
 
     let metrics_req = Request::builder()
@@ -1308,6 +1311,10 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     assert!(metrics_payload.contains("fitz_queue_complete_total"));
     assert!(metrics_payload.contains("fitz_queue_release_total"));
     assert!(metrics_payload.contains("fitz_queue_oldest_message_age_seconds 9"));
+    assert!(metrics_payload.contains(&format!(
+        "fitz_queue_redeliveries_total {}",
+        redeliveries_before + 23
+    )));
     assert!(metrics_payload.contains(&format!(
         "fitz_queue_notify_drops_total {}",
         notify_before + 19

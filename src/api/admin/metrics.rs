@@ -231,6 +231,14 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    output.push_str("# HELP fitz_queue_redeliveries_total Total queue message redeliveries recorded by this broker process\n");
+    output.push_str("# TYPE fitz_queue_redeliveries_total counter\n");
+    output.push_str(&format!(
+        "fitz_queue_redeliveries_total {}\n",
+        runtime.queue_redeliveries_total()
+    ));
+    output.push('\n');
+
     // RPC domain
     output.push_str("# HELP fitz_rpc_workers_registered Registered RPC workers\n");
     output.push_str("# TYPE fitz_rpc_workers_registered gauge\n");
