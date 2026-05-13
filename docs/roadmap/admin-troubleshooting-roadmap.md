@@ -6,6 +6,35 @@ Build the admin portal around one job: help a user understand how messages are f
 
 This roadmap is intentionally troubleshooting-first, not dashboard-first.
 
+## WIP Status
+
+This document is now a working tracker. Use it to separate what is already in the codebase from what is still pending.
+
+| Phase                                            | Status      | What that means right now                                                                                                           |
+| ------------------------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 1: Troubleshooting Questions And Taxonomy  | Done        | Canonical diagnosis labels, severity vocabulary, and explanation-hint scaffolding already exist in the admin troubleshooting layer. |
+| Phase 2: Shared Troubleshooting Read Model       | Done        | The read model already builds diagnostics, hotspots, incident summaries, comparison metrics, and bounded timelines.                 |
+| Phase 3: Add Missing Diagnostic Signals          | In progress | Several diagnostic counters and age/trend fields are wired, but the remaining domain-specific signal gaps are still open.           |
+| Phase 4: Build The UI Around Troubleshooting     | Todo        | The portal pages and drilldowns still need to be built around the troubleshooting model.                                            |
+| Phase 5: Explanation And Guidance Layer          | Todo        | Explanations are still limited to hints; the rule-based guidance layer is not complete yet.                                         |
+| Phase 6: MCP Exposure                            | Todo        | MCP tooling has not been exposed yet.                                                                                               |
+| Phase 7: Hardening, Semantics, And Test Coverage | Todo        | The troubleshooting flow still needs contract, parity, and regression coverage.                                                     |
+
+### Current Done List
+
+- Canonical diagnosis labels and diagnostic snapshots are implemented in the admin troubleshooting module.
+- Incident summaries, top bottleneck selection, and last-significant-transition tracking are already built.
+- Bounded resource timelines exist for KV, queue, stream, lease, notice, RPC, and schedule.
+- Comparison helpers already surface age, failure, contention, and transition metrics for resource drilldowns.
+
+### Current Todo List
+
+- Finish the missing queue, RPC, lease, stream, schedule, and notice diagnostic counters called out in Phase 3.
+- Add the troubleshooting-first UI pages, timeline views, compare view, and explanation card layout.
+- Turn the explanation hints into a deterministic guidance layer with confidence and next-query suggestions.
+- Expose the same bounded troubleshooting model through MCP.
+- Add parity, regression, and semantics tests for durable versus ephemeral labeling.
+
 ## Current Baseline
 
 The existing admin API already provides a strong starting point:
@@ -183,24 +212,24 @@ Implementation tasks:
 Add or extend the following endpoints and fields before the troubleshooting UI is considered complete:
 
 - `GET /api/v1/stats`
-   - add a top-level `diagnostics` section with current incident summary, top bottleneck, and last significant transition time
-   - add per-domain trend fields such as `trend`, `delta_5m`, or `delta_1h` where cheap
+  - add a top-level `diagnostics` section with current incident summary, top bottleneck, and last significant transition time
+  - add per-domain trend fields such as `trend`, `delta_5m`, or `delta_1h` where cheap
 
 - `GET /api/v1/{domain}/stats`
-   - add domain-specific failure and contention counters
-   - add backlog or ownership breakdowns that explain why the counts are high
+  - add domain-specific failure and contention counters
+  - add backlog or ownership breakdowns that explain why the counts are high
 
 - `GET /api/v1/{domain}/realms/{realm}/areas/{area}/resources/{resource}`
-   - add recent change metadata, last activity timestamps, and trend indicators
-   - add a `diagnostics` block with the likely bottleneck and explanation hints
+  - add recent change metadata, last activity timestamps, and trend indicators
+  - add a `diagnostics` block with the likely bottleneck and explanation hints
 
 - `GET /api/v1/{domain}/realms/{realm}/areas/{area}/resources/{resource}/events`
-   - return recent transitions, failures, retries, ownership changes, and state flips
-   - keep the window bounded, such as the last N events or last M minutes
+  - return recent transitions, failures, retries, ownership changes, and state flips
+  - keep the window bounded, such as the last N events or last M minutes
 
 - `GET /metrics`
-   - add missing counters and histograms that support the same troubleshooting story
-   - include age histograms where current counts alone are not enough
+  - add missing counters and histograms that support the same troubleshooting story
+  - include age histograms where current counts alone are not enough
 
 Suggested diagnostic fields:
 

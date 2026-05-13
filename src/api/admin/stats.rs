@@ -165,7 +165,7 @@ pub struct ScheduleStats {
 
 /// Handle /admin/stats endpoint
 pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
-    let troubleshooting::RuntimeDiagnostics {
+    let troubleshooting::TroubleshootingSnapshot {
         global,
         kv,
         stream,
@@ -174,7 +174,7 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
         rpc,
         lease,
         schedule,
-    } = troubleshooting::build_runtime_diagnostics(runtime.as_ref());
+    } = troubleshooting::build_troubleshooting_snapshot(runtime.as_ref());
     let stats = GlobalStats {
         broker: BrokerStats {
             uptime_seconds: runtime.uptime().as_secs(),
@@ -307,7 +307,7 @@ pub async fn handle_domain_stats(
     runtime: Arc<Runtime>,
     domain: &str,
 ) -> Result<Response<Body>, Infallible> {
-    let troubleshooting::RuntimeDiagnostics {
+    let troubleshooting::TroubleshootingSnapshot {
         kv,
         stream,
         notice,
@@ -316,7 +316,7 @@ pub async fn handle_domain_stats(
         lease,
         schedule,
         ..
-    } = troubleshooting::build_runtime_diagnostics(runtime.as_ref());
+    } = troubleshooting::build_troubleshooting_snapshot(runtime.as_ref());
     match domain {
         "kv" => handle_kv_stats(runtime, kv).await,
         "stream" => handle_stream_stats(runtime, stream).await,

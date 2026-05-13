@@ -206,6 +206,14 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    output.push_str("# HELP fitz_notice_delivery_drops_total Total notice deliveries dropped by this broker process\n");
+    output.push_str("# TYPE fitz_notice_delivery_drops_total counter\n");
+    output.push_str(&format!(
+        "fitz_notice_delivery_drops_total {}\n",
+        runtime.notice_delivery_drops_total()
+    ));
+    output.push('\n');
+
     // Queue domain
     output.push_str("# HELP fitz_queue_messages_pending Pending queue messages\n");
     output.push_str("# TYPE fitz_queue_messages_pending gauge\n");
@@ -278,6 +286,14 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str(&format!(
         "fitz_queue_redeliveries_total {}\n",
         runtime.queue_redeliveries_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_queue_notify_drops_total Total queue notifications dropped by this broker process\n");
+    output.push_str("# TYPE fitz_queue_notify_drops_total counter\n");
+    output.push_str(&format!(
+        "fitz_queue_notify_drops_total {}\n",
+        runtime.queue_notify_drops_total()
     ));
     output.push('\n');
 
@@ -449,6 +465,14 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str(&format!(
         "fitz_stream_subscriptions_active {}\n",
         runtime.stream_subscriptions_active()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_stream_notify_drops_total Total stream notifications dropped by this broker process\n");
+    output.push_str("# TYPE fitz_stream_notify_drops_total counter\n");
+    output.push_str(&format!(
+        "fitz_stream_notify_drops_total {}\n",
+        runtime.stream_notify_drops_total()
     ));
     output.push('\n');
 
@@ -716,5 +740,8 @@ mod tests {
         assert!(metrics.contains("fitz_schedule_overdue_normalizations_total 0"));
         assert!(metrics.contains("fitz_schedule_pending_claims_expired_total 0"));
         assert!(metrics.contains("fitz_schedule_pending_claim_cleanup_failure_total 0"));
+        assert!(metrics.contains("fitz_notice_delivery_drops_total 0"));
+        assert!(metrics.contains("fitz_stream_notify_drops_total 0"));
+        assert!(metrics.contains("fitz_queue_notify_drops_total 0"));
     }
 }

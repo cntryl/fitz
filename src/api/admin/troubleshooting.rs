@@ -721,6 +721,12 @@ impl DomainAnalysis {
     }
 }
 
+pub type TroubleshootingSnapshot = RuntimeDiagnostics;
+
+pub fn build_troubleshooting_snapshot(runtime: &Runtime) -> TroubleshootingSnapshot {
+    build_runtime_diagnostics(runtime)
+}
+
 pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
     let now = Utc::now();
     let read_model = runtime.admin_read_model();
