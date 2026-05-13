@@ -2896,6 +2896,11 @@ components:
         [
           streams_active,
           events_total,
+          requests_total,
+          success_total,
+          failure_total,
+          append_conflicts_total,
+          notify_drops_total,
           operations_per_second,
           subscriptions_active,
           diagnostics,
@@ -2905,6 +2910,21 @@ components:
           type: integer
         events_total:
           type: integer
+        requests_total:
+          type: integer
+          format: int64
+        success_total:
+          type: integer
+          format: int64
+        failure_total:
+          type: integer
+          format: int64
+        append_conflicts_total:
+          type: integer
+          format: int64
+        notify_drops_total:
+          type: integer
+          format: int64
         operations_per_second:
           type: number
         subscriptions_active:
@@ -2914,10 +2934,35 @@ components:
 
     NoticeStats:
       type: object
-      required: [subscriptions_active, publishes_per_second, diagnostics]
+      required:
+        [
+          subscriptions_active,
+          requests_total,
+          success_total,
+          failure_total,
+          delivery_drops_total,
+          wildcard_limit_rejects_total,
+          publishes_per_second,
+          diagnostics,
+        ]
       properties:
         subscriptions_active:
           type: integer
+        requests_total:
+          type: integer
+          format: int64
+        success_total:
+          type: integer
+          format: int64
+        failure_total:
+          type: integer
+          format: int64
+        delivery_drops_total:
+          type: integer
+          format: int64
+        wildcard_limit_rejects_total:
+          type: integer
+          format: int64
         publishes_per_second:
           type: number
         diagnostics:

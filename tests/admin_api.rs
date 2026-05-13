@@ -1243,6 +1243,107 @@ async fn should_return_stream_domain_stats_given_recorded_operations() {
 
 #[tokio::test]
 #[serial]
+async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    seed_stream_snapshot_data(store.clone());
+    seed_snapshot_data(&runtime);
+    let metrics = fitz::boot::observability::metrics();
+    let stream_requests_before = metrics.counter_get("fitz_stream_requests_total");
+    let stream_success_before = metrics.counter_get("fitz_stream_success_total");
+    let stream_failure_before = metrics.counter_get("fitz_stream_failure_total");
+    let stream_conflicts_before = metrics.counter_get("fitz_stream_append_conflicts_total");
+    let stream_notify_drops_before = metrics.counter_get("fitz_stream_notify_drops_total");
+    let notice_requests_before = metrics.counter_get("fitz_notice_requests_total");
+    let notice_success_before = metrics.counter_get("fitz_notice_success_total");
+    let notice_failure_before = metrics.counter_get("fitz_notice_failure_total");
+    let notice_drops_before = metrics.counter_get("fitz_notice_delivery_drops_total");
+    let notice_wildcard_before = metrics.counter_get("fitz_notice_wildcard_limit_rejects_total");
+
+    metrics.counter_add("fitz_stream_requests_total", 4);
+    metrics.counter_add("fitz_stream_success_total", 3);
+    metrics.counter_add("fitz_stream_failure_total", 1);
+    metrics.counter_add("fitz_stream_operations_total", 6);
+    metrics.counter_add("fitz_stream_append_conflicts_total", 2);
+    metrics.counter_add("fitz_stream_notify_drops_total", 5);
+    metrics.counter_add("fitz_notice_requests_total", 7);
+    metrics.counter_add("fitz_notice_success_total", 5);
+    metrics.counter_add("fitz_notice_failure_total", 2);
+    metrics.counter_add("fitz_notice_delivery_drops_total", 3);
+    metrics.counter_add("fitz_notice_wildcard_limit_rejects_total", 4);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let stream_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/stream/stats")
+        .header(COOKIE, cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let notice_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/notice/stats")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let stream_response = fitz::api::admin::handlers::handle_request(stream_req, runtime.clone())
+        .await
+        .unwrap();
+    let notice_response = fitz::api::admin::handlers::handle_request(notice_req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(stream_response.status(), StatusCode::OK);
+    let stream_body = body::to_bytes(stream_response.into_body()).await.unwrap();
+    let stream_payload: serde_json::Value = serde_json::from_slice(&stream_body).unwrap();
+    assert_eq!(stream_payload["streams_active"], 0);
+    assert_eq!(stream_payload["events_total"], 3);
+    assert_eq!(stream_payload["requests_total"], stream_requests_before + 4);
+    assert_eq!(stream_payload["success_total"], stream_success_before + 3);
+    assert_eq!(stream_payload["failure_total"], stream_failure_before + 1);
+    assert_eq!(
+        stream_payload["append_conflicts_total"],
+        stream_conflicts_before + 2
+    );
+    assert_eq!(
+        stream_payload["notify_drops_total"],
+        stream_notify_drops_before + 5
+    );
+    assert!(
+        stream_payload["operations_per_second"]
+            .as_f64()
+            .unwrap_or(0.0)
+            > 0.0
+    );
+
+    assert_eq!(notice_response.status(), StatusCode::OK);
+    let notice_body = body::to_bytes(notice_response.into_body()).await.unwrap();
+    let notice_payload: serde_json::Value = serde_json::from_slice(&notice_body).unwrap();
+    assert_eq!(notice_payload["subscriptions_active"], 0);
+    assert_eq!(notice_payload["requests_total"], notice_requests_before + 7);
+    assert_eq!(notice_payload["success_total"], notice_success_before + 5);
+    assert_eq!(notice_payload["failure_total"], notice_failure_before + 2);
+    assert_eq!(
+        notice_payload["delivery_drops_total"],
+        notice_drops_before + 3
+    );
+    assert_eq!(
+        notice_payload["wildcard_limit_rejects_total"],
+        notice_wildcard_before + 4
+    );
+    assert!(
+        notice_payload["publishes_per_second"]
+            .as_f64()
+            .unwrap_or(0.0)
+            > 0.0
+    );
+}
+
+#[tokio::test]
+#[serial]
 async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics() {
     // Arrange
     let runtime = test_runtime();

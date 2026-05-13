@@ -170,6 +170,26 @@ impl Runtime {
         self.admin_read_model.stream_events_total()
     }
 
+    pub fn stream_requests_total(&self) -> u64 {
+        metric_counter("fitz_stream_requests_total")
+    }
+
+    pub fn stream_success_total(&self) -> u64 {
+        metric_counter("fitz_stream_success_total")
+    }
+
+    pub fn stream_failure_total(&self) -> u64 {
+        metric_counter("fitz_stream_failure_total")
+    }
+
+    pub fn stream_append_conflicts_total(&self) -> u64 {
+        metric_counter("fitz_stream_append_conflicts_total")
+    }
+
+    pub fn stream_notify_drops_total(&self) -> u64 {
+        metric_counter("fitz_stream_notify_drops_total")
+    }
+
     pub fn stream_operations_per_second(&self) -> f64 {
         let uptime_secs = self.uptime().as_secs_f64();
         if uptime_secs < 0.001 {
@@ -190,7 +210,32 @@ impl Runtime {
     }
 
     pub fn notice_publishes_per_second(&self) -> f64 {
-        0.0
+        let uptime_secs = self.uptime().as_secs_f64();
+        if uptime_secs < 0.001 {
+            return 0.0;
+        }
+
+        self.notice_requests_total() as f64 / uptime_secs
+    }
+
+    pub fn notice_requests_total(&self) -> u64 {
+        metric_counter("fitz_notice_requests_total")
+    }
+
+    pub fn notice_success_total(&self) -> u64 {
+        metric_counter("fitz_notice_success_total")
+    }
+
+    pub fn notice_failure_total(&self) -> u64 {
+        metric_counter("fitz_notice_failure_total")
+    }
+
+    pub fn notice_delivery_drops_total(&self) -> u64 {
+        metric_counter("fitz_notice_delivery_drops_total")
+    }
+
+    pub fn notice_wildcard_limit_rejects_total(&self) -> u64 {
+        metric_counter("fitz_notice_wildcard_limit_rejects_total")
     }
 
     pub fn queue_operations_per_second(&self) -> f64 {

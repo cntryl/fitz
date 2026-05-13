@@ -260,9 +260,14 @@ describe("Data query layer", () => {
 
     expect(
       mapNoticeStats({
+        delivery_drops_total: 4,
         diagnostics: healthyDiagnostics,
+        failure_total: 6,
         publishes_per_second: 1.25,
+        requests_total: 7,
+        success_total: 8,
         subscriptions_active: 9,
+        wildcard_limit_rejects_total: 10,
       }),
     ).toEqual({
       publishesPerSecond: 1.25,
@@ -316,8 +321,13 @@ describe("Data query layer", () => {
     expect(
       mapStreamStats({
         diagnostics: healthyDiagnostics,
+        append_conflicts_total: 15,
+        failure_total: 16,
         events_total: 11,
         operations_per_second: 12.5,
+        notify_drops_total: 17,
+        requests_total: 18,
+        success_total: 19,
         streams_active: 13,
         subscriptions_active: 14,
       }),
@@ -402,9 +412,14 @@ describe("Data query layer", () => {
               waiter_depth: 7,
             },
             notice: {
+              delivery_drops_total: 1,
               diagnostics: healthyDiagnostics,
+              failure_total: 3,
               publishes_per_second: 11.5,
+              requests_total: 2,
+              success_total: 4,
               subscriptions_active: 12,
+              wildcard_limit_rejects_total: 5,
             },
             queue: {
               completes_total: 33,
@@ -450,9 +465,14 @@ describe("Data query layer", () => {
               subscriptions_active: 28,
             },
             stream: {
+              append_conflicts_total: 1,
               diagnostics: healthyDiagnostics,
+              failure_total: 3,
               events_total: 29,
               operations_per_second: 30.5,
+              notify_drops_total: 2,
+              requests_total: 4,
+              success_total: 5,
               streams_active: 31,
               subscriptions_active: 32,
             },
@@ -487,8 +507,13 @@ describe("Data query layer", () => {
           waiterDepth: 7,
         },
         notice: {
+          deliveryDropsTotal: 1,
+          failureTotal: 3,
           publishesPerSecond: 11.5,
+          requestsTotal: 2,
+          successTotal: 4,
           subscriptionsActive: 12,
+          wildcardLimitRejectsTotal: 5,
         },
         queue: {
           inflightActive: 13,
@@ -523,8 +548,13 @@ describe("Data query layer", () => {
           subscriptionsActive: 28,
         },
         stream: {
+          appendConflictsTotal: 1,
+          failureTotal: 3,
           eventsTotal: 29,
           operationsPerSecond: 30.5,
+          notifyDropsTotal: 2,
+          requestsTotal: 4,
+          successTotal: 5,
           streamsActive: 31,
           subscriptionsActive: 32,
         },
