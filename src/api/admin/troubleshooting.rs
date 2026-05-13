@@ -1760,6 +1760,16 @@ fn parse_rfc3339(value: &str) -> Option<DateTime<Utc>> {
         .map(|timestamp| timestamp.with_timezone(&Utc))
 }
 
+pub(crate) fn age_seconds_since(timestamp: &str) -> Option<u64> {
+    let timestamp = parse_rfc3339(timestamp)?;
+    Some(
+        Utc::now()
+            .signed_duration_since(timestamp)
+            .num_seconds()
+            .max(0) as u64,
+    )
+}
+
 fn rfc3339(timestamp: DateTime<Utc>) -> String {
     timestamp.to_rfc3339()
 }
@@ -1943,7 +1953,10 @@ pub(crate) fn stream_resource_diagnostics(
     )
 }
 
-pub(crate) fn lease_resource_diagnostics(active_leases: usize) -> DiagnosticSnapshot {
+pub(crate) fn lease_resource_diagnostics(
+    active_leases: usize,
+    oldest_lease_age_seconds: Option<u64>,
+) -> DiagnosticSnapshot {
     if active_leases == 0 {
         return DiagnosticSnapshot::healthy();
     }
@@ -1960,7 +1973,7 @@ pub(crate) fn lease_resource_diagnostics(active_leases: usize) -> DiagnosticSnap
         None,
         None,
         None,
-        None,
+        oldest_lease_age_seconds,
         0,
         0,
         active_leases as u64,
@@ -2610,7 +2623,7 @@ pub(crate) fn lease_resource_timeline(
         }
     }
 
-    let diagnostics = lease_resource_diagnostics(active_leases);
+    let diagnostics = lease_resource_diagnostics(active_leases, Some(oldest_age_seconds));
     if active_leases > 0 {
         let summary = match next_expiry_seconds {
             Some(remaining_seconds) => format!(

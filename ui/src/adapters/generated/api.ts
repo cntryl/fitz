@@ -1305,6 +1305,7 @@ export interface LeaseResourceDetail {
   active_leases: number;
   area: string;
   diagnostics: DiagnosticSnapshot;
+  oldest_lease_age_seconds: number;
   realm: string;
   resource: string;
 }
@@ -1317,6 +1318,7 @@ export interface LeaseStats {
   forced_releases_total: number;
   invalid_token_rejects_total: number;
   leases_active: number;
+  oldest_lease_age_seconds: number;
   operations_per_second: number;
   requests_total: number;
   success_total: number;
@@ -1446,6 +1448,8 @@ export interface QueueStats {
   messages_delayed: number;
   messages_pending: number;
   messages_ready: number;
+  notify_drops_total: number;
+  oldest_message_age_seconds: number;
   operations_per_second: number;
   releases_total: number;
   requests_total: number;
@@ -1620,7 +1624,9 @@ export interface RpcStats {
   diagnostics: DiagnosticSnapshot;
   duplicate_correlation_rejects_total: number;
   failure_total: number;
+  oldest_pending_request_age_seconds: number;
   operations_per_second: number;
+  pending_routes_active: number;
   request_timeouts_total: number;
   requests_pending: number;
   requests_total: number;

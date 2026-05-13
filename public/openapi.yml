@@ -2976,6 +2976,7 @@ components:
           messages_delayed,
           messages_pending,
           messages_dead_lettered,
+          oldest_message_age_seconds,
           inflight_active,
           requests_total,
           success_total,
@@ -2985,6 +2986,7 @@ components:
           completes_total,
           releases_total,
           extends_total,
+          notify_drops_total,
           operations_per_second,
           diagnostics,
         ]
@@ -2996,6 +2998,8 @@ components:
         messages_pending:
           type: integer
         messages_dead_lettered:
+          type: integer
+        oldest_message_age_seconds:
           type: integer
         inflight_active:
           type: integer
@@ -3023,6 +3027,9 @@ components:
         extends_total:
           type: integer
           format: int64
+        notify_drops_total:
+          type: integer
+          format: int64
         operations_per_second:
           type: number
         diagnostics:
@@ -3034,6 +3041,8 @@ components:
         [
           workers_registered,
           requests_pending,
+          oldest_pending_request_age_seconds,
+          pending_routes_active,
           requests_total,
           success_total,
           failure_total,
@@ -3051,6 +3060,11 @@ components:
         workers_registered:
           type: integer
         requests_pending:
+          type: integer
+        oldest_pending_request_age_seconds:
+          type: integer
+          format: int64
+        pending_routes_active:
           type: integer
         requests_total:
           type: integer
@@ -3093,6 +3107,7 @@ components:
         [
           leases_active,
           waiter_depth,
+          oldest_lease_age_seconds,
           requests_total,
           success_total,
           failure_total,
@@ -3107,6 +3122,9 @@ components:
           type: integer
         waiter_depth:
           type: integer
+        oldest_lease_age_seconds:
+          type: integer
+          format: int64
         requests_total:
           type: integer
           format: int64
@@ -3340,12 +3358,16 @@ components:
     LeaseResourceDetail:
       type: object
       description: Point-in-time live in-memory Lease state for a single resource on the current broker process. Counts reset on disconnect cleanup or broker restart and do not imply durable recovery.
-      required: [realm, area, resource, active_leases, diagnostics]
+      required:
+        [realm, area, resource, active_leases, oldest_lease_age_seconds, diagnostics]
       properties:
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
         active_leases: { type: integer }
+        oldest_lease_age_seconds:
+          type: integer
+          format: int64
         diagnostics:
           $ref: "#/components/schemas/DiagnosticSnapshot"
 

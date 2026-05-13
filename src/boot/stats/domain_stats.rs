@@ -3,6 +3,7 @@ use crate::domains::queue::metrics::{
     METRIC_COMPLETE_TOTAL, METRIC_ENQUEUE_TOTAL, METRIC_EXTEND_TOTAL, METRIC_FAILURE_TOTAL,
     METRIC_RELEASE_TOTAL, METRIC_REQUESTS_TOTAL, METRIC_RESERVE_TOTAL, METRIC_SUCCESS_TOTAL,
 };
+use std::collections::HashSet;
 
 fn metric_counter(name: &str) -> u64 {
     crate::boot::observability::metrics().counter_get(name)
@@ -121,12 +122,25 @@ impl Runtime {
         metric_counter(METRIC_EXTEND_TOTAL)
     }
 
+    pub fn queue_notify_drops_total(&self) -> u64 {
+        metric_counter("fitz_queue_notify_drops_total")
+    }
+
     pub fn queue_inflight_active(&self) -> usize {
         self.domains
             .read()
             .as_ref()
             .map(|domains| domains.queue.active_inflight_count())
             .unwrap_or_else(|| self.admin_read_model.queue_inflight(None).len())
+    }
+
+    pub fn queue_oldest_message_age_seconds(&self) -> u64 {
+        self.admin_read_model
+            .queues(None)
+            .into_iter()
+            .map(|queue| queue.oldest_message_age_seconds)
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn rpc_workers_registered(&self) -> usize {
@@ -138,11 +152,23 @@ impl Runtime {
     }
 
     pub fn rpc_requests_pending(&self) -> usize {
-        self.domains
-            .read()
-            .as_ref()
-            .map(|domains| domains.rpc.pending_request_count())
-            .unwrap_or_else(|| self.admin_read_model.rpc_pending(None).len())
+        self.rpc_pending_snapshot().len()
+    }
+
+    pub fn rpc_oldest_pending_request_age_seconds(&self) -> u64 {
+        self.rpc_pending_snapshot()
+            .into_iter()
+            .map(|request| request.age_seconds)
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn rpc_pending_routes_active(&self) -> usize {
+        self.rpc_pending_snapshot()
+            .into_iter()
+            .map(|request| request.route)
+            .collect::<HashSet<_>>()
+            .len()
     }
 
     pub fn lease_active(&self) -> usize {
@@ -333,6 +359,17 @@ impl Runtime {
 
     pub fn lease_invalid_token_rejects_total(&self) -> u64 {
         metric_counter("fitz_lease_invalid_token_rejects_total")
+    }
+
+    pub fn lease_oldest_lease_age_seconds(&self) -> u64 {
+        self.admin_read_model
+            .leases(None)
+            .into_iter()
+            .filter_map(|lease| {
+                crate::api::admin::troubleshooting::age_seconds_since(&lease.acquired_at)
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn schedule_active(&self) -> usize {

@@ -200,6 +200,10 @@ impl Runtime {
         self.admin_read_model.rpc_pending(realm)
     }
 
+    pub(crate) fn rpc_pending_snapshot(&self) -> Vec<crate::api::admin::RpcPendingRequest> {
+        self.rpc_list_pending(None)
+    }
+
     pub fn lease_list_leases(&self, realm: Option<&str>) -> Vec<crate::api::admin::LeaseInfo> {
         self.admin_read_model.leases(realm)
     }

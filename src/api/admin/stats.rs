@@ -83,6 +83,7 @@ pub struct QueueStats {
     pub messages_delayed: usize,
     pub messages_pending: usize,
     pub messages_dead_lettered: usize,
+    pub oldest_message_age_seconds: u64,
     pub inflight_active: usize,
     pub requests_total: u64,
     pub success_total: u64,
@@ -92,6 +93,7 @@ pub struct QueueStats {
     pub completes_total: u64,
     pub releases_total: u64,
     pub extends_total: u64,
+    pub notify_drops_total: u64,
     pub operations_per_second: f64,
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
@@ -100,6 +102,8 @@ pub struct QueueStats {
 pub struct RpcStats {
     pub workers_registered: usize,
     pub requests_pending: usize,
+    pub oldest_pending_request_age_seconds: u64,
+    pub pending_routes_active: usize,
     pub requests_total: u64,
     pub success_total: u64,
     pub failure_total: u64,
@@ -118,6 +122,7 @@ pub struct RpcStats {
 pub struct LeaseStats {
     pub leases_active: usize,
     pub waiter_depth: usize,
+    pub oldest_lease_age_seconds: u64,
     pub requests_total: u64,
     pub success_total: u64,
     pub failure_total: u64,
@@ -194,6 +199,7 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 messages_delayed: runtime.queue_messages_delayed(),
                 messages_pending: runtime.queue_messages_pending(),
                 messages_dead_lettered: runtime.queue_messages_dead_lettered(),
+                oldest_message_age_seconds: runtime.queue_oldest_message_age_seconds(),
                 inflight_active: runtime.queue_inflight_active(),
                 requests_total: runtime.queue_requests_total(),
                 success_total: runtime.queue_success_total(),
@@ -203,12 +209,16 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 completes_total: runtime.queue_completes_total(),
                 releases_total: runtime.queue_releases_total(),
                 extends_total: runtime.queue_extends_total(),
+                notify_drops_total: runtime.queue_notify_drops_total(),
                 operations_per_second: runtime.queue_operations_per_second(),
                 diagnostics: queue,
             },
             rpc: RpcStats {
                 workers_registered: runtime.rpc_workers_registered(),
                 requests_pending: runtime.rpc_requests_pending(),
+                oldest_pending_request_age_seconds: runtime
+                    .rpc_oldest_pending_request_age_seconds(),
+                pending_routes_active: runtime.rpc_pending_routes_active(),
                 requests_total: runtime.rpc_requests_total(),
                 success_total: runtime.rpc_success_total(),
                 failure_total: runtime.rpc_failure_total(),
@@ -227,6 +237,7 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
             lease: LeaseStats {
                 leases_active: runtime.lease_active(),
                 waiter_depth: runtime.lease_waiter_depth(),
+                oldest_lease_age_seconds: runtime.lease_oldest_lease_age_seconds(),
                 requests_total: runtime.lease_requests_total(),
                 success_total: runtime.lease_success_total(),
                 failure_total: runtime.lease_failure_total(),
@@ -335,6 +346,7 @@ async fn handle_queue_stats(
         messages_delayed: runtime.queue_messages_delayed(),
         messages_pending: runtime.queue_messages_pending(),
         messages_dead_lettered: runtime.queue_messages_dead_lettered(),
+        oldest_message_age_seconds: runtime.queue_oldest_message_age_seconds(),
         inflight_active: runtime.queue_inflight_active(),
         requests_total: runtime.queue_requests_total(),
         success_total: runtime.queue_success_total(),
@@ -344,6 +356,7 @@ async fn handle_queue_stats(
         completes_total: runtime.queue_completes_total(),
         releases_total: runtime.queue_releases_total(),
         extends_total: runtime.queue_extends_total(),
+        notify_drops_total: runtime.queue_notify_drops_total(),
         operations_per_second: runtime.queue_operations_per_second(),
         diagnostics,
     })
@@ -356,6 +369,8 @@ async fn handle_rpc_stats(
     crate::api::admin::json_response(RpcStats {
         workers_registered: runtime.rpc_workers_registered(),
         requests_pending: runtime.rpc_requests_pending(),
+        oldest_pending_request_age_seconds: runtime.rpc_oldest_pending_request_age_seconds(),
+        pending_routes_active: runtime.rpc_pending_routes_active(),
         requests_total: runtime.rpc_requests_total(),
         success_total: runtime.rpc_success_total(),
         failure_total: runtime.rpc_failure_total(),
@@ -378,6 +393,7 @@ async fn handle_lease_stats(
     crate::api::admin::json_response(LeaseStats {
         leases_active: runtime.lease_active(),
         waiter_depth: runtime.lease_waiter_depth(),
+        oldest_lease_age_seconds: runtime.lease_oldest_lease_age_seconds(),
         requests_total: runtime.lease_requests_total(),
         success_total: runtime.lease_success_total(),
         failure_total: runtime.lease_failure_total(),

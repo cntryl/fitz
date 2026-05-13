@@ -587,6 +587,56 @@ async fn should_return_queue_detail_with_delayed_and_dead_letter_counts() {
 
 #[tokio::test]
 #[serial]
+async fn should_return_lease_detail_with_age_and_diagnostics() {
+    // Arrange
+    let runtime = test_runtime();
+    let read_model = runtime.admin_read_model();
+    read_model.replace_leases(vec![LeaseInfo {
+        realm: "prod".to_string(),
+        area: "locks".to_string(),
+        resource: "cache".to_string(),
+        owner_session_id: "session-1".to_string(),
+        acquired_at: "2026-03-14T12:00:00Z".to_string(),
+        expires_at: "2026-03-14T12:05:00Z".to_string(),
+        renewals: 2,
+        fencing_token: 17,
+    }]);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/lease/realms/prod/areas/locks/resources/cache")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["realm"], "prod");
+    assert_eq!(payload["area"], "locks");
+    assert_eq!(payload["resource"], "cache");
+    assert_eq!(payload["active_leases"], 1);
+    assert!(payload["oldest_lease_age_seconds"].as_u64().unwrap_or(0) > 0);
+    assert_eq!(payload["diagnostics"]["current_stage"], "claimed");
+    assert_eq!(
+        payload["diagnostics"]["likely_bottleneck"],
+        "lease ownership"
+    );
+    assert_eq!(
+        payload["diagnostics"]["age_seconds"],
+        payload["oldest_lease_age_seconds"]
+    );
+}
+
+#[tokio::test]
+#[serial]
 async fn should_return_queue_events_with_bounded_timeline() {
     // Arrange
     let runtime = test_runtime();
@@ -958,6 +1008,9 @@ async fn should_return_queue_domain_stats() {
     // Arrange
     let runtime = test_runtime();
     seed_queue_snapshot_data(&runtime);
+    let metrics = fitz::boot::observability::metrics();
+    let notify_before = metrics.counter_get("fitz_queue_notify_drops_total");
+    metrics.counter_add("fitz_queue_notify_drops_total", 6);
     let cookie = login_cookie(runtime.clone()).await;
 
     let req = Request::builder()
@@ -980,7 +1033,10 @@ async fn should_return_queue_domain_stats() {
     assert!(payload.contains(r#""messages_delayed":2"#));
     assert!(payload.contains(r#""messages_pending":3"#));
     assert!(payload.contains(r#""messages_dead_lettered":4"#));
+    assert!(payload.contains(r#""oldest_message_age_seconds":9"#));
     assert!(payload.contains(r#""inflight_active":0"#));
+    let payload_json: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    assert_eq!(payload_json["notify_drops_total"], notify_before + 6);
 }
 
 #[tokio::test]
@@ -988,6 +1044,7 @@ async fn should_return_queue_domain_stats() {
 async fn should_return_queue_operation_counters_given_recorded_metrics() {
     // Arrange
     let runtime = test_runtime();
+    seed_queue_snapshot_data(&runtime);
     let metrics = fitz::boot::observability::metrics();
     let requests_before = metrics.counter_get("fitz_queue_requests_total");
     let success_before = metrics.counter_get("fitz_queue_success_total");
@@ -997,6 +1054,7 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     let completes_before = metrics.counter_get("fitz_queue_complete_total");
     let releases_before = metrics.counter_get("fitz_queue_release_total");
     let extends_before = metrics.counter_get("fitz_queue_extend_total");
+    let notify_before = metrics.counter_get("fitz_queue_notify_drops_total");
     metrics.counter_add("fitz_queue_requests_total", 5);
     metrics.counter_add("fitz_queue_success_total", 4);
     metrics.counter_add("fitz_queue_failure_total", 2);
@@ -1005,6 +1063,7 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     metrics.counter_add("fitz_queue_complete_total", 11);
     metrics.counter_add("fitz_queue_release_total", 13);
     metrics.counter_add("fitz_queue_extend_total", 17);
+    metrics.counter_add("fitz_queue_notify_drops_total", 19);
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -1032,6 +1091,7 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     assert_eq!(payload["completes_total"], completes_before + 11);
     assert_eq!(payload["releases_total"], releases_before + 13);
     assert_eq!(payload["extends_total"], extends_before + 17);
+    assert_eq!(payload["notify_drops_total"], notify_before + 19);
     assert!(payload["operations_per_second"].as_f64().unwrap_or(0.0) > 0.0);
 
     let metrics_req = Request::builder()
@@ -1048,6 +1108,11 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     let metrics_payload = String::from_utf8(metrics_body.to_vec()).unwrap();
     assert!(metrics_payload.contains("fitz_queue_complete_total"));
     assert!(metrics_payload.contains("fitz_queue_release_total"));
+    assert!(metrics_payload.contains("fitz_queue_oldest_message_age_seconds 9"));
+    assert!(metrics_payload.contains(&format!(
+        "fitz_queue_notify_drops_total {}",
+        notify_before + 19
+    )));
 }
 
 #[tokio::test]
@@ -1064,13 +1129,22 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
         requests_handled: 12,
         average_latency_ms: 4.5,
     }]);
-    read_model.replace_rpc_pending(vec![RpcPendingRequest {
-        correlation_id: "corr-abc-123".to_string(),
-        route: "rpc://prod/api/users/get".to_string(),
-        submitted_at: "2026-03-14T12:00:07Z".to_string(),
-        age_seconds: 7,
-        worker_session_id: Some("9001".to_string()),
-    }]);
+    read_model.replace_rpc_pending(vec![
+        RpcPendingRequest {
+            correlation_id: "corr-abc-123".to_string(),
+            route: "rpc://prod/api/users/get".to_string(),
+            submitted_at: "2026-03-14T12:00:07Z".to_string(),
+            age_seconds: 7,
+            worker_session_id: Some("9001".to_string()),
+        },
+        RpcPendingRequest {
+            correlation_id: "corr-xyz-789".to_string(),
+            route: "rpc://prod/api/orders/create".to_string(),
+            submitted_at: "2026-03-14T12:00:13Z".to_string(),
+            age_seconds: 13,
+            worker_session_id: None,
+        },
+    ]);
     read_model.replace_leases(vec![LeaseInfo {
         realm: "prod".to_string(),
         area: "locks".to_string(),
@@ -1139,7 +1213,7 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     let rpc_response = fitz::api::admin::handlers::handle_request(rpc_req, runtime.clone())
         .await
         .unwrap();
-    let lease_response = fitz::api::admin::handlers::handle_request(lease_req, runtime)
+    let lease_response = fitz::api::admin::handlers::handle_request(lease_req, runtime.clone())
         .await
         .unwrap();
 
@@ -1148,7 +1222,9 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     let rpc_body = body::to_bytes(rpc_response.into_body()).await.unwrap();
     let rpc_payload: serde_json::Value = serde_json::from_slice(&rpc_body).unwrap();
     assert_eq!(rpc_payload["workers_registered"], 1);
-    assert_eq!(rpc_payload["requests_pending"], 1);
+    assert_eq!(rpc_payload["requests_pending"], 2);
+    assert_eq!(rpc_payload["oldest_pending_request_age_seconds"], 13);
+    assert_eq!(rpc_payload["pending_routes_active"], 2);
     assert_eq!(rpc_payload["requests_total"], rpc_requests_before + 8);
     assert_eq!(rpc_payload["success_total"], rpc_success_before + 5);
     assert_eq!(rpc_payload["failure_total"], rpc_failure_before + 3);
@@ -1187,6 +1263,12 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     let lease_payload: serde_json::Value = serde_json::from_slice(&lease_body).unwrap();
     assert_eq!(lease_payload["leases_active"], 1);
     assert_eq!(lease_payload["waiter_depth"], 4);
+    assert!(
+        lease_payload["oldest_lease_age_seconds"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
+    );
     assert_eq!(lease_payload["requests_total"], lease_requests_before + 4);
     assert_eq!(lease_payload["success_total"], lease_success_before + 2);
     assert_eq!(lease_payload["failure_total"], lease_failure_before + 1);
@@ -1208,6 +1290,23 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
             .unwrap_or(0.0)
             > 0.0
     );
+
+    let metrics_req = Request::builder()
+        .method(Method::GET)
+        .uri("/metrics")
+        .header(COOKIE, login_cookie(runtime.clone()).await)
+        .body(Body::empty())
+        .unwrap();
+    let metrics_response = fitz::api::admin::handlers::handle_request(metrics_req, runtime)
+        .await
+        .unwrap();
+    assert_eq!(metrics_response.status(), StatusCode::OK);
+    let metrics_body = body::to_bytes(metrics_response.into_body()).await.unwrap();
+    let metrics_payload = String::from_utf8(metrics_body.to_vec()).unwrap();
+    assert!(metrics_payload.contains("fitz_rpc_requests_pending 2"));
+    assert!(metrics_payload.contains("fitz_rpc_oldest_pending_request_age_seconds 13"));
+    assert!(metrics_payload.contains("fitz_rpc_pending_routes_active 2"));
+    assert!(metrics_payload.contains("fitz_lease_oldest_lease_age_seconds"));
 }
 
 #[tokio::test]
@@ -1447,6 +1546,7 @@ async fn should_return_global_stats() {
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["domains"]["queue"]["messages_dead_lettered"], 4);
+    assert_eq!(payload["domains"]["queue"]["oldest_message_age_seconds"], 9);
     assert_eq!(
         payload["diagnostics"]["incident_summary"]["status"],
         "stalled"

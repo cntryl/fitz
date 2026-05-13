@@ -197,6 +197,14 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    output.push_str("# HELP fitz_queue_oldest_message_age_seconds Oldest visible queue message age in seconds\n");
+    output.push_str("# TYPE fitz_queue_oldest_message_age_seconds gauge\n");
+    output.push_str(&format!(
+        "fitz_queue_oldest_message_age_seconds {}\n",
+        runtime.queue_oldest_message_age_seconds()
+    ));
+    output.push('\n');
+
     // RPC domain
     output.push_str("# HELP fitz_rpc_workers_registered Registered RPC workers\n");
     output.push_str("# TYPE fitz_rpc_workers_registered gauge\n");
@@ -214,10 +222,40 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    output.push_str(
+        "# HELP fitz_rpc_oldest_pending_request_age_seconds Oldest pending RPC request age in seconds\n",
+    );
+    output.push_str("# TYPE fitz_rpc_oldest_pending_request_age_seconds gauge\n");
+    output.push_str(&format!(
+        "fitz_rpc_oldest_pending_request_age_seconds {}\n",
+        runtime.rpc_oldest_pending_request_age_seconds()
+    ));
+    output.push('\n');
+
+    output.push_str(
+        "# HELP fitz_rpc_pending_routes_active Distinct RPC routes with pending requests\n",
+    );
+    output.push_str("# TYPE fitz_rpc_pending_routes_active gauge\n");
+    output.push_str(&format!(
+        "fitz_rpc_pending_routes_active {}\n",
+        runtime.rpc_pending_routes_active()
+    ));
+    output.push('\n');
+
     // Lease domain
     output.push_str("# HELP fitz_lease_active Active leases\n");
     output.push_str("# TYPE fitz_lease_active gauge\n");
     output.push_str(&format!("fitz_lease_active {}\n", runtime.lease_active()));
+    output.push('\n');
+
+    output.push_str(
+        "# HELP fitz_lease_oldest_lease_age_seconds Oldest active lease age in seconds\n",
+    );
+    output.push_str("# TYPE fitz_lease_oldest_lease_age_seconds gauge\n");
+    output.push_str(&format!(
+        "fitz_lease_oldest_lease_age_seconds {}\n",
+        runtime.lease_oldest_lease_age_seconds()
+    ));
     output.push('\n');
 
     // Stream domain
