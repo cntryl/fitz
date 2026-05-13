@@ -126,6 +126,96 @@ async fn handle_hierarchical_get(
             };
             handle_resource_detail(scheme, runtime, realm, area, resource, family)
         }
+        ["realms", realm, "areas", area, "resources", resource, "events"] => {
+            let family = if scheme == "queue" {
+                match parse_optional_queue_family(uri) {
+                    Ok(family) => family,
+                    Err(response) => return Ok(*response),
+                }
+            } else {
+                None
+            };
+            let limit = match parse_event_limit(uri) {
+                Ok(limit) => limit,
+                Err(response) => return Ok(*response),
+            };
+            let path = list::ResourcePath {
+                realm,
+                area,
+                resource,
+            };
+
+            match scheme {
+                "kv" => list::kv_events_for_resource(runtime, &path, limit).await,
+                "queue" => list::queue_events_for_resource(runtime, &path, family, limit).await,
+                "stream" => list::stream_events_for_resource(runtime, &path, limit).await,
+                "lease" => list::lease_events_for_resource(runtime, &path, limit).await,
+                "schedule" => list::schedule_events_for_resource(runtime, &path, limit).await,
+                "notice" => list::notice_events_for_resource(runtime, &path, limit).await,
+                "rpc" => list::rpc_events_for_resource(runtime, &path, limit).await,
+                _ => Ok(super::not_found()),
+            }
+        }
+        ["realms", realm, "areas", area, "resources", resource, "compare"] => {
+            let family = if scheme == "queue" {
+                match parse_optional_u64_param(uri, "family") {
+                    Ok(family) => family,
+                    Err(response) => return Ok(*response),
+                }
+            } else {
+                None
+            };
+            let against_realm = match parse_required_string_query_param(uri, "against_realm") {
+                Ok(value) => value,
+                Err(response) => return Ok(*response),
+            };
+            let against_area = match parse_required_string_query_param(uri, "against_area") {
+                Ok(value) => value,
+                Err(response) => return Ok(*response),
+            };
+            let against_resource = match parse_required_string_query_param(uri, "against_resource")
+            {
+                Ok(value) => value,
+                Err(response) => return Ok(*response),
+            };
+            let against_family = if scheme == "queue" {
+                match parse_optional_u64_param(uri, "against_family") {
+                    Ok(family) => family,
+                    Err(response) => return Ok(*response),
+                }
+            } else {
+                None
+            };
+            let path = list::ResourcePath {
+                realm,
+                area,
+                resource,
+            };
+            let against_path = list::ResourcePath {
+                realm: &against_realm,
+                area: &against_area,
+                resource: &against_resource,
+            };
+
+            let comparison = match scheme {
+                "kv" => list::kv_compare_detail(runtime.as_ref(), &path, &against_path),
+                "queue" => list::queue_compare_detail(
+                    runtime.as_ref(),
+                    &path,
+                    family,
+                    &against_path,
+                    against_family,
+                ),
+                "stream" => list::stream_compare_detail(runtime.as_ref(), &path, &against_path),
+                "lease" => list::lease_compare_detail(runtime.as_ref(), &path, &against_path),
+                "schedule" => list::schedule_compare_detail(runtime.as_ref(), &path, &against_path),
+                "notice" => list::notice_compare_detail(runtime.as_ref(), &path, &against_path),
+                "rpc" => list::rpc_compare_detail(runtime.as_ref(), &path, &against_path),
+                _ => return Ok(super::not_found()),
+            };
+
+            super::json_response(comparison)
+        }
         ["realms", realm, "areas", area, "resources", resource, "transactions"]
             if scheme == "kv" =>
         {
@@ -421,7 +511,36 @@ fn auth_error_response(err: AuthFailure) -> Response<Body> {
 }
 
 fn parse_optional_queue_family(uri: &hyper::Uri) -> Result<Option<u64>, Box<Response<Body>>> {
-    list::parse_optional_u64_query_param(uri, "family")
+    parse_optional_u64_param(uri, "family")
+}
+
+fn parse_optional_u64_param(
+    uri: &hyper::Uri,
+    key: &str,
+) -> Result<Option<u64>, Box<Response<Body>>> {
+    list::parse_optional_u64_query_param(uri, key)
+        .map_err(|message| Box::new(super::error_response(StatusCode::BAD_REQUEST, &message)))
+}
+
+fn parse_required_string_query_param(
+    uri: &hyper::Uri,
+    key: &str,
+) -> Result<String, Box<Response<Body>>> {
+    match list::parse_query_params(uri)
+        .get(key)
+        .cloned()
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => Ok(value),
+        None => Err(Box::new(super::error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("Missing {} query parameter", key),
+        ))),
+    }
+}
+
+fn parse_event_limit(uri: &hyper::Uri) -> Result<usize, Box<Response<Body>>> {
+    list::parse_limit_query_param(uri, 20, 50)
         .map_err(|message| Box::new(super::error_response(StatusCode::BAD_REQUEST, &message)))
 }
 

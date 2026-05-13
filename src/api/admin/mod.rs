@@ -10,6 +10,7 @@ mod metrics;
 mod probes;
 pub(crate) mod read_model;
 mod stats;
+pub(crate) mod troubleshooting;
 
 pub use handlers::handle_request;
 pub use list::*;

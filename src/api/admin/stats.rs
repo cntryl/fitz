@@ -9,6 +9,7 @@
 //! - GET /api/v1/rpc/stats - RPC domain statistics
 //! - GET /api/v1/lease/stats - Lease domain statistics
 
+use super::troubleshooting;
 use crate::boot::Runtime;
 use hyper::{Body, Response};
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ use std::sync::Arc;
 pub struct GlobalStats {
     pub broker: BrokerStats,
     pub domains: DomainStats,
+    pub diagnostics: troubleshooting::GlobalTroubleshootingDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +48,7 @@ pub struct KvStats {
     pub transactions_active: usize,
     pub keys_total: usize,
     pub operations_per_second: f64,
+    pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,12 +57,14 @@ pub struct StreamStats {
     pub events_total: usize,
     pub operations_per_second: f64,
     pub subscriptions_active: usize,
+    pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoticeStats {
     pub subscriptions_active: usize,
     pub publishes_per_second: f64,
+    pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,7 +74,16 @@ pub struct QueueStats {
     pub messages_pending: usize,
     pub messages_dead_lettered: usize,
     pub inflight_active: usize,
+    pub requests_total: u64,
+    pub success_total: u64,
+    pub failure_total: u64,
+    pub enqueues_total: u64,
+    pub reserves_total: u64,
+    pub completes_total: u64,
+    pub releases_total: u64,
+    pub extends_total: u64,
     pub operations_per_second: f64,
+    pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,12 +91,14 @@ pub struct RpcStats {
     pub workers_registered: usize,
     pub requests_pending: usize,
     pub operations_per_second: f64,
+    pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeaseStats {
     pub leases_active: usize,
     pub operations_per_second: f64,
+    pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,10 +110,21 @@ pub struct ScheduleStats {
     pub notify_failures_total: u64,
     pub ack_failures_total: u64,
     pub overdue_normalizations_total: u64,
+    pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
 /// Handle /admin/stats endpoint
 pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+    let troubleshooting::RuntimeDiagnostics {
+        global,
+        kv,
+        stream,
+        notice,
+        queue,
+        rpc,
+        lease,
+        schedule,
+    } = troubleshooting::build_runtime_diagnostics(runtime.as_ref());
     let stats = GlobalStats {
         broker: BrokerStats {
             uptime_seconds: runtime.uptime().as_secs(),
@@ -111,16 +138,19 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 transactions_active: runtime.kv_transactions_active(),
                 keys_total: runtime.kv_keys_total(),
                 operations_per_second: runtime.kv_operations_per_second(),
+                diagnostics: kv,
             },
             stream: StreamStats {
                 streams_active: runtime.stream_active(),
                 events_total: runtime.stream_events_total(),
                 operations_per_second: runtime.stream_operations_per_second(),
                 subscriptions_active: runtime.stream_subscriptions_active(),
+                diagnostics: stream,
             },
             notice: NoticeStats {
                 subscriptions_active: runtime.notice_subscriptions_active(),
                 publishes_per_second: runtime.notice_publishes_per_second(),
+                diagnostics: notice,
             },
             queue: QueueStats {
                 messages_ready: runtime.queue_messages_ready(),
@@ -128,16 +158,27 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 messages_pending: runtime.queue_messages_pending(),
                 messages_dead_lettered: runtime.queue_messages_dead_lettered(),
                 inflight_active: runtime.queue_inflight_active(),
+                requests_total: runtime.queue_requests_total(),
+                success_total: runtime.queue_success_total(),
+                failure_total: runtime.queue_failure_total(),
+                enqueues_total: runtime.queue_enqueues_total(),
+                reserves_total: runtime.queue_reserves_total(),
+                completes_total: runtime.queue_completes_total(),
+                releases_total: runtime.queue_releases_total(),
+                extends_total: runtime.queue_extends_total(),
                 operations_per_second: runtime.queue_operations_per_second(),
+                diagnostics: queue,
             },
             rpc: RpcStats {
                 workers_registered: runtime.rpc_workers_registered(),
                 requests_pending: runtime.rpc_requests_pending(),
                 operations_per_second: runtime.rpc_operations_per_second(),
+                diagnostics: rpc,
             },
             lease: LeaseStats {
                 leases_active: runtime.lease_active(),
                 operations_per_second: runtime.lease_operations_per_second(),
+                diagnostics: lease,
             },
             schedule: ScheduleStats {
                 schedules_active: runtime.schedule_active(),
@@ -147,8 +188,10 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 notify_failures_total: runtime.schedule_notify_failures(),
                 ack_failures_total: runtime.schedule_ack_failures(),
                 overdue_normalizations_total: runtime.schedule_overdue_normalizations(),
+                diagnostics: schedule,
             },
         },
+        diagnostics: global,
     };
 
     crate::api::admin::json_response(stats)
@@ -159,69 +202,114 @@ pub async fn handle_domain_stats(
     runtime: Arc<Runtime>,
     domain: &str,
 ) -> Result<Response<Body>, Infallible> {
+    let troubleshooting::RuntimeDiagnostics {
+        kv,
+        stream,
+        notice,
+        queue,
+        rpc,
+        lease,
+        schedule,
+        ..
+    } = troubleshooting::build_runtime_diagnostics(runtime.as_ref());
     match domain {
-        "kv" => handle_kv_stats(runtime).await,
-        "stream" => handle_stream_stats(runtime).await,
-        "notice" => handle_notice_stats(runtime).await,
-        "queue" => handle_queue_stats(runtime).await,
-        "rpc" => handle_rpc_stats(runtime).await,
-        "lease" => handle_lease_stats(runtime).await,
-        "schedule" => handle_schedule_stats(runtime).await,
+        "kv" => handle_kv_stats(runtime, kv).await,
+        "stream" => handle_stream_stats(runtime, stream).await,
+        "notice" => handle_notice_stats(runtime, notice).await,
+        "queue" => handle_queue_stats(runtime, queue).await,
+        "rpc" => handle_rpc_stats(runtime, rpc).await,
+        "lease" => handle_lease_stats(runtime, lease).await,
+        "schedule" => handle_schedule_stats(runtime, schedule).await,
         _ => Ok(crate::api::admin::not_found()),
     }
 }
 
-async fn handle_kv_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+async fn handle_kv_stats(
+    runtime: Arc<Runtime>,
+    diagnostics: troubleshooting::DomainDiagnostics,
+) -> Result<Response<Body>, Infallible> {
     crate::api::admin::json_response(KvStats {
         transactions_active: runtime.kv_transactions_active(),
         keys_total: runtime.kv_keys_total(),
         operations_per_second: runtime.kv_operations_per_second(),
+        diagnostics,
     })
 }
 
-async fn handle_stream_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+async fn handle_stream_stats(
+    runtime: Arc<Runtime>,
+    diagnostics: troubleshooting::DomainDiagnostics,
+) -> Result<Response<Body>, Infallible> {
     crate::api::admin::json_response(StreamStats {
         streams_active: runtime.stream_active(),
         events_total: runtime.stream_events_total(),
         operations_per_second: runtime.stream_operations_per_second(),
         subscriptions_active: runtime.stream_subscriptions_active(),
+        diagnostics,
     })
 }
 
-async fn handle_notice_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+async fn handle_notice_stats(
+    runtime: Arc<Runtime>,
+    diagnostics: troubleshooting::DomainDiagnostics,
+) -> Result<Response<Body>, Infallible> {
     crate::api::admin::json_response(NoticeStats {
         subscriptions_active: runtime.notice_subscriptions_active(),
         publishes_per_second: runtime.notice_publishes_per_second(),
+        diagnostics,
     })
 }
 
-async fn handle_queue_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+async fn handle_queue_stats(
+    runtime: Arc<Runtime>,
+    diagnostics: troubleshooting::DomainDiagnostics,
+) -> Result<Response<Body>, Infallible> {
     crate::api::admin::json_response(QueueStats {
         messages_ready: runtime.queue_messages_ready(),
         messages_delayed: runtime.queue_messages_delayed(),
         messages_pending: runtime.queue_messages_pending(),
         messages_dead_lettered: runtime.queue_messages_dead_lettered(),
         inflight_active: runtime.queue_inflight_active(),
+        requests_total: runtime.queue_requests_total(),
+        success_total: runtime.queue_success_total(),
+        failure_total: runtime.queue_failure_total(),
+        enqueues_total: runtime.queue_enqueues_total(),
+        reserves_total: runtime.queue_reserves_total(),
+        completes_total: runtime.queue_completes_total(),
+        releases_total: runtime.queue_releases_total(),
+        extends_total: runtime.queue_extends_total(),
         operations_per_second: runtime.queue_operations_per_second(),
+        diagnostics,
     })
 }
 
-async fn handle_rpc_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+async fn handle_rpc_stats(
+    runtime: Arc<Runtime>,
+    diagnostics: troubleshooting::DomainDiagnostics,
+) -> Result<Response<Body>, Infallible> {
     crate::api::admin::json_response(RpcStats {
         workers_registered: runtime.rpc_workers_registered(),
         requests_pending: runtime.rpc_requests_pending(),
         operations_per_second: runtime.rpc_operations_per_second(),
+        diagnostics,
     })
 }
 
-async fn handle_lease_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+async fn handle_lease_stats(
+    runtime: Arc<Runtime>,
+    diagnostics: troubleshooting::DomainDiagnostics,
+) -> Result<Response<Body>, Infallible> {
     crate::api::admin::json_response(LeaseStats {
         leases_active: runtime.lease_active(),
         operations_per_second: runtime.lease_operations_per_second(),
+        diagnostics,
     })
 }
 
-async fn handle_schedule_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+async fn handle_schedule_stats(
+    runtime: Arc<Runtime>,
+    diagnostics: troubleshooting::DomainDiagnostics,
+) -> Result<Response<Body>, Infallible> {
     crate::api::admin::json_response(ScheduleStats {
         schedules_active: runtime.schedule_active(),
         executions_per_minute: runtime.schedule_executions_per_minute(),
@@ -230,6 +318,7 @@ async fn handle_schedule_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, 
         notify_failures_total: runtime.schedule_notify_failures(),
         ack_failures_total: runtime.schedule_ack_failures(),
         overdue_normalizations_total: runtime.schedule_overdue_normalizations(),
+        diagnostics,
     })
 }
 

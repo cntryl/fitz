@@ -183,6 +183,46 @@ fn seed_queue_snapshot_data(runtime: &Arc<Runtime>) {
     }]);
 }
 
+fn seed_queue_compare_snapshot_data(runtime: &Arc<Runtime>) {
+    let read_model = runtime.admin_read_model();
+    read_model.replace_queues(vec![
+        QueueInfo {
+            family: 1,
+            realm: "prod".to_string(),
+            area: "jobs".to_string(),
+            resource: "worker".to_string(),
+            messages_ready: 1,
+            messages_delayed: 2,
+            messages_inflight: 3,
+            messages_dead_lettered: 4,
+            messages_total: 10,
+            oldest_message_age_seconds: 9,
+        },
+        QueueInfo {
+            family: 2,
+            realm: "prod".to_string(),
+            area: "jobs".to_string(),
+            resource: "backup".to_string(),
+            messages_ready: 0,
+            messages_delayed: 0,
+            messages_inflight: 0,
+            messages_dead_lettered: 0,
+            messages_total: 0,
+            oldest_message_age_seconds: 0,
+        },
+    ]);
+    read_model.replace_queue_dead_letters(vec![QueueDeadLetter {
+        message_id: 42,
+        family: 1,
+        realm: "prod".to_string(),
+        area: "jobs".to_string(),
+        resource: "worker".to_string(),
+        dead_lettered_at: "2026-03-14T12:01:00Z".to_string(),
+        attempts: 3,
+        reason: "max_attempts_exceeded".to_string(),
+    }]);
+}
+
 fn seed_stream_snapshot_data(store: Arc<cntryl_midge::Engine>) {
     let stream_store = StreamStore::new(store);
 
@@ -249,7 +289,7 @@ async fn login_cookie(runtime: Arc<Runtime>) -> String {
         .body(Body::from(r#"{"username":"admin","password":"pwd123"}"#))
         .unwrap();
 
-    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
@@ -276,7 +316,7 @@ async fn should_create_admin_session_and_set_cookie() {
         .body(Body::from(r#"{"username":"admin","password":"pwd123"}"#))
         .unwrap();
 
-    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
@@ -300,7 +340,7 @@ async fn should_require_auth_for_hierarchical_route() {
         .body(Body::empty())
         .unwrap();
 
-    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
@@ -321,7 +361,7 @@ async fn should_list_kv_realms_with_valid_cookie() {
         .body(Body::empty())
         .unwrap();
 
-    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
@@ -344,7 +384,7 @@ async fn should_return_area_collection_route() {
         .body(Body::empty())
         .unwrap();
 
-    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
@@ -390,10 +430,12 @@ async fn should_return_leaf_resource_detail() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
-    let payload = String::from_utf8(body.to_vec()).unwrap();
-    assert!(payload.contains(r#""realm":"prod""#));
-    assert!(payload.contains(r#""area":"logs""#));
-    assert!(payload.contains(r#""resource":"application""#));
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["realm"], "prod");
+    assert_eq!(payload["area"], "logs");
+    assert_eq!(payload["resource"], "application");
+    assert_eq!(payload["diagnostics"]["current_stage"], "healthy");
+    assert_eq!(payload["diagnostics"]["severity"], "informational");
 }
 
 #[tokio::test]
@@ -412,7 +454,7 @@ async fn should_return_stream_realm_watermarks_given_committed_stream_history() 
         .unwrap();
 
     // Act
-    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
@@ -525,12 +567,102 @@ async fn should_return_queue_detail_with_delayed_and_dead_letter_counts() {
     // Assert
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
-    let payload = String::from_utf8(body.to_vec()).unwrap();
-    assert!(payload.contains(r#""messages_ready":1"#));
-    assert!(payload.contains(r#""messages_delayed":2"#));
-    assert!(payload.contains(r#""messages_inflight":3"#));
-    assert!(payload.contains(r#""messages_dead_lettered":4"#));
-    assert!(payload.contains(r#""messages_total":10"#));
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["messages_ready"], 1);
+    assert_eq!(payload["messages_delayed"], 2);
+    assert_eq!(payload["messages_inflight"], 3);
+    assert_eq!(payload["messages_dead_lettered"], 4);
+    assert_eq!(payload["messages_total"], 10);
+    assert_eq!(
+        payload["diagnostics"]["current_stage"],
+        "dead_letter_pressure"
+    );
+    assert_eq!(
+        payload["diagnostics"]["likely_bottleneck"],
+        "dead-letter pressure"
+    );
+    assert_eq!(payload["diagnostics"]["age_seconds"], 9);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_queue_events_with_bounded_timeline() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_queue_snapshot_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/events?family=1&limit=3")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["domain"], "queue");
+    assert_eq!(payload["derived"], true);
+    assert_eq!(payload["limit"], 3);
+    assert_eq!(
+        payload["diagnostics"]["current_stage"],
+        "dead_letter_pressure"
+    );
+    let events = payload["events"].as_array().unwrap();
+    assert_eq!(events.len(), 3);
+    assert!(events.iter().any(|event| event["kind"] == "failure"));
+    assert!(events
+        .iter()
+        .any(|event| event["kind"] == "ownership_change"));
+    assert!(events
+        .iter()
+        .any(|event| event["message_id"] == 42 && event["attempts"] == 3));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_queue_comparison_between_two_resource_snapshots() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_queue_compare_snapshot_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/compare?family=1&against_realm=prod&against_area=jobs&against_resource=backup&against_family=2")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["domain"], "queue");
+    assert_eq!(payload["comparison_mode"], "snapshot_vs_snapshot");
+    assert_eq!(payload["derived"], true);
+    assert_eq!(payload["left"]["scope"]["family"], 1);
+    assert_eq!(payload["right"]["scope"]["family"], 2);
+    assert_eq!(
+        payload["left"]["diagnostics"]["current_stage"],
+        "dead_letter_pressure"
+    );
+    assert_eq!(payload["right"]["diagnostics"]["current_stage"], "healthy");
+    assert_eq!(payload["delta"]["backlog"], 3);
+    assert_eq!(payload["delta"]["dead_letters"], 4);
+    assert!(payload["summary"].as_str().unwrap().contains("left side"));
 }
 
 #[tokio::test]
@@ -783,6 +915,44 @@ async fn should_return_rpc_pending_requests() {
 
 #[tokio::test]
 #[serial]
+async fn should_return_rpc_events_with_worker_registration_and_pending_transition() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_snapshot_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/rpc/realms/prod/areas/api/resources/users/events?limit=3")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["domain"], "rpc");
+    assert_eq!(payload["derived"], true);
+    assert_eq!(payload["limit"], 3);
+    assert_eq!(payload["diagnostics"]["current_stage"], "active");
+    let events = payload["events"].as_array().unwrap();
+    assert_eq!(events.len(), 3);
+    assert!(events
+        .iter()
+        .any(|event| event["kind"] == "registration" && event["worker_session"] == "9001"));
+    assert!(events.iter().any(|event| {
+        event["kind"] == "transition" && event["correlation_id"] == "corr-abc-123"
+    }));
+}
+
+#[tokio::test]
+#[serial]
 async fn should_return_queue_domain_stats() {
     // Arrange
     let runtime = test_runtime();
@@ -797,7 +967,7 @@ async fn should_return_queue_domain_stats() {
         .unwrap();
 
     // Act
-    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
@@ -810,6 +980,73 @@ async fn should_return_queue_domain_stats() {
     assert!(payload.contains(r#""messages_pending":3"#));
     assert!(payload.contains(r#""messages_dead_lettered":4"#));
     assert!(payload.contains(r#""inflight_active":0"#));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_queue_operation_counters_given_recorded_metrics() {
+    // Arrange
+    let runtime = test_runtime();
+    let metrics = fitz::boot::observability::metrics();
+    let requests_before = metrics.counter_get("fitz_queue_requests_total");
+    let success_before = metrics.counter_get("fitz_queue_success_total");
+    let failure_before = metrics.counter_get("fitz_queue_failure_total");
+    let enqueues_before = metrics.counter_get("fitz_queue_enqueue_total");
+    let reserves_before = metrics.counter_get("fitz_queue_reserve_total");
+    let completes_before = metrics.counter_get("fitz_queue_complete_total");
+    let releases_before = metrics.counter_get("fitz_queue_release_total");
+    let extends_before = metrics.counter_get("fitz_queue_extend_total");
+    metrics.counter_add("fitz_queue_requests_total", 5);
+    metrics.counter_add("fitz_queue_success_total", 4);
+    metrics.counter_add("fitz_queue_failure_total", 2);
+    metrics.counter_add("fitz_queue_enqueue_total", 3);
+    metrics.counter_add("fitz_queue_reserve_total", 7);
+    metrics.counter_add("fitz_queue_complete_total", 11);
+    metrics.counter_add("fitz_queue_release_total", 13);
+    metrics.counter_add("fitz_queue_extend_total", 17);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/queue/stats")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["requests_total"], requests_before + 5);
+    assert_eq!(payload["success_total"], success_before + 4);
+    assert_eq!(payload["failure_total"], failure_before + 2);
+    assert_eq!(payload["enqueues_total"], enqueues_before + 3);
+    assert_eq!(payload["reserves_total"], reserves_before + 7);
+    assert_eq!(payload["completes_total"], completes_before + 11);
+    assert_eq!(payload["releases_total"], releases_before + 13);
+    assert_eq!(payload["extends_total"], extends_before + 17);
+    assert!(payload["operations_per_second"].as_f64().unwrap_or(0.0) > 0.0);
+
+    let metrics_req = Request::builder()
+        .method(Method::GET)
+        .uri("/metrics")
+        .header(COOKIE, login_cookie(runtime.clone()).await)
+        .body(Body::empty())
+        .unwrap();
+    let metrics_response = fitz::api::admin::handlers::handle_request(metrics_req, runtime)
+        .await
+        .unwrap();
+    assert_eq!(metrics_response.status(), StatusCode::OK);
+    let metrics_body = body::to_bytes(metrics_response.into_body()).await.unwrap();
+    let metrics_payload = String::from_utf8(metrics_body.to_vec()).unwrap();
+    assert!(metrics_payload.contains("fitz_queue_complete_total"));
+    assert!(metrics_payload.contains("fitz_queue_release_total"));
 }
 
 #[tokio::test]
@@ -946,9 +1183,21 @@ async fn should_return_global_stats() {
     // Assert
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
-    let payload = String::from_utf8(body.to_vec()).unwrap();
-    assert!(payload.contains(r#""queue":{"#));
-    assert!(payload.contains(r#""messages_dead_lettered":4"#));
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["domains"]["queue"]["messages_dead_lettered"], 4);
+    assert_eq!(
+        payload["diagnostics"]["incident_summary"]["status"],
+        "stalled"
+    );
+    assert_eq!(
+        payload["diagnostics"]["incident_summary"]["severity"],
+        "high"
+    );
+    assert_eq!(payload["diagnostics"]["top_bottleneck"]["domain"], "queue");
+    assert_eq!(
+        payload["domains"]["queue"]["diagnostics"]["current_stage"],
+        "dead_letter_pressure"
+    );
 }
 
 #[tokio::test]
@@ -998,9 +1247,10 @@ async fn should_return_exact_rpc_operation_detail_counts() {
     // Assert
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
-    let payload = String::from_utf8(body.to_vec()).unwrap();
-    assert!(payload.contains(r#""workers_registered":1"#));
-    assert!(payload.contains(r#""requests_pending":1"#));
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["workers_registered"], 1);
+    assert_eq!(payload["requests_pending"], 1);
+    assert_eq!(payload["diagnostics"]["current_stage"], "active");
 }
 
 #[tokio::test]

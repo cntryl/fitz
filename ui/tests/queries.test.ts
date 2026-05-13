@@ -37,11 +37,33 @@ import {
   createPurgeQueueDeadLetterMutation,
   createReplayQueueDeadLetterMutation,
 } from "@/features/queue/queue-actions";
-import {
-  mapActiveSession,
-  mapActiveSessionsOverview,
-} from "@/features/session/session-mappers";
+import { mapActiveSession, mapActiveSessionsOverview } from "@/features/session/session-mappers";
 import { mapSystemOverview } from "@/features/system/system-mappers";
+import type { DiagnosticSnapshot, GlobalTroubleshootingDiagnostics } from "@/adapters";
+
+const healthyDiagnostics: DiagnosticSnapshot = {
+  current_stage: "healthy",
+  confidence: 1,
+  contention_count: 0,
+  explanation_hints: [],
+  failure_count: 0,
+  recent_transition_count: 0,
+  severity: "informational",
+  trend: "steady",
+  waiter_count: 0,
+};
+
+const healthyGlobalDiagnostics: GlobalTroubleshootingDiagnostics = {
+  hotspots: [],
+  incident_summary: {
+    confidence: 1,
+    explanation: "No active pressure detected",
+    severity: "informational",
+    status: "healthy",
+    title: "Healthy",
+  },
+  last_significant_transition_at: null,
+};
 
 describe("Data query layer", () => {
   it("exports session query helpers", () => {
@@ -131,12 +153,21 @@ describe("Data query layer", () => {
   it("maps domain stats DTOs to app models", () => {
     expect(
       mapQueueStats({
+        completes_total: 5,
+        diagnostics: healthyDiagnostics,
+        enqueues_total: 6,
+        extends_total: 7,
+        failure_total: 8,
         inflight_active: 8,
         messages_dead_lettered: 9,
         messages_delayed: 10,
         messages_pending: 11,
         messages_ready: 12,
         operations_per_second: 13.5,
+        releases_total: 10,
+        requests_total: 11,
+        reserves_total: 12,
+        success_total: 13,
       }),
     ).toEqual({
       inflightActive: 8,
@@ -150,6 +181,7 @@ describe("Data query layer", () => {
     expect(
       mapQueueResourceDetail({
         area: "a",
+        diagnostics: healthyDiagnostics,
         messages_dead_lettered: 2,
         messages_delayed: 3,
         messages_inflight: 4,
@@ -197,6 +229,7 @@ describe("Data query layer", () => {
 
     expect(
       mapKvStats({
+        diagnostics: healthyDiagnostics,
         keys_total: 4,
         operations_per_second: 1.5,
         transactions_active: 2,
@@ -209,6 +242,7 @@ describe("Data query layer", () => {
 
     expect(
       mapLeaseStats({
+        diagnostics: healthyDiagnostics,
         leases_active: 3,
         operations_per_second: 2.5,
       }),
@@ -219,6 +253,7 @@ describe("Data query layer", () => {
 
     expect(
       mapNoticeStats({
+        diagnostics: healthyDiagnostics,
         publishes_per_second: 1.25,
         subscriptions_active: 9,
       }),
@@ -229,6 +264,7 @@ describe("Data query layer", () => {
 
     expect(
       mapRpcStats({
+        diagnostics: healthyDiagnostics,
         operations_per_second: 5.5,
         requests_pending: 6,
         workers_registered: 7,
@@ -242,6 +278,7 @@ describe("Data query layer", () => {
     expect(
       mapScheduleStats({
         ack_failures_total: 1,
+        diagnostics: healthyDiagnostics,
         executions_per_minute: 2.5,
         notify_failures_total: 3,
         overdue_normalizations_total: 4,
@@ -261,6 +298,7 @@ describe("Data query layer", () => {
 
     expect(
       mapStreamStats({
+        diagnostics: healthyDiagnostics,
         events_total: 11,
         operations_per_second: 12.5,
         streams_active: 13,
@@ -326,35 +364,50 @@ describe("Data query layer", () => {
             sessions: 4,
             uptime_seconds: 5,
           },
+          diagnostics: healthyGlobalDiagnostics,
           domains: {
             kv: {
+              diagnostics: healthyDiagnostics,
               keys_total: 6,
               operations_per_second: 7.5,
               transactions_active: 8,
             },
             lease: {
+              diagnostics: healthyDiagnostics,
               leases_active: 9,
               operations_per_second: 10.5,
             },
             notice: {
+              diagnostics: healthyDiagnostics,
               publishes_per_second: 11.5,
               subscriptions_active: 12,
             },
             queue: {
+              completes_total: 33,
+              diagnostics: healthyDiagnostics,
+              enqueues_total: 34,
+              extends_total: 35,
+              failure_total: 36,
               inflight_active: 13,
               messages_dead_lettered: 14,
               messages_delayed: 15,
               messages_pending: 16,
               messages_ready: 17,
               operations_per_second: 18.5,
+              releases_total: 37,
+              requests_total: 38,
+              reserves_total: 39,
+              success_total: 40,
             },
             rpc: {
+              diagnostics: healthyDiagnostics,
               operations_per_second: 19.5,
               requests_pending: 20,
               workers_registered: 21,
             },
             schedule: {
               ack_failures_total: 22,
+              diagnostics: healthyDiagnostics,
               executions_per_minute: 23.5,
               notify_failures_total: 24,
               overdue_normalizations_total: 25,
@@ -363,6 +416,7 @@ describe("Data query layer", () => {
               subscriptions_active: 28,
             },
             stream: {
+              diagnostics: healthyDiagnostics,
               events_total: 29,
               operations_per_second: 30.5,
               streams_active: 31,

@@ -1,5 +1,9 @@
 //! Hierarchical list endpoints for admin API
 
+use crate::api::admin::troubleshooting::{
+    self, DiagnosticSnapshot, ResourceComparison, ResourceComparisonMetrics,
+    ResourceComparisonScope, ResourceComparisonSide,
+};
 use crate::boot::Runtime;
 use crate::runtime::routing::{route_quad, route_triplet};
 use hyper::{Body, Response};
@@ -70,6 +74,7 @@ pub struct KvResourceDetail {
     pub area: String,
     pub resource: String,
     pub transactions_active: usize,
+    pub diagnostics: DiagnosticSnapshot,
 }
 
 /// Point-in-time Queue resource detail for the current broker process.
@@ -89,6 +94,7 @@ pub struct QueueResourceDetail {
     pub messages_dead_lettered: usize,
     pub messages_total: usize,
     pub oldest_message_age_seconds: u64,
+    pub diagnostics: DiagnosticSnapshot,
 }
 
 /// Stream resource detail derived from durable committed metadata plus live
@@ -107,6 +113,7 @@ pub struct StreamResourceDetail {
     pub watermark: u64,
     pub size_bytes: u64,
     pub sessions_active: usize,
+    pub diagnostics: DiagnosticSnapshot,
 }
 
 /// Stream realm watermark detail built from committed stream state.
@@ -158,6 +165,7 @@ pub struct LeaseResourceDetail {
     pub area: String,
     pub resource: String,
     pub active_leases: usize,
+    pub diagnostics: DiagnosticSnapshot,
 }
 
 /// Schedule resource detail derived from the current broker's durable,
@@ -175,6 +183,7 @@ pub struct ScheduleResourceDetail {
     pub cron: Option<String>,
     pub next_run: Option<String>,
     pub executions_total: u64,
+    pub diagnostics: DiagnosticSnapshot,
 }
 
 /// Live in-memory Notice resource detail for the current broker process.
@@ -188,6 +197,7 @@ pub struct NoticeResourceDetail {
     pub area: String,
     pub resource: String,
     pub subscriptions_active: usize,
+    pub diagnostics: DiagnosticSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,6 +223,7 @@ pub struct RpcOperationDetail {
     pub operation: String,
     pub workers_registered: usize,
     pub requests_pending: usize,
+    pub diagnostics: DiagnosticSnapshot,
 }
 
 impl KvResourceDetail {
@@ -222,12 +233,20 @@ impl KvResourceDetail {
             area: path.area.to_string(),
             resource: path.resource.to_string(),
             transactions_active,
+            diagnostics: troubleshooting::kv_resource_diagnostics(transactions_active),
         }
     }
 }
 
 impl QueueResourceDetail {
     fn from_queue(item: QueueInfo) -> Self {
+        let diagnostics = troubleshooting::queue_resource_diagnostics(
+            item.messages_ready,
+            item.messages_delayed,
+            item.messages_inflight,
+            item.messages_dead_lettered,
+            item.oldest_message_age_seconds,
+        );
         Self {
             realm: item.realm,
             area: item.area,
@@ -238,6 +257,7 @@ impl QueueResourceDetail {
             messages_dead_lettered: item.messages_dead_lettered,
             messages_total: item.messages_total,
             oldest_message_age_seconds: item.oldest_message_age_seconds,
+            diagnostics,
         }
     }
 
@@ -252,12 +272,18 @@ impl QueueResourceDetail {
             messages_dead_lettered: 0,
             messages_total: 0,
             oldest_message_age_seconds: 0,
+            diagnostics: troubleshooting::queue_resource_diagnostics(0, 0, 0, 0, 0),
         }
     }
 }
 
 impl StreamResourceDetail {
     fn from_stream(item: StreamInfo) -> Self {
+        let diagnostics = troubleshooting::stream_resource_diagnostics(
+            item.offset,
+            item.watermark,
+            item.sessions_active,
+        );
         Self {
             realm: item.realm,
             area: item.area,
@@ -266,6 +292,7 @@ impl StreamResourceDetail {
             watermark: item.watermark,
             size_bytes: item.size_bytes,
             sessions_active: item.sessions_active,
+            diagnostics,
         }
     }
 
@@ -278,6 +305,7 @@ impl StreamResourceDetail {
             watermark: 0,
             size_bytes: 0,
             sessions_active: 0,
+            diagnostics: troubleshooting::stream_resource_diagnostics(0, 0, 0),
         }
     }
 }
@@ -333,6 +361,7 @@ impl LeaseResourceDetail {
             area: path.area.to_string(),
             resource: path.resource.to_string(),
             active_leases,
+            diagnostics: troubleshooting::lease_resource_diagnostics(active_leases),
         }
     }
 }
@@ -347,10 +376,17 @@ impl ScheduleResourceDetail {
             cron: None,
             next_run: None,
             executions_total: 0,
+            diagnostics: troubleshooting::schedule_resource_diagnostics(false, None, None, 0),
         }
     }
 
     fn from_schedule(item: ScheduleInfo) -> Self {
+        let diagnostics = troubleshooting::schedule_resource_diagnostics(
+            item.enabled,
+            Some(item.next_run.as_str()),
+            item.last_run.as_deref(),
+            item.executions_total,
+        );
         Self {
             realm: item.realm,
             area: item.area,
@@ -359,11 +395,16 @@ impl ScheduleResourceDetail {
             cron: Some(item.cron),
             next_run: Some(item.next_run),
             executions_total: item.executions_total,
+            diagnostics,
         }
     }
 
     fn aggregate(path: &ResourcePath<'_>, schedules: &[ScheduleInfo]) -> Self {
         let next_run = schedules.iter().map(|item| item.next_run.as_str()).min();
+        let last_run = schedules
+            .iter()
+            .filter_map(|item| item.last_run.as_deref())
+            .max();
         Self {
             realm: path.realm.to_string(),
             area: path.area.to_string(),
@@ -372,6 +413,12 @@ impl ScheduleResourceDetail {
             cron: None,
             next_run: next_run.map(ToString::to_string),
             executions_total: schedules.iter().map(|item| item.executions_total).sum(),
+            diagnostics: troubleshooting::schedule_resource_diagnostics(
+                schedules.iter().any(|item| item.enabled),
+                next_run,
+                last_run,
+                schedules.iter().map(|item| item.executions_total).sum(),
+            ),
         }
     }
 }
@@ -383,6 +430,7 @@ impl NoticeResourceDetail {
             area: path.area.to_string(),
             resource: path.resource.to_string(),
             subscriptions_active,
+            diagnostics: troubleshooting::notice_resource_diagnostics(subscriptions_active),
         }
     }
 }
@@ -400,6 +448,10 @@ impl RpcOperationDetail {
             operation: path.operation.to_string(),
             workers_registered,
             requests_pending,
+            diagnostics: troubleshooting::rpc_operation_diagnostics(
+                workers_registered,
+                requests_pending,
+            ),
         }
     }
 }
@@ -1086,6 +1138,27 @@ pub fn parse_optional_u64_query_param(uri: &hyper::Uri, key: &str) -> Result<Opt
     }
 }
 
+pub fn parse_limit_query_param(
+    uri: &hyper::Uri,
+    default: usize,
+    max: usize,
+) -> Result<usize, String> {
+    let params = parse_query_params(uri);
+    match params.get("limit") {
+        Some(value) => {
+            let limit = value
+                .parse::<usize>()
+                .map_err(|_| "Invalid limit query parameter".to_string())?;
+            if limit == 0 {
+                Err("limit query parameter must be greater than zero".to_string())
+            } else {
+                Ok(limit.min(max))
+            }
+        }
+        None => Ok(default.min(max)),
+    }
+}
+
 pub fn collect_realms(resources: &[ResourceRef]) -> RealmCollection {
     RealmCollection {
         realms: collect_distinct_entries(
@@ -1261,6 +1334,104 @@ pub async fn rpc_pending(
     crate::api::admin::json_response(RpcPendingList { requests })
 }
 
+pub async fn kv_events_for_resource(
+    runtime: Arc<Runtime>,
+    path: &ResourcePath<'_>,
+    limit: usize,
+) -> Result<Response<Body>, Infallible> {
+    let transactions = runtime.kv_list_transactions(Some(path.realm));
+    crate::api::admin::json_response(troubleshooting::kv_resource_timeline(
+        &transactions,
+        path,
+        limit,
+    ))
+}
+
+pub async fn queue_events_for_resource(
+    runtime: Arc<Runtime>,
+    path: &ResourcePath<'_>,
+    family: Option<u64>,
+    limit: usize,
+) -> Result<Response<Body>, Infallible> {
+    let queues = runtime.queue_list_queues(Some(path.realm));
+    let inflight = runtime.queue_list_inflight(Some(path.realm));
+    let dead_letters = runtime.queue_list_dead_letters(Some(path.realm));
+    crate::api::admin::json_response(troubleshooting::queue_resource_timeline(
+        &queues,
+        &inflight,
+        &dead_letters,
+        path,
+        family,
+        limit,
+    ))
+}
+
+pub async fn stream_events_for_resource(
+    runtime: Arc<Runtime>,
+    path: &ResourcePath<'_>,
+    limit: usize,
+) -> Result<Response<Body>, Infallible> {
+    let streams = runtime.stream_list_streams(Some(path.realm));
+    crate::api::admin::json_response(troubleshooting::stream_resource_timeline(
+        &streams, path, limit,
+    ))
+}
+
+pub async fn lease_events_for_resource(
+    runtime: Arc<Runtime>,
+    path: &ResourcePath<'_>,
+    limit: usize,
+) -> Result<Response<Body>, Infallible> {
+    let leases = runtime.lease_list_leases(Some(path.realm));
+    crate::api::admin::json_response(troubleshooting::lease_resource_timeline(
+        &leases, path, limit,
+    ))
+}
+
+pub async fn schedule_events_for_resource(
+    runtime: Arc<Runtime>,
+    path: &ResourcePath<'_>,
+    limit: usize,
+) -> Result<Response<Body>, Infallible> {
+    let schedules = runtime.schedule_list_schedules(Some(path.realm));
+    crate::api::admin::json_response(troubleshooting::schedule_resource_timeline(
+        &schedules,
+        runtime.schedule_pending_fire_claims(),
+        runtime.schedule_notify_failures(),
+        runtime.schedule_ack_failures(),
+        runtime.schedule_overdue_normalizations(),
+        path,
+        limit,
+    ))
+}
+
+pub async fn notice_events_for_resource(
+    runtime: Arc<Runtime>,
+    path: &ResourcePath<'_>,
+    limit: usize,
+) -> Result<Response<Body>, Infallible> {
+    let subscriptions = runtime.notice_list_subscriptions(Some(path.realm), None);
+    let routes = runtime.notice_list_routes(Some(path.realm));
+    crate::api::admin::json_response(troubleshooting::notice_resource_timeline(
+        &subscriptions,
+        &routes,
+        path,
+        limit,
+    ))
+}
+
+pub async fn rpc_events_for_resource(
+    runtime: Arc<Runtime>,
+    path: &ResourcePath<'_>,
+    limit: usize,
+) -> Result<Response<Body>, Infallible> {
+    let workers = runtime.rpc_list_workers(Some(path.realm));
+    let pending = runtime.rpc_list_pending(Some(path.realm));
+    crate::api::admin::json_response(troubleshooting::rpc_resource_timeline(
+        &workers, &pending, path, limit,
+    ))
+}
+
 pub fn kv_detail(runtime: &Runtime, path: &ResourcePath<'_>) -> KvResourceDetail {
     let transactions = runtime
         .kv_list_transactions(Some(path.realm))
@@ -1304,6 +1475,13 @@ pub fn queue_detail(
             .max(queue.oldest_message_age_seconds);
     }
 
+    detail.diagnostics = troubleshooting::queue_resource_diagnostics(
+        detail.messages_ready,
+        detail.messages_delayed,
+        detail.messages_inflight,
+        detail.messages_dead_lettered,
+        detail.oldest_message_age_seconds,
+    );
     detail
 }
 
@@ -1382,6 +1560,365 @@ pub fn rpc_operation_detail(runtime: &Runtime, path: &RpcOperationPath<'_>) -> R
         .filter(|request| matches_operation_route(&request.route, path))
         .count();
     RpcOperationDetail::from_counts(path, workers_registered, requests_pending)
+}
+
+fn comparison_scope(path: &ResourcePath<'_>, family: Option<u64>) -> ResourceComparisonScope {
+    ResourceComparisonScope::new(path, family)
+}
+
+fn comparison_side(
+    path: &ResourcePath<'_>,
+    family: Option<u64>,
+    diagnostics: DiagnosticSnapshot,
+    metrics: ResourceComparisonMetrics,
+) -> ResourceComparisonSide {
+    ResourceComparisonSide {
+        scope: comparison_scope(path, family),
+        diagnostics,
+        metrics,
+    }
+}
+
+fn build_resource_comparison(
+    domain: &str,
+    left_path: &ResourcePath<'_>,
+    left_family: Option<u64>,
+    left_diagnostics: DiagnosticSnapshot,
+    left_metrics: ResourceComparisonMetrics,
+    right_path: &ResourcePath<'_>,
+    right_family: Option<u64>,
+    right_diagnostics: DiagnosticSnapshot,
+    right_metrics: ResourceComparisonMetrics,
+) -> ResourceComparison {
+    troubleshooting::compare_resource_sides(
+        domain,
+        comparison_side(left_path, left_family, left_diagnostics, left_metrics),
+        comparison_side(right_path, right_family, right_diagnostics, right_metrics),
+    )
+}
+
+fn kv_comparison_metrics(detail: &KvResourceDetail) -> ResourceComparisonMetrics {
+    ResourceComparisonMetrics {
+        backlog: Some(detail.transactions_active),
+        inflight: None,
+        ready: None,
+        delayed: None,
+        dead_letters: None,
+        workers: None,
+        subscriptions: None,
+        waiters: None,
+        age_seconds: detail.diagnostics.age_seconds,
+        recent_transition_count: Some(detail.diagnostics.recent_transition_count),
+        failure_count: Some(detail.diagnostics.failure_count),
+        contention_count: None,
+        operations_total: Some(detail.transactions_active as u64),
+    }
+}
+
+fn queue_comparison_metrics(detail: &QueueResourceDetail) -> ResourceComparisonMetrics {
+    let backlog = detail.messages_ready + detail.messages_delayed;
+    ResourceComparisonMetrics {
+        backlog: Some(backlog),
+        inflight: Some(detail.messages_inflight),
+        ready: Some(detail.messages_ready),
+        delayed: Some(detail.messages_delayed),
+        dead_letters: Some(detail.messages_dead_lettered),
+        workers: None,
+        subscriptions: None,
+        waiters: None,
+        age_seconds: Some(detail.oldest_message_age_seconds),
+        recent_transition_count: Some(detail.diagnostics.recent_transition_count),
+        failure_count: Some(detail.messages_dead_lettered as u64),
+        contention_count: None,
+        operations_total: Some(detail.messages_total as u64),
+    }
+}
+
+fn stream_comparison_metrics(detail: &StreamResourceDetail) -> ResourceComparisonMetrics {
+    let lag = detail.offset.saturating_sub(detail.watermark) as usize;
+    ResourceComparisonMetrics {
+        backlog: Some(lag),
+        inflight: None,
+        ready: None,
+        delayed: None,
+        dead_letters: None,
+        workers: Some(detail.sessions_active),
+        subscriptions: None,
+        waiters: None,
+        age_seconds: detail.diagnostics.age_seconds,
+        recent_transition_count: Some(detail.diagnostics.recent_transition_count),
+        failure_count: Some(detail.diagnostics.failure_count),
+        contention_count: None,
+        operations_total: Some(detail.offset),
+    }
+}
+
+fn lease_comparison_metrics(detail: &LeaseResourceDetail) -> ResourceComparisonMetrics {
+    ResourceComparisonMetrics {
+        backlog: Some(detail.active_leases),
+        inflight: None,
+        ready: None,
+        delayed: None,
+        dead_letters: None,
+        workers: None,
+        subscriptions: None,
+        waiters: None,
+        age_seconds: detail.diagnostics.age_seconds,
+        recent_transition_count: Some(detail.diagnostics.recent_transition_count),
+        failure_count: Some(detail.diagnostics.failure_count),
+        contention_count: Some(detail.diagnostics.contention_count),
+        operations_total: Some(detail.active_leases as u64),
+    }
+}
+
+fn notice_comparison_metrics(detail: &NoticeResourceDetail) -> ResourceComparisonMetrics {
+    ResourceComparisonMetrics {
+        backlog: Some(detail.subscriptions_active),
+        inflight: None,
+        ready: None,
+        delayed: None,
+        dead_letters: None,
+        workers: None,
+        subscriptions: Some(detail.subscriptions_active),
+        waiters: None,
+        age_seconds: detail.diagnostics.age_seconds,
+        recent_transition_count: Some(detail.diagnostics.recent_transition_count),
+        failure_count: Some(detail.diagnostics.failure_count),
+        contention_count: None,
+        operations_total: Some(detail.subscriptions_active as u64),
+    }
+}
+
+fn schedule_comparison_metrics(detail: &ScheduleResourceDetail) -> ResourceComparisonMetrics {
+    ResourceComparisonMetrics {
+        backlog: None,
+        inflight: None,
+        ready: None,
+        delayed: None,
+        dead_letters: None,
+        workers: None,
+        subscriptions: None,
+        waiters: Some(detail.diagnostics.waiter_count),
+        age_seconds: detail.diagnostics.age_seconds,
+        recent_transition_count: Some(detail.diagnostics.recent_transition_count),
+        failure_count: Some(detail.diagnostics.failure_count),
+        contention_count: Some(detail.diagnostics.contention_count),
+        operations_total: Some(detail.executions_total),
+    }
+}
+
+fn rpc_resource_comparison_metrics(
+    workers_registered: usize,
+    requests_pending: usize,
+    oldest_pending_age: Option<u64>,
+) -> (DiagnosticSnapshot, ResourceComparisonMetrics) {
+    let diagnostics =
+        troubleshooting::rpc_operation_diagnostics(workers_registered, requests_pending);
+    (
+        diagnostics,
+        ResourceComparisonMetrics {
+            backlog: Some(requests_pending),
+            inflight: None,
+            ready: None,
+            delayed: None,
+            dead_letters: None,
+            workers: Some(workers_registered),
+            subscriptions: None,
+            waiters: None,
+            age_seconds: oldest_pending_age,
+            recent_transition_count: None,
+            failure_count: None,
+            contention_count: Some(requests_pending.saturating_sub(workers_registered) as u64),
+            operations_total: Some((workers_registered + requests_pending) as u64),
+        },
+    )
+}
+
+pub fn kv_compare_detail(
+    runtime: &Runtime,
+    path: &ResourcePath<'_>,
+    against: &ResourcePath<'_>,
+) -> ResourceComparison {
+    let left = kv_detail(runtime, path);
+    let right = kv_detail(runtime, against);
+    let left_metrics = kv_comparison_metrics(&left);
+    let right_metrics = kv_comparison_metrics(&right);
+    build_resource_comparison(
+        "kv",
+        path,
+        None,
+        left.diagnostics,
+        left_metrics,
+        against,
+        None,
+        right.diagnostics,
+        right_metrics,
+    )
+}
+
+pub fn queue_compare_detail(
+    runtime: &Runtime,
+    path: &ResourcePath<'_>,
+    family: Option<u64>,
+    against: &ResourcePath<'_>,
+    against_family: Option<u64>,
+) -> ResourceComparison {
+    let left = queue_detail(runtime, path, family);
+    let right = queue_detail(runtime, against, against_family);
+    let left_metrics = queue_comparison_metrics(&left);
+    let right_metrics = queue_comparison_metrics(&right);
+    build_resource_comparison(
+        "queue",
+        path,
+        family,
+        left.diagnostics,
+        left_metrics,
+        against,
+        against_family,
+        right.diagnostics,
+        right_metrics,
+    )
+}
+
+pub fn stream_compare_detail(
+    runtime: &Runtime,
+    path: &ResourcePath<'_>,
+    against: &ResourcePath<'_>,
+) -> ResourceComparison {
+    let left = stream_detail(runtime, path);
+    let right = stream_detail(runtime, against);
+    let left_metrics = stream_comparison_metrics(&left);
+    let right_metrics = stream_comparison_metrics(&right);
+    build_resource_comparison(
+        "stream",
+        path,
+        None,
+        left.diagnostics,
+        left_metrics,
+        against,
+        None,
+        right.diagnostics,
+        right_metrics,
+    )
+}
+
+pub fn lease_compare_detail(
+    runtime: &Runtime,
+    path: &ResourcePath<'_>,
+    against: &ResourcePath<'_>,
+) -> ResourceComparison {
+    let left = lease_detail(runtime, path);
+    let right = lease_detail(runtime, against);
+    let left_metrics = lease_comparison_metrics(&left);
+    let right_metrics = lease_comparison_metrics(&right);
+    build_resource_comparison(
+        "lease",
+        path,
+        None,
+        left.diagnostics,
+        left_metrics,
+        against,
+        None,
+        right.diagnostics,
+        right_metrics,
+    )
+}
+
+pub fn schedule_compare_detail(
+    runtime: &Runtime,
+    path: &ResourcePath<'_>,
+    against: &ResourcePath<'_>,
+) -> ResourceComparison {
+    let left = schedule_detail(runtime, path);
+    let right = schedule_detail(runtime, against);
+    let left_metrics = schedule_comparison_metrics(&left);
+    let right_metrics = schedule_comparison_metrics(&right);
+    build_resource_comparison(
+        "schedule",
+        path,
+        None,
+        left.diagnostics,
+        left_metrics,
+        against,
+        None,
+        right.diagnostics,
+        right_metrics,
+    )
+}
+
+pub fn notice_compare_detail(
+    runtime: &Runtime,
+    path: &ResourcePath<'_>,
+    against: &ResourcePath<'_>,
+) -> ResourceComparison {
+    let left = notice_detail(runtime, path);
+    let right = notice_detail(runtime, against);
+    let left_metrics = notice_comparison_metrics(&left);
+    let right_metrics = notice_comparison_metrics(&right);
+    build_resource_comparison(
+        "notice",
+        path,
+        None,
+        left.diagnostics,
+        left_metrics,
+        against,
+        None,
+        right.diagnostics,
+        right_metrics,
+    )
+}
+
+pub fn rpc_compare_detail(
+    runtime: &Runtime,
+    path: &ResourcePath<'_>,
+    against: &ResourcePath<'_>,
+) -> ResourceComparison {
+    let left_pending = runtime
+        .rpc_list_pending(Some(path.realm))
+        .into_iter()
+        .filter(|request| matches_resource_route(&request.route, path))
+        .collect::<Vec<_>>();
+    let left_workers_registered = runtime
+        .rpc_list_workers(Some(path.realm))
+        .into_iter()
+        .filter(|worker| matches_resource_route(&worker.route, path))
+        .count();
+    let (left_diagnostics, left_metrics) = rpc_resource_comparison_metrics(
+        left_workers_registered,
+        left_pending.len(),
+        left_pending.iter().map(|request| request.age_seconds).max(),
+    );
+
+    let right_pending = runtime
+        .rpc_list_pending(Some(against.realm))
+        .into_iter()
+        .filter(|request| matches_resource_route(&request.route, against))
+        .collect::<Vec<_>>();
+    let right_workers_registered = runtime
+        .rpc_list_workers(Some(against.realm))
+        .into_iter()
+        .filter(|worker| matches_resource_route(&worker.route, against))
+        .count();
+    let (right_diagnostics, right_metrics) = rpc_resource_comparison_metrics(
+        right_workers_registered,
+        right_pending.len(),
+        right_pending
+            .iter()
+            .map(|request| request.age_seconds)
+            .max(),
+    );
+
+    build_resource_comparison(
+        "rpc",
+        path,
+        None,
+        left_diagnostics,
+        left_metrics,
+        against,
+        None,
+        right_diagnostics,
+        right_metrics,
+    )
 }
 
 fn parse_flexible_route(route: &str) -> Option<ResourceRef> {

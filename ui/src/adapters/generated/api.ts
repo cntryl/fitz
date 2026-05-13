@@ -98,6 +98,40 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<KvResourceDetail>>;
   /**
+   * Compare KV resource snapshots
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceComparison>
+   */
+  compareKvResourceSnapshots: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { against_realm: string; against_area: string; against_resource: string },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceComparison>>;
+  /**
+   * Get KV resource events
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceTimeline>
+   */
+  listKvResourceEvents: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { limit?: number },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceTimeline>>;
+  /**
    * List KV transactions for a resource
    *
    * @param realm - realm parameter
@@ -198,6 +232,40 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<LeaseResourceDetail>>;
   /**
+   * Compare lease resource snapshots
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceComparison>
+   */
+  compareLeaseResourceSnapshots: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { against_realm: string; against_area: string; against_resource: string },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceComparison>>;
+  /**
+   * Get lease resource events
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceTimeline>
+   */
+  listLeaseResourceEvents: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { limit?: number },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceTimeline>>;
+  /**
    * Get Lease domain statistics
    *
    * @param options - Request options (signal, timeout, operationId)
@@ -282,6 +350,40 @@ export function createAdapter(client: FetchClient): {
     resource: string,
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<NoticeResourceDetail>>;
+  /**
+   * Compare notice resource snapshots
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceComparison>
+   */
+  compareNoticeResourceSnapshots: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { against_realm: string; against_area: string; against_resource: string },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceComparison>>;
+  /**
+   * Get notice resource events
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceTimeline>
+   */
+  listNoticeResourceEvents: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { limit?: number },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceTimeline>>;
   /**
    * List notice subscriptions for a resource
    *
@@ -383,6 +485,29 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<QueueResourceDetail>>;
   /**
+   * Compare queue resource snapshots
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceComparison>
+   */
+  compareQueueResourceSnapshots: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: {
+      family?: number;
+      against_realm: string;
+      against_area: string;
+      against_resource: string;
+      against_family?: number;
+    },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceComparison>>;
+  /**
    * List queue dead-letter entries for a resource
    *
    * @param realm - realm parameter
@@ -437,6 +562,23 @@ export function createAdapter(client: FetchClient): {
     query?: { family: number },
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<boolean>>;
+  /**
+   * Get queue resource events
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceTimeline>
+   */
+  listQueueResourceEvents: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { family?: number; limit?: number },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceTimeline>>;
   /**
    * List queue inflight entries for a resource
    *
@@ -548,6 +690,40 @@ export function createAdapter(client: FetchClient): {
     resource: string,
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<OperationCollection>>;
+  /**
+   * Compare RPC resource snapshots
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceComparison>
+   */
+  compareRpcResourceSnapshots: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { against_realm: string; against_area: string; against_resource: string },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceComparison>>;
+  /**
+   * Get RPC resource events
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceTimeline>
+   */
+  listRpcResourceEvents: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { limit?: number },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceTimeline>>;
   /**
    * List RPC operations
    *
@@ -682,6 +858,40 @@ export function createAdapter(client: FetchClient): {
     resource: string,
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<ScheduleResourceDetail>>;
+  /**
+   * Compare schedule resource snapshots
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceComparison>
+   */
+  compareScheduleResourceSnapshots: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { against_realm: string; against_area: string; against_resource: string },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceComparison>>;
+  /**
+   * Get schedule resource events
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceTimeline>
+   */
+  listScheduleResourceEvents: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { limit?: number },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceTimeline>>;
   /**
    * Get Schedule domain statistics
    *
@@ -822,6 +1032,40 @@ export function createAdapter(client: FetchClient): {
     resource: string,
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<StreamResourceDetail>>;
+  /**
+   * Compare stream resource snapshots
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceComparison>
+   */
+  compareStreamResourceSnapshots: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { against_realm: string; against_area: string; against_resource: string },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceComparison>>;
+  /**
+   * Get stream resource events
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ResourceTimeline>
+   */
+  listStreamResourceEvents: (
+    realm: string,
+    area: string,
+    resource: string,
+    query?: { limit?: number },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ResourceTimeline>>;
   /**
    * Get stream area watermarks
    *
@@ -969,6 +1213,40 @@ export function createAdapter(client: FetchClient): {
         finalOptions,
       );
     },
+    compareKvResourceSnapshots: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { against_realm: string; against_area: string; against_resource: string },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceComparison>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "compareKvResourceSnapshots",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/kv/realms/${realm}/areas/${area}/resources/${resource}/compare` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
+    listKvResourceEvents: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { limit?: number },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceTimeline>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listKvResourceEvents",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/kv/realms/${realm}/areas/${area}/resources/${resource}/events` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
     listKvTransactions: (
       realm: string,
       area: string,
@@ -1051,6 +1329,40 @@ export function createAdapter(client: FetchClient): {
         finalOptions,
       );
     },
+    compareLeaseResourceSnapshots: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { against_realm: string; against_area: string; against_resource: string },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceComparison>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "compareLeaseResourceSnapshots",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/lease/realms/${realm}/areas/${area}/resources/${resource}/compare` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
+    listLeaseResourceEvents: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { limit?: number },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceTimeline>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listLeaseResourceEvents",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/lease/realms/${realm}/areas/${area}/resources/${resource}/events` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
     getLeaseStats: (options?: {
       signal?: AbortSignal;
       timeout?: number;
@@ -1116,6 +1428,40 @@ export function createAdapter(client: FetchClient): {
         undefined,
         finalOptions,
       );
+    },
+    compareNoticeResourceSnapshots: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { against_realm: string; against_area: string; against_resource: string },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceComparison>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "compareNoticeResourceSnapshots",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/notice/realms/${realm}/areas/${area}/resources/${resource}/compare` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
+    listNoticeResourceEvents: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { limit?: number },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceTimeline>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listNoticeResourceEvents",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/notice/realms/${realm}/areas/${area}/resources/${resource}/events` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
     },
     listNoticeSubscriptions: (
       realm: string,
@@ -1199,6 +1545,29 @@ export function createAdapter(client: FetchClient): {
         finalOptions,
       );
     },
+    compareQueueResourceSnapshots: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: {
+        family?: number;
+        against_realm: string;
+        against_area: string;
+        against_resource: string;
+        against_family?: number;
+      },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceComparison>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "compareQueueResourceSnapshots",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/queue/realms/${realm}/areas/${area}/resources/${resource}/compare` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
     listQueueDeadLetters: (
       realm: string,
       area: string,
@@ -1251,6 +1620,23 @@ export function createAdapter(client: FetchClient): {
         `/api/v1/queue/realms/${realm}/areas/${area}/resources/${resource}/dead-letters/${message_id}/replay` +
         (queryString ? "?" + queryString : "");
       return client.post(url, undefined, undefined, finalOptions);
+    },
+    listQueueResourceEvents: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { family?: number; limit?: number },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceTimeline>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listQueueResourceEvents",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/queue/realms/${realm}/areas/${area}/resources/${resource}/events` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
     },
     listQueueInflightEntries: (
       realm: string,
@@ -1342,6 +1728,40 @@ export function createAdapter(client: FetchClient): {
         undefined,
         finalOptions,
       );
+    },
+    compareRpcResourceSnapshots: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { against_realm: string; against_area: string; against_resource: string },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceComparison>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "compareRpcResourceSnapshots",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/rpc/realms/${realm}/areas/${area}/resources/${resource}/compare` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
+    listRpcResourceEvents: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { limit?: number },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceTimeline>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listRpcResourceEvents",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/rpc/realms/${realm}/areas/${area}/resources/${resource}/events` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
     },
     listRpcOperations: (
       realm: string,
@@ -1459,6 +1879,40 @@ export function createAdapter(client: FetchClient): {
         finalOptions,
       );
     },
+    compareScheduleResourceSnapshots: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { against_realm: string; against_area: string; against_resource: string },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceComparison>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "compareScheduleResourceSnapshots",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/schedule/realms/${realm}/areas/${area}/resources/${resource}/compare` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
+    listScheduleResourceEvents: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { limit?: number },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceTimeline>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listScheduleResourceEvents",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/schedule/realms/${realm}/areas/${area}/resources/${resource}/events` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
     getScheduleStats: (options?: {
       signal?: AbortSignal;
       timeout?: number;
@@ -1574,6 +2028,40 @@ export function createAdapter(client: FetchClient): {
         finalOptions,
       );
     },
+    compareStreamResourceSnapshots: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { against_realm: string; against_area: string; against_resource: string },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceComparison>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "compareStreamResourceSnapshots",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/stream/realms/${realm}/areas/${area}/resources/${resource}/compare` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
+    listStreamResourceEvents: (
+      realm: string,
+      area: string,
+      resource: string,
+      query?: { limit?: number },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ResourceTimeline>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listStreamResourceEvents",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/stream/realms/${realm}/areas/${area}/resources/${resource}/events` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
     getStreamAreaWatermarks: (
       realm: string,
       area: string,
@@ -1676,6 +2164,51 @@ export interface BrokerStats {
   uptime_seconds: number;
 }
 
+/** DiagnosticHotspot schema */
+export type DiagnosticHotspot = DiagnosticSnapshot & {
+  area: string | null;
+  backlog: number | null;
+  dead_letters: number | null;
+  delayed: number | null;
+  domain: string;
+  family: number | null;
+  inflight: number | null;
+  operation: string | null;
+  owner_session: string | null;
+  ready: number | null;
+  realm: string | null;
+  resource: string | null;
+  subscriptions: number | null;
+  worker_session: string | null;
+  workers: number | null;
+};
+
+/** DiagnosticSeverity schema */
+export type DiagnosticSeverity = "informational" | "low" | "medium" | "high" | "critical";
+
+/** DiagnosticSnapshot schema */
+export interface DiagnosticSnapshot {
+  age_seconds?: number | null;
+  confidence: number;
+  contention_count: number;
+  current_stage: string;
+  delta_1h?: number | null;
+  delta_5m?: number | null;
+  explanation_hints: Array<string>;
+  failure_count: number;
+  last_changed_at?: string | null;
+  last_failure_at?: string | null;
+  last_success_at?: string | null;
+  likely_bottleneck?: string | null;
+  recent_transition_count: number;
+  severity: DiagnosticSeverity;
+  trend: DiagnosticTrend;
+  waiter_count: number;
+}
+
+/** DiagnosticTrend schema */
+export type DiagnosticTrend = "growing" | "shrinking" | "steady" | "stalled" | "unknown";
+
 /** DomainStats schema */
 export interface DomainStats {
   kv: KvStats;
@@ -1695,7 +2228,16 @@ export interface Error {
 /** GlobalStats schema */
 export interface GlobalStats {
   broker: BrokerStats;
+  diagnostics: GlobalTroubleshootingDiagnostics;
   domains: DomainStats;
+}
+
+/** GlobalTroubleshootingDiagnostics schema */
+export interface GlobalTroubleshootingDiagnostics {
+  hotspots: Array<DiagnosticHotspot>;
+  incident_summary: IncidentSummary;
+  last_significant_transition_at?: string | null;
+  top_bottleneck?: DiagnosticHotspot;
 }
 
 /** HealthStatus schema */
@@ -1703,9 +2245,24 @@ export interface HealthStatus {
   status: string;
 }
 
+/** IncidentStatus schema */
+export type IncidentStatus = "healthy" | "degraded" | "stalled" | "recovering" | "unknown";
+
+/** IncidentSummary schema */
+export interface IncidentSummary {
+  confidence: number;
+  explanation: string;
+  likely_bottleneck?: string | null;
+  recommended_next_query?: string | null;
+  severity: DiagnosticSeverity;
+  status: IncidentStatus;
+  title: string;
+}
+
 /** Durable KV committed data exists separately from this admin view. This resource detail describes only the current broker process's live in-memory transaction activity for the resource. `transactions_active` counts active session-scoped transactions and resets after disconnect cleanup or broker restart. */
 export interface KvResourceDetail {
   area: string;
+  diagnostics: DiagnosticSnapshot;
   realm: string;
   resource: string;
   /** Broker-local count of active in-memory KV transactions for this resource. This is not a durable recovery handle and resets on disconnect cleanup or broker restart. */
@@ -1714,6 +2271,7 @@ export interface KvResourceDetail {
 
 /** KvStats schema */
 export interface KvStats {
+  diagnostics: DiagnosticSnapshot;
   keys_total: number;
   operations_per_second: number;
   transactions_active: number;
@@ -1740,12 +2298,14 @@ export interface KvTransactionsList {
 export interface LeaseResourceDetail {
   active_leases: number;
   area: string;
+  diagnostics: DiagnosticSnapshot;
   realm: string;
   resource: string;
 }
 
 /** LeaseStats schema */
 export interface LeaseStats {
+  diagnostics: DiagnosticSnapshot;
   leases_active: number;
   operations_per_second: number;
 }
@@ -1759,6 +2319,7 @@ export interface LoginRequest {
 /** Live in-memory Notice detail for the current broker process. `subscriptions_active` is session-scoped fanout state only and disappears on disconnect cleanup or broker restart. */
 export interface NoticeResourceDetail {
   area: string;
+  diagnostics: DiagnosticSnapshot;
   realm: string;
   resource: string;
   /** Broker-local count of active Notice subscriptions for this resource. Not durable and not replayable. */
@@ -1767,6 +2328,7 @@ export interface NoticeResourceDetail {
 
 /** NoticeStats schema */
 export interface NoticeStats {
+  diagnostics: DiagnosticSnapshot;
   publishes_per_second: number;
   subscriptions_active: number;
 }
@@ -1843,6 +2405,7 @@ export interface QueueInflightList {
 /** Point-in-time Queue resource detail for the current broker process. Counts describe only the queue actor state currently warm in memory and do not represent a durable inventory of every committed queue in storage. */
 export interface QueueResourceDetail {
   area: string;
+  diagnostics: DiagnosticSnapshot;
   messages_dead_lettered: number;
   messages_delayed: number;
   messages_inflight: number;
@@ -1855,12 +2418,21 @@ export interface QueueResourceDetail {
 
 /** QueueStats schema */
 export interface QueueStats {
+  completes_total: number;
+  diagnostics: DiagnosticSnapshot;
+  enqueues_total: number;
+  extends_total: number;
+  failure_total: number;
   inflight_active: number;
   messages_dead_lettered: number;
   messages_delayed: number;
   messages_pending: number;
   messages_ready: number;
   operations_per_second: number;
+  releases_total: number;
+  requests_total: number;
+  reserves_total: number;
+  success_total: number;
 }
 
 /** ReadyStatus schema */
@@ -1891,14 +2463,117 @@ export interface ResourceCollection {
   resources: Array<ResourceEntry>;
 }
 
+/** ResourceComparison schema */
+export interface ResourceComparison {
+  comparison_mode: string;
+  delta: ResourceComparisonDelta;
+  derived: boolean;
+  domain: string;
+  left: ResourceComparisonSide;
+  right: ResourceComparisonSide;
+  summary: string;
+}
+
+/** ResourceComparisonDelta schema */
+export interface ResourceComparisonDelta {
+  age_seconds?: number | null;
+  backlog?: number | null;
+  contention_count?: number | null;
+  dead_letters?: number | null;
+  delayed?: number | null;
+  failure_count?: number | null;
+  inflight?: number | null;
+  operations_total?: number | null;
+  ready?: number | null;
+  recent_transition_count?: number | null;
+  subscriptions?: number | null;
+  waiters?: number | null;
+  workers?: number | null;
+}
+
+/** ResourceComparisonMetrics schema */
+export interface ResourceComparisonMetrics {
+  age_seconds?: number | null;
+  backlog?: number | null;
+  contention_count?: number | null;
+  dead_letters?: number | null;
+  delayed?: number | null;
+  failure_count?: number | null;
+  inflight?: number | null;
+  operations_total?: number | null;
+  ready?: number | null;
+  recent_transition_count?: number | null;
+  subscriptions?: number | null;
+  waiters?: number | null;
+  workers?: number | null;
+}
+
+/** ResourceComparisonScope schema */
+export interface ResourceComparisonScope {
+  area: string;
+  family?: number | null;
+  realm: string;
+  resource: string;
+}
+
+/** ResourceComparisonSide schema */
+export interface ResourceComparisonSide {
+  diagnostics: DiagnosticSnapshot;
+  metrics: ResourceComparisonMetrics;
+  scope: ResourceComparisonScope;
+}
+
 /** ResourceEntry schema */
 export interface ResourceEntry {
   resource: string;
 }
 
+/** ResourceTimeline schema */
+export interface ResourceTimeline {
+  area: string;
+  derived: boolean;
+  diagnostics: DiagnosticSnapshot;
+  domain: string;
+  events: Array<ResourceTimelineEvent>;
+  family?: number | null;
+  limit: number;
+  realm: string;
+  resource: string;
+}
+
+/** ResourceTimelineEvent schema */
+export interface ResourceTimelineEvent {
+  age_seconds?: number | null;
+  area: string;
+  attempts?: number | null;
+  correlation_id?: string | null;
+  domain: string;
+  family?: number | null;
+  kind: ResourceTimelineKind;
+  message_id?: number | null;
+  observed_at: string;
+  operation?: string | null;
+  owner_session?: string | null;
+  realm: string;
+  resource: string;
+  summary: string;
+  worker_session?: string | null;
+}
+
+/** ResourceTimelineKind schema */
+export type ResourceTimelineKind =
+  | "observation"
+  | "transition"
+  | "failure"
+  | "retry"
+  | "ownership_change"
+  | "state_flip"
+  | "registration";
+
 /** Point-in-time live in-memory RPC state for a single operation on the current broker process. Worker registrations and pending requests are ephemeral, reset on disconnect cleanup or broker restart, and do not represent durable backlog or recovery state. */
 export interface RpcOperationDetail {
   area: string;
+  diagnostics: DiagnosticSnapshot;
   operation: string;
   realm: string;
   /** Live in-memory pending requests waiting for a worker on this broker process. Not durable across disconnect or restart. */
@@ -1929,6 +2604,7 @@ export interface RpcPendingRequest {
 
 /** RpcStats schema */
 export interface RpcStats {
+  diagnostics: DiagnosticSnapshot;
   operations_per_second: number;
   requests_pending: number;
   workers_registered: number;
@@ -1959,6 +2635,7 @@ export interface RpcWorkersList {
 export interface ScheduleResourceDetail {
   area: string;
   cron?: string | null;
+  diagnostics: DiagnosticSnapshot;
   enabled: boolean;
   /** Non-authoritative current broker counter. This is not durable execution history. */
   executions_total: number;
@@ -1970,6 +2647,7 @@ export interface ScheduleResourceDetail {
 /** ScheduleStats schema */
 export interface ScheduleStats {
   ack_failures_total: number;
+  diagnostics: DiagnosticSnapshot;
   executions_per_minute: number;
   notify_failures_total: number;
   overdue_normalizations_total: number;
@@ -2038,6 +2716,7 @@ export interface StreamRealmWatermarkDetail {
 /** Durable committed stream metadata for one resource plus the current broker process's live append-session count. `offset`, `watermark`, and `size_bytes` survive restart; `sessions_active` is ephemeral and resets on disconnect cleanup or broker restart. */
 export interface StreamResourceDetail {
   area: string;
+  diagnostics: DiagnosticSnapshot;
   offset: number;
   realm: string;
   resource: string;
@@ -2048,6 +2727,7 @@ export interface StreamResourceDetail {
 
 /** StreamStats schema */
 export interface StreamStats {
+  diagnostics: DiagnosticSnapshot;
   events_total: number;
   operations_per_second: number;
   streams_active: number;

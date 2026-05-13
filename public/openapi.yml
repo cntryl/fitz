@@ -1650,6 +1650,710 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/events:
+    get:
+      tags: [KV]
+      summary: Get KV resource events
+      operationId: listKvResourceEvents
+      description: Bounded recent KV transitions and observations for a single resource on the current broker process.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 20
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: KV resource timeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceTimeline"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/compare:
+    get:
+      tags: [KV]
+      summary: Compare KV resource snapshots
+      operationId: compareKvResourceSnapshots
+      description: Compare the current KV resource against another scoped KV resource snapshot.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: against_realm
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_area
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_resource
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: KV resource comparison
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceComparison"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/events:
+    get:
+      tags: [Queue]
+      summary: Get queue resource events
+      operationId: listQueueResourceEvents
+      description: Bounded recent queue transitions, failures, retries, and ownership changes for a single resource on the current broker process.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: family
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 20
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: Queue resource timeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceTimeline"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/compare:
+    get:
+      tags: [Queue]
+      summary: Compare queue resource snapshots
+      operationId: compareQueueResourceSnapshots
+      description: Compare the current queue resource against another scoped queue resource snapshot.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: family
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: against_realm
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_area
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_resource
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_family
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Queue resource comparison
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceComparison"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}/events:
+    get:
+      tags: [Stream]
+      summary: Get stream resource events
+      operationId: listStreamResourceEvents
+      description: Bounded recent stream observations and transitions for a single resource on the current broker process.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 20
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: Stream resource timeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceTimeline"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}/compare:
+    get:
+      tags: [Stream]
+      summary: Compare stream resource snapshots
+      operationId: compareStreamResourceSnapshots
+      description: Compare the current stream resource against another scoped stream resource snapshot.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: against_realm
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_area
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_resource
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stream resource comparison
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceComparison"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/lease/realms/{realm}/areas/{area}/resources/{resource}/events:
+    get:
+      tags: [Lease]
+      summary: Get lease resource events
+      operationId: listLeaseResourceEvents
+      description: Bounded recent lease observations and ownership changes for a single resource on the current broker process.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 20
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: Lease resource timeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceTimeline"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/lease/realms/{realm}/areas/{area}/resources/{resource}/compare:
+    get:
+      tags: [Lease]
+      summary: Compare lease resource snapshots
+      operationId: compareLeaseResourceSnapshots
+      description: Compare the current lease resource against another scoped lease resource snapshot.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: against_realm
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_area
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_resource
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Lease resource comparison
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceComparison"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/schedule/realms/{realm}/areas/{area}/resources/{resource}/events:
+    get:
+      tags: [Schedule]
+      summary: Get schedule resource events
+      operationId: listScheduleResourceEvents
+      description: Bounded recent schedule observations and state flips for a single resource on the current broker process.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 20
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: Schedule resource timeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceTimeline"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/schedule/realms/{realm}/areas/{area}/resources/{resource}/compare:
+    get:
+      tags: [Schedule]
+      summary: Compare schedule resource snapshots
+      operationId: compareScheduleResourceSnapshots
+      description: Compare the current schedule resource against another scoped schedule resource snapshot.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: against_realm
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_area
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_resource
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Schedule resource comparison
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceComparison"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/notice/realms/{realm}/areas/{area}/resources/{resource}/events:
+    get:
+      tags: [Notice]
+      summary: Get notice resource events
+      operationId: listNoticeResourceEvents
+      description: Bounded recent notice registrations, observations, and delivery-related transitions for a single resource on the current broker process.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 20
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: Notice resource timeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceTimeline"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/notice/realms/{realm}/areas/{area}/resources/{resource}/compare:
+    get:
+      tags: [Notice]
+      summary: Compare notice resource snapshots
+      operationId: compareNoticeResourceSnapshots
+      description: Compare the current notice resource against another scoped notice resource snapshot.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: against_realm
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_area
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_resource
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Notice resource comparison
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceComparison"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/events:
+    get:
+      tags: [RPC]
+      summary: Get RPC resource events
+      operationId: listRpcResourceEvents
+      description: Bounded recent RPC registrations, pending-request transitions, and worker observations for a single resource on the current broker process.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 20
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: RPC resource timeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceTimeline"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/compare:
+    get:
+      tags: [RPC]
+      summary: Compare RPC resource snapshots
+      operationId: compareRpcResourceSnapshots
+      description: Compare the current RPC resource against another scoped RPC resource snapshot.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: against_realm
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_area
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: against_resource
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: RPC resource comparison
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceComparison"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
 components:
   securitySchemes:
     sessionCookie:
@@ -1689,6 +2393,48 @@ components:
       required: false
       schema:
         type: string
+    LimitQuery:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int64
+        default: 20
+        minimum: 1
+        maximum: 50
+    FamilyQuery:
+      name: family
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int64
+    AgainstRealmQuery:
+      name: against_realm
+      in: query
+      required: true
+      schema:
+        type: string
+    AgainstAreaQuery:
+      name: against_area
+      in: query
+      required: true
+      schema:
+        type: string
+    AgainstResourceQuery:
+      name: against_resource
+      in: query
+      required: true
+      schema:
+        type: string
+    AgainstFamilyQuery:
+      name: against_family
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int64
 
   schemas:
     HealthStatus:
@@ -1736,14 +2482,363 @@ components:
         username:
           type: string
 
+    DiagnosticTrend:
+      type: string
+      enum: [growing, shrinking, steady, stalled, unknown]
+
+    DiagnosticSeverity:
+      type: string
+      enum: [informational, low, medium, high, critical]
+
+    IncidentStatus:
+      type: string
+      enum: [healthy, degraded, stalled, recovering, unknown]
+
+    DiagnosticSnapshot:
+      type: object
+      required:
+        [
+          current_stage,
+          trend,
+          severity,
+          recent_transition_count,
+          failure_count,
+          contention_count,
+          waiter_count,
+          confidence,
+          explanation_hints,
+        ]
+      properties:
+        current_stage:
+          type: string
+        trend:
+          $ref: "#/components/schemas/DiagnosticTrend"
+        severity:
+          $ref: "#/components/schemas/DiagnosticSeverity"
+        likely_bottleneck:
+          type: [string, "null"]
+        last_changed_at:
+          type: [string, "null"]
+        last_success_at:
+          type: [string, "null"]
+        last_failure_at:
+          type: [string, "null"]
+        age_seconds:
+          type: [integer, "null"]
+          format: int64
+        recent_transition_count:
+          type: integer
+          format: int64
+        failure_count:
+          type: integer
+          format: int64
+        contention_count:
+          type: integer
+          format: int64
+        waiter_count:
+          type: integer
+        confidence:
+          type: number
+        explanation_hints:
+          type: array
+          items:
+            type: string
+        delta_5m:
+          type: [integer, "null"]
+          format: int64
+        delta_1h:
+          type: [integer, "null"]
+          format: int64
+
+    IncidentSummary:
+      type: object
+      required: [status, title, severity, confidence, explanation]
+      properties:
+        status:
+          $ref: "#/components/schemas/IncidentStatus"
+        title:
+          type: string
+        likely_bottleneck:
+          type: [string, "null"]
+        severity:
+          $ref: "#/components/schemas/DiagnosticSeverity"
+        confidence:
+          type: number
+        explanation:
+          type: string
+        recommended_next_query:
+          type: [string, "null"]
+
+    DiagnosticHotspot:
+      allOf:
+        - $ref: "#/components/schemas/DiagnosticSnapshot"
+        - type: object
+          required: [domain]
+          properties:
+            domain:
+              type: string
+            realm:
+              type: [string, "null"]
+            area:
+              type: [string, "null"]
+            resource:
+              type: [string, "null"]
+            operation:
+              type: [string, "null"]
+            family:
+              type: [integer, "null"]
+              format: int64
+            backlog:
+              type: [integer, "null"]
+              format: int64
+            inflight:
+              type: [integer, "null"]
+              format: int64
+            ready:
+              type: [integer, "null"]
+              format: int64
+            delayed:
+              type: [integer, "null"]
+              format: int64
+            dead_letters:
+              type: [integer, "null"]
+              format: int64
+            workers:
+              type: [integer, "null"]
+              format: int64
+            subscriptions:
+              type: [integer, "null"]
+              format: int64
+            owner_session:
+              type: [string, "null"]
+            worker_session:
+              type: [string, "null"]
+
+    GlobalTroubleshootingDiagnostics:
+      type: object
+      required: [incident_summary, hotspots]
+      properties:
+        incident_summary:
+          $ref: "#/components/schemas/IncidentSummary"
+        top_bottleneck:
+          $ref: "#/components/schemas/DiagnosticHotspot"
+        last_significant_transition_at:
+          type: [string, "null"]
+        hotspots:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiagnosticHotspot"
+
+    ResourceTimelineKind:
+      type: string
+      enum: [observation, transition, failure, retry, ownership_change, state_flip, registration]
+
+    ResourceTimelineEvent:
+      type: object
+      required: [domain, kind, observed_at, summary, realm, area, resource]
+      properties:
+        domain:
+          type: string
+        kind:
+          $ref: "#/components/schemas/ResourceTimelineKind"
+        observed_at:
+          type: string
+        summary:
+          type: string
+        realm:
+          type: string
+        area:
+          type: string
+        resource:
+          type: string
+        operation:
+          type: [string, "null"]
+        family:
+          type: [integer, "null"]
+          format: int64
+        age_seconds:
+          type: [integer, "null"]
+          format: int64
+        owner_session:
+          type: [string, "null"]
+        worker_session:
+          type: [string, "null"]
+        correlation_id:
+          type: [string, "null"]
+        message_id:
+          type: [integer, "null"]
+          format: int64
+        attempts:
+          type: [integer, "null"]
+          format: int64
+
+    ResourceTimeline:
+      type: object
+      required: [domain, realm, area, resource, derived, limit, diagnostics, events]
+      properties:
+        domain:
+          type: string
+        realm:
+          type: string
+        area:
+          type: string
+        resource:
+          type: string
+        family:
+          type: [integer, "null"]
+          format: int64
+        derived:
+          type: boolean
+        limit:
+          type: integer
+          format: int64
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceTimelineEvent"
+
+    ResourceComparisonScope:
+      type: object
+      required: [realm, area, resource]
+      properties:
+        realm:
+          type: string
+        area:
+          type: string
+        resource:
+          type: string
+        family:
+          type: [integer, "null"]
+          format: int64
+
+    ResourceComparisonMetrics:
+      type: object
+      properties:
+        backlog:
+          type: [integer, "null"]
+          format: int64
+        inflight:
+          type: [integer, "null"]
+          format: int64
+        ready:
+          type: [integer, "null"]
+          format: int64
+        delayed:
+          type: [integer, "null"]
+          format: int64
+        dead_letters:
+          type: [integer, "null"]
+          format: int64
+        workers:
+          type: [integer, "null"]
+          format: int64
+        subscriptions:
+          type: [integer, "null"]
+          format: int64
+        waiters:
+          type: [integer, "null"]
+          format: int64
+        age_seconds:
+          type: [integer, "null"]
+          format: int64
+        recent_transition_count:
+          type: [integer, "null"]
+          format: int64
+        failure_count:
+          type: [integer, "null"]
+          format: int64
+        contention_count:
+          type: [integer, "null"]
+          format: int64
+        operations_total:
+          type: [integer, "null"]
+          format: int64
+
+    ResourceComparisonSide:
+      type: object
+      required: [scope, diagnostics, metrics]
+      properties:
+        scope:
+          $ref: "#/components/schemas/ResourceComparisonScope"
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
+        metrics:
+          $ref: "#/components/schemas/ResourceComparisonMetrics"
+
+    ResourceComparisonDelta:
+      type: object
+      properties:
+        backlog:
+          type: [integer, "null"]
+          format: int64
+        inflight:
+          type: [integer, "null"]
+          format: int64
+        ready:
+          type: [integer, "null"]
+          format: int64
+        delayed:
+          type: [integer, "null"]
+          format: int64
+        dead_letters:
+          type: [integer, "null"]
+          format: int64
+        workers:
+          type: [integer, "null"]
+          format: int64
+        subscriptions:
+          type: [integer, "null"]
+          format: int64
+        waiters:
+          type: [integer, "null"]
+          format: int64
+        age_seconds:
+          type: [integer, "null"]
+          format: int64
+        recent_transition_count:
+          type: [integer, "null"]
+          format: int64
+        failure_count:
+          type: [integer, "null"]
+          format: int64
+        contention_count:
+          type: [integer, "null"]
+          format: int64
+        operations_total:
+          type: [integer, "null"]
+          format: int64
+
+    ResourceComparison:
+      type: object
+      required: [domain, comparison_mode, derived, left, right, delta, summary]
+      properties:
+        domain:
+          type: string
+        comparison_mode:
+          type: string
+        derived:
+          type: boolean
+        left:
+          $ref: "#/components/schemas/ResourceComparisonSide"
+        right:
+          $ref: "#/components/schemas/ResourceComparisonSide"
+        delta:
+          $ref: "#/components/schemas/ResourceComparisonDelta"
+        summary:
+          type: string
+
     GlobalStats:
       type: object
-      required: [broker, domains]
+      required: [broker, domains, diagnostics]
       properties:
         broker:
           $ref: "#/components/schemas/BrokerStats"
         domains:
           $ref: "#/components/schemas/DomainStats"
+        diagnostics:
+          $ref: "#/components/schemas/GlobalTroubleshootingDiagnostics"
 
     BrokerStats:
       type: object
@@ -1784,7 +2879,7 @@ components:
 
     KvStats:
       type: object
-      required: [transactions_active, keys_total, operations_per_second]
+      required: [transactions_active, keys_total, operations_per_second, diagnostics]
       properties:
         transactions_active:
           type: integer
@@ -1792,6 +2887,8 @@ components:
           type: integer
         operations_per_second:
           type: number
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     StreamStats:
       type: object
@@ -1801,6 +2898,7 @@ components:
           events_total,
           operations_per_second,
           subscriptions_active,
+          diagnostics,
         ]
       properties:
         streams_active:
@@ -1811,15 +2909,19 @@ components:
           type: number
         subscriptions_active:
           type: integer
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     NoticeStats:
       type: object
-      required: [subscriptions_active, publishes_per_second]
+      required: [subscriptions_active, publishes_per_second, diagnostics]
       properties:
         subscriptions_active:
           type: integer
         publishes_per_second:
           type: number
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     QueueStats:
       type: object
@@ -1830,7 +2932,16 @@ components:
           messages_pending,
           messages_dead_lettered,
           inflight_active,
+          requests_total,
+          success_total,
+          failure_total,
+          enqueues_total,
+          reserves_total,
+          completes_total,
+          releases_total,
+          extends_total,
           operations_per_second,
+          diagnostics,
         ]
       properties:
         messages_ready:
@@ -1843,12 +2954,38 @@ components:
           type: integer
         inflight_active:
           type: integer
+        requests_total:
+          type: integer
+          format: int64
+        success_total:
+          type: integer
+          format: int64
+        failure_total:
+          type: integer
+          format: int64
+        enqueues_total:
+          type: integer
+          format: int64
+        reserves_total:
+          type: integer
+          format: int64
+        completes_total:
+          type: integer
+          format: int64
+        releases_total:
+          type: integer
+          format: int64
+        extends_total:
+          type: integer
+          format: int64
         operations_per_second:
           type: number
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     RpcStats:
       type: object
-      required: [workers_registered, requests_pending, operations_per_second]
+      required: [workers_registered, requests_pending, operations_per_second, diagnostics]
       properties:
         workers_registered:
           type: integer
@@ -1856,15 +2993,19 @@ components:
           type: integer
         operations_per_second:
           type: number
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     LeaseStats:
       type: object
-      required: [leases_active, operations_per_second]
+      required: [leases_active, operations_per_second, diagnostics]
       properties:
         leases_active:
           type: integer
         operations_per_second:
           type: number
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     ScheduleStats:
       type: object
@@ -1877,6 +3018,7 @@ components:
           notify_failures_total,
           ack_failures_total,
           overdue_normalizations_total,
+          diagnostics,
         ]
       properties:
         schedules_active:
@@ -1893,6 +3035,8 @@ components:
           type: integer
         overdue_normalizations_total:
           type: integer
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     RealmEntry:
       type: object
@@ -1962,7 +3106,7 @@ components:
     KvResourceDetail:
       type: object
       description: Durable KV committed data exists separately from this admin view. This resource detail describes only the current broker process's live in-memory transaction activity for the resource. `transactions_active` counts active session-scoped transactions and resets after disconnect cleanup or broker restart.
-      required: [realm, area, resource, transactions_active]
+      required: [realm, area, resource, transactions_active, diagnostics]
       properties:
         realm: { type: string }
         area: { type: string }
@@ -1970,6 +3114,8 @@ components:
         transactions_active:
           type: integer
           description: Broker-local count of active in-memory KV transactions for this resource. This is not a durable recovery handle and resets on disconnect cleanup or broker restart.
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     QueueResourceDetail:
       type: object
@@ -1985,6 +3131,7 @@ components:
           messages_dead_lettered,
           messages_total,
           oldest_message_age_seconds,
+          diagnostics,
         ]
       properties:
         realm: { type: string }
@@ -1996,12 +3143,14 @@ components:
         messages_dead_lettered: { type: integer }
         messages_total: { type: integer }
         oldest_message_age_seconds: { type: integer }
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     StreamResourceDetail:
       type: object
       description: Durable committed stream metadata for one resource plus the current broker process's live append-session count. `offset`, `watermark`, and `size_bytes` survive restart; `sessions_active` is ephemeral and resets on disconnect cleanup or broker restart.
       required:
-        [realm, area, resource, offset, watermark, size_bytes, sessions_active]
+        [realm, area, resource, offset, watermark, size_bytes, sessions_active, diagnostics]
       properties:
         realm: { type: string }
         area: { type: string }
@@ -2010,6 +3159,8 @@ components:
         watermark: { type: integer }
         size_bytes: { type: integer }
         sessions_active: { type: integer }
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     StreamRealmWatermarkDetail:
       type: object
@@ -2066,17 +3217,19 @@ components:
     LeaseResourceDetail:
       type: object
       description: Point-in-time live in-memory Lease state for a single resource on the current broker process. Counts reset on disconnect cleanup or broker restart and do not imply durable recovery.
-      required: [realm, area, resource, active_leases]
+      required: [realm, area, resource, active_leases, diagnostics]
       properties:
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
         active_leases: { type: integer }
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     ScheduleResourceDetail:
       type: object
       description: Durable, boot-loaded schedule definition detail for the current broker. This describes persisted timing intent, not durable subscriber delivery or durable execution history. `executions_total` remains a non-authoritative placeholder until durable execution history exists.
-      required: [realm, area, resource, enabled, executions_total]
+      required: [realm, area, resource, enabled, executions_total, diagnostics]
       properties:
         realm: { type: string }
         area: { type: string }
@@ -2089,11 +3242,13 @@ components:
         executions_total:
           type: integer
           description: Non-authoritative current broker counter. This is not durable execution history.
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     NoticeResourceDetail:
       type: object
       description: Live in-memory Notice detail for the current broker process. `subscriptions_active` is session-scoped fanout state only and disappears on disconnect cleanup or broker restart.
-      required: [realm, area, resource, subscriptions_active]
+      required: [realm, area, resource, subscriptions_active, diagnostics]
       properties:
         realm: { type: string }
         area: { type: string }
@@ -2101,6 +3256,8 @@ components:
         subscriptions_active:
           type: integer
           description: Broker-local count of active Notice subscriptions for this resource. Not durable and not replayable.
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     OperationEntry:
       type: object
@@ -2124,7 +3281,7 @@ components:
       type: object
       description: Point-in-time live in-memory RPC state for a single operation on the current broker process. Worker registrations and pending requests are ephemeral, reset on disconnect cleanup or broker restart, and do not represent durable backlog or recovery state.
       required:
-        [realm, area, resource, operation, workers_registered, requests_pending]
+        [realm, area, resource, operation, workers_registered, requests_pending, diagnostics]
       properties:
         realm: { type: string }
         area: { type: string }
@@ -2136,6 +3293,8 @@ components:
         requests_pending:
           type: integer
           description: Live in-memory pending requests waiting for a worker on this broker process. Not durable across disconnect or restart.
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
 
     KvTransaction:
       type: object
@@ -2371,5 +3530,3 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
-
-

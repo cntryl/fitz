@@ -1,4 +1,12 @@
 use super::Runtime;
+use crate::domains::queue::metrics::{
+    METRIC_COMPLETE_TOTAL, METRIC_ENQUEUE_TOTAL, METRIC_EXTEND_TOTAL, METRIC_FAILURE_TOTAL,
+    METRIC_RELEASE_TOTAL, METRIC_REQUESTS_TOTAL, METRIC_RESERVE_TOTAL, METRIC_SUCCESS_TOTAL,
+};
+
+fn queue_metric_counter(name: &str) -> u64 {
+    crate::boot::observability::metrics().counter_get(name)
+}
 
 impl Runtime {
     pub fn queue_messages_ready(&self) -> usize {
@@ -77,6 +85,38 @@ impl Runtime {
             })
     }
 
+    pub fn queue_requests_total(&self) -> u64 {
+        queue_metric_counter(METRIC_REQUESTS_TOTAL)
+    }
+
+    pub fn queue_success_total(&self) -> u64 {
+        queue_metric_counter(METRIC_SUCCESS_TOTAL)
+    }
+
+    pub fn queue_failure_total(&self) -> u64 {
+        queue_metric_counter(METRIC_FAILURE_TOTAL)
+    }
+
+    pub fn queue_enqueues_total(&self) -> u64 {
+        queue_metric_counter(METRIC_ENQUEUE_TOTAL)
+    }
+
+    pub fn queue_reserves_total(&self) -> u64 {
+        queue_metric_counter(METRIC_RESERVE_TOTAL)
+    }
+
+    pub fn queue_completes_total(&self) -> u64 {
+        queue_metric_counter(METRIC_COMPLETE_TOTAL)
+    }
+
+    pub fn queue_releases_total(&self) -> u64 {
+        queue_metric_counter(METRIC_RELEASE_TOTAL)
+    }
+
+    pub fn queue_extends_total(&self) -> u64 {
+        queue_metric_counter(METRIC_EXTEND_TOTAL)
+    }
+
     pub fn queue_inflight_active(&self) -> usize {
         self.domains
             .read()
@@ -150,7 +190,12 @@ impl Runtime {
     }
 
     pub fn queue_operations_per_second(&self) -> f64 {
-        0.0
+        let uptime_secs = self.uptime().as_secs_f64();
+        if uptime_secs < 0.001 {
+            return 0.0;
+        }
+
+        self.queue_requests_total() as f64 / uptime_secs
     }
 
     pub fn rpc_operations_per_second(&self) -> f64 {
