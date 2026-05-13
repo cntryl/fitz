@@ -1,6 +1,7 @@
 use crate::api::admin::list::{
     KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueDeadLetter, QueueInflight,
     QueueInfo, RpcLatencyBuckets, RpcPendingRequest, RpcWorker, ScheduleInfo, StreamInfo,
+    StreamLatencyBuckets,
 };
 use crate::api::admin::ResourcePath;
 use crate::boot::Runtime;
@@ -702,12 +703,7 @@ impl DomainAnalysis {
     }
 
     fn from_hotspots(mut hotspots: Vec<ScoredHotspot>) -> Self {
-        hotspots.sort_by(|left, right| {
-            right
-                .score
-                .partial_cmp(&left.score)
-                .unwrap_or(Ordering::Equal)
-        });
+        hotspots.sort_by(compare_scored_hotspots);
         let last_changed_at = hotspots
             .iter()
             .filter_map(|candidate| candidate.last_changed_at)
@@ -730,7 +726,11 @@ pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
     let read_model = runtime.admin_read_model();
 
     let kv = analyze_kv(&read_model.kv_transactions(None), now);
-    let stream = analyze_stream(&read_model.streams(None), now);
+    let stream = analyze_stream(
+        &read_model.streams(None),
+        runtime.stream_request_latency_buckets(),
+        now,
+    );
     let notice = analyze_notice(
         &read_model.notice_subscriptions(None, None),
         &read_model.notice_routes(None),
@@ -777,12 +777,7 @@ pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
     all_hotspots.extend(lease.hotspots.iter().cloned());
     all_hotspots.extend(schedule.hotspots.iter().cloned());
 
-    all_hotspots.sort_by(|left, right| {
-        right
-            .score
-            .partial_cmp(&left.score)
-            .unwrap_or(Ordering::Equal)
-    });
+    all_hotspots.sort_by(compare_scored_hotspots);
     all_hotspots.truncate(5);
 
     let top_bottleneck = all_hotspots
@@ -827,6 +822,14 @@ pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
         lease: lease.diagnostics,
         schedule: schedule.diagnostics,
     }
+}
+
+fn compare_scored_hotspots(left: &ScoredHotspot, right: &ScoredHotspot) -> Ordering {
+    right
+        .score
+        .partial_cmp(&left.score)
+        .unwrap_or(Ordering::Equal)
+        .then_with(|| left.hotspot.path().cmp(&right.hotspot.path()))
 }
 
 fn summarize_incident(top_bottleneck: &Option<DiagnosticHotspot>) -> IncidentSummary {
@@ -980,7 +983,11 @@ fn analyze_kv(transactions: &[KvTransaction], now: DateTime<Utc>) -> DomainAnaly
     }
 }
 
-fn analyze_stream(streams: &[StreamInfo], _now: DateTime<Utc>) -> DomainAnalysis {
+fn analyze_stream(
+    streams: &[StreamInfo],
+    request_latency_buckets: StreamLatencyBuckets,
+    _now: DateTime<Utc>,
+) -> DomainAnalysis {
     let mut grouped: HashMap<(String, String, String), Vec<&StreamInfo>> = HashMap::new();
     for stream in streams {
         grouped
@@ -994,6 +1001,12 @@ fn analyze_stream(streams: &[StreamInfo], _now: DateTime<Utc>) -> DomainAnalysis
     }
 
     let mut hotspots = Vec::new();
+    let latency_total = request_latency_buckets.total();
+    let latency_tail_count = request_latency_buckets.slow_tail_count();
+    let latency_tail_ratio = request_latency_buckets.slow_tail_ratio();
+    let latency_pressure = latency_total > 0
+        && latency_tail_count > 0
+        && (latency_tail_ratio >= 0.25 || latency_tail_count >= 3);
 
     for ((realm, area, resource), streams) in grouped {
         let backlog = streams
@@ -1009,13 +1022,19 @@ fn analyze_stream(streams: &[StreamInfo], _now: DateTime<Utc>) -> DomainAnalysis
             .map(|stream| stream.offset.saturating_sub(stream.watermark))
             .max()
             .unwrap_or(0);
-        let label = if backlog > 0 || workers > 0 {
+        let label = if backlog > 0 || latency_pressure || workers > 0 {
             DiagnosisLabel::Throughput
         } else {
             DiagnosisLabel::Healthy
         };
         let trend = if backlog > 0 {
             DiagnosticTrend::Stalled
+        } else if latency_pressure {
+            if latency_tail_ratio >= 0.5 {
+                DiagnosticTrend::Stalled
+            } else {
+                DiagnosticTrend::Steady
+            }
         } else if workers > 0 {
             DiagnosticTrend::Steady
         } else {
@@ -1023,6 +1042,12 @@ fn analyze_stream(streams: &[StreamInfo], _now: DateTime<Utc>) -> DomainAnalysis
         };
         let severity = if backlog > 0 {
             DiagnosticSeverity::Medium
+        } else if latency_pressure {
+            if latency_tail_ratio >= 0.5 {
+                DiagnosticSeverity::High
+            } else {
+                DiagnosticSeverity::Medium
+            }
         } else if workers > 0 {
             DiagnosticSeverity::Low
         } else {
@@ -1030,6 +1055,12 @@ fn analyze_stream(streams: &[StreamInfo], _now: DateTime<Utc>) -> DomainAnalysis
         };
         let confidence = if backlog > 0 {
             0.68
+        } else if latency_pressure {
+            if latency_tail_ratio >= 0.5 {
+                0.8
+            } else {
+                0.72
+            }
         } else if workers > 0 {
             0.64
         } else {
@@ -1038,6 +1069,11 @@ fn analyze_stream(streams: &[StreamInfo], _now: DateTime<Utc>) -> DomainAnalysis
         let mut hints = vec![];
         if backlog > 0 {
             hints.push(format!("stream lag is {max_lag} event(s)"));
+        }
+        if latency_pressure {
+            hints.push(format!(
+                "stream request latency tail is {latency_tail_count} of {latency_total} observation(s) over 100ms"
+            ));
         }
         if workers > 0 {
             hints.push(format!("{workers} live append session(s)"));
@@ -1049,6 +1085,8 @@ fn analyze_stream(streams: &[StreamInfo], _now: DateTime<Utc>) -> DomainAnalysis
             severity,
             if backlog > 0 {
                 Some("append lag".to_string())
+            } else if latency_pressure {
+                Some("stream latency".to_string())
             } else if workers > 0 {
                 Some("append throughput".to_string())
             } else {
@@ -1060,14 +1098,14 @@ fn analyze_stream(streams: &[StreamInfo], _now: DateTime<Utc>) -> DomainAnalysis
             None,
             0,
             0,
-            backlog as u64,
+            backlog as u64 + latency_tail_count as u64,
             workers,
             confidence,
             hints,
         );
 
         hotspots.push(ScoredHotspot {
-            score: backlog as f64 * 2.0 + workers as f64 * 0.5,
+            score: backlog as f64 * 2.0 + workers as f64 * 0.5 + latency_tail_ratio * 20.0,
             hotspot: DiagnosticHotspot {
                 domain: "stream".to_string(),
                 realm: Some(realm),

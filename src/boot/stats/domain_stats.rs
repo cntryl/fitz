@@ -266,6 +266,14 @@ impl Runtime {
         metric_counter("fitz_stream_failure_total")
     }
 
+    pub fn stream_request_latency_buckets(&self) -> crate::api::admin::StreamLatencyBuckets {
+        crate::api::admin::StreamLatencyBuckets::from_histogram(
+            crate::boot::observability::metrics()
+                .histogram_get_buckets("fitz_stream_latency_ms")
+                .unwrap_or([0; 9]),
+        )
+    }
+
     pub fn stream_append_conflicts_total(&self) -> u64 {
         metric_counter("fitz_stream_append_conflicts_total")
     }

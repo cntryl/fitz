@@ -2905,6 +2905,7 @@ components:
           append_conflicts_total,
           notify_drops_total,
           watermark_lag_buckets,
+          request_latency_buckets,
           operations_per_second,
           subscriptions_active,
           diagnostics,
@@ -2942,6 +2943,8 @@ components:
           format: int64
         watermark_lag_buckets:
           $ref: "#/components/schemas/StreamLagBuckets"
+        request_latency_buckets:
+          $ref: "#/components/schemas/StreamLatencyBuckets"
         operations_per_second:
           type: number
         subscriptions_active:
@@ -2965,6 +2968,49 @@ components:
         over_100:
           type: integer
           description: Count of stream family watermarks trailing the fastest family by 100 events or more.
+
+    StreamLatencyBuckets:
+      type: object
+      required:
+        [
+          under_1ms,
+          under_5ms,
+          under_10ms,
+          under_50ms,
+          under_100ms,
+          under_500ms,
+          under_1s,
+          under_5s,
+          over_5s,
+        ]
+      properties:
+        under_1ms:
+          type: integer
+          description: Count of stream requests observed at 1ms or lower.
+        under_5ms:
+          type: integer
+          description: Count of stream requests observed between 2ms and 5ms.
+        under_10ms:
+          type: integer
+          description: Count of stream requests observed between 6ms and 10ms.
+        under_50ms:
+          type: integer
+          description: Count of stream requests observed between 11ms and 50ms.
+        under_100ms:
+          type: integer
+          description: Count of stream requests observed between 51ms and 100ms.
+        under_500ms:
+          type: integer
+          description: Count of stream requests observed between 101ms and 500ms.
+        under_1s:
+          type: integer
+          description: Count of stream requests observed between 501ms and 1s.
+        under_5s:
+          type: integer
+          description: Count of stream requests observed between 1s and 5s.
+        over_5s:
+          type: integer
+          description: Count of stream requests observed above 5s.
 
     NoticeStats:
       type: object

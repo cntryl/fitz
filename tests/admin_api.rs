@@ -8,7 +8,7 @@ use bytes::Bytes;
 use fitz::api::admin::{
     KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueAgeBuckets,
     QueueDeadLetter, QueueInfo, RpcPendingRequest, RpcWorker, StreamAreaWatermark,
-    StreamAreaWatermarkDetail,
+    StreamAreaWatermarkDetail, StreamInfo,
 };
 use fitz::boot::domains::{
     DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
@@ -488,6 +488,19 @@ fn seed_stream_watermark_lag_data(runtime: &Arc<Runtime>) {
             ],
         },
     ]);
+}
+
+fn seed_stream_latency_pressure_data(runtime: &Arc<Runtime>) {
+    let read_model = runtime.admin_read_model();
+    read_model.replace_streams(vec![StreamInfo {
+        realm: "prod".to_string(),
+        area: "logs".to_string(),
+        resource: "application".to_string(),
+        offset: 0,
+        watermark: 0,
+        size_bytes: 0,
+        sessions_active: 0,
+    }]);
 }
 
 async fn login_cookie(runtime: Arc<Runtime>) -> String {
@@ -1669,7 +1682,14 @@ async fn should_return_stream_domain_stats_given_recorded_operations() {
     seed_stream_snapshot_data(store);
     seed_stream_watermark_lag_data(&runtime);
     let metrics = fitz::boot::observability::metrics();
+    let stream_latency_before = metrics
+        .histogram_get_buckets("fitz_stream_latency_ms")
+        .unwrap_or([0; 9]);
     metrics.counter_add("fitz_stream_operations_total", 5);
+    metrics.histogram_observe_ms("fitz_stream_latency_ms", 1);
+    metrics.histogram_observe_ms("fitz_stream_latency_ms", 8);
+    metrics.histogram_observe_ms("fitz_stream_latency_ms", 60);
+    metrics.histogram_observe_ms("fitz_stream_latency_ms", 250);
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -1694,7 +1714,84 @@ async fn should_return_stream_domain_stats_given_recorded_operations() {
     assert_eq!(payload["watermark_lag_buckets"]["under_10"], 1);
     assert_eq!(payload["watermark_lag_buckets"]["under_100"], 2);
     assert_eq!(payload["watermark_lag_buckets"]["over_100"], 1);
+    assert_eq!(
+        payload["request_latency_buckets"]["under_1ms"],
+        stream_latency_before[0] + 1
+    );
+    assert_eq!(
+        payload["request_latency_buckets"]["under_10ms"],
+        stream_latency_before[2] + 1
+    );
+    assert_eq!(
+        payload["request_latency_buckets"]["under_100ms"],
+        stream_latency_before[4] + 1
+    );
+    assert_eq!(
+        payload["request_latency_buckets"]["under_500ms"],
+        stream_latency_before[5] + 1
+    );
     assert!(payload["operations_per_second"].as_f64().unwrap_or(0.0) > 0.0);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_classify_stream_latency_pressure_given_recorded_latency_tail() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_stream_latency_pressure_data(&runtime);
+    let metrics = fitz::boot::observability::metrics();
+    let stream_latency_before = metrics
+        .histogram_get_buckets("fitz_stream_latency_ms")
+        .unwrap_or([0; 9]);
+    metrics.counter_add("fitz_stream_operations_total", 5);
+    for _ in 0..10 {
+        metrics.histogram_observe_ms("fitz_stream_latency_ms", 1);
+    }
+    for _ in 0..40 {
+        metrics.histogram_observe_ms("fitz_stream_latency_ms", 250);
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/stream/stats")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["streams_active"], 1);
+    assert_eq!(
+        payload["request_latency_buckets"]["under_1ms"],
+        stream_latency_before[0] + 10
+    );
+    assert_eq!(
+        payload["request_latency_buckets"]["under_500ms"],
+        stream_latency_before[5] + 40
+    );
+    assert_eq!(payload["diagnostics"]["current_stage"], "throughput");
+    assert_eq!(
+        payload["diagnostics"]["likely_bottleneck"],
+        "stream latency"
+    );
+    assert_eq!(payload["diagnostics"]["severity"], "high");
+    assert!(payload["diagnostics"]["explanation_hints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hint| hint
+            .as_str()
+            .unwrap_or("")
+            .contains("stream request latency tail")));
 }
 
 #[tokio::test]
@@ -1706,6 +1803,9 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
     seed_stream_watermark_lag_data(&runtime);
     seed_snapshot_data(&runtime);
     let metrics = fitz::boot::observability::metrics();
+    let stream_latency_before = metrics
+        .histogram_get_buckets("fitz_stream_latency_ms")
+        .unwrap_or([0; 9]);
     let stream_requests_before = metrics.counter_get("fitz_stream_requests_total");
     let stream_success_before = metrics.counter_get("fitz_stream_success_total");
     let stream_failure_before = metrics.counter_get("fitz_stream_failure_total");
@@ -1728,6 +1828,10 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
     metrics.counter_add("fitz_stream_append_sessions_ended_total", 3);
     metrics.counter_add("fitz_stream_append_conflicts_total", 2);
     metrics.counter_add("fitz_stream_notify_drops_total", 5);
+    metrics.histogram_observe_ms("fitz_stream_latency_ms", 1);
+    metrics.histogram_observe_ms("fitz_stream_latency_ms", 8);
+    metrics.histogram_observe_ms("fitz_stream_latency_ms", 60);
+    metrics.histogram_observe_ms("fitz_stream_latency_ms", 250);
     metrics.counter_add("fitz_notice_requests_total", 7);
     metrics.counter_add("fitz_notice_success_total", 5);
     metrics.counter_add("fitz_notice_failure_total", 2);
@@ -1788,6 +1892,22 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
     assert_eq!(stream_payload["watermark_lag_buckets"]["under_10"], 1);
     assert_eq!(stream_payload["watermark_lag_buckets"]["under_100"], 2);
     assert_eq!(stream_payload["watermark_lag_buckets"]["over_100"], 1);
+    assert_eq!(
+        stream_payload["request_latency_buckets"]["under_1ms"],
+        stream_latency_before[0] + 1
+    );
+    assert_eq!(
+        stream_payload["request_latency_buckets"]["under_10ms"],
+        stream_latency_before[2] + 1
+    );
+    assert_eq!(
+        stream_payload["request_latency_buckets"]["under_100ms"],
+        stream_latency_before[4] + 1
+    );
+    assert_eq!(
+        stream_payload["request_latency_buckets"]["under_500ms"],
+        stream_latency_before[5] + 1
+    );
     assert!(
         stream_payload["operations_per_second"]
             .as_f64()
@@ -1887,6 +2007,8 @@ async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics()
     metrics.counter_add("fitz_stream_append_sessions_ended_total", 4);
     metrics.counter_add("fitz_stream_append_conflicts_total", 2);
     metrics.counter_add("fitz_stream_notify_drops_total", 1);
+    metrics.histogram_observe_ms("fitz_stream_latency_ms", 1);
+    metrics.histogram_observe_ms("fitz_stream_latency_ms", 250);
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -1912,6 +2034,8 @@ async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics()
     assert!(payload.contains("fitz_stream_append_sessions_ended_total"));
     assert!(payload.contains("fitz_stream_operations_per_second"));
     assert!(payload.contains("fitz_stream_subscriptions_active"));
+    assert!(payload.contains("fitz_stream_latency_ms{le=\"100ms\"}"));
+    assert!(payload.contains("fitz_stream_latency_ms_count"));
     assert!(payload.contains("fitz_stream_watermark_lag_bucket_caught_up"));
     assert!(payload.contains("fitz_stream_watermark_lag_bucket_under_10"));
     assert!(payload.contains("fitz_stream_watermark_lag_bucket_under_100"));

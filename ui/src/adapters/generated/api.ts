@@ -1793,6 +1793,28 @@ export interface StreamLagBuckets {
   under_100: number;
 }
 
+/** StreamLatencyBuckets schema */
+export interface StreamLatencyBuckets {
+  /** Count of stream requests observed above 5s. */
+  over_5s: number;
+  /** Count of stream requests observed between 51ms and 100ms. */
+  under_100ms: number;
+  /** Count of stream requests observed between 6ms and 10ms. */
+  under_10ms: number;
+  /** Count of stream requests observed at 1ms or lower. */
+  under_1ms: number;
+  /** Count of stream requests observed between 501ms and 1s. */
+  under_1s: number;
+  /** Count of stream requests observed between 101ms and 500ms. */
+  under_500ms: number;
+  /** Count of stream requests observed between 11ms and 50ms. */
+  under_50ms: number;
+  /** Count of stream requests observed between 2ms and 5ms. */
+  under_5ms: number;
+  /** Count of stream requests observed between 1s and 5s. */
+  under_5s: number;
+}
+
 /** StreamRealmWatermark schema */
 export interface StreamRealmWatermark {
   family: number;
@@ -1833,6 +1855,7 @@ export interface StreamStats {
   failure_total: number;
   notify_drops_total: number;
   operations_per_second: number;
+  request_latency_buckets: StreamLatencyBuckets;
   requests_total: number;
   streams_active: number;
   subscriptions_active: number;
