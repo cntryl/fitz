@@ -6,6 +6,7 @@ import {
 import {
   createQueueResourceQuery,
   createQueueResourceTimelineQuery,
+  createQueueResourceComparisonQuery,
 } from "@/features/queue/queue-resource-query";
 import {
   createActiveSessionsQuery,
@@ -15,6 +16,7 @@ import { createSignInMutation, createSignOutMutation } from "@/features/session/
 import { mapQueueDeadLetter, mapQueueStats } from "@/features/queue/queue-mappers";
 import {
   mapQueueInflight,
+  mapQueueResourceComparison,
   mapQueueResourceDetail,
   mapQueueResourceTimeline,
 } from "@/features/queue/queue-resource-mappers";
@@ -93,6 +95,8 @@ describe("Data query layer", () => {
     expect(typeof createQueueResourceQuery).toBe("function");
     expect(createQueueResourceTimelineQuery).toBeDefined();
     expect(typeof createQueueResourceTimelineQuery).toBe("function");
+    expect(createQueueResourceComparisonQuery).toBeDefined();
+    expect(typeof createQueueResourceComparisonQuery).toBe("function");
     expect(createReplayQueueDeadLetterMutation).toBeDefined();
     expect(typeof createReplayQueueDeadLetterMutation).toBe("function");
     expect(createPurgeQueueDeadLetterMutation).toBeDefined();
@@ -296,6 +300,110 @@ describe("Data query layer", () => {
       limit: 8,
       realm: "r",
       resource: "q",
+    });
+
+    expect(
+      mapQueueResourceComparison({
+        comparison_mode: "resource",
+        derived: true,
+        delta: {
+          backlog: 4,
+          dead_letters: 1,
+          delayed: -2,
+          inflight: 3,
+          ready: -5,
+          recent_transition_count: 6,
+          waiters: 7,
+        },
+        domain: "queue",
+        left: {
+          diagnostics: healthyDiagnostics,
+          metrics: {
+            backlog: 10,
+            dead_letters: 2,
+            delayed: 3,
+            inflight: 4,
+            ready: 5,
+            recent_transition_count: 6,
+            waiters: 7,
+          },
+          scope: {
+            area: "a",
+            family: 2,
+            realm: "r",
+            resource: "q",
+          },
+        },
+        right: {
+          diagnostics: healthyDiagnostics,
+          metrics: {
+            backlog: 6,
+            dead_letters: 1,
+            delayed: 5,
+            inflight: 1,
+            ready: 10,
+            recent_transition_count: 0,
+            waiters: 0,
+          },
+          scope: {
+            area: "b",
+            family: null,
+            realm: "r2",
+            resource: "q2",
+          },
+        },
+        summary: "Queue pressure is higher on the left snapshot",
+      }),
+    ).toEqual({
+      comparisonMode: "resource",
+      derived: true,
+      delta: {
+        ageSeconds: null,
+        backlog: 4,
+        deadLetters: 1,
+        delayed: -2,
+        inflight: 3,
+        ready: -5,
+        recentTransitionCount: 6,
+        waiters: 7,
+      },
+      left: {
+        metrics: {
+          ageSeconds: null,
+          backlog: 10,
+          deadLetters: 2,
+          delayed: 3,
+          inflight: 4,
+          ready: 5,
+          recentTransitionCount: 6,
+          waiters: 7,
+        },
+        scope: {
+          area: "a",
+          family: 2,
+          realm: "r",
+          resource: "q",
+        },
+      },
+      right: {
+        metrics: {
+          ageSeconds: null,
+          backlog: 6,
+          deadLetters: 1,
+          delayed: 5,
+          inflight: 1,
+          ready: 10,
+          recentTransitionCount: 0,
+          waiters: 0,
+        },
+        scope: {
+          area: "b",
+          family: null,
+          realm: "r2",
+          resource: "q2",
+        },
+      },
+      summary: "Queue pressure is higher on the left snapshot",
     });
 
     expect(

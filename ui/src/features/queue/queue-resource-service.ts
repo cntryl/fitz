@@ -1,7 +1,12 @@
 import { apiv1 } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
-import { mapQueueResourceOverview, mapQueueResourceTimeline } from "./queue-resource-mappers";
+import {
+  mapQueueResourceComparison,
+  mapQueueResourceOverview,
+  mapQueueResourceTimeline,
+} from "./queue-resource-mappers";
 import type {
+  QueueResourceComparison,
   QueueResourceOverview,
   QueueResourceRef,
   QueueResourceTimeline,
@@ -60,8 +65,32 @@ async function getTimeline(
   );
 }
 
+async function compareResource(
+  resourceRef: QueueResourceRef,
+  againstResourceRef: QueueResourceRef & { family?: number | null },
+  options: ServiceRequestOptions = {},
+): Promise<QueueResourceComparison> {
+  const response = await apiv1.compareQueueResourceSnapshots(
+    resourceRef.realm,
+    resourceRef.area,
+    resourceRef.resource,
+    {
+      against_area: againstResourceRef.area,
+      against_family: againstResourceRef.family ?? undefined,
+      against_realm: againstResourceRef.realm,
+      against_resource: againstResourceRef.resource,
+    },
+    options,
+  );
+
+  return mapQueueResourceComparison(
+    unwrapResponse(response, "Unable to compare queue resource snapshots"),
+  );
+}
+
 // Services are the app contract boundary: no Askr resources and no FetchResponse leaks.
 export const queueResourceService = {
+  compareResource,
   getResource,
   getTimeline,
 };

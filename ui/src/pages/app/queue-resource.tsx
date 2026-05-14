@@ -1,7 +1,7 @@
 import { state } from "@askrjs/askr";
 import { currentRoute, Link } from "@askrjs/askr/router";
 import { For } from "@askrjs/askr";
-import { Button } from "@askrjs/ui";
+import { Button, Input, Label } from "@askrjs/ui";
 import {
   Badge,
   Card,
@@ -23,7 +23,10 @@ import {
   createReplayQueueDeadLetterMutation,
 } from "@/features/queue/queue-actions";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
-import { createQueueResourceQuery } from "@/features/queue/queue-resource-query";
+import {
+  createQueueResourceComparisonQuery,
+  createQueueResourceQuery,
+} from "@/features/queue/queue-resource-query";
 import { formatUnknownError } from "@/shared/errors/format";
 
 function humanizeSeconds(seconds: number) {
@@ -53,9 +56,69 @@ function formatTimelineKind(kind: string) {
   }
 }
 
+function formatComparisonValue(value: number | null | undefined) {
+  if (value == null) {
+    return "n/a";
+  }
+
+  if (value === 0) {
+    return "0";
+  }
+
+  return value > 0 ? `+${value}` : `${value}`;
+}
+
+function parseOptionalNumber(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function currentCompareScope() {
+  if (typeof window === "undefined") {
+    return {
+      area: "",
+      family: "",
+      realm: "",
+      resource: "",
+    };
+  }
+
+  const query = currentRoute().query;
+
+  return {
+    area: query.get("againstArea") ?? "",
+    family: query.get("againstFamily") ?? "",
+    realm: query.get("againstRealm") ?? "",
+    resource: query.get("againstResource") ?? "",
+  };
+}
+
 export default function QueueResourcePage() {
   const { realm, area, resource } = currentRoute().params;
   const resourceQuery = createQueueResourceQuery({ realm, area, resource });
+  const compareScope = currentCompareScope();
+  const compareRealmInput = state(compareScope.realm);
+  const compareAreaInput = state(compareScope.area);
+  const compareResourceInput = state(compareScope.resource);
+  const compareFamilyInput = state(compareScope.family);
+  const compareTarget =
+    compareRealmInput().trim() && compareAreaInput().trim() && compareResourceInput().trim()
+      ? {
+          area: compareAreaInput().trim(),
+          family: parseOptionalNumber(compareFamilyInput()),
+          realm: compareRealmInput().trim(),
+          resource: compareResourceInput().trim(),
+        }
+      : null;
+  const comparisonQuery = compareTarget
+    ? createQueueResourceComparisonQuery({ realm, area, resource }, compareTarget)
+    : null;
   const replayMutation = createReplayQueueDeadLetterMutation({ realm, area, resource });
   const purgeMutation = createPurgeQueueDeadLetterMutation({ realm, area, resource });
   const actionError = state("");
@@ -119,6 +182,39 @@ export default function QueueResourcePage() {
       actionKind.set(null);
       actionMessageId.set(null);
     }
+  }
+
+  function onCompareSubmit(event: Event) {
+    event.preventDefault();
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const nextQuery = new URLSearchParams();
+    const nextRealm = compareRealmInput().trim();
+    const nextArea = compareAreaInput().trim();
+    const nextResource = compareResourceInput().trim();
+    const nextFamily = compareFamilyInput().trim();
+
+    if (nextRealm) {
+      nextQuery.set("againstRealm", nextRealm);
+    }
+
+    if (nextArea) {
+      nextQuery.set("againstArea", nextArea);
+    }
+
+    if (nextResource) {
+      nextQuery.set("againstResource", nextResource);
+    }
+
+    if (nextFamily) {
+      nextQuery.set("againstFamily", nextFamily);
+    }
+
+    const search = nextQuery.toString();
+    window.location.assign(`/queue/${realm}/${area}/${resource}${search ? `?${search}` : ""}`);
   }
 
   return (
@@ -296,6 +392,160 @@ export default function QueueResourcePage() {
                     </For>
                   </div>
                 </div>
+              )}
+            </section>
+
+            <section class="domain-section">
+              <div class="domain-section-header">
+                <div>
+                  <p class="eyebrow">Compare</p>
+                  <h2>Before / after snapshot</h2>
+                  <p>Compare this resource against another queue scope.</p>
+                </div>
+              </div>
+
+              <form class="domain-stack" onSubmit={onCompareSubmit}>
+                <div class="auth-field">
+                  <Label for="compare-realm">Against realm</Label>
+                  <Input
+                    id="compare-realm"
+                    value={compareRealmInput()}
+                    onInput={(event: Event) => compareRealmInput.set((event.target as HTMLInputElement).value)}
+                    placeholder="acme"
+                  />
+                </div>
+
+                <div class="auth-field">
+                  <Label for="compare-area">Against area</Label>
+                  <Input
+                    id="compare-area"
+                    value={compareAreaInput()}
+                    onInput={(event: Event) => compareAreaInput.set((event.target as HTMLInputElement).value)}
+                    placeholder="payments"
+                  />
+                </div>
+
+                <div class="auth-field">
+                  <Label for="compare-resource">Against resource</Label>
+                  <Input
+                    id="compare-resource"
+                    value={compareResourceInput()}
+                    onInput={(event: Event) => compareResourceInput.set((event.target as HTMLInputElement).value)}
+                    placeholder="inbox"
+                  />
+                </div>
+
+                <div class="auth-field">
+                  <Label for="compare-family">Against family</Label>
+                  <Input
+                    id="compare-family"
+                    value={compareFamilyInput()}
+                    onInput={(event: Event) => compareFamilyInput.set((event.target as HTMLInputElement).value)}
+                    placeholder="Optional family"
+                  />
+                </div>
+
+                <div class="session-filter-actions">
+                  <Button type="submit" class="primary-action">
+                    Compare
+                  </Button>
+                  <Button
+                    type="button"
+                    class="secondary-action"
+                    onPress={() => {
+                      compareRealmInput.set("");
+                      compareAreaInput.set("");
+                      compareResourceInput.set("");
+                      compareFamilyInput.set("");
+                      if (typeof window !== "undefined") {
+                        window.location.assign(`/queue/${realm}/${area}/${resource}`);
+                      }
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              </form>
+
+              {comparisonQuery ? (
+                comparisonQuery.loading ? (
+                  <EmptyState
+                    class="domain-state"
+                    icon={<Spinner label="Loading" />}
+                    description="Loading queue resource comparison..."
+                  />
+                ) : comparisonQuery.error ? (
+                  <EmptyState
+                    class="domain-state"
+                    icon={<AlertTriangleIcon size={18} />}
+                    description={formatUnknownError(comparisonQuery.error)}
+                  />
+                ) : comparisonQuery.data ? (
+                  <div class="domain-stack">
+                    <Card class="domain-resource-card" variant="raised">
+                      <CardHeader>
+                        <Badge>{comparisonQuery.data.derived ? "Derived" : "Live"}</Badge>
+                        <CardTitle>{comparisonQuery.data.summary}</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p>{comparisonQuery.data.comparisonMode}</p>
+                      </CardContent>
+                    </Card>
+
+                    <div class="domain-grid">
+                      <DomainMetricTable
+                        title="Current snapshot"
+                        metrics={[
+                          { label: "Backlog", value: comparisonQuery.data.left.metrics.backlog ?? "n/a" },
+                          { label: "Inflight", value: comparisonQuery.data.left.metrics.inflight ?? "n/a" },
+                          { label: "Ready", value: comparisonQuery.data.left.metrics.ready ?? "n/a" },
+                          { label: "Dead letters", value: comparisonQuery.data.left.metrics.deadLetters ?? "n/a" },
+                          { label: "Waiters", value: comparisonQuery.data.left.metrics.waiters ?? "n/a" },
+                          {
+                            label: "Age",
+                            value: comparisonQuery.data.left.metrics.ageSeconds == null ? "n/a" : humanizeSeconds(comparisonQuery.data.left.metrics.ageSeconds),
+                          },
+                        ]}
+                      />
+
+                      <DomainMetricTable
+                        title="Comparison target"
+                        metrics={[
+                          { label: "Backlog", value: comparisonQuery.data.right.metrics.backlog ?? "n/a" },
+                          { label: "Inflight", value: comparisonQuery.data.right.metrics.inflight ?? "n/a" },
+                          { label: "Ready", value: comparisonQuery.data.right.metrics.ready ?? "n/a" },
+                          { label: "Dead letters", value: comparisonQuery.data.right.metrics.deadLetters ?? "n/a" },
+                          { label: "Waiters", value: comparisonQuery.data.right.metrics.waiters ?? "n/a" },
+                          {
+                            label: "Age",
+                            value: comparisonQuery.data.right.metrics.ageSeconds == null ? "n/a" : humanizeSeconds(comparisonQuery.data.right.metrics.ageSeconds),
+                          },
+                        ]}
+                      />
+                    </div>
+
+                    <DomainMetricTable
+                      title="Delta"
+                      metrics={[
+                        { label: "Backlog delta", value: formatComparisonValue(comparisonQuery.data.delta.backlog) },
+                        { label: "Inflight delta", value: formatComparisonValue(comparisonQuery.data.delta.inflight) },
+                        { label: "Ready delta", value: formatComparisonValue(comparisonQuery.data.delta.ready) },
+                        { label: "Dead-letter delta", value: formatComparisonValue(comparisonQuery.data.delta.deadLetters) },
+                        { label: "Waiter delta", value: formatComparisonValue(comparisonQuery.data.delta.waiters) },
+                        {
+                          label: "Recent transitions delta",
+                          value: formatComparisonValue(comparisonQuery.data.delta.recentTransitionCount),
+                        },
+                      ]}
+                    />
+                  </div>
+                ) : null
+              ) : (
+                <EmptyState
+                  class="domain-state"
+                  icon={<GaugeIcon size={18} />}
+                  description="Enter another queue scope to compare snapshots."
+                />
               )}
             </section>
           </>

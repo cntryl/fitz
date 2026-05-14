@@ -1,6 +1,8 @@
 import { createQuery } from "@askrjs/askr/data";
 import { queueResourceService } from "./queue-resource-service";
 import type {
+  QueueResourceComparison,
+  QueueResourceComparisonSide,
   QueueResourceOverview,
   QueueResourceRef,
   QueueResourceTimeline,
@@ -23,5 +25,25 @@ export function createQueueResourceTimelineQuery(resourceRef: QueueResourceRef) 
   return createQuery<QueueResourceTimeline>({
     key: `${queueResourceQueryKey(resourceRef)}:timeline`,
     fetch: ({ signal }) => queueResourceService.getTimeline(resourceRef, { signal }),
+  });
+}
+
+export function createQueueResourceComparisonQuery(
+  resourceRef: QueueResourceRef,
+  againstResourceRef: QueueResourceComparisonSide["scope"],
+) {
+  return createQuery<QueueResourceComparison>({
+    key: `${queueResourceQueryKey(resourceRef)}:compare:${againstResourceRef.realm}:${againstResourceRef.area}:${againstResourceRef.resource}:${againstResourceRef.family ?? "any"}`,
+    fetch: ({ signal }) =>
+      queueResourceService.compareResource(
+        resourceRef,
+        {
+          area: againstResourceRef.area,
+          family: againstResourceRef.family,
+          realm: againstResourceRef.realm,
+          resource: againstResourceRef.resource,
+        },
+        { signal },
+      ),
   });
 }

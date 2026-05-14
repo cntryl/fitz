@@ -15,7 +15,7 @@ This document is now a working tracker. Use it to separate what is already in th
 | Phase 1: Troubleshooting Questions And Taxonomy  | Done        | Canonical diagnosis labels, severity vocabulary, and explanation-hint scaffolding already exist in the admin troubleshooting layer. |
 | Phase 2: Shared Troubleshooting Read Model       | Done        | The read model already builds diagnostics, hotspots, incident summaries, comparison metrics, and bounded timelines.                 |
 | Phase 3: Add Missing Diagnostic Signals          | Done        | The current admin stats and metrics surfaces now expose the phase-3 diagnostic counters and trend signals needed for the troubleshooting story. |
-| Phase 4: Build The UI Around Troubleshooting     | Todo        | The portal pages and drilldowns still need to be built around the troubleshooting model.                                            |
+| Phase 4: Build The UI Around Troubleshooting     | Done        | The portal now centers troubleshooting summaries, drilldowns, timelines, compare views, and scope filters around the shared model.  |
 | Phase 5: Explanation And Guidance Layer          | Todo        | Explanations are still limited to hints; the rule-based guidance layer is not complete yet.                                         |
 | Phase 6: MCP Exposure                            | Todo        | MCP tooling has not been exposed yet.                                                                                               |
 | Phase 7: Hardening, Semantics, And Test Coverage | Todo        | The troubleshooting flow still needs contract, parity, and regression coverage.                                                     |
@@ -28,12 +28,13 @@ This document is now a working tracker. Use it to separate what is already in th
 - Comparison helpers already surface age, failure, contention, and transition metrics for resource drilldowns.
 - Queue now exposes redeliveries, DLQ transitions, complete-rejects, backlog age distribution, and notify-drop counters in stats and metrics.
 - Queue delay-age buckets now flow through the read model, diagnostics, stats, and Prometheus metrics.
+- Queue overview now includes a troubleshooting jump bar and a short explanation card for likely pressure.
 - Queue resource drilldowns now include a bounded recent timeline panel for retries, failures, ownership flips, and other live transitions.
+- Queue resource drilldowns now include a bounded compare view with a comparison summary, side-by-side snapshots, and delta metrics.
 - Stream and schedule request-latency histograms are implemented and consumed by the troubleshooting layer.
 
 ### Current Todo List
 
-- Add the troubleshooting-first UI pages, timeline views, compare view, and explanation card layout.
 - Turn the explanation hints into a deterministic guidance layer with confidence and next-query suggestions.
 - Expose the same bounded troubleshooting model through MCP.
 - Add parity, regression, and semantics tests for durable versus ephemeral labeling.

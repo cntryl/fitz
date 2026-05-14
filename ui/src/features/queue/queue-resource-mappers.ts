@@ -2,11 +2,16 @@ import type {
   QueueDeadLetter,
   QueueInflight,
   QueueResourceDetail as QueueResourceDetailDto,
+  ResourceComparison,
   ResourceTimeline,
   ResourceTimelineEvent,
 } from "@/adapters";
 import { mapQueueDeadLetter } from "./queue-mappers";
 import type {
+  QueueResourceComparison,
+  QueueResourceComparisonMetrics,
+  QueueResourceComparisonScope,
+  QueueResourceComparisonSide,
   QueueInflightMessage,
   QueueResourceDetail,
   QueueResourceOverview,
@@ -70,6 +75,52 @@ export function mapQueueResourceTimeline(dto: ResourceTimeline): QueueResourceTi
     limit: dto.limit,
     realm: dto.realm,
     resource: dto.resource,
+  };
+}
+
+function mapQueueResourceComparisonScope(
+  scope: ResourceComparison["left"]["scope"],
+): QueueResourceComparisonScope {
+  return {
+    area: scope.area,
+    family: scope.family ?? null,
+    realm: scope.realm,
+    resource: scope.resource,
+  };
+}
+
+function mapQueueResourceComparisonMetrics(
+  metrics: ResourceComparison["left"]["metrics"],
+): QueueResourceComparisonMetrics {
+  return {
+    ageSeconds: metrics.age_seconds ?? null,
+    backlog: metrics.backlog ?? null,
+    deadLetters: metrics.dead_letters ?? null,
+    delayed: metrics.delayed ?? null,
+    inflight: metrics.inflight ?? null,
+    ready: metrics.ready ?? null,
+    recentTransitionCount: metrics.recent_transition_count ?? null,
+    waiters: metrics.waiters ?? null,
+  };
+}
+
+function mapQueueResourceComparisonSide(
+  side: ResourceComparison["left"],
+): QueueResourceComparisonSide {
+  return {
+    metrics: mapQueueResourceComparisonMetrics(side.metrics),
+    scope: mapQueueResourceComparisonScope(side.scope),
+  };
+}
+
+export function mapQueueResourceComparison(dto: ResourceComparison): QueueResourceComparison {
+  return {
+    comparisonMode: dto.comparison_mode,
+    derived: dto.derived,
+    delta: mapQueueResourceComparisonMetrics(dto.delta),
+    left: mapQueueResourceComparisonSide(dto.left),
+    right: mapQueueResourceComparisonSide(dto.right),
+    summary: dto.summary,
   };
 }
 

@@ -1,5 +1,37 @@
 import type { DeadLetterMessage, QueueResourceRef } from "./queue-models";
 
+export interface QueueResourceComparisonScope {
+  area: string;
+  family?: number | null;
+  realm: string;
+  resource: string;
+}
+
+export interface QueueResourceComparisonMetrics {
+  ageSeconds?: number | null;
+  backlog?: number | null;
+  deadLetters?: number | null;
+  delayed?: number | null;
+  inflight?: number | null;
+  ready?: number | null;
+  recentTransitionCount?: number | null;
+  waiters?: number | null;
+}
+
+export interface QueueResourceComparisonSide {
+  metrics: QueueResourceComparisonMetrics;
+  scope: QueueResourceComparisonScope;
+}
+
+export interface QueueResourceComparison {
+  comparisonMode: string;
+  derived: boolean;
+  delta: QueueResourceComparisonMetrics;
+  left: QueueResourceComparisonSide;
+  right: QueueResourceComparisonSide;
+  summary: string;
+}
+
 export type QueueResourceTimelineKind =
   | "observation"
   | "transition"
