@@ -1,4 +1,11 @@
-import { SidebarLayout } from "@askrjs/themes/components";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  SidebarLayout,
+} from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
@@ -7,6 +14,27 @@ import { EmptyState, Spinner } from "@askrjs/themes/components";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
 import { formatUnknownError } from "@/shared/errors/format";
+
+function summarizeLeasePressure(leasesActive: number, waiterDepth: number, oldestLeaseAgeSeconds: number) {
+  if (waiterDepth > 0) {
+    return {
+      label: "Lease contention",
+      detail: `${waiterDepth} waiters are competing for ${leasesActive} active leases.`,
+    };
+  }
+
+  if (oldestLeaseAgeSeconds > 0) {
+    return {
+      label: "Stale ownership risk",
+      detail: `The oldest active lease is ${oldestLeaseAgeSeconds}s old.`,
+    };
+  }
+
+  return {
+    label: "Stable",
+    detail: "Lease ownership pressure is not currently escalating.",
+  };
+}
 
 export default function LeasePage() {
   const overview = createLeaseOverviewQuery();
@@ -59,10 +87,35 @@ export default function LeasePage() {
 
         {data && !overview.loading && !overview.error ? (
           <>
+            {(() => {
+              const pressure = summarizeLeasePressure(
+                data.stats.leasesActive,
+                data.stats.waiterDepth,
+                data.stats.oldestLeaseAgeSeconds,
+              );
+
+              return (
+                <Card class="dashboard-status-card" variant="raised">
+                  <CardHeader>
+                    <CardTitle>Current pressure</CardTitle>
+                    <CardDescription>{pressure.label}</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <p>{pressure.detail}</p>
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
             <DomainMetricTable
               title="Lease metrics"
               metrics={[
                 { label: "Active leases", value: data.stats.leasesActive },
+                { label: "Waiters", value: data.stats.waiterDepth },
+                {
+                  label: "Oldest lease age",
+                  value: `${data.stats.oldestLeaseAgeSeconds}s`,
+                },
                 {
                   label: "Ops / sec",
                   value: data.stats.operationsPerSecond.toFixed(2),

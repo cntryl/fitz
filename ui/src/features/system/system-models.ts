@@ -20,6 +20,7 @@ export interface SystemDomainStatsSummary {
     forcedReleasesTotal: number;
     invalidTokenRejectsTotal: number;
     leasesActive: number;
+    oldestLeaseAgeSeconds: number;
     operationsPerSecond: number;
     requestsTotal: number;
     successTotal: number;

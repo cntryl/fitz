@@ -11,6 +11,8 @@ export function mapLeaseStats(dto: LeaseStats): LeaseStatsSummary {
   return {
     leasesActive: dto.leases_active,
     operationsPerSecond: dto.operations_per_second,
+    oldestLeaseAgeSeconds: dto.oldest_lease_age_seconds,
+    waiterDepth: dto.waiter_depth,
   };
 }
 

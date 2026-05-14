@@ -53,6 +53,7 @@ export function mapSystemOverview(
         forcedReleasesTotal: stats.domains.lease.forced_releases_total,
         invalidTokenRejectsTotal: stats.domains.lease.invalid_token_rejects_total,
         leasesActive: stats.domains.lease.leases_active,
+        oldestLeaseAgeSeconds: stats.domains.lease.oldest_lease_age_seconds,
         operationsPerSecond: stats.domains.lease.operations_per_second,
         requestsTotal: stats.domains.lease.requests_total,
         successTotal: stats.domains.lease.success_total,
