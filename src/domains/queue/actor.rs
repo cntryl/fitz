@@ -1586,10 +1586,24 @@ impl QueueActor {
         (buckets, oldest_backlog_age_seconds)
     }
 
+    fn delay_age_metrics(&self, now_epoch_ms: u64) -> QueueAgeBuckets {
+        let mut buckets = QueueAgeBuckets::default();
+
+        for record in self.records.values() {
+            if matches!(record.state, QueueState::Delayed) {
+                let age_seconds = now_epoch_ms.saturating_sub(record.first_enqueued_at_ms) / 1_000;
+                buckets.record_age_seconds(age_seconds);
+            }
+        }
+
+        buckets
+    }
+
     pub fn admin_snapshot(&self) -> QueueAdminSnapshot {
         let now_epoch_ms = self.clock.now_epoch_ms();
         let (backlog_age_buckets, oldest_backlog_age_seconds) =
             self.backlog_age_metrics(now_epoch_ms);
+        let delay_age_buckets = self.delay_age_metrics(now_epoch_ms);
         QueueAdminSnapshot {
             messages_ready: self.ready.len(),
             messages_delayed: self.persisted_delayed.len(),
@@ -1605,6 +1619,7 @@ impl QueueActor {
                 .unwrap_or(0),
             oldest_backlog_age_seconds,
             backlog_age_buckets,
+            delay_age_buckets,
         }
     }
 

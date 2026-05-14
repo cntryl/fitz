@@ -273,6 +273,12 @@ fn seed_queue_snapshot_data(runtime: &Arc<Runtime>) {
             under_15m: 1,
             over_15m: 0,
         },
+        delay_age_buckets: QueueAgeBuckets {
+            under_1m: 1,
+            under_5m: 0,
+            under_15m: 0,
+            over_15m: 1,
+        },
     }]);
     read_model.replace_queue_dead_letters(vec![QueueDeadLetter {
         message_id: 42,
@@ -280,7 +286,7 @@ fn seed_queue_snapshot_data(runtime: &Arc<Runtime>) {
         realm: "prod".to_string(),
         area: "jobs".to_string(),
         resource: "worker".to_string(),
-        dead_lettered_at: "2026-03-14T12:01:00Z".to_string(),
+        dead_lettered_at: "2099-01-01T00:00:00Z".to_string(),
         attempts: 3,
         reason: "max_attempts_exceeded".to_string(),
     }]);
@@ -307,6 +313,12 @@ fn seed_queue_compare_snapshot_data(runtime: &Arc<Runtime>) {
                 under_15m: 1,
                 over_15m: 0,
             },
+            delay_age_buckets: QueueAgeBuckets {
+                under_1m: 1,
+                under_5m: 0,
+                under_15m: 0,
+                over_15m: 1,
+            },
         },
         QueueInfo {
             family: 2,
@@ -321,6 +333,7 @@ fn seed_queue_compare_snapshot_data(runtime: &Arc<Runtime>) {
             oldest_message_age_seconds: 0,
             oldest_backlog_age_seconds: 0,
             backlog_age_buckets: QueueAgeBuckets::default(),
+            delay_age_buckets: QueueAgeBuckets::default(),
         },
     ]);
     read_model.replace_queue_dead_letters(vec![QueueDeadLetter {
@@ -329,7 +342,7 @@ fn seed_queue_compare_snapshot_data(runtime: &Arc<Runtime>) {
         realm: "prod".to_string(),
         area: "jobs".to_string(),
         resource: "worker".to_string(),
-        dead_lettered_at: "2026-03-14T12:01:00Z".to_string(),
+        dead_lettered_at: "2099-01-01T00:00:00Z".to_string(),
         attempts: 3,
         reason: "max_attempts_exceeded".to_string(),
     }]);
@@ -820,6 +833,8 @@ async fn should_return_queue_detail_with_delayed_and_dead_letter_counts() {
     assert_eq!(payload["messages_inflight"], 3);
     assert_eq!(payload["messages_dead_lettered"], 4);
     assert_eq!(payload["messages_total"], 10);
+    assert_eq!(payload["delay_age_buckets"]["under_1m"], 1);
+    assert_eq!(payload["delay_age_buckets"]["over_15m"], 1);
     assert_eq!(
         payload["diagnostics"]["current_stage"],
         "dead_letter_pressure"
@@ -1410,6 +1425,10 @@ async fn should_return_queue_domain_stats() {
     assert_eq!(payload_json["backlog_age_buckets"]["under_5m"], 1);
     assert_eq!(payload_json["backlog_age_buckets"]["under_15m"], 1);
     assert_eq!(payload_json["backlog_age_buckets"]["over_15m"], 0);
+    assert_eq!(payload_json["delay_age_buckets"]["under_1m"], 1);
+    assert_eq!(payload_json["delay_age_buckets"]["under_5m"], 0);
+    assert_eq!(payload_json["delay_age_buckets"]["under_15m"], 0);
+    assert_eq!(payload_json["delay_age_buckets"]["over_15m"], 1);
     assert_eq!(payload_json["notify_drops_total"], notify_before + 6);
 }
 
@@ -1519,6 +1538,10 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     assert!(metrics_payload.contains("fitz_queue_backlog_age_bucket_under_5m 1"));
     assert!(metrics_payload.contains("fitz_queue_backlog_age_bucket_under_15m 1"));
     assert!(metrics_payload.contains("fitz_queue_backlog_age_bucket_over_15m 0"));
+    assert!(metrics_payload.contains("fitz_queue_delay_age_bucket_under_1m 1"));
+    assert!(metrics_payload.contains("fitz_queue_delay_age_bucket_under_5m 0"));
+    assert!(metrics_payload.contains("fitz_queue_delay_age_bucket_under_15m 0"));
+    assert!(metrics_payload.contains("fitz_queue_delay_age_bucket_over_15m 1"));
     assert!(metrics_payload.contains(&format!(
         "fitz_queue_redeliveries_total {}",
         redeliveries_before + 23
@@ -2244,6 +2267,12 @@ async fn should_return_global_stats() {
             under_15m: 1,
             over_15m: 0,
         },
+        delay_age_buckets: QueueAgeBuckets {
+            under_1m: 1,
+            under_5m: 0,
+            under_15m: 0,
+            over_15m: 1,
+        },
     }]);
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -2271,6 +2300,14 @@ async fn should_return_global_stats() {
     );
     assert_eq!(
         payload["domains"]["queue"]["backlog_age_buckets"]["under_1m"],
+        1
+    );
+    assert_eq!(
+        payload["domains"]["queue"]["delay_age_buckets"]["under_1m"],
+        1
+    );
+    assert_eq!(
+        payload["domains"]["queue"]["delay_age_buckets"]["over_15m"],
         1
     );
     assert_eq!(

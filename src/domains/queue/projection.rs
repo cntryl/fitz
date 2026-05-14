@@ -20,6 +20,7 @@ pub struct QueueAdminSnapshot {
     pub oldest_message_age_seconds: u64,
     pub oldest_backlog_age_seconds: u64,
     pub backlog_age_buckets: QueueAgeBuckets,
+    pub delay_age_buckets: QueueAgeBuckets,
 }
 
 /// Point-in-time live inflight snapshot for admin diagnostics.
@@ -74,6 +75,7 @@ impl QueueProjectionState {
                 oldest_message_age_seconds: entry.snapshot.oldest_message_age_seconds,
                 oldest_backlog_age_seconds: entry.snapshot.oldest_backlog_age_seconds,
                 backlog_age_buckets: entry.snapshot.backlog_age_buckets,
+                delay_age_buckets: entry.snapshot.delay_age_buckets,
             }));
 
             for inflight_entry in entry.inflight {
@@ -222,6 +224,7 @@ mod tests {
                 oldest_message_age_seconds: 5,
                 oldest_backlog_age_seconds: 6,
                 backlog_age_buckets: QueueAgeBuckets::default(),
+                delay_age_buckets: QueueAgeBuckets::default(),
             },
             inflight: vec![QueueInflightSnapshot {
                 message_id: 22,

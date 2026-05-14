@@ -183,6 +183,16 @@ impl Runtime {
         )
     }
 
+    pub fn queue_delay_age_buckets(&self) -> crate::api::admin::QueueAgeBuckets {
+        self.admin_read_model.queues(None).into_iter().fold(
+            crate::api::admin::QueueAgeBuckets::default(),
+            |mut buckets, queue| {
+                buckets.merge(queue.delay_age_buckets);
+                buckets
+            },
+        )
+    }
+
     pub fn rpc_workers_registered(&self) -> usize {
         self.domains
             .read()

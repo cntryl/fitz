@@ -3071,6 +3071,7 @@ components:
           oldest_message_age_seconds,
           oldest_backlog_age_seconds,
           backlog_age_buckets,
+          delay_age_buckets,
           inflight_active,
           requests_total,
           success_total,
@@ -3103,6 +3104,8 @@ components:
           type: integer
           description: Oldest ready-or-delayed queue backlog age in seconds.
         backlog_age_buckets:
+          $ref: "#/components/schemas/QueueAgeBuckets"
+        delay_age_buckets:
           $ref: "#/components/schemas/QueueAgeBuckets"
         inflight_active:
           type: integer
@@ -3499,6 +3502,7 @@ components:
           oldest_message_age_seconds,
           oldest_backlog_age_seconds,
           backlog_age_buckets,
+          delay_age_buckets,
           diagnostics,
         ]
       properties:
@@ -3515,6 +3519,8 @@ components:
           type: integer
           description: Oldest ready-or-delayed queue backlog age in seconds.
         backlog_age_buckets:
+          $ref: "#/components/schemas/QueueAgeBuckets"
+        delay_age_buckets:
           $ref: "#/components/schemas/QueueAgeBuckets"
         diagnostics:
           $ref: "#/components/schemas/DiagnosticSnapshot"

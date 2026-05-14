@@ -1804,6 +1804,8 @@ mod tests {
         assert_eq!(queues[0].messages_inflight, 0);
         assert_eq!(queues[0].messages_dead_lettered, 0);
         assert_eq!(queues[0].messages_total, 1);
+        assert_eq!(queues[0].delay_age_buckets.under_1m, 1);
+        assert_eq!(queues[0].delay_age_buckets.over_15m, 0);
         assert!(admin_read_model.queue_inflight(None).is_empty());
     }
 

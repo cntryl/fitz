@@ -1,7 +1,7 @@
 use crate::api::admin::list::{
-    KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueDeadLetter, QueueInflight,
-    QueueInfo, RpcLatencyBuckets, RpcPendingRequest, RpcWorker, ScheduleInfo,
-    ScheduleLatencyBuckets, StreamInfo, StreamLatencyBuckets,
+    KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueAgeBuckets,
+    QueueDeadLetter, QueueInflight, QueueInfo, RpcLatencyBuckets, RpcPendingRequest, RpcWorker,
+    ScheduleInfo, ScheduleLatencyBuckets, StreamInfo, StreamLatencyBuckets,
 };
 use crate::api::admin::ResourcePath;
 use crate::boot::Runtime;
@@ -1464,6 +1464,12 @@ fn analyze_queue(
         if queue.messages_delayed > 0 {
             hints.push(format!("{} delayed message(s)", queue.messages_delayed));
         }
+        if queue.delay_age_buckets.over_15m > 0 {
+            hints.push(format!(
+                "{} delayed message(s) are 15m+ old",
+                queue.delay_age_buckets.over_15m
+            ));
+        }
         if dead_letter_count > 0 {
             hints.push(format!("{dead_letter_count} dead-lettered message(s)"));
         }
@@ -1513,6 +1519,7 @@ fn analyze_queue(
             score: backlog as f64 * 4.0
                 + dead_letter_count as f64 * 8.0
                 + inflight_count as f64 * 1.5
+                + queue.delay_age_buckets.over_15m as f64 * 2.0
                 + queue.oldest_backlog_age_seconds as f64 / 12.0,
             hotspot: DiagnosticHotspot {
                 domain: "queue".to_string(),
@@ -2452,6 +2459,7 @@ pub(crate) fn queue_resource_diagnostics(
     messages_inflight: usize,
     messages_dead_lettered: usize,
     oldest_backlog_age_seconds: u64,
+    delay_age_buckets: QueueAgeBuckets,
 ) -> DiagnosticSnapshot {
     let backlog = messages_ready + messages_delayed;
     let has_dead_letters = messages_dead_lettered > 0;
@@ -2532,6 +2540,12 @@ pub(crate) fn queue_resource_diagnostics(
             }
             if messages_dead_lettered > 0 {
                 hints.push(format!("{messages_dead_lettered} dead-lettered message(s)"));
+            }
+            if delay_age_buckets.over_15m > 0 {
+                hints.push(format!(
+                    "{} delayed message(s) are 15m+ old",
+                    delay_age_buckets.over_15m
+                ));
             }
             if oldest_backlog_age_seconds > 0 {
                 hints.push(format!(
@@ -3083,6 +3097,7 @@ pub(crate) fn queue_resource_timeline(
     let mut messages_inflight = 0usize;
     let mut messages_dead_lettered = 0usize;
     let mut oldest_backlog_age_seconds = 0u64;
+    let mut delay_age_buckets = QueueAgeBuckets::default();
 
     for queue in &matching_queues {
         messages_ready += queue.messages_ready;
@@ -3091,6 +3106,7 @@ pub(crate) fn queue_resource_timeline(
         messages_dead_lettered += queue.messages_dead_lettered;
         oldest_backlog_age_seconds =
             oldest_backlog_age_seconds.max(queue.oldest_backlog_age_seconds);
+        delay_age_buckets.merge(queue.delay_age_buckets);
     }
 
     let owner_sessions = matching_inflight
@@ -3108,6 +3124,7 @@ pub(crate) fn queue_resource_timeline(
         inflight_count,
         dead_letter_count,
         oldest_backlog_age_seconds,
+        delay_age_buckets,
     );
 
     for dead_letter in matching_dead_letters {
@@ -3197,6 +3214,31 @@ pub(crate) fn queue_resource_timeline(
                 None,
                 None,
                 Some(backlog),
+            ),
+        ));
+    }
+
+    if delay_age_buckets.over_15m > 0 {
+        candidates.push(timeline_candidate(
+            now,
+            3,
+            ResourceTimelineEvent::new(
+                "queue",
+                ResourceTimelineKind::Observation,
+                now,
+                format!(
+                    "{} delayed message(s) are 15m+ old",
+                    delay_age_buckets.over_15m
+                ),
+                path,
+                family,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(delay_age_buckets.over_15m),
             ),
         ));
     }
@@ -3887,7 +3929,7 @@ mod tests {
 
     #[test]
     fn should_classify_queue_backlog_growth() {
-        let snapshot = queue_resource_diagnostics(4, 2, 1, 0, 45);
+        let snapshot = queue_resource_diagnostics(4, 2, 1, 0, 45, QueueAgeBuckets::default());
         assert_eq!(snapshot.current_stage, "backlog_growth");
         assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::BacklogGrowth);
         assert_eq!(snapshot.severity, DiagnosticSeverity::Medium);
@@ -3913,6 +3955,7 @@ mod tests {
             oldest_message_age_seconds: 0,
             oldest_backlog_age_seconds: 0,
             backlog_age_buckets: QueueAgeBuckets::default(),
+            delay_age_buckets: QueueAgeBuckets::default(),
         }];
         let dead_letters = vec![QueueDeadLetter {
             message_id: 42,
@@ -4330,7 +4373,7 @@ mod tests {
             subscriptions: None,
             owner_session: None,
             worker_session: None,
-            snapshot: queue_resource_diagnostics(4, 2, 1, 0, 45),
+            snapshot: queue_resource_diagnostics(4, 2, 1, 0, 45, QueueAgeBuckets::default()),
         };
 
         let summary = summarize_incident(&Some(hotspot));

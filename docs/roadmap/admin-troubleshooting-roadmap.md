@@ -14,7 +14,7 @@ This document is now a working tracker. Use it to separate what is already in th
 | ------------------------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Phase 1: Troubleshooting Questions And Taxonomy  | Done        | Canonical diagnosis labels, severity vocabulary, and explanation-hint scaffolding already exist in the admin troubleshooting layer. |
 | Phase 2: Shared Troubleshooting Read Model       | Done        | The read model already builds diagnostics, hotspots, incident summaries, comparison metrics, and bounded timelines.                 |
-| Phase 3: Add Missing Diagnostic Signals          | In progress | Most domain-specific counters and age/trend fields are wired, and the remaining queue-specific delay/reject gaps are getting narrower. |
+| Phase 3: Add Missing Diagnostic Signals          | In progress | Most domain-specific counters and age/trend fields are wired, and the remaining gaps are now concentrated in the last RPC, Lease, and notice edge cases. |
 | Phase 4: Build The UI Around Troubleshooting     | Todo        | The portal pages and drilldowns still need to be built around the troubleshooting model.                                            |
 | Phase 5: Explanation And Guidance Layer          | Todo        | Explanations are still limited to hints; the rule-based guidance layer is not complete yet.                                         |
 | Phase 6: MCP Exposure                            | Todo        | MCP tooling has not been exposed yet.                                                                                               |
@@ -27,11 +27,12 @@ This document is now a working tracker. Use it to separate what is already in th
 - Bounded resource timelines exist for KV, queue, stream, lease, notice, RPC, and schedule.
 - Comparison helpers already surface age, failure, contention, and transition metrics for resource drilldowns.
 - Queue now exposes redeliveries, DLQ transitions, complete-rejects, backlog age distribution, and notify-drop counters in stats and metrics.
+- Queue delay-age buckets now flow through the read model, diagnostics, stats, and Prometheus metrics.
 - Stream and schedule request-latency histograms are implemented and consumed by the troubleshooting layer.
 
 ### Current Todo List
 
-- Finish the remaining queue delay-age and any last Phase 3 diagnostic counters, then move on to the next phase boundary.
+- Finish the remaining RPC, Lease, and notice Phase 3 diagnostic counters, then move on to the next phase boundary.
 - Add the troubleshooting-first UI pages, timeline views, compare view, and explanation card layout.
 - Turn the explanation hints into a deterministic guidance layer with confidence and next-query suggestions.
 - Expose the same bounded troubleshooting model through MCP.

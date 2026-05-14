@@ -1445,6 +1445,7 @@ export interface QueueInflightList {
 export interface QueueResourceDetail {
   area: string;
   backlog_age_buckets: QueueAgeBuckets;
+  delay_age_buckets: QueueAgeBuckets;
   diagnostics: DiagnosticSnapshot;
   messages_dead_lettered: number;
   messages_delayed: number;
@@ -1466,6 +1467,7 @@ export interface QueueStats {
   completes_total: number;
   /** Total queue messages moved into dead-letter state by this broker process. */
   dead_letter_transitions_total: number;
+  delay_age_buckets: QueueAgeBuckets;
   diagnostics: DiagnosticSnapshot;
   enqueues_total: number;
   extends_total: number;
