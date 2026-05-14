@@ -28,6 +28,7 @@ tags:
   - name: Schedule
   - name: Notice
   - name: RPC
+  - name: Troubleshooting
 
 paths:
   /healthz:
@@ -201,6 +202,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GlobalStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/troubleshooting:
+    get:
+      tags: [Troubleshooting]
+      summary: Get global troubleshooting guidance
+      operationId: getGlobalTroubleshootingGuidance
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Global troubleshooting guidance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlobalTroubleshootingDiagnostics"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "503":
@@ -2506,6 +2526,7 @@ components:
           contention_count,
           waiter_count,
           confidence,
+          confidence_justification,
           explanation_hints,
         ]
       properties:
@@ -2539,6 +2560,8 @@ components:
           type: integer
         confidence:
           type: number
+        confidence_justification:
+          $ref: "#/components/schemas/ConfidenceJustification"
         explanation_hints:
           type: array
           items:
@@ -2550,9 +2573,33 @@ components:
           type: [integer, "null"]
           format: int64
 
+    ConfidenceJustification:
+      type: object
+      required: [signals_matched, signals_missing, rationale]
+      properties:
+        signals_matched:
+          type: array
+          items:
+            type: string
+        signals_missing:
+          type: array
+          items:
+            type: string
+        rationale:
+          type: string
+
     IncidentSummary:
       type: object
-      required: [status, title, severity, confidence, explanation]
+      required:
+        [
+          status,
+          title,
+          severity,
+          confidence,
+          explanation,
+          recommended_next_query,
+          suggested_next_queries,
+        ]
       properties:
         status:
           $ref: "#/components/schemas/IncidentStatus"
@@ -2568,6 +2615,26 @@ components:
           type: string
         recommended_next_query:
           type: [string, "null"]
+        suggested_next_queries:
+          type: array
+          items:
+            $ref: "#/components/schemas/SuggestedQuery"
+
+    SuggestedQuery:
+      type: object
+      required: [priority, title, endpoint, rationale, remediation]
+      properties:
+        priority:
+          type: integer
+          format: int64
+        title:
+          type: string
+        endpoint:
+          type: string
+        rationale:
+          type: string
+        remediation:
+          type: string
 
     DiagnosticHotspot:
       allOf:

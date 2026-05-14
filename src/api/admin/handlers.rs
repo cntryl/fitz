@@ -52,6 +52,13 @@ pub async fn handle_request(
             stats::handle_global_stats(runtime).await
         }
 
+        (Method::GET, "/api/v1/troubleshooting") => {
+            if let Err(response) = require_admin(&req, &runtime) {
+                return Ok(*response);
+            }
+            stats::handle_global_troubleshooting(runtime).await
+        }
+
         (Method::GET, path) if path.starts_with("/api/v1/") => {
             if let Err(response) = require_admin(&req, &runtime) {
                 return Ok(*response);

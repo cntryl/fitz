@@ -310,6 +310,16 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
     crate::api::admin::json_response(stats)
 }
 
+/// Handle /admin/troubleshooting endpoint
+pub async fn handle_global_troubleshooting(
+    runtime: Arc<Runtime>,
+) -> Result<Response<Body>, Infallible> {
+    let troubleshooting::TroubleshootingSnapshot { global, .. } =
+        troubleshooting::build_troubleshooting_snapshot(runtime.as_ref());
+
+    super::json_response(global)
+}
+
 /// Handle domain-specific stats endpoints
 pub async fn handle_domain_stats(
     runtime: Arc<Runtime>,

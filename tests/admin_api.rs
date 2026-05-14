@@ -2361,6 +2361,85 @@ async fn should_return_global_stats() {
 
 #[tokio::test]
 #[serial]
+async fn should_return_global_troubleshooting_guidance() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_queue_snapshot_data(&runtime);
+    let read_model = runtime.admin_read_model();
+    read_model.replace_queues(vec![QueueInfo {
+        family: 1,
+        realm: "prod".to_string(),
+        area: "jobs".to_string(),
+        resource: "worker".to_string(),
+        messages_ready: 1,
+        messages_delayed: 2,
+        messages_inflight: 3,
+        messages_dead_lettered: 100,
+        messages_total: 110,
+        oldest_message_age_seconds: 9,
+        oldest_backlog_age_seconds: 600,
+        backlog_age_buckets: QueueAgeBuckets {
+            under_1m: 1,
+            under_5m: 1,
+            under_15m: 1,
+            over_15m: 0,
+        },
+        delay_age_buckets: QueueAgeBuckets {
+            under_1m: 1,
+            under_5m: 0,
+            under_15m: 0,
+            over_15m: 1,
+        },
+    }]);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/troubleshooting")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["incident_summary"]["status"], "stalled");
+    assert_eq!(payload["incident_summary"]["severity"], "high");
+    assert_eq!(payload["top_bottleneck"]["domain"], "queue");
+    assert_eq!(
+        payload["incident_summary"]["suggested_next_queries"][0]["title"],
+        "Inspect recent transitions"
+    );
+    assert_eq!(
+        payload["incident_summary"]["suggested_next_queries"][0]["priority"],
+        1
+    );
+    assert_eq!(
+        payload["incident_summary"]["recommended_next_query"],
+        payload["incident_summary"]["suggested_next_queries"][0]["endpoint"]
+    );
+    assert_eq!(
+        payload["incident_summary"]["suggested_next_queries"][0]["remediation"],
+        "Use the transition history to isolate the failure reason or retry pattern before taking any follow-up action."
+    );
+    assert_eq!(
+        payload["incident_summary"]["suggested_next_queries"][1]["title"],
+        "Inspect current resource snapshot"
+    );
+    assert_eq!(
+        payload["incident_summary"]["suggested_next_queries"][1]["priority"],
+        2
+    );
+}
+
+#[tokio::test]
+#[serial]
 async fn should_return_exact_rpc_operation_detail_counts() {
     // Arrange
     let runtime = test_runtime();
