@@ -1,4 +1,11 @@
 import { SidebarLayout } from "@askrjs/themes/components";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
@@ -7,6 +14,27 @@ import { EmptyState, Spinner } from "@askrjs/themes/components";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createQueueOverviewQuery } from "@/features/queue/queue-query";
 import { formatUnknownError } from "@/shared/errors/format";
+
+function summarizeQueuePressure(messagesReady: number, messagesPending: number, deadLetters: number) {
+  if (deadLetters > 0) {
+    return {
+      label: "Dead-letter pressure",
+      detail: `${deadLetters} messages are already in the dead-letter lane.`,
+    };
+  }
+
+  if (messagesPending > messagesReady) {
+    return {
+      label: "Backlog growth",
+      detail: `${messagesPending} pending messages are outpacing ${messagesReady} ready messages.`,
+    };
+  }
+
+  return {
+    label: "Stable",
+    detail: "Queue pressure is not currently building faster than it drains.",
+  };
+}
 
 export default function QueuePage() {
   const overview = createQueueOverviewQuery();
@@ -63,6 +91,26 @@ export default function QueuePage() {
 
         {data && !overview.loading && !overview.error ? (
           <>
+            {(() => {
+              const pressure = summarizeQueuePressure(
+                data.stats.messagesReady,
+                data.stats.messagesPending,
+                data.stats.messagesDeadLettered,
+              );
+
+              return (
+            <Card class="dashboard-status-card" variant="raised">
+              <CardHeader>
+                <CardTitle>Current pressure</CardTitle>
+                <CardDescription>{pressure.label}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p>{pressure.detail}</p>
+              </CardContent>
+            </Card>
+              );
+            })()}
+
             <DomainMetricTable
               title="Queue metrics"
               metrics={[
