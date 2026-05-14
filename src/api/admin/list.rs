@@ -650,6 +650,65 @@ impl StreamLatencyBuckets {
     }
 }
 
+/// Distribution of schedule request latency for the current broker process.
+///
+/// The histogram is cumulative for the broker process lifetime and groups
+/// observations into fixed millisecond buckets so operators can see whether
+/// the tail is concentrated in the low, medium, or high latency ranges.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduleLatencyBuckets {
+    pub under_1ms: usize,
+    pub under_5ms: usize,
+    pub under_10ms: usize,
+    pub under_50ms: usize,
+    pub under_100ms: usize,
+    pub under_500ms: usize,
+    pub under_1s: usize,
+    pub under_5s: usize,
+    pub over_5s: usize,
+}
+
+impl ScheduleLatencyBuckets {
+    pub(crate) fn from_histogram(buckets: [u64; 9]) -> Self {
+        Self {
+            under_1ms: buckets[0] as usize,
+            under_5ms: buckets[1] as usize,
+            under_10ms: buckets[2] as usize,
+            under_50ms: buckets[3] as usize,
+            under_100ms: buckets[4] as usize,
+            under_500ms: buckets[5] as usize,
+            under_1s: buckets[6] as usize,
+            under_5s: buckets[7] as usize,
+            over_5s: buckets[8] as usize,
+        }
+    }
+
+    pub(crate) fn total(&self) -> usize {
+        self.under_1ms
+            + self.under_5ms
+            + self.under_10ms
+            + self.under_50ms
+            + self.under_100ms
+            + self.under_500ms
+            + self.under_1s
+            + self.under_5s
+            + self.over_5s
+    }
+
+    pub(crate) fn slow_tail_count(&self) -> usize {
+        self.under_500ms + self.under_1s + self.under_5s + self.over_5s
+    }
+
+    pub(crate) fn slow_tail_ratio(&self) -> f64 {
+        let total = self.total();
+        if total == 0 {
+            0.0
+        } else {
+            self.slow_tail_count() as f64 / total as f64
+        }
+    }
+}
+
 /// Collection of live in-memory Notice subscriptions for the current broker
 /// process.
 #[derive(Debug, Clone, Serialize, Deserialize)]

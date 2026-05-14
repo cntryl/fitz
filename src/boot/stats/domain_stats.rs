@@ -518,6 +518,14 @@ impl Runtime {
             .unwrap_or(0)
     }
 
+    pub fn schedule_request_latency_buckets(&self) -> crate::api::admin::ScheduleLatencyBuckets {
+        crate::api::admin::ScheduleLatencyBuckets::from_histogram(
+            crate::boot::observability::metrics()
+                .histogram_get_buckets("fitz_schedule_latency_ms")
+                .unwrap_or([0; 9]),
+        )
+    }
+
     pub fn schedule_oldest_pending_claim_age_seconds(&self) -> u64 {
         self.domains
             .read()

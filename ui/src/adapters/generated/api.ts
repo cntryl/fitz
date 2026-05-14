@@ -1704,6 +1704,28 @@ export interface RpcWorkersList {
   workers: Array<RpcWorker>;
 }
 
+/** ScheduleLatencyBuckets schema */
+export interface ScheduleLatencyBuckets {
+  /** Count of schedule requests observed above 5s. */
+  over_5s: number;
+  /** Count of schedule requests observed between 51ms and 100ms. */
+  under_100ms: number;
+  /** Count of schedule requests observed between 6ms and 10ms. */
+  under_10ms: number;
+  /** Count of schedule requests observed at 1ms or lower. */
+  under_1ms: number;
+  /** Count of schedule requests observed between 501ms and 1s. */
+  under_1s: number;
+  /** Count of schedule requests observed between 101ms and 500ms. */
+  under_500ms: number;
+  /** Count of schedule requests observed between 11ms and 50ms. */
+  under_50ms: number;
+  /** Count of schedule requests observed between 2ms and 5ms. */
+  under_5ms: number;
+  /** Count of schedule requests observed between 1s and 5s. */
+  under_5s: number;
+}
+
 /** Durable, boot-loaded schedule definition detail for the current broker. This describes persisted timing intent, not durable subscriber delivery or durable execution history. `executions_total` remains a non-authoritative placeholder until durable execution history exists. */
 export interface ScheduleResourceDetail {
   area: string;
@@ -1734,6 +1756,7 @@ export interface ScheduleStats {
   pending_claims_expired_total: number;
   /** Count of durably claimed schedule occurrences that have not yet completed their live handoff acknowledgement. */
   pending_fire_claims: number;
+  request_latency_buckets: ScheduleLatencyBuckets;
   schedules_active: number;
   subscriptions_active: number;
 }

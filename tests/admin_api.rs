@@ -377,6 +377,31 @@ fn seed_pending_schedule_claim(store: Arc<cntryl_midge::Engine>) {
         .expect("claim schedule fire");
 }
 
+fn seed_active_schedule_definition(store: Arc<cntryl_midge::Engine>) {
+    let schedule_store = ScheduleStore::new(store);
+    let route = "schedule://prod/jobs/billing/send";
+    let payload = Bytes::from_static(b"billing");
+    let now_ms = current_epoch_ms();
+    let next_fire_ms = now_ms.saturating_add(30_000);
+    let last_fire_ms = Some(now_ms.saturating_sub(1_000));
+
+    schedule_store
+        .insert(
+            1,
+            ScheduleInsert {
+                route,
+                cron: "* * * * *",
+                payload: &payload,
+                next_fire_ms,
+                previous_fire_ms: None,
+                last_fire_ms,
+                executions_total: 7,
+            },
+            cntryl_midge::WriteOptions::buffered(),
+        )
+        .expect("insert active schedule");
+}
+
 fn seed_stream_snapshot_data(store: Arc<cntryl_midge::Engine>) {
     let stream_store = StreamStore::new(store);
 
@@ -859,6 +884,66 @@ async fn should_return_lease_detail_with_age_and_diagnostics() {
         payload["diagnostics"]["age_seconds"],
         payload["oldest_lease_age_seconds"]
     );
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_schedule_stats_with_latency_pressure() {
+    // Arrange
+    let (runtime, store, schedule) = schedule_runtime_with_domains();
+    seed_active_schedule_definition(store);
+    schedule
+        .preload_persisted_families()
+        .expect("preload schedules");
+    let metrics = fitz::boot::observability::metrics();
+    let schedule_latency_before = metrics
+        .histogram_get_buckets("fitz_schedule_latency_ms")
+        .unwrap_or([0; 9]);
+    metrics.histogram_observe_ms("fitz_schedule_latency_ms", 1);
+    metrics.histogram_observe_ms("fitz_schedule_latency_ms", 250);
+    metrics.histogram_observe_ms("fitz_schedule_latency_ms", 250);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/schedule/stats")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["schedules_active"], 1);
+    assert_eq!(
+        payload["request_latency_buckets"]["under_1ms"],
+        schedule_latency_before[0] + 1
+    );
+    assert_eq!(
+        payload["request_latency_buckets"]["under_500ms"],
+        schedule_latency_before[5] + 2
+    );
+    assert_eq!(payload["diagnostics"]["current_stage"], "throughput");
+    assert_eq!(
+        payload["diagnostics"]["likely_bottleneck"],
+        "schedule latency"
+    );
+    assert_eq!(payload["diagnostics"]["severity"], "high");
+    assert!(payload["diagnostics"]["explanation_hints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hint| hint
+            .as_str()
+            .unwrap_or("")
+            .contains("schedule request latency tail")));
 }
 
 #[tokio::test]

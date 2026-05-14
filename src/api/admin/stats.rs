@@ -155,6 +155,7 @@ pub struct ScheduleStats {
     pub pending_fire_claims: usize,
     pub pending_ack_retries: usize,
     pub oldest_pending_claim_age_seconds: u64,
+    pub request_latency_buckets: crate::api::admin::ScheduleLatencyBuckets,
     pub notify_failures_total: u64,
     pub ack_failures_total: u64,
     pub overdue_normalizations_total: u64,
@@ -287,6 +288,7 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 pending_ack_retries: runtime.schedule_pending_ack_retries(),
                 oldest_pending_claim_age_seconds: runtime
                     .schedule_oldest_pending_claim_age_seconds(),
+                request_latency_buckets: runtime.schedule_request_latency_buckets(),
                 notify_failures_total: runtime.schedule_notify_failures(),
                 ack_failures_total: runtime.schedule_ack_failures(),
                 overdue_normalizations_total: runtime.schedule_overdue_normalizations(),
@@ -468,6 +470,7 @@ async fn handle_schedule_stats(
         pending_fire_claims: runtime.schedule_pending_fire_claims(),
         pending_ack_retries: runtime.schedule_pending_ack_retries(),
         oldest_pending_claim_age_seconds: runtime.schedule_oldest_pending_claim_age_seconds(),
+        request_latency_buckets: runtime.schedule_request_latency_buckets(),
         notify_failures_total: runtime.schedule_notify_failures(),
         ack_failures_total: runtime.schedule_ack_failures(),
         overdue_normalizations_total: runtime.schedule_overdue_normalizations(),

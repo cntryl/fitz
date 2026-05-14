@@ -714,6 +714,12 @@ mod tests {
     fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
         // Arrange
         let runtime = runtime_with_preloaded_schedule_metrics();
+        let metrics = crate::boot::observability::metrics();
+        let latency_before = metrics
+            .histogram_get_buckets("fitz_schedule_latency_ms")
+            .unwrap_or([0; 9]);
+        metrics.histogram_observe_ms("fitz_schedule_latency_ms", 1);
+        metrics.histogram_observe_ms("fitz_schedule_latency_ms", 250);
 
         // Act
         let metrics = generate_prometheus_metrics(runtime);
@@ -740,6 +746,12 @@ mod tests {
         assert!(metrics.contains("fitz_schedule_overdue_normalizations_total 0"));
         assert!(metrics.contains("fitz_schedule_pending_claims_expired_total 0"));
         assert!(metrics.contains("fitz_schedule_pending_claim_cleanup_failure_total 0"));
+        assert!(metrics.contains("fitz_schedule_latency_ms{le=\"100ms\"}"));
+        assert!(metrics.contains(&format!(
+            "fitz_schedule_latency_ms{{le=\"100ms\"}} {}",
+            latency_before[0] + 1
+        )));
+        assert!(metrics.contains("fitz_schedule_latency_ms_count"));
         assert!(metrics.contains("fitz_notice_delivery_drops_total 0"));
         assert!(metrics.contains("fitz_stream_notify_drops_total 0"));
         assert!(metrics.contains("fitz_queue_notify_drops_total 0"));

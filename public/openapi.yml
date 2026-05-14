@@ -3309,6 +3309,7 @@ components:
           pending_fire_claims,
           pending_ack_retries,
           oldest_pending_claim_age_seconds,
+          request_latency_buckets,
           notify_failures_total,
           ack_failures_total,
           overdue_normalizations_total,
@@ -3333,6 +3334,8 @@ components:
           type: integer
           format: int64
           description: Age in seconds of the oldest pending schedule fire claim in the current broker process.
+        request_latency_buckets:
+          $ref: "#/components/schemas/ScheduleLatencyBuckets"
         notify_failures_total:
           type: integer
         ack_failures_total:
@@ -3347,6 +3350,49 @@ components:
           description: Total failed pending schedule claim cleanup attempts.
         diagnostics:
           $ref: "#/components/schemas/DiagnosticSnapshot"
+
+    ScheduleLatencyBuckets:
+      type: object
+      required:
+        [
+          under_1ms,
+          under_5ms,
+          under_10ms,
+          under_50ms,
+          under_100ms,
+          under_500ms,
+          under_1s,
+          under_5s,
+          over_5s,
+        ]
+      properties:
+        under_1ms:
+          type: integer
+          description: Count of schedule requests observed at 1ms or lower.
+        under_5ms:
+          type: integer
+          description: Count of schedule requests observed between 2ms and 5ms.
+        under_10ms:
+          type: integer
+          description: Count of schedule requests observed between 6ms and 10ms.
+        under_50ms:
+          type: integer
+          description: Count of schedule requests observed between 11ms and 50ms.
+        under_100ms:
+          type: integer
+          description: Count of schedule requests observed between 51ms and 100ms.
+        under_500ms:
+          type: integer
+          description: Count of schedule requests observed between 101ms and 500ms.
+        under_1s:
+          type: integer
+          description: Count of schedule requests observed between 501ms and 1s.
+        under_5s:
+          type: integer
+          description: Count of schedule requests observed between 1s and 5s.
+        over_5s:
+          type: integer
+          description: Count of schedule requests observed above 5s.
 
     RealmEntry:
       type: object

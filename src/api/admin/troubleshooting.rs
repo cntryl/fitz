@@ -1,7 +1,7 @@
 use crate::api::admin::list::{
     KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueDeadLetter, QueueInflight,
-    QueueInfo, RpcLatencyBuckets, RpcPendingRequest, RpcWorker, ScheduleInfo, StreamInfo,
-    StreamLatencyBuckets,
+    QueueInfo, RpcLatencyBuckets, RpcPendingRequest, RpcWorker, ScheduleInfo,
+    ScheduleLatencyBuckets, StreamInfo, StreamLatencyBuckets,
 };
 use crate::api::admin::ResourcePath;
 use crate::boot::Runtime;
@@ -766,6 +766,7 @@ pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
         runtime.schedule_pending_fire_claims(),
         runtime.schedule_pending_ack_retries(),
         runtime.schedule_oldest_pending_claim_age_seconds(),
+        runtime.schedule_request_latency_buckets(),
         runtime.schedule_notify_failures(),
         runtime.schedule_ack_failures(),
         runtime.schedule_overdue_normalizations(),
@@ -2134,6 +2135,7 @@ fn analyze_schedule(
     pending_fire_claims: usize,
     pending_ack_retries: usize,
     oldest_pending_claim_age_seconds: u64,
+    request_latency_buckets: ScheduleLatencyBuckets,
     notify_failures: u64,
     ack_failures: u64,
     overdue_normalizations: u64,
@@ -2156,6 +2158,12 @@ fn analyze_schedule(
 
     let mut hotspots = Vec::new();
     let mut last_changed_at: Option<DateTime<Utc>> = None;
+    let latency_total = request_latency_buckets.total();
+    let latency_tail_count = request_latency_buckets.slow_tail_count();
+    let latency_tail_ratio = request_latency_buckets.slow_tail_ratio();
+    let latency_pressure = latency_total > 0
+        && latency_tail_count > 0
+        && (latency_tail_ratio >= 0.25 || latency_tail_count >= 3);
 
     for ((realm, area, resource, operation), items) in grouped {
         let enabled = items.iter().any(|schedule| schedule.enabled);
@@ -2190,7 +2198,7 @@ fn analyze_schedule(
             .saturating_add(overdue_normalizations as usize)
             .saturating_add(pending_claims_expired_total as usize)
             .saturating_add(pending_claim_cleanup_failures_total as usize)
-            as u64;
+            .saturating_add(latency_tail_count) as u64;
         let failure_count = notify_failures + ack_failures + pending_claim_cleanup_failures_total;
         let handoff_pressure =
             pending_fire_claims > 0 || pending_ack_retries > 0 || overdue_normalizations > 0;
@@ -2219,6 +2227,22 @@ fn analyze_schedule(
                 } else {
                     0.78
                 },
+            )
+        } else if latency_pressure {
+            (
+                DiagnosisLabel::Throughput,
+                if latency_tail_ratio >= 0.5 {
+                    DiagnosticTrend::Stalled
+                } else {
+                    DiagnosticTrend::Steady
+                },
+                if latency_tail_ratio >= 0.5 {
+                    DiagnosticSeverity::High
+                } else {
+                    DiagnosticSeverity::Medium
+                },
+                Some("schedule latency".to_string()),
+                if latency_tail_ratio >= 0.5 { 0.8 } else { 0.72 },
             )
         } else if failure_count > 0 {
             (
@@ -2261,6 +2285,11 @@ fn analyze_schedule(
         if oldest_pending_claim_age_seconds > 0 {
             hints.push(format!(
                 "oldest pending claim is {oldest_pending_claim_age_seconds}s old"
+            ));
+        }
+        if latency_pressure {
+            hints.push(format!(
+                "schedule request latency tail is {latency_tail_count} of {latency_total} observation(s) over 100ms"
             ));
         }
         if overdue_normalizations > 0 {
@@ -4086,7 +4115,19 @@ mod tests {
             enabled: true,
         }];
 
-        let analysis = analyze_schedule(&schedules, 2, 1, 45, 0, 1, 0, 0, 0, now);
+        let analysis = analyze_schedule(
+            &schedules,
+            2,
+            1,
+            45,
+            ScheduleLatencyBuckets::default(),
+            0,
+            1,
+            0,
+            0,
+            0,
+            now,
+        );
         let hotspot = analysis.hotspots.first().expect("schedule hotspot");
 
         assert_eq!(hotspot.hotspot.snapshot.current_stage, "stale_handoff");
@@ -4119,7 +4160,19 @@ mod tests {
             enabled: true,
         }];
 
-        let analysis = analyze_schedule(&schedules, 0, 0, 0, 0, 0, 0, 3, 1, now);
+        let analysis = analyze_schedule(
+            &schedules,
+            0,
+            0,
+            0,
+            ScheduleLatencyBuckets::default(),
+            0,
+            0,
+            0,
+            3,
+            1,
+            now,
+        );
         let hotspot = analysis.hotspots.first().expect("schedule hotspot");
 
         assert_eq!(hotspot.hotspot.snapshot.current_stage, "stale_handoff");
@@ -4140,6 +4193,55 @@ mod tests {
             .explanation_hints
             .iter()
             .any(|hint| hint.contains("cleanup failure")));
+    }
+
+    #[test]
+    fn should_classify_schedule_latency_pressure() {
+        let now = Utc::now();
+        let schedules = vec![ScheduleInfo {
+            realm: "prod".to_string(),
+            area: "jobs".to_string(),
+            resource: "billing".to_string(),
+            operation: "send".to_string(),
+            cron: "0 * * * *".to_string(),
+            next_run: (now + Duration::seconds(30)).to_rfc3339(),
+            last_run: Some((now - Duration::seconds(60)).to_rfc3339()),
+            executions_total: 7,
+            enabled: true,
+        }];
+        let request_latency_buckets = ScheduleLatencyBuckets {
+            under_1ms: 10,
+            under_500ms: 40,
+            ..Default::default()
+        };
+
+        let analysis = analyze_schedule(
+            &schedules,
+            0,
+            0,
+            0,
+            request_latency_buckets,
+            0,
+            0,
+            0,
+            0,
+            0,
+            now,
+        );
+        let hotspot = analysis.hotspots.first().expect("schedule hotspot");
+
+        assert_eq!(hotspot.hotspot.snapshot.current_stage, "throughput");
+        assert_eq!(
+            hotspot.hotspot.snapshot.likely_bottleneck.as_deref(),
+            Some("schedule latency")
+        );
+        assert_eq!(hotspot.hotspot.snapshot.severity, DiagnosticSeverity::High);
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("schedule request latency tail")));
     }
 
     #[test]
