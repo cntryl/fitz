@@ -155,6 +155,7 @@ pub struct SuggestedQuery {
     pub title: String,
     pub endpoint: String,
     pub rationale: String,
+    pub remediation: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -490,19 +491,131 @@ impl DiagnosticHotspot {
         }
     }
 
+    fn resource_query(&self) -> Option<String> {
+        let realm = self.realm.as_ref()?;
+        let area = self.area.as_ref()?;
+        let resource = self.resource.as_ref()?;
+        if self.domain == "queue" {
+            self.family.map(|family| {
+                format!(
+                    "inspect /api/v1/{}/realms/{}/areas/{}/resources/{}?family={}",
+                    self.domain, realm, area, resource, family
+                )
+            })
+            .or_else(|| {
+                Some(format!(
+                    "inspect /api/v1/{}/realms/{}/areas/{}/resources/{}",
+                    self.domain, realm, area, resource
+                ))
+            })
+        } else {
+            Some(format!(
+                "inspect /api/v1/{}/realms/{}/areas/{}/resources/{}",
+                self.domain, realm, area, resource
+            ))
+        }
+    }
+
+    fn suggested_query(
+        priority: u8,
+        title: &str,
+        endpoint: String,
+        rationale: &str,
+        remediation: &str,
+    ) -> SuggestedQuery {
+        SuggestedQuery {
+            priority,
+            title: title.to_string(),
+            endpoint,
+            rationale: rationale.to_string(),
+            remediation: remediation.to_string(),
+        }
+    }
+
     fn suggested_queries(&self) -> Vec<SuggestedQuery> {
-        let Some(endpoint) = self.events_query() else {
+        let Some(events_endpoint) = self.events_query() else {
             return Vec::new();
         };
 
-        vec![SuggestedQuery {
-            priority: 1,
-            title: "Inspect recent transitions".to_string(),
-            endpoint,
-            rationale:
-                "Recent event timelines are the bounded next step for confirming why this hotspot changed state."
-                    .to_string(),
-        }]
+        let resource_endpoint = self.resource_query();
+        let label = self.snapshot.diagnosis_label();
+
+        let timeline_first = matches!(
+            label,
+            DiagnosisLabel::DeadLetterPressure
+                | DiagnosisLabel::DataLossRisk
+                | DiagnosisLabel::StaleHandoff
+        );
+
+        let mut queries = Vec::new();
+
+        let push_timeline_query = |queries: &mut Vec<SuggestedQuery>, priority: u8| {
+            queries.push(Self::suggested_query(
+                priority,
+                "Inspect recent transitions",
+                events_endpoint.clone(),
+                if matches!(
+                    label,
+                    DiagnosisLabel::DeadLetterPressure | DiagnosisLabel::DataLossRisk
+                ) {
+                    "Recent event timelines are the bounded next step for confirming the failure path or dead-letter trigger."
+                } else if matches!(label, DiagnosisLabel::StaleHandoff) {
+                    "Recent event timelines are the bounded next step for confirming the handoff or ownership change."
+                } else {
+                    "Recent event timelines are the bounded next step for confirming why this hotspot changed state."
+                },
+                if matches!(
+                    label,
+                    DiagnosisLabel::DeadLetterPressure | DiagnosisLabel::DataLossRisk
+                ) {
+                    "Use the transition history to isolate the failure reason or retry pattern before taking any follow-up action."
+                } else if matches!(label, DiagnosisLabel::StaleHandoff) {
+                    "Use the transition history to confirm the latest ownership flip or overdue handoff."
+                } else {
+                    "Use the timeline to confirm the latest state flip before widening the investigation."
+                },
+            ));
+        };
+
+        let push_resource_query = |queries: &mut Vec<SuggestedQuery>, priority: u8| {
+            if let Some(endpoint) = resource_endpoint.clone() {
+                queries.push(Self::suggested_query(
+                    priority,
+                    "Inspect current resource snapshot",
+                    endpoint,
+                    if matches!(
+                        label,
+                        DiagnosisLabel::WorkerStarvation
+                            | DiagnosisLabel::BacklogGrowth
+                            | DiagnosisLabel::Contention
+                    ) {
+                        "Current counters are the bounded next step for confirming active pressure, backlog, or wait depth."
+                    } else {
+                        "Current counters are the bounded next step for checking whether the hotspot is still active."
+                    },
+                    if matches!(
+                        label,
+                        DiagnosisLabel::WorkerStarvation
+                            | DiagnosisLabel::BacklogGrowth
+                            | DiagnosisLabel::Contention
+                    ) {
+                        "Check backlog, inflight work, waiters, and ownership before following the timeline."
+                    } else {
+                        "Check the current snapshot to verify the hotspot is still present before following the timeline."
+                    },
+                ));
+            }
+        };
+
+        if timeline_first {
+            push_timeline_query(&mut queries, 1);
+            push_resource_query(&mut queries, 2);
+        } else {
+            push_resource_query(&mut queries, 1);
+            push_timeline_query(&mut queries, 2);
+        }
+
+        queries
     }
 }
 
@@ -1074,6 +1187,7 @@ fn summarize_incident(top_bottleneck: &Option<DiagnosticHotspot>) -> IncidentSum
     } else {
         top.snapshot.explanation_hints.join("; ")
     };
+    let suggested_next_queries = top.suggested_queries();
 
     IncidentSummary {
         status,
@@ -1082,8 +1196,8 @@ fn summarize_incident(top_bottleneck: &Option<DiagnosticHotspot>) -> IncidentSum
         severity: top.snapshot.severity.clone(),
         confidence: top.snapshot.confidence,
         explanation,
-        recommended_next_query: top.events_query(),
-        suggested_next_queries: top.suggested_queries(),
+        recommended_next_query: suggested_next_queries.first().map(|query| query.endpoint.clone()),
+        suggested_next_queries,
     }
 }
 
@@ -4069,6 +4183,44 @@ mod tests {
             .signals_missing
             .iter()
             .any(|signal| signal == "fresh_telemetry"));
+    }
+
+    #[test]
+    fn should_prioritize_current_snapshot_for_queue_backlog_growth() {
+        // Arrange
+        let hotspot = DiagnosticHotspot {
+            domain: "queue".to_string(),
+            realm: Some("prod".to_string()),
+            area: Some("jobs".to_string()),
+            resource: Some("worker".to_string()),
+            operation: None,
+            family: Some(1),
+            backlog: Some(6),
+            inflight: Some(2),
+            ready: Some(4),
+            delayed: Some(2),
+            dead_letters: Some(0),
+            workers: None,
+            subscriptions: None,
+            owner_session: None,
+            worker_session: None,
+            snapshot: queue_resource_diagnostics(4, 2, 1, 0, 45, QueueAgeBuckets::default()),
+        };
+
+        // Act
+        let suggestions = hotspot.suggested_queries();
+
+        // Assert
+        assert_eq!(suggestions.len(), 2);
+        assert_eq!(suggestions[0].priority, 1);
+        assert_eq!(suggestions[0].title, "Inspect current resource snapshot");
+        assert!(suggestions[0]
+            .endpoint
+            .contains("/api/v1/queue/realms/prod/areas/jobs/resources/worker?family=1"));
+        assert!(suggestions[0].remediation.contains("backlog"));
+        assert_eq!(suggestions[1].priority, 2);
+        assert_eq!(suggestions[1].title, "Inspect recent transitions");
+        assert!(suggestions[1].endpoint.contains("/events?family=1"));
     }
 
     #[test]

@@ -2328,6 +2328,22 @@ async fn should_return_global_stats() {
         1
     );
     assert_eq!(
+        payload["diagnostics"]["incident_summary"]["recommended_next_query"],
+        payload["diagnostics"]["incident_summary"]["suggested_next_queries"][0]["endpoint"]
+    );
+    assert_eq!(
+        payload["diagnostics"]["incident_summary"]["suggested_next_queries"][0]["remediation"],
+        "Use the transition history to isolate the failure reason or retry pattern before taking any follow-up action."
+    );
+    assert_eq!(
+        payload["diagnostics"]["incident_summary"]["suggested_next_queries"][1]["title"],
+        "Inspect current resource snapshot"
+    );
+    assert_eq!(
+        payload["diagnostics"]["incident_summary"]["suggested_next_queries"][1]["priority"],
+        2
+    );
+    assert_eq!(
         payload["domains"]["queue"]["diagnostics"]["current_stage"],
         "dead_letter_pressure"
     );

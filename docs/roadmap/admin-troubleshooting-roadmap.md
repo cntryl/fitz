@@ -16,7 +16,7 @@ This document is now a working tracker. Use it to separate what is already in th
 | Phase 2: Shared Troubleshooting Read Model       | Done        | The read model already builds diagnostics, hotspots, incident summaries, comparison metrics, and bounded timelines.                 |
 | Phase 3: Add Missing Diagnostic Signals          | Done        | The current admin stats and metrics surfaces now expose the phase-3 diagnostic counters and trend signals needed for the troubleshooting story. |
 | Phase 4: Build The UI Around Troubleshooting     | Done        | The portal now centers troubleshooting summaries, drilldowns, timelines, compare views, and scope filters around the shared model.  |
-| Phase 5: Explanation And Guidance Layer          | In Progress | Structured explanation fields and deterministic confidence scoring now exist, but guidance rules and the dedicated API surface are still incomplete. |
+| Phase 5: Explanation And Guidance Layer          | In Progress | Structured explanation fields, deterministic confidence scoring, and ordered next-query guidance now exist, but the dedicated API surface and MCP exposure are still incomplete. |
 | Phase 6: MCP Exposure                            | Todo        | MCP tooling has not been exposed yet.                                                                                               |
 | Phase 7: Hardening, Semantics, And Test Coverage | Todo        | The troubleshooting flow still needs contract, parity, and regression coverage.                                                     |
 
@@ -34,10 +34,11 @@ This document is now a working tracker. Use it to separate what is already in th
 - Stream and schedule request-latency histograms are implemented and consumed by the troubleshooting layer.
 - The troubleshooting contract now includes structured confidence justification and suggested next-query output.
 - Diagnostic confidence is now derived by one shared calculator instead of per-domain hard-coded confidence values.
+- The troubleshooting guidance layer now orders next drilldowns by diagnosis label and carries bounded remediation text.
 
 ### Current Todo List
 
-- Extend the new confidence contract into a fuller deterministic guidance layer with ordered next-query and remediation suggestions.
+- Expose the deterministic guidance contract through a dedicated admin endpoint and wire it into the same bounded troubleshooting surface.
 - Expose the same bounded troubleshooting model through MCP.
 - Add parity, regression, and semantics tests for durable versus ephemeral labeling.
 
