@@ -14,7 +14,7 @@ This document is now a working tracker. Use it to separate what is already in th
 | ------------------------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Phase 1: Troubleshooting Questions And Taxonomy  | Done        | Canonical diagnosis labels, severity vocabulary, and explanation-hint scaffolding already exist in the admin troubleshooting layer. |
 | Phase 2: Shared Troubleshooting Read Model       | Done        | The read model already builds diagnostics, hotspots, incident summaries, comparison metrics, and bounded timelines.                 |
-| Phase 3: Add Missing Diagnostic Signals          | In progress | Most domain-specific counters and age/trend fields are wired, and the remaining gaps are now concentrated in the last RPC, Lease, and notice edge cases. |
+| Phase 3: Add Missing Diagnostic Signals          | Done        | The current admin stats and metrics surfaces now expose the phase-3 diagnostic counters and trend signals needed for the troubleshooting story. |
 | Phase 4: Build The UI Around Troubleshooting     | Todo        | The portal pages and drilldowns still need to be built around the troubleshooting model.                                            |
 | Phase 5: Explanation And Guidance Layer          | Todo        | Explanations are still limited to hints; the rule-based guidance layer is not complete yet.                                         |
 | Phase 6: MCP Exposure                            | Todo        | MCP tooling has not been exposed yet.                                                                                               |
@@ -32,7 +32,6 @@ This document is now a working tracker. Use it to separate what is already in th
 
 ### Current Todo List
 
-- Finish the remaining RPC, Lease, and notice Phase 3 diagnostic counters, then move on to the next phase boundary.
 - Add the troubleshooting-first UI pages, timeline views, compare view, and explanation card layout.
 - Turn the explanation hints into a deterministic guidance layer with confidence and next-query suggestions.
 - Expose the same bounded troubleshooting model through MCP.

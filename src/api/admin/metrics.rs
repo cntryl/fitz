@@ -214,6 +214,14 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    output.push_str("# HELP fitz_notice_wildcard_limit_rejects_total Total notice wildcard deliveries rejected because of the route limit\n");
+    output.push_str("# TYPE fitz_notice_wildcard_limit_rejects_total counter\n");
+    output.push_str(&format!(
+        "fitz_notice_wildcard_limit_rejects_total {}\n",
+        runtime.notice_wildcard_limit_rejects_total()
+    ));
+    output.push('\n');
+
     // Queue domain
     output.push_str("# HELP fitz_queue_messages_pending Pending queue messages\n");
     output.push_str("# TYPE fitz_queue_messages_pending gauge\n");
@@ -411,6 +419,38 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    output.push_str("# HELP fitz_rpc_request_timeouts_total Total RPC requests that timed out before completion\n");
+    output.push_str("# TYPE fitz_rpc_request_timeouts_total counter\n");
+    output.push_str(&format!(
+        "fitz_rpc_request_timeouts_total {}\n",
+        runtime.rpc_request_timeouts_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_rpc_backpressure_rejects_total Total RPC requests rejected because the sink was backpressured\n");
+    output.push_str("# TYPE fitz_rpc_backpressure_rejects_total counter\n");
+    output.push_str(&format!(
+        "fitz_rpc_backpressure_rejects_total {}\n",
+        runtime.rpc_backpressure_rejects_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_rpc_duplicate_correlation_rejects_total Total RPC requests rejected because the correlation ID was already live\n");
+    output.push_str("# TYPE fitz_rpc_duplicate_correlation_rejects_total counter\n");
+    output.push_str(&format!(
+        "fitz_rpc_duplicate_correlation_rejects_total {}\n",
+        runtime.rpc_duplicate_correlation_rejects_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_rpc_wrong_worker_rejects_total Total RPC requests rejected for the wrong worker session\n");
+    output.push_str("# TYPE fitz_rpc_wrong_worker_rejects_total counter\n");
+    output.push_str(&format!(
+        "fitz_rpc_wrong_worker_rejects_total {}\n",
+        runtime.rpc_wrong_worker_rejects_total()
+    ));
+    output.push('\n');
+
     // Lease domain
     output.push_str("# HELP fitz_lease_active Active leases\n");
     output.push_str("# TYPE fitz_lease_active gauge\n");
@@ -424,6 +464,14 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str(&format!(
         "fitz_lease_oldest_lease_age_seconds {}\n",
         runtime.lease_oldest_lease_age_seconds()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_lease_waiter_depth Total queued lease waiters across all resources\n");
+    output.push_str("# TYPE fitz_lease_waiter_depth gauge\n");
+    output.push_str(&format!(
+        "fitz_lease_waiter_depth {}\n",
+        runtime.lease_waiter_depth()
     ));
     output.push('\n');
 
@@ -788,5 +836,11 @@ mod tests {
         assert!(metrics.contains("fitz_notice_delivery_drops_total 0"));
         assert!(metrics.contains("fitz_stream_notify_drops_total 0"));
         assert!(metrics.contains("fitz_queue_notify_drops_total 0"));
+        assert!(metrics.contains("fitz_rpc_request_timeouts_total 0"));
+        assert!(metrics.contains("fitz_rpc_backpressure_rejects_total 0"));
+        assert!(metrics.contains("fitz_rpc_duplicate_correlation_rejects_total 0"));
+        assert!(metrics.contains("fitz_rpc_wrong_worker_rejects_total 0"));
+        assert!(metrics.contains("fitz_lease_waiter_depth 0"));
+        assert!(metrics.contains("fitz_notice_wildcard_limit_rejects_total 0"));
     }
 }
