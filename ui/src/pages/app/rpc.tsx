@@ -1,4 +1,11 @@
 import { SidebarLayout } from "@askrjs/themes/components";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
@@ -7,6 +14,27 @@ import { EmptyState, Spinner } from "@askrjs/themes/components";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
 import { formatUnknownError } from "@/shared/errors/format";
+
+function summarizeRpcPressure(workersRegistered: number, requestsPending: number) {
+  if (workersRegistered === 0 && requestsPending > 0) {
+    return {
+      label: "Worker starvation",
+      detail: `${requestsPending} pending requests have no registered workers to handle them.`,
+    };
+  }
+
+  if (requestsPending > workersRegistered) {
+    return {
+      label: "Backpressure",
+      detail: `${requestsPending} pending requests are ahead of ${workersRegistered} workers.`,
+    };
+  }
+
+  return {
+    label: "Stable",
+    detail: "RPC pressure is not currently growing faster than worker capacity.",
+  };
+}
 
 export default function RpcPage() {
   const overview = createRpcOverviewQuery();
@@ -60,6 +88,25 @@ export default function RpcPage() {
 
         {data && !overview.loading && !overview.error ? (
           <>
+            {(() => {
+              const pressure = summarizeRpcPressure(
+                data.stats.workersRegistered,
+                data.stats.requestsPending,
+              );
+
+              return (
+            <Card class="dashboard-status-card" variant="raised">
+              <CardHeader>
+                <CardTitle>Current pressure</CardTitle>
+                <CardDescription>{pressure.label}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p>{pressure.detail}</p>
+              </CardContent>
+            </Card>
+              );
+            })()}
+
             <DomainMetricTable
               title="RPC metrics"
               metrics={[
