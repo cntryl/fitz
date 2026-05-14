@@ -1,5 +1,6 @@
 import { state } from "@askrjs/askr";
 import { currentRoute, Link } from "@askrjs/askr/router";
+import { For } from "@askrjs/askr";
 import { Button } from "@askrjs/ui";
 import {
   Badge,
@@ -31,6 +32,25 @@ function humanizeSeconds(seconds: number) {
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   return `${hours}h`;
+}
+
+function formatTimelineKind(kind: string) {
+  switch (kind) {
+    case "failure":
+      return "Failure";
+    case "retry":
+      return "Retry";
+    case "ownership_change":
+      return "Ownership change";
+    case "state_flip":
+      return "State flip";
+    case "registration":
+      return "Registration";
+    case "transition":
+      return "Transition";
+    default:
+      return "Observation";
+  }
 }
 
 export default function QueueResourcePage() {
@@ -212,6 +232,70 @@ export default function QueueResourcePage() {
                   pendingAction={actionKind()}
                   pendingMessageId={actionMessageId()}
                 />
+              )}
+            </section>
+
+            <section class="domain-section">
+              <div class="domain-section-header">
+                <div>
+                  <p class="eyebrow">Timeline</p>
+                  <h2>Recent transitions</h2>
+                  <p>Bounded live events from the broker view for this resource.</p>
+                </div>
+                <Badge>{data.timeline.derived ? "Derived" : "Live"}</Badge>
+              </div>
+
+              {data.timeline.events.length === 0 ? (
+                <EmptyState
+                  class="domain-state"
+                  icon={<GaugeIcon size={18} />}
+                  description="No recent queue transitions are visible for this resource."
+                />
+              ) : (
+                <div class="domain-stack">
+                  <Card class="domain-resource-card" variant="raised">
+                    <CardHeader>
+                      <Badge>Live timeline</Badge>
+                      <CardTitle>{data.timeline.limit} event window</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p>
+                        Recent state changes, retries, failures, and ownership flips from the
+                        current broker snapshot.
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <div class="domain-stack">
+                    <For each={data.timeline.events} by={(event) => `${event.observedAt}:${event.summary}`}>
+                      {(event) => (
+                        <Card class="domain-resource-card" variant="raised">
+                          <CardHeader>
+                            <div class="domain-inline-tags">
+                              <Badge>{formatTimelineKind(event.kind)}</Badge>
+                              {event.ageSeconds != null ? (
+                                <Badge>{humanizeSeconds(event.ageSeconds)}</Badge>
+                              ) : null}
+                            </div>
+                            <CardTitle>{event.summary}</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p>{event.observedAt}</p>
+                            <p>
+                              {event.operation ? `Operation: ${event.operation}` : "Operation: unknown"}
+                              {event.messageId != null ? ` | Message ${event.messageId}` : ""}
+                            </p>
+                            <p>
+                              {event.ownerSession ? `Owner: ${event.ownerSession}` : "Owner: unknown"}
+                              {event.workerSession ? ` | Worker: ${event.workerSession}` : ""}
+                            </p>
+                            {event.correlationId ? <p>Correlation: {event.correlationId}</p> : null}
+                          </CardContent>
+                        </Card>
+                      )}
+                    </For>
+                  </div>
+                </div>
               )}
             </section>
           </>

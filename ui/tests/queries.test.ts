@@ -3,14 +3,21 @@ import {
   createQueueDeadLettersQuery,
   createQueueOverviewQuery,
 } from "@/features/queue/queue-query";
-import { createQueueResourceQuery } from "@/features/queue/queue-resource-query";
+import {
+  createQueueResourceQuery,
+  createQueueResourceTimelineQuery,
+} from "@/features/queue/queue-resource-query";
 import {
   createActiveSessionsQuery,
   createCurrentSessionQuery,
 } from "@/features/session/session-query";
 import { createSignInMutation, createSignOutMutation } from "@/features/session/session-mutation";
 import { mapQueueDeadLetter, mapQueueStats } from "@/features/queue/queue-mappers";
-import { mapQueueInflight, mapQueueResourceDetail } from "@/features/queue/queue-resource-mappers";
+import {
+  mapQueueInflight,
+  mapQueueResourceDetail,
+  mapQueueResourceTimeline,
+} from "@/features/queue/queue-resource-mappers";
 import { createKvOverviewQuery } from "@/features/kv/kv-query";
 import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
 import { createNoticeOverviewQuery } from "@/features/notice/notice-query";
@@ -84,6 +91,8 @@ describe("Data query layer", () => {
     expect(typeof createQueueOverviewQuery).toBe("function");
     expect(createQueueResourceQuery).toBeDefined();
     expect(typeof createQueueResourceQuery).toBe("function");
+    expect(createQueueResourceTimelineQuery).toBeDefined();
+    expect(typeof createQueueResourceTimelineQuery).toBe("function");
     expect(createReplayQueueDeadLetterMutation).toBeDefined();
     expect(typeof createReplayQueueDeadLetterMutation).toBe("function");
     expect(createPurgeQueueDeadLetterMutation).toBeDefined();
@@ -232,6 +241,61 @@ describe("Data query layer", () => {
       messagesDeadLettered: 2,
       messagesTotal: 6,
       oldestMessageAgeSeconds: 7,
+    });
+
+    expect(
+      mapQueueResourceTimeline({
+        area: "a",
+        derived: true,
+        diagnostics: healthyDiagnostics,
+        domain: "queue",
+        events: [
+          {
+            age_seconds: 12,
+            area: "a",
+            attempts: 2,
+            correlation_id: "corr-1",
+            domain: "queue",
+            family: 4,
+            kind: "retry",
+            message_id: 77,
+            observed_at: "2026-05-04T12:00:00Z",
+            operation: "enqueue",
+            owner_session: "owner-1",
+            realm: "r",
+            resource: "q",
+            summary: "Message retried after delay",
+            worker_session: "worker-1",
+          },
+        ],
+        family: 4,
+        limit: 8,
+        realm: "r",
+        resource: "q",
+      }),
+    ).toEqual({
+      area: "a",
+      derived: true,
+      events: [
+        {
+          ageSeconds: 12,
+          area: "a",
+          attempts: 2,
+          correlationId: "corr-1",
+          kind: "retry",
+          messageId: 77,
+          observedAt: "2026-05-04T12:00:00Z",
+          operation: "enqueue",
+          ownerSession: "owner-1",
+          realm: "r",
+          resource: "q",
+          summary: "Message retried after delay",
+          workerSession: "worker-1",
+        },
+      ],
+      limit: 8,
+      realm: "r",
+      resource: "q",
     });
 
     expect(

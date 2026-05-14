@@ -28,6 +28,7 @@ This document is now a working tracker. Use it to separate what is already in th
 - Comparison helpers already surface age, failure, contention, and transition metrics for resource drilldowns.
 - Queue now exposes redeliveries, DLQ transitions, complete-rejects, backlog age distribution, and notify-drop counters in stats and metrics.
 - Queue delay-age buckets now flow through the read model, diagnostics, stats, and Prometheus metrics.
+- Queue resource drilldowns now include a bounded recent timeline panel for retries, failures, ownership flips, and other live transitions.
 - Stream and schedule request-latency histograms are implemented and consumed by the troubleshooting layer.
 
 ### Current Todo List
