@@ -13,9 +13,9 @@ fn should_keep_server_prelude_narrow() {
 
 #[test]
 fn should_expose_internal_server_modules() {
+    // Arrange
     let source = read_source("src/lib.rs");
-
-    for required in [
+    let required_modules = [
         "pub mod control;",
         "pub mod protocol;",
         "pub mod runtime;",
@@ -23,13 +23,17 @@ fn should_expose_internal_server_modules() {
         "pub mod utils;",
         "pub mod testkit;",
         "pub mod benchkit;",
-    ] {
+    ];
+
+    // Act
+    for required in required_modules {
         assert!(
             source.contains(required),
             "missing feature-gated module fragment: {required}"
         );
     }
 
+    // Assert
     assert!(!source.contains("feature = \"internal-api\""));
     assert!(!source.contains("pub use crate::runtime::*"));
 }

@@ -143,6 +143,21 @@ fn canonical_explanation_hints(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfidenceJustification {
+    pub signals_matched: Vec<String>,
+    pub signals_missing: Vec<String>,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuggestedQuery {
+    pub priority: u8,
+    pub title: String,
+    pub endpoint: String,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiagnosticSnapshot {
     pub current_stage: String,
     pub trend: DiagnosticTrend,
@@ -157,6 +172,7 @@ pub struct DiagnosticSnapshot {
     pub contention_count: u64,
     pub waiter_count: usize,
     pub confidence: f64,
+    pub confidence_justification: Option<ConfidenceJustification>,
     pub explanation_hints: Vec<String>,
     pub delta_5m: Option<i64>,
     pub delta_1h: Option<i64>,
@@ -178,6 +194,11 @@ impl DiagnosticSnapshot {
             contention_count: 0,
             waiter_count: 0,
             confidence: 1.0,
+            confidence_justification: Some(ConfidenceJustification {
+                signals_matched: vec!["no_active_pressure".to_string()],
+                signals_missing: Vec::new(),
+                rationale: "Healthy snapshots default to full confidence because no backlog, contention, or failure signal is active.".to_string(),
+            }),
             explanation_hints: canonical_explanation_hints(DiagnosisLabel::Healthy, Vec::new()),
             delta_5m: None,
             delta_1h: None,
@@ -198,9 +219,21 @@ impl DiagnosticSnapshot {
         failure_count: u64,
         contention_count: u64,
         waiter_count: usize,
-        confidence: f64,
         explanation_hints: Vec<String>,
     ) -> Self {
+        let (confidence, confidence_justification) = calculate_confidence(
+            current_stage,
+            likely_bottleneck.as_deref(),
+            last_changed_at,
+            last_success_at,
+            last_failure_at,
+            age_seconds,
+            recent_transition_count,
+            failure_count,
+            contention_count,
+            waiter_count,
+        );
+
         Self {
             current_stage: current_stage.as_str().to_string(),
             trend,
@@ -215,6 +248,7 @@ impl DiagnosticSnapshot {
             contention_count,
             waiter_count,
             confidence,
+            confidence_justification: Some(confidence_justification),
             explanation_hints: canonical_explanation_hints(current_stage, explanation_hints),
             delta_5m: None,
             delta_1h: None,
@@ -231,6 +265,156 @@ impl DiagnosticSnapshot {
             && self.likely_bottleneck.is_none()
             && self.diagnosis_label() == DiagnosisLabel::Healthy
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn calculate_confidence(
+    current_stage: DiagnosisLabel,
+    likely_bottleneck: Option<&str>,
+    last_changed_at: Option<DateTime<Utc>>,
+    last_success_at: Option<DateTime<Utc>>,
+    last_failure_at: Option<DateTime<Utc>>,
+    age_seconds: Option<u64>,
+    recent_transition_count: u64,
+    failure_count: u64,
+    contention_count: u64,
+    waiter_count: usize,
+) -> (f64, ConfidenceJustification) {
+    let failure_signal = failure_count > 0 || last_failure_at.is_some();
+    let contention_signal = contention_count > 0 || waiter_count > 0;
+    let age_signal = age_seconds.unwrap_or(0) > 0;
+    let transition_signal = recent_transition_count > 0 || last_changed_at.is_some();
+    let bottleneck_signal = likely_bottleneck.is_some();
+    let now = Utc::now();
+    let freshness_signal = [last_changed_at, last_success_at, last_failure_at]
+        .into_iter()
+        .flatten()
+        .any(|timestamp| is_recent(timestamp, now))
+        || age_seconds
+            .map(|age| age <= RECENT_WINDOW_SECS as u64)
+            .unwrap_or(false)
+        || recent_transition_count > 0;
+
+    let (primary_signal_name, primary_signal, coverage_target) = match current_stage {
+        DiagnosisLabel::Healthy => (
+            "no_active_pressure",
+            !failure_signal && !contention_signal && !bottleneck_signal,
+            0,
+        ),
+        DiagnosisLabel::Contention => ("contention_or_waiters_present", contention_signal, 2),
+        DiagnosisLabel::WorkerStarvation => (
+            "waiters_without_capacity",
+            contention_signal || age_signal,
+            2,
+        ),
+        DiagnosisLabel::BacklogGrowth => (
+            "backlog_age_or_waiters_present",
+            contention_signal || age_signal,
+            2,
+        ),
+        DiagnosisLabel::DeadLetterPressure => ("failure_signal_present", failure_signal, 2),
+        DiagnosisLabel::DataLossRisk => ("failure_signal_present", failure_signal, 2),
+        DiagnosisLabel::StaleHandoff => (
+            "staleness_signal_present",
+            age_signal || transition_signal,
+            2,
+        ),
+        DiagnosisLabel::Throughput => (
+            "throughput_pressure_present",
+            age_signal || contention_signal || transition_signal || bottleneck_signal,
+            1,
+        ),
+    };
+
+    let observed_support = [
+        failure_signal,
+        contention_signal,
+        age_signal,
+        transition_signal,
+        bottleneck_signal,
+    ]
+    .into_iter()
+    .filter(|signal| *signal)
+    .count();
+    let coverage_ratio = if coverage_target == 0 {
+        1.0
+    } else {
+        (observed_support as f64 / coverage_target as f64).min(1.0)
+    };
+    let coverage_signal = coverage_target == 0 || observed_support >= coverage_target;
+    let freshness_score = if freshness_signal {
+        1.0
+    } else if transition_signal || last_success_at.is_some() || last_failure_at.is_some() || age_signal {
+        0.6
+    } else {
+        0.35
+    };
+
+    let mut signals_matched = Vec::new();
+    let mut signals_missing = Vec::new();
+
+    if primary_signal {
+        signals_matched.push(primary_signal_name.to_string());
+    } else {
+        signals_missing.push(primary_signal_name.to_string());
+    }
+
+    if freshness_signal {
+        signals_matched.push("fresh_telemetry".to_string());
+    } else {
+        signals_missing.push("fresh_telemetry".to_string());
+    }
+
+    if coverage_signal {
+        signals_matched.push(format!("rule_coverage_{observed_support}_of_{coverage_target}"));
+    } else {
+        signals_missing.push(format!("rule_coverage_{observed_support}_of_{coverage_target}"));
+    }
+
+    if bottleneck_signal {
+        signals_matched.push("bottleneck_identified".to_string());
+    } else if !matches!(current_stage, DiagnosisLabel::Healthy) {
+        signals_missing.push("bottleneck_identified".to_string());
+    }
+
+    let confidence = if matches!(current_stage, DiagnosisLabel::Healthy) && primary_signal {
+        if freshness_signal {
+            0.92
+        } else {
+            0.82
+        }
+    } else {
+        let primary_score = if primary_signal { 1.0 } else { 0.35 };
+        let bottleneck_score = if bottleneck_signal { 1.0 } else { 0.0 };
+        (0.25 + 0.30 * primary_score + 0.20 * coverage_ratio + 0.10 * freshness_score
+            + 0.05 * bottleneck_score)
+            .min(0.90)
+    };
+
+    let matched_summary = if signals_matched.is_empty() {
+        "none".to_string()
+    } else {
+        signals_matched.join(", ")
+    };
+    let missing_summary = if signals_missing.is_empty() {
+        "none".to_string()
+    } else {
+        signals_missing.join(", ")
+    };
+
+    (
+        confidence,
+        ConfidenceJustification {
+            signals_matched,
+            signals_missing,
+            rationale: format!(
+                "{} confidence is derived from observed signals, telemetry freshness, and rule coverage. Matched: {}. Missing: {}.",
+                current_stage.display_name(),
+                matched_summary,
+                missing_summary,
+            ),
+        },
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -305,6 +489,21 @@ impl DiagnosticHotspot {
             ))
         }
     }
+
+    fn suggested_queries(&self) -> Vec<SuggestedQuery> {
+        let Some(endpoint) = self.events_query() else {
+            return Vec::new();
+        };
+
+        vec![SuggestedQuery {
+            priority: 1,
+            title: "Inspect recent transitions".to_string(),
+            endpoint,
+            rationale:
+                "Recent event timelines are the bounded next step for confirming why this hotspot changed state."
+                    .to_string(),
+        }]
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -316,6 +515,7 @@ pub struct IncidentSummary {
     pub confidence: f64,
     pub explanation: String,
     pub recommended_next_query: Option<String>,
+    pub suggested_next_queries: Vec<SuggestedQuery>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -853,6 +1053,7 @@ fn summarize_incident(top_bottleneck: &Option<DiagnosticHotspot>) -> IncidentSum
                 "No domain is currently showing elevated backlog, contention, or failure pressure."
                     .to_string(),
             recommended_next_query: None,
+            suggested_next_queries: Vec::new(),
         };
     };
 
@@ -882,6 +1083,7 @@ fn summarize_incident(top_bottleneck: &Option<DiagnosticHotspot>) -> IncidentSum
         confidence: top.snapshot.confidence,
         explanation,
         recommended_next_query: top.events_query(),
+        suggested_next_queries: top.suggested_queries(),
     }
 }
 
@@ -918,7 +1120,6 @@ fn analyze_kv(transactions: &[KvTransaction], now: DateTime<Utc>) -> DomainAnaly
             DiagnosisLabel::Healthy
         };
         let trend = trend_from_pressure(waiter_count, age_seconds.unwrap_or(0));
-        let confidence = if waiter_count > 0 { 0.78 } else { 1.0 };
         let bottleneck = if waiter_count > 0 {
             Some("transaction coordination".to_string())
         } else {
@@ -949,7 +1150,6 @@ fn analyze_kv(transactions: &[KvTransaction], now: DateTime<Utc>) -> DomainAnaly
             failure_count,
             contention_count,
             waiter_count,
-            confidence,
             hints,
         );
 
@@ -1062,19 +1262,6 @@ fn analyze_stream(
         } else {
             DiagnosticSeverity::Informational
         };
-        let confidence = if backlog > 0 {
-            0.68
-        } else if latency_pressure {
-            if latency_tail_ratio >= 0.5 {
-                0.8
-            } else {
-                0.72
-            }
-        } else if workers > 0 {
-            0.64
-        } else {
-            1.0
-        };
         let mut hints = vec![];
         if backlog > 0 {
             hints.push(format!("stream lag is {max_lag} event(s)"));
@@ -1109,7 +1296,6 @@ fn analyze_stream(
             0,
             backlog as u64 + latency_tail_count as u64,
             workers,
-            confidence,
             hints,
         );
 
@@ -1218,15 +1404,6 @@ fn analyze_notice(
         } else {
             DiagnosticSeverity::Informational
         };
-        let confidence = if subscribers > 0 {
-            if concentration {
-                0.68
-            } else {
-                0.64
-            }
-        } else {
-            1.0
-        };
         let mut hints = vec![];
         if subscribers > 0 {
             hints.push(format!("{subscribers} subscriber(s) on route"));
@@ -1276,7 +1453,6 @@ fn analyze_notice(
             0,
             subscribers as u64,
             waiter_count,
-            confidence,
             hints,
         );
 
@@ -1406,13 +1582,12 @@ fn analyze_queue(
         } else {
             dead_letter_count as u64
         };
-        let (label, trend, severity, bottleneck, confidence) = if dead_letter_count > 0 {
+        let (label, trend, severity, bottleneck) = if dead_letter_count > 0 {
             (
                 DiagnosisLabel::DeadLetterPressure,
                 DiagnosticTrend::Stalled,
                 DiagnosticSeverity::High,
                 Some("dead-letter pressure".to_string()),
-                0.88,
             )
         } else if backlog > 0 && inflight_count == 0 {
             (
@@ -1420,7 +1595,6 @@ fn analyze_queue(
                 DiagnosticTrend::Growing,
                 DiagnosticSeverity::High,
                 Some("worker starvation".to_string()),
-                0.82,
             )
         } else if backlog > 0
             && (queue.messages_delayed > 0 || queue.oldest_backlog_age_seconds >= 30)
@@ -1430,7 +1604,6 @@ fn analyze_queue(
                 DiagnosticTrend::Growing,
                 DiagnosticSeverity::Medium,
                 Some("backlog growth".to_string()),
-                0.76,
             )
         } else if backlog > 0 {
             (
@@ -1438,7 +1611,6 @@ fn analyze_queue(
                 DiagnosticTrend::Steady,
                 DiagnosticSeverity::Low,
                 Some("queue throughput".to_string()),
-                0.72,
             )
         } else if inflight_count > 0 {
             (
@@ -1446,7 +1618,6 @@ fn analyze_queue(
                 DiagnosticTrend::Steady,
                 DiagnosticSeverity::Informational,
                 Some("queue throughput".to_string()),
-                0.68,
             )
         } else {
             (
@@ -1454,7 +1625,6 @@ fn analyze_queue(
                 DiagnosticTrend::Steady,
                 DiagnosticSeverity::Informational,
                 None,
-                1.0,
             )
         };
         let mut hints = vec![];
@@ -1503,7 +1673,6 @@ fn analyze_queue(
             dead_letter_count as u64,
             contention_count,
             waiters,
-            confidence,
             hints,
         );
 
@@ -1662,7 +1831,7 @@ fn analyze_rpc(
                 .filter(|ts| is_recent(*ts, now))
                 .count() as u64;
         let contention_count = pending_count.saturating_sub(worker_count) as u64;
-        let (label, trend, severity, bottleneck, confidence) = if worker_count == 0
+        let (label, trend, severity, bottleneck) = if worker_count == 0
             && pending_count > 0
         {
             (
@@ -1670,7 +1839,6 @@ fn analyze_rpc(
                 DiagnosticTrend::Growing,
                 DiagnosticSeverity::High,
                 Some("worker starvation".to_string()),
-                0.82,
             )
         } else if late_response_pressure > 0 && pending_count == 0 {
             (
@@ -1678,7 +1846,6 @@ fn analyze_rpc(
                 DiagnosticTrend::Stalled,
                 DiagnosticSeverity::High,
                 Some("late response drop".to_string()),
-                0.86,
             )
         } else if correlation_pressure > 0 && pending_count == 0 {
             (
@@ -1686,7 +1853,6 @@ fn analyze_rpc(
                 DiagnosticTrend::Stalled,
                 DiagnosticSeverity::High,
                 Some("correlation mismatch".to_string()),
-                0.84,
             )
         } else if pending_count > worker_count
             && (age_seconds.unwrap_or(0) >= 30 || pending_count >= worker_count.saturating_mul(2))
@@ -1700,7 +1866,6 @@ fn analyze_rpc(
                 },
                 DiagnosticSeverity::High,
                 Some("route backlog".to_string()),
-                0.82,
             )
         } else if pending_count > worker_count {
             (
@@ -1708,7 +1873,6 @@ fn analyze_rpc(
                 DiagnosticTrend::Growing,
                 DiagnosticSeverity::Medium,
                 Some("route contention".to_string()),
-                0.76,
             )
         } else if slowest_worker_average_latency_ms >= 100.0 {
             (
@@ -1720,11 +1884,6 @@ fn analyze_rpc(
                     DiagnosticSeverity::Medium
                 },
                 Some("slow worker latency".to_string()),
-                if slowest_worker_average_latency_ms >= 250.0 {
-                    0.79
-                } else {
-                    0.74
-                },
             )
         } else if pending_count > 0 {
             (
@@ -1732,7 +1891,6 @@ fn analyze_rpc(
                 DiagnosticTrend::Steady,
                 DiagnosticSeverity::Low,
                 Some("route throughput".to_string()),
-                0.70,
             )
         } else {
             (
@@ -1740,7 +1898,6 @@ fn analyze_rpc(
                 DiagnosticTrend::Unknown,
                 DiagnosticSeverity::Informational,
                 None,
-                1.0,
             )
         };
         let failure_count = if matches!(label, DiagnosisLabel::DataLossRisk) {
@@ -1802,7 +1959,6 @@ fn analyze_rpc(
             failure_count,
             contention_count,
             pending_count,
-            confidence,
             hints,
         );
 
@@ -1933,7 +2089,6 @@ fn analyze_rpc(
                         data_loss_pressure,
                         correlation_pressure,
                         pending.len(),
-                        if data_loss_pressure > 0 { 0.87 } else { 0.75 },
                         hints,
                     ),
                 },
@@ -1995,11 +2150,6 @@ fn analyze_rpc(
                         0,
                         0,
                         pending.len(),
-                        if slowest_latency_ms >= 250.0 {
-                            0.79
-                        } else {
-                            0.74
-                        },
                         hints,
                     ),
                 },
@@ -2045,14 +2195,13 @@ fn analyze_lease(leases: &[LeaseInfo], now: DateTime<Utc>) -> DomainAnalysis {
             .map(|expires| (expires - now).num_seconds().max(0) as u64)
             .min();
         let churn_pressure = renewals > 0;
-        let (label, trend, severity, bottleneck, confidence) =
+        let (label, trend, severity, bottleneck) =
             if remaining_seconds.unwrap_or(0) <= 30 && active_leases > 0 {
                 (
                     DiagnosisLabel::StaleHandoff,
                     DiagnosticTrend::Stalled,
                     DiagnosticSeverity::High,
                     Some("lease ownership".to_string()),
-                    0.88,
                 )
             } else if active_leases > 0 {
                 (
@@ -2072,7 +2221,6 @@ fn analyze_lease(leases: &[LeaseInfo], now: DateTime<Utc>) -> DomainAnalysis {
                     } else {
                         "lease ownership".to_string()
                     }),
-                    if churn_pressure { 0.82 } else { 0.72 },
                 )
             } else {
                 (
@@ -2080,7 +2228,6 @@ fn analyze_lease(leases: &[LeaseInfo], now: DateTime<Utc>) -> DomainAnalysis {
                     DiagnosticTrend::Steady,
                     DiagnosticSeverity::Informational,
                     None,
-                    1.0,
                 )
             };
         let mut hints = vec![];
@@ -2107,7 +2254,6 @@ fn analyze_lease(leases: &[LeaseInfo], now: DateTime<Utc>) -> DomainAnalysis {
             0,
             renewals as u64,
             active_leases,
-            confidence,
             hints,
         );
 
@@ -2225,13 +2371,12 @@ fn analyze_schedule(
             pending_fire_claims > 0 || pending_ack_retries > 0 || overdue_normalizations > 0;
         let cleanup_pressure =
             pending_claims_expired_total > 0 || pending_claim_cleanup_failures_total > 0;
-        let (label, trend, severity, bottleneck, confidence) = if handoff_pressure {
+        let (label, trend, severity, bottleneck) = if handoff_pressure {
             (
                 DiagnosisLabel::StaleHandoff,
                 DiagnosticTrend::Stalled,
                 DiagnosticSeverity::High,
                 Some("durable handoff".to_string()),
-                0.88,
             )
         } else if cleanup_pressure {
             (
@@ -2243,11 +2388,6 @@ fn analyze_schedule(
                     DiagnosticSeverity::Medium
                 },
                 Some("claim cleanup".to_string()),
-                if pending_claim_cleanup_failures_total > 0 {
-                    0.85
-                } else {
-                    0.78
-                },
             )
         } else if latency_pressure {
             (
@@ -2263,7 +2403,6 @@ fn analyze_schedule(
                     DiagnosticSeverity::Medium
                 },
                 Some("schedule latency".to_string()),
-                if latency_tail_ratio >= 0.5 { 0.8 } else { 0.72 },
             )
         } else if failure_count > 0 {
             (
@@ -2271,7 +2410,6 @@ fn analyze_schedule(
                 DiagnosticTrend::Steady,
                 DiagnosticSeverity::Medium,
                 Some("schedule failure".to_string()),
-                0.66,
             )
         } else if enabled {
             (
@@ -2279,7 +2417,6 @@ fn analyze_schedule(
                 DiagnosticTrend::Steady,
                 DiagnosticSeverity::Informational,
                 None,
-                0.66,
             )
         } else {
             (
@@ -2287,7 +2424,6 @@ fn analyze_schedule(
                 DiagnosticTrend::Unknown,
                 DiagnosticSeverity::Informational,
                 None,
-                1.0,
             )
         };
         let mut hints = vec![];
@@ -2341,7 +2477,6 @@ fn analyze_schedule(
             failure_count,
             contention_count,
             pending_fire_claims,
-            confidence,
             hints,
         );
 
@@ -2448,7 +2583,6 @@ pub(crate) fn kv_resource_diagnostics(transactions_active: usize) -> DiagnosticS
         0,
         transactions_active as u64,
         transactions_active,
-        0.78,
         vec![format!("{transactions_active} open transaction(s)")],
     )
 }
@@ -2466,13 +2600,12 @@ pub(crate) fn queue_resource_diagnostics(
     let has_backlog = backlog > 0;
     let has_inflight = messages_inflight > 0;
 
-    let (label, trend, severity, bottleneck, confidence) = if has_dead_letters {
+    let (label, trend, severity, bottleneck) = if has_dead_letters {
         (
             DiagnosisLabel::DeadLetterPressure,
             DiagnosticTrend::Stalled,
             DiagnosticSeverity::High,
             Some("dead-letter pressure".to_string()),
-            0.88,
         )
     } else if has_backlog && !has_inflight {
         (
@@ -2484,7 +2617,6 @@ pub(crate) fn queue_resource_diagnostics(
             },
             DiagnosticSeverity::High,
             Some("worker starvation".to_string()),
-            0.82,
         )
     } else if has_backlog && oldest_backlog_age_seconds >= 30 {
         (
@@ -2492,7 +2624,6 @@ pub(crate) fn queue_resource_diagnostics(
             DiagnosticTrend::Growing,
             DiagnosticSeverity::Medium,
             Some("backlog growth".to_string()),
-            0.76,
         )
     } else if has_inflight {
         (
@@ -2500,7 +2631,6 @@ pub(crate) fn queue_resource_diagnostics(
             DiagnosticTrend::Steady,
             DiagnosticSeverity::Low,
             Some("queue throughput".to_string()),
-            0.68,
         )
     } else {
         (
@@ -2508,7 +2638,6 @@ pub(crate) fn queue_resource_diagnostics(
             DiagnosticTrend::Steady,
             DiagnosticSeverity::Informational,
             None,
-            1.0,
         )
     };
 
@@ -2529,7 +2658,6 @@ pub(crate) fn queue_resource_diagnostics(
         messages_dead_lettered as u64,
         backlog as u64,
         backlog,
-        confidence,
         {
             let mut hints = Vec::new();
             if has_backlog {
@@ -2567,13 +2695,12 @@ pub(crate) fn stream_resource_diagnostics(
         return DiagnosticSnapshot::healthy();
     }
 
-    let (label, trend, severity, bottleneck, confidence) = if lag > 0 {
+    let (label, trend, severity, bottleneck) = if lag > 0 {
         (
             DiagnosisLabel::Throughput,
             DiagnosticTrend::Stalled,
             DiagnosticSeverity::Medium,
             Some("append lag".to_string()),
-            0.70,
         )
     } else {
         (
@@ -2581,7 +2708,6 @@ pub(crate) fn stream_resource_diagnostics(
             DiagnosticTrend::Steady,
             DiagnosticSeverity::Low,
             Some("append throughput".to_string()),
-            0.64,
         )
     };
 
@@ -2598,7 +2724,6 @@ pub(crate) fn stream_resource_diagnostics(
         0,
         lag,
         sessions_active,
-        confidence,
         {
             let mut hints = Vec::new();
             if lag > 0 {
@@ -2655,7 +2780,6 @@ pub(crate) fn lease_resource_diagnostics(
         0,
         renewals_total as u64,
         active_leases,
-        if churn_pressure { 0.82 } else { 0.72 },
         {
             let mut hints = vec![format!("{active_leases} active lease(s)")];
             if renewals_total > 0 {
@@ -2688,11 +2812,6 @@ pub(crate) fn notice_resource_diagnostics(subscriptions_active: usize) -> Diagno
         0,
         subscriptions_active as u64,
         subscriptions_active,
-        if subscriptions_active > 25 {
-            0.64
-        } else {
-            0.80
-        },
         vec![format!("{subscriptions_active} active subscription(s)")],
     )
 }
@@ -2707,13 +2826,12 @@ pub(crate) fn rpc_operation_diagnostics(
     }
 
     let slowest_worker_average_latency_ms = slowest_worker_average_latency_ms.unwrap_or(0.0);
-    let (label, trend, severity, bottleneck, confidence) = if workers_registered == 0 {
+    let (label, trend, severity, bottleneck) = if workers_registered == 0 {
         (
             DiagnosisLabel::WorkerStarvation,
             DiagnosticTrend::Growing,
             DiagnosticSeverity::High,
             Some("worker starvation".to_string()),
-            0.82,
         )
     } else if requests_pending > workers_registered && requests_pending >= workers_registered * 2 {
         (
@@ -2721,7 +2839,6 @@ pub(crate) fn rpc_operation_diagnostics(
             DiagnosticTrend::Growing,
             DiagnosticSeverity::Medium,
             Some("route backlog".to_string()),
-            0.82,
         )
     } else if requests_pending > workers_registered {
         (
@@ -2729,7 +2846,6 @@ pub(crate) fn rpc_operation_diagnostics(
             DiagnosticTrend::Growing,
             DiagnosticSeverity::Medium,
             Some("route contention".to_string()),
-            0.76,
         )
     } else if slowest_worker_average_latency_ms >= 100.0 {
         (
@@ -2741,11 +2857,6 @@ pub(crate) fn rpc_operation_diagnostics(
                 DiagnosticSeverity::Medium
             },
             Some("slow worker latency".to_string()),
-            if slowest_worker_average_latency_ms >= 250.0 {
-                0.80
-            } else {
-                0.74
-            },
         )
     } else {
         (
@@ -2753,7 +2864,6 @@ pub(crate) fn rpc_operation_diagnostics(
             DiagnosticTrend::Steady,
             DiagnosticSeverity::Low,
             Some("route throughput".to_string()),
-            0.70,
         )
     };
 
@@ -2770,7 +2880,6 @@ pub(crate) fn rpc_operation_diagnostics(
         0,
         requests_pending as u64,
         requests_pending,
-        confidence,
         {
             let mut hints = Vec::new();
             if workers_registered > 0 {
@@ -2810,13 +2919,12 @@ pub(crate) fn schedule_resource_diagnostics(
         return DiagnosticSnapshot::healthy();
     }
 
-    let (label, trend, severity, bottleneck, confidence) = if is_overdue {
+    let (label, trend, severity, bottleneck) = if is_overdue {
         (
             DiagnosisLabel::StaleHandoff,
             DiagnosticTrend::Stalled,
             DiagnosticSeverity::High,
             Some("durable handoff".to_string()),
-            0.88,
         )
     } else if enabled && executions_total > 0 {
         (
@@ -2824,7 +2932,6 @@ pub(crate) fn schedule_resource_diagnostics(
             DiagnosticTrend::Steady,
             DiagnosticSeverity::Medium,
             Some("scheduled work".to_string()),
-            0.66,
         )
     } else if enabled {
         (
@@ -2832,7 +2939,6 @@ pub(crate) fn schedule_resource_diagnostics(
             DiagnosticTrend::Steady,
             DiagnosticSeverity::Informational,
             None,
-            0.66,
         )
     } else {
         (
@@ -2840,7 +2946,6 @@ pub(crate) fn schedule_resource_diagnostics(
             DiagnosticTrend::Unknown,
             DiagnosticSeverity::Informational,
             None,
-            0.64,
         )
     };
 
@@ -2878,7 +2983,6 @@ pub(crate) fn schedule_resource_diagnostics(
         0,
         if is_overdue { 1 } else { 0 },
         if is_overdue { 1 } else { 0 },
-        confidence,
         hints,
     )
 }
@@ -3909,29 +4013,90 @@ mod tests {
 
     #[test]
     fn should_mark_empty_snapshot_healthy() {
+        // Arrange
         let snapshot = DiagnosticSnapshot::healthy();
+
+        // Act
+        let diagnosis_label = snapshot.diagnosis_label();
+
+        // Assert
         assert!(snapshot.is_healthy());
         assert_eq!(snapshot.current_stage, "healthy");
-        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::Healthy);
+        assert_eq!(diagnosis_label, DiagnosisLabel::Healthy);
+    }
+
+    #[test]
+    fn should_derive_confidence_from_supporting_signals() {
+        // Arrange
+        let snapshot = queue_resource_diagnostics(4, 2, 1, 0, 45, QueueAgeBuckets::default());
+
+        // Act
+        let justification = snapshot
+            .confidence_justification
+            .as_ref()
+            .expect("confidence justification");
+
+        // Assert
+        assert!(snapshot.confidence >= 0.85);
+        assert!(justification
+            .signals_matched
+            .iter()
+            .any(|signal| signal == "backlog_age_or_waiters_present"));
+        assert!(justification
+            .signals_matched
+            .iter()
+            .any(|signal| signal == "fresh_telemetry"));
+        assert!(justification
+            .signals_matched
+            .iter()
+            .any(|signal| signal == "bottleneck_identified"));
+    }
+
+    #[test]
+    fn should_mark_missing_freshness_when_signal_context_is_sparse() {
+        // Arrange
+        let snapshot = kv_resource_diagnostics(2);
+
+        // Act
+        let justification = snapshot
+            .confidence_justification
+            .as_ref()
+            .expect("confidence justification");
+
+        // Assert
+        assert!(snapshot.confidence < 0.85);
+        assert!(justification
+            .signals_missing
+            .iter()
+            .any(|signal| signal == "fresh_telemetry"));
     }
 
     #[test]
     fn should_round_trip_canonical_diagnosis_labels() {
-        assert_eq!(
-            DiagnosisLabel::from_stage("data_loss_risk"),
-            Some(DiagnosisLabel::DataLossRisk)
-        );
-        assert_eq!(
-            DiagnosisLabel::from_stage("backlog_growth"),
-            Some(DiagnosisLabel::BacklogGrowth)
-        );
+        // Arrange
+        let data_loss_stage = "data_loss_risk";
+        let backlog_stage = "backlog_growth";
+
+        // Act
+        let data_loss_label = DiagnosisLabel::from_stage(data_loss_stage);
+        let backlog_label = DiagnosisLabel::from_stage(backlog_stage);
+
+        // Assert
+        assert_eq!(data_loss_label, Some(DiagnosisLabel::DataLossRisk));
+        assert_eq!(backlog_label, Some(DiagnosisLabel::BacklogGrowth));
     }
 
     #[test]
     fn should_classify_queue_backlog_growth() {
+        // Arrange
         let snapshot = queue_resource_diagnostics(4, 2, 1, 0, 45, QueueAgeBuckets::default());
+
+        // Act
+        let diagnosis_label = snapshot.diagnosis_label();
+
+        // Assert
         assert_eq!(snapshot.current_stage, "backlog_growth");
-        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::BacklogGrowth);
+        assert_eq!(diagnosis_label, DiagnosisLabel::BacklogGrowth);
         assert_eq!(snapshot.severity, DiagnosticSeverity::Medium);
         assert!(snapshot
             .explanation_hints
@@ -3941,6 +4106,7 @@ mod tests {
 
     #[test]
     fn should_classify_queue_dead_letter_pressure_with_transition_counts() {
+        // Arrange
         let now = Utc::now();
         let queues = vec![QueueInfo {
             family: 1,
@@ -3968,9 +4134,11 @@ mod tests {
             reason: "max_attempts_exceeded".to_string(),
         }];
 
+        // Act
         let analysis = analyze_queue(&queues, &[], &dead_letters, 7, 2, now);
         let hotspot = analysis.hotspots.first().expect("queue hotspot");
 
+        // Assert
         assert_eq!(
             hotspot.hotspot.snapshot.current_stage,
             "dead_letter_pressure"
@@ -3995,14 +4163,21 @@ mod tests {
 
     #[test]
     fn should_classify_rpc_worker_starvation() {
+        // Arrange
         let snapshot = rpc_operation_diagnostics(0, 3, None);
+
+        // Act
+        let diagnosis_label = snapshot.diagnosis_label();
+
+        // Assert
         assert_eq!(snapshot.current_stage, "worker_starvation");
-        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::WorkerStarvation);
+        assert_eq!(diagnosis_label, DiagnosisLabel::WorkerStarvation);
         assert_eq!(snapshot.severity, DiagnosticSeverity::High);
     }
 
     #[test]
     fn should_summarize_rpc_worker_latency_buckets() {
+        // Arrange
         let workers = [
             RpcWorker {
                 session_id: "9001".to_string(),
@@ -4038,7 +4213,10 @@ mod tests {
             },
         ];
 
+        // Act
         let summary = summarize_rpc_worker_latency(workers.iter());
+
+        // Assert
         assert_eq!(summary.slowest_worker_average_latency_ms, 125.0);
         assert_eq!(summary.worker_latency_buckets.under_5ms, 1);
         assert_eq!(summary.worker_latency_buckets.under_25ms, 1);
@@ -4048,9 +4226,15 @@ mod tests {
 
     #[test]
     fn should_classify_rpc_worker_latency_pressure() {
+        // Arrange
         let snapshot = rpc_operation_diagnostics(3, 0, Some(180.0));
+
+        // Act
+        let diagnosis_label = snapshot.diagnosis_label();
+
+        // Assert
         assert_eq!(snapshot.current_stage, "throughput");
-        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::Throughput);
+        assert_eq!(diagnosis_label, DiagnosisLabel::Throughput);
         assert_eq!(snapshot.severity, DiagnosticSeverity::Medium);
         assert_eq!(
             snapshot.likely_bottleneck.as_deref(),
@@ -4064,10 +4248,14 @@ mod tests {
 
     #[test]
     fn should_classify_rpc_data_loss_risk() {
+        // Arrange
         let now = Utc::now();
+
+        // Act
         let analysis = analyze_rpc(&[], &[], 0, 0, 0, 0, 3, 2, 0, now);
         let hotspot = analysis.hotspots.first().expect("rpc hotspot");
 
+        // Assert
         assert_eq!(hotspot.hotspot.snapshot.current_stage, "data_loss_risk");
         assert_eq!(
             hotspot.hotspot.snapshot.diagnosis_label(),
@@ -4088,17 +4276,29 @@ mod tests {
 
     #[test]
     fn should_classify_lease_contention() {
+        // Arrange
         let snapshot = lease_resource_diagnostics(1, Some(120), 0);
+
+        // Act
+        let diagnosis_label = snapshot.diagnosis_label();
+
+        // Assert
         assert_eq!(snapshot.current_stage, "contention");
-        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::Contention);
+        assert_eq!(diagnosis_label, DiagnosisLabel::Contention);
         assert_eq!(snapshot.severity, DiagnosticSeverity::Low);
     }
 
     #[test]
     fn should_classify_lease_churn() {
+        // Arrange
         let snapshot = lease_resource_diagnostics(1, Some(120), 3);
+
+        // Act
+        let diagnosis_label = snapshot.diagnosis_label();
+
+        // Assert
         assert_eq!(snapshot.current_stage, "contention");
-        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::Contention);
+        assert_eq!(diagnosis_label, DiagnosisLabel::Contention);
         assert_eq!(snapshot.severity, DiagnosticSeverity::Medium);
         assert_eq!(
             snapshot.likely_bottleneck.as_deref(),
@@ -4113,6 +4313,7 @@ mod tests {
 
     #[test]
     fn should_rank_lease_hotspot_as_churn_when_renewals_present() {
+        // Arrange
         let now = Utc::now();
         let leases = vec![LeaseInfo {
             realm: "prod".to_string(),
@@ -4125,9 +4326,11 @@ mod tests {
             fencing_token: 11,
         }];
 
+        // Act
         let analysis = analyze_lease(&leases, now);
         let hotspot = analysis.hotspots.first().expect("lease hotspot");
 
+        // Assert
         assert_eq!(analysis.diagnostics.snapshot.current_stage, "contention");
         assert_eq!(
             hotspot.hotspot.snapshot.likely_bottleneck.as_deref(),
@@ -4142,6 +4345,7 @@ mod tests {
 
     #[test]
     fn should_classify_schedule_stale_handoff() {
+        // Arrange
         let now = Utc::now();
         let snapshot = schedule_resource_diagnostics(
             true,
@@ -4149,13 +4353,19 @@ mod tests {
             Some(&(now - Duration::seconds(90)).to_rfc3339()),
             4,
         );
+
+        // Act
+        let diagnosis_label = snapshot.diagnosis_label();
+
+        // Assert
         assert_eq!(snapshot.current_stage, "stale_handoff");
-        assert_eq!(snapshot.diagnosis_label(), DiagnosisLabel::StaleHandoff);
+        assert_eq!(diagnosis_label, DiagnosisLabel::StaleHandoff);
         assert_eq!(snapshot.severity, DiagnosticSeverity::High);
     }
 
     #[test]
     fn should_classify_notice_route_concentration() {
+        // Arrange
         let now = Utc::now();
         let subscriptions = vec![
             NoticeSubscription {
@@ -4198,7 +4408,10 @@ mod tests {
             },
         ];
 
+        // Act
         let analysis = analyze_notice(&subscriptions, &routes, now);
+
+        // Assert
         assert_eq!(analysis.diagnostics.snapshot.current_stage, "throughput");
         assert_eq!(
             analysis.diagnostics.snapshot.likely_bottleneck.as_deref(),
@@ -4213,6 +4426,7 @@ mod tests {
 
     #[test]
     fn should_rank_schedule_with_pending_ack_retry_pressure() {
+        // Arrange
         let now = Utc::now();
         let schedules = vec![ScheduleInfo {
             realm: "prod".to_string(),
@@ -4226,6 +4440,7 @@ mod tests {
             enabled: true,
         }];
 
+        // Act
         let analysis = analyze_schedule(
             &schedules,
             2,
@@ -4241,6 +4456,7 @@ mod tests {
         );
         let hotspot = analysis.hotspots.first().expect("schedule hotspot");
 
+        // Assert
         assert_eq!(hotspot.hotspot.snapshot.current_stage, "stale_handoff");
         assert_eq!(
             hotspot.hotspot.snapshot.diagnosis_label(),
@@ -4258,6 +4474,7 @@ mod tests {
 
     #[test]
     fn should_classify_schedule_cleanup_pressure() {
+        // Arrange
         let now = Utc::now();
         let schedules = vec![ScheduleInfo {
             realm: "prod".to_string(),
@@ -4271,6 +4488,7 @@ mod tests {
             enabled: true,
         }];
 
+        // Act
         let analysis = analyze_schedule(
             &schedules,
             0,
@@ -4286,6 +4504,7 @@ mod tests {
         );
         let hotspot = analysis.hotspots.first().expect("schedule hotspot");
 
+        // Assert
         assert_eq!(hotspot.hotspot.snapshot.current_stage, "stale_handoff");
         assert_eq!(
             hotspot.hotspot.snapshot.likely_bottleneck.as_deref(),
@@ -4308,6 +4527,7 @@ mod tests {
 
     #[test]
     fn should_classify_schedule_latency_pressure() {
+        // Arrange
         let now = Utc::now();
         let schedules = vec![ScheduleInfo {
             realm: "prod".to_string(),
@@ -4326,6 +4546,7 @@ mod tests {
             ..Default::default()
         };
 
+        // Act
         let analysis = analyze_schedule(
             &schedules,
             0,
@@ -4341,6 +4562,7 @@ mod tests {
         );
         let hotspot = analysis.hotspots.first().expect("schedule hotspot");
 
+        // Assert
         assert_eq!(hotspot.hotspot.snapshot.current_stage, "throughput");
         assert_eq!(
             hotspot.hotspot.snapshot.likely_bottleneck.as_deref(),
@@ -4356,7 +4578,8 @@ mod tests {
     }
 
     #[test]
-    fn should_summarize_incident_with_canonical_label_and_next_query() {
+    fn should_summarize_incident_given_hotspot() {
+        // Arrange
         let hotspot = DiagnosticHotspot {
             domain: "queue".to_string(),
             realm: Some("prod".to_string()),
@@ -4376,7 +4599,10 @@ mod tests {
             snapshot: queue_resource_diagnostics(4, 2, 1, 0, 45, QueueAgeBuckets::default()),
         };
 
+        // Act
         let summary = summarize_incident(&Some(hotspot));
+
+        // Assert
         assert_eq!(summary.status, IncidentStatus::Degraded);
         assert!(summary.title.contains("backlog growth"));
         assert!(summary.explanation.contains("Backlog is growing"));

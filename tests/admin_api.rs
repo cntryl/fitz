@@ -2320,9 +2320,27 @@ async fn should_return_global_stats() {
     );
     assert_eq!(payload["diagnostics"]["top_bottleneck"]["domain"], "queue");
     assert_eq!(
+        payload["diagnostics"]["incident_summary"]["suggested_next_queries"][0]["title"],
+        "Inspect recent transitions"
+    );
+    assert_eq!(
+        payload["diagnostics"]["incident_summary"]["suggested_next_queries"][0]["priority"],
+        1
+    );
+    assert_eq!(
         payload["domains"]["queue"]["diagnostics"]["current_stage"],
         "dead_letter_pressure"
     );
+    let signals_matched = payload["domains"]["queue"]["diagnostics"]
+        ["confidence_justification"]["signals_matched"]
+        .as_array()
+        .expect("queue confidence signals_matched");
+    assert!(signals_matched.iter().any(|signal| signal == "failure_signal_present"));
+    assert!(payload["domains"]["queue"]["diagnostics"]["confidence_justification"]
+        ["rationale"]
+        .as_str()
+        .expect("queue confidence rationale")
+        .contains("telemetry freshness"));
 }
 
 #[tokio::test]
