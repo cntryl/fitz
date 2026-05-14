@@ -1,3 +1,5 @@
+import type { GlobalTroubleshootingDiagnostics } from "@/adapters";
+
 export interface BrokerStatsSummary {
   connections: number;
   messagesPerSecond: number;
@@ -13,12 +15,25 @@ export interface SystemDomainStatsSummary {
     transactionsActive: number;
   };
   lease: {
+    acquireTimeoutsTotal: number;
+    failureTotal: number;
+    forcedReleasesTotal: number;
+    invalidTokenRejectsTotal: number;
     leasesActive: number;
     operationsPerSecond: number;
+    requestsTotal: number;
+    successTotal: number;
+    waiterDepth: number;
   };
   notice: {
+    deliveryDropsTotal: number;
+    failureTotal: number;
     publishesPerSecond: number;
+    requestsTotal: number;
+    successTotal: number;
     subscriptionsActive: number;
+    unsubscribesTotal: number;
+    wildcardLimitRejectsTotal: number;
   };
   queue: {
     inflightActive: number;
@@ -29,8 +44,18 @@ export interface SystemDomainStatsSummary {
     operationsPerSecond: number;
   };
   rpc: {
+    acksRejectedWrongWorkerTotal: number;
+    backpressureRejectsTotal: number;
+    duplicateCorrelationRejectsTotal: number;
+    failureTotal: number;
     operationsPerSecond: number;
+    requestTimeoutsTotal: number;
     requestsPending: number;
+    requestsTotal: number;
+    responsesDroppedClosedCallerTotal: number;
+    responsesMissingPendingTotal: number;
+    successTotal: number;
+    wrongWorkerRejectsTotal: number;
     workersRegistered: number;
   };
   schedule: {
@@ -43,8 +68,13 @@ export interface SystemDomainStatsSummary {
     subscriptionsActive: number;
   };
   stream: {
+    appendConflictsTotal: number;
+    failureTotal: number;
     eventsTotal: number;
+    notifyDropsTotal: number;
     operationsPerSecond: number;
+    requestsTotal: number;
+    successTotal: number;
     streamsActive: number;
     subscriptionsActive: number;
   };
@@ -58,6 +88,7 @@ export interface MetricsPreview {
 
 export interface SystemOverview {
   broker: BrokerStatsSummary;
+  diagnostics: GlobalTroubleshootingDiagnostics;
   domains: SystemDomainStatsSummary;
   healthStatus: string;
   metrics: MetricsPreview;

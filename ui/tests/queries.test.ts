@@ -642,6 +642,7 @@ describe("Data query layer", () => {
         sessions: 4,
         uptimeSeconds: 5,
       },
+      diagnostics: healthyGlobalDiagnostics,
       domains: {
         kv: {
           keysTotal: 6,
@@ -666,6 +667,7 @@ describe("Data query layer", () => {
           requestsTotal: 2,
           successTotal: 4,
           subscriptionsActive: 12,
+          unsubscribesTotal: 13,
           wildcardLimitRejectsTotal: 5,
         },
         queue: {

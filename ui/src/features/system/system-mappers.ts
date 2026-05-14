@@ -40,6 +40,7 @@ export function mapSystemOverview(
       sessions: stats.broker.sessions,
       uptimeSeconds: stats.broker.uptime_seconds,
     },
+    diagnostics: stats.diagnostics,
     domains: {
       kv: {
         keysTotal: stats.domains.kv.keys_total,
@@ -47,12 +48,25 @@ export function mapSystemOverview(
         transactionsActive: stats.domains.kv.transactions_active,
       },
       lease: {
+        acquireTimeoutsTotal: stats.domains.lease.acquire_timeouts_total,
+        failureTotal: stats.domains.lease.failure_total,
+        forcedReleasesTotal: stats.domains.lease.forced_releases_total,
+        invalidTokenRejectsTotal: stats.domains.lease.invalid_token_rejects_total,
         leasesActive: stats.domains.lease.leases_active,
         operationsPerSecond: stats.domains.lease.operations_per_second,
+        requestsTotal: stats.domains.lease.requests_total,
+        successTotal: stats.domains.lease.success_total,
+        waiterDepth: stats.domains.lease.waiter_depth,
       },
       notice: {
+        deliveryDropsTotal: stats.domains.notice.delivery_drops_total,
+        failureTotal: stats.domains.notice.failure_total,
         publishesPerSecond: stats.domains.notice.publishes_per_second,
+        requestsTotal: stats.domains.notice.requests_total,
+        successTotal: stats.domains.notice.success_total,
         subscriptionsActive: stats.domains.notice.subscriptions_active,
+        unsubscribesTotal: stats.domains.notice.unsubscribes_total,
+        wildcardLimitRejectsTotal: stats.domains.notice.wildcard_limit_rejects_total,
       },
       queue: {
         inflightActive: stats.domains.queue.inflight_active,
@@ -63,8 +77,20 @@ export function mapSystemOverview(
         operationsPerSecond: stats.domains.queue.operations_per_second,
       },
       rpc: {
+        acksRejectedWrongWorkerTotal: stats.domains.rpc.acks_rejected_wrong_worker_total,
+        backpressureRejectsTotal: stats.domains.rpc.backpressure_rejects_total,
+        duplicateCorrelationRejectsTotal:
+          stats.domains.rpc.duplicate_correlation_rejects_total,
+        failureTotal: stats.domains.rpc.failure_total,
         operationsPerSecond: stats.domains.rpc.operations_per_second,
+        requestTimeoutsTotal: stats.domains.rpc.request_timeouts_total,
         requestsPending: stats.domains.rpc.requests_pending,
+        requestsTotal: stats.domains.rpc.requests_total,
+        responsesDroppedClosedCallerTotal:
+          stats.domains.rpc.responses_dropped_closed_caller_total,
+        responsesMissingPendingTotal: stats.domains.rpc.responses_missing_pending_total,
+        successTotal: stats.domains.rpc.success_total,
+        wrongWorkerRejectsTotal: stats.domains.rpc.wrong_worker_rejects_total,
         workersRegistered: stats.domains.rpc.workers_registered,
       },
       schedule: {
@@ -77,8 +103,13 @@ export function mapSystemOverview(
         subscriptionsActive: stats.domains.schedule.subscriptions_active,
       },
       stream: {
+        appendConflictsTotal: stats.domains.stream.append_conflicts_total,
+        failureTotal: stats.domains.stream.failure_total,
         eventsTotal: stats.domains.stream.events_total,
+        notifyDropsTotal: stats.domains.stream.notify_drops_total,
         operationsPerSecond: stats.domains.stream.operations_per_second,
+        requestsTotal: stats.domains.stream.requests_total,
+        successTotal: stats.domains.stream.success_total,
         streamsActive: stats.domains.stream.streams_active,
         subscriptionsActive: stats.domains.stream.subscriptions_active,
       },

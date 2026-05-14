@@ -41,6 +41,18 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+function formatBottleneckLabel(bottleneck: { domain?: string; resource?: string; area?: string; realm?: string } | null | undefined) {
+  if (!bottleneck) {
+    return "No active bottleneck";
+  }
+
+  const parts = [bottleneck.domain, bottleneck.realm, bottleneck.area, bottleneck.resource].filter(
+    (part): part is string => Boolean(part),
+  );
+
+  return parts.length > 0 ? parts.join(" / ") : "Unnamed bottleneck";
+}
+
 export default function AdminHome() {
   const session = createCurrentSessionQuery();
   const signOut = createSignOutMutation();
@@ -73,6 +85,8 @@ export default function AdminHome() {
   const username = session.data?.username ?? "admin";
 
   const overview = system.data;
+  const incident = overview?.diagnostics.incident_summary;
+  const topBottleneck = overview?.diagnostics.top_bottleneck;
 
   const sidebar = createDomainSidebar({
     data: overview,
@@ -119,8 +133,8 @@ export default function AdminHome() {
           <div class="panel-copy">
             <h1>Welcome, {username}</h1>
             <p>
-              This dashboard gives you a broker-level view of system health, throughput, and live
-              domain activity so you can see how data is moving through Fitz.
+              This troubleshooting view leads with the current incident summary, then drills into
+              the broker and domains so you can see what is blocked first.
             </p>
           </div>
 
@@ -153,6 +167,31 @@ export default function AdminHome() {
         {overview && !system.loading && !system.error ? (
           <>
             <section class="dashboard-status-grid">
+              <Card class="dashboard-status-card" variant="raised">
+                <CardHeader>
+                  <CardTitle>Current incident</CardTitle>
+                  <CardDescription>{incident?.status ?? "unknown"}</CardDescription>
+                </CardHeader>
+                <CardContent class="dashboard-status-content">
+                  <div class="dashboard-metric">
+                    <span>Summary</span>
+                    <strong>{incident?.title ?? "No incident detected"}</strong>
+                  </div>
+                  <div class="dashboard-metric">
+                    <span>Likely cause</span>
+                    <strong>{incident?.explanation ?? "No active pressure detected"}</strong>
+                  </div>
+                  <div class="dashboard-metric">
+                    <span>Top bottleneck</span>
+                    <strong>{formatBottleneckLabel(topBottleneck)}</strong>
+                  </div>
+                  <div class="dashboard-metric">
+                    <span>Next query</span>
+                    <strong>{incident?.recommended_next_query ?? "No follow-up needed"}</strong>
+                  </div>
+                </CardContent>
+              </Card>
+
               <Card class="dashboard-status-card" variant="raised">
                 <CardHeader>
                   <CardTitle>Broker health</CardTitle>
