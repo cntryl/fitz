@@ -139,6 +139,14 @@ impl Runtime {
         metric_counter("fitz_queue_redeliveries_total")
     }
 
+    pub fn queue_dead_letter_transitions_total(&self) -> u64 {
+        metric_counter("fitz_queue_dlq_transitions_total")
+    }
+
+    pub fn queue_complete_rejected_total(&self) -> u64 {
+        metric_counter("fitz_queue_complete_rejected_total")
+    }
+
     pub fn queue_inflight_active(&self) -> usize {
         self.domains
             .read()

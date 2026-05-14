@@ -3082,6 +3082,8 @@ components:
           extends_total,
           notify_drops_total,
           redeliveries_total,
+          dead_letter_transitions_total,
+          complete_rejected_total,
           operations_per_second,
           diagnostics,
         ]
@@ -3135,6 +3137,14 @@ components:
           type: integer
           format: int64
           description: Total queue message redeliveries recorded by this broker process.
+        dead_letter_transitions_total:
+          type: integer
+          format: int64
+          description: Total queue messages moved into dead-letter state by this broker process.
+        complete_rejected_total:
+          type: integer
+          format: int64
+          description: Total queue COMPLETE requests rejected by this broker process.
         operations_per_second:
           type: number
         diagnostics:

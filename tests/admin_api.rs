@@ -1430,6 +1430,8 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     let extends_before = metrics.counter_get("fitz_queue_extend_total");
     let notify_before = metrics.counter_get("fitz_queue_notify_drops_total");
     let redeliveries_before = metrics.counter_get("fitz_queue_redeliveries_total");
+    let dead_letter_transitions_before = metrics.counter_get("fitz_queue_dlq_transitions_total");
+    let complete_rejected_before = metrics.counter_get("fitz_queue_complete_rejected_total");
     metrics.counter_add("fitz_queue_requests_total", 5);
     metrics.counter_add("fitz_queue_success_total", 4);
     metrics.counter_add("fitz_queue_failure_total", 2);
@@ -1440,6 +1442,8 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     metrics.counter_add("fitz_queue_extend_total", 17);
     metrics.counter_add("fitz_queue_notify_drops_total", 19);
     metrics.counter_add("fitz_queue_redeliveries_total", 23);
+    metrics.counter_add("fitz_queue_dlq_transitions_total", 29);
+    metrics.counter_add("fitz_queue_complete_rejected_total", 31);
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -1469,6 +1473,30 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     assert_eq!(payload["extends_total"], extends_before + 17);
     assert_eq!(payload["notify_drops_total"], notify_before + 19);
     assert_eq!(payload["redeliveries_total"], redeliveries_before + 23);
+    assert_eq!(
+        payload["dead_letter_transitions_total"],
+        dead_letter_transitions_before + 29
+    );
+    assert_eq!(
+        payload["complete_rejected_total"],
+        complete_rejected_before + 31
+    );
+    assert!(payload["diagnostics"]["explanation_hints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hint| hint
+            .as_str()
+            .unwrap_or("")
+            .contains("dead-letter transition")));
+    assert!(payload["diagnostics"]["explanation_hints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hint| hint
+            .as_str()
+            .unwrap_or("")
+            .contains("queue complete rejection")));
     assert!(payload["operations_per_second"].as_f64().unwrap_or(0.0) > 0.0);
 
     let metrics_req = Request::builder()
@@ -1494,6 +1522,14 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     assert!(metrics_payload.contains(&format!(
         "fitz_queue_redeliveries_total {}",
         redeliveries_before + 23
+    )));
+    assert!(metrics_payload.contains(&format!(
+        "fitz_queue_dlq_transitions_total {}",
+        dead_letter_transitions_before + 29
+    )));
+    assert!(metrics_payload.contains(&format!(
+        "fitz_queue_complete_rejected_total {}",
+        complete_rejected_before + 31
     )));
     assert!(metrics_payload.contains(&format!(
         "fitz_queue_notify_drops_total {}",

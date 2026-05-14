@@ -746,6 +746,8 @@ pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
         &read_model.queues(None),
         &read_model.queue_inflight(None),
         &read_model.queue_dead_letters(None),
+        runtime.queue_dead_letter_transitions_total(),
+        runtime.queue_complete_rejected_total(),
         now,
     );
     let rpc = analyze_rpc(
@@ -1315,6 +1317,8 @@ fn analyze_queue(
     queues: &[QueueInfo],
     inflight: &[QueueInflight],
     dead_letters: &[QueueDeadLetter],
+    dead_letter_transitions_total: u64,
+    complete_rejected_total: u64,
     now: DateTime<Utc>,
 ) -> DomainAnalysis {
     let mut inflight_by_resource: HashMap<(u64, String, String, String), Vec<&QueueInflight>> =
@@ -1462,6 +1466,16 @@ fn analyze_queue(
         }
         if dead_letter_count > 0 {
             hints.push(format!("{dead_letter_count} dead-lettered message(s)"));
+        }
+        if dead_letter_count > 0 && dead_letter_transitions_total > 0 {
+            hints.push(format!(
+                "{dead_letter_transitions_total} dead-letter transition(s) recorded"
+            ));
+        }
+        if complete_rejected_total > 0 {
+            hints.push(format!(
+                "{complete_rejected_total} queue complete rejection(s)"
+            ));
         }
         if queue.oldest_backlog_age_seconds > 0 {
             hints.push(format!(
@@ -3849,6 +3863,7 @@ pub(crate) fn schedule_resource_timeline(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::admin::QueueAgeBuckets;
 
     #[test]
     fn should_mark_empty_snapshot_healthy() {
@@ -3880,6 +3895,59 @@ mod tests {
             .explanation_hints
             .iter()
             .any(|hint| hint.contains("Backlog is growing")));
+    }
+
+    #[test]
+    fn should_classify_queue_dead_letter_pressure_with_transition_counts() {
+        let now = Utc::now();
+        let queues = vec![QueueInfo {
+            family: 1,
+            realm: "prod".to_string(),
+            area: "jobs".to_string(),
+            resource: "worker".to_string(),
+            messages_ready: 0,
+            messages_delayed: 0,
+            messages_inflight: 0,
+            messages_dead_lettered: 2,
+            messages_total: 2,
+            oldest_message_age_seconds: 0,
+            oldest_backlog_age_seconds: 0,
+            backlog_age_buckets: QueueAgeBuckets::default(),
+        }];
+        let dead_letters = vec![QueueDeadLetter {
+            message_id: 42,
+            family: 1,
+            realm: "prod".to_string(),
+            area: "jobs".to_string(),
+            resource: "worker".to_string(),
+            dead_lettered_at: (now - Duration::seconds(15)).to_rfc3339(),
+            attempts: 3,
+            reason: "max_attempts_exceeded".to_string(),
+        }];
+
+        let analysis = analyze_queue(&queues, &[], &dead_letters, 7, 2, now);
+        let hotspot = analysis.hotspots.first().expect("queue hotspot");
+
+        assert_eq!(
+            hotspot.hotspot.snapshot.current_stage,
+            "dead_letter_pressure"
+        );
+        assert_eq!(
+            hotspot.hotspot.snapshot.diagnosis_label(),
+            DiagnosisLabel::DeadLetterPressure
+        );
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("dead-letter transition")));
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("queue complete rejection")));
     }
 
     #[test]

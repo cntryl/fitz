@@ -1461,7 +1461,11 @@ export interface QueueResourceDetail {
 /** QueueStats schema */
 export interface QueueStats {
   backlog_age_buckets: QueueAgeBuckets;
+  /** Total queue COMPLETE requests rejected by this broker process. */
+  complete_rejected_total: number;
   completes_total: number;
+  /** Total queue messages moved into dead-letter state by this broker process. */
+  dead_letter_transitions_total: number;
   diagnostics: DiagnosticSnapshot;
   enqueues_total: number;
   extends_total: number;

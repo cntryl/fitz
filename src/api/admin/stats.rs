@@ -105,6 +105,8 @@ pub struct QueueStats {
     pub extends_total: u64,
     pub notify_drops_total: u64,
     pub redeliveries_total: u64,
+    pub dead_letter_transitions_total: u64,
+    pub complete_rejected_total: u64,
     pub operations_per_second: f64,
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
@@ -240,6 +242,8 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
                 extends_total: runtime.queue_extends_total(),
                 notify_drops_total: runtime.queue_notify_drops_total(),
                 redeliveries_total: runtime.queue_redeliveries_total(),
+                dead_letter_transitions_total: runtime.queue_dead_letter_transitions_total(),
+                complete_rejected_total: runtime.queue_complete_rejected_total(),
                 operations_per_second: runtime.queue_operations_per_second(),
                 diagnostics: queue,
             },
@@ -408,6 +412,8 @@ async fn handle_queue_stats(
         extends_total: runtime.queue_extends_total(),
         notify_drops_total: runtime.queue_notify_drops_total(),
         redeliveries_total: runtime.queue_redeliveries_total(),
+        dead_letter_transitions_total: runtime.queue_dead_letter_transitions_total(),
+        complete_rejected_total: runtime.queue_complete_rejected_total(),
         operations_per_second: runtime.queue_operations_per_second(),
         diagnostics,
     })
