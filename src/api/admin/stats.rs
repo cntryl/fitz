@@ -168,7 +168,7 @@ pub struct ScheduleStats {
 }
 
 /// Handle /admin/stats endpoint
-pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+pub(crate) fn build_global_stats(runtime: &Runtime) -> GlobalStats {
     let troubleshooting::TroubleshootingSnapshot {
         global,
         kv,
@@ -178,8 +178,9 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
         rpc,
         lease,
         schedule,
-    } = troubleshooting::build_troubleshooting_snapshot(runtime.as_ref());
-    let stats = GlobalStats {
+    } = troubleshooting::build_troubleshooting_snapshot(runtime);
+
+    GlobalStats {
         broker: BrokerStats {
             uptime_seconds: runtime.uptime().as_secs(),
             connections: runtime.connection_count(),
@@ -305,19 +306,28 @@ pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>
             },
         },
         diagnostics: global,
-    };
+    }
+}
 
-    crate::api::admin::json_response(stats)
+pub(crate) fn build_global_troubleshooting(
+    runtime: &Runtime,
+) -> troubleshooting::GlobalTroubleshootingDiagnostics {
+    let troubleshooting::TroubleshootingSnapshot { global, .. } =
+        troubleshooting::build_troubleshooting_snapshot(runtime);
+
+    global
+}
+
+/// Handle /admin/stats endpoint
+pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+    crate::api::admin::json_response(build_global_stats(runtime.as_ref()))
 }
 
 /// Handle /admin/troubleshooting endpoint
 pub async fn handle_global_troubleshooting(
     runtime: Arc<Runtime>,
 ) -> Result<Response<Body>, Infallible> {
-    let troubleshooting::TroubleshootingSnapshot { global, .. } =
-        troubleshooting::build_troubleshooting_snapshot(runtime.as_ref());
-
-    super::json_response(global)
+    super::json_response(build_global_troubleshooting(runtime.as_ref()))
 }
 
 /// Handle domain-specific stats endpoints

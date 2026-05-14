@@ -12,6 +12,8 @@ pub(crate) mod read_model;
 mod stats;
 pub(crate) mod troubleshooting;
 
+pub(crate) use stats::{build_global_stats, build_global_troubleshooting};
+
 pub use handlers::handle_request;
 pub use list::*;
 pub use probes::{HealthStatus, ReadyStatus, StartupStatus};

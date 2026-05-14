@@ -128,12 +128,10 @@ Current surface:
 
 - Admin read model exposes live Notice subscriptions and routes.
 - Global stats include `subscriptions_active` and `publishes_per_second`.
-- Prometheus currently exports `fitz_notice_subscriptions_active`.
+- Prometheus currently exports `fitz_notice_subscriptions_active`, `fitz_notice_unsubscribes_total`, `fitz_notice_delivery_drops_total`, and `fitz_notice_wildcard_limit_rejects_total`.
 
 Current gaps to keep explicit:
 
-- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) has a stub route for the per-domain Notice stats endpoint; it currently returns not_implemented. The domain data is not yet populated.
-- The metrics surface does not yet expose publish-failure, wildcard-limit-reject, or dropped-delivery counters.
 - Admin views are live current-process state only and must never be described as durable history.
 
 ## G. Highest-Value Tests
@@ -146,7 +144,8 @@ Current gaps to keep explicit:
 	- [tests/notice_e2e.rs](../../tests/notice_e2e.rs) `should_require_resubscribe_after_broker_restart`
 - Race and cleanup tests:
 	- [tests/notice_e2e.rs](../../tests/notice_e2e.rs) `should_remove_notice_subscription_when_subscriber_disconnects`
-	- required missing regression such as `should_not_deliver_notice_after_disconnect_cleanup_given_publish_race`
+	- [tests/notice_advanced.rs](../../tests/notice_advanced.rs) `should_not_deliver_notice_after_disconnect_cleanup_given_publish_race`
+	- [src/boot/domains/notice_sink.rs](../../src/boot/domains/notice_sink.rs) `should_increment_delivery_drop_counter_given_failing_subscriber_route`
 - Integration tests:
 	- [tests/notice_e2e.rs](../../tests/notice_e2e.rs) TCP and WebSocket publish and wildcard cases
 - Benchmark and stress tests:

@@ -1711,6 +1711,12 @@ impl QueueActor {
 
         for id in released.iter().copied() {
             self.inflight.remove(&id);
+            if let Some(record) = self.records.get_mut(&id) {
+                record.state = QueueState::Ready;
+                record.visible_at_ms = 0;
+                record.inflight_token = None;
+                record.inflight_expires_at_ms = None;
+            }
             self.push_ready(id);
         }
 

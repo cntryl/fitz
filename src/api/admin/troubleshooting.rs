@@ -345,7 +345,11 @@ fn calculate_confidence(
     let coverage_signal = coverage_target == 0 || observed_support >= coverage_target;
     let freshness_score = if freshness_signal {
         1.0
-    } else if transition_signal || last_success_at.is_some() || last_failure_at.is_some() || age_signal {
+    } else if transition_signal
+        || last_success_at.is_some()
+        || last_failure_at.is_some()
+        || age_signal
+    {
         0.6
     } else {
         0.35
@@ -367,9 +371,13 @@ fn calculate_confidence(
     }
 
     if coverage_signal {
-        signals_matched.push(format!("rule_coverage_{observed_support}_of_{coverage_target}"));
+        signals_matched.push(format!(
+            "rule_coverage_{observed_support}_of_{coverage_target}"
+        ));
     } else {
-        signals_missing.push(format!("rule_coverage_{observed_support}_of_{coverage_target}"));
+        signals_missing.push(format!(
+            "rule_coverage_{observed_support}_of_{coverage_target}"
+        ));
     }
 
     if bottleneck_signal {
@@ -387,7 +395,10 @@ fn calculate_confidence(
     } else {
         let primary_score = if primary_signal { 1.0 } else { 0.35 };
         let bottleneck_score = if bottleneck_signal { 1.0 } else { 0.0 };
-        (0.25 + 0.30 * primary_score + 0.20 * coverage_ratio + 0.10 * freshness_score
+        (0.25
+            + 0.30 * primary_score
+            + 0.20 * coverage_ratio
+            + 0.10 * freshness_score
             + 0.05 * bottleneck_score)
             .min(0.90)
     };
@@ -496,18 +507,19 @@ impl DiagnosticHotspot {
         let area = self.area.as_ref()?;
         let resource = self.resource.as_ref()?;
         if self.domain == "queue" {
-            self.family.map(|family| {
-                format!(
-                    "inspect /api/v1/{}/realms/{}/areas/{}/resources/{}?family={}",
-                    self.domain, realm, area, resource, family
-                )
-            })
-            .or_else(|| {
-                Some(format!(
-                    "inspect /api/v1/{}/realms/{}/areas/{}/resources/{}",
-                    self.domain, realm, area, resource
-                ))
-            })
+            self.family
+                .map(|family| {
+                    format!(
+                        "inspect /api/v1/{}/realms/{}/areas/{}/resources/{}?family={}",
+                        self.domain, realm, area, resource, family
+                    )
+                })
+                .or_else(|| {
+                    Some(format!(
+                        "inspect /api/v1/{}/realms/{}/areas/{}/resources/{}",
+                        self.domain, realm, area, resource
+                    ))
+                })
         } else {
             Some(format!(
                 "inspect /api/v1/{}/realms/{}/areas/{}/resources/{}",
@@ -1196,7 +1208,9 @@ fn summarize_incident(top_bottleneck: &Option<DiagnosticHotspot>) -> IncidentSum
         severity: top.snapshot.severity.clone(),
         confidence: top.snapshot.confidence,
         explanation,
-        recommended_next_query: suggested_next_queries.first().map(|query| query.endpoint.clone()),
+        recommended_next_query: suggested_next_queries
+            .first()
+            .map(|query| query.endpoint.clone()),
         suggested_next_queries,
     }
 }
@@ -1945,9 +1959,7 @@ fn analyze_rpc(
                 .filter(|ts| is_recent(*ts, now))
                 .count() as u64;
         let contention_count = pending_count.saturating_sub(worker_count) as u64;
-        let (label, trend, severity, bottleneck) = if worker_count == 0
-            && pending_count > 0
-        {
+        let (label, trend, severity, bottleneck) = if worker_count == 0 && pending_count > 0 {
             (
                 DiagnosisLabel::WorkerStarvation,
                 DiagnosticTrend::Growing,
@@ -4760,7 +4772,7 @@ mod tests {
         assert!(summary.explanation.contains("Backlog is growing"));
         assert_eq!(
             summary.recommended_next_query.as_deref(),
-            Some("inspect /api/v1/queue/realms/prod/areas/jobs/resources/worker/events?family=1")
+            Some("inspect /api/v1/queue/realms/prod/areas/jobs/resources/worker?family=1")
         );
     }
 }

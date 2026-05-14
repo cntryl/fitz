@@ -16,5 +16,6 @@
 
 pub mod admin;
 pub mod ingress;
+pub mod mcp;
 pub mod tcp;
 pub mod ws;

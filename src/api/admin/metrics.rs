@@ -467,7 +467,9 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
-    output.push_str("# HELP fitz_lease_waiter_depth Total queued lease waiters across all resources\n");
+    output.push_str(
+        "# HELP fitz_lease_waiter_depth Total queued lease waiters across all resources\n",
+    );
     output.push_str("# TYPE fitz_lease_waiter_depth gauge\n");
     output.push_str(&format!(
         "fitz_lease_waiter_depth {}\n",

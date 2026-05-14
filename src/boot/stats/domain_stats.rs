@@ -202,7 +202,11 @@ impl Runtime {
     }
 
     pub fn rpc_requests_pending(&self) -> usize {
-        self.rpc_pending_snapshot().len()
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.rpc.pending_request_count())
+            .unwrap_or_else(|| self.rpc_pending_snapshot().len())
     }
 
     pub fn rpc_oldest_pending_request_age_seconds(&self) -> u64 {

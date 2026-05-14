@@ -1060,7 +1060,7 @@ mod tests {
         );
         let _subscribe_response = decode_notice_response(&subscriber_mailbox);
         sink.deliver(Envelope::from_route(
-            publisher_address,
+            publisher_address.clone(),
             notice_address.clone(),
             FrameContext::new(
                 publisher_session_id,
@@ -1264,6 +1264,74 @@ mod tests {
         let routes = admin_read_model.notice_routes(None);
         assert_notice_admin_subscriptions(&subscriptions, &[retained_route]);
         assert_notice_admin_routes(&routes, &[retained_route]);
+    }
+
+    #[test]
+    fn should_increment_delivery_drop_counter_given_failing_subscriber_route() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let notice_route = "notice://acme/app/events";
+        let notice_address = RouteAddress::new(family, Route::new(notice_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let sink = NoticeDomainSink::new(
+            router.clone(),
+            crate::api::admin::read_model::AdminReadModel::new(),
+        );
+
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            notice_route,
+            family,
+        );
+        let subscribe_response = decode_notice_response(&subscriber_mailbox);
+        assert_eq!(subscribe_response.status, 0);
+
+        let before_drops =
+            crate::boot::observability::metrics().counter_get("fitz_notice_delivery_drops_total");
+
+        struct FailingSink;
+
+        impl MailboxSink for FailingSink {
+            fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+                Err(DeliveryError::ActorStopped)
+            }
+
+            fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+                self.deliver(envelope)
+            }
+        }
+
+        router.register(subscriber_address.clone(), Arc::new(FailingSink));
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            publisher_address,
+            notice_address,
+            FrameContext::new(
+                11,
+                ChannelId::Sub,
+                MessageType::new(500),
+                encode_notice_publish(notice_route, b"dropped"),
+                family,
+            ),
+        ))
+        .expect("publish notice event");
+
+        // Assert
+        assert_eq!(
+            crate::boot::observability::metrics().counter_get("fitz_notice_delivery_drops_total"),
+            before_drops + 1
+        );
+        assert_eq!(sink.subscription_count(), 1);
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
     }
 
     #[test]
