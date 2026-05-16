@@ -29,6 +29,7 @@ Recommended optional inputs:
 
 1. Parse the suite file and execute every listed scenario in order.
 2. For each scenario, isolate state using unique route prefixes.
+  Scenario setups may include optional load-shaping knobs such as `concurrency_limit` and `burst_size`; runners should honor them when present and ignore unknown fields.
 3. Capture verdict using the result schema from the suite.
 4. Attach evidence in a language-native but normalized format:
 - operation traces
@@ -119,7 +120,7 @@ Minimal matrix:
 - CS-007..CS-010 enforce timeout/cancel/reconnect behavior parity.
 - CS-011..CS-013 enforce stream semantics.
 - CS-016 enforces filtered stream replay and optional stream metadata.
-- CS-014..CS-015 enforce concurrency and lifecycle cleanup semantics.
+- CS-014..CS-017 enforce concurrency, bounded-load, and lifecycle cleanup semantics.
 
 ## Adoption Steps
 

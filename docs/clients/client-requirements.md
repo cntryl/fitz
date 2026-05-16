@@ -232,11 +232,13 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 ### T1 — Goroutine Lifecycle
 
-**REQ-CONC-005 (T1)** The total number of goroutines spawned by the client MUST be bounded. The client MUST NOT spawn an unbounded goroutine per subscription or per notification.
+**REQ-CONC-005 (T1)** The total number of goroutines spawned by the client MUST be bounded. The client MUST NOT spawn an unbounded goroutine per subscription, per notification, or per burst of outbound work.
 
 **REQ-CONC-006 (T1)** All goroutines started by `Connect` or `Subscribe` MUST be cleanly stopped when `Close()` is called. Verification: goroutine count after `Close()` MUST return to baseline (testable via `runtime.NumGoroutine()`).
 
 **REQ-CONC-007 (T1)** Async handler goroutines MUST have a configurable maximum concurrency limit (`WithAsyncHandlerMaxConcurrency`) and a per-handler execution timeout (`WithAsyncHandlerTimeout`) to prevent runaway handlers from exhausting resources.
+
+**REQ-CONC-010 (T1)** The client MUST enforce a configurable per-connection in-flight work limit. When the limit is reached, the client MUST queue, block, or surface a retryable backpressure error instead of creating additional parallel work. The implementation MAY use a semaphore, bounded channel, worker pool, or equivalent primitive. The limit applies to all admitted outbound work on the connection.
 
 ### T2 — Multiplexer Correctness
 

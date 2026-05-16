@@ -1053,6 +1053,18 @@ Clients **MUST** interpret error codes using this mapping.
 - Client logs slow operations (> 1s)
 - Client can identify performance regressions
 
+### AC-PERF-006: Bounded Concurrency Under Burst Load
+
+**MUST** cap in-flight work under burst load
+**Given:** Client configured with a finite max-in-flight limit and a burst of concurrent requests above that limit
+**When:** Client issues the burst across one or more domains
+**Then:**
+
+- Active in-flight requests or handler tasks never exceed the configured limit
+- Excess work is queued, blocked, or backpressured; client does NOT spawn unbounded goroutines, tasks, or promises
+- Backpressure or retryable overload errors are surfaced, or the client waits until capacity frees before retrying
+- Closing the client during load releases background work and returns the client to baseline
+
 ## Appendix: Error Code Reference
 
 This appendix provides a complete reference of all Fitz error codes by domain, as required by AC-ERROR-002.

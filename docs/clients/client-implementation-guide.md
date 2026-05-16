@@ -1109,7 +1109,7 @@ public class Connection
 {
     public async Task SendRequestAsync<TReq>(MessageType type, TReq request, CancellationToken ct)
     {
-        // Library code should use ConfigureAwait(false)
+        // Library code should use ConfigureAwait(false) and a bounded semaphore to cap concurrent sends.
         await _semaphore.WaitAsync(ct).ConfigureAwait(false);
         try
         {

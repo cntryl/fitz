@@ -393,16 +393,17 @@ const rpc2 = client.rpcRequest("rpc://prod/app/config/get", reply_route, uuid2, 
 const [resp1, resp2] = await Promise.all([rpc1, rpc2]);
 ```
 
-### Backpressure & Flow Control
+### Backpressure, Concurrency Budget & Flow Control
 
-Clients SHOULD implement backpressure:
+Clients MUST implement backpressure and a bounded concurrency budget:
 
-1. **Per-channel backpressure**: If a channel queue fills (typical limit: 1000 messages), retry with exponential backoff before sending next request
-2. **Per-connection monitoring**: Track in-flight request count; implement concurrency limit on client side (e.g., max 50 concurrent requests)
-3. **Graceful degradation**: If server rejects with backpressure error (429-like), pause and retry
+1. **Per-connection concurrency ceiling**: Clients MUST expose a configurable maximum in-flight work limit per connection. The limit applies to all admitted outbound work on that connection.
+2. **Bounded admission**: When the ceiling is reached, the client MUST queue, block, or surface a retryable backpressure error before admitting more work. The client MUST NOT spawn unbounded goroutines, tasks, or promises to absorb load.
+3. **Per-channel backpressure**: If a channel queue fills (typical limit: 1000 messages), retry with exponential backoff before sending the next request.
+4. **Graceful degradation**: If the server rejects with backpressure error (429-like), pause and retry after backoff instead of flooding the broker.
 
 ```python
-# Recommended: Limit concurrent operations per connection
+# Bound concurrent operations per connection with a semaphore or equivalent
 MAX_INFLIGHT = 50
 
 async def safe_enqueue(client, route, payload):
@@ -1052,11 +1053,12 @@ Clients MUST:
 
 ## Flow Control & Backpressure
 
-Clients SHOULD implement queueing and backoff:
+Clients MUST implement queueing, backoff, and bounded concurrency:
 
-- Implement configurable write queue with maximum size
-- On queue full, return error to caller (do NOT silently drop)
-- Implement exponential backoff for retries
+- Implement configurable write queue with maximum size.
+- Enforce a configurable per-connection maximum in-flight work limit.
+- When the queue or concurrency limit is reached, surface a retryable backpressure error or wait for capacity before admitting more work. Do NOT silently drop or spawn unbounded work.
+- Implement exponential backoff for retries.
 
 **Server backpressure signaling:**
 

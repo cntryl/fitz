@@ -1,7 +1,7 @@
 version: "1.0"
 name: "fitz-cross-language-client-conformance"
 status: "draft"
-updated: "2026-03-17"
+updated: "2026-05-16"
 owners:
   - "fitz server"
   - "fitz-go"
@@ -229,6 +229,24 @@ scenarios:
       - "client can issue a filtered read using StreamFilterSet"
       - "filtered replay returns matching records and synthetic filtered markers in offset order"
       - "cursor advances monotonically through filtered offsets"
+
+  - id: "CS-017"
+    title: "bounded concurrency under burst load"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+      concurrency_limit: 16
+      burst_size: 64
+    expected:
+      - "client enforces the configured in-flight ceiling"
+      - "requests above the ceiling are queued or backpressured instead of spawning unbounded work"
+      - "active work drains successfully once capacity frees"
+      - "client close returns background work to baseline"
+    required_evidence:
+      - "observed_max_inflight"
+      - "backpressure_or_queueing_event"
+      - "post_close_active_work_count"
 
 scoring:
   fail_on:
