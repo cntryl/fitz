@@ -694,7 +694,7 @@ impl StreamDomainSink {
                 session_owners.remove(&stream_session_id);
             }
             self.counter_add("fitz_stream_append_sessions_ended_total", removed_count);
-            self.mark_admin_snapshot_dirty();
+            self.admin_snapshot_dirty.store(true, Ordering::Relaxed);
         }
     }
 
