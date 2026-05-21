@@ -28,7 +28,7 @@ services:
       FITZ_ADMIN_JWT_SECRET: "test-admin-jwt-secret"
       FITZ_JWT_HMAC_SECRET: "test-secret-key"
       FITZ_JWT_AUDIENCE: "fitz"
-      FITZ_STORAGE_MODE: "memory"
+      FITZ_STORAGE_MODE: "local"
       FITZ_STORAGE_PATH: "/data"
       RUST_LOG: "info,fitz=trace"
     restart: unless-stopped
@@ -47,7 +47,7 @@ services:
       FITZ_ADMIN_USERNAME: "admin"
       FITZ_ADMIN_PASSWORD_HASH: "$$argon2id$$v=19$$m=19456,t=2,p=1$$Zml0ei1hZG1pbi1zYWx0$$xPKQoXK1gnKwsi41tvU+I136zdFwrtilblZpeSf3HeU"
       FITZ_ADMIN_JWT_SECRET: "test-admin-jwt-secret"
-      FITZ_STORAGE_MODE: "memory"
+      FITZ_STORAGE_MODE: "local"
       FITZ_STORAGE_PATH: "/data"
       RUST_LOG: "info,fitz=trace"
     restart: unless-stopped

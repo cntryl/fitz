@@ -26,7 +26,16 @@ import { createNoticeOverviewQuery } from "@/features/notice/notice-query";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
 import { createScheduleOverviewQuery } from "@/features/schedule/schedule-query";
 import { createStreamOverviewQuery } from "@/features/stream/stream-query";
+import {
+  createResourceInventoryQuery,
+  createResourceQuery,
+} from "@/features/resource/resource-query";
+import { resourceService } from "@/features/resource/resource-service";
+import { createMetricsOverviewQuery } from "@/features/metrics/metrics-query";
+import { metricsService } from "@/features/metrics/metrics-service";
+import { parsePrometheusMetrics } from "@/features/metrics/metrics-mappers";
 import { createSystemOverviewQuery } from "@/features/system/system-query";
+import { createHealthSummaryQuery } from "@/features/system/health-query";
 import { kvService } from "@/features/kv/kv-service";
 import { leaseService } from "@/features/lease/lease-service";
 import { noticeService } from "@/features/notice/notice-service";
@@ -118,6 +127,14 @@ describe("Data query layer", () => {
     expect(typeof createStreamOverviewQuery).toBe("function");
     expect(createSystemOverviewQuery).toBeDefined();
     expect(typeof createSystemOverviewQuery).toBe("function");
+    expect(createHealthSummaryQuery).toBeDefined();
+    expect(typeof createHealthSummaryQuery).toBe("function");
+    expect(createResourceInventoryQuery).toBeDefined();
+    expect(typeof createResourceInventoryQuery).toBe("function");
+    expect(createResourceQuery).toBeDefined();
+    expect(typeof createResourceQuery).toBe("function");
+    expect(createMetricsOverviewQuery).toBeDefined();
+    expect(typeof createMetricsOverviewQuery).toBe("function");
 
     expect(kvService.getOverview).toBeDefined();
     expect(typeof kvService.getOverview).toBe("function");
@@ -135,8 +152,61 @@ describe("Data query layer", () => {
     expect(typeof queueService.getOverview).toBe("function");
     expect(queueResourceService.getResource).toBeDefined();
     expect(typeof queueResourceService.getResource).toBe("function");
+    expect(resourceService.getResourceInventory).toBeDefined();
+    expect(typeof resourceService.getResourceInventory).toBe("function");
+    expect(resourceService.getResource).toBeDefined();
+    expect(typeof resourceService.getResource).toBe("function");
+    expect(metricsService.getOverview).toBeDefined();
+    expect(typeof metricsService.getOverview).toBe("function");
     expect(systemService.getOverview).toBeDefined();
     expect(typeof systemService.getOverview).toBe("function");
+  });
+
+  it("parses Prometheus metrics into searchable families", () => {
+    expect(
+      parsePrometheusMetrics(`# HELP fitz_rpc_requests_total RPC requests
+# TYPE fitz_rpc_requests_total counter
+fitz_rpc_requests_total{realm="prod",area="api"} 42
+fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
+`),
+    ).toEqual({
+      raw: `# HELP fitz_rpc_requests_total RPC requests
+# TYPE fitz_rpc_requests_total counter
+fitz_rpc_requests_total{realm="prod",area="api"} 42
+fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
+`,
+      families: [
+        {
+          name: "fitz_queue_ready",
+          samples: [
+            {
+              labels: {
+                area: "jobs",
+                realm: "prod",
+                resource: "emails",
+              },
+              name: "fitz_queue_ready",
+              value: 7,
+            },
+          ],
+        },
+        {
+          help: "RPC requests",
+          name: "fitz_rpc_requests_total",
+          samples: [
+            {
+              labels: {
+                area: "api",
+                realm: "prod",
+              },
+              name: "fitz_rpc_requests_total",
+              value: 42,
+            },
+          ],
+          type: "counter",
+        },
+      ],
+    });
   });
 
   it("maps queue DTOs to camelCase app models", () => {

@@ -33,11 +33,17 @@ async function signIn(payload: LoginPayload, options: ServiceRequestOptions = {}
 }
 
 async function signOut(options: ServiceRequestOptions = {}): Promise<void> {
-  ensureResponseOk(await apiv1.deleteAdminSession(options), "Unable to sign out");
+  const response = await apiv1.deleteAdminSession(options);
+
+  if (response.status === 401) {
+    return;
+  }
+
+  ensureResponseOk(response, "Unable to sign out");
 }
 
 async function listActiveSessions(
-  realm: string | undefined = undefined,
+  realm?: string,
   options: ServiceRequestOptions = {},
 ): Promise<ActiveSessionsOverview> {
   const response = await apiv1.listActiveSessions(realm ? { realm } : undefined, options);

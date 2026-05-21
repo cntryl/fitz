@@ -1,9 +1,12 @@
 import { state } from "@askrjs/askr";
-import { Button, Input, Label } from "@askrjs/ui";
+import { Input, Label } from "@askrjs/ui";
 import { AlertTriangleIcon } from "@askrjs/lucide";
-import { Badge, EmptyState, SidebarLayout, Spinner } from "@askrjs/themes/components";
+import { Button } from "@askrjs/themes/controls";
+import { EmptyState, Spinner } from "@askrjs/themes/feedback";
+import { Badge } from "@askrjs/themes/surfaces";
 import DomainHeader from "@/components/shared/domain-header";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import SidebarLayout from "@/components/shared/sidebar-layout";
 import SessionTable from "@/components/shared/session-table";
 import { createActiveSessionsQuery } from "@/features/session/session-query";
 import { formatUnknownError } from "@/shared/errors/format";

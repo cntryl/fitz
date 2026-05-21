@@ -1,7 +1,8 @@
-import { For } from "@askrjs/askr";
+import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import { GaugeIcon } from "@askrjs/lucide";
-import { EmptyState, Section } from "@askrjs/themes/components";
+import { EmptyState } from "@askrjs/themes/feedback";
+import { Section } from "@askrjs/themes/layouts";
 
 export interface DomainRealm {
   realm: string;

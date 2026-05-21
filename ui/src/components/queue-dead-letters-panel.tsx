@@ -4,7 +4,7 @@ import {
   type QueueResourceRef,
 } from "@/features/queue/queue-query";
 import { AlertTriangleIcon, GaugeIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import DomainHeader from "@/components/shared/domain-header";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";

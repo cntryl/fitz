@@ -39,7 +39,7 @@ The SPA uses the existing admin session endpoints at `/api/v1/session`.
 ## Stack
 
 - `@askrjs/askr` for SPA bootstrapping, routing, and state/resources
-- `@askrjs/askr-ui` for headless UI primitives
-- `@askrjs/askr-themes` for the default theme baseline
-- `@askrjs/icons-lucide` for icon components
+- `@askrjs/ui` for lower-level headless primitives
+- `@askrjs/themes` for the default theme baseline and themed composition helpers
+- `@askrjs/lucide` for icon components
 - Vite+ for build, lint, format, and test tooling

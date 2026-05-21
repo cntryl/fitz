@@ -141,6 +141,51 @@
   gap: 0.75rem;
 }
 
+.resource-workbench {
+  display: grid;
+  gap: 1rem;
+}
+
+.resource-metric-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem;
+}
+
+.resource-metric {
+  display: grid;
+  gap: 0.25rem;
+  min-inline-size: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--ak-color-border);
+  border-radius: var(--ak-radius-md);
+  background: var(--ak-color-surface);
+}
+
+.resource-metric span {
+  color: var(--ak-color-text-muted);
+  font-size: var(--ak-font-size-xs);
+}
+
+.resource-metric strong {
+  overflow-wrap: anywhere;
+}
+
+.resource-raw {
+  max-block-size: 32rem;
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid var(--ak-color-border);
+  border-radius: var(--ak-radius-md);
+  background: var(--ak-color-surface-muted);
+  color: var(--ak-color-text);
+  font-size: var(--ak-font-size-sm);
+}
+
+.metrics-filter {
+  max-inline-size: 28rem;
+}
+
 .dashboard-status-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));

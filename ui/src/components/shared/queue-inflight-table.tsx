@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr";
+import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import type { QueueInflightMessage } from "@/features/queue/queue-resource-models";
 

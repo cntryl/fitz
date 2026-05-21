@@ -5,12 +5,16 @@ import DomainHeader from "@/components/shared/domain-header";
 import DomainIndex from "@/components/shared/domain-index";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainSidebar from "@/components/shared/domain-sidebar";
+import ResourceWorkbench from "@/components/shared/resource-workbench";
 import SessionTable from "@/components/shared/session-table";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
 import AdminHome from "@/pages/app/admin-home";
+import MetricsPage from "@/pages/app/metrics";
 import QueuePage from "@/pages/app/queue";
 import QueueResourcePage from "@/pages/app/queue-resource";
+import ResourceDetailPage from "@/pages/app/resource-detail";
 import KvPage from "@/pages/app/kv";
 import LeasePage from "@/pages/app/lease";
 import NoticePage from "@/pages/app/notice";
@@ -21,19 +25,13 @@ import StreamPage from "@/pages/app/stream";
 import AdminLogin from "@/pages/public/admin-login";
 import Home from "@/pages/public/home";
 import { getRoutes } from "@askrjs/askr/router";
-import {
-  Card,
-  EmptyState,
-  NavBrand,
-  NavGroup,
-  NavItem,
-  NavLink,
-  Navbar,
-  Section,
-  SidebarLayout,
-} from "@askrjs/themes/components";
+import { EmptyState } from "@askrjs/themes/feedback";
+import { NavBrand, NavGroup, NavItem, NavLink, Navbar } from "@askrjs/themes/navs";
+import { Section } from "@askrjs/themes/layouts";
+import { Card } from "@askrjs/themes/surfaces";
 import { domainLinks, shellLinks } from "@/shared/navigation/domains";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
+import SidebarLayout from "@/components/shared/sidebar-layout";
 import "@/pages/_routes";
 
 describe("Admin UI", () => {
@@ -64,6 +62,8 @@ describe("Admin UI", () => {
     expect(typeof QueuePage).toBe("function");
     expect(QueueResourcePage).toBeDefined();
     expect(typeof QueueResourcePage).toBe("function");
+    expect(ResourceDetailPage).toBeDefined();
+    expect(typeof ResourceDetailPage).toBe("function");
     expect(KvPage).toBeDefined();
     expect(typeof KvPage).toBe("function");
     expect(LeasePage).toBeDefined();
@@ -78,6 +78,8 @@ describe("Admin UI", () => {
     expect(typeof SessionsPage).toBe("function");
     expect(StreamPage).toBeDefined();
     expect(typeof StreamPage).toBe("function");
+    expect(MetricsPage).toBeDefined();
+    expect(typeof MetricsPage).toBe("function");
   });
 
   it("defines the admin home page", () => {
@@ -99,8 +101,12 @@ describe("Admin UI", () => {
     expect(typeof DomainMetricTable).toBe("function");
     expect(DomainRealmTable).toBeDefined();
     expect(typeof DomainRealmTable).toBe("function");
+    expect(DomainResourceBrowser).toBeDefined();
+    expect(typeof DomainResourceBrowser).toBe("function");
     expect(DomainSidebar).toBeDefined();
     expect(typeof DomainSidebar).toBe("function");
+    expect(ResourceWorkbench).toBeDefined();
+    expect(typeof ResourceWorkbench).toBe("function");
     expect(Section).toBeDefined();
     expect(typeof Section).toBe("function");
     expect(Card).toBeDefined();
@@ -131,14 +137,21 @@ describe("Admin UI", () => {
         "/admin",
         "/login",
         "/sessions",
+        "/metrics",
         "/queue",
         "/queue/{realm}/{area}/{resource}",
         "/kv",
+        "/kv/{realm}/{area}/{resource}",
         "/lease",
+        "/lease/{realm}/{area}/{resource}",
         "/notice",
+        "/notice/{realm}/{area}/{resource}",
         "/rpc",
+        "/rpc/{realm}/{area}/{resource}",
         "/schedule",
+        "/schedule/{realm}/{area}/{resource}",
         "/stream",
+        "/stream/{realm}/{area}/{resource}",
       ]),
     );
   });

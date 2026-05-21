@@ -1,11 +1,11 @@
 /*
- * Candidate AskR theme corrections.
- * Keep framework-level missing behaviors here so they are easy to port upstream.
+ * Fitz UI theme refinements.
+ * Keep app-specific adjustments here and use public Askr theme data slots.
  */
 
 /*
- * Sidebar navigation needs a vertical primitive. AskR's Navbar/NavGroup styles are
- * row-oriented today, so this defines the missing stacked sidebar semantics.
+ * The admin sidebar nests app-specific section markup inside the Askr Sidebar.
+ * These rules align those sections with the public sidebar/nav data slots.
  */
 [data-slot="sidebar"] > nav {
   display: grid;

@@ -1,12 +1,13 @@
-# syntax=docker/dockerfile:1.4
 
 # Stage 1: Build UI (Askr + Vite+)
 FROM node:slim as ui-builder
 
+# Install dependencies needed for the curl command
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bash curl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
+# Install Vite+ globally
 RUN curl -fsSL https://vite.plus | bash
 
 ENV PATH="/root/.vite-plus/bin:${PATH}"
@@ -17,13 +18,13 @@ WORKDIR /ui
 COPY ui/package.json ui/package-lock.json* ./
 
 # Install dependencies
-RUN vp install
+RUN npm ci
 
 # Copy UI source
 COPY ui/ ./
 
 # Build production UI
-RUN vp build
+RUN npm run build
 
 # Stage 2: Build Rust binary
 FROM rust:slim as builder
@@ -48,6 +49,9 @@ COPY . .
 RUN cargo build --release --locked \
   && strip target/release/fitz || true
 
+# Prepare a writable storage directory for the non-root runtime user.
+RUN mkdir -p /usr/src/fitz/runtime-data
+
 # Stage 3: Runtime
 FROM gcr.io/distroless/cc-debian12
 
@@ -58,6 +62,9 @@ WORKDIR /app
 
 # Copy the binary from builder
 COPY --from=builder /usr/src/fitz/target/release/fitz /app/fitz
+
+# Provide a writable /data path for local disk storage.
+COPY --from=builder --chown=65532:65532 /usr/src/fitz/runtime-data/ /data/
 
 # Copy SPA files for admin UI (built to ui/dist)
 COPY --from=ui-builder /ui/dist/ /app/public/

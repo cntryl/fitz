@@ -1,5 +1,5 @@
-import { Button } from "@askrjs/ui";
 import { ActivityIcon } from "@askrjs/lucide";
+import { Button } from "@askrjs/themes/controls";
 
 export interface DomainHeaderProps {
   domain: string;
@@ -8,7 +8,12 @@ export interface DomainHeaderProps {
   onRefresh?: () => void;
 }
 
-export default function DomainHeader({ domain, title, description, onRefresh }: DomainHeaderProps) {
+export default function DomainHeader({
+  domain: _domain,
+  title,
+  description,
+  onRefresh,
+}: DomainHeaderProps) {
   return (
     <header class="domain-header">
       <div class="domain-header-copy">

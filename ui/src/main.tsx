@@ -1,4 +1,4 @@
-import { createSPA } from "@askrjs/askr";
+import { createSPA } from "@askrjs/askr/boot";
 import { getManifest } from "@askrjs/askr/router";
 import { sessionRouteAuth } from "@/features/session/session-auth";
 

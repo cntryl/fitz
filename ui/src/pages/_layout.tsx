@@ -1,5 +1,5 @@
 import "../styles.css";
-import { ThemeProvider } from "@askrjs/themes/components";
+import { ThemeProvider } from "@askrjs/themes/theme";
 
 export default function RootLayout({ children }: { children?: unknown }) {
   return (

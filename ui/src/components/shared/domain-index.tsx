@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr";
+import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import {
   Card,
@@ -6,8 +6,8 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  Section,
-} from "@askrjs/themes/components";
+} from "@askrjs/themes/surfaces";
+import { Section } from "@askrjs/themes/layouts";
 import type { DomainLink } from "@/shared/navigation/domains";
 
 export interface DomainIndexProps {

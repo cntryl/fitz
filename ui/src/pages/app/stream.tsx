@@ -1,15 +1,18 @@
-import { SidebarLayout } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
+import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import SidebarLayout from "@/components/shared/sidebar-layout";
 import { AlertTriangleIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createStreamOverviewQuery } from "@/features/stream/stream-query";
+import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatUnknownError } from "@/shared/errors/format";
 
 export default function StreamPage() {
   const overview = createStreamOverviewQuery();
+  const inventory = createResourceInventoryQuery("stream");
   const data = overview.data;
   const sidebar = createDomainSidebar({
     data,
@@ -78,6 +81,12 @@ export default function StreamPage() {
               title="Stream realms"
               realms={data.realms}
               emptyMessage="No stream realms are currently visible."
+            />
+
+            <DomainResourceBrowser
+              domain="stream"
+              inventory={inventory.data}
+              loading={inventory.loading}
             />
           </>
         ) : null}

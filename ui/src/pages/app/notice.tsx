@@ -1,15 +1,18 @@
-import { SidebarLayout } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
+import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import SidebarLayout from "@/components/shared/sidebar-layout";
 import { AlertTriangleIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createNoticeOverviewQuery } from "@/features/notice/notice-query";
+import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatUnknownError } from "@/shared/errors/format";
 
 export default function NoticePage() {
   const overview = createNoticeOverviewQuery();
+  const inventory = createResourceInventoryQuery("notice");
   const data = overview.data;
   const sidebar = createDomainSidebar({
     data,
@@ -73,6 +76,12 @@ export default function NoticePage() {
               title="Notice realms"
               realms={data.realms}
               emptyMessage="No notice realms are currently visible."
+            />
+
+            <DomainResourceBrowser
+              domain="notice"
+              inventory={inventory.data}
+              loading={inventory.loading}
             />
           </>
         ) : null}

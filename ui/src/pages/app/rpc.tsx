@@ -1,18 +1,20 @@
-import { SidebarLayout } from "@askrjs/themes/components";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/components";
+} from "@askrjs/themes/surfaces";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
+import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import SidebarLayout from "@/components/shared/sidebar-layout";
 import { AlertTriangleIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
+import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatUnknownError } from "@/shared/errors/format";
 
 function summarizeRpcPressure(workersRegistered: number, requestsPending: number) {
@@ -38,6 +40,7 @@ function summarizeRpcPressure(workersRegistered: number, requestsPending: number
 
 export default function RpcPage() {
   const overview = createRpcOverviewQuery();
+  const inventory = createResourceInventoryQuery("rpc");
   const data = overview.data;
   const sidebar = createDomainSidebar({
     data,
@@ -123,6 +126,12 @@ export default function RpcPage() {
               title="RPC realms"
               realms={data.realms}
               emptyMessage="No RPC realms are currently visible."
+            />
+
+            <DomainResourceBrowser
+              domain="rpc"
+              inventory={inventory.data}
+              loading={inventory.loading}
             />
           </>
         ) : null}

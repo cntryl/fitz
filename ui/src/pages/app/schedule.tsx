@@ -1,15 +1,18 @@
-import { SidebarLayout } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
+import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import SidebarLayout from "@/components/shared/sidebar-layout";
 import { AlertTriangleIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createScheduleOverviewQuery } from "@/features/schedule/schedule-query";
+import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatUnknownError } from "@/shared/errors/format";
 
 export default function SchedulePage() {
   const overview = createScheduleOverviewQuery();
+  const inventory = createResourceInventoryQuery("schedule");
   const data = overview.data;
   const sidebar = createDomainSidebar({
     data,
@@ -78,6 +81,12 @@ export default function SchedulePage() {
               title="Schedule realms"
               realms={data.realms}
               emptyMessage="No schedule realms are currently visible."
+            />
+
+            <DomainResourceBrowser
+              domain="schedule"
+              inventory={inventory.data}
+              loading={inventory.loading}
             />
           </>
         ) : null}

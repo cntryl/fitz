@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr";
+import { For } from "@askrjs/askr/control";
 import {
   Card,
   CardContent,
@@ -6,7 +6,7 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/components";
+} from "@askrjs/themes/surfaces";
 
 export interface DomainSidebarStat {
   label: string;

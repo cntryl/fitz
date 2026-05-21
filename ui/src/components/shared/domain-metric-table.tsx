@@ -1,6 +1,6 @@
-import { For } from "@askrjs/askr";
+import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Section } from "@askrjs/themes/components";
+import { Section } from "@askrjs/themes/layouts";
 
 export interface DomainMetric {
   label: string;

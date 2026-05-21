@@ -4,15 +4,17 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  SidebarLayout,
-} from "@askrjs/themes/components";
+} from "@askrjs/themes/surfaces";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
+import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import SidebarLayout from "@/components/shared/sidebar-layout";
 import { AlertTriangleIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
+import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatUnknownError } from "@/shared/errors/format";
 
 function summarizeLeasePressure(leasesActive: number, waiterDepth: number, oldestLeaseAgeSeconds: number) {
@@ -38,6 +40,7 @@ function summarizeLeasePressure(leasesActive: number, waiterDepth: number, oldes
 
 export default function LeasePage() {
   const overview = createLeaseOverviewQuery();
+  const inventory = createResourceInventoryQuery("lease");
   const data = overview.data;
   const sidebar = createDomainSidebar({
     data,
@@ -127,6 +130,12 @@ export default function LeasePage() {
               title="Lease realms"
               realms={data.realms}
               emptyMessage="No lease realms are currently visible."
+            />
+
+            <DomainResourceBrowser
+              domain="lease"
+              inventory={inventory.data}
+              loading={inventory.loading}
             />
           </>
         ) : null}

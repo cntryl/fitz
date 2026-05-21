@@ -1,5 +1,5 @@
 import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/ui";
+import { Button } from "@askrjs/themes/controls";
 import {
   Badge,
   Card,
@@ -7,15 +7,16 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  SidebarLayout,
-} from "@askrjs/themes/components";
+} from "@askrjs/themes/surfaces";
 import DomainIndex from "@/components/shared/domain-index";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import SidebarLayout from "@/components/shared/sidebar-layout";
 import { AlertTriangleIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { formatUnknownError } from "@/shared/errors/format";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createSignOutMutation } from "@/features/session/session-mutation";
+import { createHealthSummaryQuery } from "@/features/system/health-query";
 import { createSystemOverviewQuery } from "@/features/system/system-query";
 import { domainLinks } from "@/shared/navigation/domains";
 
@@ -41,7 +42,9 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
-function formatBottleneckLabel(bottleneck: { domain?: string; resource?: string; area?: string; realm?: string } | null | undefined) {
+function formatBottleneckLabel(
+  bottleneck: { domain?: string | null; resource?: string | null; area?: string | null; realm?: string | null } | null | undefined,
+) {
   if (!bottleneck) {
     return "No active bottleneck";
   }
@@ -56,12 +59,16 @@ function formatBottleneckLabel(bottleneck: { domain?: string; resource?: string;
 export default function AdminHome() {
   const session = createCurrentSessionQuery();
   const signOut = createSignOutMutation();
+  const health = createHealthSummaryQuery();
   const system = createSystemOverviewQuery();
 
   async function onSignOut() {
-    await signOut.execute(undefined);
-    if (typeof window !== "undefined") {
-      window.location.replace("/login");
+    try {
+      await signOut.execute(undefined);
+    } finally {
+      if (typeof window !== "undefined") {
+        window.location.replace("/login");
+      }
     }
   }
 
@@ -195,9 +202,17 @@ export default function AdminHome() {
               <Card class="dashboard-status-card" variant="raised">
                 <CardHeader>
                   <CardTitle>Broker health</CardTitle>
-                  <CardDescription>{overview.healthStatus}</CardDescription>
+                  <CardDescription>{health.data?.readiness ?? overview.healthStatus}</CardDescription>
                 </CardHeader>
                 <CardContent class="dashboard-status-content">
+                  <div class="dashboard-metric">
+                    <span>Liveness</span>
+                    <strong>{health.data?.liveness ?? "checking"}</strong>
+                  </div>
+                  <div class="dashboard-metric">
+                    <span>Startup</span>
+                    <strong>{health.data?.startup ?? "checking"}</strong>
+                  </div>
                   <div class="dashboard-metric">
                     <span>Uptime</span>
                     <strong>{humanizeSeconds(overview.broker.uptimeSeconds)}</strong>
@@ -230,6 +245,31 @@ export default function AdminHome() {
                   )}
                 </CardContent>
               </Card>
+            </section>
+
+            <section class="domain-section">
+              <div class="domain-section-header">
+                <div>
+                  <p class="eyebrow">Recent signals</p>
+                  <h2>{overview.diagnostics.hotspots.length} hotspots</h2>
+                  <p>Current troubleshooting hotspots ranked by the broker diagnostics model.</p>
+                </div>
+              </div>
+
+              <div class="dashboard-domain-grid">
+                {overview.diagnostics.hotspots.slice(0, 6).map((hotspot) => (
+                  <Card class="dashboard-domain-card" variant="raised">
+                    <CardHeader>
+                      <CardTitle>{formatBottleneckLabel(hotspot)}</CardTitle>
+                      <CardDescription>{hotspot.severity}</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <p>{hotspot.current_stage}</p>
+                      <p>{hotspot.likely_bottleneck ?? "No likely bottleneck reported"}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
             </section>
 
             <section class="dashboard-domains">

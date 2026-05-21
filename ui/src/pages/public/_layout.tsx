@@ -1,6 +1,6 @@
 import { Link } from "@askrjs/askr/router";
 import { ShieldIcon, MoonIcon, SunIcon } from "@askrjs/lucide";
-import { ThemeToggle } from "@askrjs/themes/components";
+import { ThemeToggle } from "@askrjs/themes/theme";
 import RootLayout from "../_layout";
 
 export default function PublicLayout({ children }: { children?: unknown }) {

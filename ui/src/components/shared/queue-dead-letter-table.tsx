@@ -1,6 +1,5 @@
-import { For } from "@askrjs/askr";
+import { For } from "@askrjs/askr/control";
 import {
-  Button,
   Table,
   TableBody,
   TableCell,
@@ -8,6 +7,7 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@askrjs/ui";
+import { Button } from "@askrjs/themes/controls";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
 
 export interface QueueDeadLetterTableProps {
