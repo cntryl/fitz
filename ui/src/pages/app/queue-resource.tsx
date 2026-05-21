@@ -1,5 +1,5 @@
 import { state } from "@askrjs/askr";
-import { currentRoute, Link } from "@askrjs/askr/router";
+import { currentRoute, Link, navigate } from "@askrjs/askr/router";
 import { For } from "@askrjs/askr/control";
 import { Input, Label } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
@@ -10,11 +10,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@askrjs/themes/surfaces";
-import { EmptyState, Spinner } from "@askrjs/themes/feedback";
-import { AlertTriangleIcon, GaugeIcon } from "@askrjs/lucide";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import { QueryEmptyState, QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import SidebarLayout from "@/components/shared/sidebar-layout";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
@@ -27,7 +26,6 @@ import {
   createQueueResourceComparisonQuery,
   createQueueResourceQuery,
 } from "@/features/queue/queue-resource-query";
-import { formatUnknownError } from "@/shared/errors/format";
 
 function humanizeSeconds(seconds: number) {
   if (seconds < 60) return `${seconds}s`;
@@ -214,7 +212,7 @@ export default function QueueResourcePage() {
     }
 
     const search = nextQuery.toString();
-    window.location.assign(`/queue/${realm}/${area}/${resource}${search ? `?${search}` : ""}`);
+    navigate(`/queue/${realm}/${area}/${resource}${search ? `?${search}` : ""}`);
   }
 
   return (
@@ -234,31 +232,19 @@ export default function QueueResourcePage() {
         />
 
         {resourceQuery.loading ? (
-          <EmptyState
-            class="domain-state"
-            icon={<Spinner label="Loading" />}
-            description="Loading queue resource..."
-          />
+          <QueryLoadingState description="Loading queue resource..." />
         ) : null}
 
         {resourceQuery.error ? (
-          <EmptyState
-            class="domain-state"
-            icon={<AlertTriangleIcon size={18} />}
-            description={formatUnknownError(resourceQuery.error)}
-          />
+          <QueryErrorState error={resourceQuery.error} />
         ) : null}
 
         {actionError() ? (
-          <EmptyState
-            class="domain-state"
-            icon={<AlertTriangleIcon size={18} />}
-            description={formatUnknownError(actionError())}
-          />
+          <QueryErrorState error={actionError()} />
         ) : null}
 
         {data && !resourceQuery.loading && !resourceQuery.error ? (
-          <>
+          <div class="domain-stack">
             <Card class="domain-resource-card" variant="raised">
               <CardHeader>
                 <Badge>Queue Resource</Badge>
@@ -296,11 +282,7 @@ export default function QueueResourcePage() {
               </div>
 
               {data.inflight.length === 0 ? (
-                <EmptyState
-                  class="domain-state"
-                  icon={<GaugeIcon size={18} />}
-                  description="No inflight messages are visible for this resource."
-                />
+                <QueryEmptyState description="No inflight messages are visible for this resource." />
               ) : (
                 <QueueInflightTable messages={data.inflight} />
               )}
@@ -315,11 +297,7 @@ export default function QueueResourcePage() {
               </div>
 
               {data.deadLetters.length === 0 ? (
-                <EmptyState
-                  class="domain-state"
-                  icon={<GaugeIcon size={18} />}
-                  description="No dead-letter messages are visible for this resource."
-                />
+                <QueryEmptyState description="No dead-letter messages are visible for this resource." />
               ) : (
                 <QueueDeadLetterTable
                   messages={data.deadLetters}
@@ -342,11 +320,7 @@ export default function QueueResourcePage() {
               </div>
 
               {data.timeline.events.length === 0 ? (
-                <EmptyState
-                  class="domain-state"
-                  icon={<GaugeIcon size={18} />}
-                  description="No recent queue transitions are visible for this resource."
-                />
+                <QueryEmptyState description="No recent queue transitions are visible for this resource." />
               ) : (
                 <div class="domain-stack">
                   <Card class="domain-resource-card" variant="raised">
@@ -457,9 +431,7 @@ export default function QueueResourcePage() {
                       compareAreaInput.set("");
                       compareResourceInput.set("");
                       compareFamilyInput.set("");
-                      if (typeof window !== "undefined") {
-                        window.location.assign(`/queue/${realm}/${area}/${resource}`);
-                      }
+                      navigate(`/queue/${realm}/${area}/${resource}`);
                     }}
                   >
                     Clear
@@ -469,17 +441,9 @@ export default function QueueResourcePage() {
 
               {comparisonQuery ? (
                 comparisonQuery.loading ? (
-                  <EmptyState
-                    class="domain-state"
-                    icon={<Spinner label="Loading" />}
-                    description="Loading queue resource comparison..."
-                  />
+                  <QueryLoadingState description="Loading queue resource comparison..." />
                 ) : comparisonQuery.error ? (
-                  <EmptyState
-                    class="domain-state"
-                    icon={<AlertTriangleIcon size={18} />}
-                    description={formatUnknownError(comparisonQuery.error)}
-                  />
+                  <QueryErrorState error={comparisonQuery.error} />
                 ) : comparisonQuery.data ? (
                   <div class="domain-stack">
                     <Card class="domain-resource-card" variant="raised">
@@ -541,14 +505,10 @@ export default function QueueResourcePage() {
                   </div>
                 ) : null
               ) : (
-                <EmptyState
-                  class="domain-state"
-                  icon={<GaugeIcon size={18} />}
-                  description="Enter another queue scope to compare snapshots."
-                />
+                <QueryEmptyState description="Enter another queue scope to compare snapshots." />
               )}
             </section>
-          </>
+          </div>
         ) : null}
       </section>
     </SidebarLayout>

@@ -18,5 +18,5 @@ export const sessionRouteAuth: RouteAuthOptions = {
     }
   },
   loginPath: "/login",
-  guestRedirectTo: "/admin",
+  guestRedirectTo: "/",
 };

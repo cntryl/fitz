@@ -1,5 +1,5 @@
 import { state } from "@askrjs/askr";
-import { currentRoute } from "@askrjs/askr/router";
+import { currentRoute, navigate } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
 import {
@@ -18,10 +18,10 @@ function resolveNextTarget() {
     return next;
   }
 
-  return "/admin";
+  return "/";
 }
 
-export default function AdminLogin() {
+export default function Login() {
   const username = state("");
   const password = state("");
   const error = state("");
@@ -40,9 +40,7 @@ export default function AdminLogin() {
         username: username(),
         password: password(),
       });
-      if (typeof window !== "undefined") {
-        window.location.replace(nextTarget);
-      }
+      navigate(nextTarget, { history: "replace" });
     } catch (err) {
       error.set(err instanceof Error ? err.message : "Unable to sign in");
     } finally {

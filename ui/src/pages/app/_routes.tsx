@@ -1,6 +1,6 @@
 import { group, route } from "@askrjs/askr/router";
-import AppLayout from "./_layout";
-import AdminHome from "./admin-home";
+import Layout from "./_layout";
+import Home from "./home";
 import KvPage from "./kv";
 import LeasePage from "./lease";
 import MetricsPage from "./metrics";
@@ -14,8 +14,9 @@ import SessionsPage from "./sessions";
 import StreamPage from "./stream";
 
 export function registerAppRoutes() {
-  group({ layout: AppLayout, auth: true }, () => {
-    route("/admin", AdminHome);
+  group({ layout: Layout, auth: true }, () => {
+    route("/", Home);
+    route("/admin", Home);
     route("/sessions", SessionsPage);
     route("/metrics", MetricsPage);
     route("/queue", QueuePage);

@@ -9,13 +9,11 @@ import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import SidebarLayout from "@/components/shared/sidebar-layout";
-import { AlertTriangleIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
-import { formatUnknownError } from "@/shared/errors/format";
 
 function summarizeRpcPressure(workersRegistered: number, requestsPending: number) {
   if (workersRegistered === 0 && requestsPending > 0) {
@@ -74,23 +72,15 @@ export default function RpcPage() {
         />
 
         {overview.loading ? (
-          <EmptyState
-            class="domain-state"
-            icon={<Spinner label="Loading" />}
-            description="Loading RPC overview..."
-          />
+          <QueryLoadingState description="Loading RPC overview..." />
         ) : null}
 
         {overview.error ? (
-          <EmptyState
-            class="domain-state"
-            icon={<AlertTriangleIcon size={18} />}
-            description={formatUnknownError(overview.error)}
-          />
+          <QueryErrorState error={overview.error} />
         ) : null}
 
         {data && !overview.loading && !overview.error ? (
-          <>
+          <div class="domain-stack">
             {(() => {
               const pressure = summarizeRpcPressure(
                 data.stats.workersRegistered,
@@ -133,7 +123,7 @@ export default function RpcPage() {
               inventory={inventory.data}
               loading={inventory.loading}
             />
-          </>
+          </div>
         ) : null}
       </section>
     </SidebarLayout>

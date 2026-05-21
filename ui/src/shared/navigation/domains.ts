@@ -26,7 +26,7 @@ export interface ShellLink {
 
 export const shellLinks: ShellLink[] = [
   {
-    href: "/admin",
+    href: "/",
     title: "Dashboard",
     icon: LayoutDashboardIcon,
   },

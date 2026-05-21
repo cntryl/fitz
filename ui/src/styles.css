@@ -1,9 +1,1 @@
-@import "./styles/theme.css";
-@import "./styles/base.css";
-@import "./styles/guest.css";
-@import "./styles/shell.css";
-@import "./styles/auth.css";
-@import "./styles/queue.css";
-@import "./styles/domains.css";
-@import "./styles/responsive.css";
-@import "./styles/corrections.css";
+@import "@askrjs/themes/default";

@@ -1,4 +1,5 @@
 import { state } from "@askrjs/askr";
+import { navigate } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
 import {
@@ -11,12 +12,10 @@ import {
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import SidebarLayout from "@/components/shared/sidebar-layout";
-import { AlertTriangleIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createQueueOverviewQuery } from "@/features/queue/queue-query";
-import { formatUnknownError } from "@/shared/errors/format";
 
 function summarizeQueuePressure(messagesReady: number, messagesPending: number, deadLetters: number) {
   if (deadLetters > 0) {
@@ -92,26 +91,22 @@ export default function QueuePage() {
   function onJumpSubmit(event: Event) {
     event.preventDefault();
 
-    if (typeof window === "undefined") {
-      return;
-    }
-
     const nextDomain = domainInput().trim().toLowerCase() || "queue";
     const nextRealm = realmInput().trim();
     const nextArea = areaInput().trim();
     const nextResource = resourceInput().trim();
 
     if (nextDomain === "queue" && nextRealm && nextArea && nextResource) {
-      window.location.assign(`/queue/${encodeURIComponent(nextRealm)}/${encodeURIComponent(nextArea)}/${encodeURIComponent(nextResource)}`);
+      navigate(`/queue/${encodeURIComponent(nextRealm)}/${encodeURIComponent(nextArea)}/${encodeURIComponent(nextResource)}`);
       return;
     }
 
     if (nextDomain === "queue") {
-      window.location.assign("/queue");
+      navigate("/queue");
       return;
     }
 
-    window.location.assign(`/${encodeURIComponent(nextDomain)}`);
+    navigate(`/${encodeURIComponent(nextDomain)}`);
   }
 
   return (
@@ -131,23 +126,15 @@ export default function QueuePage() {
         />
 
         {overview.loading ? (
-          <EmptyState
-            class="domain-state"
-            icon={<Spinner label="Loading" />}
-            description="Loading queue overview..."
-          />
+          <QueryLoadingState description="Loading queue overview..." />
         ) : null}
 
         {overview.error ? (
-          <EmptyState
-            class="domain-state"
-            icon={<AlertTriangleIcon size={18} />}
-            description={formatUnknownError(overview.error)}
-          />
+          <QueryErrorState error={overview.error} />
         ) : null}
 
         {data && !overview.loading && !overview.error ? (
-          <>
+          <div class="domain-stack">
             {(() => {
               const pressure = summarizeQueuePressure(
                 data.stats.messagesReady,
@@ -278,7 +265,7 @@ export default function QueuePage() {
               realms={data.realms}
               emptyMessage="No queue realms are currently visible."
             />
-          </>
+          </div>
         ) : null}
       </section>
     </SidebarLayout>

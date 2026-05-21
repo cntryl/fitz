@@ -1,12 +1,10 @@
 import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
 import { Input, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { AlertTriangleIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { Section } from "@askrjs/themes/layouts";
 import DomainHeader from "@/components/shared/domain-header";
+import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import { createMetricsOverviewQuery } from "@/features/metrics/metrics-query";
-import { formatUnknownError } from "@/shared/errors/format";
 
 export default function MetricsPage() {
   const metrics = createMetricsOverviewQuery();
@@ -35,23 +33,15 @@ export default function MetricsPage() {
       </div>
 
       {metrics.loading ? (
-        <EmptyState
-          class="domain-state"
-          icon={<Spinner label="Loading" />}
-          description="Loading Prometheus metrics..."
-        />
+        <QueryLoadingState description="Loading Prometheus metrics..." />
       ) : null}
 
       {metrics.error ? (
-        <EmptyState
-          class="domain-state"
-          icon={<AlertTriangleIcon size={18} />}
-          description={formatUnknownError(metrics.error)}
-        />
+        <QueryErrorState error={metrics.error} />
       ) : null}
 
       {metrics.data && !metrics.loading && !metrics.error ? (
-        <>
+        <div class="domain-stack">
           <Section class="domain-section" size="3">
             <div class="domain-section-header">
               <div>
@@ -94,7 +84,7 @@ export default function MetricsPage() {
             </div>
             <pre class="resource-raw">{metrics.data.raw}</pre>
           </Section>
-        </>
+        </div>
       ) : null}
     </section>
   );

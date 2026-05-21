@@ -2,13 +2,11 @@ import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import SidebarLayout from "@/components/shared/sidebar-layout";
-import { AlertTriangleIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import { createNoticeOverviewQuery } from "@/features/notice/notice-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
-import { formatUnknownError } from "@/shared/errors/format";
 
 export default function NoticePage() {
   const overview = createNoticeOverviewQuery();
@@ -44,23 +42,15 @@ export default function NoticePage() {
         />
 
         {overview.loading ? (
-          <EmptyState
-            class="domain-state"
-            icon={<Spinner label="Loading" />}
-            description="Loading notice overview..."
-          />
+          <QueryLoadingState description="Loading notice overview..." />
         ) : null}
 
         {overview.error ? (
-          <EmptyState
-            class="domain-state"
-            icon={<AlertTriangleIcon size={18} />}
-            description={formatUnknownError(overview.error)}
-          />
+          <QueryErrorState error={overview.error} />
         ) : null}
 
         {data && !overview.loading && !overview.error ? (
-          <>
+          <div class="domain-stack">
             <DomainMetricTable
               title="Notice metrics"
               metrics={[
@@ -83,7 +73,7 @@ export default function NoticePage() {
               inventory={inventory.data}
               loading={inventory.loading}
             />
-          </>
+          </div>
         ) : null}
       </section>
     </SidebarLayout>

@@ -1,15 +1,14 @@
 import { state } from "@askrjs/askr";
+import { navigate } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
-import { AlertTriangleIcon } from "@askrjs/lucide";
 import { Button } from "@askrjs/themes/controls";
-import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { Badge } from "@askrjs/themes/surfaces";
 import DomainHeader from "@/components/shared/domain-header";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import SidebarLayout from "@/components/shared/sidebar-layout";
 import SessionTable from "@/components/shared/session-table";
 import { createActiveSessionsQuery } from "@/features/session/session-query";
-import { formatUnknownError } from "@/shared/errors/format";
 
 function currentRealmFilter() {
   if (typeof window === "undefined") {
@@ -56,13 +55,9 @@ export default function SessionsPage() {
   async function onFilterSubmit(event: Event) {
     event.preventDefault();
 
-    if (typeof window === "undefined") {
-      return;
-    }
-
     const nextRealm = realmInput().trim();
     const search = nextRealm ? `?realm=${encodeURIComponent(nextRealm)}` : "";
-    window.location.assign(`/sessions${search}`);
+    navigate(`/sessions${search}`);
   }
 
   return (
@@ -108,9 +103,7 @@ export default function SessionsPage() {
                 class="secondary-action"
                 onPress={() => {
                   realmInput.set("");
-                  if (typeof window !== "undefined") {
-                    window.location.assign("/sessions");
-                  }
+                  navigate("/sessions");
                 }}
               >
                 Clear
@@ -120,23 +113,15 @@ export default function SessionsPage() {
         </section>
 
         {sessionsQuery.loading ? (
-          <EmptyState
-            class="domain-state"
-            icon={<Spinner label="Loading" />}
-            description="Loading active sessions..."
-          />
+          <QueryLoadingState description="Loading active sessions..." />
         ) : null}
 
         {sessionsQuery.error ? (
-          <EmptyState
-            class="domain-state"
-            icon={<AlertTriangleIcon size={18} />}
-            description={formatUnknownError(sessionsQuery.error)}
-          />
+          <QueryErrorState error={sessionsQuery.error} />
         ) : null}
 
         {data && !sessionsQuery.loading && !sessionsQuery.error ? (
-          <>
+          <div class="domain-stack">
             <section class="domain-section">
               <div class="domain-section-header">
                 <div>
@@ -148,7 +133,7 @@ export default function SessionsPage() {
             </section>
 
             <SessionTable sessions={data.sessions} />
-          </>
+          </div>
         ) : null}
       </section>
     </SidebarLayout>

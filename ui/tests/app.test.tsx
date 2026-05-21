@@ -10,7 +10,7 @@ import DomainSidebar from "@/components/shared/domain-sidebar";
 import ResourceWorkbench from "@/components/shared/resource-workbench";
 import SessionTable from "@/components/shared/session-table";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
-import AdminHome from "@/pages/app/admin-home";
+import Home from "@/pages/app/home";
 import MetricsPage from "@/pages/app/metrics";
 import QueuePage from "@/pages/app/queue";
 import QueueResourcePage from "@/pages/app/queue-resource";
@@ -22,7 +22,8 @@ import RpcPage from "@/pages/app/rpc";
 import SchedulePage from "@/pages/app/schedule";
 import SessionsPage from "@/pages/app/sessions";
 import StreamPage from "@/pages/app/stream";
-import AdminLogin from "@/pages/public/admin-login";
+import Logout from "@/pages/auth/logout";
+import Login from "@/pages/auth/login";
 import Home from "@/pages/public/home";
 import { getRoutes } from "@askrjs/askr/router";
 import { EmptyState } from "@askrjs/themes/feedback";
@@ -51,8 +52,13 @@ describe("Admin UI", () => {
   });
 
   it("defines the admin login page", () => {
-    expect(AdminLogin).toBeDefined();
-    expect(typeof AdminLogin).toBe("function");
+    expect(Login).toBeDefined();
+    expect(typeof Login).toBe("function");
+  });
+
+  it("defines the logout page", () => {
+    expect(Logout).toBeDefined();
+    expect(typeof Logout).toBe("function");
   });
 
   it("defines the landing and domain pages", () => {
@@ -83,8 +89,8 @@ describe("Admin UI", () => {
   });
 
   it("defines the admin home page", () => {
-    expect(AdminHome).toBeDefined();
-    expect(typeof AdminHome).toBe("function");
+    expect(Home).toBeDefined();
+    expect(typeof Home).toBe("function");
   });
 
   it("defines the queue dead-letter sample component", () => {
@@ -135,6 +141,7 @@ describe("Admin UI", () => {
       expect.arrayContaining([
         "/",
         "/admin",
+        "/logout",
         "/login",
         "/sessions",
         "/metrics",

@@ -1,14 +1,12 @@
 import { state } from "@askrjs/askr";
-import { currentRoute } from "@askrjs/askr/router";
+import { currentRoute, navigate } from "@askrjs/askr/router";
 import { Button } from "@askrjs/themes/controls";
 import { Input, Label } from "@askrjs/ui";
-import { AlertTriangleIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import ResourceWorkbench from "@/components/shared/resource-workbench";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import SidebarLayout from "@/components/shared/sidebar-layout";
 import { createResourceQuery, type DomainId, type ResourceRef } from "@/features/resource/resource-query";
-import { formatUnknownError } from "@/shared/errors/format";
 
 const domainLabels: Record<DomainId, string> = {
   kv: "KV",
@@ -126,9 +124,7 @@ export default function ResourceDetailPage() {
     if (compareResource().trim()) nextQuery.set("againstResource", compareResource().trim());
 
     const search = nextQuery.toString();
-    window.location.assign(
-      `/${domain}/${ref.realm}/${ref.area}/${ref.resource}${search ? `?${search}` : ""}`,
-    );
+    navigate(`/${domain}/${ref.realm}/${ref.area}/${ref.resource}${search ? `?${search}` : ""}`);
   }
 
   return (
@@ -141,19 +137,11 @@ export default function ResourceDetailPage() {
     >
       <section class="domain-page">
         {query.loading ? (
-          <EmptyState
-            class="domain-state"
-            icon={<Spinner label="Loading" />}
-            description={`Loading ${domainLabels[domain]} resource...`}
-          />
+          <QueryLoadingState description={`Loading ${domainLabels[domain]} resource...`} />
         ) : null}
 
         {query.error ? (
-          <EmptyState
-            class="domain-state"
-            icon={<AlertTriangleIcon size={18} />}
-            description={formatUnknownError(query.error)}
-          />
+          <QueryErrorState error={query.error} />
         ) : null}
 
         {data && !query.loading && !query.error ? <ResourceWorkbench detail={data} /> : null}

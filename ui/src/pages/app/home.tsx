@@ -1,4 +1,4 @@
-import { Link } from "@askrjs/askr/router";
+import { Link, navigate } from "@askrjs/askr/router";
 import { Button } from "@askrjs/themes/controls";
 import {
   Badge,
@@ -10,12 +10,9 @@ import {
 } from "@askrjs/themes/surfaces";
 import DomainIndex from "@/components/shared/domain-index";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import SidebarLayout from "@/components/shared/sidebar-layout";
-import { AlertTriangleIcon } from "@askrjs/lucide";
-import { EmptyState, Spinner } from "@askrjs/themes/feedback";
-import { formatUnknownError } from "@/shared/errors/format";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
-import { createSignOutMutation } from "@/features/session/session-mutation";
 import { createHealthSummaryQuery } from "@/features/system/health-query";
 import { createSystemOverviewQuery } from "@/features/system/system-query";
 import { domainLinks } from "@/shared/navigation/domains";
@@ -56,20 +53,13 @@ function formatBottleneckLabel(
   return parts.length > 0 ? parts.join(" / ") : "Unnamed bottleneck";
 }
 
-export default function AdminHome() {
+export default function Home() {
   const session = createCurrentSessionQuery();
-  const signOut = createSignOutMutation();
   const health = createHealthSummaryQuery();
   const system = createSystemOverviewQuery();
 
-  async function onSignOut() {
-    try {
-      await signOut.execute(undefined);
-    } finally {
-      if (typeof window !== "undefined") {
-        window.location.replace("/login");
-      }
-    }
+  function onLogout() {
+    navigate("/logout");
   }
 
   if (session.loading) {
@@ -115,7 +105,7 @@ export default function AdminHome() {
         <Link href="/sessions" class="admin-sidebar-link">
           View sessions
         </Link>
-        <Button class="secondary-action" onPress={onSignOut}>
+        <Button class="secondary-action" onPress={onLogout}>
           Sign out
         </Button>
       </div>
@@ -156,23 +146,15 @@ export default function AdminHome() {
         </div>
 
         {system.loading ? (
-          <EmptyState
-            class="domain-state"
-            icon={<Spinner label="Loading" />}
-            description="Loading broker overview..."
-          />
+          <QueryLoadingState description="Loading broker overview..." />
         ) : null}
 
         {system.error ? (
-          <EmptyState
-            class="domain-state"
-            icon={<AlertTriangleIcon size={18} />}
-            description={formatUnknownError(system.error)}
-          />
+          <QueryErrorState error={system.error} />
         ) : null}
 
         {overview && !system.loading && !system.error ? (
-          <>
+          <div class="domain-stack">
             <section class="dashboard-status-grid">
               <Card class="dashboard-status-card" variant="raised">
                 <CardHeader>
@@ -383,7 +365,7 @@ export default function AdminHome() {
               description="Use the domain pages for deeper inspection and queue resource drill-downs."
               links={domainLinks}
             />
-          </>
+          </div>
         ) : null}
       </section>
     </SidebarLayout>

@@ -1,9 +1,8 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { GaugeIcon } from "@askrjs/lucide";
-import { EmptyState } from "@askrjs/themes/feedback";
 import { Section } from "@askrjs/themes/layouts";
+import { QueryEmptyState } from "./query-state";
 import type { DomainId, ResourceInventory } from "@/features/resource/resource-models";
 
 export interface DomainResourceBrowserProps {
@@ -42,11 +41,7 @@ export default function DomainResourceBrowser({
       </div>
 
       {!loading && rows.length === 0 ? (
-        <EmptyState
-          class="domain-state"
-          icon={<GaugeIcon size={18} />}
-          description="No warm resources are currently visible for this domain."
-        />
+        <QueryEmptyState description="No warm resources are currently visible for this domain." />
       ) : (
         <div class="domain-table-wrap">
           <Table class="domain-table">

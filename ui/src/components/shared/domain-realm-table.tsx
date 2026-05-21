@@ -1,8 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { GaugeIcon } from "@askrjs/lucide";
-import { EmptyState } from "@askrjs/themes/feedback";
 import { Section } from "@askrjs/themes/layouts";
+import { QueryEmptyState } from "./query-state";
 
 export interface DomainRealm {
   realm: string;
@@ -26,11 +25,7 @@ export default function DomainRealmTable({ title, realms, emptyMessage }: Domain
       </div>
 
       {realms.length === 0 ? (
-        <EmptyState
-          class="domain-state"
-          icon={<GaugeIcon size={18} />}
-          description={emptyMessage}
-        />
+        <QueryEmptyState description={emptyMessage} />
       ) : (
         <div class="domain-table-wrap">
           <Table class="domain-table">

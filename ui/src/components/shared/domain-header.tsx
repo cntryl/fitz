@@ -1,4 +1,3 @@
-import { ActivityIcon } from "@askrjs/lucide";
 import { Button } from "@askrjs/themes/controls";
 
 export interface DomainHeaderProps {
@@ -23,7 +22,6 @@ export default function DomainHeader({
 
       {onRefresh ? (
         <Button class="secondary-action" onPress={onRefresh}>
-          <ActivityIcon size={16} />
           Refresh
         </Button>
       ) : null}
