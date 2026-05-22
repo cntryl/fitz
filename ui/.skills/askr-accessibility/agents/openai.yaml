@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Accessibility"
+  short_description: "Make Askr UI accessible and usable"
+  default_prompt: "Use $askr-accessibility to review or build accessible UI."

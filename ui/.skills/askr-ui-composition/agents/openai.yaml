@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr UI Composition"
+  short_description: "Compose accessible headless UI"
+  default_prompt: "Use $askr-ui-composition to compose Askr UI primitives correctly."

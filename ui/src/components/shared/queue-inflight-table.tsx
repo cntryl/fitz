@@ -1,19 +1,10 @@
 import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import type { QueueInflightMessage } from "@/features/queue/queue-resource-models";
+import { formatTimestamp } from "@/shared/format";
 
 export interface QueueInflightTableProps {
   messages: QueueInflightMessage[];
-}
-
-function formatTimestamp(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString();
 }
 
 export default function QueueInflightTable({ messages }: QueueInflightTableProps) {

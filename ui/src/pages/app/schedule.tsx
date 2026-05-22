@@ -2,9 +2,14 @@ import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
-import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
-import SidebarLayout from "@/components/shared/sidebar-layout";
+import { Stack } from "@askrjs/themes/layouts";
+import {
+  QueryErrorState,
+  QueryLoadingState,
+  QueryRefreshingState,
+} from "@/components/shared/query-state";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { createScheduleOverviewQuery } from "@/features/schedule/schedule-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 
@@ -29,14 +34,8 @@ export default function SchedulePage() {
   });
 
   return (
-    <SidebarLayout
-      sidebar={sidebar}
-      sidebarPosition="end"
-      sidebarWidth="18rem"
-      gap="1.5rem"
-      collapseBelow="md"
-    >
-      <section class="domain-page">
+    <DomainPageFrame sidebar={sidebar}>
+      <Stack gap="3">
         <DomainHeader
           domain="Schedule"
           title="Schedule overview"
@@ -44,16 +43,18 @@ export default function SchedulePage() {
           onRefresh={() => overview.refresh()}
         />
 
-        {overview.loading ? (
+        {!data && overview.loading ? (
           <QueryLoadingState description="Loading schedule overview..." />
         ) : null}
 
-        {overview.error ? (
-          <QueryErrorState error={overview.error} />
-        ) : null}
+        {!data && overview.error ? <QueryErrorState error={overview.error} /> : null}
 
-        {data && !overview.loading && !overview.error ? (
-          <div class="domain-stack">
+        {data ? (
+          <Stack gap="3">
+            {overview.refreshing ? (
+              <QueryRefreshingState description="Refreshing schedule overview..." />
+            ) : null}
+
             <DomainMetricTable
               title="Schedule metrics"
               metrics={[
@@ -78,9 +79,9 @@ export default function SchedulePage() {
               inventory={inventory.data}
               loading={inventory.loading}
             />
-          </div>
+          </Stack>
         ) : null}
-      </section>
-    </SidebarLayout>
+      </Stack>
+    </DomainPageFrame>
   );
 }

@@ -1,7 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Section } from "@askrjs/themes/layouts";
+import { Section, Stack } from "@askrjs/themes/layouts";
 import { QueryEmptyState } from "./query-state";
 import type { DomainId, ResourceInventory } from "@/features/resource/resource-models";
 
@@ -32,13 +32,11 @@ export default function DomainResourceBrowser({
     ) ?? [];
 
   return (
-    <Section class="domain-section" size="3">
-      <div class="domain-section-header">
-        <div>
-          <p class="eyebrow">Resource browser</p>
-          <h2>{loading ? "Loading resources" : `${rows.length} resources`}</h2>
-        </div>
-      </div>
+    <Section size="3">
+      <Stack gap="1">
+        <p class="eyebrow">Resource browser</p>
+        <h2>{loading ? "Loading resources" : `${rows.length} resources`}</h2>
+      </Stack>
 
       {!loading && rows.length === 0 ? (
         <QueryEmptyState description="No warm resources are currently visible for this domain." />

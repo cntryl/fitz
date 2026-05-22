@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Testing Determinism"
+  short_description: "Test deterministic Askr behavior"
+  default_prompt: "Use $askr-testing-determinism to test Askr runtime and UI behavior."

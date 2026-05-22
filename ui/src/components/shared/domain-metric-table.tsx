@@ -1,6 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Section } from "@askrjs/themes/layouts";
+import { Section, Stack } from "@askrjs/themes/layouts";
+import { formatDisplayValue } from "@/shared/format";
 
 export interface DomainMetric {
   label: string;
@@ -13,19 +14,13 @@ export interface DomainMetricTableProps {
   metrics: DomainMetric[];
 }
 
-function formatValue(value: string | number) {
-  return typeof value === "number" ? new Intl.NumberFormat("en-US").format(value) : value;
-}
-
 export default function DomainMetricTable({ title, metrics }: DomainMetricTableProps) {
   return (
-    <Section class="domain-section" size="3">
-      <div class="domain-section-header">
-        <div>
-          <p class="eyebrow">{title}</p>
-          <h2>{metrics.length} metrics</h2>
-        </div>
-      </div>
+    <Section size="3">
+      <Stack gap="1">
+        <p class="eyebrow">{title}</p>
+        <h2>{metrics.length} metrics</h2>
+      </Stack>
 
       <div class="domain-table-wrap">
         <Table class="domain-table">
@@ -41,7 +36,7 @@ export default function DomainMetricTable({ title, metrics }: DomainMetricTableP
               {(metric) => (
                 <TableRow>
                   <TableCell>{metric.label}</TableCell>
-                  <TableCell>{formatValue(metric.value)}</TableCell>
+                  <TableCell>{formatDisplayValue(metric.value)}</TableCell>
                   <TableCell>{metric.caption ?? "Live broker snapshot"}</TableCell>
                 </TableRow>
               )}

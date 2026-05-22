@@ -1,1 +1,27 @@
 @import "@askrjs/themes/default";
+
+.domain-table-wrap {
+  overflow-x: auto;
+}
+
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--ak-color-bg, Canvas) 30%, black);
+}
+
+.dialog-content {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: min(92vw, 30rem);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ak-space-3, 0.75rem);
+  padding: var(--ak-space-4, 1rem);
+  border: 1px solid var(--ak-color-border, currentColor);
+  border-radius: var(--ak-radius-2, 0.5rem);
+  background: var(--ak-color-surface, Canvas);
+  transform: translate(-50%, -50%);
+  box-shadow: var(--ak-shadow-4, 0 1rem 3rem rgb(0 0 0 / 0.2));
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Realtime Streaming"
+  short_description: "Build realtime evented UX"
+  default_prompt: "Use $askr-realtime-streaming to build realtime Askr UI."

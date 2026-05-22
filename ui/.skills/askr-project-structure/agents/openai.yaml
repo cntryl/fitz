@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Project Structure"
+  short_description: "Place Askr files in the right layer"
+  default_prompt: "Use $askr-project-structure to decide where Askr app files belong."

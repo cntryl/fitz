@@ -4,7 +4,7 @@ import type { RouteHandler } from "@askrjs/askr/router";
 
 type QueryState<T> = {
   data: T | null;
-  error: unknown | null;
+  error: Error | null;
   loading: boolean;
   refreshing: boolean;
   stale: boolean;
@@ -12,16 +12,26 @@ type QueryState<T> = {
   refresh: () => Promise<void>;
 };
 
+type MutationState = {
+  abort: ReturnType<typeof vi.fn>;
+  error: Error | null;
+  execute: ReturnType<typeof vi.fn>;
+  pending: boolean;
+  reset: ReturnType<typeof vi.fn>;
+  result: boolean | null;
+  status: "idle" | "pending" | "success" | "error";
+};
+
 const mocks = vi.hoisted(() => {
   const refresh = vi.fn(async () => undefined);
-  const mutation = {
+  const mutation: MutationState = {
     abort: vi.fn(),
     error: null,
     execute: vi.fn(async () => true),
     pending: false,
     reset: vi.fn(),
     result: null,
-    status: "idle" as const,
+    status: "idle",
   };
 
   return {
@@ -431,6 +441,9 @@ function resetQueries() {
   mocks.queryStates.stream = makeQuery(streamOverview);
   mocks.queryStates.inventory = makeQuery(inventory);
   mocks.queryStates.resource = makeQuery(resourceDetail);
+  mocks.mutation.error = null;
+  mocks.mutation.pending = false;
+  mocks.mutation.result = null;
 }
 
 async function mountRoute(path: string, routePath: string, handler: RouteHandler) {
@@ -543,6 +556,7 @@ describe("admin page smoke tests", () => {
 
       expect(root.textContent).toContain(page.assertText);
       expect(root.textContent?.trim().length).toBeGreaterThan(0);
+      expect(root.querySelector('[data-slot="shell"]')).toBeNull();
 
       cleanupApp(root);
       document.body.innerHTML = "";
@@ -574,6 +588,17 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("No queue realms are currently visible");
   });
 
+  it("keeps queue overview content visible while refresh is in flight", async () => {
+    const { default: QueuePage } = await import("@/pages/app/queue");
+
+    mocks.queryStates.queue = makeQuery(queueOverview, { refreshing: true });
+
+    const root = await mountRoute("/queue", "/queue", QueuePage);
+
+    expect(root.textContent).toContain("Refreshing queue overview");
+    expect(root.textContent).toContain("Queue metrics");
+  });
+
   it("mounts queue comparison and generic resource comparison flows", async () => {
     const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");
     let root = await mountRoute(
@@ -603,5 +628,55 @@ describe("admin page smoke tests", () => {
     );
 
     expect(root.textContent).toContain("Compare: No material difference");
+  });
+
+  it("opens an accessible queue dead-letter confirmation dialog", async () => {
+    const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");
+    mocks.queryStates.queueResource = makeQuery({
+      ...queueResource,
+      deadLetters: [
+        {
+          attempts: 2,
+          deadLetteredAt: "2026-05-21T13:05:00Z",
+          family: 1,
+          messageId: 42,
+          reason: "handler failed",
+        },
+      ],
+    });
+
+    const root = await mountRoute(
+      "/queue/default/ops/primary",
+      "/queue/{realm}/{area}/{resource}",
+      QueueResourcePage,
+    );
+    const replay = Array.from(root.querySelectorAll("button")).find(
+      (button) => button.textContent === "Replay",
+    );
+
+    expect(replay).toBeDefined();
+    replay?.click();
+
+    expect(root.textContent).toContain("Replay dead-letter message?");
+    expect(root.textContent).toContain("Replay message 42 in default / ops / primary.");
+    expect(root.querySelector('[role="alertdialog"]')).toBeTruthy();
+  });
+
+  it("uses mutation-owned login pending and error states", async () => {
+    const { default: Login } = await import("@/pages/auth/login");
+
+    mocks.mutation.pending = true;
+    let root = await mountRoute("/login", "/login", Login);
+
+    expect(root.textContent).toContain("Signing in...");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.mutation.pending = false;
+    mocks.mutation.error = new Error("Bad credentials");
+    root = await mountRoute("/login", "/login", Login);
+
+    expect(root.textContent).toContain("Bad credentials");
   });
 });

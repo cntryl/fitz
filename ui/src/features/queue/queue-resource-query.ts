@@ -10,8 +10,19 @@ import type {
 
 export type { QueueResourceRef } from "./queue-resource-models";
 
-function queueResourceQueryKey(resourceRef: QueueResourceRef) {
+export function queueResourceQueryKey(resourceRef: QueueResourceRef) {
   return `queue:resource:${resourceRef.realm}:${resourceRef.area}:${resourceRef.resource}`;
+}
+
+export function queueResourceTimelineQueryKey(resourceRef: QueueResourceRef) {
+  return `${queueResourceQueryKey(resourceRef)}:timeline`;
+}
+
+export function queueResourceComparisonQueryKey(
+  resourceRef: QueueResourceRef,
+  againstResourceRef: QueueResourceComparisonSide["scope"],
+) {
+  return `${queueResourceQueryKey(resourceRef)}:compare:${againstResourceRef.realm}:${againstResourceRef.area}:${againstResourceRef.resource}:${againstResourceRef.family ?? "any"}`;
 }
 
 export function createQueueResourceQuery(resourceRef: QueueResourceRef) {
@@ -23,7 +34,7 @@ export function createQueueResourceQuery(resourceRef: QueueResourceRef) {
 
 export function createQueueResourceTimelineQuery(resourceRef: QueueResourceRef) {
   return createQuery<QueueResourceTimeline>({
-    key: `${queueResourceQueryKey(resourceRef)}:timeline`,
+    key: queueResourceTimelineQueryKey(resourceRef),
     fetch: ({ signal }) => queueResourceService.getTimeline(resourceRef, { signal }),
   });
 }
@@ -33,7 +44,7 @@ export function createQueueResourceComparisonQuery(
   againstResourceRef: QueueResourceComparisonSide["scope"],
 ) {
   return createQuery<QueueResourceComparison>({
-    key: `${queueResourceQueryKey(resourceRef)}:compare:${againstResourceRef.realm}:${againstResourceRef.area}:${againstResourceRef.resource}:${againstResourceRef.family ?? "any"}`,
+    key: queueResourceComparisonQueryKey(resourceRef, againstResourceRef),
     fetch: ({ signal }) =>
       queueResourceService.compareResource(
         resourceRef,

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Design System"
+  short_description: "Shape polished product UI"
+  default_prompt: "Use $askr-design-system to design an Askr product surface."

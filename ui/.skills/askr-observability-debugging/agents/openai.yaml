@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Observability Debugging"
+  short_description: "Trace and debug Askr workflows"
+  default_prompt: "Use $askr-observability-debugging to add diagnostics."

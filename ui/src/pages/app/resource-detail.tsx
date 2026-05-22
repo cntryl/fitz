@@ -1,12 +1,23 @@
 import { state } from "@askrjs/askr";
+import { Show } from "@askrjs/askr/control";
 import { currentRoute, navigate } from "@askrjs/askr/router";
 import { Button } from "@askrjs/themes/controls";
+import { Stack } from "@askrjs/themes/layouts";
 import { Input, Label } from "@askrjs/ui";
 import ResourceWorkbench from "@/components/shared/resource-workbench";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
-import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
-import SidebarLayout from "@/components/shared/sidebar-layout";
-import { createResourceQuery, type DomainId, type ResourceRef } from "@/features/resource/resource-query";
+import DomainPageFrame from "@/components/shared/domain-page-frame";
+import {
+  QueryErrorState,
+  QueryLoadingState,
+  QueryRefreshingState,
+} from "@/components/shared/query-state";
+import {
+  createResourceQuery,
+  type DomainId,
+  type ResourceRef,
+} from "@/features/resource/resource-query";
+import type { ResourceDetail } from "@/features/resource/resource-models";
 
 const domainLabels: Record<DomainId, string> = {
   kv: "KV",
@@ -16,6 +27,11 @@ const domainLabels: Record<DomainId, string> = {
   schedule: "Schedule",
   stream: "Stream",
 };
+
+function trimmedOrNull(value: string) {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
 
 function currentCompareScope() {
   if (typeof window === "undefined") {
@@ -62,15 +78,21 @@ export default function ResourceDetailPage() {
     resource: route.params.resource,
   };
   const compareScope = currentCompareScope();
-  const compareRealm = state(compareScope.realm);
-  const compareArea = state(compareScope.area);
-  const compareResource = state(compareScope.resource);
+  const [compareRealm, setCompareRealm] = state(compareScope.realm);
+  const [compareArea, setCompareArea] = state(compareScope.area);
+  const [compareResource, setCompareResource] = state(compareScope.resource);
+  const compareRealmValue = compareRealm();
+  const compareAreaValue = compareArea();
+  const compareResourceValue = compareResource();
+  const compareRealmTrimmed = trimmedOrNull(compareRealmValue);
+  const compareAreaTrimmed = trimmedOrNull(compareAreaValue);
+  const compareResourceTrimmed = trimmedOrNull(compareResourceValue);
   const against =
-    compareRealm().trim() && compareArea().trim() && compareResource().trim()
+    compareRealmTrimmed && compareAreaTrimmed && compareResourceTrimmed
       ? {
-          area: compareArea().trim(),
-          realm: compareRealm().trim(),
-          resource: compareResource().trim(),
+          area: compareAreaTrimmed,
+          realm: compareRealmTrimmed,
+          resource: compareResourceTrimmed,
         }
       : null;
   const query = createResourceQuery(domain, ref, against);
@@ -81,35 +103,35 @@ export default function ResourceDetailPage() {
     description: `${ref.realm} / ${ref.area} / ${ref.resource}`,
     stats: (current) => current.detailMetrics.slice(0, 6),
     footer: (
-      <form class="domain-stack" onSubmit={onCompareSubmit}>
+      <Stack asChild gap="3">
+        <form onSubmit={onCompareSubmit}>
         <div class="auth-field">
           <Label for="compare-realm">Against realm</Label>
           <Input
             id="compare-realm"
-            value={compareRealm()}
-            onInput={(event: Event) => compareRealm.set((event.target as HTMLInputElement).value)}
+            value={compareRealmValue}
+            onInput={(event: Event) => setCompareRealm((event.target as HTMLInputElement).value)}
           />
         </div>
         <div class="auth-field">
           <Label for="compare-area">Against area</Label>
           <Input
             id="compare-area"
-            value={compareArea()}
-            onInput={(event: Event) => compareArea.set((event.target as HTMLInputElement).value)}
+            value={compareAreaValue}
+            onInput={(event: Event) => setCompareArea((event.target as HTMLInputElement).value)}
           />
         </div>
         <div class="auth-field">
           <Label for="compare-resource">Against resource</Label>
           <Input
             id="compare-resource"
-            value={compareResource()}
-            onInput={(event: Event) => compareResource.set((event.target as HTMLInputElement).value)}
+            value={compareResourceValue}
+            onInput={(event: Event) => setCompareResource((event.target as HTMLInputElement).value)}
           />
         </div>
-        <Button type="submit" class="secondary-action">
-          Compare
-        </Button>
-      </form>
+        <Button type="submit">Compare</Button>
+        </form>
+      </Stack>
     ),
   });
 
@@ -119,33 +141,43 @@ export default function ResourceDetailPage() {
     if (typeof window === "undefined") return;
 
     const nextQuery = new URLSearchParams();
-    if (compareRealm().trim()) nextQuery.set("againstRealm", compareRealm().trim());
-    if (compareArea().trim()) nextQuery.set("againstArea", compareArea().trim());
-    if (compareResource().trim()) nextQuery.set("againstResource", compareResource().trim());
+    const nextRealm = trimmedOrNull(compareRealm());
+    const nextArea = trimmedOrNull(compareArea());
+    const nextResource = trimmedOrNull(compareResource());
+
+    if (nextRealm) nextQuery.set("againstRealm", nextRealm);
+    if (nextArea) nextQuery.set("againstArea", nextArea);
+    if (nextResource) nextQuery.set("againstResource", nextResource);
 
     const search = nextQuery.toString();
     navigate(`/${domain}/${ref.realm}/${ref.area}/${ref.resource}${search ? `?${search}` : ""}`);
   }
 
   return (
-    <SidebarLayout
-      sidebar={sidebar}
-      sidebarPosition="end"
-      sidebarWidth="20rem"
-      gap="1.5rem"
-      collapseBelow="md"
-    >
-      <section class="domain-page">
-        {query.loading ? (
+    <DomainPageFrame sidebar={sidebar}>
+      <Stack gap="3">
+        <Show when={query.loading && !data}>
           <QueryLoadingState description={`Loading ${domainLabels[domain]} resource...`} />
-        ) : null}
+        </Show>
 
-        {query.error ? (
+        <Show when={query.error && !data}>
           <QueryErrorState error={query.error} />
-        ) : null}
+        </Show>
 
-        {data && !query.loading && !query.error ? <ResourceWorkbench detail={data} /> : null}
-      </section>
-    </SidebarLayout>
+        <Show when={data}>
+          {(detail: ResourceDetail) => (
+            <Stack gap="3">
+              <Show when={query.refreshing}>
+                <QueryRefreshingState
+                  description={`Refreshing ${domainLabels[domain]} resource...`}
+                />
+              </Show>
+
+              <ResourceWorkbench detail={detail} />
+            </Stack>
+          )}
+        </Show>
+      </Stack>
+    </DomainPageFrame>
   );
 }

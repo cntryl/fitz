@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Env Config"
+  short_description: "Configure env and feature flags"
+  default_prompt: "Use $askr-env-config to configure an Askr app environment."

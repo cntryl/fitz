@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr SSR SSG"
+  short_description: "Render askr on server or static"
+  default_prompt: "Use $askr-ssr-ssg to build SSR or static Askr output."

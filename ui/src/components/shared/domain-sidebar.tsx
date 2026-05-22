@@ -7,6 +7,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@askrjs/themes/surfaces";
+import { formatDisplayValue } from "@/shared/format";
 
 export interface DomainSidebarStat {
   label: string;
@@ -29,10 +30,6 @@ export interface DomainSidebarConfig<TData> {
   footer?: unknown;
 }
 
-function formatValue(value: string | number) {
-  return typeof value === "number" ? new Intl.NumberFormat("en-US").format(value) : value;
-}
-
 export default function DomainSidebar({ title, description, stats, footer }: DomainSidebarProps) {
   return (
     <Card class="domain-sidebar" variant="raised">
@@ -46,7 +43,7 @@ export default function DomainSidebar({ title, description, stats, footer }: Dom
             {(stat) => (
               <div class="domain-sidebar-stat">
                 <dt>{stat.label}</dt>
-                <dd>{formatValue(stat.value)}</dd>
+                <dd>{formatDisplayValue(stat.value)}</dd>
                 {stat.note ? <p>{stat.note}</p> : null}
               </div>
             )}

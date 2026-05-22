@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Mental Model"
+  short_description: "Learn the canonical Askr runtime model"
+  default_prompt: "Use $askr-mental-model before building or reviewing Askr application code."

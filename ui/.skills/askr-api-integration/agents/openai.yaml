@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr API Integration"
+  short_description: "Connect APIs with Askr boundaries"
+  default_prompt: "Use $askr-api-integration to connect an API to an Askr feature."

@@ -1,14 +1,8 @@
 import { For } from "@askrjs/askr/control";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-} from "@askrjs/ui";
+import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
+import { formatTimestamp } from "@/shared/format";
 
 export interface QueueDeadLetterTableProps {
   messages: DeadLetterMessage[];
@@ -16,16 +10,6 @@ export interface QueueDeadLetterTableProps {
   pendingMessageId?: number | null;
   onPurge?: (message: DeadLetterMessage) => void | Promise<void>;
   onReplay?: (message: DeadLetterMessage) => void | Promise<void>;
-}
-
-function formatTimestamp(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString();
 }
 
 export default function QueueDeadLetterTable({

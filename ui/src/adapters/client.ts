@@ -1,7 +1,5 @@
 import { FetchClient, addProductionStack } from "@fgrzl/fetch";
-
-const API_BASE_URL = import.meta.env.VITE_FITZ_API_BASE_URL ?? "";
-const REQUEST_TIMEOUT_MS = 10_000;
+import { appConfig } from "@/shared/config";
 
 function createTraceId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -14,9 +12,9 @@ function createTraceId() {
 // Adapter boundary only: configure transport concerns here, not DTO mapping or app logic.
 export const client = addProductionStack(
   new FetchClient({
-    baseUrl: API_BASE_URL,
+    baseUrl: appConfig.apiBaseUrl,
     credentials: "same-origin",
-    timeout: REQUEST_TIMEOUT_MS,
+    timeout: appConfig.requestTimeoutMs,
   }),
   {
     retry: {
@@ -28,7 +26,7 @@ export const client = addProductionStack(
       windowMs: 60 * 1000,
     },
     logging: {
-      level: import.meta.env.DEV ? "debug" : "warn",
+      level: appConfig.logLevel,
       skipPatterns: ["/health", "/healthz", "/readyz", "/startupz", "/metrics"],
     },
   },

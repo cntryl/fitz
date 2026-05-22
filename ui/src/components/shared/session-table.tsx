@@ -1,23 +1,10 @@
 import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import type { ActiveSession } from "@/features/session/session-models";
+import { formatTimestamp } from "@/shared/format";
 
 export interface SessionTableProps {
   sessions: ActiveSession[];
-}
-
-function formatTimestamp(value?: string) {
-  if (!value) {
-    return "Unknown";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString();
 }
 
 function formatDuration(value?: number) {

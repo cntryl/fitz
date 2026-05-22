@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Error Loading Empty"
+  short_description: "Design async UX states clearly"
+  default_prompt: "Use $askr-error-loading-empty to design async UI states."

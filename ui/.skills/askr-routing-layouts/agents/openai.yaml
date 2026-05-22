@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Routing Layouts"
+  short_description: "Define Askr routes and shells"
+  default_prompt: "Use $askr-routing-layouts to add routes, layouts, and navigation."

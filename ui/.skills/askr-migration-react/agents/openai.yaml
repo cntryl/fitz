@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Migration React"
+  short_description: "Translate React habits to askr"
+  default_prompt: "Use $askr-migration-react to convert React-shaped code into askr."

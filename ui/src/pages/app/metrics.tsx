@@ -1,21 +1,35 @@
 import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
-import { Input, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Section } from "@askrjs/themes/layouts";
+import {
+  Input,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from "@askrjs/ui";
+import { Section, Stack } from "@askrjs/themes/layouts";
 import DomainHeader from "@/components/shared/domain-header";
-import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
+import {
+  QueryErrorState,
+  QueryLoadingState,
+  QueryRefreshingState,
+} from "@/components/shared/query-state";
 import { createMetricsOverviewQuery } from "@/features/metrics/metrics-query";
 
 export default function MetricsPage() {
   const metrics = createMetricsOverviewQuery();
-  const filter = state("");
+  const [filter, setFilter] = state("");
+  const data = metrics.data;
+  const filterValue = filter();
   const families =
-    metrics.data?.families.filter((family) =>
-      family.name.toLowerCase().includes(filter().trim().toLowerCase()),
+    data?.families.filter((family) =>
+      family.name.toLowerCase().includes(filterValue.trim().toLowerCase()),
     ) ?? [];
 
   return (
-    <section class="domain-page">
+    <Stack gap="3">
       <DomainHeader
         domain="Metrics"
         title="Metrics explorer"
@@ -27,22 +41,24 @@ export default function MetricsPage() {
         <Input
           aria-label="Filter metrics"
           placeholder="Filter metrics"
-          value={filter()}
-          onInput={(event: Event) => filter.set((event.target as HTMLInputElement).value)}
+          value={filterValue}
+          onInput={(event: Event) => setFilter((event.target as HTMLInputElement).value)}
         />
       </div>
 
-      {metrics.loading ? (
+      {!data && metrics.loading ? (
         <QueryLoadingState description="Loading Prometheus metrics..." />
       ) : null}
 
-      {metrics.error ? (
-        <QueryErrorState error={metrics.error} />
-      ) : null}
+      {!data && metrics.error ? <QueryErrorState error={metrics.error} /> : null}
 
-      {metrics.data && !metrics.loading && !metrics.error ? (
-        <div class="domain-stack">
-          <Section class="domain-section" size="3">
+      {data ? (
+        <Stack gap="3">
+          {metrics.refreshing ? (
+            <QueryRefreshingState description="Refreshing Prometheus metrics..." />
+          ) : null}
+
+          <Section size="3">
             <div class="domain-section-header">
               <div>
                 <p class="eyebrow">Metric families</p>
@@ -75,17 +91,17 @@ export default function MetricsPage() {
             </div>
           </Section>
 
-          <Section class="domain-section" size="3">
+          <Section size="3">
             <div class="domain-section-header">
               <div>
                 <p class="eyebrow">Raw</p>
                 <h2>Prometheus payload</h2>
               </div>
             </div>
-            <pre class="resource-raw">{metrics.data.raw}</pre>
+            <pre class="resource-raw">{data.raw}</pre>
           </Section>
-        </div>
+        </Stack>
       ) : null}
-    </section>
+    </Stack>
   );
 }

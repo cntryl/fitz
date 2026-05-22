@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Runtime Reactivity"
+  short_description: "Write deterministic Askr state code"
+  default_prompt: "Use $askr-runtime-reactivity to write deterministic Askr state and control flow."

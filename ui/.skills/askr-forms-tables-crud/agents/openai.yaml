@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Forms Tables CRUD"
+  short_description: "Build CRUD forms and tables"
+  default_prompt: "Use $askr-forms-tables-crud to build a CRUD workflow in askr."

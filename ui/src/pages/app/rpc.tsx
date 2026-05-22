@@ -1,17 +1,16 @@
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@askrjs/themes/surfaces";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Stack } from "@askrjs/themes/layouts";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
-import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
-import SidebarLayout from "@/components/shared/sidebar-layout";
+import {
+  QueryErrorState,
+  QueryLoadingState,
+  QueryRefreshingState,
+} from "@/components/shared/query-state";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 
@@ -56,14 +55,8 @@ export default function RpcPage() {
   });
 
   return (
-    <SidebarLayout
-      sidebar={sidebar}
-      sidebarPosition="end"
-      sidebarWidth="18rem"
-      gap="1.5rem"
-      collapseBelow="md"
-    >
-      <section class="domain-page">
+    <DomainPageFrame sidebar={sidebar}>
+      <Stack gap="3">
         <DomainHeader
           domain="RPC"
           title="RPC overview"
@@ -71,16 +64,18 @@ export default function RpcPage() {
           onRefresh={() => overview.refresh()}
         />
 
-        {overview.loading ? (
+        {!data && overview.loading ? (
           <QueryLoadingState description="Loading RPC overview..." />
         ) : null}
 
-        {overview.error ? (
-          <QueryErrorState error={overview.error} />
-        ) : null}
+        {!data && overview.error ? <QueryErrorState error={overview.error} /> : null}
 
-        {data && !overview.loading && !overview.error ? (
-          <div class="domain-stack">
+        {data ? (
+          <Stack gap="3">
+            {overview.refreshing ? (
+              <QueryRefreshingState description="Refreshing RPC overview..." />
+            ) : null}
+
             {(() => {
               const pressure = summarizeRpcPressure(
                 data.stats.workersRegistered,
@@ -88,15 +83,15 @@ export default function RpcPage() {
               );
 
               return (
-            <Card class="dashboard-status-card" variant="raised">
-              <CardHeader>
-                <CardTitle>Current pressure</CardTitle>
-                <CardDescription>{pressure.label}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p>{pressure.detail}</p>
-              </CardContent>
-            </Card>
+                <Card class="dashboard-status-card" variant="raised">
+                  <CardHeader>
+                    <CardTitle>Current pressure</CardTitle>
+                    <CardDescription>{pressure.label}</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <p>{pressure.detail}</p>
+                  </CardContent>
+                </Card>
               );
             })()}
 
@@ -123,9 +118,9 @@ export default function RpcPage() {
               inventory={inventory.data}
               loading={inventory.loading}
             />
-          </div>
+          </Stack>
         ) : null}
-      </section>
-    </SidebarLayout>
+      </Stack>
+    </DomainPageFrame>
   );
 }

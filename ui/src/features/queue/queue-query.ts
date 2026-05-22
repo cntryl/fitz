@@ -4,12 +4,19 @@ import type { DeadLetterFilters, QueueOverview, QueueResourceRef } from "./queue
 
 export type { DeadLetterFilters, DeadLetterMessage, QueueResourceRef } from "./queue-models";
 
-const QUEUE_OVERVIEW_KEY = "queue:overview";
+export const QUEUE_OVERVIEW_KEY = "queue:overview";
 
-function queueDeadLettersQueryKey(resourceRef: QueueResourceRef, filters: DeadLetterFilters = {}) {
+export function queueDeadLettersQueryKey(
+  resourceRef: QueueResourceRef,
+  filters: DeadLetterFilters = {},
+) {
   return `queue:dead-letters:${resourceRef.realm}:${resourceRef.area}:${resourceRef.resource}:${
     filters.family ?? "all"
   }`;
+}
+
+export function queueDeadLettersQueryPrefix(resourceRef: QueueResourceRef) {
+  return `queue:dead-letters:${resourceRef.realm}:${resourceRef.area}:${resourceRef.resource}:`;
 }
 
 export function createQueueOverviewQuery() {

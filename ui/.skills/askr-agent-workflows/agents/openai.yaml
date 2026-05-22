@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Agent Workflows"
+  short_description: "Build agent run product flows"
+  default_prompt: "Use $askr-agent-workflows to build an agent run workflow."

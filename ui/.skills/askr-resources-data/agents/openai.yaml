@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Resources Data"
+  short_description: "Load cancellable lifecycle data"
+  default_prompt: "Use $askr-resources-data to load async data with resource()."

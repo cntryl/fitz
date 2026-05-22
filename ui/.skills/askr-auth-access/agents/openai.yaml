@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Auth Access"
+  short_description: "Model auth branches and access"
+  default_prompt: "Use $askr-auth-access to add authentication and route access."

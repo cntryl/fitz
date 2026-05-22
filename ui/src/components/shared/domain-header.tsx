@@ -21,7 +21,7 @@ export default function DomainHeader({
       </div>
 
       {onRefresh ? (
-        <Button class="secondary-action" onPress={onRefresh}>
+        <Button onPress={onRefresh}>
           Refresh
         </Button>
       ) : null}

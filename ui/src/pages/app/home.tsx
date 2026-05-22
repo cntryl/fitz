@@ -1,5 +1,7 @@
+import { For } from "@askrjs/askr/control";
 import { Link, navigate } from "@askrjs/askr/router";
 import { Button } from "@askrjs/themes/controls";
+import { Block, Inline, Section, Stack } from "@askrjs/themes/layouts";
 import {
   Badge,
   Card,
@@ -10,41 +12,42 @@ import {
 } from "@askrjs/themes/surfaces";
 import DomainIndex from "@/components/shared/domain-index";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
-import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
-import SidebarLayout from "@/components/shared/sidebar-layout";
+import DomainPageFrame from "@/components/shared/domain-page-frame";
+import {
+  QueryErrorState,
+  QueryLoadingState,
+  QueryRefreshingState,
+} from "@/components/shared/query-state";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createHealthSummaryQuery } from "@/features/system/health-query";
 import { createSystemOverviewQuery } from "@/features/system/system-query";
+import { formatNumber } from "@/shared/format";
 import { domainLinks } from "@/shared/navigation/domains";
 
 function humanizeSeconds(seconds: number) {
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
+  if (seconds < 60) return `${seconds}s`;
 
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    return `${minutes}m`;
-  }
+  if (minutes < 60) return `${minutes}m`;
 
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `${hours}h`;
-  }
+  if (hours < 24) return `${hours}h`;
 
   return `${Math.floor(hours / 24)}d`;
 }
 
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-US").format(value);
-}
-
 function formatBottleneckLabel(
-  bottleneck: { domain?: string | null; resource?: string | null; area?: string | null; realm?: string | null } | null | undefined,
+  bottleneck:
+    | {
+        domain?: string | null;
+        resource?: string | null;
+        area?: string | null;
+        realm?: string | null;
+      }
+    | null
+    | undefined,
 ) {
-  if (!bottleneck) {
-    return "No active bottleneck";
-  }
+  if (!bottleneck) return "No active bottleneck";
 
   const parts = [bottleneck.domain, bottleneck.realm, bottleneck.area, bottleneck.resource].filter(
     (part): part is string => Boolean(part),
@@ -58,29 +61,15 @@ export default function Home() {
   const health = createHealthSummaryQuery();
   const system = createSystemOverviewQuery();
 
-  function onLogout() {
-    navigate("/logout");
+  if (session.loading && !session.data) {
+    return <QueryLoadingState description="Loading admin dashboard..." />;
   }
 
-  if (session.loading) {
-    return (
-      <section class="admin-panel">
-        <p>Loading admin dashboard...</p>
-      </section>
-    );
-  }
-
-  if (session.error) {
-    return (
-      <section class="admin-panel">
-        <h1>Admin session unavailable</h1>
-        <p>We could not load your admin session right now.</p>
-      </section>
-    );
+  if (session.error && !session.data) {
+    return <QueryErrorState error={session.error} />;
   }
 
   const username = session.data?.username ?? "admin";
-
   const overview = system.data;
   const incident = overview?.diagnostics.incident_summary;
   const topBottleneck = overview?.diagnostics.top_bottleneck;
@@ -90,37 +79,23 @@ export default function Home() {
     title: "Broker snapshot",
     description: "Current state of the live Fitz broker and admin access.",
     stats: (current) => [
-      {
-        label: "Health",
-        value: current.healthStatus,
-        note: "Latest health endpoint result",
-      },
+      { label: "Health", value: current.healthStatus, note: "Latest health endpoint result" },
       { label: "Connections", value: current.broker.connections },
       { label: "Sessions", value: current.broker.sessions },
       { label: "Realms", value: current.broker.realms.length },
       { label: "Uptime", value: humanizeSeconds(current.broker.uptimeSeconds) },
     ],
     footer: (
-      <div class="admin-sidebar-actions">
-        <Link href="/sessions" class="admin-sidebar-link">
-          View sessions
-        </Link>
-        <Button class="secondary-action" onPress={onLogout}>
-          Sign out
-        </Button>
-      </div>
+      <Stack gap="3">
+        <Link href="/sessions">View sessions</Link>
+        <Button onPress={() => navigate("/logout")}>Sign out</Button>
+      </Stack>
     ),
   });
 
   return (
-    <SidebarLayout
-      sidebar={sidebar}
-      sidebarPosition="end"
-      sidebarWidth="18rem"
-      gap="1.5rem"
-      collapseBelow="md"
-    >
-      <section class="domain-page">
+    <DomainPageFrame sidebar={sidebar}>
+      <Stack gap="3">
         <div class="admin-hero">
           <div class="panel-heading">
             <Badge>Authenticated</Badge>
@@ -135,27 +110,25 @@ export default function Home() {
             </p>
           </div>
 
-          <div class="admin-actions">
-            <Button class="secondary-action" onPress={() => system.refresh()}>
-              Refresh broker data
-            </Button>
-            <Link href="/sessions" class="admin-sidebar-link">
-              Open sessions
-            </Link>
-          </div>
+          <Inline gap="3" wrap="wrap">
+            <Button onPress={() => system.refresh()}>Refresh broker data</Button>
+            <Link href="/sessions">Open sessions</Link>
+          </Inline>
         </div>
 
-        {system.loading ? (
+        {!overview && system.loading ? (
           <QueryLoadingState description="Loading broker overview..." />
         ) : null}
 
-        {system.error ? (
-          <QueryErrorState error={system.error} />
-        ) : null}
+        {!overview && system.error ? <QueryErrorState error={system.error} /> : null}
 
-        {overview && !system.loading && !system.error ? (
-          <div class="domain-stack">
-            <section class="dashboard-status-grid">
+        {overview ? (
+          <Stack gap="3">
+            {system.refreshing ? (
+              <QueryRefreshingState description="Refreshing broker overview..." />
+            ) : null}
+
+            <Block gap="3" size="sm">
               <Card class="dashboard-status-card" variant="raised">
                 <CardHeader>
                   <CardTitle>Current incident</CardTitle>
@@ -184,7 +157,9 @@ export default function Home() {
               <Card class="dashboard-status-card" variant="raised">
                 <CardHeader>
                   <CardTitle>Broker health</CardTitle>
-                  <CardDescription>{health.data?.readiness ?? overview.healthStatus}</CardDescription>
+                  <CardDescription>
+                    {health.data?.readiness ?? overview.healthStatus}
+                  </CardDescription>
                 </CardHeader>
                 <CardContent class="dashboard-status-content">
                   <div class="dashboard-metric">
@@ -227,9 +202,9 @@ export default function Home() {
                   )}
                 </CardContent>
               </Card>
-            </section>
+            </Block>
 
-            <section class="domain-section">
+            <Section size="3">
               <div class="domain-section-header">
                 <div>
                   <p class="eyebrow">Recent signals</p>
@@ -238,23 +213,30 @@ export default function Home() {
                 </div>
               </div>
 
-              <div class="dashboard-domain-grid">
-                {overview.diagnostics.hotspots.slice(0, 6).map((hotspot) => (
-                  <Card class="dashboard-domain-card" variant="raised">
-                    <CardHeader>
-                      <CardTitle>{formatBottleneckLabel(hotspot)}</CardTitle>
-                      <CardDescription>{hotspot.severity}</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <p>{hotspot.current_stage}</p>
-                      <p>{hotspot.likely_bottleneck ?? "No likely bottleneck reported"}</p>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </section>
+              <Block gap="3" size="sm">
+                <For
+                  each={overview.diagnostics.hotspots.slice(0, 6)}
+                  by={(hotspot) =>
+                    `${hotspot.domain ?? "unknown"}:${hotspot.realm ?? "any"}:${hotspot.area ?? "any"}:${hotspot.resource ?? "any"}`
+                  }
+                >
+                  {(hotspot) => (
+                    <Card class="dashboard-domain-card" variant="raised">
+                      <CardHeader>
+                        <CardTitle>{formatBottleneckLabel(hotspot)}</CardTitle>
+                        <CardDescription>{hotspot.severity}</CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <p>{hotspot.current_stage}</p>
+                        <p>{hotspot.likely_bottleneck ?? "No likely bottleneck reported"}</p>
+                      </CardContent>
+                    </Card>
+                  )}
+                </For>
+              </Block>
+            </Section>
 
-            <section class="dashboard-domains">
+            <Section size="3">
               <div class="domain-section-header">
                 <div>
                   <p class="eyebrow">Domain totals</p>
@@ -262,7 +244,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <div class="dashboard-domain-grid">
+              <Block gap="3" size="sm">
                 <Card class="dashboard-domain-card">
                   <CardHeader>
                     <CardTitle>Queue</CardTitle>
@@ -357,17 +339,17 @@ export default function Home() {
                     <p>Ops / sec {overview.domains.stream.operationsPerSecond.toFixed(2)}</p>
                   </CardContent>
                 </Card>
-              </div>
-            </section>
+              </Block>
+            </Section>
 
             <DomainIndex
               title="Domain workbench"
               description="Use the domain pages for deeper inspection and queue resource drill-downs."
               links={domainLinks}
             />
-          </div>
+          </Stack>
         ) : null}
-      </section>
-    </SidebarLayout>
+      </Stack>
+    </DomainPageFrame>
   );
 }

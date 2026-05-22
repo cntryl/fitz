@@ -2,27 +2,26 @@ import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import { Badge, Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
-import { Section } from "@askrjs/themes/layouts";
+import { Flex, Section, Stack } from "@askrjs/themes/layouts";
 import DomainMetricTable from "./domain-metric-table";
-import type { ResourceDetail, ResourceMetric, ResourceRelatedTable } from "@/features/resource/resource-models";
+import type {
+  ResourceDetail,
+  ResourceMetric,
+  ResourceRelatedTable,
+} from "@/features/resource/resource-models";
+import { formatDisplayValue } from "@/shared/format";
 
 export interface ResourceWorkbenchProps {
   detail: ResourceDetail;
 }
 
-function formatMetricValue(value: string | number) {
-  return typeof value === "number" ? new Intl.NumberFormat("en-US").format(value) : value;
-}
-
 function RelatedTable({ table }: { table: ResourceRelatedTable }) {
   return (
-    <Section class="domain-section" size="3">
-      <div class="domain-section-header">
-        <div>
-          <p class="eyebrow">{table.title}</p>
-          <h2>{table.rows.length} rows</h2>
-        </div>
-      </div>
+    <Section size="3">
+      <Stack gap="1">
+        <p class="eyebrow">{table.title}</p>
+        <h2>{table.rows.length} rows</h2>
+      </Stack>
       <div class="domain-table-wrap">
         <Table class="domain-table">
           <TableHead>
@@ -56,7 +55,7 @@ function MetricStrip({ metrics }: { metrics: ResourceMetric[] }) {
         {(metric) => (
           <div class="resource-metric">
             <span>{metric.label}</span>
-            <strong>{formatMetricValue(metric.value)}</strong>
+            <strong>{formatDisplayValue(metric.value)}</strong>
           </div>
         )}
       </For>
@@ -67,33 +66,31 @@ function MetricStrip({ metrics }: { metrics: ResourceMetric[] }) {
 export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
   return (
     <div class="resource-workbench">
-      <section class="domain-section">
-        <div class="domain-section-header">
-          <div>
+      <Section size="3">
+        <Flex justify="between" gap="3" align="start" wrap="wrap">
+          <Stack gap="1">
             <p class="eyebrow">{detail.domain} resource</p>
             <h2>{detail.ref.resource}</h2>
             <p>
               {detail.ref.realm} / {detail.ref.area} / {detail.ref.resource}
             </p>
-          </div>
-          <Link href={`/${detail.domain}`} class="admin-sidebar-link">
-            Back to {detail.domain}
-          </Link>
-        </div>
+          </Stack>
+          <Link href={`/${detail.domain}`}>Back to {detail.domain}</Link>
+        </Flex>
         <MetricStrip metrics={detail.detailMetrics} />
-      </section>
+      </Section>
 
       <DomainMetricTable title="Overview" metrics={detail.detailMetrics} />
 
-      <Section class="domain-section" size="3">
-        <div class="domain-section-header">
-          <div>
+      <Section size="3">
+        <Flex justify="between" gap="3" align="start" wrap="wrap">
+          <Stack gap="1">
             <p class="eyebrow">Timeline</p>
             <h2>{detail.timeline.events.length} events</h2>
-          </div>
+          </Stack>
           <Badge>{detail.timeline.derived ? "Derived" : "Live"}</Badge>
-        </div>
-        <div class="domain-stack">
+        </Flex>
+        <Stack gap="3">
           <For each={detail.timeline.events} by={(event) => `${event.observedAt}:${event.summary}`}>
             {(event) => (
               <Card class="domain-resource-card" variant="raised">
@@ -111,7 +108,7 @@ export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
               </Card>
             )}
           </For>
-        </div>
+        </Stack>
       </Section>
 
       {detail.comparison ? (
@@ -125,13 +122,11 @@ export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
         {(table) => <RelatedTable table={table} />}
       </For>
 
-      <Section class="domain-section" size="3">
-        <div class="domain-section-header">
-          <div>
-            <p class="eyebrow">Raw</p>
-            <h2>API payload</h2>
-          </div>
-        </div>
+      <Section size="3">
+        <Stack gap="1">
+          <p class="eyebrow">Raw</p>
+          <h2>API payload</h2>
+        </Stack>
         <pre class="resource-raw">{JSON.stringify(detail.raw, null, 2)}</pre>
       </Section>
     </div>

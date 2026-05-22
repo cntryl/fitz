@@ -17,11 +17,7 @@ export function QueryLoadingState({
   description,
 }: QueryStateProps) {
   return (
-    <EmptyState
-      class={className}
-      icon={<Spinner label="Loading" />}
-      description={description}
-    />
+    <EmptyState class={className} icon={<Spinner label="Loading" />} description={description} />
   );
 }
 
@@ -42,11 +38,16 @@ export function QueryEmptyState({
   class: className = "domain-state",
   description,
 }: QueryStateProps) {
+  return <EmptyState class={className} icon={<GaugeIcon size={18} />} description={description} />;
+}
+
+export function QueryRefreshingState({
+  class: className = "eyebrow",
+  description,
+}: QueryStateProps) {
   return (
-    <EmptyState
-      class={className}
-      icon={<GaugeIcon size={18} />}
-      description={description}
-    />
+    <p class={className} role="status">
+      {description}
+    </p>
   );
 }

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Theming"
+  short_description: "Style apps with Askr themes"
+  default_prompt: "Use $askr-theming to apply tokens, shells, navs, and theme rules."

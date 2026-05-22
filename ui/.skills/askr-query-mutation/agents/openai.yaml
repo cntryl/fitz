@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Query Mutation"
+  short_description: "Coordinate shared read/write state"
+  default_prompt: "Use $askr-query-mutation to model shared server state and writes."

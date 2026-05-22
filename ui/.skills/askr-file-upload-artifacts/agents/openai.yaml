@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr File Upload Artifacts"
+  short_description: "Handle uploads and artifacts"
+  default_prompt: "Use $askr-file-upload-artifacts to build file workflows."

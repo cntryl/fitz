@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Agent Execution"
+  short_description: "Follow the canonical Askr editing playbook"
+  default_prompt: "Use $askr-agent-execution to decide how to read, edit, and validate an Askr repository."

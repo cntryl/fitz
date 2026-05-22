@@ -2,11 +2,16 @@ import { state } from "@askrjs/askr";
 import { navigate } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
+import { Inline, Section, Stack } from "@askrjs/themes/layouts";
 import { Badge } from "@askrjs/themes/surfaces";
 import DomainHeader from "@/components/shared/domain-header";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
-import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
-import SidebarLayout from "@/components/shared/sidebar-layout";
+import DomainPageFrame from "@/components/shared/domain-page-frame";
+import {
+  QueryErrorState,
+  QueryLoadingState,
+  QueryRefreshingState,
+} from "@/components/shared/query-state";
 import SessionTable from "@/components/shared/session-table";
 import { createActiveSessionsQuery } from "@/features/session/session-query";
 
@@ -20,7 +25,7 @@ function currentRealmFilter() {
 
 export default function SessionsPage() {
   const realmFilter = currentRealmFilter();
-  const realmInput = state(realmFilter);
+  const [realmInput, setRealmInput] = state(realmFilter);
   const sessionsQuery = createActiveSessionsQuery(realmFilter || undefined);
   const data = sessionsQuery.data;
 
@@ -44,11 +49,9 @@ export default function SessionsPage() {
       },
     ],
     footer: (
-      <div class="admin-sidebar-actions">
-        <Button class="secondary-action" onPress={() => sessionsQuery.refresh()}>
-          Refresh
-        </Button>
-      </div>
+      <Stack gap="3">
+        <Button onPress={() => sessionsQuery.refresh()}>Refresh</Button>
+      </Stack>
     ),
   });
 
@@ -61,14 +64,8 @@ export default function SessionsPage() {
   }
 
   return (
-    <SidebarLayout
-      sidebar={sidebar}
-      sidebarPosition="end"
-      sidebarWidth="18rem"
-      gap="1.5rem"
-      collapseBelow="md"
-    >
-      <section class="domain-page">
+    <DomainPageFrame sidebar={sidebar}>
+      <Stack gap="3">
         <DomainHeader
           domain="Sessions"
           title="Active sessions"
@@ -76,7 +73,7 @@ export default function SessionsPage() {
           onRefresh={() => sessionsQuery.refresh()}
         />
 
-        <section class="domain-section">
+        <Section size="3">
           <div class="domain-section-header">
             <div>
               <p class="eyebrow">Filter</p>
@@ -84,45 +81,46 @@ export default function SessionsPage() {
             </div>
           </div>
 
-          <form class="session-filter" onSubmit={onFilterSubmit}>
+          <Stack asChild gap="3">
+            <form onSubmit={onFilterSubmit}>
             <div class="auth-field">
               <Label for="realm-filter">Realm</Label>
               <Input
                 id="realm-filter"
                 value={realmInput()}
-                onInput={(event: Event) => realmInput.set((event.target as HTMLInputElement).value)}
+                onInput={(event: Event) => setRealmInput((event.target as HTMLInputElement).value)}
                 placeholder="Leave blank for all realms"
               />
             </div>
 
-            <div class="session-filter-actions">
-              <Button type="submit" class="primary-action">
-                Apply filter
-              </Button>
+            <Inline gap="3" wrap="wrap">
+              <Button type="submit">Apply filter</Button>
               <Button
-                class="secondary-action"
                 onPress={() => {
-                  realmInput.set("");
+                  setRealmInput("");
                   navigate("/sessions");
                 }}
               >
                 Clear
               </Button>
-            </div>
-          </form>
-        </section>
+            </Inline>
+            </form>
+          </Stack>
+        </Section>
 
-        {sessionsQuery.loading ? (
+        {!data && sessionsQuery.loading ? (
           <QueryLoadingState description="Loading active sessions..." />
         ) : null}
 
-        {sessionsQuery.error ? (
-          <QueryErrorState error={sessionsQuery.error} />
-        ) : null}
+        {!data && sessionsQuery.error ? <QueryErrorState error={sessionsQuery.error} /> : null}
 
-        {data && !sessionsQuery.loading && !sessionsQuery.error ? (
-          <div class="domain-stack">
-            <section class="domain-section">
+        {data ? (
+          <Stack gap="3">
+            {sessionsQuery.refreshing ? (
+              <QueryRefreshingState description="Refreshing active sessions..." />
+            ) : null}
+
+            <Section size="3">
               <div class="domain-section-header">
                 <div>
                   <p class="eyebrow">Overview</p>
@@ -130,12 +128,12 @@ export default function SessionsPage() {
                 </div>
                 <Badge>{realmFilter || "All realms"}</Badge>
               </div>
-            </section>
+            </Section>
 
             <SessionTable sessions={data.sessions} />
-          </div>
+          </Stack>
         ) : null}
-      </section>
-    </SidebarLayout>
+      </Stack>
+    </DomainPageFrame>
   );
 }

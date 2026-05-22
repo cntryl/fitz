@@ -1,6 +1,6 @@
 import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Section } from "@askrjs/themes/layouts";
+import { Section, Stack } from "@askrjs/themes/layouts";
 import { QueryEmptyState } from "./query-state";
 
 export interface DomainRealm {
@@ -16,13 +16,11 @@ export interface DomainRealmTableProps {
 
 export default function DomainRealmTable({ title, realms, emptyMessage }: DomainRealmTableProps) {
   return (
-    <Section class="domain-section" size="3">
-      <div class="domain-section-header">
-        <div>
-          <p class="eyebrow">{title}</p>
-          <h2>{realms.length} realms</h2>
-        </div>
-      </div>
+    <Section size="3">
+      <Stack gap="1">
+        <p class="eyebrow">{title}</p>
+        <h2>{realms.length} realms</h2>
+      </Stack>
 
       {realms.length === 0 ? (
         <QueryEmptyState description={emptyMessage} />

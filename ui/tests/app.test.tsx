@@ -24,7 +24,6 @@ import SessionsPage from "@/pages/app/sessions";
 import StreamPage from "@/pages/app/stream";
 import Logout from "@/pages/auth/logout";
 import Login from "@/pages/auth/login";
-import Home from "@/pages/public/home";
 import { getRoutes } from "@askrjs/askr/router";
 import { EmptyState } from "@askrjs/themes/feedback";
 import { NavBrand, NavGroup, NavItem, NavLink, Navbar } from "@askrjs/themes/navs";
@@ -32,15 +31,15 @@ import { Section } from "@askrjs/themes/layouts";
 import { Card } from "@askrjs/themes/surfaces";
 import { domainLinks, shellLinks } from "@/shared/navigation/domains";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
-import SidebarLayout from "@/components/shared/sidebar-layout";
+import DomainPageFrame from "@/components/shared/domain-page-frame";
 import "@/pages/_routes";
 
 describe("Admin UI", () => {
   it("defines the shared admin shell", () => {
     expect(App).toBeDefined();
     expect(typeof App).toBe("function");
-    expect(SidebarLayout).toBeDefined();
-    expect(typeof SidebarLayout).toBe("function");
+    expect(DomainPageFrame).toBeDefined();
+    expect(typeof DomainPageFrame).toBe("function");
     expect(Navbar).toBeDefined();
     expect(typeof Navbar).toBe("function");
     expect(NavBrand).toBeDefined();

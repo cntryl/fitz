@@ -2,22 +2,25 @@ import { state } from "@askrjs/askr";
 import { navigate } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@askrjs/themes/surfaces";
+import { Inline, Section, Stack } from "@askrjs/themes/layouts";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
-import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
-import SidebarLayout from "@/components/shared/sidebar-layout";
+import {
+  QueryErrorState,
+  QueryLoadingState,
+  QueryRefreshingState,
+} from "@/components/shared/query-state";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { createQueueOverviewQuery } from "@/features/queue/queue-query";
 
-function summarizeQueuePressure(messagesReady: number, messagesPending: number, deadLetters: number) {
+function summarizeQueuePressure(
+  messagesReady: number,
+  messagesPending: number,
+  deadLetters: number,
+) {
   if (deadLetters > 0) {
     return {
       label: "Dead-letter pressure",
@@ -38,7 +41,11 @@ function summarizeQueuePressure(messagesReady: number, messagesPending: number, 
   };
 }
 
-function summarizeQueueExplanation(messagesReady: number, messagesPending: number, deadLetters: number) {
+function summarizeQueueExplanation(
+  messagesReady: number,
+  messagesPending: number,
+  deadLetters: number,
+) {
   if (deadLetters > 0) {
     return {
       title: "Dead-letter pressure",
@@ -65,10 +72,14 @@ function summarizeQueueExplanation(messagesReady: number, messagesPending: numbe
 export default function QueuePage() {
   const overview = createQueueOverviewQuery();
   const data = overview.data;
-  const domainInput = state("queue");
-  const realmInput = state("");
-  const areaInput = state("");
-  const resourceInput = state("");
+  const [domainInput, setDomainInput] = state("queue");
+  const [realmInput, setRealmInput] = state("");
+  const [areaInput, setAreaInput] = state("");
+  const [resourceInput, setResourceInput] = state("");
+  const domainValue = domainInput();
+  const realmValue = realmInput();
+  const areaValue = areaInput();
+  const resourceValue = resourceInput();
 
   const sidebar = createDomainSidebar({
     data,
@@ -97,7 +108,9 @@ export default function QueuePage() {
     const nextResource = resourceInput().trim();
 
     if (nextDomain === "queue" && nextRealm && nextArea && nextResource) {
-      navigate(`/queue/${encodeURIComponent(nextRealm)}/${encodeURIComponent(nextArea)}/${encodeURIComponent(nextResource)}`);
+      navigate(
+        `/queue/${encodeURIComponent(nextRealm)}/${encodeURIComponent(nextArea)}/${encodeURIComponent(nextResource)}`,
+      );
       return;
     }
 
@@ -110,14 +123,8 @@ export default function QueuePage() {
   }
 
   return (
-    <SidebarLayout
-      sidebar={sidebar}
-      sidebarPosition="end"
-      sidebarWidth="18rem"
-      gap="1.5rem"
-      collapseBelow="md"
-    >
-      <section class="domain-page">
+    <DomainPageFrame sidebar={sidebar}>
+      <Stack gap="3">
         <DomainHeader
           domain="Queue"
           title="Queue overview"
@@ -125,16 +132,18 @@ export default function QueuePage() {
           onRefresh={() => overview.refresh()}
         />
 
-        {overview.loading ? (
+        {!data && overview.loading ? (
           <QueryLoadingState description="Loading queue overview..." />
         ) : null}
 
-        {overview.error ? (
-          <QueryErrorState error={overview.error} />
-        ) : null}
+        {!data && overview.error ? <QueryErrorState error={overview.error} /> : null}
 
-        {data && !overview.loading && !overview.error ? (
-          <div class="domain-stack">
+        {data ? (
+          <Stack gap="3">
+            {overview.refreshing ? (
+              <QueryRefreshingState description="Refreshing queue overview..." />
+            ) : null}
+
             {(() => {
               const pressure = summarizeQueuePressure(
                 data.stats.messagesReady,
@@ -155,7 +164,7 @@ export default function QueuePage() {
               );
             })()}
 
-            <section class="domain-section">
+            <Section size="3">
               <div class="domain-section-header">
                 <div>
                   <p class="eyebrow">Jump / filter</p>
@@ -163,13 +172,16 @@ export default function QueuePage() {
                 </div>
               </div>
 
-              <form class="domain-stack" onSubmit={onJumpSubmit}>
+              <Stack asChild gap="3">
+                <form onSubmit={onJumpSubmit}>
                 <div class="auth-field">
                   <Label for="domain-filter">Domain</Label>
                   <Input
                     id="domain-filter"
-                    value={domainInput()}
-                    onInput={(event: Event) => domainInput.set((event.target as HTMLInputElement).value)}
+                    value={domainValue}
+                    onInput={(event: Event) =>
+                      setDomainInput((event.target as HTMLInputElement).value)
+                    }
                     placeholder="queue, lease, rpc, notice, schedule, stream, kv"
                   />
                 </div>
@@ -178,8 +190,10 @@ export default function QueuePage() {
                   <Label for="realm-filter">Realm</Label>
                   <Input
                     id="realm-filter"
-                    value={realmInput()}
-                    onInput={(event: Event) => realmInput.set((event.target as HTMLInputElement).value)}
+                    value={realmValue}
+                    onInput={(event: Event) =>
+                      setRealmInput((event.target as HTMLInputElement).value)
+                    }
                     placeholder="Optional realm"
                   />
                 </div>
@@ -188,8 +202,10 @@ export default function QueuePage() {
                   <Label for="area-filter">Area</Label>
                   <Input
                     id="area-filter"
-                    value={areaInput()}
-                    onInput={(event: Event) => areaInput.set((event.target as HTMLInputElement).value)}
+                    value={areaValue}
+                    onInput={(event: Event) =>
+                      setAreaInput((event.target as HTMLInputElement).value)
+                    }
                     placeholder="Optional area"
                   />
                 </div>
@@ -198,31 +214,31 @@ export default function QueuePage() {
                   <Label for="resource-filter">Resource</Label>
                   <Input
                     id="resource-filter"
-                    value={resourceInput()}
-                    onInput={(event: Event) => resourceInput.set((event.target as HTMLInputElement).value)}
+                    value={resourceValue}
+                    onInput={(event: Event) =>
+                      setResourceInput((event.target as HTMLInputElement).value)
+                    }
                     placeholder="Optional resource"
                   />
                 </div>
 
-                <div class="session-filter-actions">
-                  <Button type="submit" class="primary-action">
-                    Open scope
-                  </Button>
+                <Inline gap="3" wrap="wrap">
+                  <Button type="submit">Open scope</Button>
                   <Button
                     type="button"
-                    class="secondary-action"
                     onPress={() => {
-                      domainInput.set("queue");
-                      realmInput.set("");
-                      areaInput.set("");
-                      resourceInput.set("");
+                      setDomainInput("queue");
+                      setRealmInput("");
+                      setAreaInput("");
+                      setResourceInput("");
                     }}
                   >
                     Reset
                   </Button>
-                </div>
-              </form>
-            </section>
+                </Inline>
+                </form>
+              </Stack>
+            </Section>
 
             {(() => {
               const explanation = summarizeQueueExplanation(
@@ -265,9 +281,9 @@ export default function QueuePage() {
               realms={data.realms}
               emptyMessage="No queue realms are currently visible."
             />
-          </div>
+          </Stack>
         ) : null}
-      </section>
-    </SidebarLayout>
+      </Stack>
+    </DomainPageFrame>
   );
 }

@@ -5,6 +5,7 @@ import {
 } from "@/features/queue/queue-query";
 import { AlertTriangleIcon, GaugeIcon } from "@askrjs/lucide";
 import { EmptyState, Spinner } from "@askrjs/themes/feedback";
+import { Section } from "@askrjs/themes/layouts";
 import DomainHeader from "@/components/shared/domain-header";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
@@ -32,7 +33,7 @@ export default function QueueDeadLettersPanel({
   const messages = deadLetters.data ?? [];
 
   return (
-    <section class="queue-panel">
+    <Section size="3">
       <DomainHeader
         domain="Queue"
         title="Dead letters"
@@ -73,6 +74,6 @@ export default function QueueDeadLettersPanel({
           pendingMessageId={pendingMessageId}
         />
       ) : null}
-    </section>
+    </Section>
   );
 }

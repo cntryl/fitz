@@ -18,7 +18,7 @@ export interface DomainIndexProps {
 
 export default function DomainIndex({ title, description, links }: DomainIndexProps) {
   return (
-    <Section class="domain-index" size="3">
+    <Section size="3">
       <div class="domain-header-copy">
         <p class="eyebrow">Navigation</p>
         <h2>{title}</h2>

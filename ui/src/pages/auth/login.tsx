@@ -2,14 +2,9 @@ import { state } from "@askrjs/askr";
 import { currentRoute, navigate } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@askrjs/themes/surfaces";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import { createSignInMutation } from "@/features/session/session-mutation";
+import { formatUnknownError } from "@/shared/errors/format";
 
 function resolveNextTarget() {
   const next = currentRoute().query.get("next");
@@ -22,18 +17,16 @@ function resolveNextTarget() {
 }
 
 export default function Login() {
-  const username = state("");
-  const password = state("");
-  const error = state("");
-  const submitting = state(false);
+  const [username, setUsername] = state("");
+  const [password, setPassword] = state("");
 
   const signIn = createSignInMutation();
   const nextTarget = resolveNextTarget();
 
   async function onSubmit(event: Event) {
     event.preventDefault();
-    error.set("");
-    submitting.set(true);
+
+    signIn.reset();
 
     try {
       await signIn.execute({
@@ -41,10 +34,8 @@ export default function Login() {
         password: password(),
       });
       navigate(nextTarget, { history: "replace" });
-    } catch (err) {
-      error.set(err instanceof Error ? err.message : "Unable to sign in");
-    } finally {
-      submitting.set(false);
+    } catch {
+      return;
     }
   }
 
@@ -66,7 +57,7 @@ export default function Login() {
               name="username"
               autocomplete="username"
               value={username()}
-              onInput={(event: Event) => username.set((event.target as HTMLInputElement).value)}
+              onInput={(event: Event) => setUsername((event.target as HTMLInputElement).value)}
               placeholder="admin"
             />
           </div>
@@ -79,15 +70,15 @@ export default function Login() {
               name="password"
               autocomplete="current-password"
               value={password()}
-              onInput={(event: Event) => password.set((event.target as HTMLInputElement).value)}
+              onInput={(event: Event) => setPassword((event.target as HTMLInputElement).value)}
               placeholder="Enter your password"
             />
           </div>
 
-          {error() ? <p class="auth-error">{error()}</p> : null}
+          {signIn.error ? <p class="auth-error">{formatUnknownError(signIn.error)}</p> : null}
 
-          <Button type="submit" aria-busy={submitting()}>
-            {submitting() ? "Signing in..." : "Sign in"}
+          <Button type="submit" aria-busy={signIn.pending} disabled={signIn.pending}>
+            {signIn.pending ? "Signing in..." : "Sign in"}
           </Button>
         </form>
       </CardContent>

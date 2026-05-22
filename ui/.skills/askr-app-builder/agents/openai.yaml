@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr App Builder"
+  short_description: "Build idiomatic Askr applications"
+  default_prompt: "Use $askr-app-builder to plan and build an idiomatic Askr app."

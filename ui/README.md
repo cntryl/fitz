@@ -21,12 +21,24 @@ Expected companion services:
 ## Build and Verification
 
 ```bash
-vp check
-vp test
-vp build
+npm run type-check
+npm run test
+npm run build
 ```
 
 Production build output is written to `../public`, which is then served by the Rust HTTP server at `/`.
+
+## Public Config
+
+The browser client reads these public Vite env vars through `src/shared/config.ts`:
+
+- `VITE_FITZ_API_BASE_URL`
+- `VITE_FITZ_REQUEST_TIMEOUT_MS`
+- `VITE_FITZ_LOG_LEVEL`
+
+## Local Skills
+
+The repo-local `.skills/` docs describe the intended Askr workflow for each slice. Pick the narrowest applicable skill for the files you are changing, and treat the docs as guidance for that surface rather than a checklist to force onto unrelated code.
 
 ## Routing
 

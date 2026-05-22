@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr CLI Vite"
+  short_description: "Scaffold and configure Askr apps"
+  default_prompt: "Use $askr-cli-vite to scaffold or configure an askr Vite app."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Askr Dashboard Charts"
+  short_description: "Build dashboards and charts"
+  default_prompt: "Use $askr-dashboard-charts to build dashboard metrics and charts."
