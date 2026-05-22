@@ -1,5 +1,27 @@
 @import "@askrjs/themes/default";
 
+.auth-shell {
+  align-items: center;
+  justify-content: center;
+  min-height: min(42rem, calc(100dvh - 6rem));
+}
+
+.auth-card {
+  width: min(100%, 28rem);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ak-space-4, 1rem);
+}
+
+.auth-status {
+  display: flex;
+  align-items: center;
+  gap: var(--ak-space-3, 0.75rem);
+}
+
 .domain-table-wrap {
   overflow-x: auto;
 }

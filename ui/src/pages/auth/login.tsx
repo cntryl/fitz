@@ -1,8 +1,15 @@
 import { state } from "@askrjs/askr";
 import { currentRoute, navigate } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
-import { Button } from "@askrjs/themes/controls";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Button, Field, FieldHint } from "@askrjs/themes/controls";
+import {
+  Alert,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@askrjs/themes/surfaces";
 import { createSignInMutation } from "@/features/session/session-mutation";
 import { formatUnknownError } from "@/shared/errors/format";
 
@@ -50,7 +57,7 @@ export default function Login() {
 
       <CardContent>
         <form class="auth-form" onSubmit={onSubmit}>
-          <div class="auth-field">
+          <Field>
             <Label for="username-field">Username</Label>
             <Input
               id="username-field"
@@ -60,9 +67,10 @@ export default function Login() {
               onInput={(event: Event) => setUsername((event.target as HTMLInputElement).value)}
               placeholder="admin"
             />
-          </div>
+            <FieldHint>Use the same admin account you use for broker operations.</FieldHint>
+          </Field>
 
-          <div class="auth-field">
+          <Field>
             <Label for="password-field">Password</Label>
             <Input
               id="password-field"
@@ -73,9 +81,15 @@ export default function Login() {
               onInput={(event: Event) => setPassword((event.target as HTMLInputElement).value)}
               placeholder="Enter your password"
             />
-          </div>
+          </Field>
 
-          {signIn.error ? <p class="auth-error">{formatUnknownError(signIn.error)}</p> : null}
+          {signIn.error ? (
+            <Alert
+              variant="danger"
+              title="Sign in failed"
+              description={formatUnknownError(signIn.error)}
+            />
+          ) : null}
 
           <Button type="submit" aria-busy={signIn.pending} disabled={signIn.pending}>
             {signIn.pending ? "Signing in..." : "Sign in"}

@@ -1,5 +1,5 @@
 import { MoonIcon, SunIcon } from "@askrjs/lucide";
-import { Block, Container } from "@askrjs/themes/layouts";
+import { Container, Flex } from "@askrjs/themes/layouts";
 import { Header, Navbar, NavBrand, NavGroup } from "@askrjs/themes/shells";
 import { ThemeToggle } from "@askrjs/themes/theme";
 
@@ -22,10 +22,10 @@ export default function Layout({ children }: { children?: unknown }) {
           </Navbar>
         </Container>
       </Header>
-      <Container>
-        <Block size="sm" space="lg" align="center" justify="center">
+      <Container size="sm" p="4">
+        <Flex class="auth-shell" align="center" justify="center">
           {children}
-        </Block>
+        </Flex>
       </Container>
     </>
   );
