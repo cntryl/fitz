@@ -139,14 +139,20 @@ function tableFromRecords(
   return {
     columns,
     rows: rows.map((row) =>
-      Object.fromEntries(columns.map((column) => [column, formatMaybe((row as Record<string, unknown>)[column])])),
+      Object.fromEntries(
+        columns.map((column) => [column, formatMaybe((row as Record<string, unknown>)[column])]),
+      ),
     ),
     title,
   };
 }
 
 export function mapKvTransactions(transactions: KvTransaction[]): ResourceRelatedTable {
-  return tableFromRecords("KV transactions", ["tx_id", "mode", "operations_count", "idle_seconds"], transactions);
+  return tableFromRecords(
+    "KV transactions",
+    ["tx_id", "mode", "operations_count", "idle_seconds"],
+    transactions,
+  );
 }
 
 export function mapStreamWatermarks(watermarks: StreamAreaWatermark[]): ResourceRelatedTable {
@@ -170,11 +176,19 @@ export function mapRpcOperations(operations: string[]): ResourceRelatedTable {
 }
 
 export function mapRpcWorkers(workers: RpcWorker[]): ResourceRelatedTable {
-  return tableFromRecords("RPC workers", ["session_id", "route", "requests_handled", "average_latency_ms"], workers);
+  return tableFromRecords(
+    "RPC workers",
+    ["session_id", "route", "requests_handled", "average_latency_ms"],
+    workers,
+  );
 }
 
 export function mapRpcPending(requests: RpcPendingRequest[]): ResourceRelatedTable {
-  return tableFromRecords("RPC pending requests", ["correlation_id", "route", "age_seconds", "worker_session_id"], requests);
+  return tableFromRecords(
+    "RPC pending requests",
+    ["correlation_id", "route", "age_seconds", "worker_session_id"],
+    requests,
+  );
 }
 
 export function mapResourceDetail(input: {

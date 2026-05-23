@@ -13,7 +13,11 @@ export function createResourceInventoryQuery(domain: DomainId) {
   });
 }
 
-export function createResourceQuery(domain: DomainId, ref: ResourceRef, against: ResourceRef | null) {
+export function createResourceQuery(
+  domain: DomainId,
+  ref: ResourceRef,
+  against: ResourceRef | null,
+) {
   return createQuery<ResourceDetail>({
     key: `${resourceKey(domain, ref)}:against:${against?.realm ?? "none"}:${against?.area ?? "none"}:${against?.resource ?? "none"}`,
     fetch: ({ signal }) => resourceService.getResource(domain, ref, against, { signal }),

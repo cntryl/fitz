@@ -177,12 +177,7 @@ describe("service endpoint contracts", () => {
       { limit: 20 },
       {},
     );
-    expect(mocks.apiv1.listKvTransactions).toHaveBeenCalledWith(
-      "default",
-      "ops",
-      "primary",
-      {},
-    );
+    expect(mocks.apiv1.listKvTransactions).toHaveBeenCalledWith("default", "ops", "primary", {});
   });
 
   it("loads queue resource detail from the expected queue resource endpoints", async () => {

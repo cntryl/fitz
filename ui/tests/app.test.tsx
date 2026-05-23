@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import App from "@/pages/app/_layout";
 import QueueDeadLettersPanel from "@/components/queue-dead-letters-panel";

@@ -22,7 +22,13 @@ export default function DomainHeader({
       </div>
 
       {onRefresh ? (
-        <Button size="icon" variant="outline" aria-label="Refresh" title="Refresh" onPress={onRefresh}>
+        <Button
+          size="icon"
+          variant="outline"
+          aria-label="Refresh"
+          title="Refresh"
+          onPress={onRefresh}
+        >
           <RefreshCwIcon size={16} />
         </Button>
       ) : null}

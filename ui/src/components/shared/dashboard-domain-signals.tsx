@@ -72,7 +72,10 @@ export default function DashboardDomainSignals({ overview }: { overview: SystemO
           </div>
         </ChartPanel>
 
-        <ChartPanel title="Activity rate" description="Current operations per second across domains.">
+        <ChartPanel
+          title="Activity rate"
+          description="Current operations per second across domains."
+        >
           <div class="chart-meter-grid">
             {activity.map((entry) => (
               <div key={`activity-${entry.label}`}>

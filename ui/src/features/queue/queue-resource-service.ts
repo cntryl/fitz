@@ -16,29 +16,30 @@ async function getResource(
   resourceRef: QueueResourceRef,
   options: ServiceRequestOptions = {},
 ): Promise<QueueResourceOverview> {
-  const [detailResponse, inflightResponse, deadLettersResponse, timelineResponse] = await Promise.all([
-    apiv1.getQueueResource(resourceRef.realm, resourceRef.area, resourceRef.resource, options),
-    apiv1.listQueueInflightEntries(
-      resourceRef.realm,
-      resourceRef.area,
-      resourceRef.resource,
-      options,
-    ),
-    apiv1.listQueueDeadLetters(
-      resourceRef.realm,
-      resourceRef.area,
-      resourceRef.resource,
-      undefined,
-      options,
-    ),
-    apiv1.listQueueResourceEvents(
-      resourceRef.realm,
-      resourceRef.area,
-      resourceRef.resource,
-      { limit: 8 },
-      options,
-    ),
-  ]);
+  const [detailResponse, inflightResponse, deadLettersResponse, timelineResponse] =
+    await Promise.all([
+      apiv1.getQueueResource(resourceRef.realm, resourceRef.area, resourceRef.resource, options),
+      apiv1.listQueueInflightEntries(
+        resourceRef.realm,
+        resourceRef.area,
+        resourceRef.resource,
+        options,
+      ),
+      apiv1.listQueueDeadLetters(
+        resourceRef.realm,
+        resourceRef.area,
+        resourceRef.resource,
+        undefined,
+        options,
+      ),
+      apiv1.listQueueResourceEvents(
+        resourceRef.realm,
+        resourceRef.area,
+        resourceRef.resource,
+        { limit: 8 },
+        options,
+      ),
+    ]);
 
   return mapQueueResourceOverview(
     unwrapResponse(detailResponse, "Unable to load queue resource"),
