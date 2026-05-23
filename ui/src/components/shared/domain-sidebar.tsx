@@ -1,12 +1,4 @@
 import { For } from "@askrjs/askr/control";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@askrjs/themes/surfaces";
 import { formatDisplayValue } from "@/shared/format";
 
 export interface DomainSidebarStat {
@@ -32,26 +24,26 @@ export interface DomainSidebarConfig<TData> {
 
 export default function DomainSidebar({ title, description, stats, footer }: DomainSidebarProps) {
   return (
-    <Card class="domain-sidebar" variant="raised">
-      <CardHeader class="domain-sidebar-header">
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent class="domain-sidebar-content">
-        <dl class="domain-sidebar-stats">
-          <For each={stats} by={(stat) => stat.label}>
-            {(stat) => (
-              <div class="domain-sidebar-stat">
-                <dt>{stat.label}</dt>
-                <dd>{formatDisplayValue(stat.value)}</dd>
-                {stat.note ? <p>{stat.note}</p> : null}
-              </div>
-            )}
-          </For>
-        </dl>
-      </CardContent>
-      {footer ? <CardFooter class="domain-sidebar-footer">{footer}</CardFooter> : null}
-    </Card>
+    <aside class="domain-sidebar">
+      <div class="domain-section-header">
+        <div>
+          <h2>{title}</h2>
+          <p>{description}</p>
+        </div>
+      </div>
+      <dl class="domain-sidebar-stats">
+        <For each={stats} by={(stat) => stat.label}>
+          {(stat) => (
+            <div class="domain-sidebar-stat">
+              <dt>{stat.label}</dt>
+              <dd>{formatDisplayValue(stat.value)}</dd>
+              {stat.note ? <p>{stat.note}</p> : null}
+            </div>
+          )}
+        </For>
+      </dl>
+      {footer ? <div class="domain-sidebar-footer">{footer}</div> : null}
+    </aside>
   );
 }
 

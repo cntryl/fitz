@@ -1,6 +1,6 @@
 import { state } from "@askrjs/askr";
-import { currentRoute, Link, navigate } from "@askrjs/askr/router";
 import { For, Show } from "@askrjs/askr/control";
+import { currentRoute, Link, navigate } from "@askrjs/askr/router";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,14 +12,19 @@ import {
   AlertDialogTitle,
   Input,
   Label,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
 } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
-import { Block, Inline, Section, Stack } from "@askrjs/themes/layouts";
-import { Badge, Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Flex, Section, Stack } from "@askrjs/themes/layouts";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
-import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -156,53 +161,50 @@ function QueueResourceComparisonResults({
             <QueryRefreshingState description="Refreshing queue resource comparison..." />
           ) : null}
 
-          <Card class="domain-resource-card" variant="raised">
-            <CardHeader>
-              <Badge>{comparison.derived ? "Derived" : "Live"}</Badge>
-              <CardTitle>{comparison.summary}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p>{comparison.comparisonMode}</p>
-            </CardContent>
-          </Card>
+          <DomainMetricTable
+            title="Comparison summary"
+            metrics={[
+              { label: "Summary", value: comparison.summary },
+              { label: "Mode", value: comparison.comparisonMode },
+              { label: "Source", value: comparison.derived ? "Derived" : "Live" },
+            ]}
+          />
 
-          <Block gap="3" size="sm">
-            <DomainMetricTable
-              title="Current snapshot"
-              metrics={[
-                { label: "Backlog", value: comparison.left.metrics.backlog ?? "n/a" },
-                { label: "Inflight", value: comparison.left.metrics.inflight ?? "n/a" },
-                { label: "Ready", value: comparison.left.metrics.ready ?? "n/a" },
-                { label: "Dead letters", value: comparison.left.metrics.deadLetters ?? "n/a" },
-                { label: "Waiters", value: comparison.left.metrics.waiters ?? "n/a" },
-                {
-                  label: "Age",
-                  value:
-                    comparison.left.metrics.ageSeconds == null
-                      ? "n/a"
-                      : humanizeSeconds(comparison.left.metrics.ageSeconds),
-                },
-              ]}
-            />
+          <DomainMetricTable
+            title="Current snapshot"
+            metrics={[
+              { label: "Backlog", value: comparison.left.metrics.backlog ?? "n/a" },
+              { label: "Inflight", value: comparison.left.metrics.inflight ?? "n/a" },
+              { label: "Ready", value: comparison.left.metrics.ready ?? "n/a" },
+              { label: "Dead letters", value: comparison.left.metrics.deadLetters ?? "n/a" },
+              { label: "Waiters", value: comparison.left.metrics.waiters ?? "n/a" },
+              {
+                label: "Age",
+                value:
+                  comparison.left.metrics.ageSeconds == null
+                    ? "n/a"
+                    : humanizeSeconds(comparison.left.metrics.ageSeconds),
+              },
+            ]}
+          />
 
-            <DomainMetricTable
-              title="Comparison target"
-              metrics={[
-                { label: "Backlog", value: comparison.right.metrics.backlog ?? "n/a" },
-                { label: "Inflight", value: comparison.right.metrics.inflight ?? "n/a" },
-                { label: "Ready", value: comparison.right.metrics.ready ?? "n/a" },
-                { label: "Dead letters", value: comparison.right.metrics.deadLetters ?? "n/a" },
-                { label: "Waiters", value: comparison.right.metrics.waiters ?? "n/a" },
-                {
-                  label: "Age",
-                  value:
-                    comparison.right.metrics.ageSeconds == null
-                      ? "n/a"
-                      : humanizeSeconds(comparison.right.metrics.ageSeconds),
-                },
-              ]}
-            />
-          </Block>
+          <DomainMetricTable
+            title="Comparison target"
+            metrics={[
+              { label: "Backlog", value: comparison.right.metrics.backlog ?? "n/a" },
+              { label: "Inflight", value: comparison.right.metrics.inflight ?? "n/a" },
+              { label: "Ready", value: comparison.right.metrics.ready ?? "n/a" },
+              { label: "Dead letters", value: comparison.right.metrics.deadLetters ?? "n/a" },
+              { label: "Waiters", value: comparison.right.metrics.waiters ?? "n/a" },
+              {
+                label: "Age",
+                value:
+                  comparison.right.metrics.ageSeconds == null
+                    ? "n/a"
+                    : humanizeSeconds(comparison.right.metrics.ageSeconds),
+              },
+            ]}
+          />
 
           <DomainMetricTable
             title="Delta"
@@ -355,7 +357,6 @@ export default function QueueResourcePage() {
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
-          domain="Queue"
           title="Resource drill-down"
           description={`${realm} / ${area} / ${resource}`}
           onRefresh={() => resourceQuery.refresh()}
@@ -380,19 +381,6 @@ export default function QueueResourcePage() {
                 <QueryRefreshingState description="Refreshing queue resource..." />
               </Show>
 
-              <Card class="domain-resource-card" variant="raised">
-                <CardHeader>
-                  <Badge>Queue Resource</Badge>
-                  <CardTitle>{current.detail.resource}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p>
-                    Live in-memory view of the broker actor for this queue resource. Message counts
-                    are point-in-time and reflect the current broker process.
-                  </p>
-                </CardContent>
-              </Card>
-
               <DomainMetricTable
                 title="Resource metrics"
                 metrics={[
@@ -410,10 +398,8 @@ export default function QueueResourcePage() {
 
               <Section size="3">
                 <div class="domain-section-header">
-                  <div>
-                    <p class="eyebrow">Inflight</p>
-                    <h2>{current.inflight.length} entries</h2>
-                  </div>
+                  <h2>Inflight</h2>
+                  <span>{current.inflight.length} entries</span>
                 </div>
 
                 <Show
@@ -426,10 +412,8 @@ export default function QueueResourcePage() {
 
               <Section size="3">
                 <div class="domain-section-header">
-                  <div>
-                    <p class="eyebrow">Dead letters</p>
-                    <h2>{current.deadLetters.length} messages</h2>
-                  </div>
+                  <h2>Dead letters</h2>
+                  <span>{current.deadLetters.length} messages</span>
                 </div>
 
                 <Show
@@ -450,72 +434,53 @@ export default function QueueResourcePage() {
 
               <Section size="3">
                 <div class="domain-section-header">
-                  <div>
-                    <p class="eyebrow">Timeline</p>
-                    <h2>Recent transitions</h2>
-                    <p>Bounded live events from the broker view for this resource.</p>
-                  </div>
-                  <Badge>{current.timeline.derived ? "Derived" : "Live"}</Badge>
+                  <h2>Timeline</h2>
+                  <span>{current.timeline.derived ? "Derived" : "Live"}</span>
                 </div>
 
                 <Show
                   when={current.timeline.events.length === 0}
                   fallback={
-                    <Stack gap="3">
-                      <Card class="domain-resource-card" variant="raised">
-                        <CardHeader>
-                          <Badge>Live timeline</Badge>
-                          <CardTitle>{current.timeline.limit} event window</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <p>
-                            Recent state changes, retries, failures, and ownership flips from the
-                            current broker snapshot.
-                          </p>
-                        </CardContent>
-                      </Card>
-
-                      <Stack gap="3">
-                        <For
-                          each={current.timeline.events}
-                          by={(event: QueueResourceTimelineEvent) =>
-                            `${event.observedAt}:${event.summary}`
-                          }
-                        >
-                          {(event: QueueResourceTimelineEvent) => (
-                            <Card class="domain-resource-card" variant="raised">
-                              <CardHeader>
-                                <div class="domain-inline-tags">
-                                  <Badge>{formatTimelineKind(event.kind)}</Badge>
-                                  {event.ageSeconds != null ? (
-                                    <Badge>{humanizeSeconds(event.ageSeconds)}</Badge>
-                                  ) : null}
-                                </div>
-                                <CardTitle>{event.summary}</CardTitle>
-                              </CardHeader>
-                              <CardContent>
-                                <p>{event.observedAt}</p>
-                                <p>
-                                  {event.operation
-                                    ? `Operation: ${event.operation}`
-                                    : "Operation: unknown"}
-                                  {event.messageId != null ? ` | Message ${event.messageId}` : ""}
-                                </p>
-                                <p>
-                                  {event.ownerSession
-                                    ? `Owner: ${event.ownerSession}`
-                                    : "Owner: unknown"}
-                                  {event.workerSession ? ` | Worker: ${event.workerSession}` : ""}
-                                </p>
-                                {event.correlationId ? (
-                                  <p>Correlation: {event.correlationId}</p>
-                                ) : null}
-                              </CardContent>
-                            </Card>
-                          )}
-                        </For>
-                      </Stack>
-                    </Stack>
+                    <div class="domain-table-wrap">
+                      <Table class="domain-table">
+                        <TableHead>
+                          <TableRow>
+                            <TableHeaderCell>Kind</TableHeaderCell>
+                            <TableHeaderCell>Summary</TableHeaderCell>
+                            <TableHeaderCell>Observed</TableHeaderCell>
+                            <TableHeaderCell>Age</TableHeaderCell>
+                            <TableHeaderCell>Context</TableHeaderCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          <For
+                            each={current.timeline.events}
+                            by={(event: QueueResourceTimelineEvent) =>
+                              `${event.observedAt}:${event.summary}`
+                            }
+                          >
+                            {(event: QueueResourceTimelineEvent) => (
+                              <TableRow>
+                                <TableCell>{formatTimelineKind(event.kind)}</TableCell>
+                                <TableCell>{event.summary}</TableCell>
+                                <TableCell>{event.observedAt}</TableCell>
+                                <TableCell>
+                                  {event.ageSeconds == null
+                                    ? "Unknown"
+                                    : humanizeSeconds(event.ageSeconds)}
+                                </TableCell>
+                                <TableCell>
+                                  {event.operation ? `Operation: ${event.operation}` : ""}
+                                  {event.messageId != null ? ` Message: ${event.messageId}` : ""}
+                                  {event.ownerSession ? ` Owner: ${event.ownerSession}` : ""}
+                                  {event.workerSession ? ` Worker: ${event.workerSession}` : ""}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </For>
+                        </TableBody>
+                      </Table>
+                    </div>
                   }
                 >
                   <QueryEmptyState description="No recent queue transitions are visible for this resource." />
@@ -524,78 +489,76 @@ export default function QueueResourcePage() {
 
               <Section size="3">
                 <div class="domain-section-header">
-                  <div>
-                    <p class="eyebrow">Compare</p>
-                    <h2>Before / after snapshot</h2>
-                    <p>Compare this resource against another queue scope.</p>
-                  </div>
+                  <h2>Compare</h2>
                 </div>
 
                 <Stack asChild gap="3">
                   <form onSubmit={onCompareSubmit}>
-                  <div class="auth-field">
-                    <Label for="compare-realm">Against realm</Label>
-                    <Input
-                      id="compare-realm"
-                      value={compareRealmValue}
-                      onInput={(event: Event) =>
-                        setCompareRealmInput((event.target as HTMLInputElement).value)
-                      }
-                      placeholder="acme"
-                    />
-                  </div>
+                    <div class="form-grid">
+                      <div class="auth-field">
+                        <Label for="compare-realm">Against realm</Label>
+                        <Input
+                          id="compare-realm"
+                          value={compareRealmValue}
+                          onInput={(event: Event) =>
+                            setCompareRealmInput((event.target as HTMLInputElement).value)
+                          }
+                          placeholder="acme"
+                        />
+                      </div>
 
-                  <div class="auth-field">
-                    <Label for="compare-area">Against area</Label>
-                    <Input
-                      id="compare-area"
-                      value={compareAreaValue}
-                      onInput={(event: Event) =>
-                        setCompareAreaInput((event.target as HTMLInputElement).value)
-                      }
-                      placeholder="payments"
-                    />
-                  </div>
+                      <div class="auth-field">
+                        <Label for="compare-area">Against area</Label>
+                        <Input
+                          id="compare-area"
+                          value={compareAreaValue}
+                          onInput={(event: Event) =>
+                            setCompareAreaInput((event.target as HTMLInputElement).value)
+                          }
+                          placeholder="payments"
+                        />
+                      </div>
 
-                  <div class="auth-field">
-                    <Label for="compare-resource">Against resource</Label>
-                    <Input
-                      id="compare-resource"
-                      value={compareResourceValue}
-                      onInput={(event: Event) =>
-                        setCompareResourceInput((event.target as HTMLInputElement).value)
-                      }
-                      placeholder="inbox"
-                    />
-                  </div>
+                      <div class="auth-field">
+                        <Label for="compare-resource">Against resource</Label>
+                        <Input
+                          id="compare-resource"
+                          value={compareResourceValue}
+                          onInput={(event: Event) =>
+                            setCompareResourceInput((event.target as HTMLInputElement).value)
+                          }
+                          placeholder="inbox"
+                        />
+                      </div>
 
-                  <div class="auth-field">
-                    <Label for="compare-family">Against family</Label>
-                    <Input
-                      id="compare-family"
-                      value={compareFamilyValue}
-                      onInput={(event: Event) =>
-                        setCompareFamilyInput((event.target as HTMLInputElement).value)
-                      }
-                      placeholder="Optional family"
-                    />
-                  </div>
+                      <div class="auth-field">
+                        <Label for="compare-family">Against family</Label>
+                        <Input
+                          id="compare-family"
+                          value={compareFamilyValue}
+                          onInput={(event: Event) =>
+                            setCompareFamilyInput((event.target as HTMLInputElement).value)
+                          }
+                          placeholder="Optional family"
+                        />
+                      </div>
+                    </div>
 
-                  <Inline gap="3" wrap="wrap">
-                    <Button type="submit">Compare</Button>
-                    <Button
-                      type="button"
-                      onPress={() => {
-                        setCompareRealmInput("");
-                        setCompareAreaInput("");
-                        setCompareResourceInput("");
-                        setCompareFamilyInput("");
-                        navigate(`/queue/${realm}/${area}/${resource}`);
-                      }}
-                    >
-                      Clear
-                    </Button>
-                  </Inline>
+                    <Flex gap="1" wrap="wrap">
+                      <Button type="submit">Compare</Button>
+                      <Button
+                        type="button"
+                        onPress={() => {
+                          setCompareRealmInput("");
+                          setCompareAreaInput("");
+                          setCompareResourceInput("");
+                          setCompareFamilyInput("");
+                          navigate(`/queue/${realm}/${area}/${resource}`);
+                        }}
+                      >
+                        Clear
+                      </Button>
+                    </Flex>
                   </form>
                 </Stack>
 
@@ -633,7 +596,7 @@ export default function QueueResourcePage() {
                 <AlertDialogDescription>
                   {`${confirmationKind === "purge" ? "Purge" : "Replay"} message ${confirmationMessage.messageId} in ${realm} / ${area} / ${resource}.`}
                 </AlertDialogDescription>
-                <Inline gap="3" wrap="wrap">
+                <Flex gap="1" wrap="wrap">
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
                     disabled={actionPending}
@@ -647,7 +610,7 @@ export default function QueueResourcePage() {
                   >
                     {actionPending ? "Working..." : "Confirm"}
                   </AlertDialogAction>
-                </Inline>
+                </Flex>
               </AlertDialogContent>
             </AlertDialogPortal>
           </AlertDialog>

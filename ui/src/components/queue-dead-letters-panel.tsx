@@ -3,7 +3,6 @@ import {
   type DeadLetterFilters,
   type QueueResourceRef,
 } from "@/features/queue/queue-query";
-import { AlertTriangleIcon, GaugeIcon } from "@askrjs/lucide";
 import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { Section } from "@askrjs/themes/layouts";
 import DomainHeader from "@/components/shared/domain-header";
@@ -35,7 +34,6 @@ export default function QueueDeadLettersPanel({
   return (
     <Section size="3">
       <DomainHeader
-        domain="Queue"
         title="Dead letters"
         description={`${resourceRef.realm} / ${resourceRef.area} / ${resourceRef.resource}`}
         onRefresh={() => deadLetters.refresh()}
@@ -52,7 +50,7 @@ export default function QueueDeadLettersPanel({
       {deadLetters.error ? (
         <EmptyState
           class="domain-state"
-          icon={<AlertTriangleIcon size={18} />}
+          title="Error"
           description={formatUnknownError(deadLetters.error)}
         />
       ) : null}
@@ -60,7 +58,6 @@ export default function QueueDeadLettersPanel({
       {!deadLetters.loading && !deadLetters.error && messages.length === 0 ? (
         <EmptyState
           class="domain-state"
-          icon={<GaugeIcon size={18} />}
           description="No dead-letter messages are visible for this resource."
         />
       ) : null}

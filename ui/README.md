@@ -16,7 +16,7 @@ This starts the Vite+ dev server on `http://localhost:5173`.
 Expected companion services:
 
 - Fitz backend on `http://localhost:4090`
-- Vite proxy forwards `/api`, `/metrics`, `/healthz`, `/readyz`, `/startupz`, and `/ws`
+- Vite proxy forwards `/api`, `/metrics`, and `/ws`
 
 ## Build and Verification
 

@@ -1,5 +1,5 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import { Stack } from "@askrjs/themes/layouts";
+import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
@@ -13,31 +13,6 @@ import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
-
-function summarizeLeasePressure(
-  leasesActive: number,
-  waiterDepth: number,
-  oldestLeaseAgeSeconds: number,
-) {
-  if (waiterDepth > 0) {
-    return {
-      label: "Lease contention",
-      detail: `${waiterDepth} waiters are competing for ${leasesActive} active leases.`,
-    };
-  }
-
-  if (oldestLeaseAgeSeconds > 0) {
-    return {
-      label: "Stale ownership risk",
-      detail: `The oldest active lease is ${oldestLeaseAgeSeconds}s old.`,
-    };
-  }
-
-  return {
-    label: "Stable",
-    detail: "Lease ownership pressure is not currently escalating.",
-  };
-}
 
 export default function LeasePage() {
   const overview = createLeaseOverviewQuery();
@@ -61,7 +36,6 @@ export default function LeasePage() {
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
-          domain="Lease"
           title="Lease overview"
           description="Lease realm coverage and live lease load."
           onRefresh={() => overview.refresh()}
@@ -79,26 +53,6 @@ export default function LeasePage() {
               <QueryRefreshingState description="Refreshing lease overview..." />
             ) : null}
 
-            {(() => {
-              const pressure = summarizeLeasePressure(
-                data.stats.leasesActive,
-                data.stats.waiterDepth,
-                data.stats.oldestLeaseAgeSeconds,
-              );
-
-              return (
-                <Card class="dashboard-status-card" variant="raised">
-                  <CardHeader>
-                    <CardTitle>Current pressure</CardTitle>
-                    <CardDescription>{pressure.label}</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <p>{pressure.detail}</p>
-                  </CardContent>
-                </Card>
-              );
-            })()}
-
             <DomainMetricTable
               title="Lease metrics"
               metrics={[
@@ -112,6 +66,17 @@ export default function LeasePage() {
                   label: "Ops / sec",
                   value: data.stats.operationsPerSecond.toFixed(2),
                 },
+              ]}
+            />
+
+            <DomainBarChart
+              title="Lease signal"
+              description="Current lease load, waiter pressure, and oldest lease age."
+              label="Lease state snapshot"
+              data={[
+                ["Active leases", data.stats.leasesActive],
+                ["Waiters", data.stats.waiterDepth],
+                ["Oldest age", data.stats.oldestLeaseAgeSeconds],
               ]}
             />
 

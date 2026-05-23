@@ -1,11 +1,12 @@
 import {
-  BoxesIcon,
   DatabaseIcon,
+  BoxesIcon,
   LayoutDashboardIcon,
   LineChartIcon,
   MessagesSquareIcon,
   NetworkIcon,
   RadioTowerIcon,
+  Rows3Icon,
   TimerResetIcon,
   KeyRoundIcon,
   UsersIcon,
@@ -44,18 +45,6 @@ export const shellLinks: ShellLink[] = [
 
 export const domainLinks: DomainLink[] = [
   {
-    href: "/queue",
-    title: "Queue",
-    description: "Queue stats, realms, and future dead-letter drill-downs.",
-    icon: BoxesIcon,
-  },
-  {
-    href: "/kv",
-    title: "KV",
-    description: "Key-value broker statistics and realm browsing.",
-    icon: DatabaseIcon,
-  },
-  {
     href: "/lease",
     title: "Lease",
     description: "Lease realm coverage and live lease load.",
@@ -80,9 +69,21 @@ export const domainLinks: DomainLink[] = [
     icon: TimerResetIcon,
   },
   {
+    href: "/queue",
+    title: "Queue",
+    description: "Queue stats, realms, and future dead-letter drill-downs.",
+    icon: Rows3Icon,
+  },
+  {
     href: "/stream",
     title: "Stream",
     description: "Stream throughput, subscriptions, and realm structure.",
     icon: RadioTowerIcon,
+  },
+  {
+    href: "/kv",
+    title: "KV",
+    description: "Key-value broker statistics and realm browsing.",
+    icon: DatabaseIcon,
   },
 ];

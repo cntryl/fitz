@@ -1,9 +1,7 @@
-import { For } from "@askrjs/askr/control";
-import { Link, navigate } from "@askrjs/askr/router";
+import { currentRoute, Link, navigate } from "@askrjs/askr/router";
 import { MoonIcon, ShieldIcon, SunIcon } from "@askrjs/lucide";
 import { Button } from "@askrjs/themes/controls";
 import {
-  Navbar,
   NavBrand,
   NavGroup,
   NavLink,
@@ -16,6 +14,9 @@ import { ThemeToggle } from "@askrjs/themes/theme";
 import { domainLinks, shellLinks } from "@/shared/navigation/domains";
 
 export default function Layout({ children }: { children?: unknown }) {
+  const route = currentRoute();
+  const routeKey = route.path || "/";
+
   function onLogout() {
     navigate("/logout");
   }
@@ -31,45 +32,39 @@ export default function Layout({ children }: { children?: unknown }) {
             </Link>
           </NavBrand>
 
-          <NavGroup aria-label="Workspace">
-            <For each={shellLinks} by={(link) => link.href}>
-              {(link) => (
-                <NavLink href={link.href}>
-                  <link.icon size={16} />
-                  {link.title}
-                </NavLink>
-              )}
-            </For>
+          <NavGroup label="Workspace" aria-label="Workspace">
+            {shellLinks.map((link) => (
+              <NavLink key={link.href} href={link.href}>
+                <link.icon size={16} />
+                {link.title}
+              </NavLink>
+            ))}
           </NavGroup>
 
-          <NavGroup aria-label="Domains">
-            <For each={domainLinks} by={(link) => link.href}>
-              {(link) => (
-                <NavLink href={link.href}>
-                  <link.icon size={16} />
-                  {link.title}
-                </NavLink>
-              )}
-            </For>
+          <NavGroup label="Domains" aria-label="Domains">
+            {domainLinks.map((link) => (
+              <NavLink key={link.href} href={link.href}>
+                <link.icon size={16} />
+                {link.title}
+              </NavLink>
+            ))}
           </NavGroup>
 
-          <NavGroup align="end">
-            <Button onPress={onLogout}>Sign Out</Button>
-          </NavGroup>
-        </Sidebar>
-      </ShellNav>
-
-      <ShellMain>
-        <Navbar>
           <NavGroup align="end">
             <ThemeToggle
               aria-label="Toggle color theme"
               lightIcon={<SunIcon size={16} />}
               darkIcon={<MoonIcon size={16} />}
             />
+            <Button onPress={onLogout}>Sign out</Button>
           </NavGroup>
-        </Navbar>
-        {children}
+        </Sidebar>
+      </ShellNav>
+
+      <ShellMain>
+        <div key={routeKey} class="route-transition-surface">
+          {children}
+        </div>
       </ShellMain>
     </Shell>
   );

@@ -1,7 +1,7 @@
 import { state } from "@askrjs/askr";
 import { currentRoute, navigate } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
-import { Button, Field, FieldHint } from "@askrjs/themes/controls";
+import { Button, Field } from "@askrjs/themes/controls";
 import {
   Alert,
   Card,
@@ -50,9 +50,7 @@ export default function Login() {
     <Card class="auth-card" variant="raised">
       <CardHeader>
         <CardTitle>Sign in to Fitz Admin</CardTitle>
-        <CardDescription>
-          Use your admin credentials to access the REST-backed management UI.
-        </CardDescription>
+        <CardDescription>Admin access for Fitz.</CardDescription>
       </CardHeader>
 
       <CardContent>
@@ -67,7 +65,6 @@ export default function Login() {
               onInput={(event: Event) => setUsername((event.target as HTMLInputElement).value)}
               placeholder="admin"
             />
-            <FieldHint>Use the same admin account you use for broker operations.</FieldHint>
           </Field>
 
           <Field>

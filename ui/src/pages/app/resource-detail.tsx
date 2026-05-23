@@ -105,31 +105,33 @@ export default function ResourceDetailPage() {
     footer: (
       <Stack asChild gap="3">
         <form onSubmit={onCompareSubmit}>
-        <div class="auth-field">
-          <Label for="compare-realm">Against realm</Label>
-          <Input
-            id="compare-realm"
-            value={compareRealmValue}
-            onInput={(event: Event) => setCompareRealm((event.target as HTMLInputElement).value)}
-          />
-        </div>
-        <div class="auth-field">
-          <Label for="compare-area">Against area</Label>
-          <Input
-            id="compare-area"
-            value={compareAreaValue}
-            onInput={(event: Event) => setCompareArea((event.target as HTMLInputElement).value)}
-          />
-        </div>
-        <div class="auth-field">
-          <Label for="compare-resource">Against resource</Label>
-          <Input
-            id="compare-resource"
-            value={compareResourceValue}
-            onInput={(event: Event) => setCompareResource((event.target as HTMLInputElement).value)}
-          />
-        </div>
-        <Button type="submit">Compare</Button>
+          <div class="auth-field">
+            <Label for="compare-realm">Against realm</Label>
+            <Input
+              id="compare-realm"
+              value={compareRealmValue}
+              onInput={(event: Event) => setCompareRealm((event.target as HTMLInputElement).value)}
+            />
+          </div>
+          <div class="auth-field">
+            <Label for="compare-area">Against area</Label>
+            <Input
+              id="compare-area"
+              value={compareAreaValue}
+              onInput={(event: Event) => setCompareArea((event.target as HTMLInputElement).value)}
+            />
+          </div>
+          <div class="auth-field">
+            <Label for="compare-resource">Against resource</Label>
+            <Input
+              id="compare-resource"
+              value={compareResourceValue}
+              onInput={(event: Event) =>
+                setCompareResource((event.target as HTMLInputElement).value)
+              }
+            />
+          </div>
+          <Button type="submit">Compare</Button>
         </form>
       </Stack>
     ),

@@ -1,4 +1,5 @@
 import DomainHeader from "@/components/shared/domain-header";
+import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
@@ -60,6 +61,16 @@ export default function NoticePage() {
                   value: data.stats.publishesPerSecond.toFixed(2),
                 },
                 { label: "Subscriptions", value: data.stats.subscriptionsActive },
+              ]}
+            />
+
+            <DomainBarChart
+              title="Notice signal"
+              description="Current publish rate and live subscription footprint."
+              label="Notice state snapshot"
+              data={[
+                ["Publishes / sec", data.stats.publishesPerSecond],
+                ["Subscriptions", data.stats.subscriptionsActive],
               ]}
             />
 

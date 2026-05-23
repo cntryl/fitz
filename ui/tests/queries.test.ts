@@ -35,7 +35,6 @@ import { createMetricsOverviewQuery } from "@/features/metrics/metrics-query";
 import { metricsService } from "@/features/metrics/metrics-service";
 import { parsePrometheusMetrics } from "@/features/metrics/metrics-mappers";
 import { createSystemOverviewQuery } from "@/features/system/system-query";
-import { createHealthSummaryQuery } from "@/features/system/health-query";
 import { kvService } from "@/features/kv/kv-service";
 import { leaseService } from "@/features/lease/lease-service";
 import { noticeService } from "@/features/notice/notice-service";
@@ -62,6 +61,11 @@ import type { DiagnosticSnapshot, GlobalTroubleshootingDiagnostics } from "@/ada
 const healthyDiagnostics: DiagnosticSnapshot = {
   current_stage: "healthy",
   confidence: 1,
+  confidence_justification: {
+    rationale: "No pressure detected",
+    signals_matched: [],
+    signals_missing: [],
+  },
   contention_count: 0,
   explanation_hints: [],
   failure_count: 0,
@@ -76,7 +80,9 @@ const healthyGlobalDiagnostics: GlobalTroubleshootingDiagnostics = {
   incident_summary: {
     confidence: 1,
     explanation: "No active pressure detected",
+    recommended_next_query: "No follow-up needed",
     severity: "informational",
+    suggested_next_queries: [],
     status: "healthy",
     title: "Healthy",
   },
@@ -127,8 +133,6 @@ describe("Data query layer", () => {
     expect(typeof createStreamOverviewQuery).toBe("function");
     expect(createSystemOverviewQuery).toBeDefined();
     expect(typeof createSystemOverviewQuery).toBe("function");
-    expect(createHealthSummaryQuery).toBeDefined();
-    expect(typeof createHealthSummaryQuery).toBe("function");
     expect(createResourceInventoryQuery).toBeDefined();
     expect(typeof createResourceInventoryQuery).toBe("function");
     expect(createResourceQuery).toBeDefined();
@@ -875,7 +879,6 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
             },
           },
         },
-        { status: "ok" },
         "line-a\nline-b",
       ),
     ).toEqual({
@@ -959,7 +962,6 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
           subscriptionsActive: 32,
         },
       },
-      healthStatus: "ok",
       metrics: {
         raw: "line-a\nline-b",
         lines: ["line-a", "line-b"],

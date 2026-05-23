@@ -1,4 +1,5 @@
 import DomainHeader from "@/components/shared/domain-header";
+import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
@@ -65,6 +66,18 @@ export default function StreamPage() {
                   label: "Ops / sec",
                   value: data.stats.operationsPerSecond.toFixed(2),
                 },
+              ]}
+            />
+
+            <DomainBarChart
+              title="Stream signal"
+              description="Current stream footprint, active subscriptions, and event volume."
+              label="Stream state snapshot"
+              data={[
+                ["Streams", data.stats.streamsActive],
+                ["Subscriptions", data.stats.subscriptionsActive],
+                ["Events", data.stats.eventsTotal],
+                ["Ops / sec", data.stats.operationsPerSecond],
               ]}
             />
 

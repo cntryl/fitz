@@ -1,5 +1,4 @@
 import { state } from "@askrjs/askr";
-import { For } from "@askrjs/askr/control";
 import {
   Input,
   Table,
@@ -11,6 +10,7 @@ import {
 } from "@askrjs/ui";
 import { Section, Stack } from "@askrjs/themes/layouts";
 import DomainHeader from "@/components/shared/domain-header";
+import DomainPageFrame from "@/components/shared/domain-page-frame";
 import {
   QueryErrorState,
   QueryLoadingState,
@@ -29,79 +29,73 @@ export default function MetricsPage() {
     ) ?? [];
 
   return (
-    <Stack gap="3">
-      <DomainHeader
-        domain="Metrics"
-        title="Metrics explorer"
-        description="Search Prometheus metric families exposed by the Fitz broker."
-        onRefresh={() => metrics.refresh()}
-      />
-
-      <div class="auth-field metrics-filter">
-        <Input
-          aria-label="Filter metrics"
-          placeholder="Filter metrics"
-          value={filterValue}
-          onInput={(event: Event) => setFilter((event.target as HTMLInputElement).value)}
+    <DomainPageFrame>
+      <Stack gap="3">
+        <DomainHeader
+          title="Metrics explorer"
+          description="Search Prometheus metric families exposed by the Fitz broker."
+          onRefresh={() => metrics.refresh()}
         />
-      </div>
 
-      {!data && metrics.loading ? (
-        <QueryLoadingState description="Loading Prometheus metrics..." />
-      ) : null}
+        <div class="auth-field metrics-filter">
+          <Input
+            aria-label="Filter metrics"
+            placeholder="Filter metrics"
+            value={filterValue}
+            onInput={(event: Event) => setFilter((event.target as HTMLInputElement).value)}
+          />
+        </div>
 
-      {!data && metrics.error ? <QueryErrorState error={metrics.error} /> : null}
+        {!data && metrics.loading ? (
+          <QueryLoadingState description="Loading Prometheus metrics..." />
+        ) : null}
 
-      {data ? (
-        <Stack gap="3">
-          {metrics.refreshing ? (
-            <QueryRefreshingState description="Refreshing Prometheus metrics..." />
-          ) : null}
+        {!data && metrics.error ? <QueryErrorState error={metrics.error} /> : null}
 
-          <Section size="3">
-            <div class="domain-section-header">
-              <div>
-                <p class="eyebrow">Metric families</p>
-                <h2>{families.length} visible</h2>
+        {data ? (
+          <Stack gap="3">
+            {metrics.refreshing ? (
+              <QueryRefreshingState description="Refreshing Prometheus metrics..." />
+            ) : null}
+
+            <Section size="3">
+              <div class="domain-section-header">
+                <h2>Metric families</h2>
+                <span>{families.length} visible</span>
               </div>
-            </div>
-            <div class="domain-table-wrap">
-              <Table class="domain-table">
-                <TableHead>
-                  <TableRow>
-                    <TableHeaderCell>Name</TableHeaderCell>
-                    <TableHeaderCell>Type</TableHeaderCell>
-                    <TableHeaderCell>Samples</TableHeaderCell>
-                    <TableHeaderCell>Help</TableHeaderCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  <For each={families} by={(family) => family.name}>
-                    {(family) => (
-                      <TableRow>
+              <div class="domain-table-wrap">
+                <Table class="domain-table">
+                  <TableHead>
+                    <TableRow>
+                      <TableHeaderCell>Name</TableHeaderCell>
+                      <TableHeaderCell>Type</TableHeaderCell>
+                      <TableHeaderCell>Samples</TableHeaderCell>
+                      <TableHeaderCell>Help</TableHeaderCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {families.map((family) => (
+                      <TableRow key={family.name}>
                         <TableCell>{family.name}</TableCell>
                         <TableCell>{family.type ?? "unknown"}</TableCell>
                         <TableCell>{family.samples.length}</TableCell>
                         <TableCell>{family.help ?? "n/a"}</TableCell>
                       </TableRow>
-                    )}
-                  </For>
-                </TableBody>
-              </Table>
-            </div>
-          </Section>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </Section>
 
-          <Section size="3">
-            <div class="domain-section-header">
-              <div>
-                <p class="eyebrow">Raw</p>
+            <Section size="3">
+              <div class="domain-section-header">
                 <h2>Prometheus payload</h2>
               </div>
-            </div>
-            <pre class="resource-raw">{data.raw}</pre>
-          </Section>
-        </Stack>
-      ) : null}
-    </Stack>
+              <pre class="resource-raw">{data.raw}</pre>
+            </Section>
+          </Stack>
+        ) : null}
+      </Stack>
+    </DomainPageFrame>
   );
 }

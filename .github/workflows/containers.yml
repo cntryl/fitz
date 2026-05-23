@@ -42,7 +42,8 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set platform pair
-        run: echo "PLATFORM_PAIR=${{ matrix.platform }}" | tr '/' '-' >> "$GITHUB_ENV"
+        id: platform
+        run: echo "platform_pair=${{ matrix.platform }}" | tr '/' '-' >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -76,8 +77,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ env.PLATFORM_PAIR }}
-          cache-to: type=gha,mode=min,scope=${{ env.PLATFORM_PAIR }}
+          cache-from: type=gha,scope=${{ steps.platform.outputs.platform_pair }}
+          cache-to: type=gha,mode=min,scope=${{ steps.platform.outputs.platform_pair }}
 
       - name: Export digest
         run: |
@@ -88,7 +89,7 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v7
         with:
-          name: digests-${{ env.PLATFORM_PAIR }}
+          name: digests-${{ steps.platform.outputs.platform_pair }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1

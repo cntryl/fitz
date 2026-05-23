@@ -1,7 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Section, Stack } from "@askrjs/themes/layouts";
+import { Section } from "@askrjs/themes/layouts";
 import { QueryEmptyState } from "./query-state";
 import type { DomainId, ResourceInventory } from "@/features/resource/resource-models";
 
@@ -11,7 +11,12 @@ export interface DomainResourceBrowserProps {
   loading?: boolean;
 }
 
-function resourceHref(domain: DomainResourceBrowserProps["domain"], realm: string, area: string, resource: string) {
+function resourceHref(
+  domain: DomainResourceBrowserProps["domain"],
+  realm: string,
+  area: string,
+  resource: string,
+) {
   return `/${domain}/${encodeURIComponent(realm)}/${encodeURIComponent(area)}/${encodeURIComponent(resource)}`;
 }
 
@@ -33,10 +38,10 @@ export default function DomainResourceBrowser({
 
   return (
     <Section size="3">
-      <Stack gap="1">
-        <p class="eyebrow">Resource browser</p>
-        <h2>{loading ? "Loading resources" : `${rows.length} resources`}</h2>
-      </Stack>
+      <div class="domain-section-header">
+        <h2>Resources</h2>
+        <span>{loading ? "Loading" : `${rows.length} visible`}</span>
+      </div>
 
       {!loading && rows.length === 0 ? (
         <QueryEmptyState description="No warm resources are currently visible for this domain." />

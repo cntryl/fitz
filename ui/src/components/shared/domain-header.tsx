@@ -1,7 +1,8 @@
+import { RefreshCwIcon } from "@askrjs/lucide";
 import { Button } from "@askrjs/themes/controls";
 
 export interface DomainHeaderProps {
-  domain: string;
+  domain?: string;
   title: string;
   description: string;
   onRefresh?: () => void;
@@ -21,8 +22,8 @@ export default function DomainHeader({
       </div>
 
       {onRefresh ? (
-        <Button onPress={onRefresh}>
-          Refresh
+        <Button size="icon" variant="outline" aria-label="Refresh" title="Refresh" onPress={onRefresh}>
+          <RefreshCwIcon size={16} />
         </Button>
       ) : null}
     </header>

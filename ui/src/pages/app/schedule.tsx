@@ -1,4 +1,5 @@
 import DomainHeader from "@/components/shared/domain-header";
+import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
@@ -65,6 +66,18 @@ export default function SchedulePage() {
                   label: "Executions / min",
                   value: data.stats.executionsPerMinute.toFixed(2),
                 },
+              ]}
+            />
+
+            <DomainBarChart
+              title="Schedule signal"
+              description="Scheduled volume, subscriptions, claims, and execution rate."
+              label="Schedule state snapshot"
+              data={[
+                ["Schedules", data.stats.schedulesActive],
+                ["Subscriptions", data.stats.subscriptionsActive],
+                ["Pending claims", data.stats.pendingFireClaims],
+                ["Exec / min", data.stats.executionsPerMinute],
               ]}
             />
 

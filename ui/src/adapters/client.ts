@@ -27,7 +27,7 @@ export const client = addProductionStack(
     },
     logging: {
       level: appConfig.logLevel,
-      skipPatterns: ["/health", "/healthz", "/readyz", "/startupz", "/metrics"],
+      skipPatterns: ["/metrics"],
     },
   },
 );

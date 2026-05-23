@@ -1,4 +1,3 @@
-import { AlertTriangleIcon, GaugeIcon } from "@askrjs/lucide";
 import { EmptyState, Spinner } from "@askrjs/themes/feedback";
 import { formatUnknownError } from "@/shared/errors/format";
 
@@ -25,24 +24,18 @@ export function QueryErrorState({
   class: className = "domain-state",
   error,
 }: QueryErrorStateProps) {
-  return (
-    <EmptyState
-      class={className}
-      icon={<AlertTriangleIcon size={18} />}
-      description={formatUnknownError(error)}
-    />
-  );
+  return <EmptyState class={className} title="Error" description={formatUnknownError(error)} />;
 }
 
 export function QueryEmptyState({
   class: className = "domain-state",
   description,
 }: QueryStateProps) {
-  return <EmptyState class={className} icon={<GaugeIcon size={18} />} description={description} />;
+  return <EmptyState class={className} description={description} />;
 }
 
 export function QueryRefreshingState({
-  class: className = "eyebrow",
+  class: className = "domain-muted",
   description,
 }: QueryStateProps) {
   return (

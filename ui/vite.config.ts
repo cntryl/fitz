@@ -10,6 +10,23 @@ function fileUrlPath(path: string) {
 
 const srcDir = fileUrlPath("./src");
 
+function chartsForCompat() {
+  return {
+    name: "fitz-askr-charts-for-compat",
+    enforce: "pre" as const,
+    transform(code: string, id: string) {
+      if (
+        id.includes("/@askrjs/charts/dist/components/") &&
+        code.includes('from "@askrjs/askr"')
+      ) {
+        return code.replaceAll('from "@askrjs/askr"', 'from "@askrjs/askr/control"');
+      }
+
+      return null;
+    },
+  };
+}
+
 export default defineConfig({
   fmt: {},
   lint: {
@@ -19,7 +36,7 @@ export default defineConfig({
       typeCheck: true,
     },
   },
-  plugins: [askr()],
+  plugins: [chartsForCompat(), askr()],
   base: "/",
   define: {
     "process.env": {},
@@ -34,18 +51,6 @@ export default defineConfig({
         changeOrigin: true,
       },
       "/metrics": {
-        target: "http://localhost:4090",
-        changeOrigin: true,
-      },
-      "/healthz": {
-        target: "http://localhost:4090",
-        changeOrigin: true,
-      },
-      "/readyz": {
-        target: "http://localhost:4090",
-        changeOrigin: true,
-      },
-      "/startupz": {
         target: "http://localhost:4090",
         changeOrigin: true,
       },

@@ -6,6 +6,7 @@
     "dev": "vp dev",
     "build": "vp build",
     "preview": "vp preview",
+    "postinstall": "node ./scripts/patch-askr-charts.js",
     "test": "vp test",
     "type-check": "tsc --noEmit",
     "lint": "vp lint .",
@@ -16,6 +17,7 @@
   },
   "dependencies": {
     "@askrjs/askr": "0.0.37",
+    "@askrjs/charts": "^0.0.1",
     "@askrjs/logos": "0.0.1",
     "@askrjs/lucide": "^0.0.2",
     "@askrjs/themes": "^0.0.4",

@@ -2,8 +2,7 @@ import { state } from "@askrjs/askr";
 import { navigate } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
-import { Inline, Section, Stack } from "@askrjs/themes/layouts";
-import { Badge } from "@askrjs/themes/surfaces";
+import { Flex, Section, Stack } from "@askrjs/themes/layouts";
 import DomainHeader from "@/components/shared/domain-header";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -67,7 +66,6 @@ export default function SessionsPage() {
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
-          domain="Sessions"
           title="Active sessions"
           description="Inspect live broker and admin sessions, with optional realm scoping."
           onRefresh={() => sessionsQuery.refresh()}
@@ -75,35 +73,34 @@ export default function SessionsPage() {
 
         <Section size="3">
           <div class="domain-section-header">
-            <div>
-              <p class="eyebrow">Filter</p>
-              <h2>Realm scope</h2>
-            </div>
+            <h2>Realm scope</h2>
           </div>
 
           <Stack asChild gap="3">
             <form onSubmit={onFilterSubmit}>
-            <div class="auth-field">
-              <Label for="realm-filter">Realm</Label>
-              <Input
-                id="realm-filter"
-                value={realmInput()}
-                onInput={(event: Event) => setRealmInput((event.target as HTMLInputElement).value)}
-                placeholder="Leave blank for all realms"
-              />
-            </div>
+              <div class="auth-field">
+                <Label for="realm-filter">Realm</Label>
+                <Input
+                  id="realm-filter"
+                  value={realmInput()}
+                  onInput={(event: Event) =>
+                    setRealmInput((event.target as HTMLInputElement).value)
+                  }
+                  placeholder="Leave blank for all realms"
+                />
+              </div>
 
-            <Inline gap="3" wrap="wrap">
-              <Button type="submit">Apply filter</Button>
-              <Button
-                onPress={() => {
-                  setRealmInput("");
-                  navigate("/sessions");
-                }}
-              >
-                Clear
-              </Button>
-            </Inline>
+              <Flex gap="1" wrap="wrap">
+                <Button type="submit">Apply filter</Button>
+                <Button
+                  onPress={() => {
+                    setRealmInput("");
+                    navigate("/sessions");
+                  }}
+                >
+                  Clear
+                </Button>
+              </Flex>
             </form>
           </Stack>
         </Section>
@@ -119,16 +116,6 @@ export default function SessionsPage() {
             {sessionsQuery.refreshing ? (
               <QueryRefreshingState description="Refreshing active sessions..." />
             ) : null}
-
-            <Section size="3">
-              <div class="domain-section-header">
-                <div>
-                  <p class="eyebrow">Overview</p>
-                  <h2>{data.sessions.length} sessions</h2>
-                </div>
-                <Badge>{realmFilter || "All realms"}</Badge>
-              </div>
-            </Section>
 
             <SessionTable sessions={data.sessions} />
           </Stack>

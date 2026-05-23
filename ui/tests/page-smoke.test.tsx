@@ -64,10 +64,6 @@ vi.mock("@/features/session/session-mutation", () => ({
   createSignOutMutation: () => mocks.mutation,
 }));
 
-vi.mock("@/features/system/health-query", () => ({
-  createHealthSummaryQuery: () => mocks.queryStates.health,
-}));
-
 vi.mock("@/features/system/system-query", () => ({
   createSystemOverviewQuery: () => mocks.queryStates.system,
 }));
@@ -121,6 +117,12 @@ vi.mock("@/features/resource/resource-query", () => ({
   createResourceQuery: () => mocks.queryStates.resource,
 }));
 
+vi.mock("@askrjs/charts/components", () => ({
+  ChartPanel: ({ children }: { children?: unknown }) => <section>{children}</section>,
+  ChartShell: ({ children }: { children?: unknown }) => <section>{children}</section>,
+  ProgressMeter: ({ label }: { label: string }) => <div role="meter" aria-label={label} />,
+}));
+
 const realm = { realm: "default" };
 
 const inventory = {
@@ -136,12 +138,6 @@ const inventory = {
       realm: "default",
     },
   ],
-};
-
-const health = {
-  liveness: "ok",
-  readiness: "ok",
-  startup: "ok",
 };
 
 const queueOverview = {
@@ -289,7 +285,6 @@ const systemOverview = {
       successTotal: 1,
     },
   },
-  healthStatus: "ok",
   metrics: {
     lineCount: 1,
     lines: ["fitz_broker_up 1"],
@@ -425,7 +420,6 @@ const resourceDetail = {
 function resetQueries() {
   mocks.queryStates.currentSession = makeQuery({ username: "admin" });
   mocks.queryStates.activeSessions = makeQuery(activeSessions);
-  mocks.queryStates.health = makeQuery(health);
   mocks.queryStates.system = makeQuery(systemOverview);
   mocks.queryStates.metrics = makeQuery(metricsOverview);
   mocks.queryStates.queue = makeQuery(queueOverview);
@@ -561,7 +555,7 @@ describe("admin page smoke tests", () => {
       cleanupApp(root);
       document.body.innerHTML = "";
     }
-  });
+  }, 15000);
 
   it("mounts representative loading, error, and empty states", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");

@@ -36,7 +36,7 @@ export default function Logout() {
     <Card class="auth-card" variant="raised">
       <CardHeader>
         <CardTitle>Signing out</CardTitle>
-        <CardDescription>Ending your Fitz admin session and returning to login.</CardDescription>
+        <CardDescription>Ending your Fitz admin session.</CardDescription>
       </CardHeader>
       <CardContent>
         {error() ? (

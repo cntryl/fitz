@@ -1,4 +1,4 @@
-import type { GlobalStats, HealthStatus } from "@/adapters";
+import type { GlobalStats } from "@/adapters";
 import type { SystemOverview } from "./system-models";
 
 function normalizeMetricsValue(value: unknown) {
@@ -21,11 +21,7 @@ function normalizeMetricsValue(value: unknown) {
   }
 }
 
-export function mapSystemOverview(
-  stats: GlobalStats,
-  health: HealthStatus,
-  metricsValue: unknown,
-): SystemOverview {
+export function mapSystemOverview(stats: GlobalStats, metricsValue: unknown): SystemOverview {
   const raw = normalizeMetricsValue(metricsValue);
   const lines = raw
     .split(/\r?\n/)
@@ -80,15 +76,13 @@ export function mapSystemOverview(
       rpc: {
         acksRejectedWrongWorkerTotal: stats.domains.rpc.acks_rejected_wrong_worker_total,
         backpressureRejectsTotal: stats.domains.rpc.backpressure_rejects_total,
-        duplicateCorrelationRejectsTotal:
-          stats.domains.rpc.duplicate_correlation_rejects_total,
+        duplicateCorrelationRejectsTotal: stats.domains.rpc.duplicate_correlation_rejects_total,
         failureTotal: stats.domains.rpc.failure_total,
         operationsPerSecond: stats.domains.rpc.operations_per_second,
         requestTimeoutsTotal: stats.domains.rpc.request_timeouts_total,
         requestsPending: stats.domains.rpc.requests_pending,
         requestsTotal: stats.domains.rpc.requests_total,
-        responsesDroppedClosedCallerTotal:
-          stats.domains.rpc.responses_dropped_closed_caller_total,
+        responsesDroppedClosedCallerTotal: stats.domains.rpc.responses_dropped_closed_caller_total,
         responsesMissingPendingTotal: stats.domains.rpc.responses_missing_pending_total,
         successTotal: stats.domains.rpc.success_total,
         wrongWorkerRejectsTotal: stats.domains.rpc.wrong_worker_rejects_total,
@@ -115,7 +109,6 @@ export function mapSystemOverview(
         subscriptionsActive: stats.domains.stream.subscriptions_active,
       },
     },
-    healthStatus: health.status,
     metrics: {
       raw,
       lines: lines.slice(0, 8),

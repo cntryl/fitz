@@ -91,6 +91,5 @@ export interface SystemOverview {
   broker: BrokerStatsSummary;
   diagnostics: GlobalTroubleshootingDiagnostics;
   domains: SystemDomainStatsSummary;
-  healthStatus: string;
   metrics: MetricsPreview;
 }

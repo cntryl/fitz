@@ -18,7 +18,6 @@ servers:
 
 tags:
   - name: Auth
-  - name: Health
   - name: Metrics
   - name: Sessions
   - name: KV
@@ -31,74 +30,6 @@ tags:
   - name: Troubleshooting
 
 paths:
-  /healthz:
-    get:
-      tags: [Health]
-      summary: Liveness probe
-      operationId: getLivenessProbe
-      security: []
-      responses:
-        "200":
-          description: Application is alive
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HealthStatus"
-
-  /readyz:
-    get:
-      tags: [Health]
-      summary: Readiness probe
-      operationId: getReadinessProbe
-      security: []
-      responses:
-        "200":
-          description: Application is ready
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReadyStatus"
-        "503":
-          description: Application is not ready
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReadyStatus"
-
-  /startupz:
-    get:
-      tags: [Health]
-      summary: Startup probe
-      operationId: getStartupProbe
-      security: []
-      responses:
-        "200":
-          description: Startup complete
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StartupStatus"
-        "503":
-          description: Startup in progress
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StartupStatus"
-
-  /health:
-    get:
-      tags: [Health]
-      summary: Legacy health endpoint
-      operationId: getLegacyHealth
-      security: []
-      responses:
-        "200":
-          description: Application is healthy
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HealthStatus"
-
   /metrics:
     get:
       tags: [Metrics]
@@ -2457,33 +2388,6 @@ components:
         format: int64
 
   schemas:
-    HealthStatus:
-      type: object
-      properties:
-        status:
-          type: string
-      required: [status]
-
-    ReadyStatus:
-      type: object
-      properties:
-        status:
-          type: string
-        checks:
-          type: object
-          additionalProperties:
-            type: string
-      required: [status, checks]
-
-    StartupStatus:
-      type: object
-      properties:
-        status:
-          type: string
-        startup_time_seconds:
-          type: number
-      required: [status, startup_time_seconds]
-
     LoginRequest:
       type: object
       required: [username, password]

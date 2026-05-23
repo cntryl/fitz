@@ -1,4 +1,5 @@
 import DomainHeader from "@/components/shared/domain-header";
+import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
@@ -63,6 +64,17 @@ export default function KvPage() {
                   label: "Ops / sec",
                   value: data.stats.operationsPerSecond.toFixed(2),
                 },
+              ]}
+            />
+
+            <DomainBarChart
+              title="KV signal"
+              description="Current key volume, transactional pressure, and throughput."
+              label="KV state snapshot"
+              data={[
+                ["Keys", data.stats.keysTotal],
+                ["Transactions", data.stats.transactionsActive],
+                ["Ops / sec", data.stats.operationsPerSecond],
               ]}
             />
 

@@ -1,5 +1,5 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import { Stack } from "@askrjs/themes/layouts";
+import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
@@ -13,27 +13,6 @@ import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
-
-function summarizeRpcPressure(workersRegistered: number, requestsPending: number) {
-  if (workersRegistered === 0 && requestsPending > 0) {
-    return {
-      label: "Worker starvation",
-      detail: `${requestsPending} pending requests have no registered workers to handle them.`,
-    };
-  }
-
-  if (requestsPending > workersRegistered) {
-    return {
-      label: "Backpressure",
-      detail: `${requestsPending} pending requests are ahead of ${workersRegistered} workers.`,
-    };
-  }
-
-  return {
-    label: "Stable",
-    detail: "RPC pressure is not currently growing faster than worker capacity.",
-  };
-}
 
 export default function RpcPage() {
   const overview = createRpcOverviewQuery();
@@ -58,7 +37,6 @@ export default function RpcPage() {
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
-          domain="RPC"
           title="RPC overview"
           description="Pending RPC work, worker registrations, and live realm inventory."
           onRefresh={() => overview.refresh()}
@@ -76,25 +54,6 @@ export default function RpcPage() {
               <QueryRefreshingState description="Refreshing RPC overview..." />
             ) : null}
 
-            {(() => {
-              const pressure = summarizeRpcPressure(
-                data.stats.workersRegistered,
-                data.stats.requestsPending,
-              );
-
-              return (
-                <Card class="dashboard-status-card" variant="raised">
-                  <CardHeader>
-                    <CardTitle>Current pressure</CardTitle>
-                    <CardDescription>{pressure.label}</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <p>{pressure.detail}</p>
-                  </CardContent>
-                </Card>
-              );
-            })()}
-
             <DomainMetricTable
               title="RPC metrics"
               metrics={[
@@ -104,6 +63,17 @@ export default function RpcPage() {
                   label: "Ops / sec",
                   value: data.stats.operationsPerSecond.toFixed(2),
                 },
+              ]}
+            />
+
+            <DomainBarChart
+              title="RPC signal"
+              description="Worker capacity, pending request pressure, and current throughput."
+              label="RPC state snapshot"
+              data={[
+                ["Workers", data.stats.workersRegistered],
+                ["Pending", data.stats.requestsPending],
+                ["Ops / sec", data.stats.operationsPerSecond],
               ]}
             />
 

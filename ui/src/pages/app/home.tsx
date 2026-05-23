@@ -1,17 +1,9 @@
 import { For } from "@askrjs/askr/control";
-import { Link, navigate } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { Block, Inline, Section, Stack } from "@askrjs/themes/layouts";
-import {
-  Badge,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@askrjs/themes/surfaces";
-import DomainIndex from "@/components/shared/domain-index";
-import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import { Stack } from "@askrjs/themes/layouts";
+import DashboardDomainSignals from "@/components/shared/dashboard-domain-signals";
+import DomainHeader from "@/components/shared/domain-header";
+import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import {
   QueryErrorState,
@@ -19,10 +11,8 @@ import {
   QueryRefreshingState,
 } from "@/components/shared/query-state";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
-import { createHealthSummaryQuery } from "@/features/system/health-query";
 import { createSystemOverviewQuery } from "@/features/system/system-query";
 import { formatNumber } from "@/shared/format";
-import { domainLinks } from "@/shared/navigation/domains";
 
 function humanizeSeconds(seconds: number) {
   if (seconds < 60) return `${seconds}s`;
@@ -36,29 +26,8 @@ function humanizeSeconds(seconds: number) {
   return `${Math.floor(hours / 24)}d`;
 }
 
-function formatBottleneckLabel(
-  bottleneck:
-    | {
-        domain?: string | null;
-        resource?: string | null;
-        area?: string | null;
-        realm?: string | null;
-      }
-    | null
-    | undefined,
-) {
-  if (!bottleneck) return "No active bottleneck";
-
-  const parts = [bottleneck.domain, bottleneck.realm, bottleneck.area, bottleneck.resource].filter(
-    (part): part is string => Boolean(part),
-  );
-
-  return parts.length > 0 ? parts.join(" / ") : "Unnamed bottleneck";
-}
-
 export default function Home() {
   const session = createCurrentSessionQuery();
-  const health = createHealthSummaryQuery();
   const system = createSystemOverviewQuery();
 
   if (session.loading && !session.data) {
@@ -71,50 +40,15 @@ export default function Home() {
 
   const username = session.data?.username ?? "admin";
   const overview = system.data;
-  const incident = overview?.diagnostics.incident_summary;
-  const topBottleneck = overview?.diagnostics.top_bottleneck;
-
-  const sidebar = createDomainSidebar({
-    data: overview,
-    title: "Broker snapshot",
-    description: "Current state of the live Fitz broker and admin access.",
-    stats: (current) => [
-      { label: "Health", value: current.healthStatus, note: "Latest health endpoint result" },
-      { label: "Connections", value: current.broker.connections },
-      { label: "Sessions", value: current.broker.sessions },
-      { label: "Realms", value: current.broker.realms.length },
-      { label: "Uptime", value: humanizeSeconds(current.broker.uptimeSeconds) },
-    ],
-    footer: (
-      <Stack gap="3">
-        <Link href="/sessions">View sessions</Link>
-        <Button onPress={() => navigate("/logout")}>Sign out</Button>
-      </Stack>
-    ),
-  });
 
   return (
-    <DomainPageFrame sidebar={sidebar}>
+    <DomainPageFrame>
       <Stack gap="3">
-        <div class="admin-hero">
-          <div class="panel-heading">
-            <Badge>Authenticated</Badge>
-            <p class="eyebrow">Admin Home</p>
-          </div>
-
-          <div class="panel-copy">
-            <h1>Welcome, {username}</h1>
-            <p>
-              This troubleshooting view leads with the current incident summary, then drills into
-              the broker and domains so you can see what is blocked first.
-            </p>
-          </div>
-
-          <Inline gap="3" wrap="wrap">
-            <Button onPress={() => system.refresh()}>Refresh broker data</Button>
-            <Link href="/sessions">Open sessions</Link>
-          </Inline>
-        </div>
+        <DomainHeader
+          title={`Welcome, ${username}`}
+          description="Broker status, domain totals, and admin entry points."
+          onRefresh={() => system.refresh()}
+        />
 
         {!overview && system.loading ? (
           <QueryLoadingState description="Loading broker overview..." />
@@ -128,225 +62,144 @@ export default function Home() {
               <QueryRefreshingState description="Refreshing broker overview..." />
             ) : null}
 
-            <Block gap="3" size="sm">
-              <Card class="dashboard-status-card" variant="raised">
-                <CardHeader>
-                  <CardTitle>Current incident</CardTitle>
-                  <CardDescription>{incident?.status ?? "unknown"}</CardDescription>
-                </CardHeader>
-                <CardContent class="dashboard-status-content">
-                  <div class="dashboard-metric">
-                    <span>Summary</span>
-                    <strong>{incident?.title ?? "No incident detected"}</strong>
-                  </div>
-                  <div class="dashboard-metric">
-                    <span>Likely cause</span>
-                    <strong>{incident?.explanation ?? "No active pressure detected"}</strong>
-                  </div>
-                  <div class="dashboard-metric">
-                    <span>Top bottleneck</span>
-                    <strong>{formatBottleneckLabel(topBottleneck)}</strong>
-                  </div>
-                  <div class="dashboard-metric">
-                    <span>Next query</span>
-                    <strong>{incident?.recommended_next_query ?? "No follow-up needed"}</strong>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card class="dashboard-status-card" variant="raised">
-                <CardHeader>
-                  <CardTitle>Broker health</CardTitle>
-                  <CardDescription>
-                    {health.data?.readiness ?? overview.healthStatus}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent class="dashboard-status-content">
-                  <div class="dashboard-metric">
-                    <span>Liveness</span>
-                    <strong>{health.data?.liveness ?? "checking"}</strong>
-                  </div>
-                  <div class="dashboard-metric">
-                    <span>Startup</span>
-                    <strong>{health.data?.startup ?? "checking"}</strong>
-                  </div>
-                  <div class="dashboard-metric">
-                    <span>Uptime</span>
-                    <strong>{humanizeSeconds(overview.broker.uptimeSeconds)}</strong>
-                  </div>
-                  <div class="dashboard-metric">
-                    <span>Connections</span>
-                    <strong>{formatNumber(overview.broker.connections)}</strong>
-                  </div>
-                  <div class="dashboard-metric">
-                    <span>Sessions</span>
-                    <strong>{formatNumber(overview.broker.sessions)}</strong>
-                  </div>
-                  <div class="dashboard-metric">
-                    <span>Messages / sec</span>
-                    <strong>{overview.broker.messagesPerSecond.toFixed(2)}</strong>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card class="dashboard-status-card" variant="raised">
-                <CardHeader>
-                  <CardTitle>Metrics preview</CardTitle>
-                  <CardDescription>{overview.metrics.lineCount} visible lines</CardDescription>
-                </CardHeader>
-                <CardContent class="dashboard-metrics-preview">
-                  {overview.metrics.lines.length === 0 ? (
-                    <p>No metrics payload was returned.</p>
-                  ) : (
-                    <pre>{overview.metrics.lines.join("\n")}</pre>
-                  )}
-                </CardContent>
-              </Card>
-            </Block>
-
-            <Section size="3">
-              <div class="domain-section-header">
-                <div>
-                  <p class="eyebrow">Recent signals</p>
-                  <h2>{overview.diagnostics.hotspots.length} hotspots</h2>
-                  <p>Current troubleshooting hotspots ranked by the broker diagnostics model.</p>
-                </div>
-              </div>
-
-              <Block gap="3" size="sm">
-                <For
-                  each={overview.diagnostics.hotspots.slice(0, 6)}
-                  by={(hotspot) =>
-                    `${hotspot.domain ?? "unknown"}:${hotspot.realm ?? "any"}:${hotspot.area ?? "any"}:${hotspot.resource ?? "any"}`
-                  }
-                >
-                  {(hotspot) => (
-                    <Card class="dashboard-domain-card" variant="raised">
-                      <CardHeader>
-                        <CardTitle>{formatBottleneckLabel(hotspot)}</CardTitle>
-                        <CardDescription>{hotspot.severity}</CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <p>{hotspot.current_stage}</p>
-                        <p>{hotspot.likely_bottleneck ?? "No likely bottleneck reported"}</p>
-                      </CardContent>
-                    </Card>
-                  )}
-                </For>
-              </Block>
-            </Section>
-
-            <Section size="3">
-              <div class="domain-section-header">
-                <div>
-                  <p class="eyebrow">Domain totals</p>
-                  <h2>High-signal broker summaries</h2>
-                </div>
-              </div>
-
-              <Block gap="3" size="sm">
-                <Card class="dashboard-domain-card">
-                  <CardHeader>
-                    <CardTitle>Queue</CardTitle>
-                    <CardDescription>
-                      Ready {formatNumber(overview.domains.queue.messagesReady)}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <p>Inflight {formatNumber(overview.domains.queue.inflightActive)}</p>
-                    <p>Pending {formatNumber(overview.domains.queue.messagesPending)}</p>
-                    <p>Dead letters {formatNumber(overview.domains.queue.messagesDeadLettered)}</p>
-                  </CardContent>
-                </Card>
-
-                <Card class="dashboard-domain-card">
-                  <CardHeader>
-                    <CardTitle>KV</CardTitle>
-                    <CardDescription>
-                      Keys {formatNumber(overview.domains.kv.keysTotal)}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <p>Transactions {formatNumber(overview.domains.kv.transactionsActive)}</p>
-                    <p>Ops / sec {overview.domains.kv.operationsPerSecond.toFixed(2)}</p>
-                  </CardContent>
-                </Card>
-
-                <Card class="dashboard-domain-card">
-                  <CardHeader>
-                    <CardTitle>Lease</CardTitle>
-                    <CardDescription>
-                      Active {formatNumber(overview.domains.lease.leasesActive)}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <p>Ops / sec {overview.domains.lease.operationsPerSecond.toFixed(2)}</p>
-                  </CardContent>
-                </Card>
-
-                <Card class="dashboard-domain-card">
-                  <CardHeader>
-                    <CardTitle>Notice</CardTitle>
-                    <CardDescription>
-                      Subscriptions {formatNumber(overview.domains.notice.subscriptionsActive)}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <p>Publishes / sec {overview.domains.notice.publishesPerSecond.toFixed(2)}</p>
-                  </CardContent>
-                </Card>
-
-                <Card class="dashboard-domain-card">
-                  <CardHeader>
-                    <CardTitle>RPC</CardTitle>
-                    <CardDescription>
-                      Workers {formatNumber(overview.domains.rpc.workersRegistered)}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <p>Requests pending {formatNumber(overview.domains.rpc.requestsPending)}</p>
-                    <p>Ops / sec {overview.domains.rpc.operationsPerSecond.toFixed(2)}</p>
-                  </CardContent>
-                </Card>
-
-                <Card class="dashboard-domain-card">
-                  <CardHeader>
-                    <CardTitle>Schedule</CardTitle>
-                    <CardDescription>
-                      Active {formatNumber(overview.domains.schedule.schedulesActive)}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <p>
-                      Pending claims {formatNumber(overview.domains.schedule.pendingFireClaims)}
-                    </p>
-                    <p>
-                      Executions / min {overview.domains.schedule.executionsPerMinute.toFixed(2)}
-                    </p>
-                  </CardContent>
-                </Card>
-
-                <Card class="dashboard-domain-card">
-                  <CardHeader>
-                    <CardTitle>Stream</CardTitle>
-                    <CardDescription>
-                      Active {formatNumber(overview.domains.stream.streamsActive)}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <p>Events {formatNumber(overview.domains.stream.eventsTotal)}</p>
-                    <p>Subscriptions {formatNumber(overview.domains.stream.subscriptionsActive)}</p>
-                    <p>Ops / sec {overview.domains.stream.operationsPerSecond.toFixed(2)}</p>
-                  </CardContent>
-                </Card>
-              </Block>
-            </Section>
-
-            <DomainIndex
-              title="Domain workbench"
-              description="Use the domain pages for deeper inspection and queue resource drill-downs."
-              links={domainLinks}
+            <DomainMetricTable
+              title="Broker"
+              metrics={[
+                { label: "Uptime", value: humanizeSeconds(overview.broker.uptimeSeconds) },
+                { label: "Connections", value: formatNumber(overview.broker.connections) },
+                { label: "Sessions", value: formatNumber(overview.broker.sessions) },
+                { label: "Messages / sec", value: overview.broker.messagesPerSecond.toFixed(2) },
+                {
+                  label: "Incident",
+                  value: overview.diagnostics.incident_summary?.title ?? "No incident detected",
+                },
+              ]}
             />
+
+            <DashboardDomainSignals overview={overview} />
+
+            <section class="domain-section">
+              <div class="domain-section-header">
+                <h2>Domains</h2>
+              </div>
+              <div class="domain-table-wrap">
+                <Table class="domain-table">
+                  <TableHead>
+                    <TableRow>
+                      <TableHeaderCell>Domain</TableHeaderCell>
+                      <TableHeaderCell>Primary</TableHeaderCell>
+                      <TableHeaderCell>Secondary</TableHeaderCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell>Queue</TableCell>
+                      <TableCell>
+                        Ready {formatNumber(overview.domains.queue.messagesReady)}
+                      </TableCell>
+                      <TableCell>
+                        Dead letters {formatNumber(overview.domains.queue.messagesDeadLettered)}
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>KV</TableCell>
+                      <TableCell>Keys {formatNumber(overview.domains.kv.keysTotal)}</TableCell>
+                      <TableCell>
+                        Transactions {formatNumber(overview.domains.kv.transactionsActive)}
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Lease</TableCell>
+                      <TableCell>
+                        Active {formatNumber(overview.domains.lease.leasesActive)}
+                      </TableCell>
+                      <TableCell>
+                        Ops / sec {overview.domains.lease.operationsPerSecond.toFixed(2)}
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Notice</TableCell>
+                      <TableCell>
+                        Subscriptions {formatNumber(overview.domains.notice.subscriptionsActive)}
+                      </TableCell>
+                      <TableCell>
+                        Publishes / sec {overview.domains.notice.publishesPerSecond.toFixed(2)}
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>RPC</TableCell>
+                      <TableCell>
+                        Workers {formatNumber(overview.domains.rpc.workersRegistered)}
+                      </TableCell>
+                      <TableCell>
+                        Pending {formatNumber(overview.domains.rpc.requestsPending)}
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Schedule</TableCell>
+                      <TableCell>
+                        Active {formatNumber(overview.domains.schedule.schedulesActive)}
+                      </TableCell>
+                      <TableCell>
+                        Claims {formatNumber(overview.domains.schedule.pendingFireClaims)}
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Stream</TableCell>
+                      <TableCell>
+                        Streams {formatNumber(overview.domains.stream.streamsActive)}
+                      </TableCell>
+                      <TableCell>
+                        Events {formatNumber(overview.domains.stream.eventsTotal)}
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            </section>
+
+            <section class="domain-section">
+              <div class="domain-section-header">
+                <h2>Recent signals</h2>
+                <span>{overview.diagnostics.hotspots.length} hotspots</span>
+              </div>
+              {overview.diagnostics.hotspots.length === 0 ? (
+                <p class="domain-muted">No active hotspots reported.</p>
+              ) : (
+                <div class="domain-table-wrap">
+                  <Table class="domain-table">
+                    <TableHead>
+                      <TableRow>
+                        <TableHeaderCell>Scope</TableHeaderCell>
+                        <TableHeaderCell>Severity</TableHeaderCell>
+                        <TableHeaderCell>Stage</TableHeaderCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      <For
+                        each={overview.diagnostics.hotspots.slice(0, 6)}
+                        by={(hotspot) =>
+                          `${hotspot.domain ?? "unknown"}:${hotspot.realm ?? "any"}:${hotspot.area ?? "any"}:${hotspot.resource ?? "any"}`
+                        }
+                      >
+                        {(hotspot) => (
+                          <TableRow>
+                            <TableCell>
+                              {[hotspot.domain, hotspot.realm, hotspot.area, hotspot.resource]
+                                .filter(Boolean)
+                                .join(" / ") || "Broker"}
+                            </TableCell>
+                            <TableCell>{hotspot.severity}</TableCell>
+                            <TableCell>{hotspot.current_stage}</TableCell>
+                          </TableRow>
+                        )}
+                      </For>
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </section>
+
           </Stack>
         ) : null}
       </Stack>
