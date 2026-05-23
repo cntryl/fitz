@@ -2,9 +2,9 @@
 
 ## Repo Layout
 - Root is a Rust workspace. Main code lives under `src/`.
-- `ui/` is a separate Node/Vite workspace.
+- `ui/` is a separate Node/Vite workspace with its own `AGENTS.md` and local `skills/` tree.
 - `public/` contains the static SPA served by the broker.
-- Canonical repo skills live under root `skills/`.
+- Root workspace skills live under root `skills/`.
 
 ## Read First
 - [docs/development/architectural-laws.md](docs/development/architectural-laws.md)
