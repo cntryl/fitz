@@ -1,11 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-vi.mock("@askrjs/charts/components", () => ({
-  ChartPanel: ({ children }: { children?: unknown }) => <section>{children}</section>,
-  ChartShell: ({ children }: { children?: unknown }) => <section>{children}</section>,
-  ProgressMeter: ({ label }: { label: string }) => <div role="meter" aria-label={label} />,
-}));
-
 import App from "@/pages/app/_layout";
 import QueueDeadLettersPanel from "@/components/queue-dead-letters-panel";
 import DomainHeader from "@/components/shared/domain-header";

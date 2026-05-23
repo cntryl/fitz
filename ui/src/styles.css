@@ -1,5 +1,4 @@
 @import "@askrjs/themes/default";
-@import "@askrjs/charts/default";
 
 :root {
   color-scheme: light dark;
@@ -36,6 +35,45 @@ a {
 
 .domain-chart-shell {
   margin: 0;
+}
+
+.chart-shell,
+.chart-panel {
+  display: grid;
+  gap: var(--ak-space-3, 0.75rem);
+}
+
+.chart-shell {
+  padding: var(--ak-space-4, 1rem);
+  border: 1px solid var(--ak-color-border, color-mix(in srgb, CanvasText 14%, transparent));
+  border-radius: var(--ak-radius-lg, 1rem);
+  background: var(--ak-color-surface, color-mix(in srgb, Canvas 92%, CanvasText 8%));
+}
+
+.chart-panel {
+  padding: var(--ak-space-3, 0.75rem);
+  border: 1px solid var(--ak-color-border, color-mix(in srgb, CanvasText 12%, transparent));
+  border-radius: var(--ak-radius-md, 0.75rem);
+  background: var(--ak-color-bg, Canvas);
+}
+
+.chart-shell-header,
+.chart-panel-header {
+  display: grid;
+  gap: var(--ak-space-1, 0.25rem);
+}
+
+.chart-shell-header h2,
+.chart-panel-header h3 {
+  margin: 0;
+  line-height: 1.2;
+}
+
+.chart-shell-header p,
+.chart-panel-header p {
+  margin: 0;
+  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+  line-height: 1.45;
 }
 
 .chart-meter-grid {

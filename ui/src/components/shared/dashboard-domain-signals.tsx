@@ -1,5 +1,5 @@
-import { ChartPanel, ChartShell } from "@askrjs/charts/components";
 import ChartMeter from "@/components/shared/chart-meter";
+import { ChartPanel, ChartShell } from "@/components/shared/chart-frame";
 import type { SystemOverview } from "@/features/system/system-models";
 import { formatNumber } from "@/shared/format";
 

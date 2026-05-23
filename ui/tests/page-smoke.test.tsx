@@ -117,12 +117,6 @@ vi.mock("@/features/resource/resource-query", () => ({
   createResourceQuery: () => mocks.queryStates.resource,
 }));
 
-vi.mock("@askrjs/charts/components", () => ({
-  ChartPanel: ({ children }: { children?: unknown }) => <section>{children}</section>,
-  ChartShell: ({ children }: { children?: unknown }) => <section>{children}</section>,
-  ProgressMeter: ({ label }: { label: string }) => <div role="meter" aria-label={label} />,
-}));
-
 const realm = { realm: "default" };
 
 const inventory = {

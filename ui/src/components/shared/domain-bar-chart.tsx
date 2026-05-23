@@ -1,6 +1,17 @@
-import { ChartPanel, ChartShell } from "@askrjs/charts/components";
-import type { ChartValueFormatter, ValueChartDatumInput } from "@askrjs/charts/core";
 import ChartMeter from "@/components/shared/chart-meter";
+import { ChartPanel, ChartShell } from "@/components/shared/chart-frame";
+
+type ChartValueFormatter = (value: number) => string;
+
+type ValueChartDatumObject = {
+  description?: string;
+  label: string;
+  value: number;
+};
+
+type ValueChartDatumTuple = readonly [string, number?, unknown?, string?];
+
+type ValueChartDatumInput = ValueChartDatumObject | ValueChartDatumTuple;
 
 export interface DomainBarChartProps {
   data: ValueChartDatumInput[];
@@ -20,7 +31,7 @@ function normalizeData(data: ValueChartDatumInput[]) {
       };
     }
 
-    const objectEntry = entry as Exclude<ValueChartDatumInput, readonly unknown[]>;
+    const objectEntry = entry as ValueChartDatumObject;
 
     return {
       description: objectEntry.description,

@@ -1,6 +1,6 @@
 
 # Stage 1: Build UI (Askr + Vite+)
-FROM node:slim as ui-builder
+FROM node:slim AS frontend
 
 # Install dependencies needed for the curl command
 RUN apt-get update \
@@ -27,7 +27,7 @@ COPY ui/ ./
 RUN npm run build
 
 # Stage 2: Build Rust binary
-FROM rust:slim as builder
+FROM rust:slim AS backend
 
 # Install build essentials and OpenSSL dev libraries
 # cntryl-midge pulls reqwest with native-tls, which requires OpenSSL.
@@ -60,14 +60,14 @@ WORKDIR /app
 # Distroless/cc includes libc6 and C libraries needed for OpenSSL runtime
 # No need for additional package installation
 
-# Copy the binary from builder
-COPY --from=builder /usr/src/fitz/target/release/fitz /app/fitz
+# Copy the binary from backend
+COPY --from=backend /usr/src/fitz/target/release/fitz /app/fitz
 
 # Provide a writable /data path for local disk storage.
-COPY --from=builder --chown=65532:65532 /usr/src/fitz/runtime-data/ /data/
+COPY --from=backend --chown=65532:65532 /usr/src/fitz/runtime-data/ /data/
 
 # Copy SPA files for admin UI (built to ui/dist)
-COPY --from=ui-builder /ui/dist/ /app/public/
+COPY --from=frontend /ui/dist/ /app/public/
 
 # Run as non-root numeric UID
 USER 65532
