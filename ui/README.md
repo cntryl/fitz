@@ -38,7 +38,7 @@ The browser client reads these public Vite env vars through `src/shared/config.t
 
 ## Local Skills
 
-The repo-local `.skills/` docs describe the intended Askr workflow for each slice. Pick the narrowest applicable skill for the files you are changing, and treat the docs as guidance for that surface rather than a checklist to force onto unrelated code.
+The repo-root `skills/` docs describe the intended Askr workflow for each slice. Pick the narrowest applicable skill for the files you are changing, and treat the docs as guidance for that surface rather than a checklist to force onto unrelated code.
 
 ## Routing
 
