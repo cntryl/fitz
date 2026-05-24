@@ -43,6 +43,7 @@ fn configure_admin_auth() {
 }
 
 fn test_runtime() -> Arc<Runtime> {
+    fitz::boot::observability::metrics().clear();
     configure_admin_auth();
     let router = Arc::new(Router::new());
     Arc::new(Runtime::new(router))

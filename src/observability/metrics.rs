@@ -166,6 +166,13 @@ impl MetricsCollector {
         }
     }
 
+    /// Clear all recorded metrics.
+    pub fn clear(&self) {
+        self.counters.clear();
+        self.gauges.clear();
+        self.histograms.clear();
+    }
+
     // ========================================================================
     // Counter Operations
     // ========================================================================
