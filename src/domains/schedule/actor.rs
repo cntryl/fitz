@@ -1,3 +1,7 @@
+use crate::domains::schedule::metrics::{
+    METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL, METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
+    METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
+};
 use crate::domains::schedule::protocol::{
     epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
     parse_concrete_schedule_route, validate_concrete_schedule_route, Clock, CronSchedule,
@@ -369,7 +373,7 @@ impl ScheduleActor {
         let next_fire_ms =
             Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
 
-        self.store.insert(
+        if let Err(error) = self.store.insert(
             self.family.as_u64(),
             ScheduleInsert {
                 route: &route,
@@ -381,7 +385,14 @@ impl ScheduleActor {
                 executions_total: previous_executions_total,
             },
             self.write_options,
-        )?;
+        ) {
+            if previous_next_fire_ms.is_some() {
+                crate::boot::observability::counter_inc(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL);
+            } else {
+                crate::boot::observability::counter_inc(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL);
+            }
+            return Err(error);
+        }
 
         let list_index = self.upsert_list_entry(previous_list_index, &route, &cron, &payload);
         let def = ScheduleDef {
@@ -504,8 +515,31 @@ impl ScheduleActor {
             )
             .collect();
 
-        self.store
-            .insert_batch(self.family.as_u64(), &store_items, self.write_options)?;
+        if let Err(error) =
+            self.store
+                .insert_batch(self.family.as_u64(), &store_items, self.write_options)
+        {
+            let upsert_failures = pending
+                .iter()
+                .filter(|entry| entry.previous_list_index.is_some())
+                .count() as u64;
+            let create_failures = pending.len() as u64 - upsert_failures;
+
+            if create_failures > 0 {
+                crate::boot::observability::counter_add(
+                    METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
+                    create_failures,
+                );
+            }
+            if upsert_failures > 0 {
+                crate::boot::observability::counter_add(
+                    METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
+                    upsert_failures,
+                );
+            }
+
+            return Err(error);
+        }
 
         let changed = pending.len();
         for entry in pending {
@@ -548,12 +582,15 @@ impl ScheduleActor {
             return Ok(false);
         };
 
-        self.store.delete_current(
+        if let Err(error) = self.store.delete_current(
             self.family.as_u64(),
             &route,
             existing.next_fire_ms,
             self.write_options,
-        )?;
+        ) {
+            crate::boot::observability::counter_inc(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
+            return Err(error);
+        }
 
         if let Some(removed_def) = self.schedules.remove(&route) {
             self.remove_list_entry(removed_def.list_index);
@@ -1133,6 +1170,7 @@ mod tests {
     use super::*;
     use crate::testkit::create_test_engine_with_cfs;
     use chrono::TimeZone;
+    use serial_test::serial;
     use std::sync::Mutex;
 
     #[derive(Clone)]
@@ -1198,6 +1236,10 @@ mod tests {
             cntryl_midge::WriteOptions::buffered(),
             clock,
         )
+    }
+
+    fn metric_counter(name: &str) -> u64 {
+        crate::boot::observability::metrics().counter_get(name)
     }
 
     #[test]
@@ -1864,12 +1906,16 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn should_not_advance_schedule_state_given_persistence_failure() {
         // Arrange
         let mut actor = make_actor();
         let route = "schedule://acme/jobs/create-fail/run";
+        let create_before = metric_counter(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL);
+        let upsert_before = metric_counter(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL);
+        let cancel_before = metric_counter(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
 
-        // Act — inject persistence failure before create
+        // Act
         actor.store.fail_next_commit_for_tests();
         let result = actor.create_schedule(
             route.to_string(),
@@ -1877,8 +1923,23 @@ mod tests {
             Bytes::from_static(b"payload"),
         );
 
-        // Assert — create returns Err; in-memory state is not advanced
+        // Assert
         assert!(result.is_err(), "create should propagate the store error");
+        assert_eq!(
+            metric_counter(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL),
+            create_before + 1,
+            "create persistence failures should increment"
+        );
+        assert_eq!(
+            metric_counter(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL),
+            upsert_before,
+            "upsert persistence failures must not increment on create failure"
+        );
+        assert_eq!(
+            metric_counter(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL),
+            cancel_before,
+            "cancel persistence failures must not increment on create failure"
+        );
         assert!(
             !actor.schedules.contains_key(route),
             "schedule must not be inserted into in-memory map on persist failure"
@@ -1894,6 +1955,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn should_not_update_schedule_given_upsert_persistence_failure() {
         // Arrange
         let mut actor = make_actor();
@@ -1907,8 +1969,11 @@ mod tests {
             .expect("create schedule");
         let original_cron = actor.schedules.get(route).expect("schedule").cron.clone();
         let original_next_fire_ms = actor.schedules.get(route).expect("schedule").next_fire_ms;
+        let create_before = metric_counter(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL);
+        let upsert_before = metric_counter(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL);
+        let cancel_before = metric_counter(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
 
-        // Act — inject failure before upsert
+        // Act
         actor.store.fail_next_commit_for_tests();
         let result = actor.create_schedule(
             route.to_string(),
@@ -1916,8 +1981,23 @@ mod tests {
             Bytes::from_static(b"updated"),
         );
 
-        // Assert — upsert returns Err; original in-memory state is not changed
+        // Assert
         assert!(result.is_err(), "upsert should propagate the store error");
+        assert_eq!(
+            metric_counter(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL),
+            create_before,
+            "create persistence failures must not increment on upsert failure"
+        );
+        assert_eq!(
+            metric_counter(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL),
+            upsert_before + 1,
+            "upsert persistence failures should increment"
+        );
+        assert_eq!(
+            metric_counter(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL),
+            cancel_before,
+            "cancel persistence failures must not increment on upsert failure"
+        );
         let schedule = actor.schedules.get(route).expect("schedule still present");
         assert_eq!(
             schedule.cron, original_cron,
@@ -1935,6 +2015,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn should_not_remove_schedule_given_cancel_persistence_failure() {
         // Arrange
         let mut actor = make_actor();
@@ -1946,13 +2027,31 @@ mod tests {
                 Bytes::from_static(b"payload"),
             )
             .expect("create schedule");
+        let create_before = metric_counter(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL);
+        let upsert_before = metric_counter(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL);
+        let cancel_before = metric_counter(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
 
-        // Act — inject failure before cancel
+        // Act
         actor.store.fail_next_commit_for_tests();
         let result = actor.delete_schedule(route.to_string());
 
-        // Assert — cancel returns Err; in-memory state is not removed
+        // Assert
         assert!(result.is_err(), "cancel should propagate the store error");
+        assert_eq!(
+            metric_counter(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL),
+            create_before,
+            "create persistence failures must not increment on cancel failure"
+        );
+        assert_eq!(
+            metric_counter(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL),
+            upsert_before,
+            "upsert persistence failures must not increment on cancel failure"
+        );
+        assert_eq!(
+            metric_counter(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL),
+            cancel_before + 1,
+            "cancel persistence failures should increment"
+        );
         assert!(
             actor.schedules.contains_key(route),
             "schedule must not be removed from in-memory map on cancel persist failure"

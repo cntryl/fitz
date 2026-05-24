@@ -10,8 +10,11 @@ export interface BrokerStatsSummary {
 
 export interface SystemDomainStatsSummary {
   kv: {
+    commitsFailedTotal: number;
+    invalidTransactionRejectsTotal: number;
     keysTotal: number;
     operationsPerSecond: number;
+    rollbacksTotal: number;
     transactionsActive: number;
   };
   lease: {
@@ -49,6 +52,9 @@ export interface SystemDomainStatsSummary {
     backpressureRejectsTotal: number;
     duplicateCorrelationRejectsTotal: number;
     failureTotal: number;
+    invalidSequenceErrorsDroppedTotal: number;
+    invalidSequenceErrorsForwardedTotal: number;
+    invalidSequenceResponsesTotal: number;
     operationsPerSecond: number;
     requestTimeoutsTotal: number;
     requestsPending: number;
@@ -61,12 +67,15 @@ export interface SystemDomainStatsSummary {
   };
   schedule: {
     ackFailuresTotal: number;
+    cancelPersistenceFailuresTotal: number;
+    createPersistenceFailuresTotal: number;
     executionsPerMinute: number;
     notifyFailuresTotal: number;
     overdueNormalizationsTotal: number;
     pendingFireClaims: number;
     schedulesActive: number;
     subscriptionsActive: number;
+    upsertPersistenceFailuresTotal: number;
   };
   stream: {
     appendConflictsTotal: number;

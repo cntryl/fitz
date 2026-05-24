@@ -62,6 +62,9 @@ export default function LeasePage() {
                   label: "Oldest lease age",
                   value: `${data.stats.oldestLeaseAgeSeconds}s`,
                 },
+                { label: "Acquire timeouts", value: data.stats.acquireTimeoutsTotal },
+                { label: "Forced releases", value: data.stats.forcedReleasesTotal },
+                { label: "Token rejects", value: data.stats.invalidTokenRejectsTotal },
                 {
                   label: "Ops / sec",
                   value: data.stats.operationsPerSecond.toFixed(2),

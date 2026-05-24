@@ -60,6 +60,20 @@ export default function RpcPage() {
                 { label: "Workers", value: data.stats.workersRegistered },
                 { label: "Requests pending", value: data.stats.requestsPending },
                 {
+                  label: "Closed caller drops",
+                  value: data.stats.responsesDroppedClosedCallerTotal,
+                },
+                { label: "Missing pending", value: data.stats.responsesMissingPendingTotal },
+                { label: "Invalid seq responses", value: data.stats.invalidSequenceResponsesTotal },
+                {
+                  label: "Invalid seq fwd",
+                  value: data.stats.invalidSequenceErrorsForwardedTotal,
+                },
+                {
+                  label: "Invalid seq drops",
+                  value: data.stats.invalidSequenceErrorsDroppedTotal,
+                },
+                {
                   label: "Ops / sec",
                   value: data.stats.operationsPerSecond.toFixed(2),
                 },

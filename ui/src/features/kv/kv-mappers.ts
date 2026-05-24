@@ -9,8 +9,11 @@ export function mapKvRealm(dto: RealmEntry): KvRealmSummary {
 
 export function mapKvStats(dto: KvStats): KvStatsSummary {
   return {
+    commitsFailedTotal: dto.commits_failed_total,
+    invalidTransactionRejectsTotal: dto.invalid_transaction_rejects_total,
     keysTotal: dto.keys_total,
     operationsPerSecond: dto.operations_per_second,
+    rollbacksTotal: dto.rollbacks_total,
     transactionsActive: dto.transactions_active,
   };
 }

@@ -3,6 +3,9 @@ export interface LeaseRealmSummary {
 }
 
 export interface LeaseStatsSummary {
+  acquireTimeoutsTotal: number;
+  forcedReleasesTotal: number;
+  invalidTokenRejectsTotal: number;
   leasesActive: number;
   operationsPerSecond: number;
   oldestLeaseAgeSeconds: number;

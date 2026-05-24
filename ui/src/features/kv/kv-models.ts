@@ -3,8 +3,11 @@ export interface KvRealmSummary {
 }
 
 export interface KvStatsSummary {
+  commitsFailedTotal: number;
+  invalidTransactionRejectsTotal: number;
   keysTotal: number;
   operationsPerSecond: number;
+  rollbacksTotal: number;
   transactionsActive: number;
 }
 

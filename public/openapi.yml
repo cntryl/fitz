@@ -2850,12 +2850,30 @@ components:
 
     KvStats:
       type: object
-      required: [transactions_active, keys_total, operations_per_second, diagnostics]
+      required:
+        [
+          transactions_active,
+          keys_total,
+          commits_failed_total,
+          rollbacks_total,
+          invalid_transaction_rejects_total,
+          operations_per_second,
+          diagnostics,
+        ]
       properties:
         transactions_active:
           type: integer
         keys_total:
           type: integer
+        commits_failed_total:
+          type: integer
+          format: int64
+        rollbacks_total:
+          type: integer
+          format: int64
+        invalid_transaction_rejects_total:
+          type: integer
+          format: int64
         operations_per_second:
           type: number
         diagnostics:
@@ -3178,6 +3196,9 @@ components:
           responses_dropped_closed_caller_total,
           responses_missing_pending_total,
           acks_rejected_wrong_worker_total,
+          invalid_sequence_responses_total,
+          invalid_sequence_errors_forwarded_total,
+          invalid_sequence_errors_dropped_total,
           operations_per_second,
           diagnostics,
         ]
@@ -3224,6 +3245,15 @@ components:
           type: integer
           format: int64
         acks_rejected_wrong_worker_total:
+          type: integer
+          format: int64
+        invalid_sequence_responses_total:
+          type: integer
+          format: int64
+        invalid_sequence_errors_forwarded_total:
+          type: integer
+          format: int64
+        invalid_sequence_errors_dropped_total:
           type: integer
           format: int64
         operations_per_second:
@@ -3299,6 +3329,9 @@ components:
           overdue_normalizations_total,
           pending_claims_expired_total,
           pending_claim_cleanup_failures_total,
+          create_persistence_failures_total,
+          upsert_persistence_failures_total,
+          cancel_persistence_failures_total,
           diagnostics,
         ]
       properties:
@@ -3332,6 +3365,18 @@ components:
         pending_claim_cleanup_failures_total:
           type: integer
           description: Total failed pending schedule claim cleanup attempts.
+        create_persistence_failures_total:
+          type: integer
+          format: int64
+          description: Total schedule create mutations that failed to persist in this broker process.
+        upsert_persistence_failures_total:
+          type: integer
+          format: int64
+          description: Total schedule upsert mutations that failed to persist in this broker process.
+        cancel_persistence_failures_total:
+          type: integer
+          format: int64
+          description: Total schedule cancel mutations that failed to persist in this broker process.
         diagnostics:
           $ref: "#/components/schemas/DiagnosticSnapshot"
 

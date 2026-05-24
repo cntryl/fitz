@@ -506,14 +506,20 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
 
     expect(
       mapKvStats({
+        commits_failed_total: 9,
         diagnostics: healthyDiagnostics,
+        invalid_transaction_rejects_total: 11,
         keys_total: 4,
         operations_per_second: 1.5,
+        rollbacks_total: 10,
         transactions_active: 2,
       }),
     ).toEqual({
+      commitsFailedTotal: 9,
+      invalidTransactionRejectsTotal: 11,
       keysTotal: 4,
       operationsPerSecond: 1.5,
+      rollbacksTotal: 10,
       transactionsActive: 2,
     });
 
@@ -533,6 +539,9 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
         waiter_depth: 10,
       }),
     ).toEqual({
+      acquireTimeoutsTotal: 4,
+      forcedReleasesTotal: 5,
+      invalidTokenRejectsTotal: 7,
       leasesActive: 3,
       oldestLeaseAgeSeconds: 8,
       operationsPerSecond: 2.5,
@@ -565,6 +574,9 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
         duplicate_correlation_rejects_total: 9,
         diagnostics: healthyDiagnostics,
         failure_total: 6,
+        invalid_sequence_errors_dropped_total: 18,
+        invalid_sequence_errors_forwarded_total: 17,
+        invalid_sequence_responses_total: 16,
         operations_per_second: 5.5,
         oldest_pending_request_age_seconds: 11,
         pending_routes_active: 12,
@@ -585,14 +597,21 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
         workers_registered: 7,
       }),
     ).toEqual({
+      invalidSequenceErrorsDroppedTotal: 18,
+      invalidSequenceErrorsForwardedTotal: 17,
+      invalidSequenceResponsesTotal: 16,
       operationsPerSecond: 5.5,
       requestsPending: 6,
+      responsesDroppedClosedCallerTotal: 11,
+      responsesMissingPendingTotal: 12,
       workersRegistered: 7,
     });
 
     expect(
       mapScheduleStats({
         ack_failures_total: 1,
+        cancel_persistence_failures_total: 9,
+        create_persistence_failures_total: 7,
         diagnostics: healthyDiagnostics,
         executions_per_minute: 2.5,
         oldest_pending_claim_age_seconds: 0,
@@ -615,15 +634,19 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
         pending_fire_claims: 5,
         schedules_active: 6,
         subscriptions_active: 7,
+        upsert_persistence_failures_total: 8,
       }),
     ).toEqual({
       ackFailuresTotal: 1,
+      cancelPersistenceFailuresTotal: 9,
+      createPersistenceFailuresTotal: 7,
       executionsPerMinute: 2.5,
       notifyFailuresTotal: 3,
       overdueNormalizationsTotal: 4,
       pendingFireClaims: 5,
       schedulesActive: 6,
       subscriptionsActive: 7,
+      upsertPersistenceFailuresTotal: 8,
     });
 
     expect(
@@ -728,9 +751,12 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
           diagnostics: healthyGlobalDiagnostics,
           domains: {
             kv: {
+              commits_failed_total: 41,
               diagnostics: healthyDiagnostics,
+              invalid_transaction_rejects_total: 43,
               keys_total: 6,
               operations_per_second: 7.5,
+              rollbacks_total: 42,
               transactions_active: 8,
             },
             lease: {
@@ -801,6 +827,9 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
               duplicate_correlation_rejects_total: 9,
               diagnostics: healthyDiagnostics,
               failure_total: 10,
+              invalid_sequence_errors_dropped_total: 19,
+              invalid_sequence_errors_forwarded_total: 18,
+              invalid_sequence_responses_total: 17,
               operations_per_second: 19.5,
               oldest_pending_request_age_seconds: 22,
               pending_routes_active: 23,
@@ -822,6 +851,8 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
             },
             schedule: {
               ack_failures_total: 22,
+              cancel_persistence_failures_total: 43,
+              create_persistence_failures_total: 41,
               diagnostics: healthyDiagnostics,
               executions_per_minute: 23.5,
               oldest_pending_claim_age_seconds: 30,
@@ -844,6 +875,7 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
               pending_fire_claims: 26,
               schedules_active: 27,
               subscriptions_active: 28,
+              upsert_persistence_failures_total: 42,
             },
             stream: {
               append_sessions_active: 0,
@@ -892,8 +924,11 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
       diagnostics: healthyGlobalDiagnostics,
       domains: {
         kv: {
+          commitsFailedTotal: 41,
+          invalidTransactionRejectsTotal: 43,
           keysTotal: 6,
           operationsPerSecond: 7.5,
+          rollbacksTotal: 42,
           transactionsActive: 8,
         },
         lease: {
@@ -930,6 +965,9 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
           acksRejectedWrongWorkerTotal: 7,
           backpressureRejectsTotal: 8,
           duplicateCorrelationRejectsTotal: 9,
+          invalidSequenceErrorsDroppedTotal: 19,
+          invalidSequenceErrorsForwardedTotal: 18,
+          invalidSequenceResponsesTotal: 17,
           operationsPerSecond: 19.5,
           failureTotal: 10,
           requestsPending: 20,
@@ -943,12 +981,15 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
         },
         schedule: {
           ackFailuresTotal: 22,
+          cancelPersistenceFailuresTotal: 43,
+          createPersistenceFailuresTotal: 41,
           executionsPerMinute: 23.5,
           notifyFailuresTotal: 24,
           overdueNormalizationsTotal: 25,
           pendingFireClaims: 26,
           schedulesActive: 27,
           subscriptionsActive: 28,
+          upsertPersistenceFailuresTotal: 42,
         },
         stream: {
           appendConflictsTotal: 1,

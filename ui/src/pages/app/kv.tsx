@@ -60,6 +60,9 @@ export default function KvPage() {
               metrics={[
                 { label: "Keys", value: data.stats.keysTotal },
                 { label: "Transactions", value: data.stats.transactionsActive },
+                { label: "Commit fails", value: data.stats.commitsFailedTotal },
+                { label: "Rollbacks", value: data.stats.rollbacksTotal },
+                { label: "Txn rejects", value: data.stats.invalidTransactionRejectsTotal },
                 {
                   label: "Ops / sec",
                   value: data.stats.operationsPerSecond.toFixed(2),

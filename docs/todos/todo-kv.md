@@ -112,14 +112,13 @@ Operators must be able to inspect:
 
 Current surface:
 
-- Global stats include `transactions_active`, `keys_total`, and `operations_per_second`.
-- Prometheus currently exports `fitz_kv_transactions_active` and `fitz_kv_keys_total`.
+- Global and per-domain stats include `transactions_active`, `keys_total`, `operations_per_second`, `commits_failed_total`, `rollbacks_total`, and `invalid_transaction_rejects_total`.
+- Prometheus exports `fitz_kv_transactions_active`, `fitz_kv_keys_total`, `fitz_kv_commits_failed_total`, `fitz_kv_rollbacks_total`, and `fitz_kv_invalid_transaction_rejects_total`.
 - Admin APIs expose committed resource detail and current-process live transaction rows.
+- The per-domain KV stats endpoint is implemented and returns current-process diagnostics.
 
 Current gaps to keep explicit:
 
-- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) has a stub route for the per-domain KV stats endpoint; it currently returns not_implemented. The domain data is not yet populated.
-- Metrics do not yet expose commit-failure, rollback, or invalid-transaction counters.
 - Admin transaction views are current-process only and must not be described as durable recovery handles.
 
 ## G. Highest-Value Tests

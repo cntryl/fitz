@@ -9,8 +9,13 @@ export function mapRpcRealm(dto: RealmEntry): RpcRealmSummary {
 
 export function mapRpcStats(dto: RpcStats): RpcStatsSummary {
   return {
+    invalidSequenceErrorsDroppedTotal: dto.invalid_sequence_errors_dropped_total,
+    invalidSequenceErrorsForwardedTotal: dto.invalid_sequence_errors_forwarded_total,
+    invalidSequenceResponsesTotal: dto.invalid_sequence_responses_total,
     operationsPerSecond: dto.operations_per_second,
     requestsPending: dto.requests_pending,
+    responsesDroppedClosedCallerTotal: dto.responses_dropped_closed_caller_total,
+    responsesMissingPendingTotal: dto.responses_missing_pending_total,
     workersRegistered: dto.workers_registered,
   };
 }

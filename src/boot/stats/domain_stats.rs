@@ -3,6 +3,10 @@ use crate::domains::queue::metrics::{
     METRIC_COMPLETE_TOTAL, METRIC_ENQUEUE_TOTAL, METRIC_EXTEND_TOTAL, METRIC_FAILURE_TOTAL,
     METRIC_RELEASE_TOTAL, METRIC_REQUESTS_TOTAL, METRIC_RESERVE_TOTAL, METRIC_SUCCESS_TOTAL,
 };
+use crate::domains::schedule::metrics::{
+    METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL, METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
+    METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
+};
 use std::collections::HashSet;
 
 fn metric_counter(name: &str) -> u64 {
@@ -52,6 +56,18 @@ impl Runtime {
 
     pub fn kv_keys_total(&self) -> usize {
         0
+    }
+
+    pub fn kv_commits_failed_total(&self) -> u64 {
+        metric_counter("fitz_kv_commits_failed_total")
+    }
+
+    pub fn kv_rollbacks_total(&self) -> u64 {
+        metric_counter("fitz_kv_rollbacks_total")
+    }
+
+    pub fn kv_invalid_transaction_rejects_total(&self) -> u64 {
+        metric_counter("fitz_kv_invalid_transaction_rejects_total")
     }
 
     pub fn notice_subscriptions_active(&self) -> usize {
@@ -446,6 +462,18 @@ impl Runtime {
         metric_counter("rpc_acks_rejected_wrong_worker_total")
     }
 
+    pub fn rpc_invalid_sequence_responses_total(&self) -> u64 {
+        metric_counter("rpc_response_invalid_sequence_total")
+    }
+
+    pub fn rpc_invalid_sequence_errors_forwarded_total(&self) -> u64 {
+        metric_counter("rpc_invalid_sequence_errors_forwarded_total")
+    }
+
+    pub fn rpc_invalid_sequence_errors_dropped_total(&self) -> u64 {
+        metric_counter("rpc_invalid_sequence_errors_dropped_total")
+    }
+
     pub fn lease_operations_per_second(&self) -> f64 {
         let uptime_secs = self.uptime().as_secs_f64();
         if uptime_secs < 0.001 {
@@ -586,5 +614,17 @@ impl Runtime {
 
     pub fn schedule_pending_claim_cleanup_failures_total(&self) -> u64 {
         metric_counter("fitz_schedule_pending_claim_cleanup_failure_total")
+    }
+
+    pub fn schedule_create_persistence_failures_total(&self) -> u64 {
+        metric_counter(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL)
+    }
+
+    pub fn schedule_upsert_persistence_failures_total(&self) -> u64 {
+        metric_counter(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL)
+    }
+
+    pub fn schedule_cancel_persistence_failures_total(&self) -> u64 {
+        metric_counter(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL)
     }
 }

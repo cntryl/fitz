@@ -48,6 +48,23 @@ fn test_runtime() -> Arc<Runtime> {
     Arc::new(Runtime::new(router))
 }
 
+fn assert_prometheus_counter(metrics: &str, name: &str, value: u64) {
+    assert!(
+        metrics
+            .lines()
+            .any(|line| line.starts_with(&format!("# HELP {name} "))),
+        "missing HELP line for {name}"
+    );
+    assert!(
+        metrics.contains(&format!("# TYPE {name} counter")),
+        "missing TYPE line for {name}"
+    );
+    assert!(
+        metrics.contains(&format!("{name} {value}")),
+        "missing sample line for {name}={value}"
+    );
+}
+
 fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::Engine>) {
     configure_admin_auth();
     let router = Arc::new(Router::new());
@@ -664,7 +681,7 @@ async fn should_return_resource_collection_route() {
         .body(Body::empty())
         .unwrap();
 
-    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
@@ -684,7 +701,7 @@ async fn should_return_leaf_resource_detail() {
         .body(Body::empty())
         .unwrap();
 
-    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
@@ -745,7 +762,7 @@ async fn should_return_stream_area_watermarks_given_committed_stream_history() {
         .unwrap();
 
     // Act
-    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
@@ -974,19 +991,28 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
     let expired_before = metrics.counter_get("fitz_schedule_pending_claims_expired_total");
     let cleanup_failures_before =
         metrics.counter_get("fitz_schedule_pending_claim_cleanup_failure_total");
+    let create_persistence_before =
+        metrics.counter_get("fitz_schedule_create_persistence_failures_total");
+    let upsert_persistence_before =
+        metrics.counter_get("fitz_schedule_upsert_persistence_failures_total");
+    let cancel_persistence_before =
+        metrics.counter_get("fitz_schedule_cancel_persistence_failures_total");
     metrics.counter_add("fitz_schedule_pending_claims_expired_total", 2);
     metrics.counter_add("fitz_schedule_pending_claim_cleanup_failure_total", 1);
+    metrics.counter_add("fitz_schedule_create_persistence_failures_total", 3);
+    metrics.counter_add("fitz_schedule_upsert_persistence_failures_total", 5);
+    metrics.counter_add("fitz_schedule_cancel_persistence_failures_total", 7);
     let cookie = login_cookie(runtime.clone()).await;
 
     let req = Request::builder()
         .method(Method::GET)
         .uri("/api/v1/schedule/stats")
-        .header(COOKIE, cookie)
+        .header(COOKIE, cookie.clone())
         .body(Body::empty())
         .unwrap();
 
     // Act
-    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
@@ -1008,6 +1034,18 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
         payload["pending_claim_cleanup_failures_total"],
         cleanup_failures_before + 1
     );
+    assert_eq!(
+        payload["create_persistence_failures_total"],
+        create_persistence_before + 3
+    );
+    assert_eq!(
+        payload["upsert_persistence_failures_total"],
+        upsert_persistence_before + 5
+    );
+    assert_eq!(
+        payload["cancel_persistence_failures_total"],
+        cancel_persistence_before + 7
+    );
     assert_eq!(payload["diagnostics"]["current_stage"], "stale_handoff");
     assert_eq!(
         payload["diagnostics"]["likely_bottleneck"],
@@ -1016,6 +1054,34 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
     assert_eq!(
         payload["diagnostics"]["age_seconds"],
         payload["oldest_pending_claim_age_seconds"]
+    );
+
+    let metrics_req = Request::builder()
+        .method(Method::GET)
+        .uri("/metrics")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+    let metrics_response = fitz::api::admin::handlers::handle_request(metrics_req, runtime)
+        .await
+        .unwrap();
+    assert_eq!(metrics_response.status(), StatusCode::OK);
+    let metrics_body = body::to_bytes(metrics_response.into_body()).await.unwrap();
+    let metrics_payload = String::from_utf8(metrics_body.to_vec()).unwrap();
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_schedule_create_persistence_failures_total",
+        create_persistence_before + 3,
+    );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_schedule_upsert_persistence_failures_total",
+        upsert_persistence_before + 5,
+    );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_schedule_cancel_persistence_failures_total",
+        cancel_persistence_before + 7,
     );
 }
 
@@ -1562,6 +1628,101 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
 
 #[tokio::test]
 #[serial]
+async fn should_return_kv_failure_stats_given_recorded_metrics() {
+    // Arrange
+    let runtime = test_runtime();
+    let metrics = fitz::boot::observability::metrics();
+    let commits_failed_before = metrics.counter_get("fitz_kv_commits_failed_total");
+    let rollbacks_before = metrics.counter_get("fitz_kv_rollbacks_total");
+    let invalid_transaction_rejects_before =
+        metrics.counter_get("fitz_kv_invalid_transaction_rejects_total");
+    metrics.counter_add("fitz_kv_commits_failed_total", 3);
+    metrics.counter_add("fitz_kv_rollbacks_total", 5);
+    metrics.counter_add("fitz_kv_invalid_transaction_rejects_total", 7);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let kv_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/kv/stats")
+        .header(COOKIE, cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let global_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/stats")
+        .header(COOKIE, cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let kv_response = fitz::api::admin::handlers::handle_request(kv_req, runtime.clone())
+        .await
+        .unwrap();
+    let global_response = fitz::api::admin::handlers::handle_request(global_req, runtime.clone())
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(kv_response.status(), StatusCode::OK);
+    let kv_body = body::to_bytes(kv_response.into_body()).await.unwrap();
+    let kv_payload: serde_json::Value = serde_json::from_slice(&kv_body).unwrap();
+    assert_eq!(
+        kv_payload["commits_failed_total"],
+        commits_failed_before + 3
+    );
+    assert_eq!(kv_payload["rollbacks_total"], rollbacks_before + 5);
+    assert_eq!(
+        kv_payload["invalid_transaction_rejects_total"],
+        invalid_transaction_rejects_before + 7
+    );
+
+    assert_eq!(global_response.status(), StatusCode::OK);
+    let global_body = body::to_bytes(global_response.into_body()).await.unwrap();
+    let global_payload: serde_json::Value = serde_json::from_slice(&global_body).unwrap();
+    assert_eq!(
+        global_payload["domains"]["kv"]["commits_failed_total"],
+        commits_failed_before + 3
+    );
+    assert_eq!(
+        global_payload["domains"]["kv"]["rollbacks_total"],
+        rollbacks_before + 5
+    );
+    assert_eq!(
+        global_payload["domains"]["kv"]["invalid_transaction_rejects_total"],
+        invalid_transaction_rejects_before + 7
+    );
+
+    let metrics_req = Request::builder()
+        .method(Method::GET)
+        .uri("/metrics")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+    let metrics_response = fitz::api::admin::handlers::handle_request(metrics_req, runtime)
+        .await
+        .unwrap();
+    assert_eq!(metrics_response.status(), StatusCode::OK);
+    let metrics_body = body::to_bytes(metrics_response.into_body()).await.unwrap();
+    let metrics_payload = String::from_utf8(metrics_body.to_vec()).unwrap();
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_kv_commits_failed_total",
+        commits_failed_before + 3,
+    );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_kv_rollbacks_total",
+        rollbacks_before + 5,
+    );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_kv_invalid_transaction_rejects_total",
+        invalid_transaction_rejects_before + 7,
+    );
+}
+
+#[tokio::test]
+#[serial]
 async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     // Arrange
     let runtime = test_runtime();
@@ -1613,6 +1774,11 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     let rpc_closed_caller_before = metrics.counter_get("rpc_responses_dropped_closed_caller_total");
     let rpc_missing_pending_before = metrics.counter_get("rpc_responses_missing_pending_total");
     let rpc_ack_wrong_worker_before = metrics.counter_get("rpc_acks_rejected_wrong_worker_total");
+    let rpc_invalid_sequence_before = metrics.counter_get("rpc_response_invalid_sequence_total");
+    let rpc_invalid_forwarded_before =
+        metrics.counter_get("rpc_invalid_sequence_errors_forwarded_total");
+    let rpc_invalid_dropped_before =
+        metrics.counter_get("rpc_invalid_sequence_errors_dropped_total");
     let lease_requests_before = metrics.counter_get("fitz_lease_requests_total");
     let lease_success_before = metrics.counter_get("fitz_lease_success_total");
     let lease_failure_before = metrics.counter_get("fitz_lease_failure_total");
@@ -1631,6 +1797,9 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     metrics.counter_add("rpc_responses_dropped_closed_caller_total", 9);
     metrics.counter_add("rpc_responses_missing_pending_total", 11);
     metrics.counter_add("rpc_acks_rejected_wrong_worker_total", 13);
+    metrics.counter_add("rpc_response_invalid_sequence_total", 17);
+    metrics.counter_add("rpc_invalid_sequence_errors_forwarded_total", 19);
+    metrics.counter_add("rpc_invalid_sequence_errors_dropped_total", 23);
     metrics.counter_add("fitz_lease_requests_total", 4);
     metrics.counter_add("fitz_lease_success_total", 2);
     metrics.counter_add("fitz_lease_failure_total", 1);
@@ -1708,6 +1877,18 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
         rpc_payload["acks_rejected_wrong_worker_total"],
         rpc_ack_wrong_worker_before + 13
     );
+    assert_eq!(
+        rpc_payload["invalid_sequence_responses_total"],
+        rpc_invalid_sequence_before + 17
+    );
+    assert_eq!(
+        rpc_payload["invalid_sequence_errors_forwarded_total"],
+        rpc_invalid_forwarded_before + 19
+    );
+    assert_eq!(
+        rpc_payload["invalid_sequence_errors_dropped_total"],
+        rpc_invalid_dropped_before + 23
+    );
     assert!(rpc_payload["operations_per_second"].as_f64().unwrap_or(0.0) > 0.0);
 
     assert_eq!(lease_response.status(), StatusCode::OK);
@@ -1762,7 +1943,47 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     assert!(metrics_payload.contains("fitz_rpc_requests_pending 2"));
     assert!(metrics_payload.contains("fitz_rpc_oldest_pending_request_age_seconds 13"));
     assert!(metrics_payload.contains("fitz_rpc_pending_routes_active 2"));
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_rpc_responses_dropped_closed_caller_total",
+        rpc_closed_caller_before + 9,
+    );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_rpc_responses_missing_pending_total",
+        rpc_missing_pending_before + 11,
+    );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_rpc_invalid_sequence_responses_total",
+        rpc_invalid_sequence_before + 17,
+    );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_rpc_invalid_sequence_errors_forwarded_total",
+        rpc_invalid_forwarded_before + 19,
+    );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_rpc_invalid_sequence_errors_dropped_total",
+        rpc_invalid_dropped_before + 23,
+    );
     assert!(metrics_payload.contains("fitz_lease_oldest_lease_age_seconds"));
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_lease_acquire_timeouts_total",
+        lease_timeouts_before + 3,
+    );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_lease_forced_releases_total",
+        lease_forced_before + 5,
+    );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_lease_invalid_token_rejects_total",
+        lease_invalid_before + 7,
+    );
     assert!(metrics_payload.contains(&format!(
         "fitz_lease_ownership_churn_total {}",
         lease_churn_before + 11

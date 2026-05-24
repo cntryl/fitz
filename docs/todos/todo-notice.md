@@ -85,7 +85,7 @@ Subscription semantics:
 - Invariant: Notice fanout never crosses RouteFamily boundaries.
 	- Why it matters: RouteFamily is a hard isolation boundary.
 	- How it fails: the matcher or router looks up subscriptions without family scoping.
-	- How to test it: required missing focused regression such as `should_not_fanout_notice_across_route_families_given_same_pattern`. Current auth and routing coverage is strong, but a direct delivery-isolation proof should exist.
+	- How to test it: [tests/notice_advanced.rs](../../tests/notice_advanced.rs) `should_not_fanout_notice_across_route_families_given_same_pattern`.
 
 - Invariant: wildcard subscription state stays bounded per session.
 	- Why it matters: unbounded wildcard growth turns an ephemeral domain into a memory leak.
@@ -128,7 +128,8 @@ Current surface:
 
 - Admin read model exposes live Notice subscriptions and routes.
 - Global stats include `subscriptions_active` and `publishes_per_second`.
-- Prometheus currently exports `fitz_notice_subscriptions_active`, `fitz_notice_unsubscribes_total`, `fitz_notice_delivery_drops_total`, and `fitz_notice_wildcard_limit_rejects_total`.
+- Per-domain admin stats include live subscription count, route count, max route subscribers, request counters, delivery drops, unsubscribes, wildcard-limit rejects, publish rate, and diagnostics.
+- Prometheus currently exports `fitz_notice_subscriptions_active`, `fitz_notice_routes_active`, `fitz_notice_max_route_subscribers`, `fitz_notice_unsubscribes_total`, `fitz_notice_delivery_drops_total`, and `fitz_notice_wildcard_limit_rejects_total`.
 
 Current gaps to keep explicit:
 

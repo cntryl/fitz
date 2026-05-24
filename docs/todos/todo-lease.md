@@ -115,12 +115,11 @@ Current surface:
 
 - Admin APIs expose live in-memory lease rows for the current broker process.
 - Global stats include `leases_active` and `operations_per_second`.
-- Prometheus currently exports `fitz_lease_active`.
+- Per-domain admin stats include active leases, waiter depth, oldest lease age, request counters, acquire timeouts, forced releases, invalid-token rejects, ownership churn, operation rate, and diagnostics.
+- Prometheus exports `fitz_lease_active`, oldest lease age, waiter depth, ownership churn, acquire timeouts, forced releases, and invalid-token rejects.
 
 Current gaps to keep explicit:
 
-- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) has a stub route for the per-domain Lease stats endpoint; it currently returns not_implemented. The domain data is not yet populated.
-- Current metrics do not expose waiter depth, timeout count, invalid-token count, or forced-release count.
 - Admin views are current-process only and must not be described as durable recovery state.
 
 ## G. Highest-Value Tests

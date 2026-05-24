@@ -10,6 +10,12 @@ pub const METRIC_PENDING_GAUGE: &str = "fitz_schedule_pending_gauge";
 pub const METRIC_PENDING_CLAIMS_EXPIRED_TOTAL: &str = "fitz_schedule_pending_claims_expired_total";
 pub const METRIC_PENDING_CLAIM_CLEANUP_FAILURE_TOTAL: &str =
     "fitz_schedule_pending_claim_cleanup_failure_total";
+pub const METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL: &str =
+    "fitz_schedule_create_persistence_failures_total";
+pub const METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL: &str =
+    "fitz_schedule_upsert_persistence_failures_total";
+pub const METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL: &str =
+    "fitz_schedule_cancel_persistence_failures_total";
 
 #[derive(Clone)]
 pub struct ScheduleMetrics {
@@ -57,5 +63,20 @@ impl ScheduleMetrics {
     pub fn record_pending_claim_cleanup_failure(&self) {
         self.metrics
             .counter_inc(METRIC_PENDING_CLAIM_CLEANUP_FAILURE_TOTAL);
+    }
+
+    pub fn record_create_persistence_failure(&self) {
+        self.metrics
+            .counter_inc(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL);
+    }
+
+    pub fn record_upsert_persistence_failure(&self) {
+        self.metrics
+            .counter_inc(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL);
+    }
+
+    pub fn record_cancel_persistence_failure(&self) {
+        self.metrics
+            .counter_inc(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
     }
 }

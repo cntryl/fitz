@@ -3,8 +3,13 @@ export interface RpcRealmSummary {
 }
 
 export interface RpcStatsSummary {
+  invalidSequenceErrorsDroppedTotal: number;
+  invalidSequenceErrorsForwardedTotal: number;
+  invalidSequenceResponsesTotal: number;
   operationsPerSecond: number;
   requestsPending: number;
+  responsesDroppedClosedCallerTotal: number;
+  responsesMissingPendingTotal: number;
   workersRegistered: number;
 }
 

@@ -78,7 +78,7 @@ Intentionally unsupported:
 - Invariant: persistence failure must not silently advance live schedule state.
 	- Why it matters: a failed durable mutation must not look successful.
 	- How it fails: in-memory actor moves forward even though durable store write failed.
-	- How to test it: required missing focused regression such as `should_not_advance_schedule_state_given_persistence_failure`.
+	- How to test it: [src/domains/schedule/actor.rs](../../src/domains/schedule/actor.rs) `should_not_advance_schedule_state_given_persistence_failure`, `should_not_update_schedule_given_upsert_persistence_failure`, and `should_not_remove_schedule_given_cancel_persistence_failure`.
 
 - Invariant: restart does not silently lose durable schedules or pending fire claims.
 	- Why it matters: Schedule is the durable timing-intent surface.
@@ -118,14 +118,13 @@ Operators must be able to inspect:
 Current surface:
 
 - Global stats include `schedules_active`, `executions_per_minute`, `subscriptions_active`, and `pending_fire_claims`.
-- Prometheus exports `fitz_schedule_active`, `fitz_schedule_executions_per_minute`, `fitz_schedule_subscriptions_active`, and `fitz_schedule_pending_fire_claims`.
+- Per-domain admin stats include schedules active, executions per minute, live subscriptions, pending fire claims, pending acknowledgement retries, oldest pending claim age, request latency buckets, notify and ack failures, overdue normalizations, expired pending claims, cleanup failures, create/upsert/cancel persistence failures, and diagnostics.
+- Prometheus exports `fitz_schedule_active`, `fitz_schedule_executions_per_minute`, `fitz_schedule_subscriptions_active`, `fitz_schedule_pending_fire_claims`, `fitz_schedule_pending_ack_retries`, `fitz_schedule_oldest_pending_claim_age_seconds`, `fitz_schedule_notify_failures_total`, `fitz_schedule_ack_failures_total`, `fitz_schedule_overdue_normalizations_total`, `fitz_schedule_pending_claims_expired_total`, `fitz_schedule_pending_claim_cleanup_failure_total`, `fitz_schedule_create_persistence_failures_total`, `fitz_schedule_upsert_persistence_failures_total`, `fitz_schedule_cancel_persistence_failures_total`, and schedule request latency buckets.
 - Admin schedule views are preloaded from persisted definitions at boot.
 
 Current gaps to keep explicit:
 
-- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) has a stub route for the per-domain Schedule stats endpoint; it currently returns not_implemented. The domain data is not yet populated.
 - Broader admin docs already note that `last_run` and `executions_total` are not fully authoritative in the current round; that caveat must remain visible until fixed.
-- Metrics do not yet expose overdue-normalization count or persistence-failure counters.
 
 ## G. Highest-Value Tests
 

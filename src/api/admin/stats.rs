@@ -47,6 +47,9 @@ pub struct DomainStats {
 pub struct KvStats {
     pub transactions_active: usize,
     pub keys_total: usize,
+    pub commits_failed_total: u64,
+    pub rollbacks_total: u64,
+    pub invalid_transaction_rejects_total: u64,
     pub operations_per_second: f64,
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
@@ -130,6 +133,9 @@ pub struct RpcStats {
     pub responses_dropped_closed_caller_total: u64,
     pub responses_missing_pending_total: u64,
     pub acks_rejected_wrong_worker_total: u64,
+    pub invalid_sequence_responses_total: u64,
+    pub invalid_sequence_errors_forwarded_total: u64,
+    pub invalid_sequence_errors_dropped_total: u64,
     pub operations_per_second: f64,
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
@@ -164,6 +170,9 @@ pub struct ScheduleStats {
     pub overdue_normalizations_total: u64,
     pub pending_claims_expired_total: u64,
     pub pending_claim_cleanup_failures_total: u64,
+    pub create_persistence_failures_total: u64,
+    pub upsert_persistence_failures_total: u64,
+    pub cancel_persistence_failures_total: u64,
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
@@ -192,6 +201,9 @@ pub(crate) fn build_global_stats(runtime: &Runtime) -> GlobalStats {
             kv: KvStats {
                 transactions_active: runtime.kv_transactions_active(),
                 keys_total: runtime.kv_keys_total(),
+                commits_failed_total: runtime.kv_commits_failed_total(),
+                rollbacks_total: runtime.kv_rollbacks_total(),
+                invalid_transaction_rejects_total: runtime.kv_invalid_transaction_rejects_total(),
                 operations_per_second: runtime.kv_operations_per_second(),
                 diagnostics: kv,
             },
@@ -270,6 +282,11 @@ pub(crate) fn build_global_stats(runtime: &Runtime) -> GlobalStats {
                     .rpc_responses_dropped_closed_caller_total(),
                 responses_missing_pending_total: runtime.rpc_responses_missing_pending_total(),
                 acks_rejected_wrong_worker_total: runtime.rpc_acks_rejected_wrong_worker_total(),
+                invalid_sequence_responses_total: runtime.rpc_invalid_sequence_responses_total(),
+                invalid_sequence_errors_forwarded_total: runtime
+                    .rpc_invalid_sequence_errors_forwarded_total(),
+                invalid_sequence_errors_dropped_total: runtime
+                    .rpc_invalid_sequence_errors_dropped_total(),
                 operations_per_second: runtime.rpc_operations_per_second(),
                 diagnostics: rpc,
             },
@@ -302,6 +319,12 @@ pub(crate) fn build_global_stats(runtime: &Runtime) -> GlobalStats {
                 pending_claims_expired_total: runtime.schedule_pending_claims_expired_total(),
                 pending_claim_cleanup_failures_total: runtime
                     .schedule_pending_claim_cleanup_failures_total(),
+                create_persistence_failures_total: runtime
+                    .schedule_create_persistence_failures_total(),
+                upsert_persistence_failures_total: runtime
+                    .schedule_upsert_persistence_failures_total(),
+                cancel_persistence_failures_total: runtime
+                    .schedule_cancel_persistence_failures_total(),
                 diagnostics: schedule,
             },
         },
@@ -364,6 +387,9 @@ async fn handle_kv_stats(
     crate::api::admin::json_response(KvStats {
         transactions_active: runtime.kv_transactions_active(),
         keys_total: runtime.kv_keys_total(),
+        commits_failed_total: runtime.kv_commits_failed_total(),
+        rollbacks_total: runtime.kv_rollbacks_total(),
+        invalid_transaction_rejects_total: runtime.kv_invalid_transaction_rejects_total(),
         operations_per_second: runtime.kv_operations_per_second(),
         diagnostics,
     })
@@ -463,6 +489,10 @@ async fn handle_rpc_stats(
         responses_dropped_closed_caller_total: runtime.rpc_responses_dropped_closed_caller_total(),
         responses_missing_pending_total: runtime.rpc_responses_missing_pending_total(),
         acks_rejected_wrong_worker_total: runtime.rpc_acks_rejected_wrong_worker_total(),
+        invalid_sequence_responses_total: runtime.rpc_invalid_sequence_responses_total(),
+        invalid_sequence_errors_forwarded_total: runtime
+            .rpc_invalid_sequence_errors_forwarded_total(),
+        invalid_sequence_errors_dropped_total: runtime.rpc_invalid_sequence_errors_dropped_total(),
         operations_per_second: runtime.rpc_operations_per_second(),
         diagnostics,
     })
@@ -506,6 +536,9 @@ async fn handle_schedule_stats(
         pending_claims_expired_total: runtime.schedule_pending_claims_expired_total(),
         pending_claim_cleanup_failures_total: runtime
             .schedule_pending_claim_cleanup_failures_total(),
+        create_persistence_failures_total: runtime.schedule_create_persistence_failures_total(),
+        upsert_persistence_failures_total: runtime.schedule_upsert_persistence_failures_total(),
+        cancel_persistence_failures_total: runtime.schedule_cancel_persistence_failures_total(),
         diagnostics,
     })
 }

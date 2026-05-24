@@ -39,8 +39,11 @@ export function mapSystemOverview(stats: GlobalStats, metricsValue: unknown): Sy
     diagnostics: stats.diagnostics,
     domains: {
       kv: {
+        commitsFailedTotal: stats.domains.kv.commits_failed_total,
+        invalidTransactionRejectsTotal: stats.domains.kv.invalid_transaction_rejects_total,
         keysTotal: stats.domains.kv.keys_total,
         operationsPerSecond: stats.domains.kv.operations_per_second,
+        rollbacksTotal: stats.domains.kv.rollbacks_total,
         transactionsActive: stats.domains.kv.transactions_active,
       },
       lease: {
@@ -78,6 +81,11 @@ export function mapSystemOverview(stats: GlobalStats, metricsValue: unknown): Sy
         backpressureRejectsTotal: stats.domains.rpc.backpressure_rejects_total,
         duplicateCorrelationRejectsTotal: stats.domains.rpc.duplicate_correlation_rejects_total,
         failureTotal: stats.domains.rpc.failure_total,
+        invalidSequenceErrorsDroppedTotal:
+          stats.domains.rpc.invalid_sequence_errors_dropped_total,
+        invalidSequenceErrorsForwardedTotal:
+          stats.domains.rpc.invalid_sequence_errors_forwarded_total,
+        invalidSequenceResponsesTotal: stats.domains.rpc.invalid_sequence_responses_total,
         operationsPerSecond: stats.domains.rpc.operations_per_second,
         requestTimeoutsTotal: stats.domains.rpc.request_timeouts_total,
         requestsPending: stats.domains.rpc.requests_pending,
@@ -90,12 +98,15 @@ export function mapSystemOverview(stats: GlobalStats, metricsValue: unknown): Sy
       },
       schedule: {
         ackFailuresTotal: stats.domains.schedule.ack_failures_total,
+        cancelPersistenceFailuresTotal: stats.domains.schedule.cancel_persistence_failures_total,
+        createPersistenceFailuresTotal: stats.domains.schedule.create_persistence_failures_total,
         executionsPerMinute: stats.domains.schedule.executions_per_minute,
         notifyFailuresTotal: stats.domains.schedule.notify_failures_total,
         overdueNormalizationsTotal: stats.domains.schedule.overdue_normalizations_total,
         pendingFireClaims: stats.domains.schedule.pending_fire_claims,
         schedulesActive: stats.domains.schedule.schedules_active,
         subscriptionsActive: stats.domains.schedule.subscriptions_active,
+        upsertPersistenceFailuresTotal: stats.domains.schedule.upsert_persistence_failures_total,
       },
       stream: {
         appendConflictsTotal: stats.domains.stream.append_conflicts_total,

@@ -14,12 +14,15 @@ export function mapScheduleRealm(dto: RealmEntry): ScheduleRealmSummary {
 export function mapScheduleStats(dto: ScheduleStats): ScheduleStatsSummary {
   return {
     ackFailuresTotal: dto.ack_failures_total,
+    cancelPersistenceFailuresTotal: dto.cancel_persistence_failures_total,
+    createPersistenceFailuresTotal: dto.create_persistence_failures_total,
     executionsPerMinute: dto.executions_per_minute,
     notifyFailuresTotal: dto.notify_failures_total,
     overdueNormalizationsTotal: dto.overdue_normalizations_total,
     pendingFireClaims: dto.pending_fire_claims,
     schedulesActive: dto.schedules_active,
     subscriptionsActive: dto.subscriptions_active,
+    upsertPersistenceFailuresTotal: dto.upsert_persistence_failures_total,
   };
 }
 

@@ -171,6 +171,32 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str(&format!("fitz_kv_keys_total {}\n", runtime.kv_keys_total()));
     output.push('\n');
 
+    output.push_str(
+        "# HELP fitz_kv_commits_failed_total Total KV transaction commits that failed to persist\n",
+    );
+    output.push_str("# TYPE fitz_kv_commits_failed_total counter\n");
+    output.push_str(&format!(
+        "fitz_kv_commits_failed_total {}\n",
+        runtime.kv_commits_failed_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_kv_rollbacks_total Total KV transaction rollbacks processed by this broker process\n");
+    output.push_str("# TYPE fitz_kv_rollbacks_total counter\n");
+    output.push_str(&format!(
+        "fitz_kv_rollbacks_total {}\n",
+        runtime.kv_rollbacks_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_kv_invalid_transaction_rejects_total Total KV operations rejected because the transaction was invalid\n");
+    output.push_str("# TYPE fitz_kv_invalid_transaction_rejects_total counter\n");
+    output.push_str(&format!(
+        "fitz_kv_invalid_transaction_rejects_total {}\n",
+        runtime.kv_invalid_transaction_rejects_total()
+    ));
+    output.push('\n');
+
     // Notice domain
     output.push_str("# HELP fitz_notice_subscriptions_active Active subscriptions\n");
     output.push_str("# TYPE fitz_notice_subscriptions_active gauge\n");
@@ -451,6 +477,46 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     ));
     output.push('\n');
 
+    output.push_str("# HELP fitz_rpc_responses_dropped_closed_caller_total Total RPC responses dropped because the caller session was closed\n");
+    output.push_str("# TYPE fitz_rpc_responses_dropped_closed_caller_total counter\n");
+    output.push_str(&format!(
+        "fitz_rpc_responses_dropped_closed_caller_total {}\n",
+        runtime.rpc_responses_dropped_closed_caller_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_rpc_responses_missing_pending_total Total RPC responses that arrived without a pending caller request\n");
+    output.push_str("# TYPE fitz_rpc_responses_missing_pending_total counter\n");
+    output.push_str(&format!(
+        "fitz_rpc_responses_missing_pending_total {}\n",
+        runtime.rpc_responses_missing_pending_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_rpc_invalid_sequence_responses_total Total RPC responses rejected because their sequence was invalid\n");
+    output.push_str("# TYPE fitz_rpc_invalid_sequence_responses_total counter\n");
+    output.push_str(&format!(
+        "fitz_rpc_invalid_sequence_responses_total {}\n",
+        runtime.rpc_invalid_sequence_responses_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_rpc_invalid_sequence_errors_forwarded_total Total RPC invalid-sequence errors forwarded to callers\n");
+    output.push_str("# TYPE fitz_rpc_invalid_sequence_errors_forwarded_total counter\n");
+    output.push_str(&format!(
+        "fitz_rpc_invalid_sequence_errors_forwarded_total {}\n",
+        runtime.rpc_invalid_sequence_errors_forwarded_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_rpc_invalid_sequence_errors_dropped_total Total RPC invalid-sequence errors dropped because no caller could receive them\n");
+    output.push_str("# TYPE fitz_rpc_invalid_sequence_errors_dropped_total counter\n");
+    output.push_str(&format!(
+        "fitz_rpc_invalid_sequence_errors_dropped_total {}\n",
+        runtime.rpc_invalid_sequence_errors_dropped_total()
+    ));
+    output.push('\n');
+
     // Lease domain
     output.push_str("# HELP fitz_lease_active Active leases\n");
     output.push_str("# TYPE fitz_lease_active gauge\n");
@@ -484,6 +550,30 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str(&format!(
         "fitz_lease_ownership_churn_total {}\n",
         runtime.lease_ownership_churn_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_lease_acquire_timeouts_total Total lease acquire requests that timed out before ownership was granted\n");
+    output.push_str("# TYPE fitz_lease_acquire_timeouts_total counter\n");
+    output.push_str(&format!(
+        "fitz_lease_acquire_timeouts_total {}\n",
+        runtime.lease_acquire_timeouts_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_lease_forced_releases_total Total lease releases forced by administrative or conflict handling paths\n");
+    output.push_str("# TYPE fitz_lease_forced_releases_total counter\n");
+    output.push_str(&format!(
+        "fitz_lease_forced_releases_total {}\n",
+        runtime.lease_forced_releases_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_lease_invalid_token_rejects_total Total lease operations rejected because the provided token was invalid\n");
+    output.push_str("# TYPE fitz_lease_invalid_token_rejects_total counter\n");
+    output.push_str(&format!(
+        "fitz_lease_invalid_token_rejects_total {}\n",
+        runtime.lease_invalid_token_rejects_total()
     ));
     output.push('\n');
 
@@ -679,6 +769,30 @@ fn add_domain_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str(&format!(
         "fitz_schedule_pending_claim_cleanup_failure_total {}\n",
         runtime.schedule_pending_claim_cleanup_failures_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_schedule_create_persistence_failures_total Total schedule create mutations that failed to persist\n");
+    output.push_str("# TYPE fitz_schedule_create_persistence_failures_total counter\n");
+    output.push_str(&format!(
+        "fitz_schedule_create_persistence_failures_total {}\n",
+        runtime.schedule_create_persistence_failures_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_schedule_upsert_persistence_failures_total Total schedule upsert mutations that failed to persist\n");
+    output.push_str("# TYPE fitz_schedule_upsert_persistence_failures_total counter\n");
+    output.push_str(&format!(
+        "fitz_schedule_upsert_persistence_failures_total {}\n",
+        runtime.schedule_upsert_persistence_failures_total()
+    ));
+    output.push('\n');
+
+    output.push_str("# HELP fitz_schedule_cancel_persistence_failures_total Total schedule cancel mutations that failed to persist\n");
+    output.push_str("# TYPE fitz_schedule_cancel_persistence_failures_total counter\n");
+    output.push_str(&format!(
+        "fitz_schedule_cancel_persistence_failures_total {}\n",
+        runtime.schedule_cancel_persistence_failures_total()
     ));
     output.push('\n');
 }

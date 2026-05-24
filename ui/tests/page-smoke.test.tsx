@@ -149,8 +149,11 @@ const queueOverview = {
 const kvOverview = {
   realms: [realm],
   stats: {
+    commitsFailedTotal: 0,
+    invalidTransactionRejectsTotal: 0,
     keysTotal: 12,
     operationsPerSecond: 2.5,
+    rollbacksTotal: 0,
     transactionsActive: 1,
   },
 };
@@ -158,6 +161,9 @@ const kvOverview = {
 const leaseOverview = {
   realms: [realm],
   stats: {
+    acquireTimeoutsTotal: 0,
+    forcedReleasesTotal: 0,
+    invalidTokenRejectsTotal: 0,
     leasesActive: 3,
     oldestLeaseAgeSeconds: 42,
     operationsPerSecond: 1.5,
@@ -176,8 +182,13 @@ const noticeOverview = {
 const rpcOverview = {
   realms: [realm],
   stats: {
+    invalidSequenceErrorsDroppedTotal: 0,
+    invalidSequenceErrorsForwardedTotal: 0,
+    invalidSequenceResponsesTotal: 0,
     operationsPerSecond: 2,
     requestsPending: 1,
+    responsesDroppedClosedCallerTotal: 0,
+    responsesMissingPendingTotal: 0,
     workersRegistered: 4,
   },
 };
@@ -185,10 +196,16 @@ const rpcOverview = {
 const scheduleOverview = {
   realms: [realm],
   stats: {
+    ackFailuresTotal: 0,
+    cancelPersistenceFailuresTotal: 0,
+    createPersistenceFailuresTotal: 0,
     executionsPerMinute: 8,
+    notifyFailuresTotal: 0,
+    overdueNormalizationsTotal: 0,
     pendingFireClaims: 1,
     schedulesActive: 5,
     subscriptionsActive: 6,
+    upsertPersistenceFailuresTotal: 0,
   },
 };
 

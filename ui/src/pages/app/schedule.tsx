@@ -63,6 +63,18 @@ export default function SchedulePage() {
                 { label: "Subscriptions", value: data.stats.subscriptionsActive },
                 { label: "Pending claims", value: data.stats.pendingFireClaims },
                 {
+                  label: "Create persist fails",
+                  value: data.stats.createPersistenceFailuresTotal,
+                },
+                {
+                  label: "Upsert persist fails",
+                  value: data.stats.upsertPersistenceFailuresTotal,
+                },
+                {
+                  label: "Cancel persist fails",
+                  value: data.stats.cancelPersistenceFailuresTotal,
+                },
+                {
                   label: "Executions / min",
                   value: data.stats.executionsPerMinute.toFixed(2),
                 },

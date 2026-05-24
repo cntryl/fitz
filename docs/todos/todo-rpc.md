@@ -130,14 +130,13 @@ Current surface:
 
 - Admin APIs expose live workers and live pending requests for the current broker instance.
 - Global stats include `workers_registered`, `requests_pending`, and `operations_per_second`.
-- Prometheus currently exports `fitz_rpc_workers_registered` and `fitz_rpc_requests_pending`.
+- Per-domain admin stats include live workers, pending requests, oldest pending age, pending route count, worker latency buckets, timeout and backpressure counters, duplicate-correlation and wrong-worker rejects, late-response/missing-pending drops, invalid-sequence response handling, and diagnostics.
+- Prometheus exports `fitz_rpc_workers_registered`, `fitz_rpc_requests_pending`, worker latency buckets, request timeouts, backpressure rejects, duplicate-correlation rejects, wrong-worker rejects, late-response drops, missing-pending responses, and invalid-sequence response/error counters.
 - Sink-level counters are now emitted for wrong-worker and duplicate-correlation rejects: `rpc_requests_rejected_duplicate_correlation_total`, `rpc_responses_rejected_wrong_worker_total`, and `rpc_acks_rejected_wrong_worker_total`.
 - Error codes 6007 (`ERR_RPC_DUPLICATE_CORRELATION`) and 6008 (`ERR_RPC_WRONG_WORKER`) are defined in [src/protocol/error_codes.rs](../../src/protocol/error_codes.rs) and asserted in [tests/rpc_basics.rs](../../tests/rpc_basics.rs) via `should_define_error_code_6007_rpc_duplicate_correlation` and `should_define_error_code_6008_rpc_wrong_worker`.
 
 Current gaps to keep explicit:
 
-- [src/api/admin/stats.rs](../../src/api/admin/stats.rs) has a stub route for the per-domain RPC stats endpoint; it currently returns not_implemented. The domain data is not yet populated.
-- Current metrics do not yet expose timeout, backpressure, invalid-sequence, or late-response counters.
 - Admin views are current-process only and must not be described as durable backlog state.
 
 ## G. Highest-Value Tests
