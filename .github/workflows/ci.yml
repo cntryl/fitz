@@ -19,6 +19,7 @@ on:
 
 jobs:
   ci:
+    name: Release Gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
 

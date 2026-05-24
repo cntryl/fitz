@@ -41,6 +41,14 @@ pub struct ScheduleInsert<'a> {
     pub executions_total: u64,
 }
 
+struct ScheduleDefinitionData<'a> {
+    next_fire_ms: u64,
+    last_fire_ms: Option<u64>,
+    executions_total: u64,
+    cron: &'a str,
+    payload: &'a Bytes,
+}
+
 pub struct ScheduleFireClaim<'a> {
     pub route: &'a str,
     pub cron: &'a str,
@@ -119,12 +127,6 @@ impl ScheduleStore {
 
     fn schedule_storage_prefix_from_realm(realm: &str) -> Vec<u8> {
         storage_key::domain_prefix(realm, DomainKeyspace::Schedule)
-    }
-
-    fn schedule_storage_prefix(route: &str) -> Vec<u8> {
-        let parsed = parse_concrete_schedule_route(route)
-            .expect("schedule storage key requires a concrete route");
-        Self::schedule_storage_prefix_from_realm(&parsed.realm)
     }
 
     fn schedule_key_suffix(key: &[u8]) -> &[u8] {
@@ -207,6 +209,7 @@ impl ScheduleStore {
         Self::encode_prefixed_route_key(route, BODY_PREFIX)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn encode_due_key(next_fire_ms: u64, route: &str) -> Vec<u8> {
         Self::encode_prefixed_timed_route_key(next_fire_ms, route, DUE_PREFIX)
     }
@@ -521,22 +524,6 @@ impl ScheduleStore {
         .map_err(|e| format!("put schedule definition failed: {:?}", e))
     }
 
-    fn put_definition_metadata_with_realm(
-        txn: &mut cntryl_midge::Transaction,
-        realm: &str,
-        route: &str,
-        next_fire_ms: u64,
-        last_fire_ms: Option<u64>,
-        executions_total: u64,
-    ) -> Result<(), String> {
-        txn.put(
-            Self::encode_prefixed_route_key_from_realm(realm, route, DEFINITION_PREFIX),
-            Self::encode_definition_metadata_value(next_fire_ms, last_fire_ms, executions_total),
-            None,
-        )
-        .map_err(|e| format!("put schedule definition failed: {:?}", e))
-    }
-
     fn put_definition_body(
         txn: &mut cntryl_midge::Transaction,
         route: &str,
@@ -551,40 +538,19 @@ impl ScheduleStore {
         .map_err(|e| format!("put schedule body failed: {:?}", e))
     }
 
-    fn put_definition_body_with_realm(
-        txn: &mut cntryl_midge::Transaction,
-        realm: &str,
-        route: &str,
-        cron: &str,
-        payload: &Bytes,
-    ) -> Result<(), String> {
-        txn.put(
-            Self::encode_prefixed_route_key_from_realm(realm, route, BODY_PREFIX),
-            Self::encode_definition_body_value(cron, payload),
-            None,
-        )
-        .map_err(|e| format!("put schedule body failed: {:?}", e))
-    }
-
     fn put_schedule_definition(
         txn: &mut cntryl_midge::Transaction,
-        realm: &str,
         route: &str,
-        next_fire_ms: u64,
-        last_fire_ms: Option<u64>,
-        executions_total: u64,
-        cron: &str,
-        payload: &Bytes,
+        definition: &ScheduleDefinitionData<'_>,
     ) -> Result<(), String> {
-        Self::put_definition_metadata_with_realm(
+        Self::put_definition_metadata(
             txn,
-            realm,
             route,
-            next_fire_ms,
-            last_fire_ms,
-            executions_total,
+            definition.next_fire_ms,
+            definition.last_fire_ms,
+            definition.executions_total,
         )?;
-        Self::put_definition_body_with_realm(txn, realm, route, cron, payload)
+        Self::put_definition_body(txn, route, definition.cron, definition.payload)
     }
 
     pub fn insert(
@@ -608,13 +574,14 @@ impl ScheduleStore {
 
         Self::put_schedule_definition(
             &mut txn,
-            &parsed.realm,
             schedule.route,
-            schedule.next_fire_ms,
-            schedule.last_fire_ms,
-            schedule.executions_total,
-            schedule.cron,
-            schedule.payload,
+            &ScheduleDefinitionData {
+                next_fire_ms: schedule.next_fire_ms,
+                last_fire_ms: schedule.last_fire_ms,
+                executions_total: schedule.executions_total,
+                cron: schedule.cron,
+                payload: schedule.payload,
+            },
         )?;
 
         if let Some(previous_fire_ms) = schedule.previous_fire_ms {
@@ -655,13 +622,14 @@ impl ScheduleStore {
             let parsed = parse_concrete_schedule_route(&item.route)?;
             Self::put_schedule_definition(
                 &mut txn,
-                &parsed.realm,
                 &item.route,
-                item.next_fire_ms,
-                item.last_fire_ms,
-                item.executions_total,
-                &item.cron,
-                &item.payload,
+                &ScheduleDefinitionData {
+                    next_fire_ms: item.next_fire_ms,
+                    last_fire_ms: item.last_fire_ms,
+                    executions_total: item.executions_total,
+                    cron: &item.cron,
+                    payload: &item.payload,
+                },
             )?;
 
             if let Some(previous_fire_ms) = item.previous_fire_ms {
@@ -697,9 +665,8 @@ impl ScheduleStore {
 
         for item in items {
             let parsed = parse_concrete_schedule_route(item.route)?;
-            Self::put_definition_metadata_with_realm(
+            Self::put_definition_metadata(
                 &mut txn,
-                &parsed.realm,
                 item.route,
                 item.next_fire_ms,
                 item.last_fire_ms,
@@ -758,9 +725,8 @@ impl ScheduleStore {
                 .map_err(|e| format!("delete pending fire failed: {:?}", e))?;
 
             if let Some(definition) = &item.definition {
-                Self::put_definition_metadata_with_realm(
+                Self::put_definition_metadata(
                     &mut txn,
-                    &parsed.realm,
                     item.route,
                     definition.next_fire_ms,
                     Some(item.acknowledged_at_ms),
@@ -961,16 +927,16 @@ impl ScheduleStore {
             .map_err(|e| format!("begin migration tx failed: {:?}", e))?;
 
         for schedule in &normalized_definitions {
-            let parsed = parse_concrete_schedule_route(&schedule.route)?;
             Self::put_schedule_definition(
                 &mut write_tx,
-                &parsed.realm,
                 &schedule.route,
-                schedule.next_fire_ms,
-                schedule.last_fire_ms,
-                schedule.executions_total,
-                &schedule.cron,
-                &schedule.payload,
+                &ScheduleDefinitionData {
+                    next_fire_ms: schedule.next_fire_ms,
+                    last_fire_ms: schedule.last_fire_ms,
+                    executions_total: schedule.executions_total,
+                    cron: &schedule.cron,
+                    payload: &schedule.payload,
+                },
             )
             .map_err(|error| format!("import schedule definition failed: {}", error))?;
         }
