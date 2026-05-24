@@ -631,12 +631,32 @@ impl RpcState {
         self.routes.get_mut(route)
     }
 
+    fn prune_route_if_empty(&mut self, route: &Route) {
+        let should_remove = self
+            .routes
+            .get(route)
+            .map(|route_state| route_state.worker_count() == 0 && !route_state.has_queued_requests())
+            .unwrap_or(false);
+
+        if should_remove {
+            self.routes.remove(route);
+        }
+    }
+
     fn cleanup_session(&mut self, session_id: u64) -> RpcSessionCleanupResult {
         let mut removed_workers = 0;
-        self.routes.retain(|_, route_state| {
+        let mut empty_routes = Vec::new();
+
+        for (route, route_state) in self.routes.iter_mut() {
             removed_workers += route_state.unregister_session(session_id);
-            route_state.worker_count() > 0 || route_state.has_queued_requests()
-        });
+            if route_state.worker_count() == 0 && !route_state.has_queued_requests() {
+                empty_routes.push(route.clone());
+            }
+        }
+
+        for route in empty_routes {
+            self.routes.remove(&route);
+        }
 
         let pending_cleanup = self.pending.cleanup_session(session_id);
         let queued_removed = self.cleanup_queued_session(session_id);
@@ -716,9 +736,7 @@ impl RpcState {
         if let Some(route_state) = self.routes.get_mut(&queued.request.route) {
             route_state.remove_queued_request(correlation_id);
         }
-        self.routes.retain(|_, route_state| {
-            route_state.worker_count() > 0 || route_state.has_queued_requests()
-        });
+        self.prune_route_if_empty(&queued.request.route);
         Some(queued)
     }
 
@@ -739,20 +757,29 @@ impl RpcState {
             .queued
             .remove(&correlation_id)
             .expect("queued request for dispatch");
+        let RpcQueuedRequest {
+            request,
+            caller_session_id,
+            caller_inbox_addr,
+            submitted_at,
+            submitted_at_instant,
+            expires_at,
+        } = queued;
+        let route = request.route.clone();
         let pending = RpcPendingRequest::new(RpcPendingRequestInit {
-            route: queued.request.route.clone(),
-            caller_session_id: queued.caller_session_id,
-            caller_inbox_addr: queued.caller_inbox_addr.clone(),
+            route,
+            caller_session_id,
+            caller_inbox_addr,
             worker_addr: worker.addr.clone(),
             worker_session_id: worker.session_id,
-            submitted_at: queued.submitted_at.clone(),
-            submitted_at_instant: queued.submitted_at_instant,
-            expires_at: queued.expires_at,
+            submitted_at,
+            submitted_at_instant,
+            expires_at,
         });
         self.pending.track_pending(correlation_id, pending);
 
         Some(RpcQueuedDispatch {
-            request: queued.request,
+            request,
             worker,
             live_request_count: self.live_request_count(),
         })
@@ -766,6 +793,7 @@ impl RpcState {
         if let Some(route_state) = self.routes.get_mut(&pending.route) {
             route_state.release_worker(&pending.worker_addr, pending.worker_session_id, None);
         }
+        self.prune_route_if_empty(&pending.route);
         Some((pending, self.live_request_count()))
     }
 
@@ -804,7 +832,7 @@ impl RpcState {
                 .expirations
                 .pop()
                 .expect("pending expiration entry");
-            let Some(pending) = self.pending.pending.get(&expiring.correlation_id).cloned() else {
+            let Some(pending) = self.pending.pending.get(&expiring.correlation_id) else {
                 continue;
             };
 
@@ -818,6 +846,7 @@ impl RpcState {
                 .remove(&expiring.correlation_id)
                 .expect("tracked pending request");
             self.release_worker_for_pending(&pending, None);
+            self.prune_route_if_empty(&pending.route);
             removed_pending = removed_pending.saturating_add(1);
 
             if let Some(caller_inbox_addr) = pending.caller_inbox_addr {
@@ -838,7 +867,7 @@ impl RpcState {
                 .queued_expirations
                 .pop()
                 .expect("queued expiration entry");
-            let Some(queued) = self.queued.get(&expiring.correlation_id).cloned() else {
+            let Some(queued) = self.queued.get(&expiring.correlation_id) else {
                 continue;
             };
 

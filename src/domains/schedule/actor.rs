@@ -4,9 +4,8 @@ use crate::domains::schedule::metrics::{
 };
 use crate::domains::schedule::protocol::{
     epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
-    parse_concrete_schedule_route, validate_concrete_schedule_route, Clock, CronSchedule,
-    ScheduleCreateEntry, ScheduleDef, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
-    SystemClock,
+    parse_concrete_schedule_route, Clock, CronSchedule, ScheduleCreateEntry, ScheduleDef,
+    ScheduleListEntry, ScheduleMessage, ScheduleResponse, SystemClock,
 };
 use crate::domains::schedule::store::{
     PersistedPendingFireClaim, PersistedSchedule, ScheduleAckDefinition, ScheduleFireClaim,
@@ -342,8 +341,6 @@ impl ScheduleActor {
         payload: Bytes,
         now: Instant,
     ) -> Result<bool, String> {
-        validate_concrete_schedule_route(&route)?;
-
         let (
             previous_next_fire_ms,
             previous_list_index,
@@ -442,8 +439,6 @@ impl ScheduleActor {
                     entry.route
                 ));
             }
-
-            validate_concrete_schedule_route(&entry.route)?;
 
             let (
                 previous_fire_ms,
@@ -576,14 +571,15 @@ impl ScheduleActor {
     }
 
     pub fn delete_schedule(&mut self, route: String) -> Result<bool, String> {
-        validate_concrete_schedule_route(&route)?;
+        let parsed_route = parse_concrete_schedule_route(&route)?;
 
         let Some(existing) = self.schedules.get(&route) else {
             return Ok(false);
         };
 
-        if let Err(error) = self.store.delete_current(
+        if let Err(error) = self.store.delete_current_with_realm(
             self.family.as_u64(),
+            &parsed_route.realm,
             &route,
             existing.next_fire_ms,
             self.write_options,
@@ -630,19 +626,10 @@ impl ScheduleActor {
     }
 
     fn sync_cached_upsert(&mut self, current_index: Option<usize>, entry: Arc<ScheduleListEntry>) {
-        let invalidate_cache = self
-            .list_cache
-            .as_ref()
-            .is_some_and(|cache| Arc::strong_count(cache) > 1);
-        if invalidate_cache {
-            self.list_cache = None;
-            return;
-        }
-
         let Some(cache) = self.list_cache.as_mut() else {
             return;
         };
-        let cache_entries = Arc::get_mut(cache).expect("schedule list cache must be exclusive");
+        let cache_entries = Arc::make_mut(cache);
         if let Some(index) = current_index {
             cache_entries[index] = entry;
         } else {
@@ -651,19 +638,10 @@ impl ScheduleActor {
     }
 
     fn sync_cached_remove(&mut self, index: usize) {
-        let invalidate_cache = self
-            .list_cache
-            .as_ref()
-            .is_some_and(|cache| Arc::strong_count(cache) > 1);
-        if invalidate_cache {
-            self.list_cache = None;
-            return;
-        }
-
         let Some(cache) = self.list_cache.as_mut() else {
             return;
         };
-        let cache_entries = Arc::get_mut(cache).expect("schedule list cache must be exclusive");
+        let cache_entries = Arc::make_mut(cache);
         if index < cache_entries.len() {
             cache_entries.swap_remove(index);
         }

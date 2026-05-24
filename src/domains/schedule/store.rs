@@ -117,20 +117,54 @@ impl ScheduleStore {
         }
     }
 
+    fn schedule_storage_prefix_from_realm(realm: &str) -> Vec<u8> {
+        storage_key::domain_prefix(realm, DomainKeyspace::Schedule)
+    }
+
     fn schedule_storage_prefix(route: &str) -> Vec<u8> {
         let parsed = parse_concrete_schedule_route(route)
             .expect("schedule storage key requires a concrete route");
-        storage_key::domain_prefix(&parsed.realm, DomainKeyspace::Schedule)
+        Self::schedule_storage_prefix_from_realm(&parsed.realm)
     }
 
     fn schedule_key_suffix(key: &[u8]) -> &[u8] {
         storage_key::strip_domain_prefix(key, DomainKeyspace::Schedule).unwrap_or(key)
     }
 
-    fn encode_prefixed_route_key(route: &str, suffix_prefix: &[u8]) -> Vec<u8> {
-        let mut key = Self::schedule_storage_prefix(route);
+    fn encode_prefixed_route_key_from_realm(
+        realm: &str,
+        route: &str,
+        suffix_prefix: &[u8],
+    ) -> Vec<u8> {
+        let mut key = Self::schedule_storage_prefix_from_realm(realm);
         key.reserve(suffix_prefix.len() + route.len());
         key.extend_from_slice(suffix_prefix);
+        key.extend_from_slice(route.as_bytes());
+        key
+    }
+
+    fn encode_prefixed_route_key(route: &str, suffix_prefix: &[u8]) -> Vec<u8> {
+        let parsed = parse_concrete_schedule_route(route)
+            .expect("schedule storage key requires a concrete route");
+        Self::encode_prefixed_route_key_from_realm(&parsed.realm, route, suffix_prefix)
+    }
+
+    fn encode_prefixed_timed_route_key_from_realm(
+        realm: &str,
+        timestamp_ms: u64,
+        route: &str,
+        suffix_prefix: &[u8],
+    ) -> Vec<u8> {
+        let minute_epoch = timestamp_ms / 60_000;
+        let ms_offset = timestamp_ms % 60_000;
+
+        let mut key = Self::schedule_storage_prefix_from_realm(realm);
+        key.reserve(suffix_prefix.len() + 18 + route.len());
+        key.extend_from_slice(suffix_prefix);
+        key.extend_from_slice(minute_epoch.to_be_bytes().as_slice());
+        key.push(b'/');
+        key.extend_from_slice(ms_offset.to_be_bytes().as_slice());
+        key.push(b':');
         key.extend_from_slice(route.as_bytes());
         key
     }
@@ -140,18 +174,14 @@ impl ScheduleStore {
         route: &str,
         suffix_prefix: &[u8],
     ) -> Vec<u8> {
-        let minute_epoch = timestamp_ms / 60_000;
-        let ms_offset = timestamp_ms % 60_000;
-
-        let mut key = Self::schedule_storage_prefix(route);
-        key.reserve(suffix_prefix.len() + 18 + route.len());
-        key.extend_from_slice(suffix_prefix);
-        key.extend_from_slice(minute_epoch.to_be_bytes().as_slice());
-        key.push(b'/');
-        key.extend_from_slice(ms_offset.to_be_bytes().as_slice());
-        key.push(b':');
-        key.extend_from_slice(route.as_bytes());
-        key
+        let parsed = parse_concrete_schedule_route(route)
+            .expect("schedule storage key requires a concrete route");
+        Self::encode_prefixed_timed_route_key_from_realm(
+            &parsed.realm,
+            timestamp_ms,
+            route,
+            suffix_prefix,
+        )
     }
 
     fn scan_schedule_rows(
@@ -491,6 +521,22 @@ impl ScheduleStore {
         .map_err(|e| format!("put schedule definition failed: {:?}", e))
     }
 
+    fn put_definition_metadata_with_realm(
+        txn: &mut cntryl_midge::Transaction,
+        realm: &str,
+        route: &str,
+        next_fire_ms: u64,
+        last_fire_ms: Option<u64>,
+        executions_total: u64,
+    ) -> Result<(), String> {
+        txn.put(
+            Self::encode_prefixed_route_key_from_realm(realm, route, DEFINITION_PREFIX),
+            Self::encode_definition_metadata_value(next_fire_ms, last_fire_ms, executions_total),
+            None,
+        )
+        .map_err(|e| format!("put schedule definition failed: {:?}", e))
+    }
+
     fn put_definition_body(
         txn: &mut cntryl_midge::Transaction,
         route: &str,
@@ -505,8 +551,24 @@ impl ScheduleStore {
         .map_err(|e| format!("put schedule body failed: {:?}", e))
     }
 
+    fn put_definition_body_with_realm(
+        txn: &mut cntryl_midge::Transaction,
+        realm: &str,
+        route: &str,
+        cron: &str,
+        payload: &Bytes,
+    ) -> Result<(), String> {
+        txn.put(
+            Self::encode_prefixed_route_key_from_realm(realm, route, BODY_PREFIX),
+            Self::encode_definition_body_value(cron, payload),
+            None,
+        )
+        .map_err(|e| format!("put schedule body failed: {:?}", e))
+    }
+
     fn put_schedule_definition(
         txn: &mut cntryl_midge::Transaction,
+        realm: &str,
         route: &str,
         next_fire_ms: u64,
         last_fire_ms: Option<u64>,
@@ -514,8 +576,15 @@ impl ScheduleStore {
         cron: &str,
         payload: &Bytes,
     ) -> Result<(), String> {
-        Self::put_definition_metadata(txn, route, next_fire_ms, last_fire_ms, executions_total)?;
-        Self::put_definition_body(txn, route, cron, payload)
+        Self::put_definition_metadata_with_realm(
+            txn,
+            realm,
+            route,
+            next_fire_ms,
+            last_fire_ms,
+            executions_total,
+        )?;
+        Self::put_definition_body_with_realm(txn, realm, route, cron, payload)
     }
 
     pub fn insert(
@@ -524,7 +593,13 @@ impl ScheduleStore {
         schedule: ScheduleInsert<'_>,
         write_options: WriteOptions,
     ) -> Result<Vec<u8>, String> {
-        let due_key = Self::encode_due_key(schedule.next_fire_ms, schedule.route);
+        let parsed = parse_concrete_schedule_route(schedule.route)?;
+        let due_key = Self::encode_prefixed_timed_route_key_from_realm(
+            &parsed.realm,
+            schedule.next_fire_ms,
+            schedule.route,
+            DUE_PREFIX,
+        );
 
         let mut txn = self
             .db
@@ -533,6 +608,7 @@ impl ScheduleStore {
 
         Self::put_schedule_definition(
             &mut txn,
+            &parsed.realm,
             schedule.route,
             schedule.next_fire_ms,
             schedule.last_fire_ms,
@@ -543,7 +619,12 @@ impl ScheduleStore {
 
         if let Some(previous_fire_ms) = schedule.previous_fire_ms {
             if previous_fire_ms != schedule.next_fire_ms {
-                txn.delete(Self::encode_due_key(previous_fire_ms, schedule.route))
+                txn.delete(Self::encode_prefixed_timed_route_key_from_realm(
+                    &parsed.realm,
+                    previous_fire_ms,
+                    schedule.route,
+                    DUE_PREFIX,
+                ))
                     .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
             }
         }
@@ -571,8 +652,10 @@ impl ScheduleStore {
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         for item in items {
+            let parsed = parse_concrete_schedule_route(&item.route)?;
             Self::put_schedule_definition(
                 &mut txn,
+                &parsed.realm,
                 &item.route,
                 item.next_fire_ms,
                 item.last_fire_ms,
@@ -583,7 +666,12 @@ impl ScheduleStore {
 
             if let Some(previous_fire_ms) = item.previous_fire_ms {
                 if previous_fire_ms != item.next_fire_ms {
-                    txn.delete(Self::encode_due_key(previous_fire_ms, &item.route))
+                    txn.delete(Self::encode_prefixed_timed_route_key_from_realm(
+                        &parsed.realm,
+                        previous_fire_ms,
+                        &item.route,
+                        DUE_PREFIX,
+                    ))
                         .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
                 }
             }
@@ -608,17 +696,29 @@ impl ScheduleStore {
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         for item in items {
-            Self::put_definition_metadata(
+            let parsed = parse_concrete_schedule_route(item.route)?;
+            Self::put_definition_metadata_with_realm(
                 &mut txn,
+                &parsed.realm,
                 item.route,
                 item.next_fire_ms,
                 item.last_fire_ms,
                 item.executions_total,
             )?;
-            let pending_fire_key = Self::encode_pending_fire_key(item.previous_fire_ms, item.route);
+            let pending_fire_key = Self::encode_prefixed_timed_route_key_from_realm(
+                &parsed.realm,
+                item.previous_fire_ms,
+                item.route,
+                PENDING_FIRE_PREFIX,
+            );
 
             if item.previous_fire_ms != item.next_fire_ms {
-                txn.delete(Self::encode_due_key(item.previous_fire_ms, item.route))
+                txn.delete(Self::encode_prefixed_timed_route_key_from_realm(
+                    &parsed.realm,
+                    item.previous_fire_ms,
+                    item.route,
+                    DUE_PREFIX,
+                ))
                     .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
             }
             txn.put(
@@ -648,12 +748,19 @@ impl ScheduleStore {
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
         for item in items {
-            txn.delete(Self::encode_pending_fire_key(item.fire_ms, item.route))
+            let parsed = parse_concrete_schedule_route(item.route)?;
+            txn.delete(Self::encode_prefixed_timed_route_key_from_realm(
+                &parsed.realm,
+                item.fire_ms,
+                item.route,
+                PENDING_FIRE_PREFIX,
+            ))
                 .map_err(|e| format!("delete pending fire failed: {:?}", e))?;
 
             if let Some(definition) = &item.definition {
-                Self::put_definition_metadata(
+                Self::put_definition_metadata_with_realm(
                     &mut txn,
+                    &parsed.realm,
                     item.route,
                     definition.next_fire_ms,
                     Some(item.acknowledged_at_ms),
@@ -675,16 +782,41 @@ impl ScheduleStore {
         next_fire_ms: u64,
         write_options: WriteOptions,
     ) -> Result<(), String> {
+        let parsed = parse_concrete_schedule_route(route)?;
+        self.delete_current_with_realm(cf_id, &parsed.realm, route, next_fire_ms, write_options)
+    }
+
+    pub(crate) fn delete_current_with_realm(
+        &self,
+        cf_id: u64,
+        realm: &str,
+        route: &str,
+        next_fire_ms: u64,
+        write_options: WriteOptions,
+    ) -> Result<(), String> {
         let mut txn = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {:?}", e))?;
 
-        txn.delete(Self::encode_definition_key(route))
+        txn.delete(Self::encode_prefixed_route_key_from_realm(
+            realm,
+            route,
+            DEFINITION_PREFIX,
+        ))
             .map_err(|e| format!("delete schedule definition failed: {:?}", e))?;
-        txn.delete(Self::encode_body_key(route))
+        txn.delete(Self::encode_prefixed_route_key_from_realm(
+            realm,
+            route,
+            BODY_PREFIX,
+        ))
             .map_err(|e| format!("delete schedule body failed: {:?}", e))?;
-        txn.delete(Self::encode_due_key(next_fire_ms, route))
+        txn.delete(Self::encode_prefixed_timed_route_key_from_realm(
+            realm,
+            next_fire_ms,
+            route,
+            DUE_PREFIX,
+        ))
             .map_err(|e| format!("delete schedule due index failed: {:?}", e))?;
 
         self.commit_or_inject(txn, write_options)
@@ -829,8 +961,10 @@ impl ScheduleStore {
             .map_err(|e| format!("begin migration tx failed: {:?}", e))?;
 
         for schedule in &normalized_definitions {
+            let parsed = parse_concrete_schedule_route(&schedule.route)?;
             Self::put_schedule_definition(
                 &mut write_tx,
+                &parsed.realm,
                 &schedule.route,
                 schedule.next_fire_ms,
                 schedule.last_fire_ms,
@@ -848,9 +982,15 @@ impl ScheduleStore {
         }
 
         for schedule in schedules.values() {
+            let parsed = parse_concrete_schedule_route(&schedule.route)?;
             write_tx
                 .put(
-                    Self::encode_due_key(schedule.next_fire_ms, &schedule.route),
+                    Self::encode_prefixed_timed_route_key_from_realm(
+                        &parsed.realm,
+                        schedule.next_fire_ms,
+                        &schedule.route,
+                        DUE_PREFIX,
+                    ),
                     DUE_INDEX_VALUE.to_vec(),
                     None,
                 )

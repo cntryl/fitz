@@ -727,23 +727,22 @@ impl MailboxSink for QueueDomainSink {
                     session_id,
                     subscriber,
                 } => {
-                    let pattern_str = pattern.as_str().to_string();
+                    let pattern_str = pattern.as_str();
+                    let parsed_pattern = crate::runtime::matcher::Pattern::new(pattern_str);
                     let subscription_id = {
                         let mut families = self.families.lock();
                         let state = families
                             .entry(family_id.as_u64())
                             .or_insert_with(RoutedSubscriptionSet::new);
 
-                        if let Some(id) = state.find_existing_id(session_id, pattern_str.as_str()) {
+                        if let Some(id) = state.find_existing_id(session_id, pattern_str) {
                             id
                         } else {
                             let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
                             state.insert(
                                 family_id,
                                 QueueSubscription {
-                                    pattern: crate::runtime::matcher::Pattern::new(
-                                        pattern_str.as_str(),
-                                    ),
+                                    pattern: parsed_pattern.clone(),
                                     session_id,
                                     subscription_id: id,
                                     subscriber: subscriber.clone(),
@@ -755,13 +754,7 @@ impl MailboxSink for QueueDomainSink {
 
                     (
                         crate::domains::queue::QueueResponse::WatchOk { subscription_id },
-                        Some((
-                            family_id,
-                            crate::runtime::matcher::Pattern::new(pattern_str.as_str()),
-                            session_id,
-                            subscription_id,
-                            subscriber,
-                        )),
+                        Some((family_id, parsed_pattern, session_id, subscription_id, subscriber)),
                     )
                 }
                 QueueSubscriptionMessage::Unwatch {

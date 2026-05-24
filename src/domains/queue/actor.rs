@@ -304,6 +304,7 @@ impl Ord for DelayedMessage {
 struct ReadyEntry {
     ready_seq: u64,
     id: MessageId,
+    ready_enqueued_at_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy)]

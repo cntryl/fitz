@@ -91,20 +91,29 @@ impl QueueActor {
     }
 
     pub(super) fn push_ready_entry(&mut self, ready_seq: u64, id: MessageId) {
-        self.ready.push_back(ReadyEntry { ready_seq, id });
+        let ready_enqueued_at_ms = self
+            .records
+            .get(&id)
+            .map(|record| {
+                if record.first_enqueued_at_ms != 0 {
+                    record.first_enqueued_at_ms
+                } else {
+                    self.clock.now_epoch_ms()
+                }
+            })
+            .unwrap_or_else(|| self.clock.now_epoch_ms());
+
+        self.ready.push_back(ReadyEntry {
+            ready_seq,
+            id,
+            ready_enqueued_at_ms,
+        });
         self.ready_count = self.ready.len();
-        if let Some(record) = self.records.get(&id) {
-            let enqueue_ms = if record.first_enqueued_at_ms != 0 {
-                record.first_enqueued_at_ms
-            } else {
-                self.clock.now_epoch_ms()
-            };
-            self.oldest_ready_enqueued_at_ms = Some(
-                self.oldest_ready_enqueued_at_ms
-                    .map(|current| current.min(enqueue_ms))
-                    .unwrap_or(enqueue_ms),
-            );
-        }
+        self.oldest_ready_enqueued_at_ms = Some(
+            self.oldest_ready_enqueued_at_ms
+                .map(|current| current.min(ready_enqueued_at_ms))
+                .unwrap_or(ready_enqueued_at_ms),
+        );
     }
 
     pub(super) fn push_persisted_ready(&mut self, id: MessageId) {
@@ -124,11 +133,7 @@ impl QueueActor {
     }
 
     pub(super) fn recompute_oldest_ready_enqueued_at_ms(&mut self) {
-        self.oldest_ready_enqueued_at_ms = self.ready.front().and_then(|entry| {
-            self.records.get(&entry.id).and_then(|record| {
-                (record.first_enqueued_at_ms != 0).then_some(record.first_enqueued_at_ms)
-            })
-        });
+        self.oldest_ready_enqueued_at_ms = self.ready.front().map(|entry| entry.ready_enqueued_at_ms);
     }
 
     pub(super) fn pop_ready_entry(&mut self) -> Option<ReadyEntry> {

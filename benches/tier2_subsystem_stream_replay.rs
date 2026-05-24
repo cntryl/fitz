@@ -1,7 +1,7 @@
 use bincode::{deserialize, serialize};
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::benchkit::create_local_bench_store;
+use fitz::benchkit::create_bench_store;
 use fitz::domains::stream::protocol::{StreamRecord, StreamWriteMode};
 use fitz::domains::stream::storage::{
     decode_area_offset_from_key, decode_realm_offset_from_key, encode_area_key,
@@ -222,7 +222,6 @@ struct PageRunAssignment {
 struct ReplayCase {
     store: StreamStore,
     db: Arc<cntryl_midge::Engine>,
-    _temp_dir: tempfile::TempDir,
     areas: Vec<String>,
     streams: Vec<PrototypeStream>,
     stream_positions: HashMap<u64, usize>,
@@ -1174,7 +1173,7 @@ fn seed_replay_case(
     records_per_stream: usize,
     profile: PayloadProfile,
 ) -> ReplayCase {
-    let (db, temp_dir) = create_local_bench_store();
+    let db = create_bench_store();
     let store = StreamStore::new(db.clone());
     let areas = (0..area_count)
         .map(|area_index| format!("area-{area_index}"))
@@ -1523,7 +1522,6 @@ fn seed_replay_case(
     ReplayCase {
         store,
         db,
-        _temp_dir: temp_dir,
         areas,
         streams,
         stream_positions,
