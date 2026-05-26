@@ -14,7 +14,6 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "jsxImportSource": "@askrjs/askr",
-    "types": ["vite-plus/test/globals"],
     "paths": {
       "@/*": ["./src/*"],
       "@askrjs/askr/jsx-runtime": ["./node_modules/@askrjs/askr/dist/jsx/jsx-runtime.d.ts"],
