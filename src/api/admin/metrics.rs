@@ -907,6 +907,21 @@ mod tests {
         runtime
     }
 
+    fn assert_metric_exported(metrics: &str, metric_name: &str) {
+        let prefix = format!("{metric_name} ");
+        let line = metrics
+            .lines()
+            .find(|line| line.starts_with(&prefix))
+            .unwrap_or_else(|| panic!("missing metric {metric_name}"));
+        let value = line
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or_else(|| panic!("missing metric value for {metric_name}"));
+        value
+            .parse::<u64>()
+            .unwrap_or_else(|err| panic!("invalid metric value for {metric_name}: {err}"));
+    }
+
     #[test]
     fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
         // Arrange
@@ -949,14 +964,14 @@ mod tests {
             latency_before[0] + 1
         )));
         assert!(metrics.contains("fitz_schedule_latency_ms_count"));
-        assert!(metrics.contains("fitz_notice_delivery_drops_total 0"));
-        assert!(metrics.contains("fitz_stream_notify_drops_total 0"));
-        assert!(metrics.contains("fitz_queue_notify_drops_total 0"));
-        assert!(metrics.contains("fitz_rpc_request_timeouts_total 0"));
-        assert!(metrics.contains("fitz_rpc_backpressure_rejects_total 0"));
-        assert!(metrics.contains("fitz_rpc_duplicate_correlation_rejects_total 0"));
-        assert!(metrics.contains("fitz_rpc_wrong_worker_rejects_total 0"));
-        assert!(metrics.contains("fitz_lease_waiter_depth 0"));
-        assert!(metrics.contains("fitz_notice_wildcard_limit_rejects_total 0"));
+        assert_metric_exported(&metrics, "fitz_notice_delivery_drops_total");
+        assert_metric_exported(&metrics, "fitz_stream_notify_drops_total");
+        assert_metric_exported(&metrics, "fitz_queue_notify_drops_total");
+        assert_metric_exported(&metrics, "fitz_rpc_request_timeouts_total");
+        assert_metric_exported(&metrics, "fitz_rpc_backpressure_rejects_total");
+        assert_metric_exported(&metrics, "fitz_rpc_duplicate_correlation_rejects_total");
+        assert_metric_exported(&metrics, "fitz_rpc_wrong_worker_rejects_total");
+        assert_metric_exported(&metrics, "fitz_lease_waiter_depth");
+        assert_metric_exported(&metrics, "fitz_notice_wildcard_limit_rejects_total");
     }
 }

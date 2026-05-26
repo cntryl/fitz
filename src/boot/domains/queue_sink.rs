@@ -754,7 +754,13 @@ impl MailboxSink for QueueDomainSink {
 
                     (
                         crate::domains::queue::QueueResponse::WatchOk { subscription_id },
-                        Some((family_id, parsed_pattern, session_id, subscription_id, subscriber)),
+                        Some((
+                            family_id,
+                            parsed_pattern,
+                            session_id,
+                            subscription_id,
+                            subscriber,
+                        )),
                     )
                 }
                 QueueSubscriptionMessage::Unwatch {

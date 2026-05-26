@@ -635,7 +635,9 @@ impl RpcState {
         let should_remove = self
             .routes
             .get(route)
-            .map(|route_state| route_state.worker_count() == 0 && !route_state.has_queued_requests())
+            .map(|route_state| {
+                route_state.worker_count() == 0 && !route_state.has_queued_requests()
+            })
             .unwrap_or(false);
 
         if should_remove {

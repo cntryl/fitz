@@ -133,7 +133,8 @@ impl QueueActor {
     }
 
     pub(super) fn recompute_oldest_ready_enqueued_at_ms(&mut self) {
-        self.oldest_ready_enqueued_at_ms = self.ready.front().map(|entry| entry.ready_enqueued_at_ms);
+        self.oldest_ready_enqueued_at_ms =
+            self.ready.front().map(|entry| entry.ready_enqueued_at_ms);
     }
 
     pub(super) fn pop_ready_entry(&mut self) -> Option<ReadyEntry> {
