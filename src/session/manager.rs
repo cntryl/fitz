@@ -25,6 +25,20 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, trace, warn};
 
+fn dispatch_session_cleanup_route(
+    router: &crate::runtime::Router,
+    route_family: crate::runtime::routing::RouteFamily,
+    cleanup: crate::runtime::SessionCleanup,
+    route: &str,
+) {
+    let address = crate::runtime::routing::RouteAddress::new(
+        route_family,
+        crate::runtime::routing::Route::new(route),
+    );
+    let envelope = crate::runtime::Envelope::new(address, cleanup);
+    let _ = router.route(envelope);
+}
+
 fn dispatch_session_cleanup(
     router: &crate::runtime::Router,
     route_family: crate::runtime::routing::RouteFamily,
@@ -32,54 +46,14 @@ fn dispatch_session_cleanup(
 ) {
     let cleanup = crate::runtime::SessionCleanup { session_id };
 
-    let kv_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("kv://cleanup"),
-    );
-    let kv_envelope = crate::runtime::Envelope::new(kv_addr, cleanup.clone());
-    let _ = router.route(kv_envelope);
-
-    let notice_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("notice://cleanup"),
-    );
-    let notice_envelope = crate::runtime::Envelope::new(notice_addr, cleanup.clone());
-    let _ = router.route(notice_envelope);
-
-    let rpc_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("rpc://cleanup"),
-    );
-    let rpc_envelope = crate::runtime::Envelope::new(rpc_addr, cleanup.clone());
-    let _ = router.route(rpc_envelope);
-
-    let stream_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("stream://cleanup"),
-    );
-    let stream_envelope = crate::runtime::Envelope::new(stream_addr, cleanup.clone());
-    let _ = router.route(stream_envelope);
-
-    let schedule_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("schedule://cleanup"),
-    );
-    let schedule_envelope = crate::runtime::Envelope::new(schedule_addr, cleanup.clone());
-    let _ = router.route(schedule_envelope);
-
-    let lease_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("lease://cleanup"),
-    );
-    let lease_envelope = crate::runtime::Envelope::new(lease_addr, cleanup.clone());
-    let _ = router.route(lease_envelope);
-
-    let queue_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("queue://cleanup"),
-    );
-    let queue_envelope = crate::runtime::Envelope::new(queue_addr, cleanup);
-    let _ = router.route(queue_envelope);
+    for domain in DispatchDomain::cleanup_domains() {
+        dispatch_session_cleanup_route(
+            router,
+            route_family,
+            cleanup.clone(),
+            domain.cleanup_route(),
+        );
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,6 +78,30 @@ impl DispatchDomain {
             Self::Stream => "stream",
             Self::Schedule => "schedule",
         }
+    }
+
+    fn cleanup_route(self) -> &'static str {
+        match self {
+            Self::Kv => "kv://cleanup",
+            Self::Queue => "queue://cleanup",
+            Self::Rpc => "rpc://cleanup",
+            Self::Lease => "lease://cleanup",
+            Self::Notice => "notice://cleanup",
+            Self::Stream => "stream://cleanup",
+            Self::Schedule => "schedule://cleanup",
+        }
+    }
+
+    fn cleanup_domains() -> [Self; 7] {
+        [
+            Self::Kv,
+            Self::Notice,
+            Self::Rpc,
+            Self::Stream,
+            Self::Schedule,
+            Self::Lease,
+            Self::Queue,
+        ]
     }
 
     fn wildcard_route(self) -> &'static str {
