@@ -1,31 +1,31 @@
-# Fitz Web UI
+# Fitz Embedded UI Inputs
 
-This directory contains the Single Page Application (SPA) served at the root of the Fitz broker.
+This directory is no longer a runtime dependency for the Fitz admin UI. Production assets are embedded into the Fitz executable at build time, and the running broker serves them directly from memory.
 
-## Structure
+## Current Role
 
 ```
 public/
-├── index.html          # Main SPA entry point
-├── assets/             # Static assets (future)
-│   ├── css/           # Stylesheets
-│   ├── js/            # JavaScript bundles
-│   └── img/           # Images and icons
-└── README.md          # This file
+├── index.html          # Last-resort local fallback when ui/dist is unavailable
+├── favicon.svg         # Ancillary static file kept in the repo
+├── openapi.yml         # Client adapter input for the UI workspace
+└── README.md           # This file
 ```
 
-## Routing
+The preferred production asset source is `ui/dist/`. During Docker builds, those generated assets are copied into the Rust build stage and embedded into the binary.
 
-The HTTP server serves files from this directory with the following behavior:
+## Serving Behavior
 
-- `/` → `public/index.html`
-- `/assets/*` → Static files from `public/assets/`
-- Any other path without file extension → `public/index.html` (SPA client-side routing)
-- Paths with extensions (e.g., `/script.js`) → Exact file match or 404
+The HTTP server now serves embedded assets with the same public route contract as before:
+
+- `/` → embedded `index.html`
+- `/assets/*` → embedded static assets from the production UI build
+- Any other path that does not resolve to an embedded file falls back to embedded `index.html`
+- Path traversal is rejected
 
 ## Content Types
 
-The server automatically sets appropriate `Content-Type` headers:
+The embedded asset server preserves the existing content-type map:
 
 | Extension | Content-Type |
 |-----------|-------------|
@@ -43,43 +43,17 @@ The server automatically sets appropriate `Content-Type` headers:
 
 - No authentication required for SPA access (public)
 - API endpoints use `/api/v1/` prefix and require authentication
-- Static files are cached with `Cache-Control: public, max-age=3600`
+- Embedded responses preserve `Cache-Control: public, max-age=3600`
+- Embedded responses now also emit `ETag`, `Vary: Accept-Encoding`, and compressed representations for supported text assets
 
 ## Development
 
-To develop the SPA:
+To iterate on the admin UI:
 
-1. Edit `index.html` or add files to `public/`
-2. Restart the Fitz broker
-3. Navigate to `http://localhost:8080/`
+1. Work in the `ui/` workspace
+2. Run `npm run build` from `ui/` to refresh `ui/dist/`
+3. Rebuild Fitz so the new production assets are embedded into the executable
 
-For production builds with bundlers (Vite, Webpack, etc.):
+If `ui/dist/` is unavailable during a local Rust build, Fitz falls back to embedding the checked-in `public/` directory so the binary still compiles.
 
-```bash
-# Build your SPA
-npm run build
-
-# Copy output to public/
-cp -r dist/* public/
-```
-
-## Current Features
-
-The default `index.html` provides:
-
-- Broker status indicator (checks `/healthz`)
-- Feature overview
-- Links to metrics and admin API
-- Responsive design
-- No external dependencies (vanilla JS + CSS)
-
-## Future Enhancements
-
-Planned additions:
-
-- [ ] Real-time metrics dashboard
-- [ ] Domain statistics visualization
-- [ ] WebSocket connection monitor
-- [ ] Realm browser
-- [ ] Message tracing UI
-- [ ] Configuration editor
+This fallback is for developer convenience only. Production containers no longer ship a `/app/public` tree.

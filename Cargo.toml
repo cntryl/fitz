@@ -25,7 +25,9 @@ tokio-stream = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 bytes = "1.11"
+brotli = "8"
 uuid = { version = "1", features = ["v4", "serde"] }
+flate2 = "1"
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
 once_cell = "1.21"
 chrono = { version = "0.4", features = ["serde"] }
@@ -76,6 +78,9 @@ cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "260e5e6406
 # Patch transitive native-tls so Docker build succeeds (0.2.17 lacks Protocol::Tlsv13 match arm).
 [patch.crates-io]
 native-tls = { git = "https://github.com/sfackler/rust-native-tls", rev = "ea5426e0847652ca3dd780b69a351b06de91dfd6" }
+
+[build-dependencies]
+walkdir = "2"
 
 [dev-dependencies]
 url = "2"
