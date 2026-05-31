@@ -1,7 +1,7 @@
 //! Domain actor setup and registration
 
 use crate::boot::runtime::BootResult;
-use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
+use crate::runtime::{DeliveryError, DomainKind, Envelope, MailboxSink, Router};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Arc as StdArc;
@@ -91,7 +91,7 @@ pub fn setup(
         KvDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
             .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern("kv", kv_sink.clone() as Arc<dyn MailboxSink>);
+    router.register_domain_pattern(DomainKind::Kv.as_str(), kv_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered KV domain (handles kv://* across all route families)");
 
     let queue_sink = Arc::new(
@@ -104,7 +104,10 @@ pub fn setup(
         )
         .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern("queue", queue_sink.clone() as Arc<dyn MailboxSink>);
+    router.register_domain_pattern(
+        DomainKind::Queue.as_str(),
+        queue_sink.clone() as Arc<dyn MailboxSink>,
+    );
     queue_sink.start_runtime_sweep();
     tracing::info!("Registered Queue domain (handles queue://* across all route families)");
 
@@ -112,7 +115,10 @@ pub fn setup(
         NoticeDomainSink::new(router.clone(), admin_read_model.clone())
             .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern("notice", notice_sink.clone() as Arc<dyn MailboxSink>);
+    router.register_domain_pattern(
+        DomainKind::Notice.as_str(),
+        notice_sink.clone() as Arc<dyn MailboxSink>,
+    );
     tracing::info!("Registered Notice domain (handles notice://* across all route families)");
 
     let stream_sink = Arc::new(
@@ -124,7 +130,10 @@ pub fn setup(
         )?
         .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern("stream", stream_sink.clone() as Arc<dyn MailboxSink>);
+    router.register_domain_pattern(
+        DomainKind::Stream.as_str(),
+        stream_sink.clone() as Arc<dyn MailboxSink>,
+    );
     tracing::info!("Registered Stream domain (handles stream://* across all route families)");
 
     let rpc_sink = Arc::new(
@@ -132,7 +141,7 @@ pub fn setup(
             .with_request_timeout(rpc_request_timeout.unwrap_or(std::time::Duration::from_secs(30)))
             .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern("rpc", rpc_sink.clone() as Arc<dyn MailboxSink>);
+    router.register_domain_pattern(DomainKind::Rpc.as_str(), rpc_sink.clone() as Arc<dyn MailboxSink>);
     rpc_sink.start_timeout_loop();
     tracing::info!("Registered RPC domain (handles rpc://* across all route families)");
 
@@ -140,7 +149,10 @@ pub fn setup(
         LeaseDomainSink::new(router.clone(), admin_read_model.clone())
             .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern("lease", lease_sink.clone() as Arc<dyn MailboxSink>);
+    router.register_domain_pattern(
+        DomainKind::Lease.as_str(),
+        lease_sink.clone() as Arc<dyn MailboxSink>,
+    );
     lease_sink.start_timeout_loop();
     tracing::info!(
         "Registered Lease domain (ephemeral, in-memory lease://* across all route families)"
@@ -150,14 +162,20 @@ pub fn setup(
         ScheduleDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
             .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern("schedule", schedule_sink.clone() as Arc<dyn MailboxSink>);
+    router.register_domain_pattern(
+        DomainKind::Schedule.as_str(),
+        schedule_sink.clone() as Arc<dyn MailboxSink>,
+    );
     schedule_sink
         .preload_persisted_families()
         .map_err(|error| format!("schedule preload failed: {}", error))?;
     schedule_sink.start_tick_loop();
     tracing::info!("Registered Schedule domain (handles schedule://* across all route families)");
 
-    tracing::info!("All 7 domain sinks registered with router");
+    tracing::info!(
+        "All {} domain sinks registered with router",
+        DomainKind::ALL.len()
+    );
 
     Ok(DomainHandles {
         kv: kv_sink,
@@ -260,5 +278,37 @@ mod tests {
 
         // Assert
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_register_all_manifest_domains_for_session_cleanup() {
+        // Arrange
+        let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+
+        // Act
+        setup(
+            &router,
+            &store,
+            &admin_read_model,
+            cntryl_midge::WriteOptions::best_effort(),
+            None,
+            crate::domains::stream::StreamStorageLayout::default(),
+        )
+        .expect("setup domains");
+
+        // Assert
+        for domain in DomainKind::ALL {
+            let result = router.route(Envelope::new(
+                RouteAddress::new(RouteFamily::new(1), domain.cleanup_route()),
+                crate::runtime::SessionCleanup { session_id: 42 },
+            ));
+            assert!(
+                result.is_ok(),
+                "expected {} cleanup route to be registered",
+                domain.as_str()
+            );
+        }
     }
 }

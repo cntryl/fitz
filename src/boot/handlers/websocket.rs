@@ -7,6 +7,17 @@ use bytes::Bytes;
 use std::sync::Arc;
 use tracing::info;
 
+fn websocket_session_frame_error_reason(error: &crate::session::SessionError) -> String {
+    format!("session frame error: {:?}", error)
+}
+
+fn websocket_close_reason(result: &Result<(), String>) -> CloseReason {
+    match result {
+        Ok(()) => CloseReason::ClientClose,
+        Err(reason) => CloseReason::Error(reason.clone()),
+    }
+}
+
 pub(super) async fn handle_websocket(
     req: hyper::Request<hyper::Body>,
     ingress: Arc<dyn Ingress>,
@@ -157,8 +168,8 @@ where
                     break Err(reason);
                 }
 
-                if let Err(e) = session.on_frame(frame, ingress.as_ref()).await {
-                    let reason = format!("session frame error: {:?}", e);
+                if let Err(error) = session.on_frame(frame, ingress.as_ref()).await {
+                    let reason = websocket_session_frame_error_reason(&error);
                     tracing::error!(session_id = session_id, error = %reason, "WS session frame processing error");
                     break Err(reason);
                 }
@@ -198,10 +209,7 @@ where
         }
     };
 
-    let close_reason = match &result {
-        Ok(()) => CloseReason::ClientClose,
-        Err(reason) => CloseReason::Error(reason.clone()),
-    };
+    let close_reason = websocket_close_reason(&result);
     ingress.on_close(session_id, close_reason).await;
     router.unregister(&inbox_route);
 
@@ -221,4 +229,30 @@ where
         info!("WebSocket connection closed, session {}", session_id);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{websocket_close_reason, websocket_session_frame_error_reason};
+    use crate::protocol::frame::ChannelId;
+    use crate::session::{CloseReason, SessionError};
+
+    #[test]
+    fn should_treat_websocket_backpressure_as_terminal_session_error() {
+        // Arrange
+        let reason = websocket_session_frame_error_reason(&SessionError::Backpressure(
+            ChannelId::Control,
+        ));
+        let result = Err(reason.clone());
+
+        // Act
+        let close_reason = websocket_close_reason(&result);
+
+        // Assert
+        assert_eq!(reason, "session frame error: Backpressure(Control)");
+        assert!(matches!(
+            close_reason,
+            CloseReason::Error(message) if message == reason
+        ));
+    }
 }

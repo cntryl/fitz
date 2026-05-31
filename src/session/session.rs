@@ -434,6 +434,8 @@ mod tests {
         frames: Arc<Mutex<Vec<SessionFrame>>>,
     }
 
+    struct BackpressureIngress;
+
     #[async_trait::async_trait]
     impl Ingress for DummyIngress {
         async fn on_open(&self, _session: SessionInfo) -> Result<u64, String> {
@@ -457,6 +459,54 @@ mod tests {
         }
 
         async fn on_close(&self, _session_id: u64, _reason: CloseReason) {}
+    }
+
+    #[async_trait::async_trait]
+    impl Ingress for BackpressureIngress {
+        async fn on_open(&self, _session: SessionInfo) -> Result<u64, String> {
+            Ok(1)
+        }
+
+        async fn on_frame(
+            &self,
+            _session_id: u64,
+            _channel_id: crate::protocol::frame::ChannelId,
+            _msg_type: crate::protocol::tlv::MessageType,
+            _message_payload: bytes::Bytes,
+        ) -> IngressDecision {
+            IngressDecision::Backpressure
+        }
+
+        async fn on_close(&self, _session_id: u64, _reason: CloseReason) {}
+    }
+
+    #[test]
+    fn should_return_backpressure_error_given_ingress_backpressure() {
+        // Arrange
+        let rt = Runtime::new().unwrap();
+        let ingress = BackpressureIngress;
+        let config = NewSessionConfig::unauthenticated(
+            TransportKind::Tcp,
+            None,
+            SessionPermissions::empty(),
+            SessionMetadata::new(),
+            10,
+            None,
+            crate::runtime::routing::RouteFamily::new(0),
+        );
+        let mut session = Session::new(42, config);
+        let mut encoder = TlvEncoder::new();
+        encoder.encode(MessageType::new(1), b"backpressure");
+        let data = encoder.finish();
+
+        // Act
+        let result = rt.block_on(async {
+            let ingress_ref: &dyn Ingress = &ingress;
+            session.on_frame(data, ingress_ref).await
+        });
+
+        // Assert
+        assert!(matches!(result, Err(SessionError::Backpressure(_))));
     }
 
     #[test]

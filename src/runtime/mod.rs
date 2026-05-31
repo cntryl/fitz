@@ -24,6 +24,7 @@ pub mod actor;
 pub mod cf_validation;
 pub mod clock;
 pub mod context;
+pub mod domain_manifest;
 pub mod domain_event;
 pub mod envelope;
 pub mod mailbox;
@@ -40,6 +41,7 @@ pub use clock::{
     epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference, Clock, SystemClock,
 };
 pub use context::{Timer, TimerId, TimerManager};
+pub use domain_manifest::DomainKind;
 pub use domain_event::{DomainPublishEvent, SessionCleanup};
 pub use envelope::{Envelope, MessageId};
 pub use mailbox::Mailbox;

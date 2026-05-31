@@ -30,6 +30,8 @@ pub struct BrokerStats {
     pub sessions: usize,
     pub realms: Vec<String>,
     pub messages_per_second: f64,
+    pub router_backpressure_total: u64,
+    pub router_high_lane_backpressure_total: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,6 +198,8 @@ pub(crate) fn build_global_stats(runtime: &Runtime) -> GlobalStats {
             sessions: runtime.session_count(),
             realms: runtime.active_realms(),
             messages_per_second: runtime.messages_per_second(),
+            router_backpressure_total: runtime.router_backpressure_total(),
+            router_high_lane_backpressure_total: runtime.router_high_lane_backpressure_total(),
         },
         domains: DomainStats {
             kv: KvStats {

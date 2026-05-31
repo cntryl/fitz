@@ -61,6 +61,26 @@ fn generate_prometheus_metrics(runtime: Arc<Runtime>) -> String {
     ));
     output.push('\n');
 
+    output.push_str(
+        "# HELP fitz_router_backpressure_total Total router delivery failures caused by normal-lane mailbox saturation\n",
+    );
+    output.push_str("# TYPE fitz_router_backpressure_total counter\n");
+    output.push_str(&format!(
+        "fitz_router_backpressure_total {}\n",
+        runtime.router_backpressure_total()
+    ));
+    output.push('\n');
+
+    output.push_str(
+        "# HELP fitz_router_high_lane_backpressure_total Total router delivery failures caused by control-plane high-lane saturation\n",
+    );
+    output.push_str("# TYPE fitz_router_high_lane_backpressure_total counter\n");
+    output.push_str(&format!(
+        "fitz_router_high_lane_backpressure_total {}\n",
+        runtime.router_high_lane_backpressure_total()
+    ));
+    output.push('\n');
+
     // Add observability metrics (from MetricsCollector)
     add_observability_metrics(&mut output);
 

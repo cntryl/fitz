@@ -209,6 +209,14 @@ impl Runtime {
         )
     }
 
+    pub fn router_backpressure_total(&self) -> u64 {
+        metric_counter("fitz_router_backpressure_total")
+    }
+
+    pub fn router_high_lane_backpressure_total(&self) -> u64 {
+        metric_counter("fitz_router_high_lane_backpressure_total")
+    }
+
     pub fn rpc_workers_registered(&self) -> usize {
         self.domains
             .read()

@@ -592,7 +592,7 @@ impl ScheduleStore {
                     schedule.route,
                     DUE_PREFIX,
                 ))
-                    .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
+                .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
             }
         }
 
@@ -640,7 +640,7 @@ impl ScheduleStore {
                         &item.route,
                         DUE_PREFIX,
                     ))
-                        .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
+                    .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
                 }
             }
         }
@@ -686,7 +686,7 @@ impl ScheduleStore {
                     item.route,
                     DUE_PREFIX,
                 ))
-                    .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
+                .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
             }
             txn.put(
                 pending_fire_key,
@@ -722,7 +722,7 @@ impl ScheduleStore {
                 item.route,
                 PENDING_FIRE_PREFIX,
             ))
-                .map_err(|e| format!("delete pending fire failed: {:?}", e))?;
+            .map_err(|e| format!("delete pending fire failed: {:?}", e))?;
 
             if let Some(definition) = &item.definition {
                 Self::put_definition_metadata(
@@ -770,20 +770,20 @@ impl ScheduleStore {
             route,
             DEFINITION_PREFIX,
         ))
-            .map_err(|e| format!("delete schedule definition failed: {:?}", e))?;
+        .map_err(|e| format!("delete schedule definition failed: {:?}", e))?;
         txn.delete(Self::encode_prefixed_route_key_from_realm(
             realm,
             route,
             BODY_PREFIX,
         ))
-            .map_err(|e| format!("delete schedule body failed: {:?}", e))?;
+        .map_err(|e| format!("delete schedule body failed: {:?}", e))?;
         txn.delete(Self::encode_prefixed_timed_route_key_from_realm(
             realm,
             next_fire_ms,
             route,
             DUE_PREFIX,
         ))
-            .map_err(|e| format!("delete schedule due index failed: {:?}", e))?;
+        .map_err(|e| format!("delete schedule due index failed: {:?}", e))?;
 
         self.commit_or_inject(txn, write_options)
     }

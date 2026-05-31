@@ -16,10 +16,10 @@
 
 use crate::observability as obs;
 use crate::protocol::frame::ChannelId;
+use crate::runtime::DomainKind as DispatchDomain;
 use crate::session::{CloseReason, SessionInfo, SessionPermissions};
 use bytes::Bytes;
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Instant;
@@ -29,149 +29,53 @@ fn dispatch_session_cleanup(
     router: &crate::runtime::Router,
     route_family: crate::runtime::routing::RouteFamily,
     session_id: u64,
-) {
+) -> Vec<DispatchDomain> {
     let cleanup = crate::runtime::SessionCleanup { session_id };
+    let mut failed_domains = Vec::new();
 
-    let kv_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("kv://cleanup"),
-    );
-    let kv_envelope = crate::runtime::Envelope::new(kv_addr, cleanup.clone());
-    let _ = router.route(kv_envelope);
+    for domain in DispatchDomain::SESSION_CLEANUP_ORDER {
+        let cleanup_addr =
+            crate::runtime::routing::RouteAddress::new(route_family, domain.cleanup_route());
+        let cleanup_envelope = crate::runtime::Envelope::new(cleanup_addr, cleanup.clone());
 
-    let notice_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("notice://cleanup"),
-    );
-    let notice_envelope = crate::runtime::Envelope::new(notice_addr, cleanup.clone());
-    let _ = router.route(notice_envelope);
+        if let Err(error) = router.route(cleanup_envelope) {
+            warn!(
+                session_id = session_id,
+                route_family = route_family.id(),
+                domain = domain.as_str(),
+                error = %error,
+                "Ingress: session cleanup delivery failed"
+            );
+            failed_domains.push(domain);
+        }
+    }
 
-    let rpc_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("rpc://cleanup"),
-    );
-    let rpc_envelope = crate::runtime::Envelope::new(rpc_addr, cleanup.clone());
-    let _ = router.route(rpc_envelope);
-
-    let stream_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("stream://cleanup"),
-    );
-    let stream_envelope = crate::runtime::Envelope::new(stream_addr, cleanup.clone());
-    let _ = router.route(stream_envelope);
-
-    let schedule_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("schedule://cleanup"),
-    );
-    let schedule_envelope = crate::runtime::Envelope::new(schedule_addr, cleanup.clone());
-    let _ = router.route(schedule_envelope);
-
-    let lease_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("lease://cleanup"),
-    );
-    let lease_envelope = crate::runtime::Envelope::new(lease_addr, cleanup.clone());
-    let _ = router.route(lease_envelope);
-
-    let queue_addr = crate::runtime::routing::RouteAddress::new(
-        route_family,
-        crate::runtime::routing::Route::new("queue://cleanup"),
-    );
-    let queue_envelope = crate::runtime::Envelope::new(queue_addr, cleanup);
-    let _ = router.route(queue_envelope);
+    failed_domains
+}
+fn canonicalize_dispatch_route_str<'a>(domain: DispatchDomain, route: &'a str) -> Cow<'a, str> {
+    RuntimeIngress::canonicalize_domain_route_str(domain.as_str(), route)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DispatchDomain {
-    Kv,
-    Queue,
-    Rpc,
-    Lease,
-    Notice,
-    Stream,
-    Schedule,
-}
-
-impl DispatchDomain {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Kv => "kv",
-            Self::Queue => "queue",
-            Self::Rpc => "rpc",
-            Self::Lease => "lease",
-            Self::Notice => "notice",
-            Self::Stream => "stream",
-            Self::Schedule => "schedule",
-        }
-    }
-
-    fn wildcard_route(self) -> &'static str {
-        match self {
-            Self::Kv => "kv://**",
-            Self::Queue => "queue://**",
-            Self::Rpc => "rpc://**",
-            Self::Lease => "lease://**",
-            Self::Notice => "notice://**",
-            Self::Stream => "stream://**",
-            Self::Schedule => "schedule://**",
-        }
-    }
-
-    fn inbound_route(self) -> &'static crate::runtime::routing::Route {
-        static KV: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("kv://inbound"));
-        static QUEUE: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("queue://inbound"));
-        static RPC: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("rpc://inbound"));
-        static LEASE: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("lease://inbound"));
-        static NOTICE: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("notice://inbound"));
-        static STREAM: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("stream://inbound"));
-        static SCHEDULE: Lazy<crate::runtime::routing::Route> =
-            Lazy::new(|| crate::runtime::routing::Route::new("schedule://inbound"));
-
-        match self {
-            Self::Kv => &KV,
-            Self::Queue => &QUEUE,
-            Self::Rpc => &RPC,
-            Self::Lease => &LEASE,
-            Self::Notice => &NOTICE,
-            Self::Stream => &STREAM,
-            Self::Schedule => &SCHEDULE,
-        }
-    }
-
-    fn canonicalize_route_str<'a>(self, route: &'a str) -> Cow<'a, str> {
-        RuntimeIngress::canonicalize_domain_route_str(self.as_str(), route)
-    }
-
-    fn extract_auth_route<'a>(
-        self,
-        msg_type: u16,
-        payload: &'a [u8],
-    ) -> Result<Option<Cow<'a, str>>, String> {
-        match self {
-            Self::Kv => crate::protocol::kv_codec::extract_auth_route(msg_type, payload)
-                .map(|route| route.map(|route| self.canonicalize_route_str(route))),
-            Self::Queue => crate::protocol::queue_codec::extract_auth_route(msg_type, payload)
-                .map(|route| route.map(|route| self.canonicalize_route_str(route))),
-            Self::Rpc => crate::protocol::rpc_codec::extract_auth_route(msg_type, payload)
-                .map(|route| route.map(|route| self.canonicalize_route_str(route))),
-            Self::Lease => crate::protocol::lease_codec::extract_auth_route(msg_type, payload)
-                .map(|route| route.map(|route| self.canonicalize_route_str(route))),
-            Self::Notice => crate::protocol::notice_codec::extract_auth_route(msg_type, payload)
-                .map(|route| route.map(|route| self.canonicalize_route_str(route))),
-            Self::Stream => crate::protocol::stream_codec::extract_auth_route(msg_type, payload)
-                .map(|route| route.map(|route| self.canonicalize_route_str(route))),
-            Self::Schedule => {
-                crate::protocol::schedule_codec::extract_auth_route(msg_type, payload)
-                    .map(|route| route.map(|route| self.canonicalize_route_str(route)))
-            }
-        }
+fn extract_auth_route_for_domain<'a>(
+    domain: DispatchDomain,
+    msg_type: u16,
+    payload: &'a [u8],
+) -> Result<Option<Cow<'a, str>>, String> {
+    match domain {
+        DispatchDomain::Kv => crate::protocol::kv_codec::extract_auth_route(msg_type, payload)
+            .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route))),
+        DispatchDomain::Queue => crate::protocol::queue_codec::extract_auth_route(msg_type, payload)
+            .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route))),
+        DispatchDomain::Rpc => crate::protocol::rpc_codec::extract_auth_route(msg_type, payload)
+            .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route))),
+        DispatchDomain::Lease => crate::protocol::lease_codec::extract_auth_route(msg_type, payload)
+            .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route))),
+        DispatchDomain::Notice => crate::protocol::notice_codec::extract_auth_route(msg_type, payload)
+            .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route))),
+        DispatchDomain::Stream => crate::protocol::stream_codec::extract_auth_route(msg_type, payload)
+            .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route))),
+        DispatchDomain::Schedule => crate::protocol::schedule_codec::extract_auth_route(msg_type, payload)
+            .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route))),
     }
 }
 
@@ -534,7 +438,7 @@ impl RuntimeIngress {
         if domain == DispatchDomain::Schedule && msg_type.as_u16() == 706 {
             let routes = crate::protocol::schedule_codec::extract_batch_auth_routes(payload)?
                 .into_iter()
-                .map(|route| domain.canonicalize_route_str(route))
+                .map(|route| canonicalize_dispatch_route_str(domain, route))
                 .collect();
             return Ok(AuthorizationTargets::Multiple(routes));
         }
@@ -555,7 +459,7 @@ impl RuntimeIngress {
         msg_type: crate::protocol::tlv::MessageType,
         payload: &'a [u8],
     ) -> Result<Option<Cow<'a, str>>, String> {
-        domain.extract_auth_route(msg_type.as_u16(), payload)
+        extract_auth_route_for_domain(domain, msg_type.as_u16(), payload)
     }
 
     fn authorize_domain_targets(
@@ -1023,12 +927,29 @@ impl Ingress for RuntimeIngress {
             })
             .await
             {
-                Ok(()) => {
-                    tracing::debug!(
-                        session_id = session_id,
-                        route_family = route_family.id(),
-                        "Ingress: dispatched cleanup to KV, Notice, RPC, Stream, Schedule, Lease, and Queue domains"
-                    );
+                Ok(failed_domains) => {
+                    if failed_domains.is_empty() {
+                        tracing::debug!(
+                            session_id = session_id,
+                            route_family = route_family.id(),
+                            "Ingress: dispatched cleanup to KV, Notice, RPC, Stream, Schedule, Lease, and Queue domains"
+                        );
+                    } else {
+                        if let Ok(collector) =
+                            std::panic::catch_unwind(crate::boot::observability::metrics)
+                        {
+                            collector.counter_add(
+                                obs::METRIC_SESSION_CLEANUP_FAILURES,
+                                failed_domains.len() as u64,
+                            );
+                        }
+                        tracing::warn!(
+                            session_id = session_id,
+                            route_family = route_family.id(),
+                            failed_domains = ?failed_domains,
+                            "Ingress: session cleanup incomplete"
+                        );
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -1262,13 +1183,50 @@ impl RuntimeIngress {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::admin::read_model::AdminReadModel;
     use crate::auth::Access;
+    use crate::boot::domains::{
+        KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
+        ScheduleDomainSink, StreamDomainSink,
+    };
     use crate::protocol::frame::ChannelId;
-    use crate::runtime::routing::Route;
+    use crate::protocol::payload_codec::PayloadEncoder;
+    use crate::protocol::tlv::MessageType;
+    use crate::protocol::FrameContext;
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+    use crate::runtime::{DeliveryError, Envelope, Mailbox, MailboxSink};
     use crate::session::{SessionInfo, SessionMetadata, SessionPermissions, TransportKind};
     use bytes::Bytes;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct CleanupTrackingSink {
+        cleanup_sessions: Mutex<Vec<u64>>,
+    }
+
+    impl CleanupTrackingSink {
+        fn recorded_sessions(&self) -> Vec<u64> {
+            self.cleanup_sessions.lock().unwrap().clone()
+        }
+    }
+
+    impl MailboxSink for CleanupTrackingSink {
+        fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+            let cleanup = envelope
+                .payload::<crate::runtime::SessionCleanup>()
+                .expect("cleanup payload");
+            self.cleanup_sessions
+                .lock()
+                .unwrap()
+                .push(cleanup.session_id);
+            Ok(())
+        }
+
+        fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+            self.deliver(envelope)
+        }
+    }
 
     fn make_session_info(id: u64, kind: TransportKind) -> SessionInfo {
         SessionInfo {
@@ -1293,6 +1251,113 @@ mod tests {
             &EncodingKey::from_secret(b"test-secret-key"),
         )
         .unwrap()
+    }
+
+    fn encode_notice_subscribe(pattern: &str) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(pattern);
+        Bytes::from(encoder.finish())
+    }
+
+    fn encode_notice_publish(route: &str, payload: &[u8]) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(route);
+        encoder.put_bytes(payload);
+        Bytes::from(encoder.finish())
+    }
+
+    fn encode_lease_acquire(route: &str, owner_id: &str, ttl_secs: u64) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(route);
+        encoder.put_string(owner_id);
+        encoder.put_u64(ttl_secs);
+        Bytes::from(encoder.finish())
+    }
+
+    fn encode_lease_subscribe(pattern: &str) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(pattern);
+        Bytes::from(encoder.finish())
+    }
+
+    fn encode_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(route);
+        encoder.put_string(cron);
+        encoder.put_bytes(payload);
+        Bytes::from(encoder.finish())
+    }
+
+    fn encode_schedule_subscribe(route: &str) -> Bytes {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(route);
+        Bytes::from(encoder.finish())
+    }
+
+    fn encode_queue_send(route: &str, body: &[u8]) -> Bytes {
+        let mut payload = Vec::new();
+        bytes::BufMut::put_u32(&mut payload, route.len() as u32);
+        bytes::BufMut::put_slice(&mut payload, route.as_bytes());
+        bytes::BufMut::put_u32(&mut payload, body.len() as u32);
+        bytes::BufMut::put_slice(&mut payload, body);
+        Bytes::from(payload)
+    }
+
+    fn encode_queue_reserve(route: &str, inflight_seconds: u64, batch_size: u32) -> Bytes {
+        let mut payload = Vec::new();
+        bytes::BufMut::put_u32(&mut payload, route.len() as u32);
+        bytes::BufMut::put_slice(&mut payload, route.as_bytes());
+        bytes::BufMut::put_u64(&mut payload, inflight_seconds);
+        bytes::BufMut::put_u8(&mut payload, 1);
+        bytes::BufMut::put_u32(&mut payload, batch_size);
+        Bytes::from(payload)
+    }
+
+    fn queue_receive_response_message_count(frame: &FrameContext) -> u32 {
+        assert_eq!(frame.payload[0], 0, "expected success status");
+        u32::from_be_bytes(
+            frame.payload[1..5]
+                .try_into()
+                .expect("receive payload should include count"),
+        )
+    }
+
+    fn parse_rpc_response_frame(
+        frame: &FrameContext,
+    ) -> crate::domains::rpc::protocol::RpcResponse {
+        match crate::protocol::rpc_codec::parse_request(frame, &frame.payload, frame.route_family)
+            .expect("parse rpc response frame")
+        {
+            crate::domains::rpc::protocol::RpcMessage::Response(response) => response,
+            other => panic!("expected rpc response, found {other:?}"),
+        }
+    }
+
+    fn drain_mailbox(mailbox: &Mailbox) {
+        while mailbox.receiver().try_recv().is_ok() {}
+    }
+
+    fn register_fallback_cleanup_domains(
+        router: &Arc<crate::runtime::Router>,
+        real_domain: DispatchDomain,
+    ) {
+        for domain in DispatchDomain::SESSION_CLEANUP_ORDER {
+            if domain == real_domain {
+                continue;
+            }
+
+            router
+                .register_domain_pattern(domain.as_str(), Arc::new(CleanupTrackingSink::default()));
+        }
+    }
+
+    fn make_cleanup_ingress(
+        router: Arc<crate::runtime::Router>,
+        admin_read_model: Arc<AdminReadModel>,
+    ) -> RuntimeIngress {
+        RuntimeIngress::new(true)
+            .with_router(router)
+            .with_admin_read_model(admin_read_model)
     }
 
     #[tokio::test]
@@ -1397,6 +1462,801 @@ mod tests {
 
         // Assert
         assert_eq!(event_count.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn should_dispatch_session_cleanup_to_all_registered_domains() {
+        // Arrange
+        let router = crate::runtime::Router::new();
+        let route_family = crate::runtime::routing::RouteFamily::new(7);
+        let session_id = 42;
+        let sinks = DispatchDomain::SESSION_CLEANUP_ORDER
+            .iter()
+            .copied()
+            .map(|domain| {
+                let sink = Arc::new(CleanupTrackingSink::default());
+                router.register_domain_pattern(domain.as_str(), sink.clone());
+                (domain, sink)
+            })
+            .collect::<Vec<_>>();
+
+        // Act
+        let failed_domains = dispatch_session_cleanup(&router, route_family, session_id);
+
+        // Assert
+        assert!(failed_domains.is_empty());
+        for (_, sink) in sinks {
+            assert_eq!(sink.recorded_sessions(), vec![session_id]);
+        }
+    }
+
+    #[test]
+    fn should_report_missing_cleanup_domain_registration() {
+        // Arrange
+        let router = crate::runtime::Router::new();
+        let route_family = crate::runtime::routing::RouteFamily::new(9);
+        let session_id = 55;
+        let sinks = DispatchDomain::SESSION_CLEANUP_ORDER
+            .iter()
+            .copied()
+            .filter(|domain| *domain != DispatchDomain::Queue)
+            .map(|domain| {
+                let sink = Arc::new(CleanupTrackingSink::default());
+                router.register_domain_pattern(domain.as_str(), sink.clone());
+                sink
+            })
+            .collect::<Vec<_>>();
+
+        // Act
+        let failed_domains = dispatch_session_cleanup(&router, route_family, session_id);
+
+        // Assert
+        assert_eq!(failed_domains, vec![DispatchDomain::Queue]);
+        for sink in sinks {
+            assert_eq!(sink.recorded_sessions(), vec![session_id]);
+        }
+    }
+
+    #[test]
+    fn should_keep_session_cleanup_order_aligned_with_domain_manifest() {
+        // Arrange
+        let mut cleanup_domains = DispatchDomain::SESSION_CLEANUP_ORDER
+            .iter()
+            .map(|domain| domain.as_str())
+            .collect::<Vec<_>>();
+        let mut registered_domains = DispatchDomain::ALL
+            .iter()
+            .map(|domain| domain.as_str())
+            .collect::<Vec<_>>();
+
+        // Act
+        cleanup_domains.sort_unstable();
+        registered_domains.sort_unstable();
+
+        // Assert
+        assert_eq!(cleanup_domains, registered_domains);
+    }
+
+    #[tokio::test]
+    async fn should_cleanup_registered_domains_and_remove_session_state_on_close() {
+        // Arrange
+        let router = Arc::new(crate::runtime::Router::new());
+        let admin_read_model = AdminReadModel::new();
+        let ingress = make_cleanup_ingress(router.clone(), admin_read_model.clone());
+        let session_id = 77;
+        let mut session = make_session_info(session_id, TransportKind::WebSocket);
+        session.route_family = RouteFamily::new(77);
+
+        let sinks = DispatchDomain::SESSION_CLEANUP_ORDER
+            .iter()
+            .copied()
+            .map(|domain| {
+                let sink = Arc::new(CleanupTrackingSink::default());
+                router.register_domain_pattern(domain.as_str(), sink.clone());
+                sink
+            })
+            .collect::<Vec<_>>();
+
+        ingress.on_open(session).await.unwrap();
+        assert_eq!(admin_read_model.sessions(None).len(), 1);
+
+        // Act
+        ingress.on_close(session_id, CloseReason::ClientClose).await;
+
+        // Assert
+        assert_eq!(ingress.session_count(), 0);
+        assert!(ingress.get_session(session_id).is_none());
+        assert!(ingress.get_session_actor(session_id).is_none());
+        assert!(admin_read_model.sessions(None).is_empty());
+        for sink in sinks {
+            assert_eq!(sink.recorded_sessions(), vec![session_id]);
+        }
+    }
+
+    #[tokio::test]
+    async fn should_record_cleanup_failures_when_on_close_cannot_reach_all_domains() {
+        // Arrange
+        let collector = crate::boot::observability::metrics();
+
+        let router = Arc::new(crate::runtime::Router::new());
+        let admin_read_model = AdminReadModel::new();
+        let ingress = make_cleanup_ingress(router.clone(), admin_read_model);
+        let session_id = 88;
+        let mut session = make_session_info(session_id, TransportKind::Tcp);
+        session.route_family = RouteFamily::new(88);
+
+        for domain in DispatchDomain::SESSION_CLEANUP_ORDER {
+            if domain == DispatchDomain::Queue {
+                continue;
+            }
+
+            let sink = Arc::new(CleanupTrackingSink::default());
+            router.register_domain_pattern(domain.as_str(), sink);
+        }
+
+        ingress.on_open(session).await.unwrap();
+        let failures_before = collector.counter_get(obs::METRIC_SESSION_CLEANUP_FAILURES);
+
+        // Act
+        ingress.on_close(session_id, CloseReason::ClientClose).await;
+
+        // Assert
+        assert!(
+            collector.counter_get(obs::METRIC_SESSION_CLEANUP_FAILURES) > failures_before,
+            "expected cleanup failure metric to increase"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_cleanup_real_notice_domain_subscription_on_close() {
+        // Arrange
+        let family = RouteFamily::new(91);
+        let session_id = 91;
+        let notice_route = "notice://acme/app/events";
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/91"));
+        let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
+        let notice_address = RouteAddress::new(family, Route::new(notice_route));
+
+        let router = Arc::new(crate::runtime::Router::new());
+        let admin_read_model = AdminReadModel::new();
+        let notice_sink = Arc::new(NoticeDomainSink::new(
+            router.clone(),
+            admin_read_model.clone(),
+        ));
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        router.register_domain_pattern("notice", notice_sink.clone());
+        register_fallback_cleanup_domains(&router, DispatchDomain::Notice);
+
+        let ingress = make_cleanup_ingress(router, admin_read_model.clone());
+        let mut session = make_session_info(session_id, TransportKind::WebSocket);
+        session.route_family = family;
+        ingress.on_open(session).await.unwrap();
+
+        notice_sink
+            .deliver(Envelope::from_route(
+                subscriber_address,
+                notice_address.clone(),
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Sub,
+                    MessageType::new(501),
+                    encode_notice_subscribe(notice_route),
+                    family,
+                ),
+            ))
+            .expect("subscribe notice route");
+
+        let _subscribe_response = subscriber_mailbox
+            .receiver()
+            .try_recv()
+            .expect("notice subscribe response");
+        notice_sink.refresh_admin_snapshot_if_dirty();
+        assert_eq!(notice_sink.subscription_count(), 1);
+        assert_eq!(admin_read_model.notice_subscriptions(None, None).len(), 1);
+
+        // Act
+        ingress.on_close(session_id, CloseReason::ClientClose).await;
+        notice_sink.refresh_admin_snapshot_if_dirty();
+        notice_sink
+            .deliver(Envelope::from_route(
+                publisher_address,
+                notice_address,
+                FrameContext::new(
+                    11,
+                    ChannelId::Sub,
+                    MessageType::new(500),
+                    encode_notice_publish(notice_route, b"hello"),
+                    family,
+                ),
+            ))
+            .expect("publish after cleanup");
+
+        // Assert
+        assert_eq!(notice_sink.subscription_count(), 0);
+        assert!(admin_read_model.notice_subscriptions(None, None).is_empty());
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn should_cleanup_real_queue_inflight_on_close() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let sender_session_id = 7;
+        let worker_session_id = 92;
+        let next_worker_session_id = 12;
+        let queue_route = "queue://acme/jobs/emails";
+        let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+        let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let worker_address = RouteAddress::new(family, Route::new("inbox://session/92"));
+        let next_worker_address = RouteAddress::new(family, Route::new("inbox://session/12"));
+
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(crate::runtime::Router::new());
+        let admin_read_model = AdminReadModel::new();
+        let queue_sink = Arc::new(QueueDomainSink::new(
+            store,
+            router.clone(),
+            admin_read_model.clone(),
+            cntryl_midge::WriteOptions::buffered(),
+            crate::utils::idempotency::default_dedup_store(),
+        ));
+
+        let sender_mailbox = Arc::new(Mailbox::new(8));
+        let worker_mailbox = Arc::new(Mailbox::new(8));
+        let next_worker_mailbox = Arc::new(Mailbox::new(8));
+
+        router.register(sender_address.clone(), sender_mailbox.clone());
+        router.register(worker_address.clone(), worker_mailbox.clone());
+        router.register(next_worker_address.clone(), next_worker_mailbox.clone());
+        router.register_domain_pattern("queue", queue_sink.clone());
+        register_fallback_cleanup_domains(&router, DispatchDomain::Queue);
+
+        let ingress = make_cleanup_ingress(router, admin_read_model.clone());
+        let mut worker_session = make_session_info(worker_session_id, TransportKind::WebSocket);
+        worker_session.route_family = family;
+        ingress.on_open(worker_session).await.unwrap();
+
+        queue_sink
+            .deliver(Envelope::from_route(
+                sender_address,
+                queue_address.clone(),
+                FrameContext::new(
+                    sender_session_id,
+                    ChannelId::Pub,
+                    MessageType::new(200),
+                    encode_queue_send(queue_route, b"email"),
+                    family,
+                ),
+            ))
+            .expect("enqueue queue message");
+        let _send_ack = sender_mailbox
+            .receiver()
+            .try_recv()
+            .expect("enqueue response");
+
+        queue_sink
+            .deliver(Envelope::from_route(
+                worker_address,
+                queue_address.clone(),
+                FrameContext::new(
+                    worker_session_id,
+                    ChannelId::Pub,
+                    MessageType::new(202),
+                    encode_queue_reserve(queue_route, 30, 1),
+                    family,
+                ),
+            ))
+            .expect("reserve queue message");
+        let _reserve_ack = worker_mailbox
+            .receiver()
+            .try_recv()
+            .expect("reserve response");
+
+        queue_sink.refresh_admin_snapshot_if_dirty();
+        assert_eq!(admin_read_model.queue_inflight(None).len(), 1);
+
+        // Act
+        ingress
+            .on_close(worker_session_id, CloseReason::ClientClose)
+            .await;
+        queue_sink.refresh_admin_snapshot_if_dirty();
+        queue_sink
+            .deliver(Envelope::from_route(
+                next_worker_address,
+                queue_address,
+                FrameContext::new(
+                    next_worker_session_id,
+                    ChannelId::Pub,
+                    MessageType::new(202),
+                    encode_queue_reserve(queue_route, 30, 1),
+                    family,
+                ),
+            ))
+            .expect("reserve queue message after cleanup");
+        queue_sink.refresh_admin_snapshot_if_dirty();
+
+        // Assert
+        let reserve_after_cleanup = next_worker_mailbox
+            .receiver()
+            .try_recv()
+            .expect("reserve response after cleanup")
+            .into_payload::<FrameContext>()
+            .expect("reserve response frame after cleanup");
+        assert_eq!(
+            queue_receive_response_message_count(&reserve_after_cleanup),
+            1
+        );
+
+        let queues = admin_read_model.queues(None);
+        assert_eq!(queues.len(), 1);
+        assert_eq!(queues[0].messages_ready, 0);
+        assert_eq!(queues[0].messages_inflight, 1);
+        assert_eq!(admin_read_model.queue_inflight(None).len(), 1);
+        assert_eq!(
+            admin_read_model.queue_inflight(None)[0].session_id,
+            next_worker_session_id.to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn should_cleanup_real_rpc_pending_request_on_close() {
+        // Arrange
+        let family = RouteFamily::new(93);
+        let caller_session_id = 1;
+        let worker_session_id = 42;
+        let rpc_route = "rpc://acme/system/resource/operation";
+        let rpc_address = RouteAddress::new(family, Route::new(rpc_route));
+        let caller_address = RouteAddress::new(family, Route::new("inbox://session/1"));
+        let worker_address = RouteAddress::new(family, Route::new("inbox://session/42"));
+
+        let router = Arc::new(crate::runtime::Router::new());
+        let admin_read_model = AdminReadModel::new();
+        let rpc_sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone()));
+        let caller_mailbox = Arc::new(Mailbox::new(8));
+        let worker_mailbox = Arc::new(Mailbox::new(8));
+
+        router.register(caller_address.clone(), caller_mailbox.clone());
+        router.register(worker_address.clone(), worker_mailbox.clone());
+        router.register_domain_pattern("rpc", rpc_sink.clone());
+        register_fallback_cleanup_domains(&router, DispatchDomain::Rpc);
+
+        let ingress = make_cleanup_ingress(router, admin_read_model);
+        let mut worker_session = make_session_info(worker_session_id, TransportKind::WebSocket);
+        worker_session.route_family = family;
+        ingress.on_open(worker_session).await.unwrap();
+
+        let register_frame = crate::benchkit::build_rpc_subscribe(rpc_route);
+        let (register_msg_type, register_payload) =
+            crate::benchkit::extract_single_tlv_field(&register_frame);
+        rpc_sink
+            .deliver(Envelope::from_route(
+                worker_address,
+                rpc_address.clone(),
+                FrameContext::new(
+                    worker_session_id,
+                    ChannelId::Rpc,
+                    MessageType::new(register_msg_type),
+                    Bytes::from(register_payload),
+                    family,
+                ),
+            ))
+            .expect("register rpc worker");
+        let _register_ack = worker_mailbox
+            .receiver()
+            .try_recv()
+            .expect("rpc worker register response");
+
+        let request_frame = crate::benchkit::build_rpc_request(rpc_route, b"ping");
+        let (request_msg_type, request_payload) =
+            crate::benchkit::extract_single_tlv_field(&request_frame);
+        let request_ctx = FrameContext::new(
+            caller_session_id,
+            ChannelId::Rpc,
+            MessageType::new(request_msg_type),
+            Bytes::from(request_payload.clone()),
+            family,
+        );
+        let request =
+            match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
+                .expect("parse rpc request")
+            {
+                crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+                other => panic!("expected rpc request, found {other:?}"),
+            };
+
+        rpc_sink
+            .deliver(Envelope::from_route(
+                caller_address,
+                rpc_address,
+                request_ctx,
+            ))
+            .expect("deliver rpc request");
+
+        assert_eq!(rpc_sink.worker_count(), 1);
+        assert_eq!(rpc_sink.pending_request_count(), 1);
+        let _worker_request = worker_mailbox
+            .receiver()
+            .try_recv()
+            .expect("worker request delivery");
+
+        // Act
+        ingress
+            .on_close(worker_session_id, CloseReason::ClientClose)
+            .await;
+
+        // Assert
+        assert_eq!(rpc_sink.worker_count(), 0);
+        assert_eq!(rpc_sink.pending_request_count(), 0);
+
+        let request_ack = caller_mailbox
+            .receiver()
+            .try_recv()
+            .expect("rpc request ack")
+            .into_payload::<FrameContext>()
+            .expect("rpc request ack frame");
+        assert_eq!(request_ack.msg_type.as_u16(), 302);
+        assert_eq!(request_ack.payload[0], 0);
+
+        let disconnect_error = caller_mailbox
+            .receiver()
+            .try_recv()
+            .expect("rpc disconnect error")
+            .into_payload::<FrameContext>()
+            .expect("rpc disconnect error frame");
+        assert_eq!(disconnect_error.msg_type.as_u16(), 303);
+
+        let error_response = parse_rpc_response_frame(&disconnect_error);
+        assert_eq!(error_response.correlation_id, request.correlation_id);
+        assert_eq!(error_response.seq, 0);
+        assert!(error_response.stream_end);
+
+        let (error_code, _) =
+            crate::protocol::rpc_codec::decode_error_body(error_response.body.as_ref())
+                .expect("decode rpc disconnect error body");
+        assert_eq!(
+            error_code,
+            crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn should_cleanup_real_lease_state_on_close() {
+        // Arrange
+        let family = RouteFamily::new(94);
+        let session_id = 94;
+        let lease_route = "lease://acme/locks/resource";
+        let lease_address = RouteAddress::new(family, Route::new(lease_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/94"));
+
+        let router = Arc::new(crate::runtime::Router::new());
+        let admin_read_model = AdminReadModel::new();
+        let lease_sink = Arc::new(LeaseDomainSink::new(
+            router.clone(),
+            admin_read_model.clone(),
+        ));
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        router.register_domain_pattern("lease", lease_sink.clone());
+        register_fallback_cleanup_domains(&router, DispatchDomain::Lease);
+
+        let ingress = make_cleanup_ingress(router, admin_read_model.clone());
+        let mut session = make_session_info(session_id, TransportKind::WebSocket);
+        session.route_family = family;
+        ingress.on_open(session).await.unwrap();
+
+        lease_sink
+            .deliver(Envelope::from_route(
+                subscriber_address.clone(),
+                lease_address.clone(),
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Sub,
+                    MessageType::new(400),
+                    encode_lease_acquire(lease_route, "", 30),
+                    family,
+                ),
+            ))
+            .expect("acquire lease");
+        lease_sink
+            .deliver(Envelope::from_route(
+                subscriber_address,
+                lease_address,
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Sub,
+                    MessageType::new(407),
+                    encode_lease_subscribe(lease_route),
+                    family,
+                ),
+            ))
+            .expect("subscribe lease route");
+
+        assert_eq!(lease_sink.lease_count(), 1);
+        assert_eq!(lease_sink.subscription_count(), 1);
+        assert_eq!(admin_read_model.leases(None).len(), 1);
+        drain_mailbox(&subscriber_mailbox);
+
+        // Act
+        ingress.on_close(session_id, CloseReason::ClientClose).await;
+        lease_sink
+            .deliver(Envelope::new(
+                RouteAddress::new(family, Route::new("lease://events")),
+                crate::runtime::DomainPublishEvent::new(
+                    family,
+                    Route::new(lease_route),
+                    Bytes::from_static(b"expired"),
+                ),
+            ))
+            .expect("publish lease event after cleanup");
+
+        // Assert
+        assert_eq!(lease_sink.lease_count(), 0);
+        assert_eq!(lease_sink.subscription_count(), 0);
+        assert!(admin_read_model.leases(None).is_empty());
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn should_cleanup_real_schedule_subscription_on_close() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 95;
+        let schedule_route = "schedule://acme/jobs/nightly/run";
+        let schedule_address = RouteAddress::new(family, Route::new(schedule_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/95"));
+
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(crate::runtime::Router::new());
+        let admin_read_model = AdminReadModel::new();
+        let schedule_sink = Arc::new(ScheduleDomainSink::new(
+            store,
+            router.clone(),
+            admin_read_model.clone(),
+        ));
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        router.register_domain_pattern("schedule", schedule_sink.clone());
+        register_fallback_cleanup_domains(&router, DispatchDomain::Schedule);
+
+        let ingress = make_cleanup_ingress(router, admin_read_model);
+        let mut session = make_session_info(session_id, TransportKind::WebSocket);
+        session.route_family = family;
+        ingress.on_open(session).await.unwrap();
+
+        schedule_sink
+            .deliver(Envelope::from_route(
+                subscriber_address.clone(),
+                schedule_address.clone(),
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Sub,
+                    MessageType::new(700),
+                    encode_schedule_create(schedule_route, "* * * * *", b"nightly"),
+                    family,
+                ),
+            ))
+            .expect("create schedule");
+        drain_mailbox(&subscriber_mailbox);
+
+        schedule_sink
+            .deliver(Envelope::from_route(
+                subscriber_address,
+                schedule_address,
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Sub,
+                    MessageType::new(703),
+                    encode_schedule_subscribe(schedule_route),
+                    family,
+                ),
+            ))
+            .expect("subscribe schedule");
+        drain_mailbox(&subscriber_mailbox);
+        assert_eq!(schedule_sink.schedule_count(), 1);
+        assert_eq!(schedule_sink.subscription_count(), 1);
+
+        // Act
+        ingress.on_close(session_id, CloseReason::ClientClose).await;
+
+        // Assert
+        assert_eq!(schedule_sink.schedule_count(), 1);
+        assert_eq!(schedule_sink.subscription_count(), 0);
+        assert!(subscriber_mailbox.receiver().try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn should_cleanup_real_stream_session_and_subscription_on_close() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 96;
+        let stream_route = "stream://acme/logs/events";
+        let stream_pattern = "stream://acme/logs/*";
+        let source_address = RouteAddress::new(family, Route::new("inbox://session/96"));
+        let stream_address = RouteAddress::new(family, Route::new(stream_route));
+
+        let store = crate::benchkit::create_bench_store();
+        let router = Arc::new(crate::runtime::Router::new());
+        let admin_read_model = AdminReadModel::new();
+        let stream_sink = Arc::new(StreamDomainSink::new(
+            store,
+            router.clone(),
+            admin_read_model.clone(),
+        ));
+        let source_mailbox = Arc::new(Mailbox::new(8));
+
+        router.register(source_address.clone(), source_mailbox.clone());
+        router.register_domain_pattern("stream", stream_sink.clone());
+        register_fallback_cleanup_domains(&router, DispatchDomain::Stream);
+
+        let ingress = make_cleanup_ingress(router, admin_read_model);
+        let mut session = make_session_info(session_id, TransportKind::WebSocket);
+        session.route_family = family;
+        ingress.on_open(session).await.unwrap();
+
+        let begin_frame = crate::benchkit::build_stream_begin(stream_route);
+        let (begin_msg_type, begin_payload) =
+            crate::benchkit::extract_single_tlv_field(&begin_frame);
+        stream_sink
+            .deliver(Envelope::from_route(
+                source_address.clone(),
+                stream_address.clone(),
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Pub,
+                    MessageType::new(begin_msg_type),
+                    begin_payload,
+                    family,
+                ),
+            ))
+            .expect("begin stream session");
+
+        let begin_response = source_mailbox
+            .receiver()
+            .try_recv()
+            .expect("stream begin response")
+            .into_payload::<FrameContext>()
+            .expect("stream begin response frame");
+        let _stream_session_id =
+            crate::benchkit::parse_stream_session_id(begin_response.payload.as_ref())
+                .expect("stream session id");
+
+        let subscribe_frame = crate::benchkit::build_stream_subscribe(stream_pattern);
+        let (subscribe_msg_type, subscribe_payload) =
+            crate::benchkit::extract_single_tlv_field(&subscribe_frame);
+        stream_sink
+            .deliver(Envelope::from_route(
+                source_address,
+                stream_address,
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Pub,
+                    MessageType::new(subscribe_msg_type),
+                    subscribe_payload,
+                    family,
+                ),
+            ))
+            .expect("subscribe stream pattern");
+        let _subscribe_response = source_mailbox
+            .receiver()
+            .try_recv()
+            .expect("stream subscribe response");
+
+        assert_eq!(stream_sink.append_session_count(), 1);
+        assert_eq!(stream_sink.subscription_count(), 1);
+
+        // Act
+        ingress.on_close(session_id, CloseReason::ClientClose).await;
+
+        // Assert
+        assert_eq!(stream_sink.append_session_count(), 0);
+        assert_eq!(stream_sink.subscription_count(), 0);
+        assert!(source_mailbox.receiver().try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn should_cleanup_real_kv_transaction_on_close() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let first_session_id = 97;
+        let second_session_id = 98;
+        let kv_route = "kv://acme/app/users";
+        let kv_address = RouteAddress::new(family, Route::new(kv_route));
+        let first_address = RouteAddress::new(family, Route::new("inbox://session/97"));
+        let second_address = RouteAddress::new(family, Route::new("inbox://session/98"));
+
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(crate::runtime::Router::new());
+        let admin_read_model = AdminReadModel::new();
+        let kv_sink = Arc::new(KvDomainSink::new(
+            store,
+            router.clone(),
+            admin_read_model.clone(),
+        ));
+        let first_mailbox = Arc::new(Mailbox::new(8));
+        let second_mailbox = Arc::new(Mailbox::new(8));
+
+        router.register(first_address.clone(), first_mailbox.clone());
+        router.register(second_address.clone(), second_mailbox.clone());
+        router.register_domain_pattern("kv", kv_sink.clone());
+        register_fallback_cleanup_domains(&router, DispatchDomain::Kv);
+
+        let ingress = make_cleanup_ingress(router, admin_read_model);
+        let mut first_session = make_session_info(first_session_id, TransportKind::WebSocket);
+        first_session.route_family = family;
+        ingress.on_open(first_session).await.unwrap();
+
+        let first_begin = crate::benchkit::build_kv_begin(kv_route, 1, 0);
+        let (first_begin_msg_type, first_begin_payload) =
+            crate::benchkit::extract_single_tlv_field(&first_begin);
+        kv_sink
+            .deliver(Envelope::from_route(
+                first_address,
+                kv_address.clone(),
+                FrameContext::new(
+                    first_session_id,
+                    ChannelId::Pub,
+                    MessageType::new(first_begin_msg_type),
+                    first_begin_payload,
+                    family,
+                ),
+            ))
+            .expect("begin first KV transaction");
+
+        let first_begin_response = first_mailbox
+            .receiver()
+            .try_recv()
+            .expect("first begin response")
+            .into_payload::<FrameContext>()
+            .expect("first begin response frame");
+        let first_tx_id = crate::benchkit::parse_kv_tx_id(first_begin_response.payload.as_ref())
+            .expect("first tx id");
+
+        assert_eq!(first_begin_response.payload[0], 0);
+        assert!(first_tx_id > 0);
+        assert_eq!(kv_sink.active_transaction_count(), 1);
+
+        // Act
+        ingress
+            .on_close(first_session_id, CloseReason::ClientClose)
+            .await;
+
+        // Assert
+        assert_eq!(kv_sink.active_transaction_count(), 0);
+
+        let second_begin = crate::benchkit::build_kv_begin(kv_route, 1, 0);
+        let (second_begin_msg_type, second_begin_payload) =
+            crate::benchkit::extract_single_tlv_field(&second_begin);
+        kv_sink
+            .deliver(Envelope::from_route(
+                second_address,
+                kv_address,
+                FrameContext::new(
+                    second_session_id,
+                    ChannelId::Pub,
+                    MessageType::new(second_begin_msg_type),
+                    second_begin_payload,
+                    family,
+                ),
+            ))
+            .expect("begin second KV transaction");
+
+        let second_begin_response = second_mailbox
+            .receiver()
+            .try_recv()
+            .expect("second begin response")
+            .into_payload::<FrameContext>()
+            .expect("second begin response frame");
+        let second_tx_id = crate::benchkit::parse_kv_tx_id(second_begin_response.payload.as_ref())
+            .expect("second tx id");
+
+        assert_eq!(second_begin_response.payload[0], 0);
+        assert!(second_tx_id > 0);
+        assert_eq!(kv_sink.active_transaction_count(), 1);
+        assert!(first_mailbox.receiver().try_recv().is_err());
     }
 
     #[tokio::test]
@@ -1953,6 +2813,9 @@ mod tests {
         use crate::runtime::envelope::Envelope;
         use crate::runtime::router::{DeliveryError, MailboxSink};
 
+        let metrics = crate::boot::observability::metrics();
+        let backpressure_before = metrics.counter_get(obs::METRIC_ROUTER_BACKPRESSURE);
+
         struct BackpressuredSink;
 
         impl MailboxSink for BackpressuredSink {
@@ -1992,6 +2855,10 @@ mod tests {
 
             // Assert
             assert_eq!(decision, IngressDecision::Backpressure);
+            assert!(
+                metrics.counter_get(obs::METRIC_ROUTER_BACKPRESSURE) > backpressure_before,
+                "expected router backpressure metric to increase"
+            );
         });
     }
 
