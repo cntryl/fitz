@@ -135,3 +135,53 @@ async fn should_serve_embedded_assets_with_etag_and_compression() {
     assert_eq!(not_modified_status, StatusCode::NOT_MODIFIED);
     assert!(not_modified_body.is_empty());
 }
+
+#[tokio::test]
+#[serial]
+async fn should_serve_client_routes_from_embedded_index() {
+    let runtime = test_runtime();
+    let temp_dir = tempfile::tempdir().expect("create temporary working directory");
+    let _cwd_guard = CurrentDirGuard::change_to(temp_dir.path());
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/sessions/123")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = fitz::api::admin::handlers::handle_request(request, runtime)
+        .await
+        .unwrap();
+    let status = response.status();
+    let content_type = response.headers().get(header::CONTENT_TYPE).unwrap().clone();
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let html = std::str::from_utf8(&body).expect("decode embedded html");
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type, "text/html; charset=utf-8");
+    assert!(html.contains("Fitz Admin"));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_fallback_to_embedded_index_for_missing_asset_paths() {
+    let runtime = test_runtime();
+    let temp_dir = tempfile::tempdir().expect("create temporary working directory");
+    let _cwd_guard = CurrentDirGuard::change_to(temp_dir.path());
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/assets/does-not-exist.js")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = fitz::api::admin::handlers::handle_request(request, runtime)
+        .await
+        .unwrap();
+    let status = response.status();
+    let content_type = response.headers().get(header::CONTENT_TYPE).unwrap().clone();
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let html = std::str::from_utf8(&body).expect("decode embedded html");
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type, "text/html; charset=utf-8");
+    assert!(html.contains("Fitz Admin"));
+}

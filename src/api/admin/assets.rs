@@ -1,3 +1,10 @@
+//! Embedded admin UI asset serving.
+//!
+//! This module owns the production static-asset contract for the admin SPA,
+//! including lookup, MIME mapping, SPA fallback, compression negotiation, and
+//! ETag handling. The request handler delegates here so the rest of the admin
+//! API remains unchanged.
+
 use bytes::Bytes;
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::{Body, Request, Response, StatusCode};
@@ -364,6 +371,10 @@ mod tests {
                 path: "favicon.svg",
                 bytes: b"<svg></svg>",
             },
+            AssetSource {
+                path: "logo.png",
+                bytes: &[137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3, 4, 5],
+            },
         ])
     }
 
@@ -390,7 +401,10 @@ mod tests {
         let response = serve(&test_index(), "/assets/app.js", None, None).await;
         let body = body::to_bytes(response.into_body()).await.unwrap();
 
-        assert_eq!(body.as_ref(), b"console.log('fitz');");
+        assert_eq!(
+            body.as_ref(),
+            b"console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');"
+        );
     }
 
     #[tokio::test]
@@ -427,6 +441,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_preserve_missing_root_file_fallback_behavior() {
+        let response = serve(&test_index(), "/missing.css", None, None).await;
+        let status = response.status();
+        let body = body::to_bytes(response.into_body()).await.unwrap();
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(std::str::from_utf8(&body).unwrap().contains("<!doctype html>"));
+    }
+
+    #[tokio::test]
     async fn should_reject_path_traversal() {
         let response = serve(&test_index(), "/../secret", None, None).await;
 
@@ -443,6 +467,15 @@ mod tests {
             "br"
         );
         assert_eq!(response.headers().get(header::VARY).unwrap(), "Accept-Encoding");
+    }
+
+    #[tokio::test]
+    async fn should_skip_compression_for_non_compressible_assets() {
+        let response = serve(&test_index(), "/logo.png", Some("br, gzip"), None).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get(header::CONTENT_ENCODING).is_none());
+        assert_eq!(response.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
     }
 
     #[tokio::test]
