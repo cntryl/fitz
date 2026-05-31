@@ -52,6 +52,7 @@ fn dispatch_session_cleanup(
 
     failed_domains
 }
+
 fn canonicalize_dispatch_route_str<'a>(domain: DispatchDomain, route: &'a str) -> Cow<'a, str> {
     RuntimeIngress::canonicalize_domain_route_str(domain.as_str(), route)
 }
