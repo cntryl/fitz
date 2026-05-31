@@ -68,6 +68,7 @@ pub(super) async fn handle_tcp_connection(
 
     let tcp_session_id = session_id;
     let runtime_for_writes = runtime.clone();
+    let ingress_for_writes = ingress.clone();
     let mut write_half = write_half;
     let writer_handle = tokio::spawn(async move {
         tracing::debug!(
@@ -96,6 +97,7 @@ pub(super) async fn handle_tcp_connection(
                 break;
             }
             runtime_for_writes.increment_messages_sent();
+            ingress_for_writes.record_frame_sent(tcp_session_id);
         }
         tracing::debug!(
             session_id = tcp_session_id,
@@ -126,6 +128,7 @@ pub(super) async fn handle_tcp_connection(
 
         while let Some((_sid, frame)) = frame_rx.recv().await {
             runtime_for_frames.increment_messages_received();
+            ingress_clone.record_frame_received(session_id);
             if let Err(error) = crate::api::session::process_session_frame(
                 &mut session,
                 frame,

@@ -235,6 +235,10 @@ fn now_epoch_secs() -> u64 {
         .unwrap_or(0)
 }
 
+// Legacy helper name: this resolves the normalized Fitz realm value from
+// external claim-source names like `tid`, `tenant_id`, or `org_id`.
+// It does not imply that realm is inherently a tenant, and it never consults
+// `route_family`.
 fn resolved_tenant_or_empty(raw_claims: &RawClaims) -> String {
     raw_claims
         .tid
@@ -272,6 +276,9 @@ fn permissive_session_claims(
     ),
     String,
 > {
+    // Legacy local variable name retained for compatibility with `Claims.tenant`.
+    // Semantically this is the Fitz realm value normalized from external claim
+    // names, and it remains orthogonal to `route_family`.
     let tenant = resolved_tenant_or_empty(&raw_claims);
     let route_family = raw_claims.route_family()?;
     let permissions = raw_claims.normalized_permissions()?;

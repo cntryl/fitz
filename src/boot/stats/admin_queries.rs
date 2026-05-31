@@ -1,6 +1,7 @@
 use super::Runtime;
 use crate::domains::queue::{MessageId, QueueKey};
 use crate::runtime::routing::RouteFamily;
+use chrono::{DateTime, Utc};
 
 impl Runtime {
     fn refresh_queue_admin_snapshot(&self) {
@@ -225,24 +226,16 @@ impl Runtime {
             .active_sessions()
             .into_iter()
             .filter(|session| match realm {
-                Some(realm) => session
-                    .claims
-                    .as_ref()
-                    .map(|claims| claims.tenant == realm)
-                    .unwrap_or(false),
+                Some(realm) => session.realm() == realm,
                 None => true,
             })
             .map(|session| crate::api::admin::SessionInfo {
                 session_id: session.session_id.to_string(),
-                realm: session
-                    .claims
-                    .as_ref()
-                    .map(|claims| claims.tenant.clone())
-                    .unwrap_or_default(),
-                connected_at: String::new(),
-                idle_seconds: 0,
-                messages_received: 0,
-                messages_sent: 0,
+                realm: session.realm(),
+                connected_at: DateTime::<Utc>::from(session.connected_at()).to_rfc3339(),
+                idle_seconds: session.idle_seconds(),
+                messages_received: session.messages_received(),
+                messages_sent: session.messages_sent(),
                 transport: session.transport_kind.to_string(),
                 remote_addr: session
                     .peer_addr

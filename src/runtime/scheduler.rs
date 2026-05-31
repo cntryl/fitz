@@ -528,9 +528,36 @@ mod tests {
         // Arrange
         let scheduler = Scheduler::new(2);
         scheduler.start();
+        let (incremented_tx, incremented_rx) = crossbeam_channel::bounded(1);
 
         // Create two actors
-        let actor1 = CounterActor { count: 0 };
+        struct NotifyingCounterActor {
+            count: u32,
+            incremented: crossbeam_channel::Sender<()>,
+        }
+        impl Actor for NotifyingCounterActor {
+            type Message = TestMsg;
+
+            fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
+                match msg {
+                    TestMsg::Increment => {
+                        self.count += 1;
+                        let _ = self.incremented.send(());
+                    }
+                    TestMsg::GetCount(reply) => {
+                        let _ = reply.send(self.count);
+                    }
+                    TestMsg::Stop => {
+                        ctx.stop();
+                    }
+                }
+            }
+        }
+
+        let actor1 = NotifyingCounterActor {
+            count: 0,
+            incremented: incremented_tx,
+        };
         let actor2 = CounterActor { count: 0 };
         let addr1 = test_address(1, "/test/actor1");
         let addr2 = test_address(1, "/test/actor2");
@@ -562,7 +589,7 @@ mod tests {
 
         // Act - trigger the ping
         ping_ref.send("start".to_string()).unwrap();
-        thread::sleep(Duration::from_millis(100));
+    incremented_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
         // Check that actor1 received the increment
         let (tx, rx) = crossbeam_channel::bounded(1);
@@ -581,15 +608,19 @@ mod tests {
         // Arrange
         let scheduler = Scheduler::new(2);
         scheduler.start();
+        let (response_tx, response_rx) = crossbeam_channel::bounded(1);
 
         // Create a request-response actor pair
         struct RequestActor {
             response_received: Arc<parking_lot::Mutex<Option<String>>>,
+            response_tx: crossbeam_channel::Sender<String>,
         }
         impl Actor for RequestActor {
             type Message = String;
-            fn receive(&mut self, msg: String, _ctx: &mut Context<Self>) {
-                *self.response_received.lock() = Some(msg);
+            fn receive(&mut self, msg: String, ctx: &mut Context<Self>) {
+                *self.response_received.lock() = Some(msg.clone());
+                let _ = self.response_tx.send(msg);
+                ctx.stop();
             }
         }
 
@@ -600,6 +631,7 @@ mod tests {
                 if msg == "hello" {
                     // Reply to the sender
                     ctx.reply("world".to_string()).ok();
+                    ctx.stop();
                 }
             }
         }
@@ -607,6 +639,7 @@ mod tests {
         let response_received = Arc::new(parking_lot::Mutex::new(None));
         let request_actor = RequestActor {
             response_received: response_received.clone(),
+            response_tx,
         };
         let response_actor = ResponseActor;
 
@@ -622,11 +655,91 @@ mod tests {
         scheduler.router().route(request_envelope).unwrap();
 
         // Wait for reply
-        thread::sleep(Duration::from_millis(100));
+        let response = response_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
         // Assert
-        let response = response_received.lock().clone();
-        assert_eq!(response, Some("world".to_string()));
+        assert_eq!(response, "world");
+        assert_eq!(response_received.lock().clone(), Some("world".to_string()));
+    }
+
+    #[test]
+    fn should_process_high_priority_messages_before_normal_messages_given_both_lanes_ready() {
+        // Arrange
+        #[derive(Debug)]
+        enum PriorityMsg {
+            High,
+            Normal,
+        }
+
+        struct PriorityActor {
+            order: Arc<parking_lot::Mutex<Vec<&'static str>>>,
+            started_tx: crossbeam_channel::Sender<()>,
+            release_rx: crossbeam_channel::Receiver<()>,
+            done_tx: crossbeam_channel::Sender<()>,
+        }
+
+        impl Actor for PriorityActor {
+            type Message = PriorityMsg;
+
+            fn started(&mut self, _ctx: &mut Context<Self>) {
+                self.started_tx.send(()).unwrap();
+                self.release_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            }
+
+            fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
+                let label = match msg {
+                    PriorityMsg::High => "high",
+                    PriorityMsg::Normal => "normal",
+                };
+
+                let mut order = self.order.lock();
+                order.push(label);
+                if order.len() == 2 {
+                    let _ = self.done_tx.send(());
+                    ctx.stop();
+                }
+            }
+        }
+
+        let scheduler = Scheduler::new(1);
+        scheduler.start();
+        let order = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let (started_tx, started_rx) = crossbeam_channel::bounded(1);
+        let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        let address = test_address(1, "/test/high-priority");
+
+        let _actor_ref = scheduler.spawn(
+            PriorityActor {
+                order: order.clone(),
+                started_tx,
+                release_rx,
+                done_tx,
+            },
+            address.clone(),
+            10,
+        );
+
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor to start before enqueueing messages");
+
+        // Act
+        scheduler
+            .router()
+            .route(Envelope::new(address.clone(), PriorityMsg::Normal))
+            .unwrap();
+        scheduler
+            .router()
+            .route_high_priority(Envelope::new(address.clone(), PriorityMsg::High))
+            .unwrap();
+        release_tx.send(()).unwrap();
+        done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor to process both priority lanes");
+
+        // Assert
+        assert_eq!(order.lock().as_slice(), ["high", "normal"]);
     }
 
     #[test]

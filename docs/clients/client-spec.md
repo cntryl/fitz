@@ -442,7 +442,7 @@ async def safe_enqueue(client, route, payload):
 Use these exact terms. Other terms are forbidden.
 | Term | Definition | Forbidden Alternatives |
 | ---------------: | ------------------------------------------------------------------ | --------------------------------- |
-| **realm** | Isolation boundary for resources within a broker | `tenant`, `organization` |
+| **realm** | Opaque, application-defined isolation boundary for resources within a broker. A realm may represent a tenant, department, cost center, user, environment, or another developer-chosen partition. | `tenant`, `organization`, `department`, `cost_center`, `user` |
 | **area** | Namespace within a realm | `namespace`, `collection` |
 | **resource** | Named entity within an area (e.g., table, queue, stream) | — |
 | **route** | URI-like string addressing a resource or operation | `endpoint`, `path`, `key` |
@@ -450,6 +450,8 @@ Use these exact terms. Other terms are forbidden.
 | **domain** | Service category (kv, queue, notice, stream, rpc, lease, schedule) | — |
 
 **Internal routing rule:** Clients send `CONNECT(jwt)` and opaque route strings only. Broker-internal partitioning, shard placement, and other session routing state are not part of the client contract.
+
+**Realm vs RouteFamily:** `realm` is the application-visible namespace label carried in routes and permissions. `fitz.route_family` is a separate broker-internal routing key. They are orthogonal and must never be inferred or defaulted from one another.
 
 **Forbidden terminology in client code:**
 

@@ -12,12 +12,13 @@ use crate::protocol::tlv::{TlvDecoder, TlvError};
 use crate::runtime::routing::RouteFamily;
 use crate::session::permissions::SessionPermissions;
 use bytes::Bytes;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 use tracing::{debug, error, trace, warn};
 
 /// Unique session identifier
@@ -60,10 +61,39 @@ impl fmt::Display for CloseReason {
     }
 }
 
-/// Session metadata stored alongside permissions
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
+struct SessionLiveStats {
+    connected_at: SystemTime,
+    last_activity: Mutex<Instant>,
+    messages_received: AtomicU64,
+    messages_sent: AtomicU64,
+}
+
+impl Default for SessionLiveStats {
+    fn default() -> Self {
+        Self {
+            connected_at: SystemTime::now(),
+            last_activity: Mutex::new(Instant::now()),
+            messages_received: AtomicU64::new(0),
+            messages_sent: AtomicU64::new(0),
+        }
+    }
+}
+
+/// Session metadata stored alongside permissions and live transport stats.
+#[derive(Debug, Clone)]
 pub struct SessionMetadata {
     properties: HashMap<String, String>,
+    live: Arc<SessionLiveStats>,
+}
+
+impl Default for SessionMetadata {
+    fn default() -> Self {
+        Self {
+            properties: HashMap::new(),
+            live: Arc::new(SessionLiveStats::default()),
+        }
+    }
 }
 
 impl SessionMetadata {
@@ -78,6 +108,32 @@ impl SessionMetadata {
 
     pub fn get(&self, key: &str) -> Option<&str> {
         self.properties.get(key).map(|s| s.as_str())
+    }
+
+    pub fn connected_at(&self) -> SystemTime {
+        self.live.connected_at
+    }
+
+    pub fn idle_seconds(&self) -> u64 {
+        self.live.last_activity.lock().elapsed().as_secs()
+    }
+
+    pub fn messages_received(&self) -> u64 {
+        self.live.messages_received.load(Ordering::Relaxed)
+    }
+
+    pub fn messages_sent(&self) -> u64 {
+        self.live.messages_sent.load(Ordering::Relaxed)
+    }
+
+    pub fn record_frame_received(&self) {
+        self.live.messages_received.fetch_add(1, Ordering::Relaxed);
+        *self.live.last_activity.lock() = Instant::now();
+    }
+
+    pub fn record_frame_sent(&self) {
+        self.live.messages_sent.fetch_add(1, Ordering::Relaxed);
+        *self.live.last_activity.lock() = Instant::now();
     }
 }
 
@@ -96,6 +152,40 @@ pub struct SessionInfo {
     /// Route family for this session (tenant isolation boundary).
     /// Resolved from the verified `fitz.route_family` claim at authentication time.
     pub route_family: RouteFamily,
+}
+
+impl SessionInfo {
+    pub fn realm(&self) -> String {
+        self.claims
+            .as_ref()
+            .map(|claims| claims.tenant.clone())
+            .filter(|tenant| !tenant.is_empty())
+            .unwrap_or_else(|| self.route_family.as_u64().to_string())
+    }
+
+    pub fn connected_at(&self) -> SystemTime {
+        self.metadata.connected_at()
+    }
+
+    pub fn idle_seconds(&self) -> u64 {
+        self.metadata.idle_seconds()
+    }
+
+    pub fn messages_received(&self) -> u64 {
+        self.metadata.messages_received()
+    }
+
+    pub fn messages_sent(&self) -> u64 {
+        self.metadata.messages_sent()
+    }
+
+    pub fn record_frame_received(&self) {
+        self.metadata.record_frame_received();
+    }
+
+    pub fn record_frame_sent(&self) {
+        self.metadata.record_frame_sent();
+    }
 }
 
 /// Errors that can occur while handling a frame

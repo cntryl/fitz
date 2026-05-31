@@ -20,7 +20,7 @@ exactly-once delivery.
 - **Async at the edges, sync in the core** — transport adapters are async; engine, runtime, and domains are fully synchronous. No .await in domain code.
 - **Actor-based runtime** — small deterministic actors, per-actor state, mailboxes, and a scheduler for fair, low-latency execution.
 - **Route-first addressing** — use the pair `(RouteFamily, Route)`. The `Route` itself follows the pattern `{scheme}://{realm}/{area}/{resource}/{operation}` and the `RouteFamily` is a separate broker-internal isolation id (for example: RouteFamily=1 with route `kv://acme/app/users/get`).
-- **Realm isolation** — realms are first-class isolation boundaries (never call them tenants).
+- **Realm isolation** — realms are first-class, opaque application-defined isolation boundaries. A realm may model a tenant, department, cost center, user, environment, or any other developer-chosen partition, but Fitz does not assign one business meaning.
 - **Pluggable codecs & adapters** — TLV, JSON, Protobuf, binary, gRPC/HTTP/WS/TCP adapters, and streaming bridges.
 - **Performance by construction** — microbenchmarks first, no allocations in hot paths, precomputed buffers, and deterministic routing.
 
@@ -66,6 +66,7 @@ exactly-once delivery.
 
 ## Runtime Design Details ⚙️
 - RouteFamily is a broker-internal isolation key selected from verified JWT claims. Example: a full address is the pair `(RouteFamily=1, route="kv://acme/app/users/get")`.
+- RouteFamily is never a public or business namespace label. It must never be treated as a realm alias or realm fallback.
 - Anonymous mode always uses RouteFamily `1`; authenticated families must be provisioned before readiness.
 - Actors are single responsibility, synchronous objects with clearly typed messages/responses.
 - Interop boundary: async transport enqueues frames → runtime dequeues and calls actor handlers synchronously → response serialized and forwarded to transport writer.
@@ -117,11 +118,11 @@ exactly-once delivery.
 ---
 
 ## Appendix – Key Terms
-- **realm**: isolation boundary for resources (do not call it a tenant)
+- **realm**: opaque application-defined isolation boundary for resources; it may represent a tenant, department, cost center, user, environment, or another developer-chosen partition
 - **area**: namespace within a realm
 - **resource**: specific entity
 - **route**: route address, formatted as `{scheme}://{realm}/{area}/{resource}/{operation}`. Note: the full address is always the pair `(RouteFamily, Route)`; `RouteFamily` is not part of the route string.
-- **RouteFamily**: broker-internal numeric isolation id provisioned on the single node
+- **RouteFamily**: broker-internal numeric isolation id provisioned on the single node; separate from realm and never a substitute for it
 
 ---
 

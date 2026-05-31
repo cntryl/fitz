@@ -241,7 +241,7 @@ pub fn parse_jwt_noverify(compact: &str) -> Result<RawClaims, String> {
 /// Normalized, immutable Claims used by the runtime.
 ///
 /// This is produced **once at auth time** from a `RawClaims` and contains:
-/// - resolved realm (from tid/tenant_id/org_id)
+/// - resolved Fitz realm semantics (from external claim names like tid/tenant_id/org_id)
 /// - roles array (never re-interpreted)
 /// - permissions array (fully normalized, never reparsed)
 /// - expiration time
@@ -254,6 +254,12 @@ pub fn parse_jwt_noverify(compact: &str) -> Result<RawClaims, String> {
 #[derive(Debug, Clone)]
 pub struct Claims {
     pub sub: String,
+    /// Legacy internal field name for the normalized Fitz realm.
+    ///
+    /// Fitz treats realm as an opaque application-defined boundary. This value may
+    /// be sourced from external claim names such as `tid`, `tenant_id`, or `org_id`,
+    /// but its runtime meaning is Fitz realm semantics, not an inherent "tenant"
+    /// concept. It is always orthogonal to `route_family`.
     pub tenant: String,
     pub route_family: u32,
     pub roles: Vec<String>,
@@ -263,17 +269,20 @@ pub struct Claims {
 
 impl RawClaims {
     /// Validate and normalize into a `Claims` object. This performs the same
-    /// validation as `RawClaims::validate` and resolves tenant + permissions.
+    /// validation as `RawClaims::validate` and resolves Fitz realm semantics
+    /// from external claim-source names plus permissions.
     pub fn normalize(
         self,
         allowlist: &[&str],
         audiences: &[&str],
         now: u64,
     ) -> Result<Claims, String> {
-        // Basic validation (issuer, audience, time checks, tenant resolution)
+        // Basic validation (issuer, audience, time checks, external claim-source resolution)
         self.validate(allowlist, audiences, now)?;
 
-        // Resolve tenant id (we already know validate ensured exactly one present)
+        // Resolve the Fitz realm value from external claim-source names.
+        // The local variable keeps the legacy "tenant" name because the struct
+        // field has not been renamed yet.
         let tenant = if let Some(t) = &self.tid {
             t.clone()
         } else if let Some(t) = &self.tenant_id {
@@ -545,6 +554,31 @@ mod claims_tests {
 
         // Assert
         assert_eq!(result.unwrap_err(), "fitz.route_family must be non-zero");
+    }
+
+    #[test]
+    fn should_keep_realm_semantics_orthogonal_to_route_family_when_normalizing_claims() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://idp.example/",
+            "aud": "fitz-broker",
+            "sub": "user:42",
+            "exp": 9999999999u64,
+            "tid": "realm-a",
+            "fitz": { "route_family": 7, "permissions": [] }
+        });
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
+        let jwt = format!("{}.{}.{}", "{}", b64, "sig");
+
+        // Act
+        let raw = parse_jwt_noverify(&jwt).expect("parse jwt");
+        let normalized = raw
+            .normalize(&["https://idp.example/"], &["fitz-broker"], 0)
+            .expect("normalize");
+
+        // Assert
+        assert_eq!(normalized.tenant, "realm-a");
+        assert_eq!(normalized.route_family, 7);
     }
 }
 

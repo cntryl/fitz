@@ -21,6 +21,7 @@ use crate::session::{CloseReason, SessionInfo, SessionPermissions};
 use bytes::Bytes;
 use dashmap::DashMap;
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, trace, warn};
@@ -106,6 +107,11 @@ struct DomainDispatchRequest<'a> {
     preserve_payload_for_handler: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PendingSessionCleanup {
+    route_family: crate::runtime::routing::RouteFamily,
+}
+
 impl<'a> AuthorizationTargets<'a> {
     fn span_target(&self) -> (&str, usize) {
         match self {
@@ -184,6 +190,12 @@ pub trait Ingress: Send + Sync {
             .map(|session| session.route_family)
     }
 
+    /// Record that the transport accepted a frame from the wire for this session.
+    fn record_frame_received(&self, _session_id: u64) {}
+
+    /// Record that the transport wrote a frame to the wire for this session.
+    fn record_frame_sent(&self, _session_id: u64) {}
+
     /// Called when the transport closes the connection
     async fn on_close(&self, session_id: u64, reason: CloseReason);
 }
@@ -215,6 +227,10 @@ pub struct RuntimeIngress {
     session_actors: Arc<DashMap<u64, crate::session::actor::SessionActor>>,
     /// Cached per-session inbox routes used as the source address for domain dispatch.
     session_inbox_routes: Arc<DashMap<u64, crate::runtime::routing::Route>>,
+    /// Best-effort retry tickets for session cleanups that failed initial delivery.
+    pending_session_cleanups: Arc<DashMap<u64, PendingSessionCleanup>>,
+    /// Prevent overlapping pending-cleanup sweeps from issuing duplicate retries.
+    cleanup_retry_in_progress: Arc<AtomicBool>,
     /// Optional router for dispatching frames to domain sinks
     router: Option<Arc<crate::runtime::Router>>,
     /// Optional callback for session events (for routing to handlers)
@@ -237,6 +253,8 @@ impl RuntimeIngress {
             sessions: Arc::new(DashMap::new()),
             session_actors: Arc::new(DashMap::new()),
             session_inbox_routes: Arc::new(DashMap::new()),
+            pending_session_cleanups: Arc::new(DashMap::new()),
+            cleanup_retry_in_progress: Arc::new(AtomicBool::new(false)),
             router: None,
             event_handler: None,
             route_families: Arc::new(std::iter::once(1).collect()),
@@ -311,6 +329,114 @@ impl RuntimeIngress {
         self.sessions.len()
     }
 
+    fn finalize_session_close(&self, session_id: u64) {
+        self.sessions.remove(&session_id);
+        self.session_actors.remove(&session_id);
+        self.session_inbox_routes.remove(&session_id);
+        if let Some(admin_read_model) = &self.admin_read_model {
+            admin_read_model.record_session_close(session_id);
+        }
+    }
+
+    fn record_cleanup_failure(
+        &self,
+        session_id: u64,
+        route_family: crate::runtime::routing::RouteFamily,
+        failed_domains: &[DispatchDomain],
+        store_retry_ticket: bool,
+    ) {
+        if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
+            collector.counter_add(
+                obs::METRIC_SESSION_CLEANUP_FAILURES,
+                failed_domains.len() as u64,
+            );
+        }
+
+        if store_retry_ticket {
+            self.pending_session_cleanups
+                .insert(session_id, PendingSessionCleanup { route_family });
+        }
+
+        tracing::warn!(
+            session_id = session_id,
+            route_family = route_family.id(),
+            failed_domains = ?failed_domains,
+            retry_pending = store_retry_ticket,
+            "Ingress: session cleanup incomplete"
+        );
+    }
+
+    async fn retry_pending_session_cleanups(&self) {
+        if self.pending_session_cleanups.is_empty() {
+            return;
+        }
+
+        let Some(router) = &self.router else {
+            return;
+        };
+
+        if self
+            .cleanup_retry_in_progress
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+
+        let pending = self
+            .pending_session_cleanups
+            .iter()
+            .map(|entry| (*entry.key(), *entry.value()))
+            .collect::<Vec<_>>();
+        let pending_len = pending.len();
+        let router = router.clone();
+
+        let retry_result = tokio::task::spawn_blocking(move || {
+            pending
+                .into_iter()
+                .map(|(session_id, cleanup)| {
+                    (
+                        session_id,
+                        cleanup.route_family,
+                        dispatch_session_cleanup(router.as_ref(), cleanup.route_family, session_id),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .await;
+
+        self.cleanup_retry_in_progress.store(false, Ordering::SeqCst);
+
+        match retry_result {
+            Ok(retry_outcomes) => {
+                for (session_id, route_family, failed_domains) in retry_outcomes {
+                    if failed_domains.is_empty() {
+                        self.pending_session_cleanups.remove(&session_id);
+                        tracing::debug!(
+                            session_id = session_id,
+                            route_family = route_family.id(),
+                            "Ingress: pending session cleanup retry succeeded"
+                        );
+                    } else {
+                        self.record_cleanup_failure(
+                            session_id,
+                            route_family,
+                            &failed_domains,
+                            true,
+                        );
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    pending_sessions = pending_len,
+                    "Ingress: pending cleanup retry worker task failed"
+                );
+            }
+        }
+    }
+
     pub async fn close_all_sessions(&self, reason: CloseReason) {
         let session_ids = self
             .sessions
@@ -356,6 +482,10 @@ impl RuntimeIngress {
         );
         actor.authenticate(claims, snapshot);
         self.session_actors.insert(session_id, actor);
+
+        if let Some(admin_read_model) = &self.admin_read_model {
+            admin_read_model.record_session_update(entry);
+        }
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -658,6 +788,8 @@ impl Default for RuntimeIngress {
 #[async_trait::async_trait]
 impl Ingress for RuntimeIngress {
     async fn on_open(&self, session: SessionInfo) -> Result<u64, String> {
+        self.retry_pending_session_cleanups().await;
+
         let session_id = session.session_id;
 
         // Record session opened counter
@@ -712,6 +844,8 @@ impl Ingress for RuntimeIngress {
         msg_type: crate::protocol::tlv::MessageType,
         message_payload: Bytes,
     ) -> IngressDecision {
+        self.retry_pending_session_cleanups().await;
+
         let _ingress_latency =
             crate::observability::ScopedHistogramUs::new(obs::METRIC_INGRESS_FRAME_TOTAL_LATENCY);
         // Record frame received counter
@@ -923,7 +1057,21 @@ impl Ingress for RuntimeIngress {
             .map(|session| session.route_family)
     }
 
+    fn record_frame_received(&self, session_id: u64) {
+        if let Some(session) = self.sessions.get(&session_id) {
+            session.record_frame_received();
+        }
+    }
+
+    fn record_frame_sent(&self, session_id: u64) {
+        if let Some(session) = self.sessions.get(&session_id) {
+            session.record_frame_sent();
+        }
+    }
+
     async fn on_close(&self, session_id: u64, reason: CloseReason) {
+        self.retry_pending_session_cleanups().await;
+
         // Record session closed counter
         if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
             collector.counter_inc(obs::METRIC_SESSIONS_CLOSED);
@@ -951,25 +1099,20 @@ impl Ingress for RuntimeIngress {
                             "Ingress: dispatched cleanup to KV, Notice, RPC, Stream, Schedule, Lease, and Queue domains"
                         );
                     } else {
-                        if let Ok(collector) =
-                            std::panic::catch_unwind(crate::observability::metrics)
-                        {
-                            collector.counter_add(
-                                obs::METRIC_SESSION_CLEANUP_FAILURES,
-                                failed_domains.len() as u64,
-                            );
-                        }
-                        tracing::warn!(
-                            session_id = session_id,
-                            route_family = route_family.id(),
-                            failed_domains = ?failed_domains,
-                            "Ingress: session cleanup incomplete"
+                        self.record_cleanup_failure(
+                            session_id,
+                            route_family,
+                            &failed_domains,
+                            true,
                         );
                     }
                 }
                 Err(e) => {
+                    self.pending_session_cleanups
+                        .insert(session_id, PendingSessionCleanup { route_family });
                     tracing::warn!(
                         session_id = session_id,
+                        route_family = route_family.id(),
                         error = %e,
                         "Ingress: cleanup worker task failed"
                     );
@@ -978,12 +1121,7 @@ impl Ingress for RuntimeIngress {
         }
 
         // Remove session state after domain cleanup completes.
-        self.sessions.remove(&session_id);
-        self.session_actors.remove(&session_id);
-        self.session_inbox_routes.remove(&session_id);
-        if let Some(admin_read_model) = &self.admin_read_model {
-            admin_read_model.record_session_close(session_id);
-        }
+        self.finalize_session_close(session_id);
 
         // Notify handler if present
         if let Some(handler) = &self.event_handler {
@@ -1596,7 +1734,7 @@ mod tests {
 
         let router = Arc::new(crate::runtime::Router::new());
         let admin_read_model = AdminReadModel::new();
-        let ingress = make_cleanup_ingress(router.clone(), admin_read_model);
+        let ingress = make_cleanup_ingress(router.clone(), admin_read_model.clone());
         let session_id = 88;
         let mut session = make_session_info(session_id, TransportKind::Tcp);
         session.route_family = RouteFamily::new(88);
@@ -1621,6 +1759,48 @@ mod tests {
             collector.counter_get(obs::METRIC_SESSION_CLEANUP_FAILURES) > failures_before,
             "expected cleanup failure metric to increase"
         );
+        assert_eq!(ingress.session_count(), 0);
+        assert!(ingress.get_session(session_id).is_none());
+        assert!(ingress.get_session_actor(session_id).is_none());
+        assert!(admin_read_model.sessions(None).is_empty());
+        assert!(ingress.pending_session_cleanups.contains_key(&session_id));
+    }
+
+    #[tokio::test]
+    async fn should_retry_pending_session_cleanup_on_next_session_open() {
+        // Arrange
+        let router = Arc::new(crate::runtime::Router::new());
+        let admin_read_model = AdminReadModel::new();
+        let ingress = make_cleanup_ingress(router.clone(), admin_read_model);
+        let session_id = 89;
+        let mut session = make_session_info(session_id, TransportKind::Tcp);
+        session.route_family = RouteFamily::new(89);
+
+        for domain in DispatchDomain::SESSION_CLEANUP_ORDER {
+            if domain == DispatchDomain::Queue {
+                continue;
+            }
+
+            let sink = Arc::new(CleanupTrackingSink::default());
+            router.register_domain_pattern(domain.as_str(), sink);
+        }
+
+        ingress.on_open(session).await.unwrap();
+        ingress.on_close(session_id, CloseReason::ClientClose).await;
+        assert!(ingress.pending_session_cleanups.contains_key(&session_id));
+
+        let queue_sink = Arc::new(CleanupTrackingSink::default());
+        router.register_domain_pattern(DispatchDomain::Queue.as_str(), queue_sink.clone());
+
+        let mut next_session = make_session_info(90, TransportKind::WebSocket);
+        next_session.route_family = RouteFamily::new(90);
+
+        // Act
+        ingress.on_open(next_session).await.unwrap();
+
+        // Assert
+        assert!(!ingress.pending_session_cleanups.contains_key(&session_id));
+        assert_eq!(queue_sink.recorded_sessions(), vec![session_id]);
     }
 
     #[tokio::test]

@@ -115,6 +115,7 @@ where
 
     let ws_session_id = session_id;
     let runtime_for_writes = runtime.clone();
+    let ingress_for_writes = ingress.clone();
     // Capture the handle so we can await graceful drain when the session closes.
     let writer_handle = tokio::spawn(async move {
         tracing::debug!(
@@ -135,6 +136,7 @@ where
                 break;
             }
             runtime_for_writes.increment_messages_sent();
+            ingress_for_writes.record_frame_sent(ws_session_id);
         }
         tracing::debug!(session_id = ws_session_id, "WS outbound writer task ended");
     });
@@ -148,6 +150,7 @@ where
             Ok(Message::Binary(data)) => {
                 let frame = Bytes::from(data);
                 runtime.increment_messages_received();
+                ingress.record_frame_received(session_id);
                 tracing::debug!(
                     session_id = session_id,
                     frame_len = frame.len(),

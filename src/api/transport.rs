@@ -155,6 +155,8 @@ impl TransportDriver {
     ///
     /// Caller MUST call close() on error.
     pub async fn process_frame(&mut self, frame: Bytes) -> Result<(), String> {
+        self.ingress.record_frame_received(self.session_id);
+
         // Validate frame size
         if frame.len() > self.config.max_frame_size {
             return Err(format!(

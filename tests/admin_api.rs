@@ -21,6 +21,7 @@ use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::store::{CommitRecordsParams, EventPayload, StreamStore};
 use fitz::runtime::routing::RouteFamily;
 use fitz::runtime::Router;
+use fitz::session::{RuntimeIngress, SessionInfo as RuntimeSessionInfo, SessionMetadata, SessionPermissions, TransportKind};
 use hyper::header::{COOKIE, SET_COOKIE};
 use hyper::{body, Body, Method, Request, StatusCode};
 use serial_test::serial;
@@ -2833,6 +2834,28 @@ async fn should_return_exact_rpc_operation_detail_counts() {
 #[serial]
 async fn should_return_sessions_collection_only() {
     let runtime = test_runtime();
+    let ingress = Arc::new(
+        RuntimeIngress::new(true)
+            .with_router(runtime.router())
+            .with_admin_read_model(runtime.admin_read_model()),
+    );
+    runtime.attach_ingress(ingress.clone());
+
+    let session = RuntimeSessionInfo {
+        session_id: 41,
+        transport_kind: TransportKind::WebSocket,
+        peer_addr: None,
+        metadata: Arc::new(SessionMetadata::new()),
+        permissions_snapshot: SessionPermissions::empty(),
+        claims: None,
+        authenticated: false,
+        route_family: RouteFamily::new(41),
+    };
+    ingress.on_open(session).await.unwrap();
+    ingress.record_frame_received(41);
+    ingress.record_frame_received(41);
+    ingress.record_frame_sent(41);
+
     let cookie = login_cookie(runtime.clone()).await;
 
     let req = Request::builder()
@@ -2847,6 +2870,18 @@ async fn should_return_sessions_collection_only() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let sessions = payload["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["session_id"], "41");
+    assert_eq!(sessions[0]["realm"], "41");
+    assert_eq!(sessions[0]["transport"], "websocket");
+    assert_eq!(sessions[0]["messages_received"], 2);
+    assert_eq!(sessions[0]["messages_sent"], 1);
+    assert!(sessions[0]["connected_at"].as_str().unwrap().contains('T'));
+    assert!(sessions[0]["idle_seconds"].as_u64().unwrap() <= 1);
 }
 
 #[tokio::test]
