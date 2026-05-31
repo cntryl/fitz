@@ -57,10 +57,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
   cargo build --release --locked \
   && strip target/release/fitz || true
 
+FROM debian:trixie-slim AS runtime-fs
+
+RUN mkdir -p /data \
+  && chown 65532:65532 /data
+
 FROM gcr.io/distroless/cc-debian12 AS runtime
 
 WORKDIR /app
 
+COPY --from=runtime-fs --chown=65532:65532 /data /data
 COPY --from=backend /usr/src/fitz/target/release/fitz /app/fitz
 
 USER 65532:65532
