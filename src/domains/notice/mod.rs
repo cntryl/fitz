@@ -2,7 +2,7 @@
 //!
 //! # Architecture
 //!
-//! - **NoticeDomainSink** (`src/boot/domains/notice_sink.rs`): Live production handler that keeps broker-local subscription state in memory for the current process
+//! - **NoticeDomainSink** (`src/domains/notice/sink.rs`): Live production handler that keeps broker-local subscription state in memory for the current process
 //! - **NoticeRouteActor** ([actor]): Sync actor model used for core matching and focused unit tests
 //! - **SessionActor**: Enforces authentication/authorization before forwarding notice messages
 //! - Subscriptions are session-scoped and cleaned up on disconnect
@@ -27,6 +27,7 @@ pub mod events;
 pub mod metrics;
 pub mod protocol;
 pub mod session;
+pub mod sink;
 
 pub mod bench; // Zero-copy notification primitives for benchmarking
 

@@ -21,8 +21,15 @@
 ///
 /// **Debug level (typically filtered):**
 /// - scheduler (actor scheduling)
+pub mod global;
 pub mod metrics;
 pub mod tracing;
+
+pub use global::{
+    counter_add, counter_inc, gauge_dec, gauge_inc, gauge_set, histogram_observe_us,
+    hot_path_counter_inc, hot_path_histogram_observe_us, hot_path_metrics_enabled,
+    init_observability, metrics, try_init_observability, ScopedHistogramUs,
+};
 
 // ============================================================================
 // SPAN NAMES (for consistent naming and quick reference)
@@ -87,8 +94,7 @@ pub const METRIC_TLV_DECODE_ERRORS: &str = "fitz_tlv_decode_errors_total";
 pub const METRIC_ROUTE_MISMATCHES: &str = "fitz_route_mismatches_total";
 pub const METRIC_DELIVERY_FAILURES: &str = "fitz_delivery_failures_total";
 pub const METRIC_ROUTER_BACKPRESSURE: &str = "fitz_router_backpressure_total";
-pub const METRIC_ROUTER_HIGH_LANE_BACKPRESSURE: &str =
-    "fitz_router_high_lane_backpressure_total";
+pub const METRIC_ROUTER_HIGH_LANE_BACKPRESSURE: &str = "fitz_router_high_lane_backpressure_total";
 
 pub const METRIC_AUTH_FAILURES: &str = "fitz_auth_failures_total";
 pub const METRIC_PERMISSION_DENIALS: &str = "fitz_permission_denials_total";

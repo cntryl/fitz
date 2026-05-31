@@ -273,10 +273,12 @@ fn permissive_session_claims(
     String,
 > {
     let tenant = resolved_tenant_or_empty(&raw_claims);
+    let route_family = raw_claims.route_family()?;
     let permissions = raw_claims.normalized_permissions()?;
     let claims = crate::auth::Claims {
         sub: raw_claims.sub,
         tenant,
+        route_family,
         roles: raw_claims.roles.unwrap_or_default(),
         permissions: permissions.clone(),
         exp: raw_claims.exp,
@@ -503,7 +505,7 @@ mod auth_tests {
             "sub": "user:1",
             "exp": 9999999999u64,
             "tid": "realm1",
-            "fitz": { "permissions": ["stream://realm1/area1/orders/*#write"] }
+            "fitz": { "route_family": 1, "permissions": ["stream://realm1/area1/orders/*#write"] }
         });
 
         let header = Header::new(Algorithm::HS256);
@@ -534,7 +536,7 @@ mod auth_tests {
             "sub": "user:1",
             "exp": 9_999_999_999u64,
             "tid": "realm1",
-            "fitz": { "permissions": ["stream://realm1/area1/orders/*#write"] }
+            "fitz": { "route_family": 1, "permissions": ["stream://realm1/area1/orders/*#write"] }
         });
 
         let token = jsonwebtoken::encode(
@@ -566,7 +568,7 @@ mod auth_tests {
             "sub": "user:1",
             "exp": 9_999_999_999u64,
             "tid": "realm1",
-            "fitz": { "permissions": ["stream://realm1/area1/orders/*#write"] }
+            "fitz": { "route_family": 1, "permissions": ["stream://realm1/area1/orders/*#write"] }
         });
         let token = jsonwebtoken::encode(
             &Header::new(Algorithm::HS256),
@@ -592,7 +594,7 @@ mod auth_tests {
             "exp": now + 300,
             "nbf": now + 120,
             "tid": "realm1",
-            "fitz": { "permissions": ["stream://realm1/area1/orders/*#write"] }
+            "fitz": { "route_family": 1, "permissions": ["stream://realm1/area1/orders/*#write"] }
         });
         let token = jsonwebtoken::encode(
             &Header::new(Algorithm::HS256),
@@ -617,7 +619,7 @@ mod auth_tests {
             "exp": 9_999_999_999u64,
             "tid": "realm1",
             "tenant_id": "realm2",
-            "fitz": { "permissions": ["stream://realm1/area1/orders/*#write"] }
+            "fitz": { "route_family": 1, "permissions": ["stream://realm1/area1/orders/*#write"] }
         });
         let token = jsonwebtoken::encode(
             &Header::new(Algorithm::HS256),
@@ -642,7 +644,7 @@ mod auth_tests {
             "sub": "user:1",
             "exp": 9_999_999_999u64,
             "org_id": "realm-from-org",
-            "fitz": { "permissions": ["stream://realm-from-org/area1/orders/*#write"] }
+            "fitz": { "route_family": 1, "permissions": ["stream://realm-from-org/area1/orders/*#write"] }
         });
         let token = jsonwebtoken::encode(
             &Header::new(Algorithm::HS256),
@@ -666,7 +668,7 @@ mod auth_tests {
             "aud": "fitz-broker",
             "sub": "user:1",
             "exp": 9_999_999_999u64,
-            "fitz": { "permissions": ["stream://realm1/area1/orders/*#write"] }
+            "fitz": { "route_family": 1, "permissions": ["stream://realm1/area1/orders/*#write"] }
         });
         let token = jsonwebtoken::encode(
             &Header::new(Algorithm::HS256),

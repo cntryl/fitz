@@ -165,8 +165,7 @@ impl TransportDriver {
         }
 
         // Forward to session for TLV decoding and routing
-        self.session
-            .on_frame(frame, self.ingress.as_ref())
+        crate::api::session::process_session_frame(&mut self.session, frame, self.ingress.as_ref())
             .await
             .map_err(|e| format!("session error: {:?}", e))
     }

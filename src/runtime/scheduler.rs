@@ -34,7 +34,7 @@ fn record_duration_counter(name: &str, duration: Duration) {
         return;
     }
 
-    crate::boot::observability::counter_add(name, duration_us);
+    crate::observability::counter_add(name, duration_us);
 }
 
 fn record_worker_busy_time(duration: Duration) {
@@ -47,7 +47,7 @@ fn record_worker_idle_time(duration: Duration) {
 
 fn record_mailbox_observability(mailbox: &Mailbox, envelope: &crate::runtime::envelope::Envelope) {
     if let Some(queued_at) = envelope.queued_at() {
-        crate::boot::observability::histogram_observe_us(
+        crate::observability::histogram_observe_us(
             obs::METRIC_QUEUE_WAIT_LATENCY,
             Instant::now()
                 .saturating_duration_since(queued_at)
@@ -55,7 +55,7 @@ fn record_mailbox_observability(mailbox: &Mailbox, envelope: &crate::runtime::en
         );
     }
 
-    crate::boot::observability::gauge_set(
+    crate::observability::gauge_set(
         obs::METRIC_MAILBOX_DEPTH,
         mailbox.len().saturating_add(mailbox.high_priority_len()) as u64,
     );
@@ -633,7 +633,7 @@ mod tests {
     fn should_accumulate_duration_counter_in_microseconds() {
         // Arrange
         let metric_name = "test_scheduler_duration_counter_us_total";
-        let metrics = crate::boot::observability::metrics();
+        let metrics = crate::observability::metrics();
         let before = metrics.counter_get(metric_name);
 
         // Act
@@ -646,7 +646,7 @@ mod tests {
     #[test]
     fn should_record_worker_busy_time_when_processing_messages() {
         // Arrange
-        let metrics = crate::boot::observability::metrics();
+        let metrics = crate::observability::metrics();
         let before = metrics.counter_get(obs::METRIC_WORKER_BUSY_TIME);
         let scheduler = Scheduler::new(1);
         scheduler.start();
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn should_record_worker_idle_time_while_waiting_for_messages() {
         // Arrange
-        let metrics = crate::boot::observability::metrics();
+        let metrics = crate::observability::metrics();
         let before = metrics.counter_get(obs::METRIC_WORKER_IDLE_TIME);
         let scheduler = Scheduler::new(1);
         scheduler.start();

@@ -218,6 +218,11 @@ impl RouteRegistry {
     fn len(&self) -> usize {
         self.sinks.len()
     }
+
+    fn clear(&self) {
+        self.sinks.clear();
+        self.domain_patterns.clear();
+    }
 }
 
 /// Message router for in-process delivery
@@ -260,7 +265,7 @@ impl Router {
     }
 
     fn record_route_match_latency(start: Instant) {
-        if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+        if let Ok(metrics) = std::panic::catch_unwind(crate::observability::metrics) {
             metrics.histogram_observe_us(
                 obs::METRIC_ROUTE_MATCH_LATENCY,
                 start.elapsed().as_micros() as u64,
@@ -269,7 +274,7 @@ impl Router {
     }
 
     fn record_delivery_failure(error: &DeliveryError) {
-        if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+        if let Ok(metrics) = std::panic::catch_unwind(crate::observability::metrics) {
             metrics.counter_inc(obs::METRIC_DELIVERY_FAILURES);
             match error {
                 DeliveryError::MailboxFull { .. } => {
@@ -284,7 +289,7 @@ impl Router {
     }
 
     fn record_route_mismatch() {
-        if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+        if let Ok(metrics) = std::panic::catch_unwind(crate::observability::metrics) {
             metrics.counter_inc(obs::METRIC_ROUTE_MISMATCHES);
         }
     }
@@ -425,6 +430,10 @@ impl Router {
         debug!(domain = domain, "Router: registering domain pattern");
         self.registry
             .register_domain_pattern(domain.to_string(), sink);
+    }
+
+    pub fn clear(&self) {
+        self.registry.clear();
     }
 
     /// Unregister a route
@@ -783,7 +792,7 @@ mod tests {
             }
         }
 
-        let metrics = crate::boot::observability::metrics();
+        let metrics = crate::observability::metrics();
         let before = metrics.counter_get(obs::METRIC_ROUTER_HIGH_LANE_BACKPRESSURE);
         let router = Router::new();
         let address = test_address(1, "/system/control");

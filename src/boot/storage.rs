@@ -28,8 +28,14 @@ pub async fn init(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> 
 }
 
 /// Ensure required column families exist.
-fn ensure_column_families(engine: &cntryl_midge::Engine) -> BootResult<()> {
-    ensure_route_family(engine, crate::runtime::routing::RouteFamily::new(1))
+fn ensure_column_families(engine: &cntryl_midge::Engine, config: &BootConfig) -> BootResult<()> {
+    for family in &config.route_families {
+        ensure_route_family(
+            engine,
+            crate::runtime::routing::RouteFamily::new((*family).into()),
+        )?;
+    }
+    Ok(())
 }
 
 /// Ensure the storage column family aligned with a RouteFamily exists.
@@ -66,13 +72,13 @@ pub fn ensure_route_family(
 }
 
 /// Initialize in-memory storage.
-async fn init_memory(_config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
+async fn init_memory(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
     info!("Initializing in-memory storage (ephemeral, no persistence)");
 
     let store = cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
         .map_err(|e| format!("Failed to open in-memory Midge: {}", e))?;
 
-    ensure_column_families(&store)?;
+    ensure_column_families(&store, config)?;
 
     info!("In-memory storage ready (data lost on shutdown)");
     Ok(Arc::new(store))
@@ -80,7 +86,7 @@ async fn init_memory(_config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engin
 
 /// Initialize local disk storage.
 async fn init_local_disk(
-    _config: &BootConfig,
+    config: &BootConfig,
     db_path: &str,
 ) -> BootResult<Arc<cntryl_midge::Engine>> {
     info!("Initializing local disk storage at {}", db_path);
@@ -92,7 +98,7 @@ async fn init_local_disk(
     let store = cntryl_midge::Engine::open(cntryl_midge::OpenOptions::local(db_path).build())
         .map_err(|e| format!("Failed to open Midge at {}: {}", db_path, e))?;
 
-    ensure_column_families(&store)?;
+    ensure_column_families(&store, config)?;
 
     info!("Local disk storage ready at {}", db_path);
     Ok(Arc::new(store))
@@ -100,7 +106,7 @@ async fn init_local_disk(
 
 /// Initialize cloud-backed storage.
 async fn init_cloud(
-    _config: &BootConfig,
+    config: &BootConfig,
     provider: &str,
     bucket: &str,
     prefix: Option<&str>,
@@ -155,7 +161,7 @@ async fn init_cloud(
     )
     .map_err(|e| format!("Failed to open cloud-backed Midge: {}", e))?;
 
-    ensure_column_families(&store)?;
+    ensure_column_families(&store, config)?;
 
     info!(
         "Cloud storage ready: {} bucket={} prefix={:?} cache={}",
@@ -230,6 +236,31 @@ mod tests {
 
         // Assert
         assert!(is_memory_mode);
+    }
+
+    #[tokio::test]
+    async fn should_provision_configured_route_family_column_families() {
+        // Arrange
+        let config = BootConfig::with_memory_storage().with_route_families(vec![1, 2]);
+
+        // Act
+        let store = init(&config).await.expect("open memory store");
+
+        // Assert
+        assert_eq!(
+            store
+                .get_column_family("tenant_default")
+                .expect("default route family column family")
+                .id(),
+            1
+        );
+        assert_eq!(
+            store
+                .get_column_family("tenant_2")
+                .expect("second route family column family")
+                .id(),
+            2
+        );
     }
 
     #[test]

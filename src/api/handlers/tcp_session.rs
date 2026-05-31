@@ -46,7 +46,7 @@ pub(super) async fn handle_tcp_connection(
     let (outbound_tx, mut outbound_rx) =
         tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
 
-    let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(
+    let sink = std::sync::Arc::new(crate::api::outbound::SessionOutboundSink::new(
         outbound_tx.clone(),
     ));
     let initial_family = ingress
@@ -126,7 +126,13 @@ pub(super) async fn handle_tcp_connection(
 
         while let Some((_sid, frame)) = frame_rx.recv().await {
             runtime_for_frames.increment_messages_received();
-            if let Err(error) = session.on_frame(frame, ingress_clone.as_ref()).await {
+            if let Err(error) = crate::api::session::process_session_frame(
+                &mut session,
+                frame,
+                ingress_clone.as_ref(),
+            )
+            .await
+            {
                 tracing::error!(session_id = session_id, error = %error, "TCP frame processing error");
                 let reason =
                     close_tcp_session_on_frame_error(ingress_clone.as_ref(), session_id, error)

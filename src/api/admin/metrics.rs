@@ -946,7 +946,7 @@ mod tests {
     fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
         // Arrange
         let runtime = runtime_with_preloaded_schedule_metrics();
-        let metrics = crate::boot::observability::metrics();
+        let metrics = crate::observability::metrics();
         let latency_before = metrics
             .histogram_get_buckets("fitz_schedule_latency_ms")
             .unwrap_or([0; 9]);

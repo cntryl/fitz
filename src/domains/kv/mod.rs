@@ -53,6 +53,7 @@ pub mod metrics;
 pub mod projection;
 pub mod protocol;
 pub mod session;
+pub mod sink;
 
 pub use actor::KvActor;
 pub use metrics::KvMetrics;

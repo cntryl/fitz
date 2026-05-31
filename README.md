@@ -97,8 +97,10 @@ If you want a single local service, this is the smallest useful compose file:
 ## Configuration Notes
 
 - FITZ_AUTH_REQUIRED defaults to true.
+- FITZ_ROUTE_FAMILIES defaults to `1`. Configure a non-empty contiguous list starting at `1`, such as `1,2,3`, before startup.
 - FITZ_STORAGE_MODE can be set to memory, local, s3, gcs, or azure.
 - FITZ_STORAGE_PATH defaults to ./.fitz for local-backed storage modes.
+- Authenticated JWT issuers must include `fitz.route_family` with one provisioned non-zero family. Anonymous mode always uses family `1`.
 
 ## Documentation
 
@@ -108,4 +110,3 @@ If you want a single local service, this is the smallest useful compose file:
 - User onboarding guides: [docs/user-guides](docs/user-guides)
 - Operations guides: [docs/operations](docs/operations)
 - Local perf loop runner: [docs/development/perf-loop.md](docs/development/perf-loop.md)
-

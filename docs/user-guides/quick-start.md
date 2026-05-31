@@ -12,11 +12,12 @@ Use any client that follows [clients/client-spec.md](../clients/client-spec.md).
 
 ## 3. Authenticate
 
-Send CONNECT with valid JWT claims for realm and scopes.
+Send CONNECT with a valid JWT containing realm, scopes, and a provisioned
+`fitz.route_family`. Anonymous mode always uses route family `1`.
 
 ## 4. Execute a Simple Operation
 
-1. Choose a route and route family.
+1. Choose an opaque route string.
 2. Send a single operation, such as KV get or put.
 3. Confirm both the response and latency metrics.
 

@@ -966,41 +966,19 @@ impl RpcDomainSink {
         self.active.store(false, Ordering::Relaxed);
     }
 
-    /// Start the best-effort timeout sweep for in-memory pending RPC requests.
+    /// Run the best-effort timeout sweep for in-memory pending RPC requests.
     ///
     /// Expired requests are removed from the current process, timeout counters are
     /// updated, and terminal errors are forwarded only if the caller inbox is still
     /// registered. Correlation IDs here only match live in-flight work; there is
     /// no replay, broker-side deduplication, or restart recovery path behind this
     /// loop.
-    pub fn start_timeout_loop(self: &Arc<Self>) {
-        let Ok(handle) = tokio::runtime::Handle::try_current() else {
-            tracing::debug!("RPC timeout loop not started: no Tokio runtime available");
-            return;
-        };
+    pub(crate) fn is_active(&self) -> bool {
+        self.active.load(Ordering::Relaxed)
+    }
 
-        let weak = Arc::downgrade(self);
-        handle.spawn(async move {
-            loop {
-                let Some(sink) = weak.upgrade() else {
-                    break;
-                };
-                if !sink.active.load(Ordering::Relaxed) {
-                    break;
-                }
-
-                tokio::time::sleep(rpc_timeout_sweep_interval(sink.request_timeout)).await;
-
-                let Some(sink) = weak.upgrade() else {
-                    break;
-                };
-                if !sink.active.load(Ordering::Relaxed) {
-                    break;
-                }
-
-                sink.expire_timed_out_requests();
-            }
-        });
+    pub(crate) fn timeout_sweep_interval(&self) -> Duration {
+        rpc_timeout_sweep_interval(self.request_timeout)
     }
 
     fn counter_inc(&self, name: &str) {
@@ -1041,7 +1019,7 @@ impl RpcDomainSink {
         }
     }
 
-    fn expire_timed_out_requests(&self) {
+    pub(crate) fn expire_timed_out_requests(&self) {
         self.expire_timed_out_requests_at(Instant::now());
     }
 
@@ -1500,14 +1478,13 @@ impl RpcDomainSink {
 
 impl MailboxSink for RpcDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
-
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             let cleanup_result = self.apply_session_cleanup(cleanup.session_id);
             self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
             return Ok(());
+        }
+        if !self.active.load(Ordering::Relaxed) {
+            return Err(DeliveryError::ActorStopped);
         }
 
         tracing::debug!(

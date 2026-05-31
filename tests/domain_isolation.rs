@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 const DOMAINS: &[&str] = &[
     "kv", "lease", "notice", "queue", "rpc", "schedule", "stream",
 ];
+const SYNC_CORE_DIRS: &[&str] = &["session", "runtime", "protocol", "domains"];
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct OwnedSourceFile {
@@ -49,6 +50,22 @@ fn should_disallow_foreign_domain_route_schemes() {
     assert!(
         report.is_empty(),
         "found cross-domain route schemes:\n{report}"
+    );
+}
+
+#[test]
+fn should_keep_async_constructs_at_api_edge() {
+    // Arrange
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let violations = collect_sync_core_async_violations(&repo_root);
+
+    // Act
+    let report = format_violation_report(&violations);
+
+    // Assert
+    assert!(
+        report.is_empty(),
+        "found async constructs outside src/api:\n{report}"
     );
 }
 
@@ -186,6 +203,48 @@ fn collect_foreign_domain_route_scheme_violations(
     }
 
     violations
+}
+
+fn collect_sync_core_async_violations(repo_root: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    for directory in SYNC_CORE_DIRS {
+        collect_source_paths(&repo_root.join("src").join(directory), &mut files);
+    }
+    files.sort();
+
+    let forbidden = ["async fn", ".await", "tokio::", "async_trait"];
+    let mut violations = Vec::new();
+    for path in files {
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+        for (index, line) in content.lines().enumerate() {
+            for needle in forbidden {
+                if line.contains(needle) {
+                    violations.push(format!(
+                        "{}:{} contains {needle}",
+                        relative_display_path(repo_root, &path),
+                        index + 1
+                    ));
+                }
+            }
+        }
+    }
+    violations
+}
+
+fn collect_source_paths(dir: &Path, paths: &mut Vec<PathBuf>) {
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", dir.display()));
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|error| panic!("failed to read entry in {}: {error}", dir.display()))
+            .path();
+        if path.is_dir() {
+            collect_source_paths(&path, paths);
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            paths.push(path);
+        }
+    }
 }
 
 fn relative_display_path(repo_root: &Path, path: &Path) -> String {

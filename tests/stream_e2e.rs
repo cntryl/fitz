@@ -1512,7 +1512,7 @@ async fn should_rebuild_stream_admin_from_durable_metadata_after_restart() {
     assert_eq!(stream.size_bytes, b"persisted".len() as u64);
     assert_eq!(stream.sessions_active, 0);
 
-    server.shutdown().await;
+    server.shutdown().await.expect("shutdown test server");
 }
 
 #[tokio::test]

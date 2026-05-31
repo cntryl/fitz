@@ -2591,8 +2591,7 @@ async fn should_surface_router_overload_counters_in_global_stats_and_metrics() {
     let runtime = test_runtime();
     let metrics = fitz::boot::observability::metrics();
     let router_backpressure_before = metrics.counter_get("fitz_router_backpressure_total");
-    let router_high_lane_before =
-        metrics.counter_get("fitz_router_high_lane_backpressure_total");
+    let router_high_lane_before = metrics.counter_get("fitz_router_high_lane_backpressure_total");
     metrics.counter_add("fitz_router_backpressure_total", 5);
     metrics.counter_add("fitz_router_high_lane_backpressure_total", 2);
     let cookie = login_cookie(runtime.clone()).await;
@@ -2673,7 +2672,10 @@ async fn should_surface_router_overload_in_global_troubleshooting() {
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["incident_summary"]["status"], "degraded");
     assert_eq!(payload["top_bottleneck"]["domain"], "broker");
-    assert_eq!(payload["incident_summary"]["likely_bottleneck"], "router saturation");
+    assert_eq!(
+        payload["incident_summary"]["likely_bottleneck"],
+        "router saturation"
+    );
     assert_eq!(
         payload["incident_summary"]["recommended_next_query"],
         "inspect /api/v1/stats"

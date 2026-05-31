@@ -23,6 +23,7 @@ pub(super) async fn handle_websocket(
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
     runtime: Arc<crate::boot::Runtime>,
+    websocket_tasks: super::SessionTasks,
 ) -> Result<hyper::Response<hyper::Body>, std::convert::Infallible> {
     // Note: increment_connections / decrement_connections are handled by the
     // HTTP listener wrapper (handle_http_upgrade) — no additional counter here.
@@ -30,7 +31,7 @@ pub(super) async fn handle_websocket(
         Ok((response, websocket_fut)) => {
             let runtime_clone = runtime.clone();
             let router = runtime.router.clone();
-            tokio::spawn(async move {
+            websocket_tasks.lock().await.spawn(async move {
                 match websocket_fut.await {
                     Ok(ws_stream) => {
                         tracing::info!("WebSocket upgrade completed");
@@ -97,7 +98,7 @@ where
     let (outbound_tx, mut outbound_rx) =
         tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
 
-    let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(
+    let sink = std::sync::Arc::new(crate::api::outbound::SessionOutboundSink::new(
         outbound_tx.clone(),
     ));
     let mut inbox_route =
@@ -168,7 +169,13 @@ where
                     break Err(reason);
                 }
 
-                if let Err(error) = session.on_frame(frame, ingress.as_ref()).await {
+                if let Err(error) = crate::api::session::process_session_frame(
+                    &mut session,
+                    frame,
+                    ingress.as_ref(),
+                )
+                .await
+                {
                     let reason = websocket_session_frame_error_reason(&error);
                     tracing::error!(session_id = session_id, error = %reason, "WS session frame processing error");
                     break Err(reason);
@@ -240,9 +247,8 @@ mod tests {
     #[test]
     fn should_treat_websocket_backpressure_as_terminal_session_error() {
         // Arrange
-        let reason = websocket_session_frame_error_reason(&SessionError::Backpressure(
-            ChannelId::Control,
-        ));
+        let reason =
+            websocket_session_frame_error_reason(&SessionError::Backpressure(ChannelId::Control));
         let result = Err(reason.clone());
 
         // Act

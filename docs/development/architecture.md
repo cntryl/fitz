@@ -102,13 +102,13 @@ This is a hard Fitz rule:
 - **TCP:** `[u32 BE length][payload bytes]`
 - **WebSocket:** Each binary message is a complete frame
 ### Layer 2: Session
-**Files:** `src/session/session.rs`, `src/session/permissions.rs`, `src/session/manager.rs`
+**Files:** `src/session/session.rs`, `src/session/permissions.rs`, `src/api/runtime_ingress.rs`, `src/api/session.rs`
 **Responsibility:** Connection authentication, permission enforcement, frame routing.
 **Behavior:**
 - Receive raw frame from transport
 - **First frame MUST be CONNECT** with JWT payload
 - Validate JWT signature and claims (must validate signature; do NOT trust client parsing)
-- Extract JWT claims: `realm`, `areas` (array), `scopes` (array)
+- Extract JWT claims: `realm`, `areas` (array), `scopes` (array), `fitz.route_family` (provisioned non-zero integer)
 - Establish session with extracted claims
 - Assign unique session ID (internal; NOT sent to client)
 - For each subsequent frame:
@@ -478,7 +478,7 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
 }
 ```
 ### Notice Domain (Pub/Sub)
-**Current files:** `src/boot/domains/notice_sink.rs`, `src/domains/notice/mod.rs`
+**Current files:** `src/domains/notice/sink.rs`, `src/domains/notice/mod.rs`
 
 Current Notice behavior is intentionally ephemeral:
 - `NoticeDomainSink` keeps subscription indexes entirely in memory for the current broker process
@@ -583,6 +583,7 @@ Brokers MUST validate JWT in CONNECT handshake:
    - `realm` (string): Route realm must match exactly
    - `areas` (array of strings): Route area must be in array
    - `scopes` (array of strings): Verb must be in scopes (e.g., `kv:read`, `notice:subscribe`)
+   - `fitz.route_family` (non-zero integer): Family must be provisioned by `FITZ_ROUTE_FAMILIES`
 4. **Permission Enforcement:** For each request, verify:
    - Route realm ∈ JWT realm (exact match)
    - Route area ∈ JWT areas

@@ -4918,7 +4918,10 @@ mod tests {
         // Assert
         assert_eq!(summary.status, IncidentStatus::Degraded);
         assert!(summary.title.contains("broker scope"));
-        assert_eq!(summary.likely_bottleneck.as_deref(), Some("router saturation"));
+        assert_eq!(
+            summary.likely_bottleneck.as_deref(),
+            Some("router saturation")
+        );
         assert_eq!(
             summary.recommended_next_query.as_deref(),
             Some("inspect /api/v1/stats")
