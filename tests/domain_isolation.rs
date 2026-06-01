@@ -80,10 +80,7 @@ fn domain_owned_source_files(repo_root: &Path) -> Vec<OwnedSourceFile> {
         );
     }
 
-    collect_boot_domain_files(
-        &repo_root.join("src").join("boot").join("domains"),
-        &mut files,
-    );
+    collect_boot_domain_files(&repo_root.join("src").join("boot"), &mut files);
     files.sort();
     files
 }
