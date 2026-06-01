@@ -17,7 +17,7 @@
 ## Design Principles
 1. **Read-heavy**: Most operations are queries for visibility
 2. **Safe by default**: Dangerous operations (force rollback, cancel) require explicit confirmation
-3. **Realm-scoped**: All queries can be filtered by realm for multi-tenancy
+3. **Realm-scoped**: Queries that expose realm filters operate on the application-defined realm label used in Fitz routes and resources, never on `route_family`
 4. **Prometheus-compatible**: Metrics endpoint follows Prometheus format
 5. **Minimal dependencies**: No external monitoring system required for basic visibility
 6. **SPA-first**: Web interface served at root, all API routes namespaced
@@ -590,6 +590,8 @@ If multiple operations exist under the same resource, `cron` is omitted and `nex
 ```
 GET /admin/sessions?realm={realm}
 ```
+`realm` filters by the session's application-visible realm label only. It is not a `route_family` selector, fallback, or alias.
+
 **Response**:
 ```json
 {

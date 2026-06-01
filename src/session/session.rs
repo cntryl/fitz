@@ -10,15 +10,15 @@ use crate::protocol::frame::ChannelId;
 use crate::protocol::mux::{Mux, MuxError, TypeMapping};
 use crate::protocol::tlv::{TlvDecoder, TlvError};
 use crate::runtime::routing::RouteFamily;
-use crate::session::manager::{Ingress, IngressDecision};
 use crate::session::permissions::SessionPermissions;
 use bytes::Bytes;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 use tracing::{debug, error, trace, warn};
 
 /// Unique session identifier
@@ -61,10 +61,39 @@ impl fmt::Display for CloseReason {
     }
 }
 
-/// Session metadata stored alongside permissions
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
+struct SessionLiveStats {
+    connected_at: SystemTime,
+    last_activity: Mutex<Instant>,
+    messages_received: AtomicU64,
+    messages_sent: AtomicU64,
+}
+
+impl Default for SessionLiveStats {
+    fn default() -> Self {
+        Self {
+            connected_at: SystemTime::now(),
+            last_activity: Mutex::new(Instant::now()),
+            messages_received: AtomicU64::new(0),
+            messages_sent: AtomicU64::new(0),
+        }
+    }
+}
+
+/// Session metadata stored alongside permissions and live transport stats.
+#[derive(Debug, Clone)]
 pub struct SessionMetadata {
     properties: HashMap<String, String>,
+    live: Arc<SessionLiveStats>,
+}
+
+impl Default for SessionMetadata {
+    fn default() -> Self {
+        Self {
+            properties: HashMap::new(),
+            live: Arc::new(SessionLiveStats::default()),
+        }
+    }
 }
 
 impl SessionMetadata {
@@ -80,6 +109,32 @@ impl SessionMetadata {
     pub fn get(&self, key: &str) -> Option<&str> {
         self.properties.get(key).map(|s| s.as_str())
     }
+
+    pub fn connected_at(&self) -> SystemTime {
+        self.live.connected_at
+    }
+
+    pub fn idle_seconds(&self) -> u64 {
+        self.live.last_activity.lock().elapsed().as_secs()
+    }
+
+    pub fn messages_received(&self) -> u64 {
+        self.live.messages_received.load(Ordering::Relaxed)
+    }
+
+    pub fn messages_sent(&self) -> u64 {
+        self.live.messages_sent.load(Ordering::Relaxed)
+    }
+
+    pub fn record_frame_received(&self) {
+        self.live.messages_received.fetch_add(1, Ordering::Relaxed);
+        *self.live.last_activity.lock() = Instant::now();
+    }
+
+    pub fn record_frame_sent(&self) {
+        self.live.messages_sent.fetch_add(1, Ordering::Relaxed);
+        *self.live.last_activity.lock() = Instant::now();
+    }
 }
 
 /// Summary of session metadata exposed to runtime ingress
@@ -94,9 +149,43 @@ pub struct SessionInfo {
     pub claims: Option<Arc<crate::auth::Claims>>,
     /// Whether the session has completed the connect/auth handshake
     pub authenticated: bool,
-    /// Route family for this session (tenant isolation boundary)
-    /// Resolved from tenant_id at authentication time
+    /// Route family for this session (tenant isolation boundary).
+    /// Resolved from the verified `fitz.route_family` claim at authentication time.
     pub route_family: RouteFamily,
+}
+
+impl SessionInfo {
+    pub fn realm(&self) -> String {
+        self.claims
+            .as_ref()
+            .map(|claims| claims.tenant.clone())
+            .filter(|tenant| !tenant.is_empty())
+            .unwrap_or_else(|| self.route_family.as_u64().to_string())
+    }
+
+    pub fn connected_at(&self) -> SystemTime {
+        self.metadata.connected_at()
+    }
+
+    pub fn idle_seconds(&self) -> u64 {
+        self.metadata.idle_seconds()
+    }
+
+    pub fn messages_received(&self) -> u64 {
+        self.metadata.messages_received()
+    }
+
+    pub fn messages_sent(&self) -> u64 {
+        self.metadata.messages_sent()
+    }
+
+    pub fn record_frame_received(&self) {
+        self.metadata.record_frame_received();
+    }
+
+    pub fn record_frame_sent(&self) {
+        self.metadata.record_frame_sent();
+    }
 }
 
 /// Errors that can occur while handling a frame
@@ -254,124 +343,79 @@ impl Session {
         self.info.clone()
     }
 
-    /// Handle a raw frame
-    pub async fn on_frame(
-        &mut self,
-        frame: Bytes,
-        ingress: &dyn Ingress,
-    ) -> Result<(), SessionError> {
-        let _frame_latency = crate::boot::observability::ScopedHistogramUs::new(
-            obs::METRIC_SESSION_FRAME_PROCESS_LATENCY,
-        );
+    /// Append bytes received from a transport to the session decoder buffer.
+    pub fn push_frame(&mut self, frame: Bytes) {
+        let _frame_latency =
+            crate::observability::ScopedHistogramUs::new(obs::METRIC_SESSION_FRAME_PROCESS_LATENCY);
         debug!(
             session_id = self.info.session_id,
             frame_len = frame.len(),
             buffer_before = self.buffer.len(),
             "Session on_frame: received raw frame"
         );
-        // Append incoming bytes to per-session buffer and decode as many records
         self.buffer.extend_from_slice(&frame);
+    }
 
-        loop {
-            // Attempt to decode one record from buffer
-            let decode_start = Instant::now();
-            let decode_result = self.decoder.decode_one_ref(&self.buffer);
-            crate::boot::observability::hot_path_histogram_observe_us(
-                obs::METRIC_SESSION_TLV_DECODE_LATENCY,
-                decode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            );
+    /// Decode the next complete message, if one is buffered.
+    pub fn next_message(
+        &mut self,
+    ) -> Result<Option<crate::protocol::mux::ChannelMessage>, SessionError> {
+        let decode_start = Instant::now();
+        let decode_result = self.decoder.decode_one_ref(&self.buffer);
+        crate::observability::hot_path_histogram_observe_us(
+            obs::METRIC_SESSION_TLV_DECODE_LATENCY,
+            decode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+        );
 
-            match decode_result {
-                Ok((msg_type, slice, consumed)) => {
-                    let payload_offset = consumed.saturating_sub(slice.len());
-                    debug!(
-                        session_id = self.info.session_id,
-                        msg_type = msg_type.as_u16(),
-                        payload_len = slice.len(),
-                        consumed = consumed,
-                        "Session decoded TLV record"
-                    );
-                    // Move the decoded record bytes out of the session buffer so the payload can
-                    // be routed as a zero-copy Bytes slice instead of cloning into a new buffer.
-                    // Current transport drivers treat Session::on_frame errors as terminal, so we
-                    // do not need to preserve the consumed bytes for a later retry.
-                    let record_bytes = self.buffer.split_to(consumed).freeze();
-                    let record = crate::protocol::tlv::TlvRecord::new(
-                        msg_type,
-                        record_bytes.slice(payload_offset..consumed),
-                    );
-                    let mux_start = Instant::now();
-                    let message = self.mux.route(record);
-                    crate::boot::observability::hot_path_histogram_observe_us(
-                        obs::METRIC_SESSION_MUX_ROUTE_LATENCY,
-                        mux_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-                    );
-                    let message = message.map_err(|e| {
-                        warn!(session_id = self.info.session_id, error = ?e, "Mux routing error");
-                        SessionError::Mux(e)
-                    })?;
-
-                    debug!(
-                        session_id = self.info.session_id,
-                        channel = ?message.channel,
-                        msg_type = message.msg_type.as_u16(),
-                        payload_len = message.payload.len(),
-                        "Session dispatching to ingress.on_frame"
-                    );
-
-                    let ingress_start = Instant::now();
-                    let decision = ingress
-                        .on_frame(
-                            self.info.session_id,
-                            message.channel,
-                            message.msg_type,
-                            message.payload,
-                        )
-                        .await;
-                    crate::boot::observability::hot_path_histogram_observe_us(
-                        obs::METRIC_SESSION_INGRESS_HANDOFF_LATENCY,
-                        ingress_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-                    );
-
-                    self.mux.release(message.channel);
-
-                    match decision {
-                        IngressDecision::Accept => {
-                            trace!(session_id = self.info.session_id, "Ingress accepted frame");
-                            continue;
-                        }
-                        IngressDecision::Backpressure => {
-                            warn!(session_id = self.info.session_id, channel = ?message.channel, "Ingress backpressure");
-                            return Err(SessionError::Backpressure(message.channel));
-                        }
-                        IngressDecision::Close(reason) => {
-                            warn!(session_id = self.info.session_id, reason = %reason, "Ingress requested close");
-                            return Err(SessionError::IngressClose(reason));
-                        }
-                    }
-                }
-                Err(crate::protocol::tlv::TlvError::IncompleteType)
-                | Err(crate::protocol::tlv::TlvError::IncompleteLength)
-                | Err(crate::protocol::tlv::TlvError::IncompleteValue { .. })
-                | Err(crate::protocol::tlv::TlvError::EmptyFrame) => {
-                    trace!(
-                        session_id = self.info.session_id,
-                        buffer_remaining = self.buffer.len(),
-                        "Session: incomplete TLV frame, waiting for more bytes"
-                    );
-                    // Incomplete frame or empty buffer: wait for more bytes
-                    break;
-                }
-                Err(e) => {
-                    crate::boot::observability::counter_inc(obs::METRIC_TLV_DECODE_ERRORS);
-                    crate::boot::observability::counter_inc(obs::METRIC_FRAMES_MALFORMED);
-                    error!(session_id = self.info.session_id, error = ?e, "Session TLV decode error");
-                    return Err(SessionError::Decode(e));
-                }
+        match decode_result {
+            Ok((msg_type, slice, consumed)) => {
+                let payload_offset = consumed.saturating_sub(slice.len());
+                debug!(
+                    session_id = self.info.session_id,
+                    msg_type = msg_type.as_u16(),
+                    payload_len = slice.len(),
+                    consumed = consumed,
+                    "Session decoded TLV record"
+                );
+                let record_bytes = self.buffer.split_to(consumed).freeze();
+                let record = crate::protocol::tlv::TlvRecord::new(
+                    msg_type,
+                    record_bytes.slice(payload_offset..consumed),
+                );
+                let mux_start = Instant::now();
+                let message = self.mux.route(record);
+                crate::observability::hot_path_histogram_observe_us(
+                    obs::METRIC_SESSION_MUX_ROUTE_LATENCY,
+                    mux_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                );
+                message.map(Some).map_err(|error| {
+                    warn!(session_id = self.info.session_id, error = ?error, "Mux routing error");
+                    SessionError::Mux(error)
+                })
+            }
+            Err(crate::protocol::tlv::TlvError::IncompleteType)
+            | Err(crate::protocol::tlv::TlvError::IncompleteLength)
+            | Err(crate::protocol::tlv::TlvError::IncompleteValue { .. })
+            | Err(crate::protocol::tlv::TlvError::EmptyFrame) => {
+                trace!(
+                    session_id = self.info.session_id,
+                    buffer_remaining = self.buffer.len(),
+                    "Session: incomplete TLV frame, waiting for more bytes"
+                );
+                Ok(None)
+            }
+            Err(error) => {
+                crate::observability::counter_inc(obs::METRIC_TLV_DECODE_ERRORS);
+                crate::observability::counter_inc(obs::METRIC_FRAMES_MALFORMED);
+                error!(session_id = self.info.session_id, error = ?error, "Session TLV decode error");
+                Err(SessionError::Decode(error))
             }
         }
+    }
 
-        Ok(())
+    /// Release mux capacity after the transport edge has handed off a message.
+    pub fn release_channel(&mut self, channel: ChannelId) {
+        self.mux.release(channel);
     }
 
     /// Access permissions snapshot
@@ -426,48 +470,39 @@ pub fn next_session_id() -> u64 {
 mod tests {
     use super::*;
     use crate::protocol::tlv::{MessageType, TlvEncoder};
-    use crate::session::manager::{Ingress, IngressDecision, SessionFrame};
-    use std::sync::{Arc, Mutex};
-    use tokio::runtime::Runtime;
 
-    struct DummyIngress {
-        frames: Arc<Mutex<Vec<SessionFrame>>>,
-    }
+    #[test]
+    fn should_release_channel_capacity_after_handoff() {
+        // Arrange
+        let config = NewSessionConfig::unauthenticated(
+            TransportKind::Tcp,
+            None,
+            SessionPermissions::empty(),
+            SessionMetadata::new(),
+            1,
+            None,
+            crate::runtime::routing::RouteFamily::new(0),
+        );
+        let mut session = Session::new(42, config);
+        let mut encoder = TlvEncoder::new();
+        encoder.encode(MessageType::new(1), b"first");
+        encoder.encode(MessageType::new(1), b"second");
+        let data = encoder.finish();
 
-    #[async_trait::async_trait]
-    impl Ingress for DummyIngress {
-        async fn on_open(&self, _session: SessionInfo) -> Result<u64, String> {
-            Ok(1)
-        }
+        // Act
+        session.push_frame(data);
+        let first = session.next_message().unwrap().unwrap();
+        session.release_channel(first.channel);
+        let second = session.next_message().unwrap().unwrap();
 
-        async fn on_frame(
-            &self,
-            session_id: u64,
-            channel_id: crate::protocol::frame::ChannelId,
-            _msg_type: crate::protocol::tlv::MessageType,
-            message_payload: bytes::Bytes,
-        ) -> IngressDecision {
-            let mut vec = self.frames.lock().unwrap();
-            vec.push(SessionFrame {
-                session_id,
-                channel_id,
-                payload: message_payload,
-            });
-            IngressDecision::Accept
-        }
-
-        async fn on_close(&self, _session_id: u64, _reason: CloseReason) {}
+        // Assert
+        assert_eq!(first.payload, b"first".as_ref());
+        assert_eq!(second.payload, b"second".as_ref());
     }
 
     #[test]
     fn should_buffer_partial_frames() {
         // Arrange
-        let rt = Runtime::new().unwrap();
-        let frames = Arc::new(Mutex::new(Vec::new()));
-        let ingress = DummyIngress {
-            frames: frames.clone(),
-        };
-
         let config = NewSessionConfig::unauthenticated(
             TransportKind::Tcp,
             None,
@@ -489,23 +524,13 @@ mod tests {
         let part2 = data.slice(split..);
 
         // Act
-        let ingress_ref: &dyn Ingress = &ingress;
-        rt.block_on(async {
-            session.on_frame(part1, ingress_ref).await.unwrap();
-        });
-
-        // Verify: no frames processed yet
-        assert_eq!(frames.lock().unwrap().len(), 0);
-
-        // Step 2: send second part (completes message)
-        rt.block_on(async {
-            session.on_frame(part2, ingress_ref).await.unwrap();
-        });
+        session.push_frame(part1);
+        let incomplete = session.next_message().unwrap();
+        session.push_frame(part2);
+        let complete = session.next_message().unwrap().unwrap();
 
         // Assert
-        assert_eq!(frames.lock().unwrap().len(), 1);
-        let f = &frames.lock().unwrap()[0];
-        assert_eq!(f.session_id, 42);
-        assert_eq!(f.payload, b"abcdefgh".as_ref());
+        assert!(incomplete.is_none());
+        assert_eq!(complete.payload, b"abcdefgh".as_ref());
     }
 }

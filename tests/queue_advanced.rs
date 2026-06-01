@@ -457,41 +457,50 @@ fn should_prevent_id_collisions_across_crash() {
 
 /// Test lease expiration with redelivery (automatic)
 #[test]
-#[ignore = "smoke test: lease expiration redelivery requires MockClock integration"]
 fn should_redeliver_message_on_lease_expiration() {
     // Arrange
+    let clock = TestClock::new();
     let store = Arc::new(
         cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
 
     let queue_key = unique_queue_key("lease-expire");
-    let mut actor = QueueActor::new(
+    let mut actor = QueueActor::with_clock(
         RouteFamily::new(0),
         queue_key,
         store,
+        Box::new(clock.clone()),
         None,
         fitz::utils::idempotency::default_dedup_store(),
     );
 
     // Act
-    // Enqueue and reserve message
     actor.handle_send(Bytes::from("work"), None);
-    match actor.handle_receive(30, Some(1)) {
+    let first = match actor.handle_receive(30, Some(1)) {
         QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 1);
+            messages[0].clone()
         }
         _ => panic!("Expected Reserved"),
     };
+    clock.advance(Duration::from_secs(31));
+    actor.process_expired_timers();
+    let second = match actor.handle_receive(30, Some(1)) {
+        QueueResponse::Received { messages } => {
+            assert_eq!(messages.len(), 1);
+            messages[0].clone()
+        }
+        _ => panic!("Expected redelivered message"),
+    };
 
     // Assert
-    // Verify message is inflight
     assert_eq!(actor.inflight.len(), 1);
     assert_eq!(actor.ready_len(), 0);
-
-    // Note: Cannot advance time without MockClock (test limitation).
-    // Unit tests verify expiration behavior with MockClock.
-    // This integration test verifies reserve/complete mechanics.
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.body, first.body);
+    assert_ne!(second.token, first.token);
+    assert_eq!(second.attempts, 2);
 }
 
 /// Test dead letter queue (DLQ) for max attempts threshold

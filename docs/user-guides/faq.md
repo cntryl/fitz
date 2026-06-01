@@ -6,7 +6,10 @@ Not yet. Review [../README.md](../README.md) and the readiness documentation bef
 
 ## How do I choose route family values?
 
-Use route family as an isolation and partition key, and keep route naming stable for application semantics.
+Route families are a deployment-level isolation allowlist, not a client routing
+API. Configure `FITZ_ROUTE_FAMILIES=1,2,...` as a contiguous list starting at `1`
+and issue authenticated JWTs with one provisioned `fitz.route_family`. Keep route
+strings stable for application semantics.
 
 ## Where is the full wire protocol?
 

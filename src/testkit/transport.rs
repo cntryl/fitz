@@ -36,8 +36,11 @@ pub struct TestServer {
     pub tcp_addr: SocketAddr,
     pub ws_addr: SocketAddr,
     pub runtime: Arc<crate::boot::Runtime>,
+    store: Arc<cntryl_midge::Engine>,
     _tcp_shutdown: tokio::sync::oneshot::Sender<()>,
     _ws_shutdown: tokio::sync::oneshot::Sender<()>,
+    _tcp_join: tokio::task::JoinHandle<()>,
+    _ws_join: tokio::task::JoinHandle<()>,
     _permit: tokio::sync::OwnedSemaphorePermit,
 }
 impl TestServer {
@@ -130,7 +133,7 @@ impl TestServer {
 
         // Initialize observability (metrics + tracing) once for tests
         // Safe to call multiple times - will only initialize once
-        let _ = crate::boot::observability::try_init_observability();
+        let _ = crate::observability::try_init_observability();
 
         if auth_required {
             init_auth_env();
@@ -160,6 +163,7 @@ impl TestServer {
             } else {
                 crate::auth::AuthConfig::Disabled
             },
+            route_families: vec![1],
             max_connections: 1000,
             max_frame_size: 16_777_216, // 16 MB (test config allows larger frames than production 1 MB default)
             channel_capacity: 10_000,
@@ -169,7 +173,7 @@ impl TestServer {
         let store = crate::boot::storage::init(&boot_config).await?;
 
         // Step 2: Initialize runtime
-        let (router, ingress, ingress_config, _scheduler, runtime) =
+        let (router, ingress, ingress_config, runtime) =
             crate::boot::runtime::init(&boot_config, &store)?;
 
         // Mark storage ready
@@ -198,7 +202,7 @@ impl TestServer {
         runtime.mark_domains_ready();
 
         // Step 4: Start TCP listener with pre-bound socket (eliminates port race)
-        let tcp_handle = crate::boot::handlers::spawn_tcp_listener_with_bound_socket(
+        let tcp_handle = crate::api::handlers::spawn_tcp_listener_with_bound_socket(
             tcp_socket,
             ingress.clone(),
             ingress_config.clone(),
@@ -206,20 +210,22 @@ impl TestServer {
         )?;
 
         // Step 5: Start HTTP/WebSocket listener with pre-bound socket
-        let ws_handle = crate::boot::handlers::spawn_http_listener_with_bound_socket(
+        let ws_handle = crate::api::handlers::spawn_http_listener_with_bound_socket(
             ws_socket,
             ingress.clone(),
             ingress_config.clone(),
             runtime.clone(),
         )?;
 
-        let crate::boot::handlers::ListenerHandle {
+        let crate::api::handlers::ListenerHandle {
             ready: tcp_ready_rx,
             shutdown: tcp_shutdown,
+            join: tcp_join,
         } = tcp_handle;
-        let crate::boot::handlers::ListenerHandle {
+        let crate::api::handlers::ListenerHandle {
             ready: ws_ready_rx,
             shutdown: ws_shutdown,
+            join: ws_join,
         } = ws_handle;
 
         // Wait for both listeners to be ready before returning
@@ -247,8 +253,11 @@ impl TestServer {
             tcp_addr,
             ws_addr,
             runtime: runtime_arc,
+            store,
             _tcp_shutdown: tcp_shutdown,
             _ws_shutdown: ws_shutdown,
+            _tcp_join: tcp_join,
+            _ws_join: ws_join,
             _permit: permit,
         })
     }
@@ -335,20 +344,60 @@ impl TestServer {
         Ok(())
     }
 
-    pub async fn shutdown(self) {
+    pub async fn shutdown(self) -> Result<(), Box<dyn std::error::Error>> {
         let TestServer {
             _tcp_shutdown: tcp_shutdown,
             _ws_shutdown: ws_shutdown,
+            _tcp_join: tcp_join,
+            _ws_join: ws_join,
             runtime,
+            store,
             _permit: permit,
             ..
         } = self;
 
         let _ = tcp_shutdown.send(());
         let _ = ws_shutdown.send(());
+
+        let wait_for_listener = async |name, join: tokio::task::JoinHandle<()>| {
+            timeout(Duration::from_secs(6), join)
+                .await
+                .map_err(|_| format!("{} listener shutdown timed out", name))?
+                .map_err(|error| format!("{} listener join failed: {}", name, error))
+        };
+        let (tcp_result, ws_result) = tokio::join!(
+            wait_for_listener("TCP", tcp_join),
+            wait_for_listener("HTTP", ws_join)
+        );
+        tcp_result?;
+        ws_result?;
+
+        let domains = runtime.detach_domains();
+        if let Some(domains) = &domains {
+            domains.stop();
+        }
+        if let Some(ingress) = runtime.detach_ingress() {
+            ingress
+                .close_all_sessions(crate::session::CloseReason::ServerClose(
+                    "test server shutdown".to_string(),
+                ))
+                .await;
+            drop(ingress);
+        }
+        runtime.router().clear();
+        drop(domains);
         drop(runtime);
         drop(permit);
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        let store = Arc::try_unwrap(store).map_err(|store| {
+            format!(
+                "Midge shutdown blocked by {} leftover engine references",
+                Arc::strong_count(&store)
+            )
+        })?;
+        store
+            .shutdown()
+            .map_err(|error| format!("Midge shutdown failed: {}", error))?;
+        Ok(())
     }
 }
 
@@ -642,8 +691,17 @@ pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
 /// Token is valid for 1 hour from now
 /// Includes full permissions for the realm
 pub fn generate_test_jwt(realm: &str) -> String {
+    generate_test_jwt_for_family(realm, 1)
+}
+
+pub fn generate_test_jwt_for_family(realm: &str, route_family: u32) -> String {
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct FitzClaims {
+        route_family: u32,
+    }
 
     #[derive(Debug, Serialize, Deserialize)]
     struct Claims {
@@ -654,6 +712,7 @@ pub fn generate_test_jwt(realm: &str) -> String {
         exp: i64,           // Expiration time
         iat: i64,           // Issued at
         roles: Vec<String>, // Permissions as role strings
+        fitz: FitzClaims,
     }
 
     let now = std::time::SystemTime::now()
@@ -677,6 +736,7 @@ pub fn generate_test_jwt(realm: &str) -> String {
             format!("lease://{}/**#*", realm),
             format!("schedule://{}/**#*", realm),
         ],
+        fitz: FitzClaims { route_family },
     };
 
     let mut header = Header::new(Algorithm::HS256);
@@ -696,6 +756,11 @@ pub fn generate_expired_jwt(realm: &str) -> String {
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
+    struct FitzClaims {
+        route_family: u32,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
     struct Claims {
         iss: String,
         aud: String,
@@ -704,6 +769,7 @@ pub fn generate_expired_jwt(realm: &str) -> String {
         exp: i64,
         iat: i64,
         roles: Vec<String>,
+        fitz: FitzClaims,
     }
 
     let now = std::time::SystemTime::now()
@@ -719,6 +785,7 @@ pub fn generate_expired_jwt(realm: &str) -> String {
         exp: now - 3600, // Expired 1 hour ago
         iat: now - 7200,
         roles: vec![format!("kv://{}/**#*", realm)],
+        fitz: FitzClaims { route_family: 1 },
     };
 
     let header = Header::new(Algorithm::HS256);
@@ -737,6 +804,11 @@ pub fn generate_invalid_signature_jwt(realm: &str) -> String {
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
+    struct FitzClaims {
+        route_family: u32,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
     struct Claims {
         iss: String,
         aud: String,
@@ -745,6 +817,7 @@ pub fn generate_invalid_signature_jwt(realm: &str) -> String {
         exp: i64,
         iat: i64,
         roles: Vec<String>,
+        fitz: FitzClaims,
     }
 
     let now = std::time::SystemTime::now()
@@ -760,6 +833,7 @@ pub fn generate_invalid_signature_jwt(realm: &str) -> String {
         exp: now + 3600,
         iat: now,
         roles: vec![format!("kv://{}/**#*", realm)],
+        fitz: FitzClaims { route_family: 1 },
     };
 
     let header = Header::new(Algorithm::HS256);
@@ -843,5 +917,23 @@ mod tests {
             3,
             "JWT should have header.payload.signature format"
         );
+    }
+
+    #[tokio::test]
+    async fn should_shutdown_with_active_tcp_and_websocket_sessions() {
+        // Arrange
+        let server = TestServer::start().await.expect("start test server");
+        let _tcp = server.connect().await.expect("connect tcp client");
+        let _websocket = server.connect_ws().await.expect("connect websocket client");
+        server
+            .wait_for_session_count(2)
+            .await
+            .expect("wait for active sessions");
+
+        // Act
+        let result = server.shutdown().await;
+
+        // Assert
+        assert!(result.is_ok());
     }
 }

@@ -75,7 +75,7 @@ async fn handle_connection(socket: TcpStream, peer_addr: SocketAddr) {
 
 ### Layer 2: Session (Sync)
 
-**Files:** `src/session/session.rs`, `src/session/permissions.rs`, `src/session/manager.rs`
+**Files:** `src/session/session.rs`, `src/session/permissions.rs`, `src/api/runtime_ingress.rs`
 
 **Goal:** Track authentication, authorization, and frame processing
 

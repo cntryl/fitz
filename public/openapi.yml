@@ -105,6 +105,7 @@ paths:
         - name: realm
           in: query
           required: false
+          description: Filter by the session's application-defined realm label. This is never a route_family selector or fallback.
           schema:
             type: string
       responses:
@@ -3902,7 +3903,9 @@ components:
       type: object
       properties:
         session_id: { type: string }
-        realm: { type: string }
+        realm:
+          type: string
+          description: Application-defined realm label associated with the session. This is a Fitz realm value, not a route_family alias or fallback.
         connected_at: { type: string }
         idle_seconds: { type: integer }
         messages_received: { type: integer }

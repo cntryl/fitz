@@ -39,9 +39,14 @@
 
 use cntryl_midge::testkit::MidgeOptions;
 use cntryl_midge::Engine;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-/// Create a test Midge engine with support for multiple column families
+/// Create a test Midge engine with support for multiple column families.
+///
+/// Each call gets an isolated local-disk database path so test state does not
+/// leak across engine instances in the same process.
 ///
 /// # Parameters
 ///
@@ -70,8 +75,26 @@ pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
         }
     }
 
+    static ENGINE_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique_id = ENGINE_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let db_path = PathBuf::from(format!(
+        "target/tmp/fitz_test_engine_{}_{}_{}",
+        std::process::id(),
+        unique_id,
+        timestamp
+    ));
+    let _ = std::fs::create_dir_all(&db_path);
+
     let engine = Arc::new(
-        Engine::open_with_options(MidgeOptions::default()).expect("Failed to create test engine"),
+        Engine::open_with_options(MidgeOptions {
+            storage_mode: cntryl_midge::testkit::StorageMode::LocalDisk { db_path },
+            ..MidgeOptions::default()
+        })
+        .expect("Failed to create test engine"),
     );
 
     // Explicitly create each requested column family.

@@ -4,7 +4,7 @@ use crate::api::admin::{
     StreamInfo, StreamRealmWatermarkDetail,
 };
 use crate::session::session::SessionInfo as RuntimeSessionInfo;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -38,6 +38,22 @@ fn schedule_identity_for(info: &ScheduleInfo) -> ScheduleIdentity {
 
 fn lease_identity_for(info: &LeaseInfo) -> LeaseIdentity {
     lease_identity_key(&info.realm, &info.area, &info.resource)
+}
+
+fn snapshot_session_info(session: &RuntimeSessionInfo, connected_at: String) -> SessionInfo {
+    SessionInfo {
+        session_id: session.session_id.to_string(),
+        realm: session.realm(),
+        connected_at,
+        idle_seconds: session.idle_seconds(),
+        messages_received: session.messages_received(),
+        messages_sent: session.messages_sent(),
+        transport: session.transport_kind.to_string(),
+        remote_addr: session
+            .peer_addr
+            .map(|addr| addr.to_string())
+            .unwrap_or_default(),
+    }
 }
 
 fn matches_realm(realm: Option<&str>, value: &str) -> bool {
@@ -313,22 +329,24 @@ impl AdminReadModel {
     }
 
     pub fn record_session_open(&self, session: &RuntimeSessionInfo) {
+        let connected_at = DateTime::<Utc>::from(session.connected_at()).to_rfc3339();
         self.sessions.write().insert(
             session.session_id,
-            SessionInfo {
-                session_id: session.session_id.to_string(),
-                realm: session.route_family.as_u64().to_string(),
-                connected_at: Utc::now().to_rfc3339(),
-                idle_seconds: 0,
-                messages_received: 0,
-                messages_sent: 0,
-                transport: session.transport_kind.to_string(),
-                remote_addr: session
-                    .peer_addr
-                    .map(|addr| addr.to_string())
-                    .unwrap_or_default(),
-            },
+            snapshot_session_info(session, connected_at),
         );
+    }
+
+    pub fn record_session_update(&self, session: &RuntimeSessionInfo) {
+        let connected_at = self
+            .sessions
+            .read()
+            .get(&session.session_id)
+            .map(|info| info.connected_at.clone())
+            .unwrap_or_else(|| DateTime::<Utc>::from(session.connected_at()).to_rfc3339());
+
+        self.sessions
+            .write()
+            .insert(session.session_id, snapshot_session_info(session, connected_at));
     }
 
     pub fn record_session_close(&self, session_id: u64) {

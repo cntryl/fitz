@@ -69,12 +69,12 @@ Streaming response semantics:
 - Invariant: one correlation id maps to exactly one live pending request at a time.
 	- Why it matters: caller identity and response routing depend on it.
 	- How it fails: duplicate pending entries or reused correlation ids route a response to the wrong call.
-	- How to test it: [tests/rpc_basics.rs](../../tests/rpc_basics.rs) `should_correlate_response_with_request` and `should_match_response_to_request_by_correlation_id`, plus [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) `should_reject_wrong_correlation_response_after_accept_tcp` and `should_reject_wrong_correlation_response_after_accept_ws`. Sink-level regressions in [src/boot/domains/rpc_sink.rs](../../src/boot/domains/rpc_sink.rs): `should_reject_duplicate_live_correlation_given_rpc_sink`, `should_reject_worker_response_from_non_owner_session_given_rpc_sink`, and `should_reject_worker_ack_from_non_owner_session_given_rpc_sink`.
+	- How to test it: [tests/rpc_basics.rs](../../tests/rpc_basics.rs) `should_correlate_response_with_request` and `should_match_response_to_request_by_correlation_id`, plus [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) `should_reject_wrong_correlation_response_after_accept_tcp` and `should_reject_wrong_correlation_response_after_accept_ws`. Sink-level regressions in [src/domains/rpc/sink.rs](../../src/domains/rpc/sink.rs): `should_reject_duplicate_live_correlation_given_rpc_sink`, `should_reject_worker_response_from_non_owner_session_given_rpc_sink`, and `should_reject_worker_ack_from_non_owner_session_given_rpc_sink`.
 
 - Invariant: a response cannot be delivered to the wrong caller or wrong worker route.
 	- Why it matters: misrouting is worse than a visible failure.
 	- How it fails: reply route ownership or worker registration cleanup leaks across sessions.
-	- How to test it: [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) `should_reject_wrong_correlation_response_after_accept_tcp`, `should_reject_wrong_correlation_response_after_accept_ws`, `should_return_worker_disconnect_error_after_unsubscribe_tcp`, and `should_return_worker_disconnect_error_after_unsubscribe_ws`. Sink-level regressions in [src/boot/domains/rpc_sink.rs](../../src/boot/domains/rpc_sink.rs): `should_reject_worker_response_from_non_owner_session_given_rpc_sink` and `should_reject_worker_ack_from_non_owner_session_given_rpc_sink`.
+	- How to test it: [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) `should_reject_wrong_correlation_response_after_accept_tcp`, `should_reject_wrong_correlation_response_after_accept_ws`, `should_return_worker_disconnect_error_after_unsubscribe_tcp`, and `should_return_worker_disconnect_error_after_unsubscribe_ws`. Sink-level regressions in [src/domains/rpc/sink.rs](../../src/domains/rpc/sink.rs): `should_reject_worker_response_from_non_owner_session_given_rpc_sink` and `should_reject_worker_ack_from_non_owner_session_given_rpc_sink`.
 
 - Invariant: a timed-out request never becomes live again.
 	- Why it matters: timeout must be a terminal caller-visible outcome.
@@ -151,9 +151,9 @@ Current gaps to keep explicit:
 - Race and cleanup tests:
 	- [tests/rpc_advanced.rs](../../tests/rpc_advanced.rs) `should_drop_late_response_after_lease_expired`
 	- [tests/rpc_advanced.rs](../../tests/rpc_advanced.rs) `should_reject_late_worker_response_after_timeout_given_rpc_sink`
-	- [src/boot/domains/rpc_sink.rs](../../src/boot/domains/rpc_sink.rs) `should_reject_duplicate_live_correlation_given_rpc_sink`
-	- [src/boot/domains/rpc_sink.rs](../../src/boot/domains/rpc_sink.rs) `should_reject_worker_response_from_non_owner_session_given_rpc_sink`
-	- [src/boot/domains/rpc_sink.rs](../../src/boot/domains/rpc_sink.rs) `should_reject_worker_ack_from_non_owner_session_given_rpc_sink`
+	- [src/domains/rpc/sink.rs](../../src/domains/rpc/sink.rs) `should_reject_duplicate_live_correlation_given_rpc_sink`
+	- [src/domains/rpc/sink.rs](../../src/domains/rpc/sink.rs) `should_reject_worker_response_from_non_owner_session_given_rpc_sink`
+	- [src/domains/rpc/sink.rs](../../src/domains/rpc/sink.rs) `should_reject_worker_ack_from_non_owner_session_given_rpc_sink`
 - Integration tests:
 	- [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) worker disconnect, timeout, wrong correlation, and invalid sequence cases
 - Benchmark and stress tests:

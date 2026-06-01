@@ -120,7 +120,7 @@ impl MailboxSink for Mailbox {
             crossbeam_channel::TrySendError::Disconnected(_) => DeliveryError::ActorStopped,
         })?;
 
-        crate::boot::observability::gauge_set(
+        crate::observability::gauge_set(
             obs::METRIC_MAILBOX_DEPTH,
             self.len().saturating_add(self.high_priority_len()) as u64,
         );
@@ -139,7 +139,7 @@ impl MailboxSink for Mailbox {
             crossbeam_channel::TrySendError::Disconnected(_) => DeliveryError::ActorStopped,
         })?;
 
-        crate::boot::observability::gauge_set(
+        crate::observability::gauge_set(
             obs::METRIC_MAILBOX_DEPTH,
             self.len().saturating_add(self.high_priority_len()) as u64,
         );

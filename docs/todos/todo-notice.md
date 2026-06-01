@@ -146,7 +146,7 @@ Current gaps to keep explicit:
 - Race and cleanup tests:
 	- [tests/notice_e2e.rs](../../tests/notice_e2e.rs) `should_remove_notice_subscription_when_subscriber_disconnects`
 	- [tests/notice_advanced.rs](../../tests/notice_advanced.rs) `should_not_deliver_notice_after_disconnect_cleanup_given_publish_race`
-	- [src/boot/domains/notice_sink.rs](../../src/boot/domains/notice_sink.rs) `should_increment_delivery_drop_counter_given_failing_subscriber_route`
+	- [src/domains/notice/sink.rs](../../src/domains/notice/sink.rs) `should_increment_delivery_drop_counter_given_failing_subscriber_route`
 - Integration tests:
 	- [tests/notice_e2e.rs](../../tests/notice_e2e.rs) TCP and WebSocket publish and wildcard cases
 - Benchmark and stress tests:

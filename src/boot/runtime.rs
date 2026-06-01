@@ -17,7 +17,6 @@ type RuntimeComponents = (
     Arc<Router>,
     Arc<RuntimeIngress>,
     IngressConfig,
-    crate::runtime::Scheduler,
     crate::boot::Runtime,
 );
 
@@ -27,11 +26,10 @@ type RuntimeComponents = (
 /// - Router for message delivery
 /// - RuntimeIngress for session management
 /// - IngressConfig for transport configuration
-/// - Scheduler for actor execution
 /// - Runtime stats tracker for observability
 pub fn init(
     config: &BootConfig,
-    store: &Arc<cntryl_midge::Engine>,
+    _store: &Arc<cntryl_midge::Engine>,
 ) -> BootResult<RuntimeComponents> {
     info!("Initializing runtime infrastructure");
     config.validate()?;
@@ -45,23 +43,19 @@ pub fn init(
             .with_router(router.clone())
             .with_admin_read_model(admin_read_model.clone())
             .with_auth_config(config.auth_config.clone())
-            .with_store(store.clone()),
+            .with_route_families(&config.route_families),
     );
 
     let ingress_config = IngressConfig::default()
         .with_frame_size(config.max_frame_size)
         .with_channel_capacity(config.channel_capacity);
 
-    // Create scheduler
-    let num_workers = num_cpus::get();
-    let scheduler = crate::runtime::Scheduler::new(num_workers);
-
     // Create runtime stats tracker
     let runtime = crate::boot::Runtime::with_admin_read_model(router.clone(), admin_read_model);
     runtime.attach_ingress(ingress.clone());
     runtime.attach_auth_config(config.auth_config.clone());
 
-    info!("Runtime initialized with {} worker threads", num_workers);
+    info!("Runtime initialized");
 
-    Ok((router, ingress, ingress_config, scheduler, runtime))
+    Ok((router, ingress, ingress_config, runtime))
 }

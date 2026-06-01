@@ -4,8 +4,8 @@
 //! session-scoped, cleaned up on disconnect, and are never replayed or
 //! restored after broker restart.
 
-use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::domains::notice::NoticeMetrics;
+use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
@@ -219,7 +219,7 @@ impl NoticeDomainSink {
         if let Some(metrics) = &self.metrics {
             metrics.counter_add(name, amount);
         } else {
-            crate::boot::observability::counter_add(name, amount);
+            crate::observability::counter_add(name, amount);
         }
     }
 
@@ -277,7 +277,7 @@ impl NoticeDomainSink {
         );
         let notify_envelope = Envelope::new(target.subscriber.clone(), notify_ctx);
         if self.router.route(notify_envelope).is_err() {
-            crate::boot::observability::counter_inc("fitz_notice_delivery_drops_total");
+            crate::observability::counter_inc("fitz_notice_delivery_drops_total");
         }
     }
 
@@ -405,17 +405,16 @@ impl NoticeDomainSink {
 
 impl MailboxSink for NoticeDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.unsubscribe_all_for_session(cleanup.session_id);
+            return Ok(());
+        }
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
         }
 
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
             return self.handle_domain_publish(event);
-        }
-
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.unsubscribe_all_for_session(cleanup.session_id);
-            return Ok(());
         }
 
         tracing::debug!(
@@ -547,7 +546,7 @@ impl MailboxSink for NoticeDomainSink {
                             limit = MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION,
                             "Rejected wildcard notice subscription because session limit was exceeded"
                         );
-                        crate::boot::observability::counter_inc(
+                        crate::observability::counter_inc(
                             "fitz_notice_wildcard_limit_rejects_total",
                         );
                         (
@@ -1295,7 +1294,7 @@ mod tests {
         assert_eq!(subscribe_response.status, 0);
 
         let before_drops =
-            crate::boot::observability::metrics().counter_get("fitz_notice_delivery_drops_total");
+            crate::observability::metrics().counter_get("fitz_notice_delivery_drops_total");
 
         struct FailingSink;
 
@@ -1327,7 +1326,7 @@ mod tests {
 
         // Assert
         assert_eq!(
-            crate::boot::observability::metrics().counter_get("fitz_notice_delivery_drops_total"),
+            crate::observability::metrics().counter_get("fitz_notice_delivery_drops_total"),
             before_drops + 1
         );
         assert_eq!(sink.subscription_count(), 1);

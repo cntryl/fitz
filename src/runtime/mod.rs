@@ -25,6 +25,7 @@ pub mod cf_validation;
 pub mod clock;
 pub mod context;
 pub mod domain_event;
+pub mod domain_manifest;
 pub mod envelope;
 pub mod mailbox;
 pub mod matcher;
@@ -41,6 +42,7 @@ pub use clock::{
 };
 pub use context::{Timer, TimerId, TimerManager};
 pub use domain_event::{DomainPublishEvent, SessionCleanup};
+pub use domain_manifest::DomainKind;
 pub use envelope::{Envelope, MessageId};
 pub use mailbox::Mailbox;
 pub use matcher::{Pattern, PatternSegment};
