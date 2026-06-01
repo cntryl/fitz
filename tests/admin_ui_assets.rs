@@ -2,7 +2,6 @@ use fitz::boot::Runtime;
 use fitz::runtime::Router;
 use hyper::header::{self, ETAG};
 use hyper::{body, Body, Method, Request, StatusCode};
-use regex::Regex;
 use serial_test::serial;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -29,14 +28,6 @@ impl Drop for CurrentDirGuard {
     fn drop(&mut self) {
         env::set_current_dir(&self.original).expect("restore current directory");
     }
-}
-
-fn extract_js_asset_path(html: &str) -> String {
-    let pattern = Regex::new(r#"/assets/[^\"']+\.js"#).expect("compile asset regex");
-    pattern
-        .find(html)
-        .map(|match_| match_.as_str().to_string())
-        .expect("embedded index.html should reference a JavaScript asset")
 }
 
 #[tokio::test]
@@ -66,26 +57,15 @@ async fn should_serve_embedded_ui_without_runtime_files() {
 
 #[tokio::test]
 #[serial]
-async fn should_serve_embedded_assets_with_etag_and_compression() {
+async fn should_serve_embedded_svg_with_etag_and_compression() {
     let runtime = test_runtime();
-    let index_request = Request::builder()
-        .method(Method::GET)
-        .uri("/")
-        .body(Body::empty())
-        .unwrap();
-    let index_response = fitz::api::admin::handlers::handle_request(index_request, runtime.clone())
-        .await
-        .unwrap();
-    let index_body = body::to_bytes(index_response.into_body()).await.unwrap();
-    let index_html = std::str::from_utf8(&index_body).expect("decode embedded html");
-    let asset_path = extract_js_asset_path(index_html);
-
     let asset_request = Request::builder()
         .method(Method::GET)
-        .uri(asset_path.as_str())
-        .header(header::ACCEPT_ENCODING, "br, gzip")
+        .uri("/favicon.svg")
+        .header(header::ACCEPT_ENCODING, "gzip")
         .body(Body::empty())
         .unwrap();
+
     let asset_response = fitz::api::admin::handlers::handle_request(asset_request, runtime.clone())
         .await
         .unwrap();
@@ -111,15 +91,15 @@ async fn should_serve_embedded_assets_with_etag_and_compression() {
     let asset_body = body::to_bytes(asset_response.into_body()).await.unwrap();
 
     assert_eq!(asset_status, StatusCode::OK);
-    assert_eq!(asset_content_type, "application/javascript; charset=utf-8");
-    assert_eq!(asset_content_encoding, "br");
+    assert_eq!(asset_content_type, "image/svg+xml");
+    assert_eq!(asset_content_encoding, "gzip");
     assert_eq!(asset_vary, "Accept-Encoding");
     assert!(!asset_body.is_empty());
 
     let not_modified_request = Request::builder()
         .method(Method::GET)
-        .uri(asset_path.as_str())
-        .header(header::ACCEPT_ENCODING, "br, gzip")
+        .uri("/favicon.svg")
+        .header(header::ACCEPT_ENCODING, "gzip")
         .header(header::IF_NONE_MATCH, etag)
         .body(Body::empty())
         .unwrap();

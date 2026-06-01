@@ -924,6 +924,7 @@ async fn should_return_lease_detail_with_age_and_diagnostics() {
 #[serial]
 async fn should_return_schedule_stats_with_latency_pressure() {
     // Arrange
+    fitz::boot::observability::metrics().clear();
     let (runtime, store, schedule) = schedule_runtime_with_domains();
     seed_active_schedule_definition(store);
     schedule
