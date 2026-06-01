@@ -62,6 +62,7 @@ pub mod projection;
 pub mod protocol;
 pub mod reply_inbox;
 pub mod session;
+pub mod sink;
 
 // Re-export primary types
 pub use actor::RpcRouteActor;

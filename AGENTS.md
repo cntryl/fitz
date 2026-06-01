@@ -24,6 +24,26 @@
 - Preserve the domain meanings: Notice = live ephemeral fanout, Stream = durable history/replay, KV = current authoritative state, Queue = durable work delivery, RPC = live request/response, Lease = ephemeral ownership coordination, Schedule = durable timing intent.
 - If semantics change, update the relevant docs in the same change.
 
+## Realm vs RouteFamily
+- `realm` is an opaque, application-defined namespace boundary.
+- A `realm` may represent a tenant, department, cost center, user, environment, or any other developer-chosen partition.
+- Fitz does not assign one business meaning to `realm`, so do not define it as "tenant" in core semantics.
+- `realm` and `route_family` are orthogonal identifiers.
+- `realm` is the application-visible namespace label used in Fitz routes, permissions, and admin/API payloads.
+- `route_family` is a broker-internal routing and isolation key used for session assignment and delivery partitioning.
+- They MUST NEVER be inferred from each other, aliased, substituted, or used as fallback values.
+- If `realm` is unknown or absent, it stays unknown or absent. It is never `route_family.to_string()`.
+
+Wrong:
+- `session.realm = session.route_family.to_string()`
+- describing `realm` as inherently equal to `tenant`
+- treating `?realm=41` as route-family selection
+
+Right:
+- expose `realm` and `route_family` separately when both matter
+- filter by `realm` using realm-bearing data only
+- treat external claim names like `tenant_id` as claim-source naming, not Fitz core terminology
+
 ## Working Rules
 - Keep changes small and focused.
 - Do not overwrite unrelated user edits.

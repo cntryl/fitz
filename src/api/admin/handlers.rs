@@ -80,7 +80,7 @@ pub async fn handle_request(
             handle_hierarchical_delete(&req, runtime).await
         }
 
-        (Method::GET, _) => serve_spa(path.as_str()).await,
+        (Method::GET, _) => super::assets::serve_request(&req),
         _ => Ok(super::not_found()),
     }
 }
@@ -641,65 +641,4 @@ fn no_content_response() -> Response<Body> {
         .status(StatusCode::NO_CONTENT)
         .body(Body::empty())
         .unwrap()
-}
-
-async fn serve_spa(path: &str) -> Result<Response<Body>, Infallible> {
-    use std::path::PathBuf;
-    use tokio::fs;
-
-    let safe_path = path.trim_start_matches('/');
-    let mut file_path = PathBuf::from("public");
-
-    if safe_path.is_empty() || safe_path == "/" {
-        file_path.push("index.html");
-    } else {
-        for component in safe_path.split('/') {
-            if component == ".." || component == "." {
-                return Ok(super::not_found());
-            }
-            file_path.push(component);
-        }
-
-        if !file_path.exists() || file_path.is_dir() {
-            file_path = PathBuf::from("public/index.html");
-        }
-    }
-
-    match fs::read(&file_path).await {
-        Ok(contents) => {
-            let content_type = match file_path.extension().and_then(|e| e.to_str()) {
-                Some("html") => "text/html; charset=utf-8",
-                Some("css") => "text/css; charset=utf-8",
-                Some("js") => "application/javascript; charset=utf-8",
-                Some("json") => "application/json",
-                Some("png") => "image/png",
-                Some("jpg") | Some("jpeg") => "image/jpeg",
-                Some("svg") => "image/svg+xml",
-                Some("ico") => "image/x-icon",
-                Some("woff") => "font/woff",
-                Some("woff2") => "font/woff2",
-                Some("ttf") => "font/ttf",
-                _ => "application/octet-stream",
-            };
-
-            Response::builder()
-                .status(200)
-                .header("Content-Type", content_type)
-                .header("Cache-Control", "public, max-age=3600")
-                .body(Body::from(contents))
-                .map_err(|_| unreachable!())
-        }
-        Err(_) => {
-            if !path.contains('.') {
-                if let Ok(index) = fs::read("public/index.html").await {
-                    return Response::builder()
-                        .status(200)
-                        .header("Content-Type", "text/html; charset=utf-8")
-                        .body(Body::from(index))
-                        .map_err(|_| unreachable!());
-                }
-            }
-            Ok(super::not_found())
-        }
-    }
 }

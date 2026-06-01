@@ -6,7 +6,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 const SCHEDULE_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
@@ -279,33 +279,11 @@ impl ScheduleDomainSink {
         Ok(())
     }
 
-    pub fn start_tick_loop(self: &Arc<Self>) {
-        let Ok(handle) = tokio::runtime::Handle::try_current() else {
-            tracing::debug!("Schedule tick loop not started: no Tokio runtime available");
-            return;
-        };
-
-        let weak = Arc::downgrade(self);
-        handle.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(250));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-            loop {
-                interval.tick().await;
-
-                let Some(sink) = weak.upgrade() else {
-                    break;
-                };
-                if !sink.active.load(Ordering::Relaxed) {
-                    break;
-                }
-
-                sink.scan_due_schedules();
-            }
-        });
+    pub(crate) fn is_active(&self) -> bool {
+        self.active.load(Ordering::Relaxed)
     }
 
-    fn scan_due_schedules(&self) {
+    pub(crate) fn scan_due_schedules(&self) {
         let mut live_publish_candidates = Vec::new();
         let mut ack_retry_candidates =
             HashMap::<crate::runtime::routing::RouteFamily, Vec<PendingFireKey>>::new();
@@ -754,17 +732,16 @@ impl ScheduleDomainSink {
 
 impl MailboxSink for ScheduleDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.unsubscribe_all(cleanup.session_id);
+            return Ok(());
+        }
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
         }
 
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
             return self.handle_domain_publish(event);
-        }
-
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.unsubscribe_all(cleanup.session_id);
-            return Ok(());
         }
 
         tracing::debug!(
@@ -1031,6 +1008,7 @@ mod tests {
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
     use bytes::Bytes;
     use std::sync::Arc;
+    use std::time::Duration;
 
     #[derive(Clone)]
     struct MockClock {

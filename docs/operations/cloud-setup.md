@@ -10,7 +10,7 @@ This guide defines a baseline cloud setup for Fitz.
 
 ## Baseline Topology
 
-1. Fitz node group behind a load balancer.
+1. One Fitz node behind ingress or a load balancer where needed.
 2. Persistent volume per stateful deployment where durability is required.
 3. Prometheus scraping for metrics and log shipping to central storage.
 
@@ -28,6 +28,7 @@ Details are in [admin/admin-api.md](../admin/admin-api.md) and [operations/obser
 
 1. TLS enabled at ingress.
 2. JWT signing keys configured and rotated.
-3. Resource limits configured per pod and per realm.
-4. Persistent storage configured for durability-sensitive domains.
-5. Alerting configured before first customer traffic.
+3. `FITZ_ROUTE_FAMILIES=1,2,...` configured as a contiguous allowlist and JWT issuers updated to emit `fitz.route_family`.
+4. Resource limits configured for the Fitz node and its realms.
+5. Persistent storage configured for durability-sensitive domains.
+6. Alerting configured before first customer traffic.

@@ -442,7 +442,7 @@ async def safe_enqueue(client, route, payload):
 Use these exact terms. Other terms are forbidden.
 | Term | Definition | Forbidden Alternatives |
 | ---------------: | ------------------------------------------------------------------ | --------------------------------- |
-| **realm** | Isolation boundary for resources within a broker | `tenant`, `organization` |
+| **realm** | Opaque, application-defined isolation boundary for resources within a broker. A realm may represent a tenant, department, cost center, user, environment, or another developer-chosen partition. | `tenant`, `organization`, `department`, `cost_center`, `user` |
 | **area** | Namespace within a realm | `namespace`, `collection` |
 | **resource** | Named entity within an area (e.g., table, queue, stream) | — |
 | **route** | URI-like string addressing a resource or operation | `endpoint`, `path`, `key` |
@@ -450,6 +450,8 @@ Use these exact terms. Other terms are forbidden.
 | **domain** | Service category (kv, queue, notice, stream, rpc, lease, schedule) | — |
 
 **Internal routing rule:** Clients send `CONNECT(jwt)` and opaque route strings only. Broker-internal partitioning, shard placement, and other session routing state are not part of the client contract.
+
+**Realm vs RouteFamily:** `realm` is the application-visible namespace label carried in routes and permissions. `fitz.route_family` is a separate broker-internal routing key. They are orthogonal and must never be inferred or defaulted from one another.
 
 **Forbidden terminology in client code:**
 
@@ -936,7 +938,7 @@ Clients MUST:
   **Session State After Successful CONNECT:**
   On successful CONNECT, broker creates session and MUST:
 - Assign unique session ID (internal use only)
-- Extract JWT claims (realm, areas, scopes)
+- Extract JWT claims (`realm`, `areas`, `scopes`, and provisioned non-zero `fitz.route_family`)
 - Establish permissions for all subsequent requests
 - Track active subscriptions, transactions, and resources
   **Session Cleanup On Disconnect:**
@@ -993,11 +995,12 @@ Fitz brokers support two authentication modes controlled by server configuration
 - JWT authentication is **required** for all connections
 - CONNECT frame MUST include valid JWT
 - Broker validates JWT signature and claims
-- Missing or invalid JWT causes immediate connection close
+- Missing or invalid JWT, including a missing, zero, or unprovisioned `fitz.route_family`, causes immediate connection close
   **2. Anonymous Mode** (`FITZ_AUTH_REQUIRED=false`):
 - JWT authentication is **optional**
 - CONNECT frame MAY include empty JWT or placeholder value
 - Broker assigns default permissions (typically full access to all realms/areas)
+- Broker always uses internal route family `1`
 - Useful for development, testing, or trusted internal networks
 
 ### JWT (Authentication Mechanism)
@@ -1657,7 +1660,7 @@ Clients MUST NOT:
 Authorization behavior depends on server authentication mode:
 **Authenticated Mode (`FITZ_AUTH_REQUIRED=true`):**
 
-- Broker MUST extract claims from JWT: `realm`, `areas` (array), `scopes` (array)
+- Broker MUST extract claims from JWT: `realm`, `areas` (array), `scopes` (array), `fitz.route_family` (provisioned non-zero integer)
 - For each request, broker MUST check:
   1. **Realm match**: Route realm ∈ JWT realm (MUST be exact match)
   2. **Area match**: Route area ∈ JWT areas
@@ -1666,13 +1669,14 @@ Authorization behavior depends on server authentication mode:
   **Anonymous Mode (`FITZ_AUTH_REQUIRED=false`):**
 - Broker assigns default permissions (typically unrestricted access)
 - No JWT validation or permission checks
+- Broker always uses internal route family `1`
 - All routes and verbs allowed
 - Used for development/testing or trusted internal networks
   **Permission Check Order (Authenticated Mode):**
   Broker MUST enforce permissions in this order:
 
 1. **Route validation:** Scheme known, depth valid, shape matches method (if fails: protocol error)
-2. **JWT validation:** Signature valid, not expired (if fails: transport error)
+2. **JWT validation:** Signature valid, not expired, and `fitz.route_family` provisioned and non-zero (if fails: transport error)
 3. **Permission enforcement:** Realm/area/scope match (if fails: domain error with code ERR_UNAUTHORIZED)
 4. **Domain dispatch:** Route to domain handler
 
@@ -1700,9 +1704,15 @@ Where `*` is domain prefix (1xxx for KV, 3xxx for Notice, etc.).
   "realm": "prod",
   "areas": ["app", "system"],
   "scopes": ["kv:read", "kv:write", "notice:subscribe"],
+  "fitz": { "route_family": 1 },
   "exp": 1234567890
 }
 ```
+
+The deployment configures the accepted contiguous allowlist with
+`FITZ_ROUTE_FAMILIES=1,2,...`, defaulting to `1`. Token issuers must be updated
+before deploying a broker that enforces this claim. Client libraries continue
+to treat the compact JWT as opaque input.
 
 **Scope Format:** `{domain}:{verb}` or `{domain}:*` (all verbs in domain)
 

@@ -1,5 +1,6 @@
 use super::{
-    record_connection_closed, record_connection_opened, websocket::handle_websocket, ListenerHandle,
+    drain_session_tasks, record_connection_closed, record_connection_opened, session_tasks,
+    websocket::handle_websocket, ListenerHandle,
 };
 use crate::api::ingress::IngressConfig;
 use crate::boot::{BootConfig, BootResult};
@@ -34,7 +35,9 @@ pub fn spawn_http_listener_with_bound_socket(
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
 
-    tokio::spawn(async move {
+    let join = tokio::spawn(async move {
+        let connections = session_tasks();
+        let websockets = session_tasks();
         let _ = ready_tx.send(());
 
         loop {
@@ -52,8 +55,9 @@ pub fn spawn_http_listener_with_bound_socket(
                             let ingress = ingress.clone();
                             let config = http_config.clone();
                             let runtime = runtime.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime).await {
+                            let websocket_tasks = websockets.clone();
+                            connections.lock().await.spawn(async move {
+                                if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime, websocket_tasks).await {
                                     tracing::error!("HTTP handler error: {}", e);
                                 }
                             });
@@ -65,11 +69,14 @@ pub fn spawn_http_listener_with_bound_socket(
                 }
             }
         }
+
+        drain_session_tasks("http", vec![connections, websockets]).await;
     });
 
     Ok(ListenerHandle {
         ready: ready_rx,
         shutdown: shutdown_tx,
+        join,
     })
 }
 
@@ -78,6 +85,7 @@ async fn handle_http_upgrade(
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
     runtime: Arc<crate::boot::Runtime>,
+    websocket_tasks: super::SessionTasks,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use hyper::server::conn::Http;
     use hyper::service::service_fn;
@@ -91,10 +99,11 @@ async fn handle_http_upgrade(
         let ingress = ingress.clone();
         let config = config.clone();
         let runtime = runtime_clone.clone();
+        let websocket_tasks = websocket_tasks.clone();
 
         async move {
             if is_websocket_upgrade(&req) {
-                handle_websocket(req, ingress, config, runtime).await
+                handle_websocket(req, ingress, config, runtime, websocket_tasks).await
             } else {
                 crate::api::admin::handlers::handle_request(req, runtime).await
             }

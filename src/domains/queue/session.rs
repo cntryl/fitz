@@ -181,6 +181,9 @@ mod tests {
             cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open Midge"),
         );
+        store
+            .create_column_family("cf_1")
+            .expect("Failed to provision queue test column family");
         let queue_key = QueueKey {
             family: RouteFamily::new(1),
             realm: "realm".to_string(),

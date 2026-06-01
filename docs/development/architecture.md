@@ -13,7 +13,7 @@
 ## Overview
 Fitz is a **layered, synchronous-core broker** designed for:
 - **Low-latency domain operations** (KV, queues, pub/sub, streams, RPC, leases, scheduling)
-- **Isolation via realms** (multi-tenant resource partitioning)
+- **Isolation via realms** (application-defined resource partitioning)
 - **Deterministic message routing** (no async jitter in hot paths)
 - **High fanout** (pub/sub with wildcard patterns)
 
@@ -22,7 +22,7 @@ For the strict internal contract that defines what each domain is allowed to do,
 The server is implemented in **async I/O boundaries** (transport) with a **100% synchronous core** (routing, domains). This separation ensures:
 - Clean transport abstraction (WebSocket, TCP, HTTP)
 - Predictable domain latency (no async scheduling variability)
-- Efficient multi-tenant isolation
+- Efficient realm-based isolation
 ## System Architecture
 ### Layered Design
 ```
@@ -102,13 +102,14 @@ This is a hard Fitz rule:
 - **TCP:** `[u32 BE length][payload bytes]`
 - **WebSocket:** Each binary message is a complete frame
 ### Layer 2: Session
-**Files:** `src/session/session.rs`, `src/session/permissions.rs`, `src/session/manager.rs`
+**Files:** `src/session/session.rs`, `src/session/permissions.rs`, `src/api/runtime_ingress.rs`, `src/api/session.rs`
 **Responsibility:** Connection authentication, permission enforcement, frame routing.
 **Behavior:**
 - Receive raw frame from transport
 - **First frame MUST be CONNECT** with JWT payload
 - Validate JWT signature and claims (must validate signature; do NOT trust client parsing)
-- Extract JWT claims: `realm`, `areas` (array), `scopes` (array)
+- Extract JWT claims: `realm`, `areas` (array), `scopes` (array), `fitz.route_family` (provisioned non-zero integer)
+- Treat `realm` as an opaque application-defined namespace boundary. Treat `fitz.route_family` as a separate broker-internal routing key, never as a realm fallback or synonym.
 - Establish session with extracted claims
 - Assign unique session ID (internal; NOT sent to client)
 - For each subsequent frame:
@@ -478,7 +479,7 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
 }
 ```
 ### Notice Domain (Pub/Sub)
-**Current files:** `src/boot/domains/notice_sink.rs`, `src/domains/notice/mod.rs`
+**Current files:** `src/domains/notice/sink.rs`, `src/domains/notice/mod.rs`
 
 Current Notice behavior is intentionally ephemeral:
 - `NoticeDomainSink` keeps subscription indexes entirely in memory for the current broker process
@@ -583,6 +584,7 @@ Brokers MUST validate JWT in CONNECT handshake:
    - `realm` (string): Route realm must match exactly
    - `areas` (array of strings): Route area must be in array
    - `scopes` (array of strings): Verb must be in scopes (e.g., `kv:read`, `notice:subscribe`)
+   - `fitz.route_family` (non-zero integer): Family must be provisioned by `FITZ_ROUTE_FAMILIES`
 4. **Permission Enforcement:** For each request, verify:
    - Route realm ∈ JWT realm (exact match)
    - Route area ∈ JWT areas

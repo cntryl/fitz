@@ -7,8 +7,8 @@
 //! lease state immediately. Fencing tokens are process-local and must not be
 //! interpreted as durable or cross-node identifiers.
 
-use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::domains::lease::LeaseMetrics;
+use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
@@ -20,7 +20,6 @@ use std::time::{Duration, Instant};
 
 const LEASE_MAX_WAIT_SECONDS: u32 = 30;
 const LEASE_MAX_QUEUE_DEPTH: usize = 100;
-const LEASE_SWEEP_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Clone)]
 struct SinkLeaseState {
@@ -150,30 +149,8 @@ impl LeaseDomainSink {
         self.active.store(false, Ordering::Relaxed);
     }
 
-    pub fn start_timeout_loop(self: &Arc<Self>) {
-        let Ok(handle) = tokio::runtime::Handle::try_current() else {
-            tracing::debug!("Lease timeout loop not started: no Tokio runtime available");
-            return;
-        };
-
-        let weak = Arc::downgrade(self);
-        handle.spawn(async move {
-            let mut interval = tokio::time::interval(LEASE_SWEEP_INTERVAL);
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-            loop {
-                interval.tick().await;
-
-                let Some(sink) = weak.upgrade() else {
-                    break;
-                };
-                if !sink.active.load(Ordering::Relaxed) {
-                    break;
-                }
-
-                sink.sweep_expired_state();
-            }
-        });
+    pub(crate) fn is_active(&self) -> bool {
+        self.active.load(Ordering::Relaxed)
     }
 
     fn lease_info_from_state(
@@ -224,8 +201,8 @@ impl LeaseDomainSink {
             metrics.set_active_leases(lease_count);
             metrics.set_waiter_depth(waiter_count);
         } else {
-            crate::boot::observability::gauge_set("fitz_lease_active_gauge", lease_count as u64);
-            crate::boot::observability::gauge_set("fitz_lease_waiter_depth", waiter_count as u64);
+            crate::observability::gauge_set("fitz_lease_active_gauge", lease_count as u64);
+            crate::observability::gauge_set("fitz_lease_waiter_depth", waiter_count as u64);
         }
     }
 
@@ -233,7 +210,7 @@ impl LeaseDomainSink {
         if let Some(metrics) = &self.metrics {
             metrics.counter_inc(name);
         } else {
-            crate::boot::observability::counter_inc(name);
+            crate::observability::counter_inc(name);
         }
     }
 
@@ -538,7 +515,7 @@ impl LeaseDomainSink {
         }
     }
 
-    fn sweep_expired_state(&self) {
+    pub(crate) fn sweep_expired_state(&self) {
         let now = Instant::now();
 
         let expired_waiters = {
@@ -982,13 +959,12 @@ impl LeaseDomainSink {
 
 impl MailboxSink for LeaseDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
-
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.cleanup_session(cleanup.session_id);
             return Ok(());
+        }
+        if !self.active.load(Ordering::Relaxed) {
+            return Err(DeliveryError::ActorStopped);
         }
 
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {

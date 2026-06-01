@@ -61,6 +61,26 @@ fn generate_prometheus_metrics(runtime: Arc<Runtime>) -> String {
     ));
     output.push('\n');
 
+    output.push_str(
+        "# HELP fitz_router_backpressure_total Total router delivery failures caused by normal-lane mailbox saturation\n",
+    );
+    output.push_str("# TYPE fitz_router_backpressure_total counter\n");
+    output.push_str(&format!(
+        "fitz_router_backpressure_total {}\n",
+        runtime.router_backpressure_total()
+    ));
+    output.push('\n');
+
+    output.push_str(
+        "# HELP fitz_router_high_lane_backpressure_total Total router delivery failures caused by control-plane high-lane saturation\n",
+    );
+    output.push_str("# TYPE fitz_router_high_lane_backpressure_total counter\n");
+    output.push_str(&format!(
+        "fitz_router_high_lane_backpressure_total {}\n",
+        runtime.router_high_lane_backpressure_total()
+    ));
+    output.push('\n');
+
     // Add observability metrics (from MetricsCollector)
     add_observability_metrics(&mut output);
 
@@ -907,11 +927,26 @@ mod tests {
         runtime
     }
 
+    fn assert_metric_exported(metrics: &str, metric_name: &str) {
+        let prefix = format!("{metric_name} ");
+        let line = metrics
+            .lines()
+            .find(|line| line.starts_with(&prefix))
+            .unwrap_or_else(|| panic!("missing metric {metric_name}"));
+        let value = line
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or_else(|| panic!("missing metric value for {metric_name}"));
+        value
+            .parse::<u64>()
+            .unwrap_or_else(|err| panic!("invalid metric value for {metric_name}: {err}"));
+    }
+
     #[test]
     fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
         // Arrange
         let runtime = runtime_with_preloaded_schedule_metrics();
-        let metrics = crate::boot::observability::metrics();
+        let metrics = crate::observability::metrics();
         let latency_before = metrics
             .histogram_get_buckets("fitz_schedule_latency_ms")
             .unwrap_or([0; 9]);
@@ -949,14 +984,14 @@ mod tests {
             latency_before[0] + 1
         )));
         assert!(metrics.contains("fitz_schedule_latency_ms_count"));
-        assert!(metrics.contains("fitz_notice_delivery_drops_total 0"));
-        assert!(metrics.contains("fitz_stream_notify_drops_total 0"));
-        assert!(metrics.contains("fitz_queue_notify_drops_total 0"));
-        assert!(metrics.contains("fitz_rpc_request_timeouts_total 0"));
-        assert!(metrics.contains("fitz_rpc_backpressure_rejects_total 0"));
-        assert!(metrics.contains("fitz_rpc_duplicate_correlation_rejects_total 0"));
-        assert!(metrics.contains("fitz_rpc_wrong_worker_rejects_total 0"));
-        assert!(metrics.contains("fitz_lease_waiter_depth 0"));
-        assert!(metrics.contains("fitz_notice_wildcard_limit_rejects_total 0"));
+        assert_metric_exported(&metrics, "fitz_notice_delivery_drops_total");
+        assert_metric_exported(&metrics, "fitz_stream_notify_drops_total");
+        assert_metric_exported(&metrics, "fitz_queue_notify_drops_total");
+        assert_metric_exported(&metrics, "fitz_rpc_request_timeouts_total");
+        assert_metric_exported(&metrics, "fitz_rpc_backpressure_rejects_total");
+        assert_metric_exported(&metrics, "fitz_rpc_duplicate_correlation_rejects_total");
+        assert_metric_exported(&metrics, "fitz_rpc_wrong_worker_rejects_total");
+        assert_metric_exported(&metrics, "fitz_lease_waiter_depth");
+        assert_metric_exported(&metrics, "fitz_notice_wildcard_limit_rejects_total");
     }
 }

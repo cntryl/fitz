@@ -130,6 +130,8 @@ pub struct BootConfig {
     pub auth_required: bool,
     /// Explicit auth configuration for token verification
     pub auth_config: crate::auth::AuthConfig,
+    /// Provisioned RouteFamily values accepted from verified JWT claims.
+    pub route_families: Vec<u32>,
     /// Maximum concurrent connections
     pub max_connections: usize,
     /// Frame size limit in bytes
@@ -165,6 +167,11 @@ impl Default for BootConfig {
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(crate::prelude::DEFAULT_TCP_PORT);
         let bind_addr = std::env::var("FITZ_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
+        let route_families = std::env::var("FITZ_ROUTE_FAMILIES")
+            .unwrap_or_else(|_| "1".to_string())
+            .split(',')
+            .map(|value| value.trim().parse::<u32>().unwrap_or(0))
+            .collect();
 
         Self {
             http_port,
@@ -174,6 +181,7 @@ impl Default for BootConfig {
             stream_storage_layout: StreamStorageLayout::from_env(),
             auth_required,
             auth_config: crate::auth::AuthConfig::from_env(auth_required),
+            route_families,
             max_connections: 10_000,
             max_frame_size: 1024 * 1024,
             channel_capacity: 1000,
@@ -233,6 +241,11 @@ impl BootConfig {
         self
     }
 
+    pub fn with_route_families(mut self, route_families: Vec<u32>) -> Self {
+        self.route_families = route_families;
+        self
+    }
+
     pub fn validate(&self) -> BootResult<()> {
         self.storage_mode
             .validate()
@@ -240,6 +253,19 @@ impl BootConfig {
         self.auth_config
             .validate(self.auth_required)
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+        if self.route_families.is_empty() {
+            return Err("FITZ_ROUTE_FAMILIES must contain at least one family".into());
+        }
+        for (index, family) in self.route_families.iter().copied().enumerate() {
+            let expected = index as u32 + 1;
+            if family != expected {
+                return Err(format!(
+                    "FITZ_ROUTE_FAMILIES must be contiguous non-zero values starting at 1; expected {}, found {}",
+                    expected, family
+                )
+                .into());
+            }
+        }
         Ok(())
     }
 }
@@ -261,6 +287,7 @@ mod tests {
         assert_eq!(config.http_port, prelude::DEFAULT_HTTP_PORT);
         assert_eq!(config.bind_addr, "0.0.0.0");
         assert_eq!(config.max_connections, 10_000);
+        assert_eq!(config.route_families, vec![1]);
         assert_eq!(
             config.stream_storage_layout,
             StreamStorageLayout::PromotionFrontier
@@ -311,5 +338,47 @@ mod tests {
             config.stream_storage_layout,
             StreamStorageLayout::PromotionFrontier
         );
+    }
+
+    #[test]
+    fn should_accept_contiguous_route_family_allowlist() {
+        // Arrange
+        let config = BootConfig::new()
+            .with_auth_config(crate::auth::AuthConfig::Disabled)
+            .with_route_families(vec![1, 2, 3]);
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_reject_empty_route_family_allowlist() {
+        // Arrange
+        let config = BootConfig::new()
+            .with_auth_config(crate::auth::AuthConfig::Disabled)
+            .with_route_families(Vec::new());
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_reject_gapped_route_family_allowlist() {
+        // Arrange
+        let config = BootConfig::new()
+            .with_auth_config(crate::auth::AuthConfig::Disabled)
+            .with_route_families(vec![1, 3]);
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result.is_err());
     }
 }

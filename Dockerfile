@@ -1,76 +1,78 @@
-
-# Stage 1: Build UI (Askr + Vite+)
 FROM node:slim AS frontend
 
-# Install dependencies needed for the curl command
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash curl ca-certificates \
+  && apt-get install -y --no-install-recommends \
+  bash \
+  ca-certificates \
+  curl \
   && rm -rf /var/lib/apt/lists/*
 
-# Install Vite+ globally
 RUN curl -fsSL https://vite.plus | bash
 
 ENV PATH="/root/.vite-plus/bin:${PATH}"
 
 WORKDIR /ui
 
-# Copy UI package files
 COPY ui/package.json ui/package-lock.json* ./
 
-# Install dependencies
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci
 
-# Copy UI source
 COPY ui/ ./
 
-# Build production UI
 RUN npm run build
 
-# Stage 2: Build Rust binary
-FROM rust:slim AS backend
+FROM rust:slim AS chef
 
-# Install build essentials and OpenSSL dev libraries
-# cntryl-midge pulls reqwest with native-tls, which requires OpenSSL.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-  build-essential ca-certificates libssl-dev pkg-config \
+  build-essential \
+  ca-certificates \
+  libssl-dev \
+  pkg-config \
   && rm -rf /var/lib/apt/lists/*
+
+RUN cargo install --locked cargo-chef
 
 WORKDIR /usr/src/fitz
 
-# Dependency caching: copy manifests and do a dummy build to cache crates
-COPY Cargo.toml Cargo.lock ./
-RUN mkdir -p src && echo 'fn main() { println!("build-hint"); }' > src/main.rs
-RUN cargo build --release
+FROM chef AS planner
 
-# Copy the full source and perform the real build
 COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 
-RUN cargo build --release --locked \
+FROM chef AS backend
+
+COPY --from=planner /usr/src/fitz/recipe.json recipe.json
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  cargo chef cook --release --locked --recipe-path recipe.json
+
+COPY . .
+COPY --from=frontend /ui/dist/ /usr/src/fitz/embedded-ui/
+
+ENV FITZ_EMBED_UI_DIR=/usr/src/fitz/embedded-ui
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  cargo build --release --locked \
   && strip target/release/fitz || true
 
-# Prepare a writable storage directory for the non-root runtime user.
-RUN mkdir -p /usr/src/fitz/runtime-data
+FROM debian:trixie-slim AS runtime-fs
 
-# Stage 3: Runtime
-FROM gcr.io/distroless/cc-debian12
+RUN mkdir -p /data \
+  && chown 65532:65532 /data
+
+FROM gcr.io/distroless/cc-debian12 AS runtime
 
 WORKDIR /app
 
-# Distroless/cc includes libc6 and C libraries needed for OpenSSL runtime
-# No need for additional package installation
-
-# Copy the binary from backend
+COPY --from=runtime-fs --chown=65532:65532 /data /data
 COPY --from=backend /usr/src/fitz/target/release/fitz /app/fitz
 
-# Provide a writable /data path for local disk storage.
-COPY --from=backend --chown=65532:65532 /usr/src/fitz/runtime-data/ /data/
-
-# Copy SPA files for admin UI (built to ui/dist)
-COPY --from=frontend /ui/dist/ /app/public/
-
-# Run as non-root numeric UID
-USER 65532
+USER 65532:65532
 
 EXPOSE 4090 4091
-CMD ["/app/fitz"]
+
+VOLUME ["/data"]
+
+ENTRYPOINT ["/app/fitz"]

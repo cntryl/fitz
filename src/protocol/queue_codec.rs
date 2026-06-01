@@ -206,8 +206,9 @@ fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
 
     // Parse optional delay (1 byte flag, then u64 if present)
     let delay_seconds = if offset < payload.len() {
-        if payload[offset] == 1 {
-            offset += 1;
+        let has_delay = payload[offset];
+        offset += 1;
+        if has_delay == 1 {
             if offset + 8 > payload.len() {
                 return Err("Incomplete delay_seconds".to_string());
             }
@@ -221,13 +222,20 @@ fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
                 payload[offset + 6],
                 payload[offset + 7],
             ]);
+            offset += 8;
             Some(delay)
-        } else {
+        } else if has_delay == 0 {
             None
+        } else {
+            return Err("Invalid delay flag".to_string());
         }
     } else {
         None
     };
+
+    if offset != payload.len() {
+        return Err("Trailing data in enqueue request".to_string());
+    }
 
     Ok(QueueMessage::Send {
         family_id,
@@ -276,8 +284,10 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
             ]) as usize;
             offset += 4;
             Some(size)
-        } else {
+        } else if has_batch_size == 0 {
             None
+        } else {
+            return Err("Invalid batch_size flag".to_string());
         }
     } else {
         None
@@ -405,6 +415,11 @@ fn parse_extend(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, 
         payload[offset + 6],
         payload[offset + 7],
     ]);
+    offset += 8;
+
+    if offset != payload.len() {
+        return Err("Trailing data in extend request".to_string());
+    }
 
     Ok(QueueMessage::Extend {
         family_id,
@@ -452,6 +467,11 @@ fn parse_complete(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage
         payload[offset + 6],
         payload[offset + 7],
     ]);
+    offset += 8;
+
+    if offset != payload.len() {
+        return Err("Trailing data in complete request".to_string());
+    }
 
     Ok(QueueMessage::Ack {
         family_id,

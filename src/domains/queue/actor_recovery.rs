@@ -372,14 +372,17 @@ impl QueueActor {
         while let Some((key_bytes, value_bytes)) = header_iter.next() {
             let Some(id) = Self::parse_message_id_from_key(&key_bytes, &self.header_key_prefix)
             else {
-                continue;
+                return Err("Malformed authoritative queue header key".to_string());
             };
             let record = if let Ok(record) = Self::decode_record_header(&value_bytes) {
                 record
             } else if let Ok(record) = Self::decode_legacy_record(value_bytes.clone()) {
                 record.metadata_only_from()
             } else {
-                continue;
+                return Err(format!(
+                    "Malformed authoritative queue header record for message {}",
+                    id
+                ));
             };
 
             max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
@@ -418,11 +421,16 @@ impl QueueActor {
             let Some(id) =
                 Self::parse_message_id_from_key(&key_bytes, &self.legacy_message_key_prefix)
             else {
-                continue;
+                return Err("Malformed authoritative legacy queue message key".to_string());
             };
             let record = match Self::decode_legacy_record(value_bytes) {
                 Ok(record) => record,
-                Err(_) => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "Malformed authoritative legacy queue message {}: {}",
+                        id, error
+                    ))
+                }
             };
 
             max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
@@ -475,18 +483,11 @@ impl QueueActor {
             .unwrap_or(fallback_next_id)
             .max(fallback_next_id);
 
-        if let Err(e) = self.rewrite_index_from_memory(rebuild_next_id) {
-            tracing::warn!(
-                queue = ?self.queue_key,
-                route_family = self.queue_key.family.as_u64(),
-                error_reason = %e,
-                "Failed to rewrite queue recovery index"
-            );
-        }
+        self.rewrite_index_from_memory(rebuild_next_id)?;
         Ok(max_id)
     }
 
-    pub(super) fn recover_from_store(&mut self) {
+    pub(super) fn recover_from_store(&mut self) -> Result<(), String> {
         let (mut next_id, max_id) = match self.try_recover_from_index() {
             IndexRecoveryAttempt::Hit { next_id, max_id } => {
                 self.recovery_path = RecoveryPath::IndexHit;
@@ -494,18 +495,7 @@ impl QueueActor {
             }
             IndexRecoveryAttempt::Missing { next_id } => {
                 self.recovery_path = RecoveryPath::IndexMissingFallback;
-                let max_id = match self.recover_from_scan_and_rebuild_index(next_id) {
-                    Ok(max_id) => max_id,
-                    Err(e) => {
-                        tracing::warn!(
-                            queue = ?self.queue_key,
-                            route_family = self.queue_key.family.as_u64(),
-                            error_reason = %e,
-                            "Failed to rebuild missing queue index from scan"
-                        );
-                        None
-                    }
-                };
+                let max_id = self.recover_from_scan_and_rebuild_index(next_id)?;
                 (next_id, max_id)
             }
             IndexRecoveryAttempt::Invalid { next_id, reason } => {
@@ -516,18 +506,7 @@ impl QueueActor {
                     "Queue index recovery found invalid state; falling back to full scan"
                 );
                 self.recovery_path = RecoveryPath::IndexInvalidFallback;
-                let max_id = match self.recover_from_scan_and_rebuild_index(next_id) {
-                    Ok(max_id) => max_id,
-                    Err(scan_err) => {
-                        tracing::warn!(
-                            queue = ?self.queue_key,
-                            route_family = self.queue_key.family.as_u64(),
-                            error_reason = %scan_err,
-                            "Queue fallback recovery scan failed after invalid index"
-                        );
-                        None
-                    }
-                };
+                let max_id = self.recover_from_scan_and_rebuild_index(next_id)?;
                 (next_id, max_id)
             }
             IndexRecoveryAttempt::Error { next_id, reason } => {
@@ -538,18 +517,7 @@ impl QueueActor {
                     "Queue index recovery failed; falling back to full scan"
                 );
                 self.recovery_path = RecoveryPath::IndexErrorFallback;
-                let max_id = match self.recover_from_scan_and_rebuild_index(next_id) {
-                    Ok(max_id) => max_id,
-                    Err(scan_err) => {
-                        tracing::warn!(
-                            queue = ?self.queue_key,
-                            route_family = self.queue_key.family.as_u64(),
-                            error_reason = %scan_err,
-                            "Queue fallback recovery scan failed after index recovery error"
-                        );
-                        None
-                    }
-                };
+                let max_id = self.recover_from_scan_and_rebuild_index(next_id)?;
                 (next_id, max_id)
             }
         };
@@ -567,5 +535,6 @@ impl QueueActor {
         {
             self.recovery_path = RecoveryPath::Empty;
         }
+        Ok(())
     }
 }
