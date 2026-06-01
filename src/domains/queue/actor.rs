@@ -45,7 +45,7 @@
 //! - `queue:{realm}:{area}:{resource}:meta` Ã¢â€ â€™ [next_id:8]
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -611,7 +611,26 @@ impl QueueActor {
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
         commit_write_options: cntryl_midge::WriteOptions,
     ) -> Self {
-        Self::with_clock_and_write_options(
+        Self::try_new_with_write_options(
+            family,
+            queue_key,
+            store,
+            max_attempts,
+            dedup_store,
+            commit_write_options,
+        )
+        .expect("recover queue actor from store")
+    }
+
+    pub fn try_new_with_write_options(
+        family: RouteFamily,
+        queue_key: QueueKey,
+        store: Arc<cntryl_midge::MidgeEngine>,
+        max_attempts: Option<u32>,
+        dedup_store: Arc<crate::utils::idempotency::DedupStore>,
+        commit_write_options: cntryl_midge::WriteOptions,
+    ) -> Result<Self, String> {
+        Self::try_with_clock_and_write_options(
             family,
             queue_key,
             store,
@@ -652,6 +671,27 @@ impl QueueActor {
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
         commit_write_options: cntryl_midge::WriteOptions,
     ) -> Self {
+        Self::try_with_clock_and_write_options(
+            family,
+            queue_key,
+            store,
+            clock,
+            max_attempts,
+            dedup_store,
+            commit_write_options,
+        )
+        .expect("recover queue actor from store")
+    }
+
+    pub fn try_with_clock_and_write_options(
+        family: RouteFamily,
+        queue_key: QueueKey,
+        store: Arc<cntryl_midge::MidgeEngine>,
+        clock: Box<dyn Clock>,
+        max_attempts: Option<u32>,
+        dedup_store: Arc<crate::utils::idempotency::DedupStore>,
+        commit_write_options: cntryl_midge::WriteOptions,
+    ) -> Result<Self, String> {
         let now = Instant::now();
 
         let mut actor = Self {
@@ -703,8 +743,167 @@ impl QueueActor {
             next_delayed_deadline: now,
         };
 
-        actor.recover_from_store();
-        actor
+        actor.recover_from_store()?;
+        Ok(actor)
+    }
+
+    pub fn validate_persisted_state_for_existing_families(
+        store: &cntryl_midge::Engine,
+    ) -> Result<(), String> {
+        let families = store
+            .list_column_families()
+            .map_err(|error| format!("list queue column families failed: {error}"))?;
+
+        for family in families {
+            if family.id() == 0 {
+                continue;
+            }
+            Self::validate_persisted_state_for_family(store, family.id())?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_persisted_state_for_family(
+        store: &cntryl_midge::Engine,
+        family: u32,
+    ) -> Result<(), String> {
+        let txn = store
+            .begin_tx(family, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|error| {
+                format!(
+                    "queue validation failed: family={} key_category=transaction error={:?}",
+                    family, error
+                )
+            })?;
+        let mut iter = txn.scan(&cntryl_midge::Query::new()).map_err(|error| {
+            format!(
+                "queue validation failed: family={} key_category=scan error={:?}",
+                family, error
+            )
+        })?;
+        let mut required_bodies = HashSet::<Vec<u8>>::new();
+        let mut body_rows = HashSet::<Vec<u8>>::new();
+
+        for (key, value) in iter.collect_all() {
+            let Some(suffix) = storage_key::strip_domain_prefix(&key, DomainKeyspace::Queue) else {
+                continue;
+            };
+
+            if suffix.ends_with(b":meta") && !suffix.ends_with(b":idx:meta") {
+                let Some(meta) = Self::decode_meta(&value) else {
+                    return Err(format!(
+                        "queue validation failed: family={} key_category=meta error=invalid encoding",
+                        family
+                    ));
+                };
+                if meta.next_id == 0 {
+                    return Err(format!(
+                        "queue validation failed: family={} key_category=meta error=next_id is zero",
+                        family
+                    ));
+                }
+                continue;
+            }
+
+            if let Some((queue_prefix, id_bytes)) = Self::split_authoritative_key(suffix, b":hdr:")
+            {
+                Self::validate_authoritative_message_id(family, "header", id_bytes)?;
+                let is_split = Self::is_versioned_header(&value) || value.len() == 12;
+                if Self::decode_record_header(&value).is_err()
+                    && Self::decode_legacy_record(value.clone()).is_err()
+                {
+                    return Err(format!(
+                        "queue validation failed: family={} key_category=header error=invalid encoding",
+                        family
+                    ));
+                }
+                if is_split {
+                    required_bodies.insert(Self::body_suffix(queue_prefix, id_bytes));
+                }
+                continue;
+            }
+
+            if let Some((_queue_prefix, id_bytes)) = Self::split_authoritative_key(suffix, b":msg:")
+            {
+                Self::validate_authoritative_message_id(family, "legacy_message", id_bytes)?;
+                Self::decode_legacy_record(value).map_err(|error| {
+                    format!(
+                        "queue validation failed: family={} key_category=legacy_message error={}",
+                        family, error
+                    )
+                })?;
+                continue;
+            }
+
+            if let Some((queue_prefix, id_bytes)) = Self::split_authoritative_key(suffix, b":body:")
+            {
+                Self::validate_authoritative_message_id(family, "body", id_bytes)?;
+                body_rows.insert(Self::body_suffix(queue_prefix, id_bytes));
+            }
+        }
+
+        for required_body in required_bodies {
+            if !body_rows.remove(&required_body) {
+                return Err(format!(
+                    "queue validation failed: family={} key_category=body error=missing body for split header",
+                    family
+                ));
+            }
+        }
+        if !body_rows.is_empty() {
+            return Err(format!(
+                "queue validation failed: family={} key_category=body error=orphan body row",
+                family
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn split_authoritative_key<'a>(
+        suffix: &'a [u8],
+        marker: &[u8],
+    ) -> Option<(&'a [u8], &'a [u8])> {
+        let marker_start = suffix
+            .windows(marker.len())
+            .rposition(|window| window == marker)?;
+        Some((
+            &suffix[..marker_start],
+            &suffix[marker_start + marker.len()..],
+        ))
+    }
+
+    fn validate_authoritative_message_id(
+        family: u32,
+        category: &str,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        if bytes.is_empty() || bytes.iter().any(|byte| !byte.is_ascii_digit()) {
+            return Err(format!(
+                "queue validation failed: family={} key_category={} error=invalid message id",
+                family, category
+            ));
+        }
+        let id = std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0);
+        if id == 0 {
+            return Err(format!(
+                "queue validation failed: family={} key_category={} error=invalid message id",
+                family, category
+            ));
+        }
+        Ok(())
+    }
+
+    fn body_suffix(queue_prefix: &[u8], id_bytes: &[u8]) -> Vec<u8> {
+        let mut suffix = Vec::with_capacity(queue_prefix.len() + 6 + id_bytes.len());
+        suffix.extend_from_slice(queue_prefix);
+        suffix.extend_from_slice(b":body:");
+        suffix.extend_from_slice(id_bytes);
+        suffix
     }
 
     #[inline]
@@ -973,7 +1172,7 @@ impl QueueActor {
             });
         }
 
-        if bytes.first().copied()? != Self::META_VERSION_V2 || bytes.len() < 57 {
+        if bytes.first().copied()? != Self::META_VERSION_V2 || bytes.len() != 57 {
             return None;
         }
 
@@ -1741,7 +1940,11 @@ impl QueueActor {
 
         let now_instant = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
-        let delay_ms = delay_seconds.unwrap_or(0).saturating_mul(1_000);
+        let Some(delay_ms) = delay_seconds.unwrap_or(0).checked_mul(1_000) else {
+            return QueueResponse::BadRequest {
+                reason: "delay_seconds is too large".to_string(),
+            };
+        };
 
         // Start transaction
         let cf_id = self.queue_key.family.id();
@@ -1760,7 +1963,11 @@ impl QueueActor {
         // Allocate message ID
         let id = MessageId::new(self.next_id);
         let visible_at_ms = now_epoch_ms.saturating_add(delay_ms);
-        let visible_at = now_instant + Duration::from_millis(delay_ms);
+        let Some(visible_at) = now_instant.checked_add(Duration::from_millis(delay_ms)) else {
+            return QueueResponse::BadRequest {
+                reason: "delay_seconds is too large".to_string(),
+            };
+        };
 
         let record = QueueRecord::metadata_only(0, visible_at_ms);
         let cached_body = body.clone();
@@ -1927,10 +2134,18 @@ impl QueueActor {
         let reserved_limit = self.reserved_id_limit_for(items.len() as u64);
 
         for (body, delay_seconds) in items {
-            let delay_ms = delay_seconds.unwrap_or(0).saturating_mul(1_000);
+            let Some(delay_ms) = delay_seconds.unwrap_or(0).checked_mul(1_000) else {
+                return QueueResponse::BadRequest {
+                    reason: "delay_seconds is too large".to_string(),
+                };
+            };
             let id = MessageId::new(next_id);
             let visible_at_ms = now_epoch_ms.saturating_add(delay_ms);
-            let visible_at = now_instant + Duration::from_millis(delay_ms);
+            let Some(visible_at) = now_instant.checked_add(Duration::from_millis(delay_ms)) else {
+                return QueueResponse::BadRequest {
+                    reason: "delay_seconds is too large".to_string(),
+                };
+            };
 
             let record = QueueRecord::metadata_only(0, visible_at_ms);
 
@@ -2081,8 +2296,13 @@ impl QueueActor {
         let now = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
         let inflight_duration = Duration::from_secs(inflight_seconds);
+        let Some(expires_at) = now.checked_add(inflight_duration) else {
+            return QueueResponse::BadRequest {
+                reason: "inflight_seconds is too large".to_string(),
+            };
+        };
 
-        let mut messages = Vec::with_capacity(batch_size);
+        let mut messages = Vec::with_capacity(self.ready.len().min(batch_size));
 
         for _ in 0..batch_size {
             let id = match self.ready.front().map(|entry| entry.id) {
@@ -2112,7 +2332,6 @@ impl QueueActor {
 
             // Generate inflight token
             let token = Self::generate_token();
-            let expires_at = now + inflight_duration;
             let inflight_epoch = self
                 .records
                 .get(&id)
@@ -2201,7 +2420,11 @@ impl QueueActor {
         }
 
         // Extend expiration
-        let new_expires_at = now + Duration::from_secs(inflight_seconds);
+        let Some(new_expires_at) = now.checked_add(Duration::from_secs(inflight_seconds)) else {
+            return QueueResponse::BadRequest {
+                reason: "inflight_seconds is too large".to_string(),
+            };
+        };
         inflight.inflight_epoch = inflight.inflight_epoch.saturating_add(1);
         inflight.expires_at = new_expires_at;
         inflight.expires_at_epoch_ms =
@@ -2687,6 +2910,7 @@ impl QueueActor {
 pub mod tests {
     use super::*;
     use crate::runtime::routing::RouteFamily;
+    use crate::testkit::create_test_engine_with_cfs;
     use uuid::Uuid;
 
     /// Mock clock for deterministic testing
@@ -2862,6 +3086,92 @@ pub mod tests {
 
         txn.commit(cntryl_midge::WriteOptions::buffered())
             .expect("commit index mutation");
+    }
+
+    fn put_queue_validation_row(store: &cntryl_midge::Engine, suffix: &[u8], value: Vec<u8>) {
+        let mut txn = store
+            .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin write tx");
+        txn.put(
+            storage_key::prefixed_key("test", DomainKeyspace::Queue, suffix),
+            value,
+            None,
+        )
+        .expect("write queue validation row");
+        txn.commit(cntryl_midge::WriteOptions::buffered())
+            .expect("commit queue validation row");
+    }
+
+    #[test]
+    fn should_reject_malformed_authoritative_queue_rows_during_preflight() {
+        // Arrange
+        let cases = [
+            (b"jobs:email:meta".as_slice(), b"broken".to_vec(), "meta"),
+            (b"jobs:email:hdr:1".as_slice(), b"broken".to_vec(), "header"),
+            (
+                b"jobs:email:msg:1".as_slice(),
+                b"broken".to_vec(),
+                "legacy_message",
+            ),
+        ];
+
+        // Act
+        let errors = cases
+            .into_iter()
+            .map(|(suffix, value, category)| {
+                let store = create_test_engine_with_cfs(vec![1]);
+                put_queue_validation_row(store.as_ref(), suffix, value);
+                (
+                    QueueActor::validate_persisted_state_for_existing_families(store.as_ref())
+                        .expect_err("malformed queue row should fail preflight"),
+                    category,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert!(errors
+            .into_iter()
+            .all(|(error, category)| error.contains(&format!("key_category={category}"))));
+    }
+
+    #[test]
+    fn should_reject_missing_queue_body_for_split_header_during_preflight() {
+        // Arrange
+        let store = create_test_engine_with_cfs(vec![1]);
+        put_queue_validation_row(
+            store.as_ref(),
+            b"jobs:email:hdr:1",
+            QueueActor::encode_record_header(&QueueRecord::ready(
+                Bytes::from_static(b"payload"),
+                1,
+                1,
+                1_700_000_000_000,
+            )),
+        );
+
+        // Act
+        let result = QueueActor::validate_persisted_state_for_existing_families(store.as_ref());
+
+        // Assert
+        assert!(result
+            .expect_err("missing queue body should fail preflight")
+            .contains("missing body for split header"));
+    }
+
+    #[test]
+    fn should_reject_orphan_queue_body_during_preflight() {
+        // Arrange
+        let store = create_test_engine_with_cfs(vec![1]);
+        put_queue_validation_row(store.as_ref(), b"jobs:email:body:1", b"payload".to_vec());
+
+        // Act
+        let result = QueueActor::validate_persisted_state_for_existing_families(store.as_ref());
+
+        // Assert
+        assert!(result
+            .expect_err("orphan queue body should fail preflight")
+            .contains("orphan body row"));
     }
 
     #[test]

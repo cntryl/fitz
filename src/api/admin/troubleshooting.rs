@@ -545,6 +545,25 @@ impl DiagnosticHotspot {
     }
 
     fn suggested_queries(&self) -> Vec<SuggestedQuery> {
+        if self.domain == "broker" {
+            return vec![
+                Self::suggested_query(
+                    1,
+                    "Inspect broker stats",
+                    "inspect /api/v1/stats".to_string(),
+                    "Broker-level stats are the bounded next step for confirming whether overload is confined to router saturation or reflected in domain diagnostics.",
+                    "Compare broker router counters against domain diagnostics before treating the overload as domain-local pressure.",
+                ),
+                Self::suggested_query(
+                    2,
+                    "Inspect broker metrics",
+                    "inspect /metrics".to_string(),
+                    "Prometheus counters are the bounded next step for checking whether saturation is accumulating in the normal lane or the control-plane high lane.",
+                    "Use the metrics view to separate data-plane mailbox pressure from control-plane saturation before changing overload policy.",
+                ),
+            ];
+        }
+
         let Some(events_endpoint) = self.events_query() else {
             return Vec::new();
         };
@@ -1110,6 +1129,12 @@ pub fn build_runtime_diagnostics(runtime: &Runtime) -> RuntimeDiagnostics {
     all_hotspots.extend(rpc.hotspots.iter().cloned());
     all_hotspots.extend(lease.hotspots.iter().cloned());
     all_hotspots.extend(schedule.hotspots.iter().cloned());
+    if let Some(router_hotspot) = broker_router_hotspot(
+        runtime.router_backpressure_total(),
+        runtime.router_high_lane_backpressure_total(),
+    ) {
+        all_hotspots.push(router_hotspot);
+    }
 
     all_hotspots.sort_by(compare_scored_hotspots);
     all_hotspots.truncate(5);
@@ -1166,6 +1191,77 @@ fn compare_scored_hotspots(left: &ScoredHotspot, right: &ScoredHotspot) -> Order
         .then_with(|| left.hotspot.path().cmp(&right.hotspot.path()))
 }
 
+fn broker_router_hotspot(
+    router_backpressure_total: u64,
+    router_high_lane_backpressure_total: u64,
+) -> Option<ScoredHotspot> {
+    if router_backpressure_total == 0 && router_high_lane_backpressure_total == 0 {
+        return None;
+    }
+
+    let likely_bottleneck = if router_high_lane_backpressure_total > 0 {
+        "router control-plane saturation".to_string()
+    } else {
+        "router saturation".to_string()
+    };
+    let severity = if router_high_lane_backpressure_total > 0 {
+        DiagnosticSeverity::High
+    } else {
+        DiagnosticSeverity::Medium
+    };
+    let mut hints = Vec::new();
+    if router_backpressure_total > 0 {
+        hints.push(format!(
+            "{router_backpressure_total} router mailbox saturation event(s)"
+        ));
+    }
+    if router_high_lane_backpressure_total > 0 {
+        hints.push(format!(
+            "{router_high_lane_backpressure_total} router high-lane saturation event(s)"
+        ));
+    }
+
+    let snapshot = DiagnosticSnapshot::with_stage(
+        DiagnosisLabel::Throughput,
+        DiagnosticTrend::Growing,
+        severity,
+        Some(likely_bottleneck.clone()),
+        None,
+        None,
+        None,
+        None,
+        0,
+        0,
+        0,
+        0,
+        hints,
+    );
+
+    Some(ScoredHotspot {
+        score: router_backpressure_total as f64 * 3.0
+            + router_high_lane_backpressure_total as f64 * 12.0,
+        hotspot: DiagnosticHotspot {
+            domain: "broker".to_string(),
+            realm: None,
+            area: None,
+            resource: None,
+            operation: None,
+            family: None,
+            backlog: None,
+            inflight: None,
+            ready: None,
+            delayed: None,
+            dead_letters: None,
+            workers: None,
+            subscriptions: None,
+            owner_session: None,
+            worker_session: None,
+            snapshot,
+        },
+        last_changed_at: None,
+    })
+}
+
 fn summarize_incident(top_bottleneck: &Option<DiagnosticHotspot>) -> IncidentSummary {
     let Some(top) = top_bottleneck else {
         return IncidentSummary {
@@ -1192,7 +1288,11 @@ fn summarize_incident(top_bottleneck: &Option<DiagnosticHotspot>) -> IncidentSum
     let title = format!(
         "{} hotspot in {}",
         label.display_name(),
-        top.path().unwrap_or_else(|| "unknown scope".to_string())
+        if top.domain == "broker" {
+            "broker scope".to_string()
+        } else {
+            top.path().unwrap_or_else(|| "unknown scope".to_string())
+        }
     );
     let explanation = if top.snapshot.explanation_hints.is_empty() {
         label.explanation_hint().to_string()
@@ -4773,6 +4873,63 @@ mod tests {
         assert_eq!(
             summary.recommended_next_query.as_deref(),
             Some("inspect /api/v1/queue/realms/prod/areas/jobs/resources/worker?family=1")
+        );
+    }
+
+    #[test]
+    fn should_summarize_incident_given_broker_hotspot() {
+        // Arrange
+        let hotspot = DiagnosticHotspot {
+            domain: "broker".to_string(),
+            realm: None,
+            area: None,
+            resource: None,
+            operation: None,
+            family: None,
+            backlog: None,
+            inflight: None,
+            ready: None,
+            delayed: None,
+            dead_letters: None,
+            workers: None,
+            subscriptions: None,
+            owner_session: None,
+            worker_session: None,
+            snapshot: DiagnosticSnapshot::with_stage(
+                DiagnosisLabel::Throughput,
+                DiagnosticTrend::Growing,
+                DiagnosticSeverity::Medium,
+                Some("router saturation".to_string()),
+                None,
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                vec!["5 router mailbox saturation event(s)".to_string()],
+            ),
+        };
+
+        // Act
+        let summary = summarize_incident(&Some(hotspot));
+
+        // Assert
+        assert_eq!(summary.status, IncidentStatus::Degraded);
+        assert!(summary.title.contains("broker scope"));
+        assert_eq!(
+            summary.likely_bottleneck.as_deref(),
+            Some("router saturation")
+        );
+        assert_eq!(
+            summary.recommended_next_query.as_deref(),
+            Some("inspect /api/v1/stats")
+        );
+        assert_eq!(summary.suggested_next_queries.len(), 2);
+        assert_eq!(
+            summary.suggested_next_queries[1].endpoint,
+            "inspect /metrics"
         );
     }
 }

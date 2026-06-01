@@ -160,7 +160,7 @@ impl TcpHandler {
                 // Forward to runtime with backpressure handling.
                 // Pass ownership directly — recover from TrySendError::Full to avoid
                 // an atomic ref-count increment (Bytes::clone) on every successful send.
-                let _handoff_latency = crate::boot::observability::ScopedHistogramUs::new(
+                let _handoff_latency = crate::observability::ScopedHistogramUs::new(
                     obs::METRIC_TCP_CHANNEL_HANDOFF_LATENCY,
                 );
                 match self.tx.try_send((self.session_id, frame)) {
@@ -171,7 +171,7 @@ impl TcpHandler {
                         );
                     }
                     Err(mpsc::error::TrySendError::Full((_, frame))) => {
-                        crate::boot::observability::counter_inc(obs::METRIC_TCP_BACKPRESSURE);
+                        crate::observability::counter_inc(obs::METRIC_TCP_BACKPRESSURE);
                         warn!(
                             session_id = self.session_id,
                             "TCP channel full, backpressure - retrying after timeout"

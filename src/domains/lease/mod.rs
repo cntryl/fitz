@@ -37,6 +37,7 @@ pub mod metrics;
 pub mod projection;
 pub mod protocol;
 pub mod session;
+pub mod sink;
 
 pub use crate::runtime::clock::{Clock, SystemClock};
 pub use actor::LeaseActor;

@@ -43,6 +43,7 @@ pub mod events;
 pub mod metrics;
 pub mod protocol;
 pub mod session;
+pub mod sink;
 pub mod storage;
 pub mod store;
 

@@ -21,6 +21,7 @@ use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::store::{CommitRecordsParams, EventPayload, StreamStore};
 use fitz::runtime::routing::RouteFamily;
 use fitz::runtime::Router;
+use fitz::session::{Ingress, RuntimeIngress, SessionInfo as RuntimeSessionInfo, SessionMetadata, SessionPermissions, TransportKind};
 use hyper::header::{COOKIE, SET_COOKIE};
 use hyper::{body, Body, Method, Request, StatusCode};
 use serial_test::serial;
@@ -923,6 +924,7 @@ async fn should_return_lease_detail_with_age_and_diagnostics() {
 #[serial]
 async fn should_return_schedule_stats_with_latency_pressure() {
     // Arrange
+    fitz::boot::observability::metrics().clear();
     let (runtime, store, schedule) = schedule_runtime_with_domains();
     seed_active_schedule_definition(store);
     schedule
@@ -2586,6 +2588,116 @@ async fn should_return_global_stats() {
 
 #[tokio::test]
 #[serial]
+async fn should_surface_router_overload_counters_in_global_stats_and_metrics() {
+    // Arrange
+    let runtime = test_runtime();
+    let metrics = fitz::boot::observability::metrics();
+    let router_backpressure_before = metrics.counter_get("fitz_router_backpressure_total");
+    let router_high_lane_before = metrics.counter_get("fitz_router_high_lane_backpressure_total");
+    metrics.counter_add("fitz_router_backpressure_total", 5);
+    metrics.counter_add("fitz_router_high_lane_backpressure_total", 2);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let stats_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/stats")
+        .header(COOKIE, cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let metrics_req = Request::builder()
+        .method(Method::GET)
+        .uri("/metrics")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let stats_response = fitz::api::admin::handlers::handle_request(stats_req, runtime.clone())
+        .await
+        .unwrap();
+    let metrics_response = fitz::api::admin::handlers::handle_request(metrics_req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(stats_response.status(), StatusCode::OK);
+    let stats_body = body::to_bytes(stats_response.into_body()).await.unwrap();
+    let stats_payload: serde_json::Value = serde_json::from_slice(&stats_body).unwrap();
+    assert_eq!(
+        stats_payload["broker"]["router_backpressure_total"],
+        router_backpressure_before + 5
+    );
+    assert_eq!(
+        stats_payload["broker"]["router_high_lane_backpressure_total"],
+        router_high_lane_before + 2
+    );
+
+    assert_eq!(metrics_response.status(), StatusCode::OK);
+    let metrics_body = body::to_bytes(metrics_response.into_body()).await.unwrap();
+    let metrics_payload = String::from_utf8(metrics_body.to_vec()).unwrap();
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_router_backpressure_total",
+        router_backpressure_before + 5,
+    );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_router_high_lane_backpressure_total",
+        router_high_lane_before + 2,
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn should_surface_router_overload_in_global_troubleshooting() {
+    // Arrange
+    let runtime = test_runtime();
+    let metrics = fitz::boot::observability::metrics();
+    metrics.counter_add("fitz_router_backpressure_total", 5);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/troubleshooting")
+        .header(COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["incident_summary"]["status"], "degraded");
+    assert_eq!(payload["top_bottleneck"]["domain"], "broker");
+    assert_eq!(
+        payload["incident_summary"]["likely_bottleneck"],
+        "router saturation"
+    );
+    assert_eq!(
+        payload["incident_summary"]["recommended_next_query"],
+        "inspect /api/v1/stats"
+    );
+    assert_eq!(
+        payload["incident_summary"]["suggested_next_queries"][0]["title"],
+        "Inspect broker stats"
+    );
+    assert_eq!(
+        payload["incident_summary"]["suggested_next_queries"][1]["title"],
+        "Inspect broker metrics"
+    );
+    assert!(payload["incident_summary"]["explanation"]
+        .as_str()
+        .unwrap_or("")
+        .contains("router mailbox saturation"));
+}
+
+#[tokio::test]
+#[serial]
 async fn should_return_global_troubleshooting_guidance() {
     // Arrange
     let runtime = test_runtime();
@@ -2723,6 +2835,28 @@ async fn should_return_exact_rpc_operation_detail_counts() {
 #[serial]
 async fn should_return_sessions_collection_only() {
     let runtime = test_runtime();
+    let ingress = Arc::new(
+        RuntimeIngress::new(true)
+            .with_router(runtime.router())
+            .with_admin_read_model(runtime.admin_read_model()),
+    );
+    runtime.attach_ingress(ingress.clone());
+
+    let session = RuntimeSessionInfo {
+        session_id: 41,
+        transport_kind: TransportKind::WebSocket,
+        peer_addr: None,
+        metadata: Arc::new(SessionMetadata::new()),
+        permissions_snapshot: SessionPermissions::empty(),
+        claims: None,
+        authenticated: false,
+        route_family: RouteFamily::new(41),
+    };
+    ingress.on_open(session).await.unwrap();
+    ingress.record_frame_received(41);
+    ingress.record_frame_received(41);
+    ingress.record_frame_sent(41);
+
     let cookie = login_cookie(runtime.clone()).await;
 
     let req = Request::builder()
@@ -2737,6 +2871,18 @@ async fn should_return_sessions_collection_only() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let sessions = payload["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["session_id"], "41");
+    assert_eq!(sessions[0]["realm"], "41");
+    assert_eq!(sessions[0]["transport"], "websocket");
+    assert_eq!(sessions[0]["messages_received"], 2);
+    assert_eq!(sessions[0]["messages_sent"], 1);
+    assert!(sessions[0]["connected_at"].as_str().unwrap().contains('T'));
+    assert!(sessions[0]["idle_seconds"].as_u64().unwrap() <= 1);
 }
 
 #[tokio::test]

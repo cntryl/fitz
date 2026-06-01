@@ -1,4 +1,7 @@
-use super::{record_connection_opened, tcp_session::handle_tcp_connection, ListenerHandle};
+use super::{
+    drain_session_tasks, record_connection_opened, session_tasks,
+    tcp_session::handle_tcp_connection, ListenerHandle,
+};
 use crate::api::ingress::IngressConfig;
 use crate::boot::{BootConfig, BootResult};
 use crate::session::manager::Ingress;
@@ -32,7 +35,8 @@ pub fn spawn_tcp_listener_with_bound_socket(
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
 
-    tokio::spawn(async move {
+    let join = tokio::spawn(async move {
+        let sessions = session_tasks();
         let _ = ready_tx.send(());
 
         loop {
@@ -50,7 +54,7 @@ pub fn spawn_tcp_listener_with_bound_socket(
                             let ingress = ingress.clone();
                             let config = tcp_config.clone();
                             let runtime = runtime.clone();
-                            tokio::spawn(async move {
+                            sessions.lock().await.spawn(async move {
                                 if let Err(e) = handle_tcp_connection(stream, ingress, config, runtime).await {
                                     tracing::error!("TCP handler error: {}", e);
                                 }
@@ -63,10 +67,13 @@ pub fn spawn_tcp_listener_with_bound_socket(
                 }
             }
         }
+
+        drain_session_tasks("tcp", vec![sessions]).await;
     });
 
     Ok(ListenerHandle {
         ready: ready_rx,
         shutdown: shutdown_tx,
+        join,
     })
 }

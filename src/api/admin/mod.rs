@@ -4,6 +4,7 @@
 //! All endpoints coexist with data plane on same port (path-based routing).
 
 pub mod auth;
+mod assets;
 pub mod handlers;
 mod list;
 mod metrics;

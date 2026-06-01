@@ -26,7 +26,9 @@ npm run test
 npm run build
 ```
 
-Production build output is written to `../public`, which is then served by the Rust HTTP server at `/`.
+Production build output is written to `ui/dist/`. During Docker builds, that directory is copied into the Rust backend build stage and embedded into the Fitz executable.
+
+For local Rust builds, Fitz prefers embedding `ui/dist/` when it exists. If it does not exist, the build falls back to the checked-in `../public` directory so the binary still compiles.
 
 ## Public Config
 
@@ -47,6 +49,12 @@ The workspace-local `skills/` docs describe the intended Askr workflow for each 
 - `/admin` is the authenticated landing page
 
 The SPA uses the existing admin session endpoints at `/api/v1/session`.
+
+## Production Delivery
+
+- Production containers now ship a single Fitz executable rather than an executable plus `/app/public`
+- The Rust HTTP layer serves embedded assets, including SPA fallback for client routes
+- Asset responses preserve the existing content-type and cache-control behavior and now include ETag plus compression negotiation for supported text assets
 
 ## Stack
 

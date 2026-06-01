@@ -15,7 +15,12 @@
 //! - Contain domain logic
 
 pub mod admin;
+pub mod background;
+pub mod handlers;
 pub mod ingress;
 pub mod mcp;
+pub mod outbound;
+pub mod runtime_ingress;
+pub mod session;
 pub mod tcp;
 pub mod ws;

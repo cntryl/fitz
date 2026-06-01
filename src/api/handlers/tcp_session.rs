@@ -12,6 +12,21 @@ use tokio::net::TcpStream;
 // on the same connection so there is at most one heap allocation per connection.
 const WRITE_BUF_INIT_CAPACITY: usize = 512;
 
+async fn close_tcp_session_on_frame_error(
+    ingress: &dyn Ingress,
+    session_id: u64,
+    error: crate::session::SessionError,
+) -> String {
+    let reason = error.to_string();
+    ingress
+        .on_close(
+            session_id,
+            crate::session::CloseReason::Error(format!("{:?}", error)),
+        )
+        .await;
+    reason
+}
+
 /// Handle an incoming TCP connection with outbound response support.
 pub(super) async fn handle_tcp_connection(
     stream: TcpStream,
@@ -31,7 +46,7 @@ pub(super) async fn handle_tcp_connection(
     let (outbound_tx, mut outbound_rx) =
         tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
 
-    let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(
+    let sink = std::sync::Arc::new(crate::api::outbound::SessionOutboundSink::new(
         outbound_tx.clone(),
     ));
     let initial_family = ingress
@@ -53,6 +68,7 @@ pub(super) async fn handle_tcp_connection(
 
     let tcp_session_id = session_id;
     let runtime_for_writes = runtime.clone();
+    let ingress_for_writes = ingress.clone();
     let mut write_half = write_half;
     let writer_handle = tokio::spawn(async move {
         tracing::debug!(
@@ -81,6 +97,7 @@ pub(super) async fn handle_tcp_connection(
                 break;
             }
             runtime_for_writes.increment_messages_sent();
+            ingress_for_writes.record_frame_sent(tcp_session_id);
         }
         tracing::debug!(
             session_id = tcp_session_id,
@@ -111,15 +128,19 @@ pub(super) async fn handle_tcp_connection(
 
         while let Some((_sid, frame)) = frame_rx.recv().await {
             runtime_for_frames.increment_messages_received();
-            if let Err(e) = session.on_frame(frame, ingress_clone.as_ref()).await {
-                tracing::error!(session_id = session_id, error = %e, "TCP frame processing error");
-                ingress_clone
-                    .on_close(
-                        session_id,
-                        crate::session::CloseReason::Error(format!("{:?}", e)),
-                    )
-                    .await;
-                return Err(format!("{e}"));
+            ingress_clone.record_frame_received(session_id);
+            if let Err(error) = crate::api::session::process_session_frame(
+                &mut session,
+                frame,
+                ingress_clone.as_ref(),
+            )
+            .await
+            {
+                tracing::error!(session_id = session_id, error = %error, "TCP frame processing error");
+                let reason =
+                    close_tcp_session_on_frame_error(ingress_clone.as_ref(), session_id, error)
+                        .await;
+                return Err(reason);
             }
 
             if let Some(updated_route_family) = ingress_clone.get_route_family(session_id) {
@@ -197,4 +218,65 @@ pub(super) async fn handle_tcp_connection(
     run_result
         .map_err(std::io::Error::other)
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::close_tcp_session_on_frame_error;
+    use crate::protocol::frame::ChannelId;
+    use crate::session::manager::{Ingress, IngressDecision};
+    use crate::session::{CloseReason, SessionError, SessionInfo};
+    use bytes::Bytes;
+    use std::sync::{Arc, Mutex};
+
+    struct RecordingIngress {
+        closes: Arc<Mutex<Vec<CloseReason>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Ingress for RecordingIngress {
+        async fn on_open(&self, _session: SessionInfo) -> Result<u64, String> {
+            Ok(1)
+        }
+
+        async fn on_frame(
+            &self,
+            _session_id: u64,
+            _channel_id: ChannelId,
+            _msg_type: crate::protocol::tlv::MessageType,
+            _message_payload: Bytes,
+        ) -> IngressDecision {
+            IngressDecision::Accept
+        }
+
+        async fn on_close(&self, _session_id: u64, reason: CloseReason) {
+            self.closes.lock().unwrap().push(reason);
+        }
+    }
+
+    #[tokio::test]
+    async fn should_close_tcp_session_given_backpressure_session_error() {
+        // Arrange
+        let closes = Arc::new(Mutex::new(Vec::new()));
+        let ingress = RecordingIngress {
+            closes: closes.clone(),
+        };
+
+        // Act
+        let reason = close_tcp_session_on_frame_error(
+            &ingress,
+            7,
+            SessionError::Backpressure(ChannelId::Control),
+        )
+        .await;
+
+        // Assert
+        assert_eq!(reason, "backpressure on channel control");
+        let closes = closes.lock().unwrap();
+        assert_eq!(closes.len(), 1);
+        assert!(matches!(
+            &closes[0],
+            CloseReason::Error(message) if message.contains("Backpressure")
+        ));
+    }
 }

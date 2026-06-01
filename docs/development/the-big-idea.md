@@ -1,13 +1,17 @@
-# BIG IDEA: World‑class Multi‑Modal Broker on an Actor-Based Runtime
+# BIG IDEA: World‑class Single-Node Multi‑Modal Broker on an Actor-Based Runtime
 
 ## TL;DR ✅
-Build a deterministic, ultra-high-performance, multi-modal broker centered on a synchronous actor-based runtime and thin async transports. Target use cases: real-time messaging, RPC, streaming, queues, and hybrid multimodal integrations (HTTP, WebSocket, TCP, gRPC, binary streams). Focus on **realm isolation**, **route‑based addressing**, **pluggable codecs**, and **predictable, low-latency behavior**.
+Build a deterministic, ultra-high-performance, single-node multi-modal broker centered on a synchronous actor-based runtime and thin async transports. Target use cases: real-time messaging, RPC, streaming, queues, and hybrid multimodal integrations. Focus on **realm isolation**, **route‑based addressing**, **pluggable codecs**, and **predictable, low-latency behavior**.
+
+This document describes direction within Fitz's single-node boundary. It does
+not promise replication, distributed consensus, cross-node recovery, or
+exactly-once delivery.
 
 ---
 
 ## Vision 🎯
 - A broker that is simple to integrate with any protocol and payload format, but opinionated internally for performance and operational clarity.
-- Provide predictable latency, strong isolation (per-realm), and production-level durability and observability out of the box.
+- Provide predictable latency, strong isolation (per-realm), explicit domain durability semantics, and observability out of the box.
 - Developer-friendly primitives (routes, actors, codecs) so domain logic remains synchronous and deterministic.
 
 ---
@@ -15,10 +19,10 @@ Build a deterministic, ultra-high-performance, multi-modal broker centered on a 
 ## Core Principles 🔧
 - **Async at the edges, sync in the core** — transport adapters are async; engine, runtime, and domains are fully synchronous. No .await in domain code.
 - **Actor-based runtime** — small deterministic actors, per-actor state, mailboxes, and a scheduler for fair, low-latency execution.
-- **Route-first addressing** — use the pair `(RouteFamily, Route)`. The `Route` itself follows the pattern `{scheme}://{realm}/{area}/{resource}/{operation}` and the `RouteFamily` is a separate numeric id used for sharding (for example: RouteFamily=1 with route `kv://acme/app/users/get`).
-- **Realm isolation** — realms are first-class isolation boundaries (never call them tenants).
+- **Route-first addressing** — use the pair `(RouteFamily, Route)`. The `Route` itself follows the pattern `{scheme}://{realm}/{area}/{resource}/{operation}` and the `RouteFamily` is a separate broker-internal isolation id (for example: RouteFamily=1 with route `kv://acme/app/users/get`).
+- **Realm isolation** — realms are first-class, opaque application-defined isolation boundaries. A realm may model a tenant, department, cost center, user, environment, or any other developer-chosen partition, but Fitz does not assign one business meaning.
 - **Pluggable codecs & adapters** — TLV, JSON, Protobuf, binary, gRPC/HTTP/WS/TCP adapters, and streaming bridges.
-- **Performance by construction** — microbenchmarks first, no allocations in hot paths, precomputed buffers, and deterministic sharding.
+- **Performance by construction** — microbenchmarks first, no allocations in hot paths, precomputed buffers, and deterministic routing.
 
 ---
 
@@ -35,7 +39,7 @@ Build a deterministic, ultra-high-performance, multi-modal broker centered on a 
 
 3. Runtime (actor engine, 100% sync)
    - Router, scheduler, matcher, subscription index
-   - Enforces RouteFamily sharding and routes messages to domain actors
+   - Enforces RouteFamily isolation and routes messages to domain actors
    - Actor mailboxes are lightweight; scheduling is deterministic and observable
 
 4. Domains (business logic, 100% sync)
@@ -47,7 +51,7 @@ Build a deterministic, ultra-high-performance, multi-modal broker centered on a 
    - Per-operation durability levels (in-memory fast path, buffered, fsync)
 
 6. Observability & Ops
-   - Metrics (prometheus), distributed traces (OpenTelemetry), structured audit logs
+   - Metrics (prometheus), traces (OpenTelemetry), structured audit logs
    - Integrated microbench harnesses and CI performance checks
 
 ---
@@ -61,18 +65,19 @@ Build a deterministic, ultra-high-performance, multi-modal broker centered on a 
 ---
 
 ## Runtime Design Details ⚙️
-- RouteFamily is the numeric sharding key. Example: a full address is the pair `(RouteFamily=1, route="kv://acme/app/users/get")`.
-- Per-route sharding: map (route_family, realm, area, resource) → runtime shard to keep locality.
+- RouteFamily is a broker-internal isolation key selected from verified JWT claims. Example: a full address is the pair `(RouteFamily=1, route="kv://acme/app/users/get")`.
+- RouteFamily is never a public or business namespace label. It must never be treated as a realm alias or realm fallback.
+- Anonymous mode always uses RouteFamily `1`; authenticated families must be provisioned before readiness.
 - Actors are single responsibility, synchronous objects with clearly typed messages/responses.
 - Interop boundary: async transport enqueues frames → runtime dequeues and calls actor handlers synchronously → response serialized and forwarded to transport writer.
 
 ---
 
 ## Reliability & Delivery Semantics 🛡️
-- Multiple delivery modes: fire-and-forget, at-least-once with ack windows, durable exactly‑once via idempotency keys and storage.
+- Delivery semantics stay domain-specific: Notice is live ephemeral fanout, Stream is durable history and replay, Queue is durable at-least-once work delivery, and RPC is live request and response.
 - Subscription semantics: wildcards (`*`, `**`) and pattern matching.
 - Ordering and partitioning guarantees configurable per resource (per-route).
-- Durable queues and persisted messages with replay on restart.
+- Durable Queue messages and Stream history survive restart where the configured storage backend supports persistence.
 
 ---
 
@@ -91,19 +96,17 @@ Build a deterministic, ultra-high-performance, multi-modal broker centered on a 
 ---
 
 ## Deployment & Scalability 📦
-- Two deployment patterns:
-  1. Co-located shards (node runs N engine shards), single config: simpler for small clusters
-  2. Dedicated shard nodes with routing proxies for global scale
-- Stateful shards with leader/follower replication for durability; or external storage for simpler stateless engine nodes.
-- Automatic rebalancing of RouteFamily ranges for elasticity.
+- Fitz is a single-node broker.
+- Route families are provisioned local isolation namespaces, not cross-node ownership ranges.
+- Scale-up work must preserve the async-edge and sync-core rule without implying coordinated failover or state transfer.
 
 ---
 
 ## Roadmap & Milestones 🛣️
 - MVP (v0.1): core engine, transport adapters (WS/TCP), `notice` (pub/sub), `kv` (in-memory), TLV codec, tests & benchmarks
 - v0.2: durable storage + WAL, `queue` and `rpc` domains, authN/Z, metrics and tracing
-- v0.3: scaling & sharding automation, gRPC/HTTP adapters, stream domain improvements, multi-modal bridges
-- v1.0 GA: hardened operations, replication, cross-realm migrations, enterprise features (RBAC, quotas, PCI/PII controls)
+- v0.3: single-node operational hardening, stream domain improvements, and multi-modal bridges
+- v1.0 GA: explicit domain credibility evidence, stable operations, and carefully scoped extension points
 
 ---
 
@@ -115,11 +118,11 @@ Build a deterministic, ultra-high-performance, multi-modal broker centered on a 
 ---
 
 ## Appendix – Key Terms
-- **realm**: isolation boundary for resources (do not call it a tenant)
+- **realm**: opaque application-defined isolation boundary for resources; it may represent a tenant, department, cost center, user, environment, or another developer-chosen partition
 - **area**: namespace within a realm
 - **resource**: specific entity
 - **route**: route address, formatted as `{scheme}://{realm}/{area}/{resource}/{operation}`. Note: the full address is always the pair `(RouteFamily, Route)`; `RouteFamily` is not part of the route string.
-- **RouteFamily**: numeric shard id used for partitioning
+- **RouteFamily**: broker-internal numeric isolation id provisioned on the single node; separate from realm and never a substitute for it
 
 ---
 

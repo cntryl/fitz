@@ -1,8 +1,8 @@
-use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::domains::queue::{
     projection::{QueueAdminProjection, QueueProjectionEntry, QueueProjectionState},
     QueueAdminSnapshot, QueueMetrics, QueueNotification, QueueSubscriptionMessage,
 };
+use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::observability as obs;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
@@ -46,7 +46,6 @@ struct QueueReadyNotification {
 
 const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_secs(5 * 60);
 const QUEUE_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
-const QUEUE_RUNTIME_SWEEP_INTERVAL: Duration = Duration::from_millis(50);
 const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Queue domain sink with per-queue QueueActor instances
@@ -81,6 +80,23 @@ pub struct QueueDomainSink {
 }
 
 impl QueueDomainSink {
+    pub fn try_new(
+        store: Arc<cntryl_midge::Engine>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+        queue_write_options: cntryl_midge::WriteOptions,
+        dedup_store: Arc<crate::utils::idempotency::DedupStore>,
+    ) -> Result<Self, String> {
+        crate::domains::queue::QueueActor::validate_persisted_state_for_existing_families(&store)?;
+        Ok(Self::new(
+            store,
+            router,
+            admin_read_model,
+            queue_write_options,
+            dedup_store,
+        ))
+    }
+
     pub fn new(
         store: Arc<cntryl_midge::Engine>,
         router: Arc<Router>,
@@ -118,30 +134,8 @@ impl QueueDomainSink {
         self.active.store(false, Ordering::Relaxed);
     }
 
-    pub fn start_runtime_sweep(self: &Arc<Self>) {
-        let Ok(handle) = tokio::runtime::Handle::try_current() else {
-            tracing::debug!("Queue runtime sweep not started: no Tokio runtime available");
-            return;
-        };
-
-        let weak = Arc::downgrade(self);
-        handle.spawn(async move {
-            let mut interval = tokio::time::interval(QUEUE_RUNTIME_SWEEP_INTERVAL);
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-            loop {
-                interval.tick().await;
-
-                let Some(sink) = weak.upgrade() else {
-                    break;
-                };
-                if !sink.active.load(Ordering::Relaxed) {
-                    break;
-                }
-
-                sink.sweep_runtime_state();
-            }
-        });
+    pub(crate) fn is_active(&self) -> bool {
+        self.active.load(Ordering::Relaxed)
     }
 
     fn queue_key_for_route(
@@ -208,6 +202,27 @@ impl QueueDomainSink {
         }
     }
 
+    fn route_queue_recovery_error(
+        &self,
+        request_envelope: &Envelope,
+        frame_ctx: &FrameContext,
+        request_started: Option<Instant>,
+        message: String,
+    ) -> Result<(), DeliveryError> {
+        tracing::error!(
+            domain = "queue",
+            family = frame_ctx.route_family.as_u64(),
+            error = %message,
+            "Queue actor recovery failed"
+        );
+        let response = crate::domains::queue::QueueResponse::Error { message };
+        self.route_queue_response(request_envelope, frame_ctx, &response);
+        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            metrics.record_failure(started_at);
+        }
+        Ok(())
+    }
+
     fn queue_ready_route(key: &crate::domains::queue::QueueKey) -> crate::runtime::routing::Route {
         crate::runtime::routing::Route::new(format!(
             "queue://{}/{}/{}/ready",
@@ -266,7 +281,7 @@ impl QueueDomainSink {
         );
         let notify_envelope = Envelope::new(subscriber.clone(), notify_ctx);
         if self.router.route(notify_envelope).is_err() {
-            crate::boot::observability::counter_inc("fitz_queue_notify_drops_total");
+            crate::observability::counter_inc("fitz_queue_notify_drops_total");
         }
     }
 
@@ -322,7 +337,7 @@ impl QueueDomainSink {
         }
     }
 
-    fn sweep_runtime_state(&self) {
+    pub(crate) fn sweep_runtime_state(&self) {
         self.sweep_runtime_state_at(Instant::now());
     }
 
@@ -350,7 +365,7 @@ impl QueueDomainSink {
     fn get_or_create_actor(
         &self,
         key: crate::domains::queue::QueueKey,
-    ) -> (Arc<Mutex<crate::domains::queue::QueueActor>>, bool) {
+    ) -> Result<(Arc<Mutex<crate::domains::queue::QueueActor>>, bool), String> {
         use std::collections::hash_map::Entry;
 
         let now = Instant::now();
@@ -358,24 +373,24 @@ impl QueueDomainSink {
         match actors.entry(key.clone()) {
             Entry::Occupied(mut entry) => {
                 entry.get_mut().last_used = now;
-                (entry.get().actor.clone(), false)
+                Ok((entry.get().actor.clone(), false))
             }
             Entry::Vacant(entry) => {
                 let actor = Arc::new(Mutex::new(
-                    crate::domains::queue::QueueActor::new_with_write_options(
+                    crate::domains::queue::QueueActor::try_new_with_write_options(
                         key.family,
                         key,
                         self.store.clone(),
                         None,
                         self.dedup_store.clone(),
                         self.queue_write_options,
-                    ),
+                    )?,
                 ));
                 entry.insert(WarmQueueActor {
                     actor: actor.clone(),
                     last_used: now,
                 });
-                (actor, true)
+                Ok((actor, true))
             }
         }
     }
@@ -397,7 +412,7 @@ impl QueueDomainSink {
         if let Some(metrics) = &self.metrics {
             metrics.histogram_observe_us(name, value_us);
         } else {
-            crate::boot::observability::histogram_observe_us(name, value_us);
+            crate::observability::histogram_observe_us(name, value_us);
         }
     }
 
@@ -600,7 +615,7 @@ impl QueueDomainSink {
         key: crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<bool, String> {
-        let (actor_handle, created_actor) = self.get_or_create_actor(key.clone());
+        let (actor_handle, created_actor) = self.get_or_create_actor(key.clone())?;
         let result = {
             let mut actor = actor_handle.lock();
             actor.replay_dead_letter(id)
@@ -635,7 +650,7 @@ impl QueueDomainSink {
         key: crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<bool, String> {
-        let (actor_handle, created_actor) = self.get_or_create_actor(key.clone());
+        let (actor_handle, created_actor) = self.get_or_create_actor(key.clone())?;
         let result = {
             let mut actor = actor_handle.lock();
             actor.purge_dead_letter(id)
@@ -663,13 +678,12 @@ impl QueueDomainSink {
 
 impl MailboxSink for QueueDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
-
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.cleanup_session(cleanup.session_id);
             return Ok(());
+        }
+        if !self.active.load(Ordering::Relaxed) {
+            return Err(DeliveryError::ActorStopped);
         }
 
         tracing::debug!(
@@ -754,7 +768,13 @@ impl MailboxSink for QueueDomainSink {
 
                     (
                         crate::domains::queue::QueueResponse::WatchOk { subscription_id },
-                        Some((family_id, parsed_pattern, session_id, subscription_id, subscriber)),
+                        Some((
+                            family_id,
+                            parsed_pattern,
+                            session_id,
+                            subscription_id,
+                            subscriber,
+                        )),
                     )
                 }
                 QueueSubscriptionMessage::Unwatch {
@@ -834,7 +854,17 @@ impl MailboxSink for QueueDomainSink {
                 Ok(key) => {
                     let notification_key = key.clone();
                     let actor_lock_start = Instant::now();
-                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    let (actor_handle, created_actor) = match self.get_or_create_actor(key) {
+                        Ok(actor) => actor,
+                        Err(message) => {
+                            return self.route_queue_recovery_error(
+                                &envelope,
+                                &frame_ctx,
+                                request_started,
+                                message,
+                            )
+                        }
+                    };
                     self.observe_histogram_us(
                         obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
                         actor_lock_start.elapsed().as_micros() as u64,
@@ -867,7 +897,17 @@ impl MailboxSink for QueueDomainSink {
                 Ok(key) => {
                     let notification_key = key.clone();
                     let actor_lock_start = Instant::now();
-                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    let (actor_handle, created_actor) = match self.get_or_create_actor(key) {
+                        Ok(actor) => actor,
+                        Err(message) => {
+                            return self.route_queue_recovery_error(
+                                &envelope,
+                                &frame_ctx,
+                                request_started,
+                                message,
+                            )
+                        }
+                    };
                     self.observe_histogram_us(
                         obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
                         actor_lock_start.elapsed().as_micros() as u64,
@@ -906,7 +946,17 @@ impl MailboxSink for QueueDomainSink {
                 Ok(key) => {
                     let notification_key = key.clone();
                     let actor_lock_start = Instant::now();
-                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    let (actor_handle, created_actor) = match self.get_or_create_actor(key) {
+                        Ok(actor) => actor,
+                        Err(message) => {
+                            return self.route_queue_recovery_error(
+                                &envelope,
+                                &frame_ctx,
+                                request_started,
+                                message,
+                            )
+                        }
+                    };
                     self.observe_histogram_us(
                         obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
                         actor_lock_start.elapsed().as_micros() as u64,
@@ -939,7 +989,17 @@ impl MailboxSink for QueueDomainSink {
                 Ok(key) => {
                     let notification_key = key.clone();
                     let actor_lock_start = Instant::now();
-                    let (actor_handle, created_actor) = self.get_or_create_actor(key);
+                    let (actor_handle, created_actor) = match self.get_or_create_actor(key) {
+                        Ok(actor) => actor,
+                        Err(message) => {
+                            return self.route_queue_recovery_error(
+                                &envelope,
+                                &frame_ctx,
+                                request_started,
+                                message,
+                            )
+                        }
+                    };
                     self.observe_histogram_us(
                         obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
                         actor_lock_start.elapsed().as_micros() as u64,

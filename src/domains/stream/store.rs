@@ -11,12 +11,14 @@ use super::protocol::{
 };
 use super::storage::{
     decode_area_offset_from_key, decode_realm_offset_from_key, decode_resource_offset_from_key,
-    encode_area_counter_key, encode_compact_area_page_key, encode_compact_resource_page_key,
-    encode_compressed_compact_realm_page_key, encode_realm_counter_key, encode_resource_meta_key,
-    encode_stream_layout_marker_key, encode_watermark_key, AreaCounterValue, CompactAreaPageRecord,
-    CompactAreaPageValue, CompactRealmPageRecord, CompactResourcePageRecord,
-    CompactResourcePageValue, CompressedCompactRealmPageValue, KeyPrefix, RealmCounterValue,
-    ResourceMetaValue, StreamLayoutMarkerValue, WatermarkValue, REALM_PAGE_RECORD_LIMIT,
+    decode_staging_value, encode_area_counter_key, encode_compact_area_page_key,
+    encode_compact_resource_page_key, encode_compressed_compact_realm_page_key,
+    encode_realm_counter_key, encode_resource_meta_key, encode_stream_layout_marker_key,
+    encode_watermark_key, AreaCounterValue, AreaLocatorValue, AreaValue, CanonicalResourceValue,
+    CompactAreaPageRecord, CompactAreaPageValue, CompactRealmPageRecord, CompactResourcePageRecord,
+    CompactResourcePageValue, CompressedCompactRealmPageValue, KeyPrefix, OffsetCounterValue,
+    RealmCounterValue, RealmLocatorValue, RealmValue, ResourceMetaValue, ResourceValue,
+    StreamLayoutMarkerValue, WatermarkValue, REALM_PAGE_RECORD_LIMIT,
 };
 
 #[cfg(test)]
@@ -473,11 +475,144 @@ impl StreamStore {
             .map_err(|e| format!("list column families failed: {:?}", e))?;
 
         for family in families {
+            if family.id() == 0 {
+                continue;
+            }
             self.inspect_and_activate_layout_for_family_detailed(family.id() as u64)
                 .map_err(LayoutActivationFailure::into_string)?;
         }
 
         Ok(())
+    }
+
+    pub fn validate_persisted_state_for_existing_families(&self) -> Result<(), String> {
+        let families = self
+            .db
+            .list_column_families()
+            .map_err(|e| format!("list stream column families failed: {:?}", e))?;
+
+        for family in families {
+            if family.id() == 0 {
+                continue;
+            }
+            self.validate_persisted_state_for_family(family.id() as u64)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_persisted_state_for_family(&self, family: u64) -> Result<(), String> {
+        let txn = self
+            .db
+            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|e| {
+                format!(
+                    "stream validation failed: family={} begin_tx: {:?}",
+                    family, e
+                )
+            })?;
+        let mut iter = txn
+            .scan(&cntryl_midge::Query::new())
+            .map_err(|e| format!("stream validation failed: family={} scan: {:?}", family, e))?;
+
+        for (key, value) in iter.collect_all() {
+            let validation = Self::validate_persisted_row(&key, &value);
+            if let Err((category, error)) = validation {
+                return Err(format!(
+                    "stream validation failed: family={} key_category={} error={}",
+                    family, category, error
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_persisted_row(key: &[u8], value: &[u8]) -> Result<(), (&'static str, String)> {
+        if key == encode_stream_layout_marker_key() {
+            return StreamLayoutMarkerValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("layout_marker", error));
+        }
+        if key.first().copied() == Some(KeyPrefix::CanonicalResource as u8) {
+            return CanonicalResourceValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("canonical_resource", error));
+        }
+        if key.first().copied() == Some(KeyPrefix::Staging as u8) {
+            return decode_staging_value(value)
+                .map(|_| ())
+                .map_err(|error| ("staging", error));
+        }
+
+        let Some(suffix) = crate::utils::storage_key::strip_domain_prefix(
+            key,
+            crate::utils::storage_key::DomainKeyspace::Stream,
+        ) else {
+            return Ok(());
+        };
+        let Some(prefix) = suffix.first().copied() else {
+            return Err(("empty_key", "stream key suffix is empty".to_string()));
+        };
+
+        match prefix {
+            prefix if prefix == KeyPrefix::Resource as u8 => ResourceValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("resource", error)),
+            prefix if prefix == KeyPrefix::Area as u8 => AreaValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("area", error)),
+            prefix if prefix == KeyPrefix::Realm as u8 => RealmValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("realm", error)),
+            prefix if prefix == KeyPrefix::Watermark as u8 => WatermarkValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("watermark", error)),
+            prefix if prefix == KeyPrefix::OffsetCounter as u8 => OffsetCounterValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("offset_counter", error)),
+            prefix if prefix == KeyPrefix::RealmWatermark as u8 => WatermarkValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("realm_watermark", error)),
+            prefix if prefix == KeyPrefix::ResourceMeta as u8 => ResourceMetaValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("resource_meta", error)),
+            prefix if prefix == KeyPrefix::AreaCounter as u8 => AreaCounterValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("area_counter", error)),
+            prefix if prefix == KeyPrefix::RealmCounter as u8 => RealmCounterValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("realm_counter", error)),
+            prefix if prefix == KeyPrefix::CanonicalResource as u8 => {
+                CanonicalResourceValue::try_decode(value)
+                    .map(|_| ())
+                    .map_err(|error| ("canonical_resource", error))
+            }
+            prefix if prefix == KeyPrefix::AreaLocator as u8 => AreaLocatorValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("area_locator", error)),
+            prefix if prefix == KeyPrefix::RealmLocator as u8 => {
+                RealmLocatorValue::try_decode(value)
+                    .map(|_| ())
+                    .map_err(|error| ("realm_locator", error))
+            }
+            prefix if prefix == KeyPrefix::CompactAreaPage as u8 => {
+                CompactAreaPageValue::try_decode(value)
+                    .map(|_| ())
+                    .map_err(|error| ("compact_area_page", error))
+            }
+            prefix if prefix == KeyPrefix::CompressedCompactRealmPage as u8 => {
+                CompressedCompactRealmPageValue::try_decode(value)
+                    .map(|_| ())
+                    .map_err(|error| ("compressed_compact_realm_page", error))
+            }
+            prefix if prefix == KeyPrefix::CompactResourcePage as u8 => {
+                CompactResourcePageValue::try_decode(value)
+                    .map(|_| ())
+                    .map_err(|error| ("compact_resource_page", error))
+            }
+            _ => Ok(()),
+        }
     }
 
     fn ensure_layout_activation_for_family(&self, family: u64) -> Result<(), String> {
@@ -1296,7 +1431,11 @@ impl StreamStore {
 
         txn.get(key)
             .map_err(|e| format!("midge get error: {:?}", e))
-            .map(|existing| existing.map(|bytes| WatermarkValue::decode(&bytes).watermark))
+            .and_then(|existing| {
+                existing
+                    .map(|bytes| WatermarkValue::decode(&bytes).map(|value| value.watermark))
+                    .transpose()
+            })
     }
 
     fn load_existing_realm_watermark_for_guard(
@@ -1320,7 +1459,11 @@ impl StreamStore {
 
         txn.get(key)
             .map_err(|e| format!("midge get error: {:?}", e))
-            .map(|existing| existing.map(|bytes| WatermarkValue::decode(&bytes).watermark))
+            .and_then(|existing| {
+                existing
+                    .map(|bytes| WatermarkValue::decode(&bytes).map(|value| value.watermark))
+                    .transpose()
+            })
     }
 
     #[cfg(test)]
@@ -1525,7 +1668,7 @@ impl StreamStore {
             .get(&meta_key)
             .map_err(|e| format!("get error: {:?}", e))?
         {
-            Some(bytes) => Ok((ResourceMetaValue::decode(&bytes), false)),
+            Some(bytes) => Ok((ResourceMetaValue::decode(&bytes)?, false)),
             None => {
                 let (next_offset, committed_size_bytes) =
                     self.scan_resource_stats(family, realm, area, resource)?;
@@ -1554,7 +1697,7 @@ impl StreamStore {
             .get(&resource_meta_key)
             .map_err(|e| format!("get error: {:?}", e))?
         {
-            Some(value_bytes) => Ok(ResourceMetaValue::decode(&value_bytes).next_offset),
+            Some(value_bytes) => Ok(ResourceMetaValue::decode(&value_bytes)?.next_offset),
             None => self.scan_next_resource_offset(family, realm, area, resource),
         }
     }
@@ -1572,7 +1715,7 @@ impl StreamStore {
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
 
         match txn.get(&key).map_err(|e| format!("get error: {:?}", e))? {
-            Some(bytes) => Ok((AreaCounterValue::decode(&bytes).next_offset, false)),
+            Some(bytes) => Ok((AreaCounterValue::decode(&bytes)?.next_offset, false)),
             None => Ok((self.scan_next_area_offset(family, realm, area)?, true)),
         }
     }
@@ -1589,7 +1732,7 @@ impl StreamStore {
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
 
         match txn.get(&key).map_err(|e| format!("get error: {:?}", e))? {
-            Some(bytes) => Ok((RealmCounterValue::decode(&bytes).next_offset, false)),
+            Some(bytes) => Ok((RealmCounterValue::decode(&bytes)?.next_offset, false)),
             None => Ok((self.scan_next_realm_offset(family, realm)?, true)),
         }
     }
@@ -1714,7 +1857,7 @@ impl StreamStore {
             ) else {
                 continue;
             };
-            let meta = ResourceMetaValue::decode(&value);
+            let meta = ResourceMetaValue::decode(&value)?;
             if meta.next_offset == 0 {
                 continue;
             }
@@ -2409,14 +2552,14 @@ impl StreamStore {
             .map_err(|e| format!("midge get error: {:?}", e))?
         {
             Some(bytes) => {
-                let value = WatermarkValue::decode(&bytes);
+                let value = WatermarkValue::decode(&bytes)?;
                 Ok(value.watermark)
             }
             None => match txn
                 .get(&counter_key)
                 .map_err(|e| format!("midge get error: {:?}", e))?
             {
-                Some(bytes) => Ok(AreaCounterValue::decode(&bytes)
+                Some(bytes) => Ok(AreaCounterValue::decode(&bytes)?
                     .next_offset
                     .saturating_sub(1)),
                 None => Ok(self
@@ -2473,14 +2616,14 @@ impl StreamStore {
             .map_err(|e| format!("midge get error: {:?}", e))?
         {
             Some(bytes) => {
-                let value = WatermarkValue::decode(&bytes);
+                let value = WatermarkValue::decode(&bytes)?;
                 Ok(value.watermark)
             }
             None => match txn
                 .get(&counter_key)
                 .map_err(|e| format!("midge get error: {:?}", e))?
             {
-                Some(bytes) => Ok(RealmCounterValue::decode(&bytes)
+                Some(bytes) => Ok(RealmCounterValue::decode(&bytes)?
                     .next_offset
                     .saturating_sub(1)),
                 None => Ok(self
@@ -2936,6 +3079,100 @@ mod tests {
         let error = result.expect_err("legacy layout marker should fail boot scan");
         assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
         assert!(error.contains("family=2"));
+    }
+
+    #[test]
+    fn should_reject_corrupt_persisted_rows_for_each_stream_decoder_family() {
+        // Arrange
+        let stream_key = |prefix| {
+            crate::utils::storage_key::prefixed_key(
+                "test",
+                crate::utils::storage_key::DomainKeyspace::Stream,
+                &[prefix],
+            )
+        };
+        let corrupt_rows = [
+            (encode_stream_layout_marker_key(), "layout_marker"),
+            (stream_key(KeyPrefix::Resource as u8), "resource"),
+            (stream_key(KeyPrefix::Area as u8), "area"),
+            (stream_key(KeyPrefix::Realm as u8), "realm"),
+            (stream_key(KeyPrefix::Watermark as u8), "watermark"),
+            (stream_key(KeyPrefix::OffsetCounter as u8), "offset_counter"),
+            (
+                stream_key(KeyPrefix::RealmWatermark as u8),
+                "realm_watermark",
+            ),
+            (stream_key(KeyPrefix::ResourceMeta as u8), "resource_meta"),
+            (stream_key(KeyPrefix::AreaCounter as u8), "area_counter"),
+            (stream_key(KeyPrefix::RealmCounter as u8), "realm_counter"),
+            (
+                crate::domains::stream::storage::encode_canonical_resource_key(1, 1),
+                "canonical_resource",
+            ),
+            (stream_key(KeyPrefix::AreaLocator as u8), "area_locator"),
+            (stream_key(KeyPrefix::RealmLocator as u8), "realm_locator"),
+            (
+                stream_key(KeyPrefix::CompactAreaPage as u8),
+                "compact_area_page",
+            ),
+            (
+                stream_key(KeyPrefix::CompressedCompactRealmPage as u8),
+                "compressed_compact_realm_page",
+            ),
+            (
+                stream_key(KeyPrefix::CompactResourcePage as u8),
+                "compact_resource_page",
+            ),
+            (
+                crate::domains::stream::storage::encode_staging_key(1, 1),
+                "staging",
+            ),
+        ];
+
+        // Act
+        let errors = corrupt_rows
+            .into_iter()
+            .map(|(key, expected_category)| {
+                (
+                    StreamStore::validate_persisted_row(&key, b"broken")
+                        .expect_err("corrupt stream row should fail validation")
+                        .0,
+                    expected_category,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert!(errors
+            .into_iter()
+            .all(|(actual, expected)| actual == expected));
+    }
+
+    #[test]
+    fn should_fail_existing_family_validation_given_corrupt_stream_watermark() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        write_layout_marker(db.as_ref(), 1, StreamStorageLayout::PromotionFrontier);
+        let mut txn = db
+            .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin write tx");
+        txn.put(
+            encode_watermark_key("test", "events"),
+            b"broken".to_vec(),
+            None,
+        )
+        .expect("write corrupt watermark");
+        txn.commit(cntryl_midge::WriteOptions::sync())
+            .expect("commit corrupt watermark");
+        let store = StreamStore::new(db);
+
+        // Act
+        let result = store.validate_persisted_state_for_existing_families();
+
+        // Assert
+        let error = result.expect_err("corrupt watermark should fail family validation");
+        assert!(error.contains("family=1"));
+        assert!(error.contains("key_category=watermark"));
     }
 
     #[test]

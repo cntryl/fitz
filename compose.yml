@@ -31,7 +31,10 @@ services:
       FITZ_STORAGE_MODE: "local"
       FITZ_STORAGE_PATH: "/data"
       RUST_LOG: "info,fitz=trace"
+    volumes:
+      - fitz_auth_data:/data
     restart: unless-stopped
+    stop_grace_period: 15s
     healthcheck:
       disable: true
   fitz-anon:
@@ -50,6 +53,13 @@ services:
       FITZ_STORAGE_MODE: "local"
       FITZ_STORAGE_PATH: "/data"
       RUST_LOG: "info,fitz=trace"
+    volumes:
+      - fitz_anon_data:/data
     restart: unless-stopped
+    stop_grace_period: 15s
     healthcheck:
       disable: true
+
+volumes:
+  fitz_auth_data:
+  fitz_anon_data:

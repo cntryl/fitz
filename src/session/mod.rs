@@ -1,15 +1,13 @@
-// LAYER: SESSION (Async → Sync Bridge)
+// LAYER: SESSION
 //! Session management helpers
 //!
 //! This layer provides:
 //! - Per-connection session state (metadata, permissions, ID)
-//! - Async → Sync boundary (owns `Mux`, hands frames to runtime)
+//! - Synchronous TLV decoding and multiplexing
 //! - SessionId generation
 //! - Session lifecycle (open, close, reason tracking)
-//! - Ingress trait definition (async boundary between transport and runtime)
-//! - Ingress implementation (async trait implementation for transport integration)
 //!
-//! Session is the critical bridge between async transport and synchronous runtime.
+//! Async transport adapters live under `src/api/`.
 
 #![allow(clippy::module_inception)]
 
@@ -19,7 +17,6 @@ pub mod manager;
 pub mod outbound;
 pub mod permissions;
 pub mod session;
-pub mod tenant;
 
 pub use actor::SessionActor;
 
@@ -31,4 +28,3 @@ pub use session::{
     next_session_id, CloseReason, NewSessionConfig, Session, SessionError, SessionId, SessionInfo,
     SessionMetadata, TransportKind,
 };
-pub use tenant::{resolve_route_family, ControlPlaneStub};

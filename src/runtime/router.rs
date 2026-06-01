@@ -218,6 +218,11 @@ impl RouteRegistry {
     fn len(&self) -> usize {
         self.sinks.len()
     }
+
+    fn clear(&self) {
+        self.sinks.clear();
+        self.domain_patterns.clear();
+    }
 }
 
 /// Message router for in-process delivery
@@ -260,7 +265,7 @@ impl Router {
     }
 
     fn record_route_match_latency(start: Instant) {
-        if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+        if let Ok(metrics) = std::panic::catch_unwind(crate::observability::metrics) {
             metrics.histogram_observe_us(
                 obs::METRIC_ROUTE_MATCH_LATENCY,
                 start.elapsed().as_micros() as u64,
@@ -268,14 +273,23 @@ impl Router {
         }
     }
 
-    fn record_delivery_failure() {
-        if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+    fn record_delivery_failure(error: &DeliveryError) {
+        if let Ok(metrics) = std::panic::catch_unwind(crate::observability::metrics) {
             metrics.counter_inc(obs::METRIC_DELIVERY_FAILURES);
+            match error {
+                DeliveryError::MailboxFull { .. } => {
+                    metrics.counter_inc(obs::METRIC_ROUTER_BACKPRESSURE);
+                }
+                DeliveryError::HighLaneFull { .. } => {
+                    metrics.counter_inc(obs::METRIC_ROUTER_HIGH_LANE_BACKPRESSURE);
+                }
+                DeliveryError::ActorStopped => {}
+            }
         }
     }
 
     fn record_route_mismatch() {
-        if let Ok(metrics) = std::panic::catch_unwind(crate::boot::observability::metrics) {
+        if let Ok(metrics) = std::panic::catch_unwind(crate::observability::metrics) {
             metrics.counter_inc(obs::METRIC_ROUTE_MISMATCHES);
         }
     }
@@ -316,7 +330,7 @@ impl Router {
             Err(e) => {
                 warn!(destination = %dest, error = %e, "Router: delivery failed");
 
-                Self::record_delivery_failure();
+                Self::record_delivery_failure(&e);
 
                 Err(RouteError::DeliveryFailed(dest, e))
             }
@@ -418,6 +432,10 @@ impl Router {
             .register_domain_pattern(domain.to_string(), sink);
     }
 
+    pub fn clear(&self) {
+        self.registry.clear();
+    }
+
     /// Unregister a route
     ///
     /// After unregistration, envelopes addressed to this route will
@@ -504,8 +522,14 @@ impl Router {
             .get(&dest)
             .ok_or_else(|| RouteError::RouteNotFound(dest.clone()))?;
 
-        sink.deliver_high_priority(envelope)
-            .map_err(|e| RouteError::DeliveryFailed(dest, e))
+        match sink.deliver_high_priority(envelope) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                warn!(destination = %dest, error = %e, "Router: high-priority delivery failed");
+                Self::record_delivery_failure(&e);
+                Err(RouteError::DeliveryFailed(dest, e))
+            }
+        }
     }
 
     /// Check if a route is registered
@@ -542,6 +566,7 @@ fn should_sample_hot_path() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observability as obs;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
     use parking_lot::Mutex;
 
@@ -747,6 +772,47 @@ mod tests {
                 DeliveryError::MailboxFull { .. }
             ))
         ));
+    }
+
+    #[test]
+    fn should_record_high_lane_backpressure_metric_on_high_priority_delivery_failure() {
+        // Arrange
+        struct HighLaneBackpressuredSink;
+
+        impl MailboxSink for HighLaneBackpressuredSink {
+            fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+                Ok(())
+            }
+
+            fn deliver_high_priority(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+                Err(DeliveryError::HighLaneFull {
+                    capacity: 1,
+                    current_len: 1,
+                })
+            }
+        }
+
+        let metrics = crate::observability::metrics();
+        let before = metrics.counter_get(obs::METRIC_ROUTER_HIGH_LANE_BACKPRESSURE);
+        let router = Router::new();
+        let address = test_address(1, "/system/control");
+        router.register(address.clone(), Arc::new(HighLaneBackpressuredSink));
+
+        // Act
+        let result = router.route_high_priority(Envelope::new(address.clone(), "msg"));
+
+        // Assert
+        assert!(matches!(
+            result,
+            Err(RouteError::DeliveryFailed(
+                target,
+                DeliveryError::HighLaneFull { .. }
+            )) if target == address
+        ));
+        assert!(
+            metrics.counter_get(obs::METRIC_ROUTER_HIGH_LANE_BACKPRESSURE) > before,
+            "expected router high-lane backpressure metric to increase"
+        );
     }
 
     #[test]
