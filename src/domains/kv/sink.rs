@@ -7,7 +7,7 @@
 //! intentionally discards that state on disconnect, and broker restart clears
 //! it wholesale instead of attempting transaction recovery.
 
-use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
+use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
@@ -177,7 +177,7 @@ impl KvDomainSink {
         );
         let notify_envelope = Envelope::new(subscriber.clone(), notify_ctx);
         if self.router.route(notify_envelope).is_err() {
-            crate::boot::observability::counter_inc("fitz_kv_notify_drops_total");
+            crate::observability::counter_inc("fitz_kv_notify_drops_total");
         }
     }
 
@@ -317,13 +317,12 @@ impl KvDomainSink {
 
 impl MailboxSink for KvDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
-
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.cleanup_session(cleanup.session_id);
             return Ok(());
+        }
+        if !self.active.load(Ordering::Relaxed) {
+            return Err(DeliveryError::ActorStopped);
         }
 
         tracing::debug!(
@@ -594,7 +593,7 @@ impl MailboxSink for KvDomainSink {
                         (resp, true, None)
                     }
                 } else {
-                    crate::boot::observability::counter_inc("fitz_kv_commits_failed_total");
+                    crate::observability::counter_inc("fitz_kv_commits_failed_total");
                     (resp, false, None)
                 }
             }
@@ -620,7 +619,7 @@ impl MailboxSink for KvDomainSink {
                     if let Some(k) = lock_key {
                         self.resource_locks.lock().remove(&k);
                     }
-                    crate::boot::observability::counter_inc("fitz_kv_rollbacks_total");
+                    crate::observability::counter_inc("fitz_kv_rollbacks_total");
                     (resp, true, None)
                 } else {
                     (resp, false, None)
@@ -652,7 +651,7 @@ impl MailboxSink for KvDomainSink {
                 ..
             }
         ) {
-            crate::boot::observability::counter_inc("fitz_kv_invalid_transaction_rejects_total");
+            crate::observability::counter_inc("fitz_kv_invalid_transaction_rejects_total");
         }
         if should_sync_admin_snapshot {
             self.sync_admin_snapshot();

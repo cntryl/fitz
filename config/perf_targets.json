@@ -99,11 +99,11 @@
                                                                                      "target_class":  "service_budget",
                                                                                      "budget_group":  "direct_api"
                                                                                  },
-                    "stress:tier4-integration-kv|network_roundtrip|tcp":  {
+                    "stress:tier4-integration-kv|transaction_sequence|tcp":  {
                                                                               "kind":  "stress",
                                                                               "domain":  "kv",
                                                                               "suite":  "tier4-integration-kv",
-                                                                              "scenario":  "network_roundtrip",
+                                                                              "scenario":  "transaction_sequence",
                                                                               "layer":  "tcp",
                                                                               "metric":  "mean_us",
                                                                               "current_mean_us":  88.766667,
@@ -115,11 +115,11 @@
                                                                               "target_class":  "service_budget",
                                                                               "budget_group":  "transport"
                                                                           },
-                    "stress:tier4-integration-kv|network_roundtrip|websocket":  {
+                    "stress:tier4-integration-kv|transaction_sequence|websocket":  {
                                                                                     "kind":  "stress",
                                                                                     "domain":  "kv",
                                                                                     "suite":  "tier4-integration-kv",
-                                                                                    "scenario":  "network_roundtrip",
+                                                                                    "scenario":  "transaction_sequence",
                                                                                     "layer":  "websocket",
                                                                                     "metric":  "mean_us",
                                                                                     "current_mean_us":  138.433333,
@@ -325,11 +325,11 @@
                                                                            "target_class":  "service_budget",
                                                                            "budget_group":  "direct_api"
                                                                        },
-                    "stress:tier4-integration-notice|network_roundtrip|tcp":  {
+                    "stress:tier4-integration-notice|publish|tcp":  {
                                                                                   "kind":  "stress",
                                                                                   "domain":  "notice",
                                                                                   "suite":  "tier4-integration-notice",
-                                                                                  "scenario":  "network_roundtrip",
+                                                                                  "scenario":  "publish",
                                                                                   "layer":  "tcp",
                                                                                   "metric":  "mean_us",
                                                                                   "current_mean_us":  92.8,
@@ -341,11 +341,11 @@
                                                                                   "target_class":  "service_budget",
                                                                                   "budget_group":  "transport"
                                                                               },
-                    "stress:tier4-integration-notice|network_roundtrip|websocket":  {
+                    "stress:tier4-integration-notice|publish|websocket":  {
                                                                                         "kind":  "stress",
                                                                                         "domain":  "notice",
                                                                                         "suite":  "tier4-integration-notice",
-                                                                                        "scenario":  "network_roundtrip",
+                                                                                        "scenario":  "publish",
                                                                                         "layer":  "websocket",
                                                                                         "metric":  "mean_us",
                                                                                         "current_mean_us":  87.3,
@@ -357,11 +357,11 @@
                                                                                         "target_class":  "service_budget",
                                                                                         "budget_group":  "transport"
                                                                                     },
-                    "stress:tier4-integration-notice|concurrent_publishers|multiclient":  {
+                    "stress:tier4-integration-notice|fanout_publish|multiclient":  {
                                                                                               "kind":  "stress",
                                                                                               "domain":  "notice",
                                                                                               "suite":  "tier4-integration-notice",
-                                                                                              "scenario":  "concurrent_publishers",
+                                                                                              "scenario":  "fanout_publish",
                                                                                               "layer":  "multiclient",
                                                                                               "metric":  "mean_us",
                                                                                               "current_mean_us":  32.19,
@@ -387,11 +387,11 @@
                                                                      "gating":  "hard",
                                                                      "target_class":  "engine_core"
                                                                  },
-                    "stress:tier3-system-queue|mixed_workload":  {
+                    "stress:tier3-system-queue|mixed_steady_state":  {
                                                                      "kind":  "stress",
                                                                      "domain":  "queue",
                                                                      "suite":  "tier3-system-queue",
-                                                                     "scenario":  "mixed_workload",
+                                                                     "scenario":  "mixed_steady_state",
                                                                      "metric":  "mean_us",
                                                                      "current_mean_us":  4.396,
                                                                      "operational_target":  3.4,
@@ -461,11 +461,11 @@
                                                                            "target_class":  "service_budget",
                                                                            "budget_group":  "direct_api"
                                                                        },
-                    "stress:tier4-integration-queue|network_roundtrip|tcp":  {
+                    "stress:tier4-integration-queue|enqueue|tcp":  {
                                                                                  "kind":  "stress",
                                                                                  "domain":  "queue",
                                                                                  "suite":  "tier4-integration-queue",
-                                                                                 "scenario":  "network_roundtrip",
+                                                                                 "scenario":  "enqueue",
                                                                                  "layer":  "tcp",
                                                                                  "metric":  "mean_us",
                                                                                  "current_mean_us":  271.9,
@@ -477,11 +477,11 @@
                                                                                  "target_class":  "service_budget",
                                                                                  "budget_group":  "transport"
                                                                              },
-                    "stress:tier4-integration-queue|network_roundtrip|websocket":  {
+                    "stress:tier4-integration-queue|enqueue|websocket":  {
                                                                                        "kind":  "stress",
                                                                                        "domain":  "queue",
                                                                                        "suite":  "tier4-integration-queue",
-                                                                                       "scenario":  "network_roundtrip",
+                                                                                       "scenario":  "enqueue",
                                                                                        "layer":  "websocket",
                                                                                        "metric":  "mean_us",
                                                                                        "current_mean_us":  501.2,
@@ -523,11 +523,11 @@
                                                                        "gating":  "hard",
                                                                        "target_class":  "engine_core"
                                                                    },
-                    "stress:tier3-system-rpc|response_streaming":  {
+                    "stress:tier3-system-rpc|single_response_throughput":  {
                                                                        "kind":  "stress",
                                                                        "domain":  "rpc",
                                                                        "suite":  "tier3-system-rpc",
-                                                                       "scenario":  "response_streaming",
+                                                                       "scenario":  "single_response_throughput",
                                                                        "metric":  "mean_us",
                                                                        "current_mean_us":  2.1033,
                                                                        "operational_target":  1.7,
@@ -537,11 +537,11 @@
                                                                        "gating":  "hard",
                                                                        "target_class":  "engine_core"
                                                                    },
-                    "stress:tier3-system-rpc|concurrent_tracking":  {
+                    "stress:tier3-system-rpc|steady_state_tracking":  {
                                                                         "kind":  "stress",
                                                                         "domain":  "rpc",
                                                                         "suite":  "tier3-system-rpc",
-                                                                        "scenario":  "concurrent_tracking",
+                                                                        "scenario":  "steady_state_tracking",
                                                                         "metric":  "mean_us",
                                                                         "current_mean_us":  2.0635,
                                                                         "operational_target":  1.6,
@@ -551,11 +551,11 @@
                                                                         "gating":  "hard",
                                                                         "target_class":  "engine_core"
                                                                     },
-                    "stress:tier3-system-rpc|scaling_64":  {
+                    "stress:tier3-system-rpc|scaling_64_full_roundtrip":  {
                                                                "kind":  "stress",
                                                                "domain":  "rpc",
                                                                "suite":  "tier3-system-rpc",
-                                                               "scenario":  "scaling_64",
+                                                               "scenario":  "scaling_64_full_roundtrip",
                                                                "metric":  "mean_us",
                                                                "current_mean_us":  3.6278,
                                                                "operational_target":  2.8,
@@ -565,11 +565,11 @@
                                                                "gating":  "hard",
                                                                "target_class":  "engine_core"
                                                            },
-                    "stress:tier3-system-rpc|scaling_256":  {
+                    "stress:tier3-system-rpc|scaling_256_full_roundtrip":  {
                                                                 "kind":  "stress",
                                                                 "domain":  "rpc",
                                                                 "suite":  "tier3-system-rpc",
-                                                                "scenario":  "scaling_256",
+                                                                "scenario":  "scaling_256_full_roundtrip",
                                                                 "metric":  "mean_us",
                                                                 "current_mean_us":  9.1655,
                                                                 "operational_target":  7.0,
@@ -579,11 +579,11 @@
                                                                 "gating":  "hard",
                                                                 "target_class":  "engine_core"
                                                             },
-                    "stress:tier3-system-rpc|mixed_workload":  {
+                    "stress:tier3-system-rpc|short_roundtrip_batch":  {
                                                                    "kind":  "stress",
                                                                    "domain":  "rpc",
                                                                    "suite":  "tier3-system-rpc",
-                                                                   "scenario":  "mixed_workload",
+                                                                   "scenario":  "short_roundtrip_batch",
                                                                    "metric":  "mean_us",
                                                                    "current_mean_us":  4.08,
                                                                    "operational_target":  3.0,
@@ -593,11 +593,11 @@
                                                                    "gating":  "hard",
                                                                    "target_class":  "engine_core"
                                                                },
-                    "stress:tier4-integration-rpc|request|direct":  {
+                    "stress:tier4-integration-rpc|request_response|direct":  {
                                                                         "kind":  "stress",
                                                                         "domain":  "rpc",
                                                                         "suite":  "tier4-integration-rpc",
-                                                                        "scenario":  "request",
+                                                                        "scenario":  "request_response",
                                                                         "layer":  "direct",
                                                                         "metric":  "mean_us",
                                                                         "current_mean_us":  38.3,
@@ -609,11 +609,11 @@
                                                                         "target_class":  "service_budget",
                                                                         "budget_group":  "direct_api"
                                                                     },
-                    "stress:tier4-integration-rpc|request|encoded":  {
+                    "stress:tier4-integration-rpc|request_response|encoded":  {
                                                                          "kind":  "stress",
                                                                          "domain":  "rpc",
                                                                          "suite":  "tier4-integration-rpc",
-                                                                         "scenario":  "request",
+                                                                         "scenario":  "request_response",
                                                                          "layer":  "encoded",
                                                                          "metric":  "mean_us",
                                                                          "current_mean_us":  11.3,
@@ -625,11 +625,11 @@
                                                                          "target_class":  "service_budget",
                                                                          "budget_group":  "direct_api"
                                                                      },
-                    "stress:tier4-integration-rpc|network_roundtrip|tcp":  {
+                    "stress:tier4-integration-rpc|request_response|tcp":  {
                                                                                "kind":  "stress",
                                                                                "domain":  "rpc",
                                                                                "suite":  "tier4-integration-rpc",
-                                                                               "scenario":  "network_roundtrip",
+                                                                               "scenario":  "request_response",
                                                                                "layer":  "tcp",
                                                                                "metric":  "mean_us",
                                                                                "current_mean_us":  72.8,
@@ -641,11 +641,11 @@
                                                                                "target_class":  "service_budget",
                                                                                "budget_group":  "transport"
                                                                            },
-                    "stress:tier4-integration-rpc|network_roundtrip|websocket":  {
+                    "stress:tier4-integration-rpc|request_response|websocket":  {
                                                                                      "kind":  "stress",
                                                                                      "domain":  "rpc",
                                                                                      "suite":  "tier4-integration-rpc",
-                                                                                     "scenario":  "network_roundtrip",
+                                                                                     "scenario":  "request_response",
                                                                                      "layer":  "websocket",
                                                                                      "metric":  "mean_us",
                                                                                      "current_mean_us":  206.1,
@@ -657,11 +657,11 @@
                                                                                      "target_class":  "service_budget",
                                                                                      "budget_group":  "transport"
                                                                                  },
-                    "stress:tier4-integration-rpc|concurrent_subscribe|multiclient":  {
+                    "stress:tier4-integration-rpc|concurrent_requests|multiclient":  {
                                                                                           "kind":  "stress",
                                                                                           "domain":  "rpc",
                                                                                           "suite":  "tier4-integration-rpc",
-                                                                                          "scenario":  "concurrent_subscribe",
+                                                                                          "scenario":  "concurrent_requests",
                                                                                           "layer":  "multiclient",
                                                                                           "metric":  "mean_us",
                                                                                           "current_mean_us":  33.76,
@@ -670,7 +670,6 @@
                                                                                           "stretch_target":  18.0,
                                                                                           "stretch_min_ops_sec":  55556,
                                                                                           "gating":  "hard",
-                                                                                          "note":  "Bench tag still says concurrent_subscribe; benchmark behavior is concurrent requests.",
                                                                                           "target_class":  "service_budget",
                                                                                           "budget_group":  "contention"
                                                                                       },
@@ -1345,4 +1344,3 @@
                                                                            }
                 }
 }
-

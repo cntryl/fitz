@@ -10,11 +10,11 @@ use crate::domains::schedule::metrics::{
 use std::collections::HashSet;
 
 fn metric_counter(name: &str) -> u64 {
-    crate::boot::observability::metrics().counter_get(name)
+    crate::observability::metrics().counter_get(name)
 }
 
 fn metric_gauge(name: &str) -> u64 {
-    crate::boot::observability::metrics().gauge_get(name)
+    crate::observability::metrics().gauge_get(name)
 }
 
 impl Runtime {
@@ -209,6 +209,14 @@ impl Runtime {
         )
     }
 
+    pub fn router_backpressure_total(&self) -> u64 {
+        metric_counter("fitz_router_backpressure_total")
+    }
+
+    pub fn router_high_lane_backpressure_total(&self) -> u64 {
+        metric_counter("fitz_router_high_lane_backpressure_total")
+    }
+
     pub fn rpc_workers_registered(&self) -> usize {
         self.domains
             .read()
@@ -306,7 +314,7 @@ impl Runtime {
 
     pub fn stream_request_latency_buckets(&self) -> crate::api::admin::StreamLatencyBuckets {
         crate::api::admin::StreamLatencyBuckets::from_histogram(
-            crate::boot::observability::metrics()
+            crate::observability::metrics()
                 .histogram_get_buckets("fitz_stream_latency_ms")
                 .unwrap_or([0; 9]),
         )
@@ -335,7 +343,7 @@ impl Runtime {
         }
 
         let total_operations =
-            crate::boot::observability::metrics().counter_get("fitz_stream_operations_total");
+            crate::observability::metrics().counter_get("fitz_stream_operations_total");
         total_operations as f64 / uptime_secs
     }
 
@@ -570,7 +578,7 @@ impl Runtime {
 
     pub fn schedule_request_latency_buckets(&self) -> crate::api::admin::ScheduleLatencyBuckets {
         crate::api::admin::ScheduleLatencyBuckets::from_histogram(
-            crate::boot::observability::metrics()
+            crate::observability::metrics()
                 .histogram_get_buckets("fitz_schedule_latency_ms")
                 .unwrap_or([0; 9]),
         )

@@ -2,16 +2,20 @@ name: Bench
 
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [main]
-  #   paths:
-  #     - "src/**"
-  #     - "benches/**"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "benches/**"
+      - "config/**"
+      - "scripts/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
 
 jobs:
   bench:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
@@ -31,6 +35,10 @@ jobs:
       - name: Build all benchmarks
         run: cargo bench --no-run
 
+      - name: Verify benchmark target catalog
+        shell: pwsh
+        run: ./scripts/verify-benchmark-trust.ps1
+
       - name: Run Tier 1 benchmarks (hotpath)
         run: cargo bench --bench 'tier1_*'
 
@@ -46,10 +54,14 @@ jobs:
       - name: Summarize benchmark results
         run: cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 
+      - name: Verify trusted stress results
+        shell: pwsh
+        run: ./scripts/verify-benchmark-trust.ps1 -RequireResults -MinimumStressSamples 5
+
       - name: Upload Criterion artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: bench-artifacts-${{ matrix.os }}
+          name: bench-artifacts-ubuntu-latest
           path: |
             target/criterion/**
             target/stress/**

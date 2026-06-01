@@ -241,6 +241,10 @@ For local PowerShell runs, use the repo helper so Tier 3 and Tier 4 benches alwa
 The helper also removes the targeted raw output directories before rerun (`target/criterion/<group>` for Criterion and `target/stress/<suite>` for stress suites) so renamed or deleted cases do not survive into the next summary.
 
 Use `-FreezeBaseline` only after a trusted cleanup pass. It copies `target/bench_results.json` into `config/bench_baseline.json` and reruns the summary so the current report immediately compares against the frozen baseline.
+The refresh helper runs `scripts/verify-benchmark-trust.ps1` for selected stress
+suites. The verifier rejects orphaned target IDs, missing tracked scenarios,
+invalid stress rows, and frozen `insufficient_data` rows. A frozen Tier 3 / Tier
+4 baseline requires at least five measured samples per tracked stress scenario.
 
 ```powershell
 .\scripts\refresh-benchmarks.ps1
@@ -262,6 +266,11 @@ Numerical, testable performance targets are defined in **[Performance targets](b
 For a domain-by-domain production validation checklist that turns the current benchmark inventory into concrete benchmark and failure-mode questions, see **[Production credibility checklist](production-credibility-checklist.md)**.
 
 The benchmark summary script validates the collected Criterion and stress outputs before generating the report. Invalid or implausible measurements are excluded from the main tables and listed separately so they do not turn into presentation-safe numbers like `0.000 us` or absurd ops/sec.
+
+Current mean-based gates are a reproducible regression signal, not a
+production-readiness claim. Record percentile, memory, and error-behavior
+scenarios as the next credibility milestone before describing any domain as
+production-ready.
 
 ## Best Practices
 

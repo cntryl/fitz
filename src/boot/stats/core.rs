@@ -52,6 +52,14 @@ impl Runtime {
         *self.domains.write() = Some(domains);
     }
 
+    pub fn detach_domains(&self) -> Option<Arc<DomainHandles>> {
+        self.domains.write().take()
+    }
+
+    pub fn detach_ingress(&self) -> Option<Arc<RuntimeIngress>> {
+        self.ingress.write().take()
+    }
+
     pub fn attach_auth_config(&self, auth_config: crate::auth::AuthConfig) {
         *self.auth_config.write() = auth_config;
     }

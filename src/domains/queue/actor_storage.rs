@@ -12,8 +12,11 @@ impl QueueActor {
         let visible_at_ms = u64::from_le_bytes(bytes[4..12].try_into().unwrap());
         let body_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
 
-        if bytes.len() < 16 + body_len {
+        if bytes.len().saturating_sub(16) < body_len {
             return Err("Truncated record body".to_string());
+        }
+        if bytes.len() != 16 + body_len {
+            return Err("Invalid record trailing bytes".to_string());
         }
 
         Ok(QueueRecord::loaded_legacy(
@@ -30,7 +33,7 @@ impl QueueActor {
             return Ok(QueueRecord::metadata_only(attempts, visible_at_ms));
         }
 
-        if bytes.len() < 79 || bytes[0] != Self::HEADER_VERSION_V2 {
+        if bytes.len() != 79 || bytes[0] != Self::HEADER_VERSION_V2 {
             return Err("Invalid record format".to_string());
         }
 
@@ -229,7 +232,7 @@ impl QueueActor {
     }
 
     pub(super) fn observe_histogram_us(metric_name: &str, value_us: u64) {
-        crate::boot::observability::histogram_observe_us(metric_name, value_us);
+        crate::observability::histogram_observe_us(metric_name, value_us);
     }
 
     pub(super) fn observe_elapsed_us(metric_name: &str, start: Instant) {
@@ -237,7 +240,7 @@ impl QueueActor {
     }
 
     pub(super) fn increment_counter(metric_name: &str) {
-        crate::boot::observability::counter_inc(metric_name);
+        crate::observability::counter_inc(metric_name);
     }
 
     pub(super) fn is_missing_read_snapshot_error(error: &impl std::fmt::Debug) -> bool {

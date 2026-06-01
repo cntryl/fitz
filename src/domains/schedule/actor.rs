@@ -242,10 +242,10 @@ impl ScheduleActor {
                         .push((Reverse(effective_next_fire_ms), route.clone()));
                 }
                 Err(error) => {
-                    warn!(
-                        "Failed to parse cron for persisted schedule {}: {}",
+                    return Err(format!(
+                        "parse persisted schedule cron failed for {}: {}",
                         route, error
-                    );
+                    ));
                 }
             }
         }
@@ -384,9 +384,9 @@ impl ScheduleActor {
             self.write_options,
         ) {
             if previous_next_fire_ms.is_some() {
-                crate::boot::observability::counter_inc(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL);
+                crate::observability::counter_inc(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL);
             } else {
-                crate::boot::observability::counter_inc(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL);
+                crate::observability::counter_inc(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL);
             }
             return Err(error);
         }
@@ -521,13 +521,13 @@ impl ScheduleActor {
             let create_failures = pending.len() as u64 - upsert_failures;
 
             if create_failures > 0 {
-                crate::boot::observability::counter_add(
+                crate::observability::counter_add(
                     METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
                     create_failures,
                 );
             }
             if upsert_failures > 0 {
-                crate::boot::observability::counter_add(
+                crate::observability::counter_add(
                     METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
                     upsert_failures,
                 );
@@ -584,7 +584,7 @@ impl ScheduleActor {
             existing.next_fire_ms,
             self.write_options,
         ) {
-            crate::boot::observability::counter_inc(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
+            crate::observability::counter_inc(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
             return Err(error);
         }
 
@@ -1217,7 +1217,7 @@ mod tests {
     }
 
     fn metric_counter(name: &str) -> u64 {
-        crate::boot::observability::metrics().counter_get(name)
+        crate::observability::metrics().counter_get(name)
     }
 
     #[test]

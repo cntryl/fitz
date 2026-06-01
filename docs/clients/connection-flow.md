@@ -82,7 +82,9 @@ There is no explicit `CONNECT_OK` response frame to wait for.
 ### Step 4: Internal Broker Setup
 
 After a valid `CONNECT`, the broker may attach internal session metadata and
-authorization state. Clients do not observe or manage that state directly.
+authorization state. In authenticated mode the JWT must contain a provisioned,
+non-zero `fitz.route_family`; anonymous mode always uses internal family `1`.
+Clients do not observe or manage that state directly.
 
 ## Request and Response Flow
 

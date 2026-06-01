@@ -592,7 +592,7 @@ impl ScheduleStore {
                     schedule.route,
                     DUE_PREFIX,
                 ))
-                    .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
+                .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
             }
         }
 
@@ -640,7 +640,7 @@ impl ScheduleStore {
                         &item.route,
                         DUE_PREFIX,
                     ))
-                        .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
+                    .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
                 }
             }
         }
@@ -686,7 +686,7 @@ impl ScheduleStore {
                     item.route,
                     DUE_PREFIX,
                 ))
-                    .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
+                .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
             }
             txn.put(
                 pending_fire_key,
@@ -722,7 +722,7 @@ impl ScheduleStore {
                 item.route,
                 PENDING_FIRE_PREFIX,
             ))
-                .map_err(|e| format!("delete pending fire failed: {:?}", e))?;
+            .map_err(|e| format!("delete pending fire failed: {:?}", e))?;
 
             if let Some(definition) = &item.definition {
                 Self::put_definition_metadata(
@@ -770,20 +770,20 @@ impl ScheduleStore {
             route,
             DEFINITION_PREFIX,
         ))
-            .map_err(|e| format!("delete schedule definition failed: {:?}", e))?;
+        .map_err(|e| format!("delete schedule definition failed: {:?}", e))?;
         txn.delete(Self::encode_prefixed_route_key_from_realm(
             realm,
             route,
             BODY_PREFIX,
         ))
-            .map_err(|e| format!("delete schedule body failed: {:?}", e))?;
+        .map_err(|e| format!("delete schedule body failed: {:?}", e))?;
         txn.delete(Self::encode_prefixed_timed_route_key_from_realm(
             realm,
             next_fire_ms,
             route,
             DUE_PREFIX,
         ))
-            .map_err(|e| format!("delete schedule due index failed: {:?}", e))?;
+        .map_err(|e| format!("delete schedule due index failed: {:?}", e))?;
 
         self.commit_or_inject(txn, write_options)
     }
@@ -846,7 +846,10 @@ impl ScheduleStore {
                     metadata_rows.insert(route, (next_fire_ms, last_fire_ms, executions_total));
                 }
                 (Err(error), _) | (_, Err(error)) => {
-                    tracing::warn!("Failed to decode persisted schedule definition: {}", error);
+                    return Err(format!(
+                        "decode persisted schedule definition failed: {}",
+                        error
+                    ));
                 }
             }
         }
@@ -861,7 +864,7 @@ impl ScheduleStore {
                     body_definitions.insert(route, (cron, payload));
                 }
                 (Err(error), _) | (_, Err(error)) => {
-                    tracing::warn!("Failed to decode persisted schedule body: {}", error);
+                    return Err(format!("decode persisted schedule body failed: {}", error));
                 }
             }
         }
@@ -882,10 +885,10 @@ impl ScheduleStore {
                     );
                 }
                 None => {
-                    tracing::warn!(
-                        "Missing schedule body row for persisted schedule definition: {}",
+                    return Err(format!(
+                        "missing schedule body row for persisted definition: {}",
                         route
-                    );
+                    ));
                 }
             }
         }
@@ -912,7 +915,7 @@ impl ScheduleStore {
                     schedules.insert(route.clone(), persisted);
                 }
                 (Err(error), _) | (_, Err(error)) => {
-                    tracing::warn!("Failed to decode legacy schedule row: {}", error);
+                    return Err(format!("decode legacy schedule row failed: {}", error));
                 }
             }
         }
@@ -1005,7 +1008,7 @@ impl ScheduleStore {
                     });
                 }
                 (Err(error), _) | (_, Err(error)) => {
-                    tracing::warn!("Failed to decode pending schedule fire: {}", error);
+                    return Err(format!("decode pending schedule fire failed: {}", error));
                 }
             }
         }
@@ -1678,5 +1681,71 @@ mod tests {
             read_raw_value(&db, 1, &ScheduleStore::encode_definition_key(route)).is_none(),
             "schedule definition should not be recreated"
         );
+    }
+
+    #[test]
+    fn should_reject_malformed_persisted_schedule_definition_on_load() {
+        // Arrange
+        let (store, db) = make_store();
+        put_raw(
+            &db,
+            1,
+            ScheduleStore::encode_definition_key("schedule://acme/jobs/bad/run"),
+            b"broken".to_vec(),
+        )
+        .expect("write malformed definition");
+
+        // Act
+        let result = store.load_all(1, WriteOptions::buffered());
+
+        // Assert
+        assert!(result
+            .expect_err("malformed definition should fail recovery")
+            .contains("decode persisted schedule definition failed"));
+    }
+
+    #[test]
+    fn should_reject_missing_schedule_body_on_load() {
+        // Arrange
+        let (store, db) = make_store();
+        put_raw(
+            &db,
+            1,
+            ScheduleStore::encode_definition_key("schedule://acme/jobs/missing/run"),
+            ScheduleStore::encode_definition_metadata_value(1_700_000_000_000, None, 0),
+        )
+        .expect("write metadata without body");
+
+        // Act
+        let result = store.load_all(1, WriteOptions::buffered());
+
+        // Assert
+        assert!(result
+            .expect_err("missing body should fail recovery")
+            .contains("missing schedule body row"));
+    }
+
+    #[test]
+    fn should_reject_malformed_pending_fire_claim_on_load() {
+        // Arrange
+        let (store, db) = make_store();
+        put_raw(
+            &db,
+            1,
+            ScheduleStore::encode_pending_fire_key(
+                1_700_000_000_000,
+                "schedule://acme/jobs/bad/run",
+            ),
+            b"broken".to_vec(),
+        )
+        .expect("write malformed pending fire claim");
+
+        // Act
+        let result = store.load_pending_fire_claims(1);
+
+        // Assert
+        assert!(result
+            .expect_err("malformed pending claim should fail recovery")
+            .contains("decode pending schedule fire failed"));
     }
 }

@@ -120,6 +120,7 @@ mod tests {
         let claims = crate::auth::Claims {
             sub: "user:42".to_string(),
             tenant: "prod".to_string(),
+            route_family: 1,
             roles: vec![],
             permissions: vec![p],
             exp: 9999999999,

@@ -27,7 +27,9 @@ These rules apply to every domain in this document:
 
 - Sessions are ephemeral. Disconnect destroys session-owned state.
 - Broker-side recovery exists only for explicitly persisted committed state.
+- `realm` is an opaque, application-defined namespace boundary. It may represent a tenant, department, cost center, user, environment, or any other developer-chosen partition.
 - RouteFamily is a hard isolation boundary. Cross-family delivery, replay, or state bleed is a contract violation.
+- `realm` and RouteFamily are separate axes. They must never be inferred, aliased, substituted, or defaulted from one another.
 - Durable and ephemeral behavior must never be described with the same language.
 - A domain may compose with another domain, but it must not silently inherit the other domain's guarantees.
 - If a workflow needs multiple guarantees, it must compose multiple domains explicitly.

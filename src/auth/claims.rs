@@ -14,6 +14,7 @@ use crate::auth::Permission;
 ///   Portion of the OIDC JWT reserved for Fitz-specific data.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FitzClaims {
+    pub route_family: Option<u32>,
     pub permissions: Option<Vec<String>>,
 }
 
@@ -58,6 +59,18 @@ pub struct RawClaims {
 }
 
 impl RawClaims {
+    pub fn route_family(&self) -> Result<u32, String> {
+        let family = self
+            .fitz
+            .as_ref()
+            .and_then(|fitz| fitz.route_family)
+            .ok_or_else(|| "fitz.route_family claim is required".to_string())?;
+        if family == 0 {
+            return Err("fitz.route_family must be non-zero".to_string());
+        }
+        Ok(family)
+    }
+
     /// Validate standard claims against issuer allowlist and audience, and time
     /// checks. `now` is the current unix epoch seconds.
     pub fn validate(&self, allowlist: &[&str], audiences: &[&str], now: u64) -> Result<(), String> {
@@ -228,7 +241,7 @@ pub fn parse_jwt_noverify(compact: &str) -> Result<RawClaims, String> {
 /// Normalized, immutable Claims used by the runtime.
 ///
 /// This is produced **once at auth time** from a `RawClaims` and contains:
-/// - resolved realm (from tid/tenant_id/org_id)
+/// - resolved Fitz realm semantics (from external claim names like tid/tenant_id/org_id)
 /// - roles array (never re-interpreted)
 /// - permissions array (fully normalized, never reparsed)
 /// - expiration time
@@ -241,7 +254,14 @@ pub fn parse_jwt_noverify(compact: &str) -> Result<RawClaims, String> {
 #[derive(Debug, Clone)]
 pub struct Claims {
     pub sub: String,
+    /// Legacy internal field name for the normalized Fitz realm.
+    ///
+    /// Fitz treats realm as an opaque application-defined boundary. This value may
+    /// be sourced from external claim names such as `tid`, `tenant_id`, or `org_id`,
+    /// but its runtime meaning is Fitz realm semantics, not an inherent "tenant"
+    /// concept. It is always orthogonal to `route_family`.
     pub tenant: String,
+    pub route_family: u32,
     pub roles: Vec<String>,
     pub permissions: Vec<crate::auth::Permission>,
     pub exp: u64,
@@ -249,17 +269,20 @@ pub struct Claims {
 
 impl RawClaims {
     /// Validate and normalize into a `Claims` object. This performs the same
-    /// validation as `RawClaims::validate` and resolves tenant + permissions.
+    /// validation as `RawClaims::validate` and resolves Fitz realm semantics
+    /// from external claim-source names plus permissions.
     pub fn normalize(
         self,
         allowlist: &[&str],
         audiences: &[&str],
         now: u64,
     ) -> Result<Claims, String> {
-        // Basic validation (issuer, audience, time checks, tenant resolution)
+        // Basic validation (issuer, audience, time checks, external claim-source resolution)
         self.validate(allowlist, audiences, now)?;
 
-        // Resolve tenant id (we already know validate ensured exactly one present)
+        // Resolve the Fitz realm value from external claim-source names.
+        // The local variable keeps the legacy "tenant" name because the struct
+        // field has not been renamed yet.
         let tenant = if let Some(t) = &self.tid {
             t.clone()
         } else if let Some(t) = &self.tenant_id {
@@ -272,6 +295,7 @@ impl RawClaims {
 
         // Roles (if absent, empty vec). Clone to avoid partially moving `self`.
         let roles = self.roles.clone().unwrap_or_default();
+        let route_family = self.route_family()?;
 
         // Permissions (normalize using existing helper)
         let permissions = self.normalized_permissions()?;
@@ -279,6 +303,7 @@ impl RawClaims {
         Ok(Claims {
             sub: self.sub,
             tenant,
+            route_family,
             roles,
             permissions,
             exp: self.exp,
@@ -393,7 +418,7 @@ mod claims_tests {
             "sub": "user:42",
             "exp": 9999999999u64,
             "tid": "acme-prod",
-            "fitz": { "permissions": ["notice://prod/orders/**#read"] }
+            "fitz": { "route_family": 1, "permissions": ["notice://prod/orders/**#read"] }
         });
         let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
         let jwt = format!("{}.{}.{}", "{}", b64, "sig");
@@ -417,7 +442,7 @@ mod claims_tests {
             "exp": 9999999999u64,
             "tid": "acme-prod",
             "roles": ["admin"],
-            "fitz": { "permissions": ["notice://prod/orders/**#read"] }
+            "fitz": { "route_family": 1, "permissions": ["notice://prod/orders/**#read"] }
         });
         let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
         let jwt = format!("{}.{}.{}", "{}", b64, "sig");
@@ -430,6 +455,7 @@ mod claims_tests {
 
         // Assert
         assert_eq!(normalized.tenant, "acme-prod");
+        assert_eq!(normalized.route_family, 1);
         assert_eq!(normalized.roles.len(), 1);
         assert_eq!(normalized.permissions.len(), 1);
         assert_eq!(
@@ -484,6 +510,75 @@ mod claims_tests {
         // Assert
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("issuer"));
+    }
+
+    #[test]
+    fn should_reject_missing_route_family_claim() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://idp.example/",
+            "aud": "fitz-broker",
+            "sub": "user:42",
+            "exp": 9999999999u64,
+            "tid": "acme-prod",
+            "fitz": { "permissions": [] }
+        });
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
+        let jwt = format!("{}.{}.{}", "{}", b64, "sig");
+
+        // Act
+        let raw = parse_jwt_noverify(&jwt).expect("parse jwt");
+        let result = raw.normalize(&["https://idp.example/"], &["fitz-broker"], 0);
+
+        // Assert
+        assert_eq!(result.unwrap_err(), "fitz.route_family claim is required");
+    }
+
+    #[test]
+    fn should_reject_zero_route_family_claim() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://idp.example/",
+            "aud": "fitz-broker",
+            "sub": "user:42",
+            "exp": 9999999999u64,
+            "tid": "acme-prod",
+            "fitz": { "route_family": 0, "permissions": [] }
+        });
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
+        let jwt = format!("{}.{}.{}", "{}", b64, "sig");
+
+        // Act
+        let raw = parse_jwt_noverify(&jwt).expect("parse jwt");
+        let result = raw.normalize(&["https://idp.example/"], &["fitz-broker"], 0);
+
+        // Assert
+        assert_eq!(result.unwrap_err(), "fitz.route_family must be non-zero");
+    }
+
+    #[test]
+    fn should_keep_realm_semantics_orthogonal_to_route_family_when_normalizing_claims() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://idp.example/",
+            "aud": "fitz-broker",
+            "sub": "user:42",
+            "exp": 9999999999u64,
+            "tid": "realm-a",
+            "fitz": { "route_family": 7, "permissions": [] }
+        });
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
+        let jwt = format!("{}.{}.{}", "{}", b64, "sig");
+
+        // Act
+        let raw = parse_jwt_noverify(&jwt).expect("parse jwt");
+        let normalized = raw
+            .normalize(&["https://idp.example/"], &["fitz-broker"], 0)
+            .expect("normalize");
+
+        // Assert
+        assert_eq!(normalized.tenant, "realm-a");
+        assert_eq!(normalized.route_family, 7);
     }
 }
 

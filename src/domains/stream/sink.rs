@@ -1,10 +1,10 @@
-use super::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::domains::stream::store::StreamAdminRecord;
 use crate::domains::stream::StreamMetrics;
 use crate::domains::stream::{
     ReadResponse, StreamActor, StreamFilteredReason, StreamMetadata, StreamReadItem, StreamRecord,
     StreamStorageLayout, StreamStore,
 };
+use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::PayloadEncoder;
 use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
@@ -108,6 +108,7 @@ impl StreamDomainSink {
             stream_storage_layout,
         ));
         stream_store.ensure_layout_activation_for_existing_families()?;
+        stream_store.validate_persisted_state_for_existing_families()?;
 
         Ok(Self {
             stream_store,
@@ -197,12 +198,12 @@ impl StreamDomainSink {
             metrics.set_subscription_count(subscription_count);
             metrics.set_append_session_count(append_session_count);
         } else {
-            crate::boot::observability::gauge_set("fitz_stream_active_gauge", stream_count as u64);
-            crate::boot::observability::gauge_set(
+            crate::observability::gauge_set("fitz_stream_active_gauge", stream_count as u64);
+            crate::observability::gauge_set(
                 "fitz_stream_subscriptions_gauge",
                 subscription_count as u64,
             );
-            crate::boot::observability::gauge_set(
+            crate::observability::gauge_set(
                 "fitz_stream_append_sessions_active",
                 append_session_count as u64,
             );
@@ -213,7 +214,7 @@ impl StreamDomainSink {
         if let Some(metrics) = &self.metrics {
             metrics.counter_inc(name);
         } else {
-            crate::boot::observability::counter_inc(name);
+            crate::observability::counter_inc(name);
         }
     }
 
@@ -221,7 +222,7 @@ impl StreamDomainSink {
         if let Some(metrics) = &self.metrics {
             metrics.counter_add(name, amount);
         } else {
-            crate::boot::observability::counter_add(name, amount);
+            crate::observability::counter_add(name, amount);
         }
     }
 
@@ -662,7 +663,7 @@ impl StreamDomainSink {
         );
         let notify_envelope = Envelope::new(subscription.subscriber.clone(), notify_ctx);
         if self.router.route(notify_envelope).is_err() {
-            crate::boot::observability::counter_inc("fitz_stream_notify_drops_total");
+            crate::observability::counter_inc("fitz_stream_notify_drops_total");
         }
     }
 
@@ -713,17 +714,16 @@ impl StreamDomainSink {
 
 impl MailboxSink for StreamDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.cleanup_session(cleanup.session_id);
+            return Ok(());
+        }
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
         }
 
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
             return self.handle_domain_publish(event);
-        }
-
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.cleanup_session(cleanup.session_id);
-            return Ok(());
         }
 
         let frame_ctx = match envelope.payload::<FrameContext>() {
@@ -764,7 +764,7 @@ impl MailboxSink for StreamDomainSink {
         if let Some(metrics) = &self.metrics {
             metrics.counter_inc(STREAM_OPERATIONS_TOTAL);
         } else {
-            crate::boot::observability::counter_inc(STREAM_OPERATIONS_TOTAL);
+            crate::observability::counter_inc(STREAM_OPERATIONS_TOTAL);
         }
 
         // Subscription messages are handled entirely by the sink without touching StreamActor.
@@ -899,7 +899,7 @@ impl MailboxSink for StreamDomainSink {
                                 )
                             }
                             Err(error) => {
-                                crate::boot::observability::counter_inc(
+                                crate::observability::counter_inc(
                                     "fitz_stream_append_conflicts_total",
                                 );
                                 (Self::stream_error_response(error), None, false)

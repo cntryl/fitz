@@ -557,21 +557,25 @@ impl ResourceValue {
         buf
     }
 
-    pub fn decode(bytes: &[u8]) -> Self {
+    pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         if bytes.starts_with(&RESOURCE_VALUE_V2_MARKER) {
-            return Self::decode_v2(bytes).expect("deserialize compact resource value");
+            return Self::decode_v2(bytes);
         }
 
-        let legacy: LegacyResourceValue =
-            deserialize(bytes).expect("deserialize legacy resource value");
-        Self {
+        let legacy: LegacyResourceValue = deserialize(bytes)
+            .map_err(|error| format!("deserialize legacy resource value: {error}"))?;
+        Ok(Self {
             resource_offset: legacy.resource_offset,
             body: legacy.body,
             metadata: legacy.metadata,
             created_at: legacy.created_at,
             area_offset: legacy.area_offset,
             realm_offset: legacy.realm_offset,
-        }
+        })
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        Self::try_decode(bytes).expect("deserialize resource value")
     }
 
     fn decode_v2(bytes: &[u8]) -> Result<Self, String> {
@@ -592,22 +596,27 @@ impl ResourceValue {
         };
 
         let mut offset = 42;
-        if bytes.len() < offset + body_len {
+        if bytes.len().saturating_sub(offset) < body_len {
             return Err("decode resource value: truncated body".to_string());
         }
         let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
         offset += body_len;
 
         let metadata = if let Some(metadata_len) = metadata_len {
-            if bytes.len() < offset + metadata_len {
+            if bytes.len().saturating_sub(offset) < metadata_len {
                 return Err("decode resource value: truncated metadata".to_string());
             }
-            Some(Bytes::copy_from_slice(
+            let metadata = Some(Bytes::copy_from_slice(
                 &bytes[offset..offset + metadata_len],
-            ))
+            ));
+            offset += metadata_len;
+            metadata
         } else {
             None
         };
+        if offset != bytes.len() {
+            return Err("decode resource value: trailing bytes".to_string());
+        }
 
         Ok(Self {
             resource_offset,
@@ -643,18 +652,23 @@ impl AreaValue {
         buf
     }
 
-    pub fn decode(bytes: &[u8]) -> Self {
+    pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         if bytes.starts_with(&AREA_VALUE_V2_MARKER) {
-            return Self::decode_v2(bytes).expect("deserialize compact area value");
+            return Self::decode_v2(bytes);
         }
 
-        let legacy: LegacyAreaValue = deserialize(bytes).expect("deserialize legacy area value");
-        Self {
+        let legacy: LegacyAreaValue = deserialize(bytes)
+            .map_err(|error| format!("deserialize legacy area value: {error}"))?;
+        Ok(Self {
             resource_offset: legacy.resource_offset,
             body: legacy.body,
             metadata: legacy.metadata,
             created_at: legacy.created_at,
-        }
+        })
+    }
+
+    pub fn decode(bytes: &[u8]) -> Self {
+        Self::try_decode(bytes).expect("deserialize area value")
     }
 
     fn decode_v2(bytes: &[u8]) -> Result<Self, String> {
@@ -673,22 +687,28 @@ impl AreaValue {
         };
 
         let mut offset = 26;
-        if bytes.len() < offset + body_len {
+        if bytes.len().saturating_sub(offset) < body_len {
             return Err("decode area value: truncated body".to_string());
         }
         let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
         offset += body_len;
 
         let metadata = if let Some(metadata_len) = metadata_len {
-            if bytes.len() < offset + metadata_len {
+            if bytes.len().saturating_sub(offset) < metadata_len {
                 return Err("decode area value: truncated metadata".to_string());
             }
-            Some(Bytes::copy_from_slice(
+            let metadata = Some(Bytes::copy_from_slice(
                 &bytes[offset..offset + metadata_len],
-            ))
+            ));
+            offset += metadata_len;
+            metadata
         } else {
             None
         };
+
+        if offset != bytes.len() {
+            return Err("decode area value: trailing bytes".to_string());
+        }
 
         Ok(Self {
             resource_offset,
@@ -760,22 +780,27 @@ impl RealmValue {
         };
 
         let mut offset = 34;
-        if bytes.len() < offset + body_len {
+        if bytes.len().saturating_sub(offset) < body_len {
             return Err("decode realm value: truncated body".to_string());
         }
         let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
         offset += body_len;
 
         let metadata = if let Some(metadata_len) = metadata_len {
-            if bytes.len() < offset + metadata_len {
+            if bytes.len().saturating_sub(offset) < metadata_len {
                 return Err("decode realm value: truncated metadata".to_string());
             }
-            Some(Bytes::copy_from_slice(
+            let metadata = Some(Bytes::copy_from_slice(
                 &bytes[offset..offset + metadata_len],
-            ))
+            ));
+            offset += metadata_len;
+            metadata
         } else {
             None
         };
+        if offset != bytes.len() {
+            return Err("decode realm value: trailing bytes".to_string());
+        }
 
         Ok(Self {
             area_offset,
@@ -848,7 +873,7 @@ impl CompactRealmPageValue {
 
         let mut records = Vec::with_capacity(record_count);
         for _ in 0..record_count {
-            if bytes.len() < offset + 32 {
+            if bytes.len().saturating_sub(offset) < 32 {
                 return Err("decode compact realm page value: record header truncated".to_string());
             }
 
@@ -870,14 +895,14 @@ impl CompactRealmPageValue {
                 Some(metadata_len_raw as usize)
             };
 
-            if bytes.len() < offset + body_len {
+            if bytes.len().saturating_sub(offset) < body_len {
                 return Err("decode compact realm page value: truncated body".to_string());
             }
             let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
             offset += body_len;
 
             let metadata = if let Some(metadata_len) = metadata_len {
-                if bytes.len() < offset + metadata_len {
+                if bytes.len().saturating_sub(offset) < metadata_len {
                     return Err("decode compact realm page value: truncated metadata".to_string());
                 }
                 let metadata = Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]);
@@ -894,6 +919,9 @@ impl CompactRealmPageValue {
                 metadata,
                 created_at,
             });
+        }
+        if offset != bytes.len() {
+            return Err("decode compact realm page value: trailing bytes".to_string());
         }
 
         Ok(Self { records })
@@ -960,6 +988,10 @@ impl CompactAreaPageValue {
 
         let mut records = Vec::with_capacity(record_count);
         for _ in 0..record_count {
+            if bytes.len().saturating_sub(offset) < 24 {
+                return Err("decode compact area page value: record header truncated".to_string());
+            }
+
             let resource_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
             offset += 8;
             let created_at = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
@@ -976,14 +1008,14 @@ impl CompactAreaPageValue {
                 Some(metadata_len_raw as usize)
             };
 
-            if bytes.len() < offset + body_len {
+            if bytes.len().saturating_sub(offset) < body_len {
                 return Err("decode compact area page value: truncated body".to_string());
             }
             let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
             offset += body_len;
 
             let metadata = if let Some(metadata_len) = metadata_len {
-                if bytes.len() < offset + metadata_len {
+                if bytes.len().saturating_sub(offset) < metadata_len {
                     return Err("decode compact area page value: truncated metadata".to_string());
                 }
                 let metadata = Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]);
@@ -999,6 +1031,9 @@ impl CompactAreaPageValue {
                 metadata,
                 created_at,
             });
+        }
+        if offset != bytes.len() {
+            return Err("decode compact area page value: trailing bytes".to_string());
         }
 
         Ok(Self { records })
@@ -1066,6 +1101,12 @@ impl CompactResourcePageValue {
 
         let mut records = Vec::with_capacity(record_count);
         for _ in 0..record_count {
+            if bytes.len().saturating_sub(offset) < 32 {
+                return Err(
+                    "decode compact resource page value: record header truncated".to_string(),
+                );
+            }
+
             let area_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
             offset += 8;
             let realm_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
@@ -1084,14 +1125,14 @@ impl CompactResourcePageValue {
                 Some(metadata_len_raw as usize)
             };
 
-            if bytes.len() < offset + body_len {
+            if bytes.len().saturating_sub(offset) < body_len {
                 return Err("decode compact resource page value: truncated body".to_string());
             }
             let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
             offset += body_len;
 
             let metadata = if let Some(metadata_len) = metadata_len {
-                if bytes.len() < offset + metadata_len {
+                if bytes.len().saturating_sub(offset) < metadata_len {
                     return Err(
                         "decode compact resource page value: truncated metadata".to_string()
                     );
@@ -1110,6 +1151,9 @@ impl CompactResourcePageValue {
                 metadata,
                 created_at,
             });
+        }
+        if offset != bytes.len() {
+            return Err("decode compact resource page value: trailing bytes".to_string());
         }
 
         Ok(Self { records })
@@ -1167,8 +1211,8 @@ impl WatermarkValue {
         serialize(self).expect("serialize watermark value")
     }
 
-    pub fn decode(bytes: &[u8]) -> Self {
-        deserialize(bytes).expect("deserialize watermark value")
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        deserialize(bytes).map_err(|error| format!("deserialize watermark value: {error}"))
     }
 }
 
@@ -1177,8 +1221,8 @@ impl OffsetCounterValue {
         serialize(self).expect("serialize offset counter value")
     }
 
-    pub fn decode(bytes: &[u8]) -> Self {
-        deserialize(bytes).expect("deserialize offset counter value")
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        deserialize(bytes).map_err(|error| format!("deserialize offset counter value: {error}"))
     }
 }
 
@@ -1187,8 +1231,8 @@ impl ResourceMetaValue {
         serialize(self).expect("serialize resource metadata value")
     }
 
-    pub fn decode(bytes: &[u8]) -> Self {
-        deserialize(bytes).expect("deserialize resource metadata value")
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        deserialize(bytes).map_err(|error| format!("deserialize resource metadata value: {error}"))
     }
 }
 
@@ -1197,8 +1241,8 @@ impl AreaCounterValue {
         serialize(self).expect("serialize area counter value")
     }
 
-    pub fn decode(bytes: &[u8]) -> Self {
-        deserialize(bytes).expect("deserialize area counter value")
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        deserialize(bytes).map_err(|error| format!("deserialize area counter value: {error}"))
     }
 }
 
@@ -1207,8 +1251,8 @@ impl RealmCounterValue {
         serialize(self).expect("serialize realm counter value")
     }
 
-    pub fn decode(bytes: &[u8]) -> Self {
-        deserialize(bytes).expect("deserialize realm counter value")
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        deserialize(bytes).map_err(|error| format!("deserialize realm counter value: {error}"))
     }
 }
 
@@ -1237,7 +1281,11 @@ impl CanonicalResourceValue {
     }
 
     pub fn decode(bytes: &[u8]) -> Self {
-        Self::decode_v1(bytes).expect("deserialize canonical resource value")
+        Self::try_decode(bytes).expect("deserialize canonical resource value")
+    }
+
+    pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
+        Self::decode_v1(bytes)
     }
 
     fn decode_v1(bytes: &[u8]) -> Result<Self, String> {
@@ -1260,22 +1308,28 @@ impl CanonicalResourceValue {
         };
 
         let mut offset = 34;
-        if bytes.len() < offset + body_len {
+        if bytes.len().saturating_sub(offset) < body_len {
             return Err("decode canonical resource value: truncated body".to_string());
         }
         let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
         offset += body_len;
 
         let metadata = if let Some(metadata_len) = metadata_len {
-            if bytes.len() < offset + metadata_len {
+            if bytes.len().saturating_sub(offset) < metadata_len {
                 return Err("decode canonical resource value: truncated metadata".to_string());
             }
-            Some(Bytes::copy_from_slice(
+            let metadata = Some(Bytes::copy_from_slice(
                 &bytes[offset..offset + metadata_len],
-            ))
+            ));
+            offset += metadata_len;
+            metadata
         } else {
             None
         };
+
+        if offset != bytes.len() {
+            return Err("decode canonical resource value: trailing bytes".to_string());
+        }
 
         Ok(Self {
             area_offset,
@@ -1297,15 +1351,19 @@ impl AreaLocatorValue {
     }
 
     pub fn decode(bytes: &[u8]) -> Self {
-        Self::decode_v1(bytes).expect("deserialize area locator value")
+        Self::try_decode(bytes).expect("deserialize area locator value")
+    }
+
+    pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
+        Self::decode_v1(bytes)
     }
 
     fn decode_v1(bytes: &[u8]) -> Result<Self, String> {
         if !bytes.starts_with(&AREA_LOCATOR_VALUE_V1_MARKER) {
             return Err("decode area locator value: missing marker".to_string());
         }
-        if bytes.len() < 18 {
-            return Err("decode area locator value: header too short".to_string());
+        if bytes.len() != 18 {
+            return Err("decode area locator value: invalid length".to_string());
         }
 
         Ok(Self {
@@ -1326,15 +1384,19 @@ impl RealmLocatorValue {
     }
 
     pub fn decode(bytes: &[u8]) -> Self {
-        Self::decode_v1(bytes).expect("deserialize realm locator value")
+        Self::try_decode(bytes).expect("deserialize realm locator value")
+    }
+
+    pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
+        Self::decode_v1(bytes)
     }
 
     fn decode_v1(bytes: &[u8]) -> Result<Self, String> {
         if !bytes.starts_with(&REALM_LOCATOR_VALUE_V1_MARKER) {
             return Err("decode realm locator value: missing marker".to_string());
         }
-        if bytes.len() < 26 {
-            return Err("decode realm locator value: header too short".to_string());
+        if bytes.len() != 26 {
+            return Err("decode realm locator value: invalid length".to_string());
         }
 
         Ok(Self {
@@ -1408,10 +1470,15 @@ pub fn decode_staging_value(data: &[u8]) -> Result<EventPayload, String> {
         if data.len() < offset + metadata_len {
             return Err("decode_staging_value: truncated metadata".to_string());
         }
-        Some(data[offset..offset + metadata_len].to_vec())
+        let metadata = Some(data[offset..offset + metadata_len].to_vec());
+        offset += metadata_len;
+        metadata
     } else {
         None
     };
+    if offset != data.len() {
+        return Err("decode_staging_value: trailing bytes".to_string());
+    }
 
     Ok(EventPayload {
         body: Bytes::from(body),
@@ -1597,6 +1664,24 @@ mod tests {
         // Assert
         assert_eq!(decoded.body, event.body);
         assert_eq!(decoded.metadata, None);
+    }
+
+    #[test]
+    fn should_reject_staging_value_with_trailing_bytes() {
+        // Arrange
+        let event = EventPayload {
+            body: Bytes::from("body"),
+            metadata: Some(Bytes::from("meta")),
+            discriminator: None,
+        };
+        let mut encoded = encode_staging_value(&event);
+        encoded.push(0);
+
+        // Act
+        let error = decode_staging_value(&encoded).expect_err("reject trailing bytes");
+
+        // Assert
+        assert_eq!(error, "decode_staging_value: trailing bytes");
     }
 
     #[test]

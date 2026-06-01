@@ -7,11 +7,23 @@ use bytes::Bytes;
 use std::sync::Arc;
 use tracing::info;
 
+fn websocket_session_frame_error_reason(error: &crate::session::SessionError) -> String {
+    format!("session frame error: {:?}", error)
+}
+
+fn websocket_close_reason(result: &Result<(), String>) -> CloseReason {
+    match result {
+        Ok(()) => CloseReason::ClientClose,
+        Err(reason) => CloseReason::Error(reason.clone()),
+    }
+}
+
 pub(super) async fn handle_websocket(
     req: hyper::Request<hyper::Body>,
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
     runtime: Arc<crate::boot::Runtime>,
+    websocket_tasks: super::SessionTasks,
 ) -> Result<hyper::Response<hyper::Body>, std::convert::Infallible> {
     // Note: increment_connections / decrement_connections are handled by the
     // HTTP listener wrapper (handle_http_upgrade) — no additional counter here.
@@ -19,7 +31,7 @@ pub(super) async fn handle_websocket(
         Ok((response, websocket_fut)) => {
             let runtime_clone = runtime.clone();
             let router = runtime.router.clone();
-            tokio::spawn(async move {
+            websocket_tasks.lock().await.spawn(async move {
                 match websocket_fut.await {
                     Ok(ws_stream) => {
                         tracing::info!("WebSocket upgrade completed");
@@ -86,7 +98,7 @@ where
     let (outbound_tx, mut outbound_rx) =
         tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
 
-    let sink = std::sync::Arc::new(crate::session::outbound::SessionOutboundSink::new(
+    let sink = std::sync::Arc::new(crate::api::outbound::SessionOutboundSink::new(
         outbound_tx.clone(),
     ));
     let mut inbox_route =
@@ -103,6 +115,7 @@ where
 
     let ws_session_id = session_id;
     let runtime_for_writes = runtime.clone();
+    let ingress_for_writes = ingress.clone();
     // Capture the handle so we can await graceful drain when the session closes.
     let writer_handle = tokio::spawn(async move {
         tracing::debug!(
@@ -123,6 +136,7 @@ where
                 break;
             }
             runtime_for_writes.increment_messages_sent();
+            ingress_for_writes.record_frame_sent(ws_session_id);
         }
         tracing::debug!(session_id = ws_session_id, "WS outbound writer task ended");
     });
@@ -136,6 +150,7 @@ where
             Ok(Message::Binary(data)) => {
                 let frame = Bytes::from(data);
                 runtime.increment_messages_received();
+                ingress.record_frame_received(session_id);
                 tracing::debug!(
                     session_id = session_id,
                     frame_len = frame.len(),
@@ -157,8 +172,14 @@ where
                     break Err(reason);
                 }
 
-                if let Err(e) = session.on_frame(frame, ingress.as_ref()).await {
-                    let reason = format!("session frame error: {:?}", e);
+                if let Err(error) = crate::api::session::process_session_frame(
+                    &mut session,
+                    frame,
+                    ingress.as_ref(),
+                )
+                .await
+                {
+                    let reason = websocket_session_frame_error_reason(&error);
                     tracing::error!(session_id = session_id, error = %reason, "WS session frame processing error");
                     break Err(reason);
                 }
@@ -198,10 +219,7 @@ where
         }
     };
 
-    let close_reason = match &result {
-        Ok(()) => CloseReason::ClientClose,
-        Err(reason) => CloseReason::Error(reason.clone()),
-    };
+    let close_reason = websocket_close_reason(&result);
     ingress.on_close(session_id, close_reason).await;
     router.unregister(&inbox_route);
 
@@ -221,4 +239,29 @@ where
         info!("WebSocket connection closed, session {}", session_id);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{websocket_close_reason, websocket_session_frame_error_reason};
+    use crate::protocol::frame::ChannelId;
+    use crate::session::{CloseReason, SessionError};
+
+    #[test]
+    fn should_treat_websocket_backpressure_as_terminal_session_error() {
+        // Arrange
+        let reason =
+            websocket_session_frame_error_reason(&SessionError::Backpressure(ChannelId::Control));
+        let result = Err(reason.clone());
+
+        // Act
+        let close_reason = websocket_close_reason(&result);
+
+        // Assert
+        assert_eq!(reason, "session frame error: Backpressure(Control)");
+        assert!(matches!(
+            close_reason,
+            CloseReason::Error(message) if message == reason
+        ));
+    }
 }
