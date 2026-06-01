@@ -21,7 +21,7 @@ use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::store::{CommitRecordsParams, EventPayload, StreamStore};
 use fitz::runtime::routing::RouteFamily;
 use fitz::runtime::Router;
-use fitz::session::{RuntimeIngress, SessionInfo as RuntimeSessionInfo, SessionMetadata, SessionPermissions, TransportKind};
+use fitz::session::{Ingress, RuntimeIngress, SessionInfo as RuntimeSessionInfo, SessionMetadata, SessionPermissions, TransportKind};
 use hyper::header::{COOKIE, SET_COOKIE};
 use hyper::{body, Body, Method, Request, StatusCode};
 use serial_test::serial;
