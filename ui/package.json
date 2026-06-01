@@ -15,18 +15,18 @@
     "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts"
   },
   "dependencies": {
-    "@askrjs/askr": "0.0.39",
+    "@askrjs/askr": "0.0.40",
     "@askrjs/logos": "0.0.1",
     "@askrjs/lucide": "^0.0.2",
     "@askrjs/themes": "^0.0.6",
     "@askrjs/ui": "0.0.7",
     "@askrjs/vite": "0.0.2",
-    "@fgrzl/fetch": "^1.4.2"
+    "@fgrzl/fetch": "^2.0.0"
   },
   "devDependencies": {
     "jsdom": "^29.1.1",
     "typescript": "^6.0.3",
-    "vite-plus": "^0.1.22"
+    "vite-plus": "^0.1.24"
   },
-  "packageManager": "npm@11.15.0"
+  "packageManager": "npm@11.16.0"
 }
