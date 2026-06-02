@@ -1549,11 +1549,8 @@ fn hydrate_area_batches(
         let last_offset = *sorted_offsets.last().expect("sorted area offsets");
 
         let area = &case.areas[area_index];
-        let mut prefix_key = vec![KeyPrefix::Area as u8];
-        prefix_key.extend_from_slice(REALM.as_bytes());
-        prefix_key.push(0);
-        prefix_key.extend_from_slice(area.as_bytes());
-        prefix_key.push(0);
+        let mut prefix_key = encode_area_key(REALM, area, 0);
+        prefix_key.truncate(prefix_key.len() - 8);
 
         let query = cntryl_midge::Query::new()
             .start_key(Bytes::from(encode_area_key(REALM, area, first_offset)))
@@ -1931,11 +1928,8 @@ fn read_area_hydrated(case: &ReplayCase, area: &str) -> Result<Vec<StreamRecord>
         .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
-    let mut prefix_key = vec![KeyPrefix::AreaLocator as u8];
-    prefix_key.extend_from_slice(REALM.as_bytes());
-    prefix_key.push(0);
-    prefix_key.extend_from_slice(area.as_bytes());
-    prefix_key.push(0);
+    let mut prefix_key = encode_area_locator_key(REALM, area, 0);
+    prefix_key.truncate(prefix_key.len() - 8);
 
     let query = cntryl_midge::Query::new()
         .start_key(Bytes::from(encode_area_locator_key(REALM, area, 0)))
@@ -1997,9 +1991,8 @@ fn read_realm_hydrated(case: &ReplayCase) -> Result<Vec<StreamRecord>, String> {
         .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
-    let mut prefix_key = vec![KeyPrefix::RealmLocator as u8];
-    prefix_key.extend_from_slice(REALM.as_bytes());
-    prefix_key.push(0);
+    let mut prefix_key = encode_realm_locator_key(REALM, 0);
+    prefix_key.truncate(prefix_key.len() - 8);
 
     let query = cntryl_midge::Query::new()
         .start_key(Bytes::from(encode_realm_locator_key(REALM, 0)))
