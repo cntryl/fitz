@@ -452,6 +452,7 @@ function resetQueries() {
 }
 
 async function mountRoute(path: string, routePath: string, handler: RouteHandler) {
+  cleanupApp("app");
   document.body.innerHTML = '<div id="app"></div>';
   window.history.pushState({}, "", path);
 
@@ -465,6 +466,7 @@ async function mountRoute(path: string, routePath: string, handler: RouteHandler
     routes: [{ handler, path: routePath }],
   });
 
+  await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
   return root;
 }
 
@@ -660,7 +662,9 @@ describe("admin page smoke tests", () => {
     );
 
     expect(replay).toBeDefined();
+
     replay?.click();
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
 
     expect(root.textContent).toContain("Replay dead-letter message?");
     expect(root.textContent).toContain("Replay message 42 in default / ops / primary.");

@@ -17,7 +17,6 @@ import {
   type DomainId,
   type ResourceRef,
 } from "@/features/resource/resource-query";
-import type { ResourceDetail } from "@/features/resource/resource-models";
 
 const domainLabels: Record<DomainId, string> = {
   kv: "KV",
@@ -97,6 +96,22 @@ export default function ResourceDetailPage() {
       : null;
   const query = createResourceQuery(domain, ref, against);
   const data = query.data;
+  const errorMessage =
+    query.error instanceof Error
+      ? query.error.message
+      : typeof query.error === "string"
+      ? query.error
+      : JSON.stringify(query.error);
+  console.log(
+    "RESOURCE-DETAIL DEBUG",
+    JSON.stringify({
+      domain,
+      ref,
+      data: data ? { ...data, raw: undefined } : data,
+      error: errorMessage,
+      loading: query.loading,
+    }),
+  );
   const sidebar = createDomainSidebar({
     data,
     title: `${domainLabels[domain]} resource`,
@@ -166,19 +181,17 @@ export default function ResourceDetailPage() {
           <QueryErrorState error={query.error} />
         </Show>
 
-        <Show when={data}>
-          {(detail: ResourceDetail) => (
-            <Stack gap="3">
-              <Show when={query.refreshing}>
-                <QueryRefreshingState
-                  description={`Refreshing ${domainLabels[domain]} resource...`}
-                />
-              </Show>
+        {data ? (
+          <Stack gap="3">
+            {query.refreshing ? (
+              <QueryRefreshingState
+                description={`Refreshing ${domainLabels[domain]} resource...`}
+              />
+            ) : null}
 
-              <ResourceWorkbench detail={detail} />
-            </Stack>
-          )}
-        </Show>
+            <ResourceWorkbench detail={data} />
+          </Stack>
+        ) : null}
       </Stack>
     </DomainPageFrame>
   );

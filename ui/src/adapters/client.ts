@@ -1,4 +1,5 @@
-import { FetchClient, addProductionStack } from "@fgrzl/fetch";
+import { FetchClient } from "@fgrzl/fetch";
+import { addLogging, addRateLimit, addRetry } from "@fgrzl/fetch/middleware";
 import { appConfig } from "@/shared/config";
 
 function createTraceId() {
@@ -10,27 +11,27 @@ function createTraceId() {
 }
 
 // Adapter boundary only: configure transport concerns here, not DTO mapping or app logic.
-export const client = addProductionStack(
-  new FetchClient({
-    baseUrl: appConfig.apiBaseUrl,
-    credentials: "same-origin",
-    timeout: appConfig.requestTimeoutMs,
-  }),
-  {
-    retry: {
-      maxRetries: 2,
-      delay: 750,
-    },
-    rateLimit: {
-      maxRequests: 100,
-      windowMs: 60 * 1000,
-    },
-    logging: {
-      level: appConfig.logLevel,
-      skipPatterns: ["/metrics"],
-    },
-  },
-);
+export const client = new FetchClient({
+  baseUrl: appConfig.apiBaseUrl,
+  credentials: "same-origin",
+  timeout: appConfig.requestTimeoutMs,
+});
+
+addRetry(client, {
+  maxRetries: 2,
+  delay: 750,
+});
+
+addRateLimit(client, {
+  maxRequests: 100,
+  windowMs: 60 * 1000,
+  skipPatterns: ["/metrics"],
+});
+
+addLogging(client, {
+  level: appConfig.logLevel,
+  skipPatterns: ["/metrics"],
+});
 
 client.use((request, next) => {
   const headers = new Headers(request.headers);

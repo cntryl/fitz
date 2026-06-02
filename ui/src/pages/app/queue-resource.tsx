@@ -1,15 +1,7 @@
 import { state } from "@askrjs/askr";
-import { For, Show } from "@askrjs/askr/control";
+import { For } from "@askrjs/askr/control";
 import { currentRoute, Link, navigate } from "@askrjs/askr/router";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogOverlay,
-  AlertDialogPortal,
-  AlertDialogTitle,
   Input,
   Label,
   Table,
@@ -42,10 +34,7 @@ import {
   createQueueResourceComparisonQuery,
   createQueueResourceQuery,
 } from "@/features/queue/queue-resource-query";
-import type {
-  QueueResourceOverview,
-  QueueResourceTimelineEvent,
-} from "@/features/queue/queue-resource-models";
+import type { QueueResourceTimelineEvent } from "@/features/queue/queue-resource-models";
 
 interface QueueComparisonTarget {
   area: string;
@@ -261,10 +250,19 @@ export default function QueueResourcePage() {
   const [actionKind, setActionKind] = state<"replay" | "purge" | null>(null);
   const [confirmMessage, setConfirmMessage] = state<DeadLetterMessage | null>(null);
   const [confirmKind, setConfirmKind] = state<"replay" | "purge" | null>(null);
+  const [debugDialogOpen, setDebugDialogOpen] = state(false);
   const data = resourceQuery.data;
+  const resourceQueryError = resourceQuery.error as Error | null;
   const actionError = replayMutation.error ?? purgeMutation.error;
   const confirmationMessage = confirmMessage();
   const confirmationKind = confirmKind();
+  const debugDialogOpenValue = debugDialogOpen();
+  console.log(
+    "QUEUE-RESOURCE CONFIRM MESSAGE",
+    confirmationMessage?.messageId,
+    confirmationKind,
+    debugDialogOpenValue,
+  );
   const actionPending = actionKind() !== null;
 
   const sidebar = createDomainSidebar({
@@ -293,9 +291,53 @@ export default function QueueResourcePage() {
     ),
   });
 
+  if (!data) {
+    return (
+      <DomainPageFrame sidebar={sidebar}>
+        <Stack gap="3">
+          <DomainHeader
+            title="Resource drill-down"
+            description={`${realm} / ${area} / ${resource}`}
+            onRefresh={() => resourceQuery.refresh()}
+          />
+
+          <div id="queue-resource-debug">
+            Debug dialog open: {debugDialogOpenValue ? "yes" : "no"}
+          </div>
+
+          {resourceQuery.loading && !data ? (
+            <QueryLoadingState description="Loading queue resource..." />
+          ) : null}
+
+          {resourceQuery.error && !data ? (
+            <QueryErrorState error={resourceQuery.error} />
+          ) : null}
+
+          {actionError ? <QueryErrorState error={actionError} /> : null}
+        </Stack>
+      </DomainPageFrame>
+    );
+  }
+
+  const current = data;
+
   function openDeadLetterConfirmation(kind: "replay" | "purge", message: DeadLetterMessage) {
+    console.log("QUEUE-RESOURCE OPEN CONFIRM", kind, message.messageId);
+    console.log(
+      "QUEUE-RESOURCE SET CONFIRM",
+      typeof setConfirmMessage,
+      setConfirmMessage === undefined,
+      setConfirmMessage?.toString?.().slice(0, 120),
+    );
     setConfirmKind(kind);
     setConfirmMessage(message);
+    setDebugDialogOpen(true);
+    console.log(
+      "QUEUE-RESOURCE OPEN CONFIRM AFTER SET",
+      confirmationMessage?.messageId,
+      confirmationKind,
+      debugDialogOpenValue,
+    );
   }
 
   async function runDeadLetterAction(kind: "replay" | "purge", message: DeadLetterMessage) {
@@ -362,258 +404,262 @@ export default function QueueResourcePage() {
           onRefresh={() => resourceQuery.refresh()}
         />
 
-        <Show when={resourceQuery.loading && !data}>
+        <div id="queue-resource-debug">
+          Debug dialog open: {debugDialogOpenValue ? "yes" : "no"}
+        </div>
+
+        {resourceQuery.loading && !data ? (
           <QueryLoadingState description="Loading queue resource..." />
-        </Show>
+        ) : null}
 
-        <Show when={resourceQuery.error && !data}>
-          <QueryErrorState error={resourceQuery.error} />
-        </Show>
+        {resourceQueryError && !data ? <QueryErrorState error={resourceQueryError} /> : null}
 
-        <Show when={actionError}>
-          <QueryErrorState error={actionError} />
-        </Show>
+        {actionError ? <QueryErrorState error={actionError} /> : null}
 
-        <Show when={data}>
-          {(current: QueueResourceOverview) => (
-            <Stack gap="3">
-              <Show when={resourceQuery.refreshing}>
-                <QueryRefreshingState description="Refreshing queue resource..." />
-              </Show>
+        <Stack gap="3">
+            {resourceQuery.refreshing ? (
+              <QueryRefreshingState description="Refreshing queue resource..." />
+            ) : null}
 
-              <DomainMetricTable
-                title="Resource metrics"
-                metrics={[
-                  { label: "Total messages", value: current.detail.messagesTotal },
-                  { label: "Ready", value: current.detail.messagesReady },
-                  { label: "Inflight", value: current.detail.messagesInflight },
-                  { label: "Dead-lettered", value: current.detail.messagesDeadLettered },
-                  { label: "Delayed", value: current.detail.messagesDelayed },
-                  {
-                    label: "Oldest age",
-                    value: humanizeSeconds(current.detail.oldestMessageAgeSeconds),
-                  },
-                ]}
-              />
+            <DomainMetricTable
+              title="Resource metrics"
+              metrics={[
+                { label: "Total messages", value: current.detail.messagesTotal },
+                { label: "Ready", value: current.detail.messagesReady },
+                { label: "Inflight", value: current.detail.messagesInflight },
+                { label: "Dead-lettered", value: current.detail.messagesDeadLettered },
+                { label: "Delayed", value: current.detail.messagesDelayed },
+                {
+                  label: "Oldest age",
+                  value: humanizeSeconds(current.detail.oldestMessageAgeSeconds),
+                },
+              ]}
+            />
 
-              <Section size="3">
-                <div class="domain-section-header">
-                  <h2>Inflight</h2>
-                  <span>{current.inflight.length} entries</span>
-                </div>
+            <Section size="3">
+              <div class="domain-section-header">
+                <h2>Inflight</h2>
+                <span>{current.inflight.length} entries</span>
+              </div>
 
-                <Show
-                  when={current.inflight.length === 0}
-                  fallback={<QueueInflightTable messages={current.inflight} />}
-                >
-                  <QueryEmptyState description="No inflight messages are visible for this resource." />
-                </Show>
-              </Section>
+              {current.inflight.length === 0 ? (
+                <QueryEmptyState description="No inflight messages are visible for this resource." />
+              ) : (
+                <QueueInflightTable messages={current.inflight} />
+              )}
+            </Section>
 
-              <Section size="3">
-                <div class="domain-section-header">
-                  <h2>Dead letters</h2>
-                  <span>{current.deadLetters.length} messages</span>
-                </div>
+            <Section size="3">
+              <div class="domain-section-header">
+                <h2>Dead letters</h2>
+                <span>{current.deadLetters.length} messages</span>
+              </div>
 
-                <Show
-                  when={current.deadLetters.length === 0}
-                  fallback={
-                    <QueueDeadLetterTable
-                      messages={current.deadLetters}
-                      onReplay={(message) => openDeadLetterConfirmation("replay", message)}
-                      onPurge={(message) => openDeadLetterConfirmation("purge", message)}
-                      pendingAction={actionKind()}
-                      pendingMessageId={actionMessageId()}
-                    />
-                  }
-                >
-                  <QueryEmptyState description="No dead-letter messages are visible for this resource." />
-                </Show>
-              </Section>
+              {console.log(
+                "QUEUE-RESOURCE DEAD LETTER",
+                JSON.stringify({
+                  length: current.deadLetters.length,
+                  messages: current.deadLetters,
+                }),
+              )}
 
-              <Section size="3">
-                <div class="domain-section-header">
-                  <h2>Timeline</h2>
-                  <span>{current.timeline.derived ? "Derived" : "Live"}</span>
-                </div>
+              {current.deadLetters.length === 0 ? (
+                <QueryEmptyState description="No dead-letter messages are visible for this resource." />
+              ) : (
+                <QueueDeadLetterTable
+                  messages={current.deadLetters}
+                  onReplay={(message) => openDeadLetterConfirmation("replay", message)}
+                  onPurge={(message) => openDeadLetterConfirmation("purge", message)}
+                  pendingAction={actionKind()}
+                  pendingMessageId={actionMessageId()}
+                />
+              )}
+            </Section>
 
-                <Show
-                  when={current.timeline.events.length === 0}
-                  fallback={
-                    <div class="domain-table-wrap">
-                      <Table class="domain-table">
-                        <TableHead>
-                          <TableRow>
-                            <TableHeaderCell>Kind</TableHeaderCell>
-                            <TableHeaderCell>Summary</TableHeaderCell>
-                            <TableHeaderCell>Observed</TableHeaderCell>
-                            <TableHeaderCell>Age</TableHeaderCell>
-                            <TableHeaderCell>Context</TableHeaderCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          <For
-                            each={current.timeline.events}
-                            by={(event: QueueResourceTimelineEvent) =>
-                              `${event.observedAt}:${event.summary}`
-                            }
-                          >
-                            {(event: QueueResourceTimelineEvent) => (
-                              <TableRow>
-                                <TableCell>{formatTimelineKind(event.kind)}</TableCell>
-                                <TableCell>{event.summary}</TableCell>
-                                <TableCell>{event.observedAt}</TableCell>
-                                <TableCell>
-                                  {event.ageSeconds == null
-                                    ? "Unknown"
-                                    : humanizeSeconds(event.ageSeconds)}
-                                </TableCell>
-                                <TableCell>
-                                  {event.operation ? `Operation: ${event.operation}` : ""}
-                                  {event.messageId != null ? ` Message: ${event.messageId}` : ""}
-                                  {event.ownerSession ? ` Owner: ${event.ownerSession}` : ""}
-                                  {event.workerSession ? ` Worker: ${event.workerSession}` : ""}
-                                </TableCell>
-                              </TableRow>
-                            )}
-                          </For>
-                        </TableBody>
-                      </Table>
-                    </div>
-                  }
-                >
-                  <QueryEmptyState description="No recent queue transitions are visible for this resource." />
-                </Show>
-              </Section>
+            <Section size="3">
+              <div class="domain-section-header">
+                <h2>Timeline</h2>
+                <span>{current.timeline.derived ? "Derived" : "Live"}</span>
+              </div>
 
-              <Section size="3">
-                <div class="domain-section-header">
-                  <h2>Compare</h2>
-                </div>
-
-                <Stack asChild gap="3">
-                  <form onSubmit={onCompareSubmit}>
-                    <div class="form-grid">
-                      <div class="auth-field">
-                        <Label for="compare-realm">Against realm</Label>
-                        <Input
-                          id="compare-realm"
-                          value={compareRealmValue}
-                          onInput={(event: Event) =>
-                            setCompareRealmInput((event.target as HTMLInputElement).value)
-                          }
-                          placeholder="acme"
-                        />
-                      </div>
-
-                      <div class="auth-field">
-                        <Label for="compare-area">Against area</Label>
-                        <Input
-                          id="compare-area"
-                          value={compareAreaValue}
-                          onInput={(event: Event) =>
-                            setCompareAreaInput((event.target as HTMLInputElement).value)
-                          }
-                          placeholder="payments"
-                        />
-                      </div>
-
-                      <div class="auth-field">
-                        <Label for="compare-resource">Against resource</Label>
-                        <Input
-                          id="compare-resource"
-                          value={compareResourceValue}
-                          onInput={(event: Event) =>
-                            setCompareResourceInput((event.target as HTMLInputElement).value)
-                          }
-                          placeholder="inbox"
-                        />
-                      </div>
-
-                      <div class="auth-field">
-                        <Label for="compare-family">Against family</Label>
-                        <Input
-                          id="compare-family"
-                          value={compareFamilyValue}
-                          onInput={(event: Event) =>
-                            setCompareFamilyInput((event.target as HTMLInputElement).value)
-                          }
-                          placeholder="Optional family"
-                        />
-                      </div>
-                    </div>
-
-                    <Flex gap="1" wrap="wrap">
-                      <Button type="submit">Compare</Button>
-                      <Button
-                        type="button"
-                        onPress={() => {
-                          setCompareRealmInput("");
-                          setCompareAreaInput("");
-                          setCompareResourceInput("");
-                          setCompareFamilyInput("");
-                          navigate(`/queue/${realm}/${area}/${resource}`);
-                        }}
+              {current.timeline.events.length === 0 ? (
+                <QueryEmptyState description="No recent queue transitions are visible for this resource." />
+              ) : (
+                <div class="domain-table-wrap">
+                  <Table class="domain-table">
+                    <TableHead>
+                      <TableRow>
+                        <TableHeaderCell>Kind</TableHeaderCell>
+                        <TableHeaderCell>Summary</TableHeaderCell>
+                        <TableHeaderCell>Observed</TableHeaderCell>
+                        <TableHeaderCell>Age</TableHeaderCell>
+                        <TableHeaderCell>Context</TableHeaderCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      <For
+                        each={current.timeline.events}
+                        by={(event: QueueResourceTimelineEvent) =>
+                          `${event.observedAt}:${event.summary}`
+                        }
                       >
-                        Clear
-                      </Button>
-                    </Flex>
-                  </form>
-                </Stack>
+                        {(event: QueueResourceTimelineEvent) => (
+                          <TableRow>
+                            <TableCell>{formatTimelineKind(event.kind)}</TableCell>
+                            <TableCell>{event.summary}</TableCell>
+                            <TableCell>{event.observedAt}</TableCell>
+                            <TableCell>
+                              {event.ageSeconds == null
+                                ? "Unknown"
+                                : humanizeSeconds(event.ageSeconds)}
+                            </TableCell>
+                            <TableCell>
+                              {event.operation ? `Operation: ${event.operation}` : ""}
+                              {event.messageId != null ? ` Message: ${event.messageId}` : ""}
+                              {event.ownerSession ? ` Owner: ${event.ownerSession}` : ""}
+                              {event.workerSession ? ` Worker: ${event.workerSession}` : ""}
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </For>
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </Section>
 
-                {compareTarget ? (
-                  <QueueResourceComparisonResults
-                    resourceRef={resourceRef}
-                    compareTarget={compareTarget}
-                  />
-                ) : (
-                  <QueryEmptyState description="Enter another queue scope to compare snapshots." />
-                )}
-              </Section>
-            </Stack>
-          )}
-        </Show>
+            <Section size="3">
+              <div class="domain-section-header">
+                <h2>Compare</h2>
+              </div>
+
+              <Stack asChild gap="3">
+                <form onSubmit={onCompareSubmit}>
+                  <div class="form-grid">
+                    <div class="auth-field">
+                      <Label for="compare-realm">Against realm</Label>
+                      <Input
+                        id="compare-realm"
+                        value={compareRealmValue}
+                        onInput={(event: Event) =>
+                          setCompareRealmInput((event.target as HTMLInputElement).value)
+                        }
+                        placeholder="acme"
+                      />
+                    </div>
+
+                    <div class="auth-field">
+                      <Label for="compare-area">Against area</Label>
+                      <Input
+                        id="compare-area"
+                        value={compareAreaValue}
+                        onInput={(event: Event) =>
+                          setCompareAreaInput((event.target as HTMLInputElement).value)
+                        }
+                        placeholder="payments"
+                      />
+                    </div>
+
+                    <div class="auth-field">
+                      <Label for="compare-resource">Against resource</Label>
+                      <Input
+                        id="compare-resource"
+                        value={compareResourceValue}
+                        onInput={(event: Event) =>
+                          setCompareResourceInput((event.target as HTMLInputElement).value)
+                        }
+                        placeholder="inbox"
+                      />
+                    </div>
+
+                    <div class="auth-field">
+                      <Label for="compare-family">Against family</Label>
+                      <Input
+                        id="compare-family"
+                        value={compareFamilyValue}
+                        onInput={(event: Event) =>
+                          setCompareFamilyInput((event.target as HTMLInputElement).value)
+                        }
+                        placeholder="Optional family"
+                      />
+                    </div>
+                  </div>
+
+                  <Flex gap="1" wrap="wrap">
+                    <Button type="submit">Compare</Button>
+                    <Button
+                      type="button"
+                      onPress={() => {
+                        setCompareRealmInput("");
+                        setCompareAreaInput("");
+                        setCompareResourceInput("");
+                        setCompareFamilyInput("");
+                        navigate(`/queue/${realm}/${area}/${resource}`);
+                      }}
+                    >
+                      Clear
+                    </Button>
+                  </Flex>
+                </form>
+              </Stack>
+
+              {compareTarget ? (
+                <QueueResourceComparisonResults
+                  resourceRef={resourceRef}
+                  compareTarget={compareTarget}
+                />
+              ) : (
+                <QueryEmptyState description="Enter another queue scope to compare snapshots." />
+              )}
+            </Section>
+          </Stack>
 
         {confirmationMessage ? (
-          <AlertDialog
-            open
-            onOpenChange={(open) => {
-              if (!open) {
-                setConfirmKind(null);
-                setConfirmMessage(null);
-              }
-            }}
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="queue-dead-letter-dialog-title"
+            aria-describedby="queue-dead-letter-dialog-description"
+            class="dialog dialog-alert"
           >
-            <AlertDialogPortal>
-              <AlertDialogOverlay class="dialog-overlay" />
-              <AlertDialogContent class="dialog-content" role="alertdialog">
-                <AlertDialogTitle>
-                  {confirmationKind === "purge"
-                    ? "Purge dead-letter message?"
-                    : "Replay dead-letter message?"}
-                </AlertDialogTitle>
-                <AlertDialogDescription>
-                  {`${confirmationKind === "purge" ? "Purge" : "Replay"} message ${confirmationMessage.messageId} in ${realm} / ${area} / ${resource}.`}
-                </AlertDialogDescription>
-                <Flex gap="1" wrap="wrap">
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    disabled={actionPending}
-                    onPress={() => {
-                      const nextKind = confirmKind();
-                      const nextMessage = confirmMessage();
-                      if (nextKind && nextMessage) {
-                        void runDeadLetterAction(nextKind, nextMessage);
-                      }
-                    }}
-                  >
-                    {actionPending ? "Working..." : "Confirm"}
-                  </AlertDialogAction>
-                </Flex>
-              </AlertDialogContent>
-            </AlertDialogPortal>
-          </AlertDialog>
+            <h2 id="queue-dead-letter-dialog-title">
+              {confirmationKind === "replay"
+                ? "Replay dead-letter message?"
+                : "Purge dead-letter message?"}
+            </h2>
+            <p id="queue-dead-letter-dialog-description">
+              {confirmationKind === "replay"
+                ? `Replay message ${confirmationMessage.messageId} in ${realm} / ${area} / ${resource}.`
+                : `Purge message ${confirmationMessage.messageId} from ${realm} / ${area} / ${resource}.`}
+            </p>
+            <Flex gap="2" align="end">
+              <Button
+                variant="secondary"
+                type="button"
+                onPress={() => {
+                  setConfirmKind(null);
+                  setConfirmMessage(null);
+                }}
+                disabled={actionPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onPress={() => runDeadLetterAction(confirmationKind!, confirmationMessage)}
+                disabled={actionPending}
+                aria-busy={actionPending}
+              >
+                {actionPending
+                  ? confirmationKind === "replay"
+                    ? "Replaying..."
+                    : "Purging..."
+                  : confirmationKind === "replay"
+                    ? "Replay"
+                    : "Purge"}
+              </Button>
+            </Flex>
+          </div>
         ) : null}
       </Stack>
     </DomainPageFrame>

@@ -1,6 +1,6 @@
 import { createQuery } from "@askrjs/askr/data";
 import { sessionService } from "./session-service";
-import type { ActiveSessionsOverview } from "./session-models";
+import type { ActiveSessionsOverview, SessionState } from "./session-models";
 
 const CURRENT_SESSION_KEY = "session:current";
 function activeSessionsKey(realm?: string) {
@@ -8,9 +8,13 @@ function activeSessionsKey(realm?: string) {
 }
 
 export function createCurrentSessionQuery() {
-  return createQuery({
+  return createQuery<SessionState>({
     key: CURRENT_SESSION_KEY,
-    fetch: ({ signal }) => sessionService.getCurrentSession({ signal }),
+    fetch: async ({ signal }) =>
+      (await sessionService.getCurrentSession({ signal })) ?? {
+        authenticated: false,
+        username: "admin",
+      },
   });
 }
 

@@ -81,8 +81,7 @@ export function mapSystemOverview(stats: GlobalStats, metricsValue: unknown): Sy
         backpressureRejectsTotal: stats.domains.rpc.backpressure_rejects_total,
         duplicateCorrelationRejectsTotal: stats.domains.rpc.duplicate_correlation_rejects_total,
         failureTotal: stats.domains.rpc.failure_total,
-        invalidSequenceErrorsDroppedTotal:
-          stats.domains.rpc.invalid_sequence_errors_dropped_total,
+        invalidSequenceErrorsDroppedTotal: stats.domains.rpc.invalid_sequence_errors_dropped_total,
         invalidSequenceErrorsForwardedTotal:
           stats.domains.rpc.invalid_sequence_errors_forwarded_total,
         invalidSequenceResponsesTotal: stats.domains.rpc.invalid_sequence_responses_total,
