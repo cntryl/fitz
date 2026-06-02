@@ -243,7 +243,7 @@ pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error:
             .with_batch_exporter(span_exporter)
             .build();
 
-        let _ = global::set_tracer_provider(tracer_provider.clone());
+        global::set_tracer_provider(tracer_provider);
         let tracer = global::tracer(crate::observability::SERVICE_NAME);
 
         tracing_subscriber::registry()
