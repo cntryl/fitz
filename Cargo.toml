@@ -50,11 +50,11 @@ rcgen = "0.12"
 crc32fast = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt", "ansi"] }
-tracing-opentelemetry = "0.21"
+tracing-opentelemetry = "0.33"
 tracing-appender = "0.2"
-opentelemetry = { version = "0.20", features = ["rt-tokio", "trace"] }
-opentelemetry-otlp = { version = "0.13", features = ["tonic"] }
-opentelemetry_sdk = { version = "0.20", features = ["rt-tokio"] }
+opentelemetry = { version = "0.32", features = ["trace"] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "trace"] }
 prometheus = { version = "0.13", optional = true }
 async-trait = "0.1"
 
@@ -89,7 +89,7 @@ clap = { version = "4", features = ["derive"] }
 regex = "1"
 criterion = { version = "0.4", features = ["async_futures"] }
 cntryl-stress = "0.2.3"
-serial_test = "3.4.0"
+serial_test = "3.5.0"
 tempfile = "3"
 rand = "0.8"
 proptest = "1"

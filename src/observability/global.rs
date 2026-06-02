@@ -7,12 +7,13 @@
 /// - Sampling rate configuration
 use crate::observability::metrics::MetricsCollector;
 use once_cell::sync::OnceCell;
-use opentelemetry::{
-    global,
-    sdk::{propagation::TraceContextPropagator, trace as sdktrace, Resource},
-    KeyValue,
+use opentelemetry::{global, KeyValue};
+use opentelemetry_otlp::{SpanExporter, WithExportConfig};
+use opentelemetry_sdk::{
+    propagation::TraceContextPropagator,
+    trace::{self as sdktrace, SdkTracerProvider},
+    Resource,
 };
-use opentelemetry_otlp::WithExportConfig;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing_subscriber::{fmt, prelude::*, util::SubscriberInitExt, EnvFilter};
@@ -208,40 +209,42 @@ pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error:
         .unwrap_or(true);
 
     if otel_enabled {
-        let resource = Resource::new(vec![
-            KeyValue::new(
-                "service.name",
-                crate::observability::SERVICE_NAME.to_string(),
-            ),
-            KeyValue::new(
-                "service.version",
-                crate::observability::SERVICE_VERSION.to_string(),
-            ),
-            KeyValue::new("service.instance.id", service_instance_id.clone()),
-            KeyValue::new("deployment.environment", deployment_environment.clone()),
-        ]);
+        let resource = Resource::builder_empty()
+            .with_attributes([
+                KeyValue::new(
+                    "service.name",
+                    crate::observability::SERVICE_NAME.to_string(),
+                ),
+                KeyValue::new(
+                    "service.version",
+                    crate::observability::SERVICE_VERSION.to_string(),
+                ),
+                KeyValue::new("service.instance.id", service_instance_id.clone()),
+                KeyValue::new("deployment.environment", deployment_environment.clone()),
+            ])
+            .build();
 
         global::set_text_map_propagator(TraceContextPropagator::new());
 
-        let tracer = opentelemetry_otlp::new_pipeline()
-            .tracing()
-            .with_exporter(
-                opentelemetry_otlp::new_exporter()
-                    .tonic()
-                    .with_endpoint(otel_endpoint.clone()),
-            )
-            .with_trace_config(
-                sdktrace::config().with_resource(resource).with_sampler(
-                    sdktrace::Sampler::TraceIdRatioBased(
-                        std::env::var("FITZ_OTEL_SAMPLE_RATIO")
-                            .ok()
-                            .and_then(|value| value.parse::<f64>().ok())
-                            .unwrap_or(1.0),
-                    ),
-                ),
-            )
-            .install_batch(opentelemetry::runtime::Tokio)
-            .map_err(|e| format!("Failed to init OTEL: {}", e))?;
+        let span_exporter = SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint(otel_endpoint.clone())
+            .build()
+            .map_err(|e| format!("Failed to init OTEL exporter: {}", e))?;
+
+        let tracer_provider = SdkTracerProvider::builder()
+            .with_resource(resource)
+            .with_sampler(sdktrace::Sampler::TraceIdRatioBased(
+                std::env::var("FITZ_OTEL_SAMPLE_RATIO")
+                    .ok()
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .unwrap_or(1.0),
+            ))
+            .with_batch_exporter(span_exporter)
+            .build();
+
+        let _ = global::set_tracer_provider(tracer_provider.clone());
+        let tracer = global::tracer(crate::observability::SERVICE_NAME);
 
         tracing_subscriber::registry()
             .with(env_filter)
