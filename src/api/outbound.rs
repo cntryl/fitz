@@ -46,14 +46,18 @@ impl MailboxSink for SessionOutboundSink {
                 "Outbound sink: sending TLV frame to transport channel"
             );
 
-            // Send TLV frame bytes to the outbound channel (sync try_send)
+            // Send TLV frame bytes to the outbound channel. This may block when the
+            // underlying transport writer is congested, which preserves delivery
+            // semantics under backpressure instead of dropping notices.
             let send_start = Instant::now();
-            match self.tx.try_send(bytes) {
+            let send_result = tokio::task::block_in_place(|| self.tx.blocking_send(bytes));
+            crate::observability::hot_path_histogram_observe_us(
+                obs::METRIC_OUTBOUND_SEND_LATENCY,
+                send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+            );
+
+            match send_result {
                 Ok(()) => {
-                    crate::observability::hot_path_histogram_observe_us(
-                        obs::METRIC_OUTBOUND_SEND_LATENCY,
-                        send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-                    );
                     crate::observability::hot_path_counter_inc(obs::METRIC_FRAMES_SENT);
                     debug!(
                         session_id = ctx.session_id,
@@ -61,34 +65,13 @@ impl MailboxSink for SessionOutboundSink {
                     );
                     Ok(())
                 }
-                Err(e) => match e {
-                    mpsc::error::TrySendError::Full(_) => {
-                        crate::observability::hot_path_histogram_observe_us(
-                            obs::METRIC_OUTBOUND_SEND_LATENCY,
-                            send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-                        );
-                        crate::observability::counter_inc(obs::METRIC_OUTBOUND_BACKPRESSURE);
-                        warn!(
-                            session_id = ctx.session_id,
-                            "Outbound sink: transport channel full (backpressure)"
-                        );
-                        Err(DeliveryError::MailboxFull {
-                            capacity: 0,
-                            current_len: 0,
-                        })
-                    }
-                    mpsc::error::TrySendError::Closed(_) => {
-                        crate::observability::hot_path_histogram_observe_us(
-                            obs::METRIC_OUTBOUND_SEND_LATENCY,
-                            send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-                        );
-                        warn!(
-                            session_id = ctx.session_id,
-                            "Outbound sink: transport channel closed"
-                        );
-                        Err(DeliveryError::ActorStopped)
-                    }
-                },
+                Err(_) => {
+                    warn!(
+                        session_id = ctx.session_id,
+                        "Outbound sink: transport channel closed"
+                    );
+                    Err(DeliveryError::ActorStopped)
+                }
             }
         } else {
             // Not a FrameContext - cannot deliver

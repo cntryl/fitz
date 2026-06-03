@@ -1,7 +1,7 @@
 use crate::api::admin::read_model::AdminReadModel;
 use crate::api::admin::{RpcPendingRequest, RpcWorker};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Combined snapshot for the RPC admin projection.
 pub struct RpcAdminState {

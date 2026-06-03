@@ -672,8 +672,17 @@ pub fn count_stream_read_records_from_payload(payload: &[u8]) -> Result<usize, S
     let mut decoder = PayloadDecoder::new(&data);
     let count = decoder.get_u32()? as usize;
 
-    for _ in 0..count {
-        skip_stream_read_item(&mut decoder)?;
+    for item_index in 0..count {
+        if let Err(err) = skip_stream_read_item(&mut decoder) {
+            let offset = decoder.offset();
+            return Err(format!(
+                "stream read item {} failed at offset {}: {} (next byte = {})",
+                item_index,
+                offset,
+                err,
+                decoder.peek_u8().unwrap_or(0)
+            ));
+        }
     }
 
     decoder.get_u64()?;

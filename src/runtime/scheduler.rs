@@ -7,8 +7,8 @@ use crate::observability as obs;
 use crate::runtime::router::Router;
 use crate::runtime::routing::RouteAddress;
 use std::any::Any;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -589,7 +589,7 @@ mod tests {
 
         // Act - trigger the ping
         ping_ref.send("start".to_string()).unwrap();
-    incremented_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        incremented_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
         // Check that actor1 received the increment
         let (tx, rx) = crossbeam_channel::bounded(1);
@@ -683,7 +683,9 @@ mod tests {
 
             fn started(&mut self, _ctx: &mut Context<Self>) {
                 self.started_tx.send(()).unwrap();
-                self.release_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                self.release_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap();
             }
 
             fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {

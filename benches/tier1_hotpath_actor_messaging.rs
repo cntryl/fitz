@@ -1,10 +1,10 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use criterion::{Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main};
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{DeliveryError, MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::runtime::{Actor, ActorRef, Context};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "criterion_config.rs"]
 mod criterion_config;

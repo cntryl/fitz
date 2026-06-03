@@ -21,13 +21,13 @@ mod jwks;
 mod realm;
 mod token;
 
-pub use claims::{parse_jwt_noverify, Claims, RawClaims};
+pub use claims::{Claims, RawClaims, parse_jwt_noverify};
 pub use errors::AuthError;
 pub use jwks::{
     cache_jwks_from_json, cache_jwks_from_json_with_ttl, derive_jwks_url_from_issuer,
     ensure_jwks_cached, fetch_and_cache_jwks, get_decoding_key_from_cache, is_jwks_stale,
 };
-pub use realm::{realm_matches, validate_realm_format, RealmError};
+pub use realm::{RealmError, realm_matches, validate_realm_format};
 pub use token::{verify_jwt_with_hmac_secret, verify_jwt_with_rsa_pem};
 
 use std::str::FromStr;

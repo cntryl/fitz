@@ -7,15 +7,15 @@
 
 use bytes::Bytes;
 use fitz::auth::Permission;
+use fitz::domains::notice::NoticeRouteActor;
 use fitz::domains::notice::protocol::{NotificationMessage, PublishMessage, SubscribeMessage};
 use fitz::domains::notice::session::SessionActor;
-use fitz::domains::notice::NoticeRouteActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::routing::RouteFamily;
 use fitz::session::permissions::SessionPermissions;
 use fitz::session::session::SessionId;
-use fitz::testkit::{addr, make_router, route, session_id, TestSink};
+use fitz::testkit::{TestSink, addr, make_router, route, session_id};
 use std::sync::Arc;
 
 fn assert_delivered_payloads(sink: &TestSink, expected_count: usize, expected_payload: &[u8]) {

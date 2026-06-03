@@ -1,6 +1,6 @@
 use crate::auth::Access;
-use crate::domains::notice::protocol::{PublishMessage, SubscribeMessage};
 use crate::domains::notice::NoticeRouteActor;
+use crate::domains::notice::protocol::{PublishMessage, SubscribeMessage};
 use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::Route;
 use crate::runtime::routing::RouteFamily;

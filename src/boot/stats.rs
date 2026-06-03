@@ -4,8 +4,8 @@ use crate::boot::domains::DomainHandles;
 use crate::runtime::Router;
 use crate::session::manager::RuntimeIngress;
 use parking_lot::RwLock;
-use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::time::Instant;
 
 mod admin_queries;

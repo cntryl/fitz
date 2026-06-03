@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
+    BatchSize, Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main,
 };
 use fitz::benchkit::{
-    build_stream_subscribe, create_bench_stream_sink, extract_single_tlv_field,
-    register_session_counting_sink, register_session_queue_sink, route_frame, CountingSink,
-    FrameQueueSink,
+    CountingSink, FrameQueueSink, build_stream_subscribe, create_bench_stream_sink,
+    extract_single_tlv_field, register_session_counting_sink, register_session_queue_sink,
+    route_frame,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::domain_event::DomainPublishEvent;

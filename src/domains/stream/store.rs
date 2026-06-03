@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use parking_lot::Mutex;
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{HashMap, hash_map::Entry};
 use std::sync::Arc;
 
 use super::protocol::{
@@ -10,15 +10,15 @@ use super::protocol::{
     StreamRecord, StreamWriteMode,
 };
 use super::storage::{
-    decode_area_offset_from_key, decode_realm_offset_from_key, decode_resource_offset_from_key,
-    decode_staging_value, encode_area_counter_key, encode_compact_area_page_key,
-    encode_compact_resource_page_key, encode_compressed_compact_realm_page_key,
-    encode_realm_counter_key, encode_resource_meta_key, encode_stream_layout_marker_key,
-    encode_watermark_key, AreaCounterValue, AreaLocatorValue, AreaValue, CanonicalResourceValue,
-    CompactAreaPageRecord, CompactAreaPageValue, CompactRealmPageRecord, CompactResourcePageRecord,
+    AreaCounterValue, AreaLocatorValue, AreaValue, CanonicalResourceValue, CompactAreaPageRecord,
+    CompactAreaPageValue, CompactRealmPageRecord, CompactResourcePageRecord,
     CompactResourcePageValue, CompressedCompactRealmPageValue, KeyPrefix, OffsetCounterValue,
-    RealmCounterValue, RealmLocatorValue, RealmValue, ResourceMetaValue, ResourceValue,
-    StreamLayoutMarkerValue, WatermarkValue, REALM_PAGE_RECORD_LIMIT,
+    REALM_PAGE_RECORD_LIMIT, RealmCounterValue, RealmLocatorValue, RealmValue, ResourceMetaValue,
+    ResourceValue, StreamLayoutMarkerValue, WatermarkValue, decode_area_offset_from_key,
+    decode_realm_offset_from_key, decode_resource_offset_from_key, decode_staging_value,
+    encode_area_counter_key, encode_compact_area_page_key, encode_compact_resource_page_key,
+    encode_compressed_compact_realm_page_key, encode_realm_counter_key, encode_resource_meta_key,
+    encode_stream_layout_marker_key, encode_watermark_key,
 };
 
 #[cfg(test)]
@@ -2831,7 +2831,7 @@ impl StreamStore {
 mod tests {
     use super::*;
     use crate::domains::stream::protocol::StreamFilterClause;
-    use crate::domains::stream::storage::{encode_offset_counter_key, OffsetCounterValue};
+    use crate::domains::stream::storage::{OffsetCounterValue, encode_offset_counter_key};
     use crate::testkit::create_test_engine_with_cfs;
     use bytes::Bytes;
 
@@ -3143,9 +3143,11 @@ mod tests {
             .collect::<Vec<_>>();
 
         // Assert
-        assert!(errors
-            .into_iter()
-            .all(|(actual, expected)| actual == expected));
+        assert!(
+            errors
+                .into_iter()
+                .all(|(actual, expected)| actual == expected)
+        );
     }
 
     #[test]
@@ -3717,8 +3719,8 @@ mod tests {
     }
 
     #[test]
-    fn should_return_next_available_resource_record_given_trimmed_compact_resource_page_on_ttl_store(
-    ) {
+    fn should_return_next_available_resource_record_given_trimmed_compact_resource_page_on_ttl_store()
+     {
         // Arrange
         let db = create_test_engine_with_cfs(vec![1]);
         let store = StreamStore::with_config(

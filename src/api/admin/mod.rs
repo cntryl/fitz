@@ -3,8 +3,8 @@
 //! Provides HTTP endpoints for observability, health checks, and operational control.
 //! All endpoints coexist with data plane on same port (path-based routing).
 
-pub mod auth;
 mod assets;
+pub mod auth;
 pub mod handlers;
 mod list;
 mod metrics;

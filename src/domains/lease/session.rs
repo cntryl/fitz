@@ -1,6 +1,6 @@
 use crate::auth::Access;
-use crate::domains::lease::protocol::LeaseMessage;
 use crate::domains::lease::LeaseActor;
+use crate::domains::lease::protocol::LeaseMessage;
 use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::Route;
 use crate::runtime::routing::RouteFamily;

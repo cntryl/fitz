@@ -514,7 +514,7 @@ impl StreamLayoutMarkerValue {
                 return Err(format!(
                     "decode stream layout marker: unknown layout id {}",
                     other
-                ))
+                ));
             }
         };
 

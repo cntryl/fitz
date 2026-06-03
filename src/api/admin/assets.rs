@@ -393,7 +393,9 @@ mod tests {
         }
 
         let request = request.body(Body::empty()).unwrap();
-        index.serve(request.uri().path(), request.headers()).unwrap()
+        index
+            .serve(request.uri().path(), request.headers())
+            .unwrap()
     }
 
     #[tokio::test]
@@ -425,19 +427,31 @@ mod tests {
         let body = body::to_bytes(response.into_body()).await.unwrap();
 
         assert_eq!(status, StatusCode::OK);
-        assert!(std::str::from_utf8(&body).unwrap().contains("<!doctype html>"));
+        assert!(
+            std::str::from_utf8(&body)
+                .unwrap()
+                .contains("<!doctype html>")
+        );
     }
 
     #[tokio::test]
     async fn should_preserve_missing_asset_fallback_behavior() {
         let response = serve(&test_index(), "/assets/missing.js", None, None).await;
         let status = response.status();
-        let content_type = response.headers().get(header::CONTENT_TYPE).unwrap().clone();
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .clone();
         let body = body::to_bytes(response.into_body()).await.unwrap();
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(content_type, "text/html; charset=utf-8");
-        assert!(std::str::from_utf8(&body).unwrap().contains("<!doctype html>"));
+        assert!(
+            std::str::from_utf8(&body)
+                .unwrap()
+                .contains("<!doctype html>")
+        );
     }
 
     #[tokio::test]
@@ -447,7 +461,11 @@ mod tests {
         let body = body::to_bytes(response.into_body()).await.unwrap();
 
         assert_eq!(status, StatusCode::OK);
-        assert!(std::str::from_utf8(&body).unwrap().contains("<!doctype html>"));
+        assert!(
+            std::str::from_utf8(&body)
+                .unwrap()
+                .contains("<!doctype html>")
+        );
     }
 
     #[tokio::test]
@@ -466,7 +484,10 @@ mod tests {
             response.headers().get(header::CONTENT_ENCODING).unwrap(),
             "br"
         );
-        assert_eq!(response.headers().get(header::VARY).unwrap(), "Accept-Encoding");
+        assert_eq!(
+            response.headers().get(header::VARY).unwrap(),
+            "Accept-Encoding"
+        );
     }
 
     #[tokio::test]
@@ -475,13 +496,22 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().get(header::CONTENT_ENCODING).is_none());
-        assert_eq!(response.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/png"
+        );
     }
 
     #[tokio::test]
     async fn should_return_not_modified_when_etag_matches_representation() {
         let initial = serve(&test_index(), "/assets/app.js", Some("gzip"), None).await;
-        let etag = initial.headers().get(header::ETAG).unwrap().to_str().unwrap().to_string();
+        let etag = initial
+            .headers()
+            .get(header::ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let response = serve(&test_index(), "/assets/app.js", Some("gzip"), Some(&etag)).await;
 
@@ -490,9 +520,6 @@ mod tests {
             response.headers().get(header::CONTENT_ENCODING).unwrap(),
             "gzip"
         );
-        assert_eq!(
-            body::to_bytes(response.into_body()).await.unwrap().len(),
-            0
-        );
+        assert_eq!(body::to_bytes(response.into_body()).await.unwrap().len(), 0);
     }
 }

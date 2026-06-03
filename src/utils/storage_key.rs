@@ -229,17 +229,21 @@ mod tests {
         // Assert
         assert_eq!(rows.len(), 4);
         assert!(rows.iter().all(|(key, _)| key.starts_with(b"acme\0")));
-        assert!(rows
-            .iter()
-            .any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Kv).is_some()));
-        assert!(rows
-            .iter()
-            .any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Queue).is_some()));
-        assert!(rows
-            .iter()
-            .any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Schedule).is_some()));
-        assert!(rows
-            .iter()
-            .any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Stream).is_some()));
+        assert!(
+            rows.iter()
+                .any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Kv).is_some())
+        );
+        assert!(
+            rows.iter()
+                .any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Queue).is_some())
+        );
+        assert!(
+            rows.iter()
+                .any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Schedule).is_some())
+        );
+        assert!(
+            rows.iter()
+                .any(|(key, _)| strip_domain_prefix(key, DomainKeyspace::Stream).is_some())
+        );
     }
 }

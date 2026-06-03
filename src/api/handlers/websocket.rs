@@ -1,7 +1,7 @@
 use crate::api::ingress::IngressConfig;
 use crate::session::manager::Ingress;
 use crate::session::{
-    generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind,
+    CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind, generate_session_id,
 };
 use bytes::Bytes;
 use std::sync::Arc;

@@ -2251,11 +2251,11 @@ fn matches_operation_route(route: &str, path: &RpcOperationPath<'_>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::boot::Runtime;
     use crate::boot::domains::{
         DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink,
         RpcDomainSink, ScheduleDomainSink, StreamDomainSink,
     };
-    use crate::boot::Runtime;
     use crate::domains::schedule::store::{ScheduleInsert, ScheduleStore};
     use crate::runtime::Router;
     use bytes::Bytes;

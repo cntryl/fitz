@@ -99,11 +99,11 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
         }
         QueueResponse::Extended => {
             buf.put_u8(0); // status: success
-                           // Empty response
+            // Empty response
         }
         QueueResponse::Acked => {
             buf.put_u8(0); // status: success
-                           // Empty response
+            // Empty response
         }
         QueueResponse::InvalidToken => {
             buf.put_u8(1); // status: error

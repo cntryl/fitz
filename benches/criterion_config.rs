@@ -11,6 +11,9 @@
 //!
 //! NOTE: For Tier1 and Tier2, set `SamplingMode::Flat` on the benchmark group:
 //! `group.sampling_mode(SamplingMode::Flat)`.
+//!
+//! Local developers can tune Tier1/Tier2 runs with environment variables. The current defaults are optimized
+//! for fast iteration while keeping noise under control.
 
 use criterion::Criterion;
 use std::time::Duration;
@@ -44,7 +47,9 @@ pub fn criterion_config_for_tier1() -> Criterion {
     // Tier 1 — Hotpath (ns → µs)
     //
     // Ultra-tight loops: bloom probe, cache lookup, TLV parse.
-    // Goal: stable sub-microsecond signals.
+    // Goal: stable sub-microsecond signals with a fast local developer loop.
+    // These defaults are tuned for local iteration; use env vars to adjust when you need
+    // more stability or are debugging noisy measurements.
     // Windows has higher system jitter, so we use:
     // - Longer warmup (CPU ramp-up, cache warmth)
     // - Longer measurement window (average out timer noise)

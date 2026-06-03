@@ -7,9 +7,8 @@ use walkdir::WalkDir;
 fn main() {
     println!("cargo:rerun-if-env-changed=FITZ_EMBED_UI_DIR");
 
-    let manifest_dir = PathBuf::from(
-        env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"),
-    );
+    let manifest_dir =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set"));
 
     let asset_dir = resolve_asset_dir(&manifest_dir);

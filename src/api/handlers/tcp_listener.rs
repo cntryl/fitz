@@ -1,6 +1,6 @@
 use super::{
-    drain_session_tasks, record_connection_opened, session_tasks,
-    tcp_session::handle_tcp_connection, ListenerHandle,
+    ListenerHandle, drain_session_tasks, record_connection_opened, session_tasks,
+    tcp_session::handle_tcp_connection,
 };
 use crate::api::ingress::IngressConfig;
 use crate::boot::{BootConfig, BootResult};

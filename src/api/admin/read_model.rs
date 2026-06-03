@@ -344,9 +344,10 @@ impl AdminReadModel {
             .map(|info| info.connected_at.clone())
             .unwrap_or_else(|| DateTime::<Utc>::from(session.connected_at()).to_rfc3339());
 
-        self.sessions
-            .write()
-            .insert(session.session_id, snapshot_session_info(session, connected_at));
+        self.sessions.write().insert(
+            session.session_id,
+            snapshot_session_info(session, connected_at),
+        );
     }
 
     pub fn record_session_close(&self, session_id: u64) {

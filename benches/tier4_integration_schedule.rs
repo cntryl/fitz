@@ -12,7 +12,7 @@
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{StressContext, stress_main, stress_test};
 use fitz::benchkit::{
     build_schedule_create, build_schedule_create_batch, create_local_bench_store,
     ensure_schedule_ok, shared_bench_runtime,

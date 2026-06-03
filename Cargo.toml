@@ -207,9 +207,9 @@ harness = false
 path = "benches/tier2_subsystem_stream_replay.rs"
 
 [[bench]]
-name = "tier2_subsystem_stream_write_shape"
+name = "bench_stream_write_shape"
 harness = false
-path = "benches/tier2_subsystem_stream_write_shape.rs"
+path = "benches/bench_stream_write_shape.rs"
 
 # Tier 3: System (Domain + plumbing, <10s, sync only - one per domain)
 [[bench]]

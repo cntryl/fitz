@@ -12,8 +12,8 @@ use chrono::Utc;
 use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Per-session wildcard cap used to keep the in-memory matcher bounded.

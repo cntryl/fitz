@@ -1,8 +1,8 @@
 //! Integration test for admin REST API
 
 use argon2::{
-    password_hash::{rand_core::OsRng, SaltString},
     Argon2, PasswordHasher,
+    password_hash::{SaltString, rand_core::OsRng},
 };
 use bytes::Bytes;
 use fitz::api::admin::{
@@ -10,20 +10,23 @@ use fitz::api::admin::{
     QueueDeadLetter, QueueInfo, RpcPendingRequest, RpcWorker, StreamAreaWatermark,
     StreamAreaWatermarkDetail, StreamInfo,
 };
+use fitz::boot::Runtime;
 use fitz::boot::domains::{
     DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
     ScheduleDomainSink, StreamDomainSink,
 };
-use fitz::boot::Runtime;
 use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
 use fitz::domains::schedule::store::{ScheduleFireClaim, ScheduleInsert, ScheduleStore};
 use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::store::{CommitRecordsParams, EventPayload, StreamStore};
-use fitz::runtime::routing::RouteFamily;
 use fitz::runtime::Router;
-use fitz::session::{Ingress, RuntimeIngress, SessionInfo as RuntimeSessionInfo, SessionMetadata, SessionPermissions, TransportKind};
+use fitz::runtime::routing::RouteFamily;
+use fitz::session::{
+    Ingress, RuntimeIngress, SessionInfo as RuntimeSessionInfo, SessionMetadata,
+    SessionPermissions, TransportKind,
+};
 use hyper::header::{COOKIE, SET_COOKIE};
-use hyper::{body, Body, Method, Request, StatusCode};
+use hyper::{Body, Method, Request, StatusCode, body};
 use serial_test::serial;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -600,13 +603,15 @@ async fn should_create_admin_session_and_set_cookie() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert!(response
-        .headers()
-        .get(SET_COOKIE)
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .contains("fitz_admin_session="));
+    assert!(
+        response
+            .headers()
+            .get(SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("fitz_admin_session=")
+    );
 }
 
 #[tokio::test]
@@ -909,11 +914,13 @@ async fn should_return_lease_detail_with_age_and_diagnostics() {
         payload["diagnostics"]["likely_bottleneck"],
         "lease ownership churn"
     );
-    assert!(payload["diagnostics"]["explanation_hints"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|hint| hint.as_str().unwrap_or("").contains("renewals recorded")));
+    assert!(
+        payload["diagnostics"]["explanation_hints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|hint| hint.as_str().unwrap_or("").contains("renewals recorded"))
+    );
     assert_eq!(
         payload["diagnostics"]["age_seconds"],
         payload["oldest_lease_age_seconds"]
@@ -971,14 +978,16 @@ async fn should_return_schedule_stats_with_latency_pressure() {
         "schedule latency"
     );
     assert_eq!(payload["diagnostics"]["severity"], "high");
-    assert!(payload["diagnostics"]["explanation_hints"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|hint| hint
-            .as_str()
-            .unwrap_or("")
-            .contains("schedule request latency tail")));
+    assert!(
+        payload["diagnostics"]["explanation_hints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|hint| hint
+                .as_str()
+                .unwrap_or("")
+                .contains("schedule request latency tail"))
+    );
 }
 
 #[tokio::test]
@@ -1122,12 +1131,16 @@ async fn should_return_queue_events_with_bounded_timeline() {
     let events = payload["events"].as_array().unwrap();
     assert_eq!(events.len(), 3);
     assert!(events.iter().any(|event| event["kind"] == "failure"));
-    assert!(events
-        .iter()
-        .any(|event| event["kind"] == "ownership_change"));
-    assert!(events
-        .iter()
-        .any(|event| event["message_id"] == 42 && event["attempts"] == 3));
+    assert!(
+        events
+            .iter()
+            .any(|event| event["kind"] == "ownership_change")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event["message_id"] == 42 && event["attempts"] == 3)
+    );
 }
 
 #[tokio::test]
@@ -1447,9 +1460,11 @@ async fn should_return_rpc_events_with_worker_registration_and_pending_transitio
     assert_eq!(payload["diagnostics"]["current_stage"], "throughput");
     let events = payload["events"].as_array().unwrap();
     assert_eq!(events.len(), 3);
-    assert!(events
-        .iter()
-        .any(|event| event["kind"] == "registration" && event["worker_session"] == "9001"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event["kind"] == "registration" && event["worker_session"] == "9001")
+    );
     assert!(events.iter().any(|event| {
         event["kind"] == "transition" && event["correlation_id"] == "corr-abc-123"
     }));
@@ -1569,22 +1584,26 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
         payload["complete_rejected_total"],
         complete_rejected_before + 31
     );
-    assert!(payload["diagnostics"]["explanation_hints"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|hint| hint
-            .as_str()
-            .unwrap_or("")
-            .contains("dead-letter transition")));
-    assert!(payload["diagnostics"]["explanation_hints"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|hint| hint
-            .as_str()
-            .unwrap_or("")
-            .contains("queue complete rejection")));
+    assert!(
+        payload["diagnostics"]["explanation_hints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|hint| hint
+                .as_str()
+                .unwrap_or("")
+                .contains("dead-letter transition"))
+    );
+    assert!(
+        payload["diagnostics"]["explanation_hints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|hint| hint
+                .as_str()
+                .unwrap_or("")
+                .contains("queue complete rejection"))
+    );
     assert!(payload["operations_per_second"].as_f64().unwrap_or(0.0) > 0.0);
 
     let metrics_req = Request::builder()
@@ -2035,11 +2054,13 @@ async fn should_return_rpc_data_loss_risk_given_late_response_drops() {
         payload["diagnostics"]["likely_bottleneck"],
         "late response drop"
     );
-    assert!(payload["diagnostics"]["explanation_hints"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|value| value.as_str().unwrap_or("").contains("late response drop")));
+    assert!(
+        payload["diagnostics"]["explanation_hints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value.as_str().unwrap_or("").contains("late response drop"))
+    );
 }
 
 #[tokio::test]
@@ -2152,14 +2173,16 @@ async fn should_classify_stream_latency_pressure_given_recorded_latency_tail() {
         "stream latency"
     );
     assert_eq!(payload["diagnostics"]["severity"], "high");
-    assert!(payload["diagnostics"]["explanation_hints"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|hint| hint
-            .as_str()
-            .unwrap_or("")
-            .contains("stream request latency tail")));
+    assert!(
+        payload["diagnostics"]["explanation_hints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|hint| hint
+                .as_str()
+                .unwrap_or("")
+                .contains("stream request latency tail"))
+    );
 }
 
 #[tokio::test]
@@ -2459,8 +2482,10 @@ async fn should_export_stream_watermark_series_given_committed_stream_history() 
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload = String::from_utf8(body.to_vec()).unwrap();
     assert!(payload.contains("fitz_stream_realm_watermark{realm=\"prod\",family=\"1\"} 2"));
-    assert!(payload
-        .contains("fitz_stream_area_watermark{realm=\"prod\",area=\"audit\",family=\"1\"} 0"));
+    assert!(
+        payload
+            .contains("fitz_stream_area_watermark{realm=\"prod\",area=\"audit\",family=\"1\"} 0")
+    );
     assert!(
         payload.contains("fitz_stream_area_watermark{realm=\"prod\",area=\"logs\",family=\"1\"} 1")
     );
@@ -2571,13 +2596,15 @@ async fn should_return_global_stats() {
         payload["domains"]["queue"]["diagnostics"]["current_stage"],
         "dead_letter_pressure"
     );
-    let signals_matched = payload["domains"]["queue"]["diagnostics"]["confidence_justification"]
-        ["signals_matched"]
-        .as_array()
-        .expect("queue confidence signals_matched");
-    assert!(signals_matched
-        .iter()
-        .any(|signal| signal == "failure_signal_present"));
+    let signals_matched =
+        payload["domains"]["queue"]["diagnostics"]["confidence_justification"]["signals_matched"]
+            .as_array()
+            .expect("queue confidence signals_matched");
+    assert!(
+        signals_matched
+            .iter()
+            .any(|signal| signal == "failure_signal_present")
+    );
     assert!(
         payload["domains"]["queue"]["diagnostics"]["confidence_justification"]["rationale"]
             .as_str()
@@ -2690,10 +2717,12 @@ async fn should_surface_router_overload_in_global_troubleshooting() {
         payload["incident_summary"]["suggested_next_queries"][1]["title"],
         "Inspect broker metrics"
     );
-    assert!(payload["incident_summary"]["explanation"]
-        .as_str()
-        .unwrap_or("")
-        .contains("router mailbox saturation"));
+    assert!(
+        payload["incident_summary"]["explanation"]
+            .as_str()
+            .unwrap_or("")
+            .contains("router mailbox saturation")
+    );
 }
 
 #[tokio::test]

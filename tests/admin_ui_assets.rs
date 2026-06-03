@@ -1,7 +1,7 @@
 use fitz::boot::Runtime;
 use fitz::runtime::Router;
 use hyper::header::{self, ETAG};
-use hyper::{body, Body, Method, Request, StatusCode};
+use hyper::{Body, Method, Request, StatusCode, body};
 use serial_test::serial;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -46,7 +46,11 @@ async fn should_serve_embedded_ui_without_runtime_files() {
         .await
         .unwrap();
     let status = response.status();
-    let content_type = response.headers().get(header::CONTENT_TYPE).unwrap().clone();
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .clone();
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let html = std::str::from_utf8(&body).expect("decode embedded html");
 
@@ -132,7 +136,11 @@ async fn should_serve_client_routes_from_embedded_index() {
         .await
         .unwrap();
     let status = response.status();
-    let content_type = response.headers().get(header::CONTENT_TYPE).unwrap().clone();
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .clone();
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let html = std::str::from_utf8(&body).expect("decode embedded html");
 
@@ -157,7 +165,11 @@ async fn should_fallback_to_embedded_index_for_missing_asset_paths() {
         .await
         .unwrap();
     let status = response.status();
-    let content_type = response.headers().get(header::CONTENT_TYPE).unwrap().clone();
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .clone();
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let html = std::str::from_utf8(&body).expect("decode embedded html");
 

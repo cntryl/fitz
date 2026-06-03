@@ -7,16 +7,16 @@
 /// - Sampling rate configuration
 use crate::observability::metrics::MetricsCollector;
 use once_cell::sync::OnceCell;
-use opentelemetry::{global, KeyValue};
+use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::{SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{
+    Resource,
     propagation::TraceContextPropagator,
     trace::{self as sdktrace, SdkTracerProvider},
-    Resource,
 };
 use std::sync::Arc;
 use std::time::Instant;
-use tracing_subscriber::{fmt, prelude::*, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*, util::SubscriberInitExt};
 use uuid::Uuid;
 
 /// Global metrics collector (initialized once during boot)

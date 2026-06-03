@@ -8,7 +8,7 @@ pub mod retry;
 pub mod timeout;
 pub mod validation;
 
-pub use frame::{validate_frame, validate_utf8, FrameLimits, FrameValidation};
+pub use frame::{FrameLimits, FrameValidation, validate_frame, validate_utf8};
 pub use retry::{ErrorClassification, ExponentialBackoff, RetryConfig, RetryableError};
 pub use timeout::{FrameBuffer, TimeoutConfig, TimeoutTracker};
 pub use validation::{IntegrityChecker, QuotaError, ResourceQuota, SizeError, SizeLimits};

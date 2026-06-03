@@ -1,7 +1,7 @@
 //! Stream domain basic tests for the store-authoritative runtime path.
 
 use bytes::Bytes;
-use fitz::domains::stream::protocol::{StreamWriteMode, MAX_EVENT_SIZE};
+use fitz::domains::stream::protocol::{MAX_EVENT_SIZE, StreamWriteMode};
 use fitz::domains::stream::session::SessionActor;
 use fitz::domains::stream::store::{BatchLimits, StreamStore, StreamTTL};
 use fitz::domains::stream::{StreamActor, StreamMessage};

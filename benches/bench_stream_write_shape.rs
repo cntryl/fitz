@@ -1,7 +1,7 @@
 use bytes::Bytes;
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use criterion::{Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main};
 use fitz::domains::stream::storage::{
-    encode_area_key, encode_realm_key, encode_resource_key, AreaValue, RealmValue, ResourceValue,
+    AreaValue, RealmValue, ResourceValue, encode_area_key, encode_realm_key, encode_resource_key,
 };
 use lz4_flex::block::compress_prepend_size;
 use std::collections::HashMap;
@@ -1715,7 +1715,8 @@ fn bench_stream_write_shape(c: &mut Criterion) {
         "adding compressed realm bodies should cost more than the pure run-ref resource mini-page layout"
     );
     assert!(
-        resource_mini_page_compressed_realm.total_bytes < area_paged_compressed_realm_body.total_bytes,
+        resource_mini_page_compressed_realm.total_bytes
+            < area_paged_compressed_realm_body.total_bytes,
         "resource mini-page plus compressed realm layout should still beat the current resource covering compressed-realm hybrid"
     );
     assert!(

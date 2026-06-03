@@ -11,7 +11,7 @@
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{StressContext, stress_main, stress_test};
 use fitz::domains::kv::{KvActor, KvMessage, KvResponse, TxMode};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;

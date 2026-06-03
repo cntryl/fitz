@@ -1699,9 +1699,11 @@ mod tests {
         let result = store.load_all(1, WriteOptions::buffered());
 
         // Assert
-        assert!(result
-            .expect_err("malformed definition should fail recovery")
-            .contains("decode persisted schedule definition failed"));
+        assert!(
+            result
+                .expect_err("malformed definition should fail recovery")
+                .contains("decode persisted schedule definition failed")
+        );
     }
 
     #[test]
@@ -1720,9 +1722,11 @@ mod tests {
         let result = store.load_all(1, WriteOptions::buffered());
 
         // Assert
-        assert!(result
-            .expect_err("missing body should fail recovery")
-            .contains("missing schedule body row"));
+        assert!(
+            result
+                .expect_err("missing body should fail recovery")
+                .contains("missing schedule body row")
+        );
     }
 
     #[test]
@@ -1744,8 +1748,10 @@ mod tests {
         let result = store.load_pending_fire_claims(1);
 
         // Assert
-        assert!(result
-            .expect_err("malformed pending claim should fail recovery")
-            .contains("decode pending schedule fire failed"));
+        assert!(
+            result
+                .expect_err("malformed pending claim should fail recovery")
+                .contains("decode pending schedule fire failed")
+        );
     }
 }

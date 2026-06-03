@@ -12,11 +12,11 @@ mod stress_config;
 
 use bytes::BufMut;
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{StressContext, stress_main, stress_test};
 use fitz::benchkit::{
-    build_notice_publish, build_notice_subscribe, create_bench_notice_sink,
+    FrameQueueSink, build_notice_publish, build_notice_subscribe, create_bench_notice_sink,
     extract_single_tlv_field, parse_notice_subscription_id, register_session_counting_sink,
-    register_session_queue_sink, route_frame, FrameQueueSink,
+    register_session_queue_sink, route_frame,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};

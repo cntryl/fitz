@@ -12,8 +12,18 @@ Use any client that follows [clients/client-spec.md](../clients/client-spec.md).
 
 ## 3. Authenticate
 
-Send CONNECT with a valid JWT containing realm, scopes, and a provisioned
-`fitz.route_family`. Anonymous mode always uses route family `1`.
+Send CONNECT with a valid JWT as the first frame. In authenticated mode, the
+JWT must be signed and must include:
+
+- `sub` — subject identity
+- `aud` — one of the broker audiences configured by `FITZ_JWT_AUDIENCES`
+- `exp` — token expiration time
+- `fitz.route_family` — a non-zero provisioned route family
+- `permissions` or `scopes` — authorization rules for subsequent domain requests
+- `iss` when using JWKS mode; it must match a configured issuer
+
+If `FITZ_AUTH_REQUIRED=false`, anonymous mode is allowed and the broker uses
+route family `1`.
 
 ## 4. Execute a Simple Operation
 

@@ -11,13 +11,13 @@ use crate::api::ingress::IngressConfig;
 use crate::observability as obs;
 use crate::session::manager::Ingress;
 use crate::session::{
-    generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind,
+    CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind, generate_session_id,
 };
 use bytes::{Bytes, BytesMut};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 

@@ -336,7 +336,7 @@ impl QueueActor {
                 return Err(format!(
                     "Failed to scan queue headers for recovery: {:?}",
                     e
-                ))
+                ));
             }
         };
         let mut legacy_iter = match txn.scan(&legacy_query) {
@@ -346,7 +346,7 @@ impl QueueActor {
                 return Err(format!(
                     "Failed to scan legacy queue records for recovery: {:?}",
                     e
-                ))
+                ));
             }
         };
 
@@ -429,7 +429,7 @@ impl QueueActor {
                     return Err(format!(
                         "Malformed authoritative legacy queue message {}: {}",
                         id, error
-                    ))
+                    ));
                 }
             };
 

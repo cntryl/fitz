@@ -1,5 +1,5 @@
-use crate::domains::stream::store::StreamAdminRecord;
 use crate::domains::stream::StreamMetrics;
+use crate::domains::stream::store::StreamAdminRecord;
 use crate::domains::stream::{
     ReadResponse, StreamActor, StreamFilteredReason, StreamMetadata, StreamReadItem, StreamRecord,
     StreamStorageLayout, StreamStore,
@@ -7,12 +7,12 @@ use crate::domains::stream::{
 use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::PayloadEncoder;
-use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily, route_triplet};
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 struct StreamSubscription {
     pattern: crate::runtime::matcher::Pattern,
@@ -1120,9 +1120,9 @@ impl MailboxSink for StreamDomainSink {
 mod tests {
     use super::*;
     use crate::benchkit::{
-        build_stream_append, build_stream_append_with_metadata, build_stream_begin,
+        FrameQueueSink, build_stream_append, build_stream_append_with_metadata, build_stream_begin,
         build_stream_commit, build_stream_read, count_stream_read_records_from_payload,
-        extract_single_tlv_field, register_session_queue_sink, route_frame, FrameQueueSink,
+        extract_single_tlv_field, register_session_queue_sink, route_frame,
     };
     use crate::protocol::frame::ChannelId;
     use bytes::Bytes;

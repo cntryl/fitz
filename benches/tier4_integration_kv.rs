@@ -16,7 +16,7 @@
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{StressContext, stress_main, stress_test};
 use fitz::benchkit::{
     build_kv_begin, build_kv_put, build_kv_rollback, create_local_bench_store, parse_kv_response,
     parse_kv_tx_id, shared_bench_runtime,

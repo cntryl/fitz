@@ -121,6 +121,19 @@ impl<'a> PayloadDecoder<'a> {
         self.payload.len().saturating_sub(self.offset)
     }
 
+    /// Get the current decoder offset.
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    /// Peek the next u8 without advancing.
+    pub fn peek_u8(&self) -> Result<u8, String> {
+        if self.offset + 1 > self.payload.len() {
+            return Err("Incomplete u8".to_string());
+        }
+        Ok(self.payload[self.offset])
+    }
+
     /// Decode a u8 scalar
     pub fn get_u8(&mut self) -> Result<u8, String> {
         if self.offset + 1 > self.payload.len() {
@@ -261,11 +274,7 @@ impl<'a> PayloadDecoder<'a> {
     /// Skip optional bytes without allocating.
     pub fn skip_optional_bytes(&mut self) -> Result<(), String> {
         let flag = self.get_u8()?;
-        if flag == 1 {
-            self.skip_bytes()
-        } else {
-            Ok(())
-        }
+        if flag == 1 { self.skip_bytes() } else { Ok(()) }
     }
 
     /// Check if we've consumed all input

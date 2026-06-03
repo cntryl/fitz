@@ -207,10 +207,21 @@ All Criterion benchmarks use the shared config from `benches/criterion_config.rs
 
 Current shared settings:
 
-- `warm_up_time`: 2s
-- `measurement_time`: 5s
-- `sample_size`: 100
-- `noise_threshold`: 0.02
+- `warm_up_time`: 400ms (Tier 1), 500ms (Tier 2)
+- `measurement_time`: 1200ms (Tier 1), 1500ms (Tier 2)
+- `sample_size`: 25 (Tier 1), 20 (Tier 2)
+- `noise_threshold`: 0.04
+
+Local tuning environment variables:
+
+- `BENCH_TIER1_WARMUP_MS`
+- `BENCH_TIER1_MEASUREMENT_MS`
+- `BENCH_TIER1_SAMPLE_SIZE`
+- `BENCH_TIER1_NOISE_THRESHOLD`
+- `BENCH_TIER2_WARMUP_MS`
+- `BENCH_TIER2_MEASUREMENT_MS`
+- `BENCH_TIER2_SAMPLE_SIZE`
+- `BENCH_TIER2_NOISE_THRESHOLD`
 
 Practical rules:
 
@@ -218,6 +229,7 @@ Practical rules:
 - If a measured op is below about 0.05 us median, fold it into a larger workflow or exclude it from the headline report.
 - Use `black_box()` on inputs, but do not use it to hide fake work.
 - Keep setup outside `b.iter()` or `iter_batched()`.
+- Prefer the shared defaults for fast local iteration; increase measurement time only when diagnosing noise.
 
 The benchmark summary is median-first. Mean is still recorded, but the headline tables and regression checks use median latency or throughput.
 
@@ -495,6 +507,8 @@ cargo bench --bench tier1_hotpath_routing
 cargo bench -- tier1_hotpath
 ```
 
+> Note: optional heavy proof benches such as the stream write-shape benchmark are not included in the standard `tier2_*` wildcard run. Use `cargo bench --bench bench_stream_write_shape` when you need the storage-model proof case.
+
 #### Single benchmark:
 
 ```bash
@@ -502,6 +516,8 @@ cargo bench -- tier1_hotpath
 cargo bench --bench tier1_hotpath_matcher
 # With filter (all hotpath routing)
 cargo bench -- hotpath_routing
+# Local override: shorten Tier1 measurement for faster iteration
+BENCH_TIER1_MEASUREMENT_MS=800 cargo bench --bench tier1_hotpath_matcher
 ```
 
 #### Stress (Tier 3 / Tier 4):
@@ -511,6 +527,8 @@ cargo bench --bench tier3_system_kv
 cargo bench --bench tier4_integration_kv
 # Optional: fewer runs for faster feedback
 cargo bench --bench tier4_integration_kv -- --runs 5 --warmup 1
+# Local override: use a shorter measured duration for quick exploration
+BENCH_MEASURE_SECS=3 cargo bench --bench tier4_integration_kv -- --runs 5 --warmup 1
 ```
 
 #### Watch mode for TDD:

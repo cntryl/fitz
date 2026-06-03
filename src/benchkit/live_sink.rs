@@ -17,8 +17,8 @@ use crate::runtime::router::{DeliveryError, MailboxSink, RouteError, Router};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// Queue-style sink that keeps delivered frame contexts until explicitly drained.

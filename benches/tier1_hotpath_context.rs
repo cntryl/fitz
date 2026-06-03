@@ -1,5 +1,5 @@
 use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
+    BatchSize, Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main,
 };
 use fitz::runtime::context::{TimerId, TimerManager};
 use std::sync::OnceLock;

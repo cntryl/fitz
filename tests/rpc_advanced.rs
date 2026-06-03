@@ -18,19 +18,19 @@ use fitz::domains::rpc::{
     InboxMessage, ReplyInboxActor, RpcError, RpcErrorCode, RpcRequest,
     RpcResponse as RpcResponseMsg, RpcRouteActor,
 };
+use fitz::protocol::FrameContext;
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::tlv::MessageType;
-use fitz::protocol::FrameContext;
 use fitz::runtime::actor::{Actor, Context};
-use fitz::runtime::routing::{session_inbox_address, Route, RouteAddress, RouteFamily};
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily, session_inbox_address};
 use fitz::runtime::{DeliveryError, Envelope, MailboxSink, Router, SessionCleanup};
 use fixtures::transport::{
     build_rpc_request, build_rpc_response_delivery, build_rpc_subscribe,
     parse_rpc_request_delivery, parse_rpc_response, parse_rpc_response_delivery,
 };
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use uuid::Uuid;
 

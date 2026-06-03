@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 
 use fitz::domains::queue::{
-    protocol::{QueueKey, QueueResponse},
     Clock, QueueActor,
+    protocol::{QueueKey, QueueResponse},
 };
 use fitz::runtime::routing::RouteFamily;
 use fitz::utils::storage_key::{self, DomainKeyspace};
@@ -438,9 +438,11 @@ fn should_prevent_id_collisions_across_crash() {
         // Verify crash-safe monotonic allocation: no reuse, gaps allowed.
         assert!(second_batch_ids[0] > 10);
         assert_eq!(second_batch_ids.len(), 10);
-        assert!(second_batch_ids
-            .windows(2)
-            .all(|pair| pair[1] == pair[0] + 1));
+        assert!(
+            second_batch_ids
+                .windows(2)
+                .all(|pair| pair[1] == pair[0] + 1)
+        );
     }
 
     // Assert

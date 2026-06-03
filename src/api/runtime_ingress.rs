@@ -21,8 +21,8 @@ use crate::session::{CloseReason, SessionInfo, SessionPermissions};
 use bytes::Bytes;
 use dashmap::DashMap;
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tracing::{debug, error, info, trace, warn};
 
@@ -405,7 +405,8 @@ impl RuntimeIngress {
         })
         .await;
 
-        self.cleanup_retry_in_progress.store(false, Ordering::SeqCst);
+        self.cleanup_retry_in_progress
+            .store(false, Ordering::SeqCst);
 
         match retry_result {
             Ok(retry_outcomes) => {
@@ -1343,10 +1344,10 @@ mod tests {
         KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
         ScheduleDomainSink, StreamDomainSink,
     };
+    use crate::protocol::FrameContext;
     use crate::protocol::frame::ChannelId;
     use crate::protocol::payload_codec::PayloadEncoder;
     use crate::protocol::tlv::MessageType;
-    use crate::protocol::FrameContext;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
     use crate::runtime::{DeliveryError, Envelope, Mailbox, MailboxSink};
     use crate::session::{SessionInfo, SessionMetadata, SessionPermissions, TransportKind};
@@ -2876,7 +2877,7 @@ mod tests {
         use jsonwebtoken::{Algorithm, EncodingKey, Header};
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::sync::oneshot;
-        use tokio::time::{timeout, Duration};
+        use tokio::time::{Duration, timeout};
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let issuer = format!("http://{}", listener.local_addr().unwrap());
@@ -3103,8 +3104,8 @@ mod tests {
     #[test]
     fn should_deny_e2e_notification_publish_via_ingress_snapshot() {
         // Arrange
-        use crate::domains::notice::session as notice_session;
         use crate::domains::notice::NoticeRouteActor;
+        use crate::domains::notice::session as notice_session;
         use crate::runtime::actor::Context;
         use crate::runtime::router::Router;
         use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -3169,8 +3170,8 @@ mod tests {
     #[test]
     fn should_allow_e2e_notification_publish_via_ingress_snapshot() {
         // Arrange
-        use crate::domains::notice::session as notice_session;
         use crate::domains::notice::NoticeRouteActor;
+        use crate::domains::notice::session as notice_session;
         use crate::runtime::actor::Context;
         use crate::runtime::router::Router;
         use crate::runtime::routing::{Route, RouteAddress, RouteFamily};

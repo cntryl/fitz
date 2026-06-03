@@ -1,7 +1,7 @@
-use crate::api::admin::read_model::AdminReadModel;
 use crate::api::admin::LeaseInfo;
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::api::admin::read_model::AdminReadModel;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Admin projection for the lease domain.
 ///

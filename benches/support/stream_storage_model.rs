@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use fitz::benchkit::create_local_bench_store;
+use fitz::domains::stream::StreamReadItem;
 use fitz::domains::stream::protocol::{StreamRecord, StreamWriteMode};
 use fitz::domains::stream::storage::{decode_area_offset_from_key, decode_realm_offset_from_key};
 use fitz::domains::stream::store::{
     CommitRecordsParams, EventPayload, ReadResourceParams, StreamStore,
 };
-use fitz::domains::stream::StreamReadItem;
 use fitz::protocol::payload_codec::PayloadEncoder;
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{DeliveryError, MailboxSink, Router};

@@ -372,9 +372,11 @@ fn should_cleanup_pending_fire_claim_after_ttl() {
 
     // Assert
     assert_eq!(expired, 1);
-    assert!(actor
-        .bench_pending_claimed_occurrences_for_publish()
-        .is_empty());
+    assert!(
+        actor
+            .bench_pending_claimed_occurrences_for_publish()
+            .is_empty()
+    );
     assert!(persisted.is_empty());
 }
 

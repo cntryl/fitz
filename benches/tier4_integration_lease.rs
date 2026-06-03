@@ -11,7 +11,7 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{StressContext, stress_main, stress_test};
 use fitz::benchkit::{
     build_lease_acquire_immediate, build_lease_release, create_bench_lease_sink,
     extract_single_tlv_field, parse_lease_response, parse_lease_token_response,

@@ -1,8 +1,8 @@
 //! Session integration for stream operations
 
 use crate::auth::Access;
-use crate::domains::stream::protocol::StreamMessage;
 use crate::domains::stream::StreamActor;
+use crate::domains::stream::protocol::StreamMessage;
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::session::permissions::SessionPermissions;

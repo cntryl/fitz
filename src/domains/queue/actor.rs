@@ -46,9 +46,9 @@
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
@@ -1956,7 +1956,7 @@ impl QueueActor {
             Err(e) => {
                 return QueueResponse::Error {
                     message: format!("Failed to begin transaction: {:?}", e),
-                }
+                };
             }
         };
 
@@ -2113,7 +2113,7 @@ impl QueueActor {
             Err(e) => {
                 return QueueResponse::Error {
                     message: format!("Failed to begin transaction: {:?}", e),
-                }
+                };
             }
         };
 
@@ -3130,9 +3130,11 @@ pub mod tests {
             .collect::<Vec<_>>();
 
         // Assert
-        assert!(errors
-            .into_iter()
-            .all(|(error, category)| error.contains(&format!("key_category={category}"))));
+        assert!(
+            errors
+                .into_iter()
+                .all(|(error, category)| error.contains(&format!("key_category={category}")))
+        );
     }
 
     #[test]
@@ -3154,9 +3156,11 @@ pub mod tests {
         let result = QueueActor::validate_persisted_state_for_existing_families(store.as_ref());
 
         // Assert
-        assert!(result
-            .expect_err("missing queue body should fail preflight")
-            .contains("missing body for split header"));
+        assert!(
+            result
+                .expect_err("missing queue body should fail preflight")
+                .contains("missing body for split header")
+        );
     }
 
     #[test]
@@ -3169,9 +3173,11 @@ pub mod tests {
         let result = QueueActor::validate_persisted_state_for_existing_families(store.as_ref());
 
         // Assert
-        assert!(result
-            .expect_err("orphan queue body should fail preflight")
-            .contains("orphan body row"));
+        assert!(
+            result
+                .expect_err("orphan queue body should fail preflight")
+                .contains("orphan body row")
+        );
     }
 
     #[test]

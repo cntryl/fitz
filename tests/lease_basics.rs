@@ -2,8 +2,8 @@
 // Combined from: lease_auth.rs, lease_semantics.rs, lease_realm_isolation.rs
 
 use fitz::auth::Permission;
-use fitz::domains::lease::session::{AcquireRequest, ExtendRequest, ReleaseRequest, SessionActor};
 use fitz::domains::lease::LeaseActor;
+use fitz::domains::lease::session::{AcquireRequest, ExtendRequest, ReleaseRequest, SessionActor};
 use fitz::runtime::actor::{Actor, Context};
 use fitz::runtime::router::Router;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -226,8 +226,8 @@ fn should_enforce_realm_boundary_for_lease_operations() {
 
 // --- Lease semantics & invariants (from lease_semantics.rs + lease_realm_isolation.rs) ---
 
-use fitz::domains::lease::protocol::LeaseMessage;
 use fitz::domains::lease::LeaseActor as InnerLeaseActor;
+use fitz::domains::lease::protocol::LeaseMessage;
 
 #[allow(dead_code)]
 fn make_lease_actor() -> (InnerLeaseActor, Context<InnerLeaseActor>) {

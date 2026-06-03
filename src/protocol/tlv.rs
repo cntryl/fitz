@@ -34,11 +34,7 @@ impl MessageType {
 
     #[inline]
     pub fn encoded_type_len(&self) -> usize {
-        if self.is_single_byte() {
-            1
-        } else {
-            3
-        }
+        if self.is_single_byte() { 1 } else { 3 }
     }
 
     #[inline]

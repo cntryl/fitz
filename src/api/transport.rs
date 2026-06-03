@@ -51,8 +51,8 @@
 use crate::api::ingress::IngressConfig;
 use crate::session::manager::Ingress;
 use crate::session::{
-    generate_session_id, CloseReason, Session, SessionInfo, SessionMetadata, SessionPermissions,
-    TransportKind,
+    CloseReason, Session, SessionInfo, SessionMetadata, SessionPermissions, TransportKind,
+    generate_session_id,
 };
 use bytes::Bytes;
 use std::sync::Arc;
@@ -113,7 +113,7 @@ impl TransportDriver {
     ) -> Result<Self, String> {
         // Generate session ID
         let temp_session_id = generate_session_id();
-        
+
         // Create session
         let session_config = crate::session::NewSessionConfig::unauthenticated(
             transport_kind,

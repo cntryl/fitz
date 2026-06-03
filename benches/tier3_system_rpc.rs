@@ -7,12 +7,12 @@
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{StressContext, stress_main, stress_test};
 use criterion::black_box;
 use fitz::benchkit::{
-    build_rpc_ack_frame, build_rpc_request, build_rpc_response_frame, build_rpc_subscribe,
-    create_bench_rpc_sink, extract_single_tlv_field, register_session_queue_sink, route_frame,
-    FrameQueueSink,
+    FrameQueueSink, build_rpc_ack_frame, build_rpc_request, build_rpc_response_frame,
+    build_rpc_subscribe, create_bench_rpc_sink, extract_single_tlv_field,
+    register_session_queue_sink, route_frame,
 };
 use fitz::domains::rpc::protocol::RpcMessage;
 use fitz::protocol::frame::ChannelId;

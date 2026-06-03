@@ -10,10 +10,10 @@
 mod stress_config;
 
 use bytes::{BufMut, Bytes};
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{StressContext, stress_main, stress_test};
 use fitz::benchkit::{
-    count_stream_read_records_from_payload, create_local_bench_store, extract_single_tlv_field,
-    register_session_queue_sink, route_frame, FrameQueueSink,
+    FrameQueueSink, count_stream_read_records_from_payload, create_local_bench_store,
+    extract_single_tlv_field, register_session_queue_sink, route_frame,
 };
 use fitz::domains::stream::protocol::{StreamRecord, StreamWriteMode};
 use fitz::domains::stream::storage::{decode_area_offset_from_key, decode_realm_offset_from_key};
@@ -1104,6 +1104,7 @@ fn encode_stream_read_data(
     let mut encoder = PayloadEncoder::new();
     encoder.put_u32(selected.len() as u32);
     for record in selected {
+        encoder.put_u8(0); // StreamReadItem::Event
         encode_stream_record(&mut encoder, record);
     }
     encoder.put_u64(last_resource_offset);

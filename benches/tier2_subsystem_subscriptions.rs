@@ -1,4 +1,4 @@
-﻿use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use criterion::{Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main};
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
 
