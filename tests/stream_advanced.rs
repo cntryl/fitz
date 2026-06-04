@@ -4,8 +4,8 @@
 use bytes::Bytes;
 use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::storage::{
-    OffsetCounterValue, StreamLayoutMarkerValue, encode_offset_counter_key,
-    encode_stream_layout_marker_key,
+    encode_offset_counter_key, encode_stream_layout_marker_key, OffsetCounterValue,
+    StreamLayoutMarkerValue,
 };
 use fitz::domains::stream::store::{
     CommitRecordsParams, EventPayload, StreamAdminRecord, StreamStorageLayout, StreamStore,

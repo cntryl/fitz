@@ -12,7 +12,7 @@ use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 use super::constants::INTERNAL_REALM_SEGMENT;
 use super::protocol::{
-    AreaWatermarkAdvanced, DEFAULT_REALM_LEASE_BLOCK, LeaseGranted, StreamCoordinationMessage,
+    AreaWatermarkAdvanced, LeaseGranted, StreamCoordinationMessage, DEFAULT_REALM_LEASE_BLOCK,
 };
 use super::store::StreamStore;
 

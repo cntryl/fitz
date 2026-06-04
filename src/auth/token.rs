@@ -11,7 +11,7 @@
 //! - Perform authorization
 //! - Do HTTP/network I/O
 
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde_json::Value;
 
 /// Verify the JWT signature using the provided RSA public key (PEM) and return the decoded payload as JSON.

@@ -1,5 +1,5 @@
 use criterion::{
-    BatchSize, Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main,
+    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::mailbox::Mailbox;

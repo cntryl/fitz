@@ -721,8 +721,8 @@ mod tests {
     }
 
     #[test]
-    fn should_keep_remaining_worker_dispatchable_given_other_worker_unregistered_with_live_assignment()
-     {
+    fn should_keep_remaining_worker_dispatchable_given_other_worker_unregistered_with_live_assignment(
+    ) {
         // Arrange
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let (mut ctx, _router) = make_ctx();

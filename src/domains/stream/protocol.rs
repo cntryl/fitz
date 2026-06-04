@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::routing::{Route, RouteFamily, route_exact_quad};
+use crate::runtime::routing::{route_exact_quad, Route, RouteFamily};
 
 /// Parse a stream route into (realm, area, resource, operation).
 ///

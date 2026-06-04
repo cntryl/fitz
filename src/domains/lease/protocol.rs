@@ -9,7 +9,7 @@
 //! - **Subscribe / Unsubscribe**: Watch concrete lease routes for change notifications
 //! - **Tick**: Runtime-driven expiration (scheduler)
 
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily, route_triplet};
+use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
 
 /// Parsed lease identity
 ///

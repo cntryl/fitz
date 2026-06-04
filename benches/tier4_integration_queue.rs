@@ -13,7 +13,7 @@
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{StressContext, stress_main, stress_test};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_queue_enqueue, create_bench_queue_actor, parse_queue_response, shared_bench_runtime,
 };

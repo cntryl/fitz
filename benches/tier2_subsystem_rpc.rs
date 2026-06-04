@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use criterion::{
-    BatchSize, Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main,
+    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
 use fitz::benchkit::{
-    FrameQueueSink, build_rpc_ack_frame, build_rpc_request, build_rpc_response_frame,
-    build_rpc_subscribe, create_bench_rpc_sink, create_bench_rpc_sink_with_timeout,
-    extract_single_tlv_field, register_session_queue_sink,
+    build_rpc_ack_frame, build_rpc_request, build_rpc_response_frame, build_rpc_subscribe,
+    create_bench_rpc_sink, create_bench_rpc_sink_with_timeout, extract_single_tlv_field,
+    register_session_queue_sink, FrameQueueSink,
 };
 use fitz::domains::rpc::protocol::{RpcMessage, RpcResponse};
 use fitz::protocol::frame::ChannelId;

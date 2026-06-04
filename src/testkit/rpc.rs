@@ -1,8 +1,8 @@
 //! RPC test helpers
 
-use crate::domains::rpc::RpcRouteActor;
 use crate::domains::rpc::protocol::{RpcRequest, RpcResponse};
 use crate::domains::rpc::reply_inbox::ReplyInboxActor;
+use crate::domains::rpc::RpcRouteActor;
 use crate::runtime::actor::Context;
 use crate::runtime::router::Router;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};

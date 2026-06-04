@@ -3,8 +3,8 @@ use crate::boot::domains::DomainHandles;
 use crate::runtime::Router;
 use crate::session::manager::RuntimeIngress;
 use std::collections::BTreeSet;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
 impl Runtime {

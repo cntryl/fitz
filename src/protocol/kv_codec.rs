@@ -4,7 +4,7 @@ use crate::domains::kv::{
     KvMessage, KvNotification, KvResponse, KvSubscriptionMessage, ScanQuery, TxMode,
 };
 use crate::protocol::frame_context::FrameContext;
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily, route_triplet_tail};
+use crate::runtime::routing::{route_triplet_tail, Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 
 /// KV domain message type IDs
@@ -100,11 +100,11 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
         }
         KvResponse::CommitOk => {
             buf.put_u8(0); // status: success
-            // Empty response for commit ok
+                           // Empty response for commit ok
         }
         KvResponse::RollbackOk => {
             buf.put_u8(0); // status: success
-            // Empty response for rollback ok
+                           // Empty response for rollback ok
         }
         KvResponse::GetResult { found, value } => {
             buf.put_u8(0); // status: success
@@ -118,19 +118,19 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
         }
         KvResponse::PutOk => {
             buf.put_u8(0); // status: success
-            // Empty response for put ok
+                           // Empty response for put ok
         }
         KvResponse::InsertOk => {
             buf.put_u8(0); // status: success
-            // Empty response for insert ok
+                           // Empty response for insert ok
         }
         KvResponse::DeleteOk => {
             buf.put_u8(0); // status: success
-            // Empty response for delete ok
+                           // Empty response for delete ok
         }
         KvResponse::DeleteRangeOk => {
             buf.put_u8(0); // status: success
-            // Empty response for delete range ok
+                           // Empty response for delete range ok
         }
         KvResponse::ScanResult { items, has_more } => {
             buf.put_u8(0); // status: success

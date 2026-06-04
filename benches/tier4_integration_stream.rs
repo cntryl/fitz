@@ -12,7 +12,7 @@
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{StressContext, stress_main, stress_test};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, build_stream_commit, build_stream_read,
     create_bench_stream_sink, extract_single_tlv_field, parse_stream_read_record_count,

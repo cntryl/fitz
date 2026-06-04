@@ -1,4 +1,4 @@
-use crate::runtime::routing::{Route, RouteFamily, route_triplet};
+use crate::runtime::routing::{route_triplet, Route, RouteFamily};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 

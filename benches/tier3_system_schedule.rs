@@ -10,7 +10,7 @@
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{StressContext, stress_main, stress_test};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;

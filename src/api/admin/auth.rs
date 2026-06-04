@@ -1,6 +1,6 @@
 use argon2::{
-    Argon2,
     password_hash::{PasswordHash, PasswordVerifier},
+    Argon2,
 };
 use chrono::{Duration, Utc};
 use hyper::header::{COOKIE, SET_COOKIE};
@@ -274,8 +274,8 @@ fn clear_cookie() -> String {
 mod tests {
     use super::*;
     use argon2::{
+        password_hash::{rand_core::OsRng, SaltString},
         PasswordHasher,
-        password_hash::{SaltString, rand_core::OsRng},
     };
 
     fn password_hash_for(password: &str) -> String {

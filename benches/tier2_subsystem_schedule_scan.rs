@@ -3,8 +3,8 @@
 //! benchmark-only shortcut paths.
 
 use bytes::Bytes;
-use criterion::{Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main};
-use fitz::domains::schedule::protocol::{Clock, validate_concrete_schedule_route};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;

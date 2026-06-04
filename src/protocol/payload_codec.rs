@@ -274,7 +274,11 @@ impl<'a> PayloadDecoder<'a> {
     /// Skip optional bytes without allocating.
     pub fn skip_optional_bytes(&mut self) -> Result<(), String> {
         let flag = self.get_u8()?;
-        if flag == 1 { self.skip_bytes() } else { Ok(()) }
+        if flag == 1 {
+            self.skip_bytes()
+        } else {
+            Ok(())
+        }
     }
 
     /// Check if we've consumed all input

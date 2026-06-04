@@ -12,10 +12,10 @@ mod stream_storage_model;
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{StressContext, stress_main, stress_test};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    FrameQueueSink, build_stream_read_with_limit, count_stream_read_records_from_payload,
-    extract_single_tlv_field, register_session_queue_sink, route_frame, shared_bench_runtime,
+    build_stream_read_with_limit, count_stream_read_records_from_payload, extract_single_tlv_field,
+    register_session_queue_sink, route_frame, shared_bench_runtime, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::Router;
@@ -23,8 +23,8 @@ use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use fitz::testkit::transport::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use stream_storage_model::{
-    PROTOTYPE_ROUTE_FAMILY, PrototypeReadCase, install_stream_read_prototype_sink,
-    prepare_area_read_case, prepare_realm_read_case, prepare_resource_read_case,
+    install_stream_read_prototype_sink, prepare_area_read_case, prepare_realm_read_case,
+    prepare_resource_read_case, PrototypeReadCase, PROTOTYPE_ROUTE_FAMILY,
 };
 
 const CLIENT_SESSION_ID: u64 = 1;

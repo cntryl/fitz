@@ -1,6 +1,6 @@
 use argon2::{
+    password_hash::{rand_core::OsRng, SaltString},
     Argon2, PasswordHasher,
-    password_hash::{SaltString, rand_core::OsRng},
 };
 use fitz::api::admin::auth::AdminPrincipal;
 use fitz::api::admin::{QueueAgeBuckets, QueueInfo};
@@ -9,7 +9,7 @@ use fitz::auth::default_anonymous_permissions;
 use fitz::boot::Runtime;
 use fitz::runtime::Router;
 use hyper::header::COOKIE;
-use hyper::{Body, Method, Request, StatusCode, body};
+use hyper::{body, Body, Method, Request, StatusCode};
 use serde_json::Value;
 use serial_test::serial;
 use std::sync::Arc;
@@ -257,9 +257,7 @@ async fn should_preserve_durable_backlog_label_given_queue_pressure() {
         .iter()
         .map(|value| value.as_str().unwrap_or_default())
         .collect::<Vec<_>>();
-    assert!(
-        hints
-            .iter()
-            .any(|hint| hint.contains("Durable backlog with live processing lag"))
-    );
+    assert!(hints
+        .iter()
+        .any(|hint| hint.contains("Durable backlog with live processing lag")));
 }

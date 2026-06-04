@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use criterion::{
-    BatchSize, Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main,
+    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
 use fitz::benchkit::create_bench_store;
 use fitz::domains::schedule::actor::ScheduleActor;
 use fitz::domains::schedule::protocol::{
-    CronSchedule, ScheduleCreateEntry, validate_concrete_schedule_route,
+    validate_concrete_schedule_route, CronSchedule, ScheduleCreateEntry,
 };
 use fitz::domains::schedule::store::{ScheduleBatchInsert, ScheduleInsert, ScheduleStore};
 use fitz::runtime::routing::RouteFamily;

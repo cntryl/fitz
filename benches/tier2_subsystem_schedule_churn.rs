@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use criterion::{
-    BatchSize, Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main,
+    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
 use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};

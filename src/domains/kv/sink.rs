@@ -13,8 +13,8 @@ use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use chrono::Utc;
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct KvResourceLockKey {
@@ -680,8 +680,8 @@ mod tests {
     use super::*;
     use crate::protocol::frame::ChannelId;
     use crate::protocol::tlv::MessageType;
-    use crate::runtime::Mailbox;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+    use crate::runtime::Mailbox;
     use bytes::{BufMut, Bytes};
     use std::sync::Arc;
 

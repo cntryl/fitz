@@ -1,6 +1,6 @@
 //! Prometheus metrics endpoint
 
-use crate::boot::{Runtime, observability};
+use crate::boot::{observability, Runtime};
 use hyper::{Body, Response, StatusCode};
 use std::convert::Infallible;
 use std::sync::Arc;

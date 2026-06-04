@@ -1,7 +1,7 @@
 use bytes::Bytes;
-use criterion::{Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::domains::stream::storage::{
-    AreaValue, RealmValue, ResourceValue, encode_area_key, encode_realm_key, encode_resource_key,
+    encode_area_key, encode_realm_key, encode_resource_key, AreaValue, RealmValue, ResourceValue,
 };
 use lz4_flex::block::compress_prepend_size;
 use std::collections::HashMap;

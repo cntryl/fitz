@@ -1,10 +1,10 @@
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily, route_exact_quad, route_scheme};
+use crate::runtime::routing::{route_exact_quad, route_scheme, Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub use crate::runtime::clock::{
-    Clock, SystemClock, epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
+    epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference, Clock, SystemClock,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

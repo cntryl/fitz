@@ -10,10 +10,10 @@
 mod stress_config;
 
 use bytes::{BufMut, Bytes};
-use cntryl_stress::{StressContext, stress_main, stress_test};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    FrameQueueSink, count_stream_read_records_from_payload, create_local_bench_store,
-    extract_single_tlv_field, register_session_queue_sink, route_frame,
+    count_stream_read_records_from_payload, create_local_bench_store, extract_single_tlv_field,
+    register_session_queue_sink, route_frame, FrameQueueSink,
 };
 use fitz::domains::stream::protocol::{StreamRecord, StreamWriteMode};
 use fitz::domains::stream::storage::{decode_area_offset_from_key, decode_realm_offset_from_key};

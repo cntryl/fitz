@@ -2,20 +2,20 @@
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{StressContext, stress_main, stress_test};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    CountingSink, FrameQueueSink, build_queue_complete, build_queue_dequeue,
-    build_queue_dequeue_batch, build_queue_enqueue, build_queue_watch, create_bench_queue_actor,
-    create_bench_queue_sink, extract_single_tlv_field, register_session_counting_sink,
-    register_session_queue_sink, route_frame,
+    build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch, build_queue_enqueue,
+    build_queue_watch, create_bench_queue_actor, create_bench_queue_sink, extract_single_tlv_field,
+    register_session_counting_sink, register_session_queue_sink, route_frame, CountingSink,
+    FrameQueueSink,
 };
 use fitz::domains::queue::{Clock, QueueActor, QueueKey, QueueResponse, ReservedMessage};
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use fitz::testkit::create_test_engine_with_cfs;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const CLIENT_SESSION_ID: u64 = 1;

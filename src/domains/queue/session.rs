@@ -226,9 +226,10 @@ mod tests {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
-            SessionPermissions::from_permissions(vec![
-                Permission::parse("queue://realm/area/jobs#write").unwrap(),
-            ]),
+            SessionPermissions::from_permissions(vec![Permission::parse(
+                "queue://realm/area/jobs#write",
+            )
+            .unwrap()]),
         );
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();
@@ -252,9 +253,10 @@ mod tests {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
-            SessionPermissions::from_permissions(vec![
-                Permission::parse("queue://realm/area/other#read").unwrap(),
-            ]),
+            SessionPermissions::from_permissions(vec![Permission::parse(
+                "queue://realm/area/other#read",
+            )
+            .unwrap()]),
         );
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();
@@ -279,9 +281,10 @@ mod tests {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
-            SessionPermissions::from_permissions(vec![
-                Permission::parse("queue://realm/area/jobs#read").unwrap(),
-            ]),
+            SessionPermissions::from_permissions(vec![Permission::parse(
+                "queue://realm/area/jobs#read",
+            )
+            .unwrap()]),
         );
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();
@@ -305,9 +308,10 @@ mod tests {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
-            SessionPermissions::from_permissions(vec![
-                Permission::parse("queue://realm/area/jobs#read").unwrap(),
-            ]),
+            SessionPermissions::from_permissions(vec![Permission::parse(
+                "queue://realm/area/jobs#read",
+            )
+            .unwrap()]),
         );
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();
@@ -333,9 +337,10 @@ mod tests {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
-            SessionPermissions::from_permissions(vec![
-                Permission::parse("queue://realm/area/jobs#read").unwrap(),
-            ]),
+            SessionPermissions::from_permissions(vec![Permission::parse(
+                "queue://realm/area/jobs#read",
+            )
+            .unwrap()]),
         );
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();
@@ -360,9 +365,10 @@ mod tests {
         // Arrange
         let session = SessionActor::new(
             SessionId(1),
-            SessionPermissions::from_permissions(vec![
-                Permission::parse("queue://realm/area/jobs#write").unwrap(),
-            ]),
+            SessionPermissions::from_permissions(vec![Permission::parse(
+                "queue://realm/area/jobs#write",
+            )
+            .unwrap()]),
         );
         let mut actor = make_queue_actor();
         let mut ctx = make_ctx();

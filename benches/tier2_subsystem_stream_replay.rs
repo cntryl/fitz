@@ -1,17 +1,17 @@
 use bincode::{deserialize, serialize};
 use bytes::Bytes;
-use criterion::{Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::create_bench_store;
-use fitz::domains::stream::StreamReadItem;
 use fitz::domains::stream::protocol::{StreamRecord, StreamWriteMode};
 use fitz::domains::stream::storage::{
-    AreaLocatorValue, AreaValue, CanonicalResourceValue, KeyPrefix, RealmLocatorValue,
     decode_area_offset_from_key, decode_realm_offset_from_key, encode_area_key,
     encode_area_locator_key, encode_canonical_resource_key, encode_realm_locator_key,
+    AreaLocatorValue, AreaValue, CanonicalResourceValue, KeyPrefix, RealmLocatorValue,
 };
 use fitz::domains::stream::store::{
     CommitRecordsParams, EventPayload, ReadResourceParams, StreamStore,
 };
+use fitz::domains::stream::StreamReadItem;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

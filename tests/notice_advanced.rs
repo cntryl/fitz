@@ -6,14 +6,14 @@
 //! - notice_e2e_scale.rs: End-to-end scale tests
 
 use bytes::Bytes;
-use fitz::domains::notice::NoticeRouteActor;
 use fitz::domains::notice::protocol::{
     NotificationMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
 };
+use fitz::domains::notice::NoticeRouteActor;
 use fitz::prelude::Actor;
 use fitz::runtime::actor::Context;
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
-use fitz::testkit::notice::{TestSink, addr, make_router, route, session_id};
+use fitz::testkit::notice::{addr, make_router, route, session_id, TestSink};
 use std::sync::Arc;
 
 // ===== Tier 2: Scale & Shape Invariants =====

@@ -427,11 +427,9 @@ mod tests {
         let body = body::to_bytes(response.into_body()).await.unwrap();
 
         assert_eq!(status, StatusCode::OK);
-        assert!(
-            std::str::from_utf8(&body)
-                .unwrap()
-                .contains("<!doctype html>")
-        );
+        assert!(std::str::from_utf8(&body)
+            .unwrap()
+            .contains("<!doctype html>"));
     }
 
     #[tokio::test]
@@ -447,11 +445,9 @@ mod tests {
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(content_type, "text/html; charset=utf-8");
-        assert!(
-            std::str::from_utf8(&body)
-                .unwrap()
-                .contains("<!doctype html>")
-        );
+        assert!(std::str::from_utf8(&body)
+            .unwrap()
+            .contains("<!doctype html>"));
     }
 
     #[tokio::test]
@@ -461,11 +457,9 @@ mod tests {
         let body = body::to_bytes(response.into_body()).await.unwrap();
 
         assert_eq!(status, StatusCode::OK);
-        assert!(
-            std::str::from_utf8(&body)
-                .unwrap()
-                .contains("<!doctype html>")
-        );
+        assert!(std::str::from_utf8(&body)
+            .unwrap()
+            .contains("<!doctype html>"));
     }
 
     #[tokio::test]

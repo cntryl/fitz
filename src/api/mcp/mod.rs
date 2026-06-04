@@ -11,8 +11,8 @@ use crate::api::admin::troubleshooting::{
     stream_resource_timeline,
 };
 use crate::api::admin::{
-    ResourcePath, build_global_stats, build_global_troubleshooting, kv_detail, lease_detail,
-    notice_detail, queue_detail, rpc_operations, schedule_detail, stream_detail,
+    build_global_stats, build_global_troubleshooting, kv_detail, lease_detail, notice_detail,
+    queue_detail, rpc_operations, schedule_detail, stream_detail, ResourcePath,
 };
 use crate::auth::Access;
 use crate::boot::Runtime;
@@ -710,7 +710,7 @@ fn build_resource_timeline_value(
 mod tests {
     use super::*;
     use crate::api::admin::auth::AdminPrincipal;
-    use crate::api::admin::{ResourcePath, kv_detail, read_model::AdminReadModel};
+    use crate::api::admin::{kv_detail, read_model::AdminReadModel, ResourcePath};
     use crate::auth::default_anonymous_permissions;
     use crate::boot::Runtime;
     use crate::runtime::Router;

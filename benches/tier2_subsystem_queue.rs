@@ -1,12 +1,12 @@
 use bytes::Bytes;
 use criterion::{
-    BatchSize, Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main,
+    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
 use fitz::benchkit::{
-    CountingSink, FrameQueueSink, build_queue_complete, build_queue_dequeue,
-    build_queue_dequeue_batch, build_queue_enqueue, build_queue_watch, create_bench_queue_sink,
-    extract_single_tlv_field, register_session_counting_sink, register_session_queue_sink,
-    route_frame,
+    build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch, build_queue_enqueue,
+    build_queue_watch, create_bench_queue_sink, extract_single_tlv_field,
+    register_session_counting_sink, register_session_queue_sink, route_frame, CountingSink,
+    FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};

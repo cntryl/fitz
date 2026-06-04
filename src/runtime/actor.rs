@@ -6,8 +6,8 @@ use crate::runtime::envelope::Envelope;
 use crate::runtime::router::{DeliveryError, RouteError, Router};
 use crate::runtime::routing::RouteAddress;
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 #[inline]
 fn delivery_error_to_send_error(target: RouteAddress, error: DeliveryError) -> SendError {

@@ -4,7 +4,7 @@
 use crate::observability as obs;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::router::{DeliveryError, MailboxSink};
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use std::time::Instant;
 
 /// Mailbox for actor message queuing with bounded capacity

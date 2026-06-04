@@ -2,9 +2,9 @@
 
 use crate::boot::runtime::BootResult;
 use crate::runtime::{DeliveryError, DomainKind, Envelope, MailboxSink, Router};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Arc as StdArc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(test)]
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};

@@ -9,8 +9,8 @@ use crate::runtime::routing::RouteFamily;
 
 use super::protocol::{
     AppendResponse, BeginSessionResponse, CommitSessionResponse, GetMetadataResponse,
-    IngestMetadata, MAX_EVENT_SIZE, PeekResponse, ReadResponse, StreamDiscriminator, StreamError,
-    StreamFilterSet, StreamMessage, StreamResponse, StreamWriteMode,
+    IngestMetadata, PeekResponse, ReadResponse, StreamDiscriminator, StreamError, StreamFilterSet,
+    StreamMessage, StreamResponse, StreamWriteMode, MAX_EVENT_SIZE,
 };
 use super::store::{CommitRecordsParams, EventPayload, StreamStore};
 
@@ -401,7 +401,7 @@ impl Actor for StreamActor {
 mod tests {
     use super::*;
     use crate::domains::stream::storage::{
-        StreamLayoutMarkerValue, encode_stream_layout_marker_key,
+        encode_stream_layout_marker_key, StreamLayoutMarkerValue,
     };
     use crate::domains::stream::store::StreamStorageLayout;
     use crate::testkit::create_test_engine_with_cfs;

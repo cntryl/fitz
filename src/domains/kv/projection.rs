@@ -1,7 +1,7 @@
-use crate::api::admin::KvTransaction;
 use crate::api::admin::read_model::AdminReadModel;
-use std::sync::Arc;
+use crate::api::admin::KvTransaction;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Admin projection for the KV domain.
 ///

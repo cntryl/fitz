@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use criterion::{Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder, TlvRecord};
 
 #[path = "criterion_config.rs"]

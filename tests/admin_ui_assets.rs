@@ -1,7 +1,7 @@
 use fitz::boot::Runtime;
 use fitz::runtime::Router;
 use hyper::header::{self, ETAG};
-use hyper::{Body, Method, Request, StatusCode, body};
+use hyper::{body, Body, Method, Request, StatusCode};
 use serial_test::serial;
 use std::env;
 use std::path::{Path, PathBuf};

@@ -1,5 +1,5 @@
 use criterion::{
-    BatchSize, Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main,
+    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
 use fitz::protocol::mux::{Mux, MuxError};
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};

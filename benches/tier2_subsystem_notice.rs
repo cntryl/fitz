@@ -1,8 +1,8 @@
 use bytes::Bytes;
-use criterion::{Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::{
-    CountingSink, build_notice_subscribe, create_bench_notice_sink, extract_single_tlv_field,
-    register_session_counting_sink, route_frame,
+    build_notice_subscribe, create_bench_notice_sink, extract_single_tlv_field,
+    register_session_counting_sink, route_frame, CountingSink,
 };
 use fitz::boot::domains::NoticeDomainSink;
 use fitz::protocol::frame::ChannelId;

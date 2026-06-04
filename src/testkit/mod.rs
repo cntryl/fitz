@@ -18,7 +18,7 @@ pub use notice as notification;
 // Re-export common test utilities
 pub use lease::create_test_lease_context;
 pub use midge::create_test_engine_with_cfs;
-pub use notice::{TestSink, addr, make_router, route, session_id};
+pub use notice::{addr, make_router, route, session_id, TestSink};
 pub use queue::create_test_queue_actor;
 pub use rpc::{
     create_test_inbox, create_test_inbox_context, create_test_rpc_actor_with_timeout,

@@ -33,7 +33,7 @@
 //! - During matching, we try suffix patterns against all possible remaining segments
 
 use crate::runtime::matcher::{
-    PatternSegment, extract_route_segments_borrowed, parse_pattern_segments,
+    extract_route_segments_borrowed, parse_pattern_segments, PatternSegment,
 };
 use crate::runtime::routing::{Route, RouteFamily};
 use ahash::AHashMap;
@@ -96,7 +96,7 @@ impl Default for SegmentInterner {
 }
 
 mod segments_cache {
-    use crate::runtime::matcher::{PatternSegment, parse_pattern_segments};
+    use crate::runtime::matcher::{parse_pattern_segments, PatternSegment};
     use fxhash::FxBuildHasher;
     use std::collections::HashMap;
     use std::sync::Arc;

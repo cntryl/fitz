@@ -7,8 +7,8 @@ use crate::observability as obs;
 use crate::runtime::router::Router;
 use crate::runtime::routing::RouteAddress;
 use std::any::Any;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 

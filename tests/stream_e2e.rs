@@ -4,7 +4,7 @@
 mod fixtures;
 use bytes::{BufMut, Bytes};
 use fitz::domains::stream::protocol::StreamWriteMode;
-use fitz::domains::stream::storage::{StreamLayoutMarkerValue, encode_stream_layout_marker_key};
+use fitz::domains::stream::storage::{encode_stream_layout_marker_key, StreamLayoutMarkerValue};
 use fitz::domains::stream::store::StreamStore;
 use fitz::domains::stream::{StreamActor, StreamReadItem, StreamRecord, StreamStorageLayout};
 use fitz::protocol::payload_codec::PayloadDecoder;
@@ -1755,11 +1755,9 @@ async fn should_fail_local_stream_restart_given_mismatched_layout_marker() {
     match result {
         Ok(_) => panic!("mismatched layout marker should fail stream restart"),
         Err(error) => {
-            assert!(
-                error
-                    .to_string()
-                    .contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH")
-            );
+            assert!(error
+                .to_string()
+                .contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
         }
     }
 }

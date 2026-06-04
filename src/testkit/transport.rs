@@ -13,8 +13,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, client_async,
+    client_async,
     tungstenite::{client::IntoClientRequest, protocol::Message},
+    MaybeTlsStream, WebSocketStream,
 };
 
 static AUTH_ENV_INIT: Once = Once::new();
@@ -694,7 +695,7 @@ pub fn generate_test_jwt(realm: &str) -> String {
 }
 
 pub fn generate_test_jwt_for_family(realm: &str, route_family: u32) -> String {
-    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -751,7 +752,7 @@ pub fn generate_test_jwt_for_family(realm: &str, route_family: u32) -> String {
 
 /// Generate expired JWT (for testing rejection)
 pub fn generate_expired_jwt(realm: &str) -> String {
-    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -799,7 +800,7 @@ pub fn generate_expired_jwt(realm: &str) -> String {
 
 /// Generate JWT with invalid signature (for testing rejection)
 pub fn generate_invalid_signature_jwt(realm: &str) -> String {
-    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]

@@ -1,9 +1,9 @@
-use crate::api::admin::ResourcePath;
 use crate::api::admin::list::{
     KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueAgeBuckets,
     QueueDeadLetter, QueueInflight, QueueInfo, RpcLatencyBuckets, RpcPendingRequest, RpcWorker,
     ScheduleInfo, ScheduleLatencyBuckets, StreamInfo, StreamLatencyBuckets,
 };
+use crate::api::admin::ResourcePath;
 use crate::boot::Runtime;
 use crate::runtime::routing::{route_quad, route_triplet};
 use chrono::{DateTime, Duration, Utc};
@@ -387,7 +387,11 @@ fn calculate_confidence(
     }
 
     let confidence = if matches!(current_stage, DiagnosisLabel::Healthy) && primary_signal {
-        if freshness_signal { 0.92 } else { 0.82 }
+        if freshness_signal {
+            0.92
+        } else {
+            0.82
+        }
     } else {
         let primary_score = if primary_signal { 1.0 } else { 0.35 };
         let bottleneck_score = if bottleneck_signal { 1.0 } else { 0.0 };
@@ -4260,24 +4264,18 @@ mod tests {
 
         // Assert
         assert!(snapshot.confidence >= 0.85);
-        assert!(
-            justification
-                .signals_matched
-                .iter()
-                .any(|signal| signal == "backlog_age_or_waiters_present")
-        );
-        assert!(
-            justification
-                .signals_matched
-                .iter()
-                .any(|signal| signal == "fresh_telemetry")
-        );
-        assert!(
-            justification
-                .signals_matched
-                .iter()
-                .any(|signal| signal == "bottleneck_identified")
-        );
+        assert!(justification
+            .signals_matched
+            .iter()
+            .any(|signal| signal == "backlog_age_or_waiters_present"));
+        assert!(justification
+            .signals_matched
+            .iter()
+            .any(|signal| signal == "fresh_telemetry"));
+        assert!(justification
+            .signals_matched
+            .iter()
+            .any(|signal| signal == "bottleneck_identified"));
     }
 
     #[test]
@@ -4293,12 +4291,10 @@ mod tests {
 
         // Assert
         assert!(snapshot.confidence < 0.85);
-        assert!(
-            justification
-                .signals_missing
-                .iter()
-                .any(|signal| signal == "fresh_telemetry")
-        );
+        assert!(justification
+            .signals_missing
+            .iter()
+            .any(|signal| signal == "fresh_telemetry"));
     }
 
     #[test]
@@ -4330,11 +4326,9 @@ mod tests {
         assert_eq!(suggestions.len(), 2);
         assert_eq!(suggestions[0].priority, 1);
         assert_eq!(suggestions[0].title, "Inspect current resource snapshot");
-        assert!(
-            suggestions[0]
-                .endpoint
-                .contains("/api/v1/queue/realms/prod/areas/jobs/resources/worker?family=1")
-        );
+        assert!(suggestions[0]
+            .endpoint
+            .contains("/api/v1/queue/realms/prod/areas/jobs/resources/worker?family=1"));
         assert!(suggestions[0].remediation.contains("backlog"));
         assert_eq!(suggestions[1].priority, 2);
         assert_eq!(suggestions[1].title, "Inspect recent transitions");
@@ -4368,12 +4362,10 @@ mod tests {
         assert_eq!(snapshot.current_stage, "backlog_growth");
         assert_eq!(diagnosis_label, DiagnosisLabel::BacklogGrowth);
         assert_eq!(snapshot.severity, DiagnosticSeverity::Medium);
-        assert!(
-            snapshot
-                .explanation_hints
-                .iter()
-                .any(|hint| hint.contains("Backlog is growing"))
-        );
+        assert!(snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("Backlog is growing")));
     }
 
     #[test]
@@ -4419,22 +4411,18 @@ mod tests {
             hotspot.hotspot.snapshot.diagnosis_label(),
             DiagnosisLabel::DeadLetterPressure
         );
-        assert!(
-            hotspot
-                .hotspot
-                .snapshot
-                .explanation_hints
-                .iter()
-                .any(|hint| hint.contains("dead-letter transition"))
-        );
-        assert!(
-            hotspot
-                .hotspot
-                .snapshot
-                .explanation_hints
-                .iter()
-                .any(|hint| hint.contains("queue complete rejection"))
-        );
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("dead-letter transition")));
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("queue complete rejection")));
     }
 
     #[test]
@@ -4516,12 +4504,10 @@ mod tests {
             snapshot.likely_bottleneck.as_deref(),
             Some("slow worker latency")
         );
-        assert!(
-            snapshot
-                .explanation_hints
-                .iter()
-                .any(|hint| hint.contains("slowest worker average latency is 180.0ms"))
-        );
+        assert!(snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("slowest worker average latency is 180.0ms")));
     }
 
     #[test]
@@ -4544,14 +4530,12 @@ mod tests {
             Some("late response drop")
         );
         assert_eq!(hotspot.hotspot.snapshot.severity, DiagnosticSeverity::High);
-        assert!(
-            hotspot
-                .hotspot
-                .snapshot
-                .explanation_hints
-                .iter()
-                .any(|hint| hint.contains("late response drop"))
-        );
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("late response drop")));
     }
 
     #[test]
@@ -4585,12 +4569,10 @@ mod tests {
             Some("lease ownership churn")
         );
         assert_eq!(snapshot.trend, DiagnosticTrend::Growing);
-        assert!(
-            snapshot
-                .explanation_hints
-                .iter()
-                .any(|hint| hint.contains("renewals recorded"))
-        );
+        assert!(snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("renewals recorded")));
     }
 
     #[test]
@@ -4746,14 +4728,12 @@ mod tests {
         );
         assert_eq!(hotspot.hotspot.backlog, Some(3));
         assert_eq!(hotspot.hotspot.snapshot.age_seconds, Some(45));
-        assert!(
-            hotspot
-                .hotspot
-                .snapshot
-                .explanation_hints
-                .iter()
-                .any(|hint| hint.contains("pending ack retry"))
-        );
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("pending ack retry")));
     }
 
     #[test]
@@ -4795,22 +4775,18 @@ mod tests {
             Some("claim cleanup")
         );
         assert_eq!(hotspot.hotspot.snapshot.severity, DiagnosticSeverity::High);
-        assert!(
-            hotspot
-                .hotspot
-                .snapshot
-                .explanation_hints
-                .iter()
-                .any(|hint| hint.contains("expired pending claim"))
-        );
-        assert!(
-            hotspot
-                .hotspot
-                .snapshot
-                .explanation_hints
-                .iter()
-                .any(|hint| hint.contains("cleanup failure"))
-        );
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("expired pending claim")));
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("cleanup failure")));
     }
 
     #[test]
@@ -4857,14 +4833,12 @@ mod tests {
             Some("schedule latency")
         );
         assert_eq!(hotspot.hotspot.snapshot.severity, DiagnosticSeverity::High);
-        assert!(
-            hotspot
-                .hotspot
-                .snapshot
-                .explanation_hints
-                .iter()
-                .any(|hint| hint.contains("schedule request latency tail"))
-        );
+        assert!(hotspot
+            .hotspot
+            .snapshot
+            .explanation_hints
+            .iter()
+            .any(|hint| hint.contains("schedule request latency tail")));
     }
 
     #[test]

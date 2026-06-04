@@ -10,10 +10,10 @@
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{StressContext, stress_main, stress_test};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    FrameQueueSink, create_bench_lease_sink, parse_lease_extend_token_response,
-    parse_lease_token_response, register_session_queue_sink, route_frame,
+    create_bench_lease_sink, parse_lease_extend_token_response, parse_lease_token_response,
+    register_session_queue_sink, route_frame, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::payload_codec::PayloadEncoder;

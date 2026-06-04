@@ -1,8 +1,8 @@
 use bytes::Bytes;
-use criterion::{BatchSize, Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::{
-    CountingSink, create_bench_lease_sink, register_session_counting_sink,
-    register_session_queue_sink, route_frame,
+    create_bench_lease_sink, register_session_counting_sink, register_session_queue_sink,
+    route_frame, CountingSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::lease_codec::msg_type;

@@ -133,15 +133,7 @@ async fn handle_hierarchical_get(
             };
             handle_resource_detail(scheme, runtime, realm, area, resource, family)
         }
-        [
-            "realms",
-            realm,
-            "areas",
-            area,
-            "resources",
-            resource,
-            "events",
-        ] => {
+        ["realms", realm, "areas", area, "resources", resource, "events"] => {
             let family = if scheme == "queue" {
                 match parse_optional_queue_family(uri) {
                     Ok(family) => family,
@@ -171,15 +163,7 @@ async fn handle_hierarchical_get(
                 _ => Ok(super::not_found()),
             }
         }
-        [
-            "realms",
-            realm,
-            "areas",
-            area,
-            "resources",
-            resource,
-            "compare",
-        ] => {
+        ["realms", realm, "areas", area, "resources", resource, "compare"] => {
             let family = if scheme == "queue" {
                 match parse_optional_u64_param(uri, "family") {
                     Ok(family) => family,
@@ -239,15 +223,9 @@ async fn handle_hierarchical_get(
 
             super::json_response(comparison)
         }
-        [
-            "realms",
-            realm,
-            "areas",
-            area,
-            "resources",
-            resource,
-            "transactions",
-        ] if scheme == "kv" => {
+        ["realms", realm, "areas", area, "resources", resource, "transactions"]
+            if scheme == "kv" =>
+        {
             list::kv_transactions_for_resource(
                 runtime,
                 &list::ResourcePath {
@@ -258,15 +236,9 @@ async fn handle_hierarchical_get(
             )
             .await
         }
-        [
-            "realms",
-            realm,
-            "areas",
-            area,
-            "resources",
-            resource,
-            "inflight",
-        ] if scheme == "queue" => {
+        ["realms", realm, "areas", area, "resources", resource, "inflight"]
+            if scheme == "queue" =>
+        {
             let family = match parse_optional_queue_family(uri) {
                 Ok(family) => family,
                 Err(response) => return Ok(*response),
@@ -282,15 +254,9 @@ async fn handle_hierarchical_get(
             )
             .await
         }
-        [
-            "realms",
-            realm,
-            "areas",
-            area,
-            "resources",
-            resource,
-            "dead-letters",
-        ] if scheme == "queue" => {
+        ["realms", realm, "areas", area, "resources", resource, "dead-letters"]
+            if scheme == "queue" =>
+        {
             let family = match parse_optional_queue_family(uri) {
                 Ok(family) => family,
                 Err(response) => return Ok(*response),
@@ -306,15 +272,9 @@ async fn handle_hierarchical_get(
             )
             .await
         }
-        [
-            "realms",
-            realm,
-            "areas",
-            area,
-            "resources",
-            resource,
-            "subscriptions",
-        ] if scheme == "notice" => {
+        ["realms", realm, "areas", area, "resources", resource, "subscriptions"]
+            if scheme == "notice" =>
+        {
             list::notice_subscriptions_for_resource(
                 runtime,
                 &list::ResourcePath {
@@ -325,51 +285,34 @@ async fn handle_hierarchical_get(
             )
             .await
         }
-        [
-            "realms",
-            realm,
-            "areas",
-            area,
-            "resources",
-            resource,
-            "operations",
-        ] if scheme == "rpc" => super::json_response(list::rpc_operations(
-            runtime.as_ref(),
-            &list::ResourcePath {
-                realm,
-                area,
-                resource,
-            },
-        )),
-        [
-            "realms",
-            realm,
-            "areas",
-            area,
-            "resources",
-            resource,
-            "operations",
-            operation,
-        ] if scheme == "rpc" => super::json_response(list::rpc_operation_detail(
-            runtime.as_ref(),
-            &list::RpcOperationPath {
-                realm,
-                area,
-                resource,
-                operation,
-            },
-        )),
-        [
-            "realms",
-            realm,
-            "areas",
-            area,
-            "resources",
-            resource,
-            "operations",
-            operation,
-            "workers",
-        ] if scheme == "rpc" => {
+        ["realms", realm, "areas", area, "resources", resource, "operations"]
+            if scheme == "rpc" =>
+        {
+            super::json_response(list::rpc_operations(
+                runtime.as_ref(),
+                &list::ResourcePath {
+                    realm,
+                    area,
+                    resource,
+                },
+            ))
+        }
+        ["realms", realm, "areas", area, "resources", resource, "operations", operation]
+            if scheme == "rpc" =>
+        {
+            super::json_response(list::rpc_operation_detail(
+                runtime.as_ref(),
+                &list::RpcOperationPath {
+                    realm,
+                    area,
+                    resource,
+                    operation,
+                },
+            ))
+        }
+        ["realms", realm, "areas", area, "resources", resource, "operations", operation, "workers"]
+            if scheme == "rpc" =>
+        {
             list::rpc_workers_for_operation(
                 runtime,
                 &list::RpcOperationPath {
@@ -400,17 +343,9 @@ async fn handle_hierarchical_post(
     let tail = &segments[3..];
 
     match tail {
-        [
-            "realms",
-            realm,
-            "areas",
-            area,
-            "resources",
-            resource,
-            "dead-letters",
-            message_id,
-            "replay",
-        ] if scheme == "queue" => {
+        ["realms", realm, "areas", area, "resources", resource, "dead-letters", message_id, "replay"]
+            if scheme == "queue" =>
+        {
             handle_queue_dead_letter_replay(req.uri(), runtime, realm, area, resource, message_id)
         }
         _ => Ok(super::not_found()),
@@ -431,16 +366,9 @@ async fn handle_hierarchical_delete(
     let tail = &segments[3..];
 
     match tail {
-        [
-            "realms",
-            realm,
-            "areas",
-            area,
-            "resources",
-            resource,
-            "dead-letters",
-            message_id,
-        ] if scheme == "queue" => {
+        ["realms", realm, "areas", area, "resources", resource, "dead-letters", message_id]
+            if scheme == "queue" =>
+        {
             handle_queue_dead_letter_purge(req.uri(), runtime, realm, area, resource, message_id)
         }
         _ => Ok(super::not_found()),

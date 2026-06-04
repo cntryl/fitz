@@ -25,6 +25,6 @@ pub use manager::{Ingress, IngressDecision, RuntimeIngress, SessionEvent, Sessio
 pub use outbound::SessionOutboundSink;
 pub use permissions::SessionPermissions;
 pub use session::{
-    CloseReason, NewSessionConfig, Session, SessionError, SessionId, SessionInfo, SessionMetadata,
-    TransportKind, next_session_id,
+    next_session_id, CloseReason, NewSessionConfig, Session, SessionError, SessionId, SessionInfo,
+    SessionMetadata, TransportKind,
 };

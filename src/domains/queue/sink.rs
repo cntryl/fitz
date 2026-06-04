@@ -1,6 +1,6 @@
 use crate::domains::queue::{
-    QueueAdminSnapshot, QueueMetrics, QueueNotification, QueueSubscriptionMessage,
     projection::{QueueAdminProjection, QueueProjectionEntry, QueueProjectionState},
+    QueueAdminSnapshot, QueueMetrics, QueueNotification, QueueSubscriptionMessage,
 };
 use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::observability as obs;
@@ -8,8 +8,8 @@ use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 struct WarmQueueActor {
@@ -1069,8 +1069,8 @@ mod tests {
     use super::*;
     use crate::protocol::frame::ChannelId;
     use crate::protocol::tlv::MessageType;
-    use crate::runtime::Mailbox;
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+    use crate::runtime::Mailbox;
     use bytes::{BufMut, Bytes};
 
     fn encode_route_pattern(pattern: &str) -> Bytes {

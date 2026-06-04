@@ -10,13 +10,12 @@
 mod stress_config;
 
 use bytes::Bytes;
-use cntryl_stress::{StressContext, stress_main, stress_test};
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    FrameQueueSink, build_stream_append, build_stream_begin, build_stream_commit,
-    build_stream_last, build_stream_read, build_stream_subscribe,
-    count_stream_read_records_from_payload, create_bench_stream_sink, extract_single_tlv_field,
-    parse_stream_session_id, register_session_counting_sink, register_session_queue_sink,
-    route_frame,
+    build_stream_append, build_stream_begin, build_stream_commit, build_stream_last,
+    build_stream_read, build_stream_subscribe, count_stream_read_records_from_payload,
+    create_bench_stream_sink, extract_single_tlv_field, parse_stream_session_id,
+    register_session_counting_sink, register_session_queue_sink, route_frame, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};

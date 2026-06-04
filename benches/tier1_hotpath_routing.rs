@@ -1,4 +1,4 @@
-use criterion::{Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 #[path = "criterion_config.rs"]
