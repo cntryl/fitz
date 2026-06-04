@@ -1,9 +1,10 @@
 // ! Main HTTP request handler for admin API
 
 use crate::api::admin::auth::{self, AdminPrincipal, AuthFailure, SessionResponse};
+use crate::api::http::{Body, Response};
 use crate::boot::Runtime;
 use crate::runtime::routing::RouteFamily;
-use hyper::{Body, Method, Request, Response, StatusCode};
+use hyper::{Method, StatusCode};
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -12,10 +13,13 @@ use super::metrics;
 use super::probes;
 use super::stats;
 
-pub async fn handle_request(
-    req: Request<Body>,
+pub async fn handle_request<B>(
+    req: hyper::Request<B>,
     runtime: Arc<Runtime>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible>
+where
+    B: hyper::body::Body + Send,
+{
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 
@@ -88,7 +92,7 @@ pub async fn handle_request(
 async fn handle_hierarchical_get(
     uri: &hyper::Uri,
     runtime: Arc<Runtime>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let path = uri.path();
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     if segments.len() < 4 || segments[0] != "api" || segments[1] != "v1" {
@@ -329,10 +333,10 @@ async fn handle_hierarchical_get(
     }
 }
 
-async fn handle_hierarchical_post(
-    req: &Request<Body>,
+async fn handle_hierarchical_post<B>(
+    req: &hyper::Request<B>,
     runtime: Arc<Runtime>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let path = req.uri().path();
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     if segments.len() < 4 || segments[0] != "api" || segments[1] != "v1" {
@@ -352,10 +356,10 @@ async fn handle_hierarchical_post(
     }
 }
 
-async fn handle_hierarchical_delete(
-    req: &Request<Body>,
+async fn handle_hierarchical_delete<B>(
+    req: &hyper::Request<B>,
     runtime: Arc<Runtime>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let path = req.uri().path();
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     if segments.len() < 4 || segments[0] != "api" || segments[1] != "v1" {
@@ -375,10 +379,7 @@ async fn handle_hierarchical_delete(
     }
 }
 
-fn handle_realms_collection(
-    scheme: &str,
-    runtime: Arc<Runtime>,
-) -> Result<Response<Body>, Infallible> {
+fn handle_realms_collection(scheme: &str, runtime: Arc<Runtime>) -> Result<Response, Infallible> {
     let resources = resources_for_scheme(scheme, runtime.as_ref());
     super::json_response(list::collect_realms(&resources))
 }
@@ -387,7 +388,7 @@ fn handle_areas_collection(
     scheme: &str,
     runtime: Arc<Runtime>,
     realm: &str,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let resources = resources_for_scheme(scheme, runtime.as_ref());
     super::json_response(list::collect_areas(&resources, realm))
 }
@@ -397,7 +398,7 @@ fn handle_resources_collection(
     runtime: Arc<Runtime>,
     realm: &str,
     area: &str,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let resources = resources_for_scheme(scheme, runtime.as_ref());
     super::json_response(list::collect_resources(&resources, realm, area))
 }
@@ -409,7 +410,7 @@ fn handle_resource_detail(
     area: &str,
     resource: &str,
     queue_family: Option<u64>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let path = list::ResourcePath {
         realm,
         area,
@@ -446,10 +447,13 @@ fn resources_for_scheme(scheme: &str, runtime: &Runtime) -> Vec<list::ResourceRe
     }
 }
 
-async fn handle_login(
-    req: Request<Body>,
+async fn handle_login<B>(
+    req: hyper::Request<B>,
     runtime: Arc<Runtime>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible>
+where
+    B: hyper::body::Body + Send,
+{
     let admin_auth = runtime.admin_auth();
     if !admin_auth.is_configured() {
         return Ok(super::error_response(
@@ -481,10 +485,10 @@ async fn handle_login(
     Ok(auth::session_created_response(&cookie))
 }
 
-async fn handle_current_session(
-    req: Request<Body>,
+async fn handle_current_session<B>(
+    req: hyper::Request<B>,
     runtime: Arc<Runtime>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let principal = match require_admin(&req, &runtime) {
         Ok(principal) => principal,
         Err(response) => return Ok(*response),
@@ -496,43 +500,37 @@ async fn handle_current_session(
     })
 }
 
-async fn handle_logout(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+async fn handle_logout(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
     let admin_auth = runtime.admin_auth();
     Ok(auth::session_deleted_response(
         &admin_auth.clear_session_cookie(),
     ))
 }
 
-fn require_admin(
-    req: &Request<Body>,
+fn require_admin<B>(
+    req: &hyper::Request<B>,
     runtime: &Arc<Runtime>,
-) -> Result<AdminPrincipal, Box<Response<Body>>> {
+) -> Result<AdminPrincipal, Box<Response>> {
     runtime
         .admin_auth()
         .principal_from_request(req)
         .map_err(|err| Box::new(auth_error_response(err)))
 }
 
-fn auth_error_response(err: AuthFailure) -> Response<Body> {
+fn auth_error_response(err: AuthFailure) -> Response {
     super::error_response(err.status_code(), err.message())
 }
 
-fn parse_optional_queue_family(uri: &hyper::Uri) -> Result<Option<u64>, Box<Response<Body>>> {
+fn parse_optional_queue_family(uri: &hyper::Uri) -> Result<Option<u64>, Box<Response>> {
     parse_optional_u64_param(uri, "family")
 }
 
-fn parse_optional_u64_param(
-    uri: &hyper::Uri,
-    key: &str,
-) -> Result<Option<u64>, Box<Response<Body>>> {
+fn parse_optional_u64_param(uri: &hyper::Uri, key: &str) -> Result<Option<u64>, Box<Response>> {
     list::parse_optional_u64_query_param(uri, key)
         .map_err(|message| Box::new(super::error_response(StatusCode::BAD_REQUEST, &message)))
 }
 
-fn parse_required_string_query_param(
-    uri: &hyper::Uri,
-    key: &str,
-) -> Result<String, Box<Response<Body>>> {
+fn parse_required_string_query_param(uri: &hyper::Uri, key: &str) -> Result<String, Box<Response>> {
     match list::parse_query_params(uri)
         .get(key)
         .cloned()
@@ -546,12 +544,12 @@ fn parse_required_string_query_param(
     }
 }
 
-fn parse_event_limit(uri: &hyper::Uri) -> Result<usize, Box<Response<Body>>> {
+fn parse_event_limit(uri: &hyper::Uri) -> Result<usize, Box<Response>> {
     list::parse_limit_query_param(uri, 20, 50)
         .map_err(|message| Box::new(super::error_response(StatusCode::BAD_REQUEST, &message)))
 }
 
-fn require_queue_family(uri: &hyper::Uri) -> Result<u64, Box<Response<Body>>> {
+fn require_queue_family(uri: &hyper::Uri) -> Result<u64, Box<Response>> {
     match parse_optional_queue_family(uri)? {
         Some(family) => Ok(family),
         None => Err(Box::new(super::error_response(
@@ -561,7 +559,7 @@ fn require_queue_family(uri: &hyper::Uri) -> Result<u64, Box<Response<Body>>> {
     }
 }
 
-fn parse_message_id(value: &str) -> Result<u64, Box<Response<Body>>> {
+fn parse_message_id(value: &str) -> Result<u64, Box<Response>> {
     value.parse::<u64>().map_err(|_| {
         Box::new(super::error_response(
             StatusCode::BAD_REQUEST,
@@ -577,7 +575,7 @@ fn handle_queue_dead_letter_replay(
     area: &str,
     resource: &str,
     message_id: &str,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let family = match require_queue_family(uri) {
         Ok(family) => family,
         Err(response) => return Ok(*response),
@@ -610,7 +608,7 @@ fn handle_queue_dead_letter_purge(
     area: &str,
     resource: &str,
     message_id: &str,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let family = match require_queue_family(uri) {
         Ok(family) => family,
         Err(response) => return Ok(*response),
@@ -636,9 +634,9 @@ fn handle_queue_dead_letter_purge(
     }
 }
 
-fn no_content_response() -> Response<Body> {
-    Response::builder()
+fn no_content_response() -> Response {
+    hyper::http::Response::builder()
         .status(StatusCode::NO_CONTENT)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap()
 }

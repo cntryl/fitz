@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! Stream storage-model tier 3 benchmarks using stress.
 //!
 //! These are bench-only prototype replay measurements for the current Tier 2

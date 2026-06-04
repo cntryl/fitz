@@ -1,4 +1,4 @@
-use bincode::{deserialize, serialize};
+#![allow(deprecated)]
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::create_bench_store;
@@ -13,7 +13,6 @@ use fitz::domains::stream::store::{
 };
 use fitz::domains::stream::StreamReadItem;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -43,6 +42,8 @@ const COMPACT_REALM_PAGE_RUN_REF_KEY_PREFIX: u8 = 0xE7;
 const COMPRESSED_COMPACT_PAGED_REALM_KEY_PREFIX: u8 = 0xE8;
 const COMPACT_RESOURCE_AREA_PAGE_REF_KEY_PREFIX: u8 = 0xE9;
 const COMPACT_RESOURCE_PAGE_KEY_PREFIX: u8 = 0xEA;
+const PAGED_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xB0];
+const PAGED_AREA_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xB1];
 const COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xB2];
 const COMPACT_AREA_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xE4];
 const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xE8];
@@ -96,7 +97,7 @@ struct PagedSeedRecord {
     created_at: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct PagedReplayRecord {
     resource_offset: u64,
     area_offset: u64,
@@ -105,12 +106,12 @@ struct PagedReplayRecord {
     created_at: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct PagedRealmValue {
     records: Vec<PagedReplayRecord>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct PagedAreaLocatorValue {
     page_start_realm_offset: u64,
     slot: u16,
@@ -236,23 +237,176 @@ struct HydrationLocator {
     realm_offset: Option<u64>,
 }
 
+fn read_exact<const N: usize>(bytes: &[u8], offset: &mut usize, context: &str) -> [u8; N] {
+    let end = offset
+        .checked_add(N)
+        .expect("decode replay bench value: offset overflow");
+    assert!(end <= bytes.len(), "{context}: truncated");
+
+    let mut value = [0u8; N];
+    value.copy_from_slice(&bytes[*offset..end]);
+    *offset = end;
+    value
+}
+
+fn read_u16_le(bytes: &[u8], offset: &mut usize, context: &str) -> u16 {
+    u16::from_le_bytes(read_exact(bytes, offset, context))
+}
+
+fn read_u32_le(bytes: &[u8], offset: &mut usize, context: &str) -> u32 {
+    u32::from_le_bytes(read_exact(bytes, offset, context))
+}
+
+fn read_u64_le(bytes: &[u8], offset: &mut usize, context: &str) -> u64 {
+    u64::from_le_bytes(read_exact(bytes, offset, context))
+}
+
 impl PagedRealmValue {
     fn encode(&self) -> Vec<u8> {
-        serialize(self).expect("serialize paged realm value")
+        let mut total_len = PAGED_REALM_PAGE_VALUE_V1_MARKER.len() + 4;
+        for record in &self.records {
+            total_len += 8 + 8 + 8 + 4 + 4;
+            total_len += record.body.len();
+            total_len += record
+                .metadata
+                .as_ref()
+                .map(|metadata| metadata.len())
+                .unwrap_or(0);
+        }
+
+        let mut bytes = Vec::with_capacity(total_len);
+        bytes.extend_from_slice(&PAGED_REALM_PAGE_VALUE_V1_MARKER);
+        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+
+        for record in &self.records {
+            bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
+            bytes.extend_from_slice(&record.area_offset.to_le_bytes());
+            bytes.extend_from_slice(&record.created_at.to_le_bytes());
+            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(
+                &record
+                    .metadata
+                    .as_ref()
+                    .map(|metadata| metadata.len() as u32)
+                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .to_le_bytes(),
+            );
+            bytes.extend_from_slice(&record.body);
+            if let Some(metadata) = &record.metadata {
+                bytes.extend_from_slice(metadata);
+            }
+        }
+
+        bytes
     }
 
     fn decode(bytes: &[u8]) -> Self {
-        deserialize(bytes).expect("deserialize paged realm value")
+        assert!(
+            bytes.len() >= PAGED_REALM_PAGE_VALUE_V1_MARKER.len() + 4,
+            "deserialize paged realm value: header too short"
+        );
+        assert!(
+            bytes.starts_with(&PAGED_REALM_PAGE_VALUE_V1_MARKER),
+            "deserialize paged realm value: missing marker"
+        );
+
+        let mut offset = PAGED_REALM_PAGE_VALUE_V1_MARKER.len();
+        let record_count =
+            read_u32_le(bytes, &mut offset, "deserialize paged realm value") as usize;
+        let mut records = Vec::with_capacity(record_count);
+
+        for _ in 0..record_count {
+            let resource_offset = read_u64_le(bytes, &mut offset, "deserialize paged realm value");
+            let area_offset = read_u64_le(bytes, &mut offset, "deserialize paged realm value");
+            let created_at = read_u64_le(bytes, &mut offset, "deserialize paged realm value");
+            let body_len =
+                read_u32_le(bytes, &mut offset, "deserialize paged realm value") as usize;
+            let metadata_len_raw = read_u32_le(bytes, &mut offset, "deserialize paged realm value");
+            let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
+                None
+            } else {
+                Some(metadata_len_raw as usize)
+            };
+
+            let body_end = offset
+                .checked_add(body_len)
+                .expect("deserialize paged realm value: body length overflow");
+            assert!(
+                body_end <= bytes.len(),
+                "deserialize paged realm value: body truncated"
+            );
+            let body = Bytes::copy_from_slice(&bytes[offset..body_end]);
+            offset = body_end;
+
+            let metadata = if let Some(metadata_len) = metadata_len {
+                let metadata_end = offset
+                    .checked_add(metadata_len)
+                    .expect("deserialize paged realm value: metadata length overflow");
+                assert!(
+                    metadata_end <= bytes.len(),
+                    "deserialize paged realm value: metadata truncated"
+                );
+                let metadata = Bytes::copy_from_slice(&bytes[offset..metadata_end]);
+                offset = metadata_end;
+                Some(metadata)
+            } else {
+                None
+            };
+
+            records.push(PagedReplayRecord {
+                resource_offset,
+                area_offset,
+                body,
+                metadata,
+                created_at,
+            });
+        }
+
+        assert_eq!(
+            offset,
+            bytes.len(),
+            "deserialize paged realm value: trailing bytes"
+        );
+
+        Self { records }
     }
 }
 
 impl PagedAreaLocatorValue {
     fn encode(&self) -> Vec<u8> {
-        serialize(self).expect("serialize paged area locator")
+        let mut bytes = Vec::with_capacity(PAGED_AREA_LOCATOR_VALUE_V1_MARKER.len() + 8 + 2);
+        bytes.extend_from_slice(&PAGED_AREA_LOCATOR_VALUE_V1_MARKER);
+        bytes.extend_from_slice(&self.page_start_realm_offset.to_le_bytes());
+        bytes.extend_from_slice(&self.slot.to_le_bytes());
+        bytes
     }
 
     fn decode(bytes: &[u8]) -> Self {
-        deserialize(bytes).expect("deserialize paged area locator")
+        assert_eq!(
+            bytes.len(),
+            PAGED_AREA_LOCATOR_VALUE_V1_MARKER.len() + 8 + 2,
+            "deserialize paged area locator: invalid length"
+        );
+        assert!(
+            bytes.starts_with(&PAGED_AREA_LOCATOR_VALUE_V1_MARKER),
+            "deserialize paged area locator: missing marker"
+        );
+
+        let mut offset = PAGED_AREA_LOCATOR_VALUE_V1_MARKER.len();
+        let page_start_realm_offset =
+            read_u64_le(bytes, &mut offset, "deserialize paged area locator");
+        let slot = read_u16_le(bytes, &mut offset, "deserialize paged area locator");
+
+        assert_eq!(
+            offset,
+            bytes.len(),
+            "deserialize paged area locator: trailing bytes"
+        );
+
+        Self {
+            page_start_realm_offset,
+            slot,
+        }
     }
 }
 
@@ -3175,6 +3329,93 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
     );
 
     group.finish();
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn should_roundtrip_paged_realm_value_codec() {
+        // Arrange
+        let value = super::PagedRealmValue {
+            records: vec![super::PagedReplayRecord {
+                resource_offset: 11,
+                area_offset: 22,
+                body: super::Bytes::from_static(b"body"),
+                metadata: Some(super::Bytes::from_static(b"meta")),
+                created_at: 33,
+            }],
+        };
+
+        // Act
+        let encoded = value.encode();
+        let decoded = super::PagedRealmValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.records.len(), 1);
+        let record = &decoded.records[0];
+        assert_eq!(record.resource_offset, 11);
+        assert_eq!(record.area_offset, 22);
+        assert_eq!(record.body, super::Bytes::from_static(b"body"));
+        assert_eq!(record.metadata, Some(super::Bytes::from_static(b"meta")));
+        assert_eq!(record.created_at, 33);
+    }
+
+    #[test]
+    #[should_panic(expected = "deserialize paged realm value: missing marker")]
+    fn should_reject_paged_realm_value_with_wrong_marker() {
+        // Arrange
+        let bytes = vec![0, 0xFF, 0, 0, 0, 0];
+
+        // Act
+        let _ = super::PagedRealmValue::decode(&bytes);
+    }
+
+    #[test]
+    #[should_panic(expected = "deserialize paged realm value: body truncated")]
+    fn should_reject_paged_realm_value_with_truncation() {
+        // Arrange
+        let value = super::PagedRealmValue {
+            records: vec![super::PagedReplayRecord {
+                resource_offset: 1,
+                area_offset: 2,
+                body: super::Bytes::from_static(b"abc"),
+                metadata: None,
+                created_at: 3,
+            }],
+        };
+        let mut bytes = value.encode();
+        bytes.pop();
+
+        // Act
+        let _ = PagedRealmValue::decode(&bytes);
+    }
+
+    #[test]
+    fn should_roundtrip_paged_area_locator_value_codec() {
+        // Arrange
+        let value = super::PagedAreaLocatorValue {
+            page_start_realm_offset: 99,
+            slot: 7,
+        };
+
+        // Act
+        let encoded = value.encode();
+        let decoded = super::PagedAreaLocatorValue::decode(&encoded);
+
+        // Assert
+        assert_eq!(decoded.page_start_realm_offset, 99);
+        assert_eq!(decoded.slot, 7);
+    }
+
+    #[test]
+    #[should_panic(expected = "deserialize paged area locator: missing marker")]
+    fn should_reject_paged_area_locator_value_with_wrong_marker() {
+        // Arrange
+        let bytes = vec![0, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        // Act
+        let _ = super::PagedAreaLocatorValue::decode(&bytes);
+    }
 }
 
 criterion_group! {

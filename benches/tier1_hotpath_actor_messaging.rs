@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{DeliveryError, MailboxSink, Router};

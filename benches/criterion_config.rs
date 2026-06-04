@@ -12,8 +12,8 @@
 //! NOTE: For Tier1 and Tier2, set `SamplingMode::Flat` on the benchmark group:
 //! `group.sampling_mode(SamplingMode::Flat)`.
 //!
-//! Local developers can tune Tier1/Tier2 runs with environment variables. The current defaults are optimized
-//! for fast iteration while keeping noise under control.
+//! Local developers can tune Tier1/Tier2 runs with environment variables. The defaults stay short so
+//! local iteration remains snappy, and you can stretch the window when you need steadier numbers.
 
 use criterion::Criterion;
 use std::time::Duration;
@@ -48,19 +48,14 @@ pub fn criterion_config_for_tier1() -> Criterion {
     //
     // Ultra-tight loops: bloom probe, cache lookup, TLV parse.
     // Goal: stable sub-microsecond signals with a fast local developer loop.
-    // These defaults are tuned for local iteration; use env vars to adjust when you need
-    // more stability or are debugging noisy measurements.
-    // Windows has higher system jitter, so we use:
-    // - Longer warmup (CPU ramp-up, cache warmth)
-    // - Longer measurement window (average out timer noise)
-    // - More samples (statistical stability)
-    // - Looser noise threshold (accept Windows jitter)
+    // These defaults are tuned for local iteration; use env vars to widen the window when
+    // you need more stability or are debugging noisy measurements.
     // ---------------------------------------------------------------
     Criterion::default()
-        .warm_up_time(env_duration_ms("BENCH_TIER1_WARMUP_MS", 400))
-        .measurement_time(env_duration_ms("BENCH_TIER1_MEASUREMENT_MS", 1200))
-        .sample_size(env_usize("BENCH_TIER1_SAMPLE_SIZE", 25))
-        .noise_threshold(env_f64("BENCH_TIER1_NOISE_THRESHOLD", 0.04))
+        .warm_up_time(env_duration_ms("BENCH_TIER1_WARMUP_MS", 100))
+        .measurement_time(env_duration_ms("BENCH_TIER1_MEASUREMENT_MS", 500))
+        .sample_size(env_usize("BENCH_TIER1_SAMPLE_SIZE", 12))
+        .noise_threshold(env_f64("BENCH_TIER1_NOISE_THRESHOLD", 0.05))
         .without_plots()
 }
 
@@ -70,12 +65,12 @@ pub fn criterion_config_for_tier2() -> Criterion {
     // Tier 2 — Subsystem (µs → ms)
     //
     // Component-level latencies: memtable insert, block read, WAL append.
-    // Used very frequently during perf tuning.
+    // Used very frequently during perf tuning, so the defaults stay short and predictable.
     // ---------------------------------------------------------------
     Criterion::default()
-        .warm_up_time(env_duration_ms("BENCH_TIER2_WARMUP_MS", 500))
-        .measurement_time(env_duration_ms("BENCH_TIER2_MEASUREMENT_MS", 1500))
-        .sample_size(env_usize("BENCH_TIER2_SAMPLE_SIZE", 20))
-        .noise_threshold(env_f64("BENCH_TIER2_NOISE_THRESHOLD", 0.04))
+        .warm_up_time(env_duration_ms("BENCH_TIER2_WARMUP_MS", 150))
+        .measurement_time(env_duration_ms("BENCH_TIER2_MEASUREMENT_MS", 700))
+        .sample_size(env_usize("BENCH_TIER2_SAMPLE_SIZE", 10))
+        .noise_threshold(env_f64("BENCH_TIER2_NOISE_THRESHOLD", 0.05))
         .without_plots()
 }

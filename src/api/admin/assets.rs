@@ -5,9 +5,10 @@
 //! ETag handling. The request handler delegates here so the rest of the admin
 //! API remains unchanged.
 
+use crate::api::http::{Body, Response};
 use bytes::Bytes;
 use hyper::header::{self, HeaderMap, HeaderValue};
-use hyper::{Body, Request, Response, StatusCode};
+use hyper::StatusCode;
 use once_cell::sync::Lazy;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -39,7 +40,7 @@ static ASSET_INDEX: Lazy<AssetIndex> = Lazy::new(|| {
     }))
 });
 
-pub(crate) fn serve_request(req: &Request<Body>) -> Result<Response<Body>, Infallible> {
+pub(crate) fn serve_request<B>(req: &hyper::Request<B>) -> Result<Response, Infallible> {
     ASSET_INDEX.serve(req.uri().path(), req.headers())
 }
 
@@ -139,7 +140,7 @@ impl AssetIndex {
         Self { assets }
     }
 
-    fn serve(&self, path: &str, headers: &HeaderMap) -> Result<Response<Body>, Infallible> {
+    fn serve(&self, path: &str, headers: &HeaderMap) -> Result<Response, Infallible> {
         let Some(resolved_path) = self.resolve_path(path) else {
             return Ok(super::not_found());
         };
@@ -190,8 +191,8 @@ fn response_for_asset(
     asset: &AssetEntry,
     representation: &AssetRepresentation,
     omit_body: bool,
-) -> Response<Body> {
-    let mut builder = Response::builder()
+) -> Response {
+    let mut builder = hyper::http::Response::builder()
         .status(status)
         .header(header::CACHE_CONTROL, asset.cache_control)
         .header(header::CONTENT_TYPE, asset.content_type)
@@ -212,7 +213,7 @@ fn response_for_asset(
 
     builder
         .body(if omit_body {
-            Body::empty()
+            Body::default()
         } else {
             Body::from(representation.body.clone())
         })
@@ -355,7 +356,6 @@ fn brotli_compress(bytes: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyper::body;
 
     fn test_index() -> AssetIndex {
         AssetIndex::from_sources([
@@ -383,8 +383,8 @@ mod tests {
         path: &str,
         accept_encoding: Option<&str>,
         if_none_match: Option<&str>,
-    ) -> Response<Body> {
-        let mut request = Request::builder().uri(path);
+    ) -> Response {
+        let mut request = hyper::http::Request::builder().uri(path);
         if let Some(accept_encoding) = accept_encoding {
             request = request.header(header::ACCEPT_ENCODING, accept_encoding);
         }
@@ -392,7 +392,7 @@ mod tests {
             request = request.header(header::IF_NONE_MATCH, if_none_match);
         }
 
-        let request = request.body(Body::empty()).unwrap();
+        let request = request.body(Body::default()).unwrap();
         index
             .serve(request.uri().path(), request.headers())
             .unwrap()
@@ -401,7 +401,9 @@ mod tests {
     #[tokio::test]
     async fn should_lookup_asset_by_exact_path() {
         let response = serve(&test_index(), "/assets/app.js", None, None).await;
-        let body = body::to_bytes(response.into_body()).await.unwrap();
+        let body = crate::testkit::body::to_bytes(response.into_body())
+            .await
+            .unwrap();
 
         assert_eq!(
             body.as_ref(),
@@ -424,7 +426,9 @@ mod tests {
     async fn should_fallback_to_index_for_client_routes() {
         let response = serve(&test_index(), "/sessions/123", None, None).await;
         let status = response.status();
-        let body = body::to_bytes(response.into_body()).await.unwrap();
+        let body = crate::testkit::body::to_bytes(response.into_body())
+            .await
+            .unwrap();
 
         assert_eq!(status, StatusCode::OK);
         assert!(std::str::from_utf8(&body)
@@ -441,7 +445,9 @@ mod tests {
             .get(header::CONTENT_TYPE)
             .unwrap()
             .clone();
-        let body = body::to_bytes(response.into_body()).await.unwrap();
+        let body = crate::testkit::body::to_bytes(response.into_body())
+            .await
+            .unwrap();
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(content_type, "text/html; charset=utf-8");
@@ -454,7 +460,9 @@ mod tests {
     async fn should_preserve_missing_root_file_fallback_behavior() {
         let response = serve(&test_index(), "/missing.css", None, None).await;
         let status = response.status();
-        let body = body::to_bytes(response.into_body()).await.unwrap();
+        let body = crate::testkit::body::to_bytes(response.into_body())
+            .await
+            .unwrap();
 
         assert_eq!(status, StatusCode::OK);
         assert!(std::str::from_utf8(&body)
@@ -514,6 +522,12 @@ mod tests {
             response.headers().get(header::CONTENT_ENCODING).unwrap(),
             "gzip"
         );
-        assert_eq!(body::to_bytes(response.into_body()).await.unwrap().len(), 0);
+        assert_eq!(
+            crate::testkit::body::to_bytes(response.into_body())
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
     }
 }

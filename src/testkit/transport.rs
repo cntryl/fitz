@@ -487,7 +487,7 @@ impl TestWebSocketClient {
 
     /// Send a WebSocket binary frame (no length prefix - handled by WebSocket protocol)
     pub async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-        self.ws.send(Message::Binary(frame.to_vec())).await?;
+        self.ws.send(Message::Binary(frame.to_vec().into())).await?;
         Ok(())
     }
 
@@ -502,7 +502,7 @@ impl TestWebSocketClient {
                 // This is a fast synchronous check that avoids async overhead
                 while let Some(msg) = self.pending_frames.pop_front() {
                     match msg {
-                        Message::Binary(data) => return Ok(data),
+                        Message::Binary(data) => return Ok(data.to_vec()),
                         Message::Ping(_) | Message::Pong(_) => continue,
                         Message::Close(_) => return Err("WebSocket closed".into()),
                         Message::Text(_) => continue,
@@ -514,7 +514,7 @@ impl TestWebSocketClient {
                 match self.ws.next().await {
                     Some(Ok(msg)) => {
                         match msg {
-                            Message::Binary(data) => return Ok(data),
+                            Message::Binary(data) => return Ok(data.to_vec()),
                             Message::Ping(_) | Message::Pong(_) => {
                                 // Filter out control frames, try next message
                                 continue;

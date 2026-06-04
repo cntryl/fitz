@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use bytes::Bytes;
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,

@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::{create_bench_schedule_sink, register_session_counting_sink, route_frame};

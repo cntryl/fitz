@@ -2,9 +2,13 @@ use super::{
     drain_session_tasks, record_connection_closed, record_connection_opened, session_tasks,
     websocket::handle_websocket, ListenerHandle,
 };
+use crate::api::http::Request;
 use crate::api::ingress::IngressConfig;
 use crate::boot::{BootConfig, BootResult};
 use crate::session::manager::Ingress;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper_util::rt::TokioIo;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tracing::info;
@@ -87,9 +91,6 @@ async fn handle_http_upgrade(
     runtime: Arc<crate::boot::Runtime>,
     websocket_tasks: super::SessionTasks,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use hyper::server::conn::Http;
-    use hyper::service::service_fn;
-
     stream.set_nodelay(true)?;
 
     runtime.increment_connections();
@@ -110,10 +111,10 @@ async fn handle_http_upgrade(
         }
     });
 
-    let conn = Http::new()
-        .http1_only(true)
-        .http1_keep_alive(true)
-        .serve_connection(stream, service)
+    let io = TokioIo::new(stream);
+    let conn = http1::Builder::new()
+        .keep_alive(true)
+        .serve_connection(io, service)
         .with_upgrades();
 
     if let Err(e) = conn.await {
@@ -126,7 +127,7 @@ async fn handle_http_upgrade(
     Ok(())
 }
 
-fn is_websocket_upgrade(req: &hyper::Request<hyper::Body>) -> bool {
+fn is_websocket_upgrade(req: &Request) -> bool {
     req.headers()
         .get("upgrade")
         .and_then(|value| value.to_str().ok())

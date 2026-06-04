@@ -10,6 +10,7 @@ use fitz::api::admin::{
     QueueDeadLetter, QueueInfo, RpcPendingRequest, RpcWorker, StreamAreaWatermark,
     StreamAreaWatermarkDetail, StreamInfo,
 };
+use fitz::api::http::Body;
 use fitz::boot::domains::{
     DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
     ScheduleDomainSink, StreamDomainSink,
@@ -25,8 +26,9 @@ use fitz::session::{
     Ingress, RuntimeIngress, SessionInfo as RuntimeSessionInfo, SessionMetadata,
     SessionPermissions, TransportKind,
 };
+use fitz::testkit::body;
 use hyper::header::{COOKIE, SET_COOKIE};
-use hyper::{body, Body, Method, Request, StatusCode};
+use hyper::{Method, StatusCode};
 use serial_test::serial;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -564,7 +566,7 @@ fn seed_stream_latency_pressure_data(runtime: &Arc<Runtime>) {
 }
 
 async fn login_cookie(runtime: Arc<Runtime>) -> String {
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::POST)
         .uri("/api/v1/session")
         .header("Content-Type", "application/json")
@@ -591,7 +593,7 @@ async fn login_cookie(runtime: Arc<Runtime>) -> String {
 #[serial]
 async fn should_create_admin_session_and_set_cookie() {
     let runtime = test_runtime();
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::POST)
         .uri("/api/v1/session")
         .header("Content-Type", "application/json")
@@ -616,10 +618,10 @@ async fn should_create_admin_session_and_set_cookie() {
 #[serial]
 async fn should_require_auth_for_hierarchical_route() {
     let runtime = test_runtime();
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/kv/realms")
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
@@ -636,11 +638,11 @@ async fn should_list_kv_realms_with_valid_cookie() {
     seed_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/kv/realms")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
@@ -659,11 +661,11 @@ async fn should_return_area_collection_route() {
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/kv/realms/prod/areas")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
@@ -679,11 +681,11 @@ async fn should_return_resource_collection_route() {
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/queue/realms/prod/areas/jobs/resources")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
@@ -699,11 +701,11 @@ async fn should_return_leaf_resource_detail() {
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/stream/realms/prod/areas/logs/resources/application")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
@@ -728,11 +730,11 @@ async fn should_return_stream_realm_watermarks_given_committed_stream_history() 
     seed_stream_snapshot_data(store);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/stream/realms/prod/watermarks")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -759,11 +761,11 @@ async fn should_return_stream_area_watermarks_given_committed_stream_history() {
     seed_stream_snapshot_data(store);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/stream/realms/prod/areas/logs/watermarks")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -789,11 +791,11 @@ async fn should_return_kv_transactions_under_resource() {
     seed_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/kv/realms/prod/areas/app/resources/users/transactions")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(req, runtime)
@@ -812,11 +814,11 @@ async fn should_return_queue_inflight_under_resource() {
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/inflight")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(req, runtime)
@@ -834,11 +836,11 @@ async fn should_return_queue_detail_with_delayed_and_dead_letter_counts() {
     seed_queue_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -886,11 +888,11 @@ async fn should_return_lease_detail_with_age_and_diagnostics() {
     }]);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/lease/realms/prod/areas/locks/resources/cache")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -943,11 +945,11 @@ async fn should_return_schedule_stats_with_latency_pressure() {
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/schedule/stats")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -1010,11 +1012,11 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
     metrics.counter_add("fitz_schedule_cancel_persistence_failures_total", 7);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/schedule/stats")
         .header(COOKIE, cookie.clone())
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -1062,11 +1064,11 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
         payload["oldest_pending_claim_age_seconds"]
     );
 
-    let metrics_req = Request::builder()
+    let metrics_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/metrics")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
     let metrics_response = fitz::api::admin::handlers::handle_request(metrics_req, runtime)
         .await
@@ -1099,11 +1101,11 @@ async fn should_return_queue_events_with_bounded_timeline() {
     seed_queue_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/events?family=1&limit=3")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -1141,11 +1143,11 @@ async fn should_return_queue_comparison_between_two_resource_snapshots() {
     seed_queue_compare_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/compare?family=1&against_realm=prod&against_area=jobs&against_resource=backup&against_family=2")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -1180,11 +1182,11 @@ async fn should_return_queue_dead_letters_under_resource() {
     seed_queue_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -1208,14 +1210,14 @@ async fn should_reject_dead_letter_replay_given_missing_family_query_param() {
     let message_id = seed_dead_lettered_queue_message(store);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::POST)
         .uri(format!(
             "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{}/replay",
             message_id
         ))
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -1235,34 +1237,34 @@ async fn should_replay_dead_letter_given_family_targeted_admin_request() {
     let message_id = seed_dead_lettered_queue_message(store);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let replay_req = Request::builder()
+    let replay_req = hyper::http::Request::builder()
         .method(Method::POST)
         .uri(format!(
             "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{}/replay?family=1",
             message_id
         ))
         .header(COOKIE, cookie.clone())
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
     let replay_response = fitz::api::admin::handlers::handle_request(replay_req, runtime.clone())
         .await
         .unwrap();
-    let detail_req = Request::builder()
+    let detail_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker?family=1")
         .header(COOKIE, cookie.clone())
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
     let detail_response = fitz::api::admin::handlers::handle_request(detail_req, runtime.clone())
         .await
         .unwrap();
-    let dead_letters_req = Request::builder()
+    let dead_letters_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters?family=1")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
     let dead_letters_response =
         fitz::api::admin::handlers::handle_request(dead_letters_req, runtime)
@@ -1293,34 +1295,34 @@ async fn should_purge_dead_letter_given_family_targeted_admin_request() {
     let message_id = seed_dead_lettered_queue_message(store);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let purge_req = Request::builder()
+    let purge_req = hyper::http::Request::builder()
         .method(Method::DELETE)
         .uri(format!(
             "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{}?family=1",
             message_id
         ))
         .header(COOKIE, cookie.clone())
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
     let purge_response = fitz::api::admin::handlers::handle_request(purge_req, runtime.clone())
         .await
         .unwrap();
-    let detail_req = Request::builder()
+    let detail_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker?family=1")
         .header(COOKIE, cookie.clone())
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
     let detail_response = fitz::api::admin::handlers::handle_request(detail_req, runtime.clone())
         .await
         .unwrap();
-    let dead_letters_req = Request::builder()
+    let dead_letters_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters?family=1")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
     let dead_letters_response =
         fitz::api::admin::handlers::handle_request(dead_letters_req, runtime)
@@ -1350,11 +1352,11 @@ async fn should_return_notice_subscriptions_under_resource() {
     seed_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/notice/realms/prod/areas/events/resources/orders/subscriptions")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(req, runtime)
@@ -1374,11 +1376,11 @@ async fn should_return_rpc_workers_under_operation() {
     seed_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/rpc/realms/prod/areas/api/resources/users/operations/get/workers")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(req, runtime)
@@ -1399,11 +1401,11 @@ async fn should_return_rpc_pending_requests() {
     seed_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/rpc/pending?realm=prod")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -1428,11 +1430,11 @@ async fn should_return_rpc_events_with_worker_registration_and_pending_transitio
     seed_snapshot_data(&runtime);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/rpc/realms/prod/areas/api/resources/users/events?limit=3")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -1469,11 +1471,11 @@ async fn should_return_queue_domain_stats() {
     metrics.counter_add("fitz_queue_notify_drops_total", 6);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/queue/stats")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -1538,11 +1540,11 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/queue/stats")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -1590,11 +1592,11 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
             .contains("queue complete rejection")));
     assert!(payload["operations_per_second"].as_f64().unwrap_or(0.0) > 0.0);
 
-    let metrics_req = Request::builder()
+    let metrics_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/metrics")
         .header(COOKIE, login_cookie(runtime.clone()).await)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
     let metrics_response = fitz::api::admin::handlers::handle_request(metrics_req, runtime)
         .await
@@ -1647,17 +1649,17 @@ async fn should_return_kv_failure_stats_given_recorded_metrics() {
     metrics.counter_add("fitz_kv_invalid_transaction_rejects_total", 7);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let kv_req = Request::builder()
+    let kv_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/kv/stats")
         .header(COOKIE, cookie.clone())
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
-    let global_req = Request::builder()
+    let global_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/stats")
         .header(COOKIE, cookie.clone())
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -1698,11 +1700,11 @@ async fn should_return_kv_failure_stats_given_recorded_metrics() {
         invalid_transaction_rejects_before + 7
     );
 
-    let metrics_req = Request::builder()
+    let metrics_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/metrics")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
     let metrics_response = fitz::api::admin::handlers::handle_request(metrics_req, runtime)
         .await
@@ -1818,17 +1820,17 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
-    let rpc_req = Request::builder()
+    let rpc_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/rpc/stats")
         .header(COOKIE, cookie.clone())
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
-    let lease_req = Request::builder()
+    let lease_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/lease/stats")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -1934,11 +1936,11 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
             > 0.0
     );
 
-    let metrics_req = Request::builder()
+    let metrics_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/metrics")
         .header(COOKIE, login_cookie(runtime.clone()).await)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
     let metrics_response = fitz::api::admin::handlers::handle_request(metrics_req, runtime)
         .await
@@ -2009,11 +2011,11 @@ async fn should_return_rpc_data_loss_risk_given_late_response_drops() {
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/rpc/stats")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -2064,11 +2066,11 @@ async fn should_return_stream_domain_stats_given_recorded_operations() {
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/stream/stats")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -2124,11 +2126,11 @@ async fn should_classify_stream_latency_pressure_given_recorded_latency_tail() {
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/stream/stats")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -2212,17 +2214,17 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
-    let stream_req = Request::builder()
+    let stream_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/stream/stats")
         .header(COOKIE, cookie.clone())
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
-    let notice_req = Request::builder()
+    let notice_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/notice/stats")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -2332,11 +2334,11 @@ async fn should_export_notice_churn_and_concentration_metrics_given_recorded_not
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/metrics")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -2383,11 +2385,11 @@ async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics()
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/metrics")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -2445,11 +2447,11 @@ async fn should_export_stream_watermark_series_given_committed_stream_history() 
     seed_stream_snapshot_data(store);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/metrics")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -2503,11 +2505,11 @@ async fn should_return_global_stats() {
     }]);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/stats")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -2601,17 +2603,17 @@ async fn should_surface_router_overload_counters_in_global_stats_and_metrics() {
     metrics.counter_add("fitz_router_high_lane_backpressure_total", 2);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let stats_req = Request::builder()
+    let stats_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/stats")
         .header(COOKIE, cookie.clone())
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
-    let metrics_req = Request::builder()
+    let metrics_req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/metrics")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -2659,11 +2661,11 @@ async fn should_surface_router_overload_in_global_troubleshooting() {
     metrics.counter_add("fitz_router_backpressure_total", 5);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/troubleshooting")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -2733,11 +2735,11 @@ async fn should_return_global_troubleshooting_guidance() {
     }]);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/troubleshooting")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -2810,11 +2812,11 @@ async fn should_return_exact_rpc_operation_detail_counts() {
     ]);
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/rpc/realms/prod/areas/api/resources/users/operations/get")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     // Act
@@ -2862,11 +2864,11 @@ async fn should_return_sessions_collection_only() {
 
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/sessions")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(req, runtime)
@@ -2894,11 +2896,11 @@ async fn should_reject_removed_session_detail_route() {
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;
 
-    let req = Request::builder()
+    let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/sessions/123")
         .header(COOKIE, cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(req, runtime)

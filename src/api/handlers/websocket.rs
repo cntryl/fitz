@@ -1,3 +1,4 @@
+use crate::api::http::{Body, Request, Response};
 use crate::api::ingress::IngressConfig;
 use crate::session::manager::Ingress;
 use crate::session::{
@@ -19,12 +20,12 @@ fn websocket_close_reason(result: &Result<(), String>) -> CloseReason {
 }
 
 pub(super) async fn handle_websocket(
-    req: hyper::Request<hyper::Body>,
+    req: Request,
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
     runtime: Arc<crate::boot::Runtime>,
     websocket_tasks: super::SessionTasks,
-) -> Result<hyper::Response<hyper::Body>, std::convert::Infallible> {
+) -> Result<Response, std::convert::Infallible> {
     // Note: increment_connections / decrement_connections are handled by the
     // HTTP listener wrapper (handle_http_upgrade) — no additional counter here.
     match hyper_tungstenite::upgrade(req, None) {
@@ -52,9 +53,9 @@ pub(super) async fn handle_websocket(
         }
         Err(e) => {
             tracing::debug!("WebSocket upgrade rejected: {}", e);
-            Ok(hyper::Response::builder()
+            Ok(hyper::http::Response::builder()
                 .status(400)
-                .body(hyper::Body::from("Bad WebSocket upgrade request"))
+                .body(Body::from("Bad WebSocket upgrade request"))
                 .unwrap())
         }
     }
@@ -128,10 +129,7 @@ where
                 frame_len = frame.len(),
                 "WS outbound: sending frame to wire"
             );
-            // `frame.into()` avoids the unconditional heap copy of `to_vec()` —
-            // Vec<u8> implements From<Bytes>, and reuses the allocation when the
-            // Bytes arc has no other active references.
-            if let Err(e) = ws_sender.send(Message::Binary(frame.into())).await {
+            if let Err(e) = ws_sender.send(Message::Binary(frame)).await {
                 tracing::error!(session_id = ws_session_id, error = %e, "WS outbound send error");
                 break;
             }
@@ -148,7 +146,7 @@ where
 
         match msg_result {
             Ok(Message::Binary(data)) => {
-                let frame = Bytes::from(data);
+                let frame = data;
                 runtime.increment_messages_received();
                 ingress.record_frame_received(session_id);
                 tracing::debug!(

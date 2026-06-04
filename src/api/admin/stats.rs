@@ -10,8 +10,8 @@
 //! - GET /api/v1/lease/stats - Lease domain statistics
 
 use super::troubleshooting;
+use crate::api::http::Response;
 use crate::boot::Runtime;
-use hyper::{Body, Response};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -346,14 +346,12 @@ pub(crate) fn build_global_troubleshooting(
 }
 
 /// Handle /admin/stats endpoint
-pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
     crate::api::admin::json_response(build_global_stats(runtime.as_ref()))
 }
 
 /// Handle /admin/troubleshooting endpoint
-pub async fn handle_global_troubleshooting(
-    runtime: Arc<Runtime>,
-) -> Result<Response<Body>, Infallible> {
+pub async fn handle_global_troubleshooting(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
     super::json_response(build_global_troubleshooting(runtime.as_ref()))
 }
 
@@ -361,7 +359,7 @@ pub async fn handle_global_troubleshooting(
 pub async fn handle_domain_stats(
     runtime: Arc<Runtime>,
     domain: &str,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let troubleshooting::TroubleshootingSnapshot {
         kv,
         stream,
@@ -387,7 +385,7 @@ pub async fn handle_domain_stats(
 async fn handle_kv_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     crate::api::admin::json_response(KvStats {
         transactions_active: runtime.kv_transactions_active(),
         keys_total: runtime.kv_keys_total(),
@@ -402,7 +400,7 @@ async fn handle_kv_stats(
 async fn handle_stream_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     crate::api::admin::json_response(StreamStats {
         streams_active: runtime.stream_active(),
         append_sessions_active: runtime.stream_append_sessions_active(),
@@ -425,7 +423,7 @@ async fn handle_stream_stats(
 async fn handle_notice_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     crate::api::admin::json_response(NoticeStats {
         subscriptions_active: runtime.notice_subscriptions_active(),
         routes_active: runtime.notice_routes_active(),
@@ -444,7 +442,7 @@ async fn handle_notice_stats(
 async fn handle_queue_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     crate::api::admin::json_response(QueueStats {
         messages_ready: runtime.queue_messages_ready(),
         messages_delayed: runtime.queue_messages_delayed(),
@@ -475,7 +473,7 @@ async fn handle_queue_stats(
 async fn handle_rpc_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     crate::api::admin::json_response(RpcStats {
         workers_registered: runtime.rpc_workers_registered(),
         requests_pending: runtime.rpc_requests_pending(),
@@ -505,7 +503,7 @@ async fn handle_rpc_stats(
 async fn handle_lease_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     crate::api::admin::json_response(LeaseStats {
         leases_active: runtime.lease_active(),
         waiter_depth: runtime.lease_waiter_depth(),
@@ -525,7 +523,7 @@ async fn handle_lease_stats(
 async fn handle_schedule_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     crate::api::admin::json_response(ScheduleStats {
         schedules_active: runtime.schedule_active(),
         executions_per_minute: runtime.schedule_executions_per_minute(),

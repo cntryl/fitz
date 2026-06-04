@@ -1,7 +1,8 @@
 //! Kubernetes probe handlers (liveness, readiness, startup)
 
+use crate::api::http::{Body, Response};
 use crate::boot::Runtime;
-use hyper::{Body, Response, StatusCode};
+use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -31,10 +32,10 @@ pub struct StartupStatus {
 
 /// Liveness probe - is the application alive?
 /// Returns 503 only if deadlocked/panicked
-pub async fn handle_liveness() -> Result<Response<Body>, Infallible> {
+pub async fn handle_liveness() -> Result<Response, Infallible> {
     let response = HealthStatus { status: "ok" };
 
-    Ok(Response::builder()
+    Ok(hyper::http::Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
         .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -42,7 +43,7 @@ pub async fn handle_liveness() -> Result<Response<Body>, Infallible> {
 }
 
 /// Readiness probe - is the application ready to accept traffic?
-pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
     let storage_ready = runtime.is_storage_ready();
     let domains_ready = runtime.are_domains_ready();
 
@@ -55,7 +56,7 @@ pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, I
             },
         };
 
-        return Ok(Response::builder()
+        return Ok(hyper::http::Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .header("Content-Type", "application/json")
             .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -70,7 +71,7 @@ pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, I
         },
     };
 
-    Ok(Response::builder()
+    Ok(hyper::http::Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
         .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -78,11 +79,11 @@ pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, I
 }
 
 /// Startup probe - has the application completed startup?
-pub async fn handle_startup(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+pub async fn handle_startup(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
     if !runtime.is_startup_complete() {
         let response = HealthStatus { status: "starting" };
 
-        return Ok(Response::builder()
+        return Ok(hyper::http::Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .header("Content-Type", "application/json")
             .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -94,7 +95,7 @@ pub async fn handle_startup(runtime: Arc<Runtime>) -> Result<Response<Body>, Inf
         startup_time_seconds: runtime.startup_duration().as_secs_f64(),
     };
 
-    Ok(Response::builder()
+    Ok(hyper::http::Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
         .body(Body::from(serde_json::to_string(&response).unwrap()))
@@ -102,6 +103,6 @@ pub async fn handle_startup(runtime: Arc<Runtime>) -> Result<Response<Body>, Inf
 }
 
 /// Legacy health check
-pub async fn handle_health() -> Result<Response<Body>, Infallible> {
+pub async fn handle_health() -> Result<Response, Infallible> {
     handle_liveness().await
 }

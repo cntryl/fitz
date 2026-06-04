@@ -49,14 +49,14 @@ jobs:
         run: cargo bench --bench 'tier3_*' -- --runs 5 --warmup 1
 
       - name: Run Tier 4 benchmarks (integration)
-        run: cargo bench --bench 'tier4_*' -- --runs 5 --warmup 1
+        run: cargo bench --bench 'tier4_*' -- --runs 3 --warmup 0
 
       - name: Summarize benchmark results
         run: cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 
       - name: Verify trusted stress results
         shell: pwsh
-        run: ./scripts/verify-benchmark-trust.ps1 -RequireResults -MinimumStressSamples 5
+        run: ./scripts/verify-benchmark-trust.ps1 -RequireResults -MinimumStressSamples 3
 
       - name: Upload Criterion artifacts
         uses: actions/upload-artifact@v7

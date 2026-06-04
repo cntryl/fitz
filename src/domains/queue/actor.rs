@@ -84,6 +84,30 @@ pub(crate) mod timers;
 
 type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 
+const CACHED_RESPONSE_VERSION: u8 = 1;
+const CACHED_RESPONSE_ACKED: u8 = 0;
+const CACHED_RESPONSE_NOT_FOUND: u8 = 1;
+
+fn encode_cached_response(response: &QueueResponse) -> Option<Vec<u8>> {
+    match response {
+        QueueResponse::Acked => Some(vec![CACHED_RESPONSE_VERSION, CACHED_RESPONSE_ACKED]),
+        QueueResponse::NotFound => Some(vec![CACHED_RESPONSE_VERSION, CACHED_RESPONSE_NOT_FOUND]),
+        _ => None,
+    }
+}
+
+fn decode_cached_response(bytes: &[u8]) -> Result<QueueResponse, String> {
+    match bytes {
+        [version, tag] if *version == CACHED_RESPONSE_VERSION => match *tag {
+            CACHED_RESPONSE_ACKED => Ok(QueueResponse::Acked),
+            CACHED_RESPONSE_NOT_FOUND => Ok(QueueResponse::NotFound),
+            other => Err(format!("Unknown cached response tag {}", other)),
+        },
+        [version, ..] => Err(format!("Unknown cached response version {}", version)),
+        _ => Err("Cached response payload too short".to_string()),
+    }
+}
+
 /// Durable queue record (persisted to Midge)
 ///
 /// All time values use SystemTime::UNIX_EPOCH (milliseconds).
@@ -2484,7 +2508,7 @@ impl QueueActor {
                 "Queue COMPLETE deduplicated (returning cached response)"
             );
             // Deserialize cached response
-            match bincode::deserialize(&cached_response) {
+            match decode_cached_response(&cached_response) {
                 Ok(resp) => return resp,
                 Err(e) => {
                     tracing::warn!(
@@ -2503,7 +2527,7 @@ impl QueueActor {
             None => {
                 let response = QueueResponse::NotFound;
                 // Cache negative response (prevents retries from hitting storage)
-                if let Ok(bytes) = bincode::serialize(&response) {
+                if let Some(bytes) = encode_cached_response(&response) {
                     self.dedup_store.record(dedup_key, bytes);
                 }
                 return response;
@@ -2614,7 +2638,7 @@ impl QueueActor {
         let response = QueueResponse::Acked;
 
         // Cache successful completion response
-        if let Ok(bytes) = bincode::serialize(&response) {
+        if let Some(bytes) = encode_cached_response(&response) {
             self.dedup_store.record(dedup_key, bytes);
         }
 

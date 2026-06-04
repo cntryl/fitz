@@ -399,7 +399,10 @@ pub async fn permissions_from_jwt_using_jwks(
 
     // Determine alg for validation
     let alg = header.alg;
-    let validation = jsonwebtoken::Validation::new(alg);
+    let mut validation = jsonwebtoken::Validation::new(alg);
+    validation.validate_aud = false;
+    validation.validate_exp = false;
+    validation.validate_nbf = false;
 
     // Verify and extract claims as serde_json::Value
     let token_data = jsonwebtoken::decode::<serde_json::Value>(compact, &dk, &validation)

@@ -1,7 +1,9 @@
+use fitz::api::http::Body;
 use fitz::boot::Runtime;
 use fitz::runtime::Router;
+use fitz::testkit::body;
 use hyper::header::{self, ETAG};
-use hyper::{body, Body, Method, Request, StatusCode};
+use hyper::{Method, StatusCode};
 use serial_test::serial;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -36,10 +38,10 @@ async fn should_serve_embedded_ui_without_runtime_files() {
     let runtime = test_runtime();
     let temp_dir = tempfile::tempdir().expect("create temporary working directory");
     let _cwd_guard = CurrentDirGuard::change_to(temp_dir.path());
-    let request = Request::builder()
+    let request = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/")
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(request, runtime)
@@ -63,11 +65,11 @@ async fn should_serve_embedded_ui_without_runtime_files() {
 #[serial]
 async fn should_serve_embedded_svg_with_etag_and_compression() {
     let runtime = test_runtime();
-    let asset_request = Request::builder()
+    let asset_request = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/favicon.svg")
         .header(header::ACCEPT_ENCODING, "gzip")
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let asset_response = fitz::api::admin::handlers::handle_request(asset_request, runtime.clone())
@@ -100,12 +102,12 @@ async fn should_serve_embedded_svg_with_etag_and_compression() {
     assert_eq!(asset_vary, "Accept-Encoding");
     assert!(!asset_body.is_empty());
 
-    let not_modified_request = Request::builder()
+    let not_modified_request = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/favicon.svg")
         .header(header::ACCEPT_ENCODING, "gzip")
         .header(header::IF_NONE_MATCH, etag)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
     let not_modified_response =
         fitz::api::admin::handlers::handle_request(not_modified_request, runtime)
@@ -126,10 +128,10 @@ async fn should_serve_client_routes_from_embedded_index() {
     let runtime = test_runtime();
     let temp_dir = tempfile::tempdir().expect("create temporary working directory");
     let _cwd_guard = CurrentDirGuard::change_to(temp_dir.path());
-    let request = Request::builder()
+    let request = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/sessions/123")
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(request, runtime)
@@ -155,10 +157,10 @@ async fn should_fallback_to_embedded_index_for_missing_asset_paths() {
     let runtime = test_runtime();
     let temp_dir = tempfile::tempdir().expect("create temporary working directory");
     let _cwd_guard = CurrentDirGuard::change_to(temp_dir.path());
-    let request = Request::builder()
+    let request = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/assets/does-not-exist.js")
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(request, runtime)

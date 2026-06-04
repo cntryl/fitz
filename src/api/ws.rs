@@ -67,7 +67,7 @@ impl WebSocketHandler {
                 let _handoff_latency = crate::observability::ScopedHistogramUs::new(
                     obs::METRIC_WS_CHANNEL_HANDOFF_LATENCY,
                 );
-                let frame = Bytes::from(data);
+                let frame = data;
                 debug!(
                     session_id = self.session_id,
                     frame_len = frame.len(),
@@ -308,7 +308,9 @@ mod tests {
         let handler = WebSocketHandler::new(ingress, config, tx, 7);
 
         // Act
-        let result = handler.handle_message(Message::Binary(vec![1, 2, 3])).await;
+        let result = handler
+            .handle_message(Message::Binary(vec![1, 2, 3].into()))
+            .await;
 
         // Assert
         assert_eq!(rx.try_recv().unwrap(), (7, Bytes::from_static(b"occupied")));

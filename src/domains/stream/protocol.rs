@@ -3,6 +3,7 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
+use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{route_exact_quad, Route, RouteFamily};
 
 /// Parse a stream route into (realm, area, resource, operation).
@@ -121,7 +122,7 @@ pub struct StreamRecord {
     /// index is not consulted.
     ///
     /// Note: changing this to `u64` would require a storage migration because the
-    /// on-disk `ResourceValue` encodes this as `Option<u64>` via bincode.
+    /// on-disk `ResourceValue` encodes this as `Option<u64>`.
     pub realm_offset: Option<u64>,
 
     /// Event payload
@@ -167,6 +168,47 @@ pub enum StreamFilterClause {
 }
 
 impl StreamFilterClause {
+    fn encode_into(&self, enc: &mut PayloadEncoder) {
+        match self {
+            Self::Equals(value) => {
+                enc.put_u8(0);
+                enc.put_string(value);
+            }
+            Self::NotEquals(value) => {
+                enc.put_u8(1);
+                enc.put_string(value);
+            }
+            Self::StartsWith(prefix) => {
+                enc.put_u8(2);
+                enc.put_string(prefix);
+            }
+            Self::AnyOf(values) => {
+                enc.put_u8(3);
+                enc.put_u32(values.len() as u32);
+                for value in values {
+                    enc.put_string(value);
+                }
+            }
+        }
+    }
+
+    fn try_decode(dec: &mut PayloadDecoder) -> Result<Self, String> {
+        match dec.get_u8()? {
+            0 => Ok(Self::Equals(dec.get_string()?)),
+            1 => Ok(Self::NotEquals(dec.get_string()?)),
+            2 => Ok(Self::StartsWith(dec.get_string()?)),
+            3 => {
+                let count = dec.get_u32()? as usize;
+                let mut values = Vec::with_capacity(count);
+                for _ in 0..count {
+                    values.push(dec.get_string()?);
+                }
+                Ok(Self::AnyOf(values))
+            }
+            other => Err(format!("Unknown stream filter clause {}", other)),
+        }
+    }
+
     fn matches(&self, discriminator: &str) -> bool {
         match self {
             Self::Equals(value) => discriminator == value,
@@ -184,6 +226,40 @@ pub struct StreamFilterSet {
 }
 
 impl StreamFilterSet {
+    const VERSION_MARKER: [u8; 2] = [0, 0xF1];
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut enc = PayloadEncoder::with_capacity(2 + 4 + self.clauses.len() * 8);
+        enc.put_u8(Self::VERSION_MARKER[0]);
+        enc.put_u8(Self::VERSION_MARKER[1]);
+        enc.put_u32(self.clauses.len() as u32);
+        for clause in &self.clauses {
+            clause.encode_into(&mut enc);
+        }
+        enc.finish()
+    }
+
+    pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
+        let mut dec = PayloadDecoder::new(bytes);
+        let marker0 = dec.get_u8()?;
+        let marker1 = dec.get_u8()?;
+        if [marker0, marker1] != Self::VERSION_MARKER {
+            return Err("decode stream filter set: missing marker".to_string());
+        }
+
+        let clause_count = dec.get_u32()? as usize;
+        let mut clauses = Vec::with_capacity(clause_count);
+        for _ in 0..clause_count {
+            clauses.push(StreamFilterClause::try_decode(&mut dec)?);
+        }
+
+        if !dec.is_complete() {
+            return Err("decode stream filter set: trailing bytes".to_string());
+        }
+
+        Ok(Self { clauses })
+    }
+
     pub fn matches(&self, discriminator: Option<&str>) -> bool {
         let discriminator = discriminator.unwrap_or("");
         self.clauses
@@ -613,5 +689,37 @@ mod tests {
 
         // Assert
         assert!(!result);
+    }
+
+    #[test]
+    fn should_roundtrip_stream_filter_set_codec() {
+        // Arrange
+        let filter = StreamFilterSet {
+            clauses: vec![
+                StreamFilterClause::Equals("alpha".to_string()),
+                StreamFilterClause::NotEquals("beta".to_string()),
+                StreamFilterClause::StartsWith("proj.".to_string()),
+                StreamFilterClause::AnyOf(vec!["one".to_string(), "two".to_string()]),
+            ],
+        };
+
+        // Act
+        let encoded = filter.encode();
+        let decoded = StreamFilterSet::try_decode(&encoded).expect("decode stream filter");
+
+        // Assert
+        assert_eq!(decoded, filter);
+    }
+
+    #[test]
+    fn should_reject_stream_filter_set_with_wrong_marker() {
+        // Arrange
+        let encoded = vec![0, 0, 0, 0];
+
+        // Act
+        let result = StreamFilterSet::try_decode(&encoded);
+
+        // Assert
+        assert!(result.is_err());
     }
 }

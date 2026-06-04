@@ -1,7 +1,5 @@
-use bincode::{deserialize, serialize};
 use bytes::Bytes;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
-use serde::{Deserialize, Serialize};
 
 use super::store::{EventPayload, StreamStorageLayout};
 use crate::utils::storage_key::{self, DomainKeyspace};
@@ -64,6 +62,49 @@ fn stream_kind_key(realm: &str, kind: KeyPrefix, extra_capacity: usize) -> Vec<u
 
 pub fn stream_key_suffix(key: &[u8]) -> &[u8] {
     storage_key::strip_domain_prefix(key, DomainKeyspace::Stream).unwrap_or(key)
+}
+
+fn encode_single_u64_value(marker: u8, value: u64) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(9);
+    bytes.push(marker);
+    bytes.extend_from_slice(&value.to_le_bytes());
+    bytes
+}
+
+fn decode_single_u64_value(bytes: &[u8], marker: u8, context: &str) -> Result<u64, String> {
+    if bytes.len() != 9 {
+        return Err(format!("{context}: invalid length"));
+    }
+    if bytes[0] != marker {
+        return Err(format!("{context}: missing marker"));
+    }
+
+    let mut value = [0u8; 8];
+    value.copy_from_slice(&bytes[1..9]);
+    Ok(u64::from_le_bytes(value))
+}
+
+fn encode_two_u64_value(marker: u8, first: u64, second: u64) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(17);
+    bytes.push(marker);
+    bytes.extend_from_slice(&first.to_le_bytes());
+    bytes.extend_from_slice(&second.to_le_bytes());
+    bytes
+}
+
+fn decode_two_u64_value(bytes: &[u8], marker: u8, context: &str) -> Result<(u64, u64), String> {
+    if bytes.len() != 17 {
+        return Err(format!("{context}: invalid length"));
+    }
+    if bytes[0] != marker {
+        return Err(format!("{context}: missing marker"));
+    }
+
+    let mut first = [0u8; 8];
+    first.copy_from_slice(&bytes[1..9]);
+    let mut second = [0u8; 8];
+    second.copy_from_slice(&bytes[9..17]);
+    Ok((u64::from_le_bytes(first), u64::from_le_bytes(second)))
 }
 
 /// Encodes a resource stream key
@@ -292,9 +333,8 @@ pub fn encode_stream_layout_marker_key() -> Vec<u8> {
 /// Value stored in resource index (full record)
 ///
 /// `area_offset` and `realm_offset` are always written as `Some` at commit time.
-/// They are typed as `Option<u64>` solely for bincode format compatibility with
-/// existing on-disk data. Changing these to `u64` would be a breaking storage
-/// migration and must not be done without a migration plan.
+/// They remain options in memory so the record shape stays explicit at the
+/// storage boundary.
 #[derive(Debug, Clone)]
 pub struct ResourceValue {
     pub resource_offset: u64,
@@ -305,16 +345,6 @@ pub struct ResourceValue {
     pub area_offset: Option<u64>,
     /// Realm offset — always `Some` when written at commit time.
     pub realm_offset: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LegacyResourceValue {
-    resource_offset: u64,
-    body: Bytes,
-    metadata: Option<Bytes>,
-    created_at: u64,
-    area_offset: Option<u64>,
-    realm_offset: Option<u64>,
 }
 
 /// Value stored in area index (covering index with full event)
@@ -386,29 +416,6 @@ pub struct CompressedCompactRealmPageValue {
     pub records: Vec<CompactRealmPageRecord>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LegacyAreaValue {
-    realm: String,
-    area: String,
-    resource: String,
-    resource_offset: u64,
-    body: Bytes,
-    metadata: Option<Bytes>,
-    created_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LegacyRealmValue {
-    realm: String,
-    area: String,
-    area_offset: u64,
-    resource: String,
-    resource_offset: u64,
-    body: Bytes,
-    metadata: Option<Bytes>,
-    created_at: u64,
-}
-
 const AREA_VALUE_V2_MARKER: [u8; 2] = [0, 0xA1];
 const REALM_VALUE_V2_MARKER: [u8; 2] = [0, 0xB1];
 const COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xB2];
@@ -426,32 +433,32 @@ const OPTIONAL_OFFSET_ABSENT: u64 = u64::MAX;
 pub const REALM_PAGE_RECORD_LIMIT: usize = 64;
 
 /// Watermark value
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WatermarkValue {
     pub watermark: u64,
 }
 
 /// Offset counter value (metadata, not subject to TTL)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OffsetCounterValue {
     pub next_offset: u64,
 }
 
 /// Durable metadata for a resource stream.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResourceMetaValue {
     pub next_offset: u64,
     pub committed_size_bytes: u64,
 }
 
 /// Durable next area offset counter.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AreaCounterValue {
     pub next_offset: u64,
 }
 
 /// Durable next realm offset counter.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RealmCounterValue {
     pub next_offset: u64,
 }
@@ -558,20 +565,7 @@ impl ResourceValue {
     }
 
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.starts_with(&RESOURCE_VALUE_V2_MARKER) {
-            return Self::decode_v2(bytes);
-        }
-
-        let legacy: LegacyResourceValue = deserialize(bytes)
-            .map_err(|error| format!("deserialize legacy resource value: {error}"))?;
-        Ok(Self {
-            resource_offset: legacy.resource_offset,
-            body: legacy.body,
-            metadata: legacy.metadata,
-            created_at: legacy.created_at,
-            area_offset: legacy.area_offset,
-            realm_offset: legacy.realm_offset,
-        })
+        Self::decode_v2(bytes)
     }
 
     pub fn decode(bytes: &[u8]) -> Self {
@@ -579,6 +573,9 @@ impl ResourceValue {
     }
 
     fn decode_v2(bytes: &[u8]) -> Result<Self, String> {
+        if !bytes.starts_with(&RESOURCE_VALUE_V2_MARKER) {
+            return Err("decode resource value: missing marker".to_string());
+        }
         if bytes.len() < 42 {
             return Err("decode resource value: header too short".to_string());
         }
@@ -653,18 +650,7 @@ impl AreaValue {
     }
 
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.starts_with(&AREA_VALUE_V2_MARKER) {
-            return Self::decode_v2(bytes);
-        }
-
-        let legacy: LegacyAreaValue = deserialize(bytes)
-            .map_err(|error| format!("deserialize legacy area value: {error}"))?;
-        Ok(Self {
-            resource_offset: legacy.resource_offset,
-            body: legacy.body,
-            metadata: legacy.metadata,
-            created_at: legacy.created_at,
-        })
+        Self::decode_v2(bytes)
     }
 
     pub fn decode(bytes: &[u8]) -> Self {
@@ -672,6 +658,9 @@ impl AreaValue {
     }
 
     fn decode_v2(bytes: &[u8]) -> Result<Self, String> {
+        if !bytes.starts_with(&AREA_VALUE_V2_MARKER) {
+            return Err("decode area value: missing marker".to_string());
+        }
         if bytes.len() < 26 {
             return Err("decode area value: header too short".to_string());
         }
@@ -721,19 +710,7 @@ impl AreaValue {
 
 impl RealmValue {
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.starts_with(&REALM_VALUE_V2_MARKER) {
-            return Self::decode_v2(bytes);
-        }
-
-        let legacy: LegacyRealmValue = deserialize(bytes)
-            .map_err(|error| format!("deserialize legacy realm value: {error}"))?;
-        Ok(Self {
-            area_offset: legacy.area_offset,
-            resource_offset: legacy.resource_offset,
-            body: legacy.body,
-            metadata: legacy.metadata,
-            created_at: legacy.created_at,
-        })
+        Self::decode_v2(bytes)
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -764,6 +741,9 @@ impl RealmValue {
     }
 
     fn decode_v2(bytes: &[u8]) -> Result<Self, String> {
+        if !bytes.starts_with(&REALM_VALUE_V2_MARKER) {
+            return Err("decode realm value: missing marker".to_string());
+        }
         if bytes.len() < 34 {
             return Err("decode realm value: header too short".to_string());
         }
@@ -1208,51 +1188,64 @@ impl CompressedCompactRealmPageValue {
 
 impl WatermarkValue {
     pub fn encode(&self) -> Vec<u8> {
-        serialize(self).expect("serialize watermark value")
+        encode_single_u64_value(0x01, self.watermark)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
-        deserialize(bytes).map_err(|error| format!("deserialize watermark value: {error}"))
+        Ok(Self {
+            watermark: decode_single_u64_value(bytes, 0x01, "decode watermark value")?,
+        })
     }
 }
 
 impl OffsetCounterValue {
     pub fn encode(&self) -> Vec<u8> {
-        serialize(self).expect("serialize offset counter value")
+        encode_single_u64_value(0x02, self.next_offset)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
-        deserialize(bytes).map_err(|error| format!("deserialize offset counter value: {error}"))
+        Ok(Self {
+            next_offset: decode_single_u64_value(bytes, 0x02, "decode offset counter value")?,
+        })
     }
 }
 
 impl ResourceMetaValue {
     pub fn encode(&self) -> Vec<u8> {
-        serialize(self).expect("serialize resource metadata value")
+        encode_two_u64_value(0x03, self.next_offset, self.committed_size_bytes)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
-        deserialize(bytes).map_err(|error| format!("deserialize resource metadata value: {error}"))
+        let (next_offset, committed_size_bytes) =
+            decode_two_u64_value(bytes, 0x03, "decode resource metadata value")?;
+        Ok(Self {
+            next_offset,
+            committed_size_bytes,
+        })
     }
 }
 
 impl AreaCounterValue {
     pub fn encode(&self) -> Vec<u8> {
-        serialize(self).expect("serialize area counter value")
+        encode_single_u64_value(0x04, self.next_offset)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
-        deserialize(bytes).map_err(|error| format!("deserialize area counter value: {error}"))
+        Ok(Self {
+            next_offset: decode_single_u64_value(bytes, 0x04, "decode area counter value")?,
+        })
     }
 }
 
 impl RealmCounterValue {
     pub fn encode(&self) -> Vec<u8> {
-        serialize(self).expect("serialize realm counter value")
+        encode_single_u64_value(0x05, self.next_offset)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
-        deserialize(bytes).map_err(|error| format!("deserialize realm counter value: {error}"))
+        Ok(Self {
+            next_offset: decode_single_u64_value(bytes, 0x05, "decode realm counter value")?,
+        })
     }
 }
 
@@ -1606,28 +1599,24 @@ mod tests {
     }
 
     #[test]
-    fn should_decode_legacy_resource_value() {
+    fn should_reject_resource_value_with_wrong_marker() {
         // Arrange
-        let encoded = serialize(&LegacyResourceValue {
+        let mut encoded = ResourceValue {
             resource_offset: 42,
             body: Bytes::from("test"),
             metadata: Some(Bytes::from("meta")),
             created_at: 1234567890,
             area_offset: Some(10),
             realm_offset: Some(5),
-        })
-        .expect("serialize legacy resource value");
+        }
+        .encode();
+        encoded[0] = 0xFF;
 
         // Act
-        let decoded = ResourceValue::decode(&encoded);
+        let error = ResourceValue::try_decode(&encoded).expect_err("reject wrong marker");
 
         // Assert
-        assert_eq!(decoded.resource_offset, 42);
-        assert_eq!(decoded.body, Bytes::from("test"));
-        assert_eq!(decoded.metadata, Some(Bytes::from("meta")));
-        assert_eq!(decoded.created_at, 1234567890);
-        assert_eq!(decoded.area_offset, Some(10));
-        assert_eq!(decoded.realm_offset, Some(5));
+        assert_eq!(error, "decode resource value: missing marker");
     }
 
     #[test]
@@ -1706,27 +1695,22 @@ mod tests {
     }
 
     #[test]
-    fn should_decode_legacy_area_value() {
+    fn should_reject_area_value_with_wrong_marker() {
         // Arrange
-        let encoded = serialize(&LegacyAreaValue {
-            realm: "realm".to_string(),
-            area: "area".to_string(),
-            resource: "resource".to_string(),
+        let mut encoded = AreaValue {
             resource_offset: 7,
             body: Bytes::from("body"),
             metadata: Some(Bytes::from("meta")),
             created_at: 321,
-        })
-        .expect("serialize legacy area value");
+        }
+        .encode();
+        encoded[0] = 0xFF;
 
         // Act
-        let decoded = AreaValue::decode(&encoded);
+        let error = AreaValue::try_decode(&encoded).expect_err("reject wrong marker");
 
         // Assert
-        assert_eq!(decoded.resource_offset, 7);
-        assert_eq!(decoded.body, Bytes::from("body"));
-        assert_eq!(decoded.metadata, Some(Bytes::from("meta")));
-        assert_eq!(decoded.created_at, 321);
+        assert_eq!(error, "decode area value: missing marker");
     }
 
     #[test]
@@ -1753,29 +1737,106 @@ mod tests {
     }
 
     #[test]
-    fn should_decode_legacy_realm_value() {
+    fn should_reject_realm_value_with_wrong_marker() {
         // Arrange
-        let encoded = serialize(&LegacyRealmValue {
-            realm: "realm".to_string(),
-            area: "area".to_string(),
+        let mut encoded = RealmValue {
             area_offset: 11,
-            resource: "resource".to_string(),
             resource_offset: 7,
             body: Bytes::from("body"),
             metadata: Some(Bytes::from("meta")),
             created_at: 321,
-        })
-        .expect("serialize legacy realm value");
+        }
+        .encode();
+        encoded[0] = 0xFF;
 
         // Act
-        let decoded = RealmValue::decode(&encoded);
+        let error = RealmValue::try_decode(&encoded).expect_err("reject wrong marker");
 
         // Assert
-        assert_eq!(decoded.area_offset, 11);
-        assert_eq!(decoded.resource_offset, 7);
-        assert_eq!(decoded.body, Bytes::from("body"));
-        assert_eq!(decoded.metadata, Some(Bytes::from("meta")));
-        assert_eq!(decoded.created_at, 321);
+        assert_eq!(error, "decode realm value: missing marker");
+    }
+
+    #[test]
+    fn should_roundtrip_simple_storage_values() {
+        // Arrange
+        let watermark = WatermarkValue { watermark: 42 };
+        let offset_counter = OffsetCounterValue { next_offset: 7 };
+        let resource_meta = ResourceMetaValue {
+            next_offset: 11,
+            committed_size_bytes: 99,
+        };
+        let area_counter = AreaCounterValue { next_offset: 19 };
+        let realm_counter = RealmCounterValue { next_offset: 23 };
+
+        // Act
+        let decoded_watermark =
+            WatermarkValue::decode(&watermark.encode()).expect("decode watermark");
+        let decoded_offset_counter =
+            OffsetCounterValue::decode(&offset_counter.encode()).expect("decode offset counter");
+        let decoded_resource_meta =
+            ResourceMetaValue::decode(&resource_meta.encode()).expect("decode resource meta");
+        let decoded_area_counter =
+            AreaCounterValue::decode(&area_counter.encode()).expect("decode area counter");
+        let decoded_realm_counter =
+            RealmCounterValue::decode(&realm_counter.encode()).expect("decode realm counter");
+
+        // Assert
+        assert_eq!(decoded_watermark.watermark, 42);
+        assert_eq!(decoded_offset_counter.next_offset, 7);
+        assert_eq!(decoded_resource_meta.next_offset, 11);
+        assert_eq!(decoded_resource_meta.committed_size_bytes, 99);
+        assert_eq!(decoded_area_counter.next_offset, 19);
+        assert_eq!(decoded_realm_counter.next_offset, 23);
+    }
+
+    #[test]
+    fn should_reject_simple_storage_values_with_truncation() {
+        // Arrange
+        let mut watermark = WatermarkValue { watermark: 42 }.encode();
+        watermark.pop();
+        let mut offset_counter = OffsetCounterValue { next_offset: 7 }.encode();
+        offset_counter.pop();
+        let mut resource_meta = ResourceMetaValue {
+            next_offset: 11,
+            committed_size_bytes: 99,
+        }
+        .encode();
+        resource_meta.pop();
+        let mut area_counter = AreaCounterValue { next_offset: 19 }.encode();
+        area_counter.pop();
+        let mut realm_counter = RealmCounterValue { next_offset: 23 }.encode();
+        realm_counter.pop();
+
+        // Act
+        let watermark_error =
+            WatermarkValue::decode(&watermark).expect_err("reject truncated watermark");
+        let offset_counter_error =
+            OffsetCounterValue::decode(&offset_counter).expect_err("reject truncated offset");
+        let resource_meta_error =
+            ResourceMetaValue::decode(&resource_meta).expect_err("reject truncated resource meta");
+        let area_counter_error =
+            AreaCounterValue::decode(&area_counter).expect_err("reject truncated area counter");
+        let realm_counter_error =
+            RealmCounterValue::decode(&realm_counter).expect_err("reject truncated realm counter");
+
+        // Assert
+        assert_eq!(watermark_error, "decode watermark value: invalid length");
+        assert_eq!(
+            offset_counter_error,
+            "decode offset counter value: invalid length"
+        );
+        assert_eq!(
+            resource_meta_error,
+            "decode resource metadata value: invalid length"
+        );
+        assert_eq!(
+            area_counter_error,
+            "decode area counter value: invalid length"
+        );
+        assert_eq!(
+            realm_counter_error,
+            "decode realm counter value: invalid length"
+        );
     }
 
     #[test]

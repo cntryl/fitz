@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! Criterion benchmark for schedule due-occurrence collection on the production scan path.
 //! This intentionally measures only collect_due_occurrences_for_publish and avoids
 //! benchmark-only shortcut paths.

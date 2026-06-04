@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! Criterion benchmarks for schedule churn and shared full-list cache invalidation.
 
 use bytes::Bytes;

@@ -17,6 +17,7 @@
 pub mod admin;
 pub mod background;
 pub mod handlers;
+pub mod http;
 pub mod ingress;
 pub mod mcp;
 pub mod outbound;

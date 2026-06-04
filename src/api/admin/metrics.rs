@@ -1,15 +1,16 @@
 //! Prometheus metrics endpoint
 
+use crate::api::http::{Body, Response};
 use crate::boot::{observability, Runtime};
-use hyper::{Body, Response, StatusCode};
+use hyper::StatusCode;
 use std::convert::Infallible;
 use std::sync::Arc;
 
 /// Handle /metrics endpoint (Prometheus format)
-pub async fn handle_metrics(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
+pub async fn handle_metrics(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
     let metrics = generate_prometheus_metrics(runtime);
 
-    Ok(Response::builder()
+    Ok(hyper::http::Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/plain; version=0.0.4")
         .body(Body::from(metrics))

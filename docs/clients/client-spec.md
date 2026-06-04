@@ -2551,11 +2551,11 @@ Response (status=1):
 [u64 BE]  max_bytes (if present)
 [u8]      has_filter
 [u32 BE]  filter_len (if has_filter=1)
-[bytes]   filter (bincode-encoded StreamFilterSet)
+[bytes]   filter (StreamFilterSet codec)
 Response: status byte + data
 ```
 
-**Optional filter:** Clients MAY include a `StreamFilterSet` to request server-side replay filtering. The filter is encoded as bincode and is conjunctive: all clauses must match the record discriminator. Missing discriminators are treated as empty strings for matching.
+**Optional filter:** Clients MAY include a `StreamFilterSet` to request server-side replay filtering. The filter uses Fitz's fixed-field stream filter codec and is conjunctive: all clauses must match the record discriminator. Missing discriminators are treated as empty strings for matching.
 
 **Read page:** On success, the `data` payload is a count-prefixed sequence of tagged delivery items followed by the read cursor. `event` items contain committed records. `filtered` items contain the skipped committed offset and an optional reason. `filtered_range` may compact contiguous skipped offsets. Clients MAY expose the raw page or flatten event-only results, but they MUST preserve cursor progress.
 

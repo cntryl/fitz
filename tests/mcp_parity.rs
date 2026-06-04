@@ -4,12 +4,14 @@ use argon2::{
 };
 use fitz::api::admin::auth::AdminPrincipal;
 use fitz::api::admin::{QueueAgeBuckets, QueueInfo};
+use fitz::api::http::Body;
 use fitz::api::mcp::{McpCapabilityPolicy, McpExecutionContext, McpToolRegistry};
 use fitz::auth::default_anonymous_permissions;
 use fitz::boot::Runtime;
 use fitz::runtime::Router;
+use fitz::testkit::body;
 use hyper::header::COOKIE;
-use hyper::{body, Body, Method, Request, StatusCode};
+use hyper::{Method, StatusCode};
 use serde_json::Value;
 use serial_test::serial;
 use std::sync::Arc;
@@ -55,11 +57,11 @@ fn authenticated_context() -> McpExecutionContext {
 }
 
 async fn rest_json(runtime: &Arc<Runtime>, path: &str) -> Value {
-    let request = Request::builder()
+    let request = hyper::http::Request::builder()
         .method(Method::GET)
         .uri(path)
         .header(COOKIE, authenticated_cookie(runtime))
-        .body(Body::empty())
+        .body(Body::default())
         .expect("request");
 
     let response = fitz::api::admin::handlers::handle_request(request, runtime.clone())

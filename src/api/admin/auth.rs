@@ -1,10 +1,12 @@
+use crate::api::http::{Body, Response};
 use argon2::{
     password_hash::{PasswordHash, PasswordVerifier},
     Argon2,
 };
 use chrono::{Duration, Utc};
+use http_body_util::BodyExt;
 use hyper::header::{COOKIE, SET_COOKIE};
-use hyper::{Body, Request, Response, StatusCode};
+use hyper::StatusCode;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -157,9 +159,9 @@ impl AdminAuth {
         clear_cookie()
     }
 
-    pub fn principal_from_request(
+    pub fn principal_from_request<B>(
         &self,
-        req: &Request<Body>,
+        req: &hyper::Request<B>,
     ) -> Result<AdminPrincipal, AuthFailure> {
         let settings = self
             .settings
@@ -214,30 +216,36 @@ impl AuthFailure {
     }
 }
 
-pub async fn parse_login_request(req: Request<Body>) -> Result<LoginRequest, AuthFailure> {
-    let body = hyper::body::to_bytes(req.into_body())
+pub async fn parse_login_request<B>(req: hyper::Request<B>) -> Result<LoginRequest, AuthFailure>
+where
+    B: hyper::body::Body,
+{
+    let body = req
+        .into_body()
+        .collect()
         .await
-        .map_err(|_| AuthFailure::InvalidCredentials)?;
+        .map_err(|_| AuthFailure::InvalidCredentials)?
+        .to_bytes();
     serde_json::from_slice::<LoginRequest>(&body).map_err(|_| AuthFailure::InvalidCredentials)
 }
 
-pub fn session_created_response(set_cookie: &str) -> Response<Body> {
-    Response::builder()
+pub fn session_created_response(set_cookie: &str) -> Response {
+    hyper::http::Response::builder()
         .status(StatusCode::NO_CONTENT)
         .header(SET_COOKIE, set_cookie)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap()
 }
 
-pub fn session_deleted_response(clear_cookie_header: &str) -> Response<Body> {
-    Response::builder()
+pub fn session_deleted_response(clear_cookie_header: &str) -> Response {
+    hyper::http::Response::builder()
         .status(StatusCode::NO_CONTENT)
         .header(SET_COOKIE, clear_cookie_header)
-        .body(Body::empty())
+        .body(Body::default())
         .unwrap()
 }
 
-fn extract_cookie_value(req: &Request<Body>, cookie_name: &str) -> Option<String> {
+fn extract_cookie_value<B>(req: &hyper::Request<B>, cookie_name: &str) -> Option<String> {
     let cookie_header = req.headers().get(COOKIE)?.to_str().ok()?;
     cookie_header.split(';').find_map(|cookie| {
         let trimmed = cookie.trim();
@@ -313,9 +321,9 @@ mod tests {
         let cookie = auth.issue_session_cookie(&principal).unwrap();
         let cookie_value = cookie.split(';').next().unwrap().to_string();
 
-        let req = Request::builder()
+        let req = hyper::http::Request::builder()
             .header(COOKIE, cookie_value)
-            .body(Body::empty())
+            .body(Body::default())
             .unwrap();
 
         // Act

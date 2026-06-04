@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::envelope::{Envelope, MessageId};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};

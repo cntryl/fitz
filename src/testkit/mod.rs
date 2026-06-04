@@ -4,6 +4,7 @@
 //! including notification and stream domains. Available when compiled with
 //! test configuration or the test-helpers feature.
 
+pub mod body;
 pub mod lease;
 pub mod midge;
 pub mod notice;
@@ -16,6 +17,7 @@ pub mod transport;
 pub use notice as notification;
 
 // Re-export common test utilities
+pub use body::to_bytes;
 pub use lease::create_test_lease_context;
 pub use midge::create_test_engine_with_cfs;
 pub use notice::{addr, make_router, route, session_id, TestSink};

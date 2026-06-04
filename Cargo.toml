@@ -17,9 +17,11 @@ codegen-units = 1
  
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-hyper = { version = "0.14", features = ["full"] }
-tokio-tungstenite = "0.20"
-tungstenite = "0.20"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["server", "tokio"] }
+http-body-util = "0.1"
+tokio-tungstenite = "0.29"
+tungstenite = "0.29"
 futures = "0.3"
 tokio-stream = "0.1"
 serde = { version = "1.0", features = ["derive"] }
@@ -28,25 +30,25 @@ bytes = "1.11"
 brotli = "8"
 uuid = { version = "1", features = ["v4", "serde"] }
 flate2 = "1"
-reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 once_cell = "1.21"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22.1"
-jsonwebtoken = "8"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 argon2 = "0.5"
 sha1 = "0.10"
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
-hyper-tungstenite = "0.6"
-tokio-rustls = "0.24"
-rustls = "0.21"
-rustls-pemfile = "1.0"
+hyper-tungstenite = "0.20"
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2.2"
 futures-util = "0.3"
 url = "2"
 quinn = "0.11"
-rustls-native-certs = "0.7"
-rcgen = "0.12"
+rustls-native-certs = "0.8"
+rcgen = "0.14"
 crc32fast = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt", "ansi"] }
@@ -69,10 +71,9 @@ num_cpus = "1.17"
 dashmap = "6.2.1"
 parking_lot = "0.12"
 smallvec = "1.15"
-bincode = "1.3"
 tempfile = "3"
 lz4_flex = "0.13.1"
-cntryl-midge = { git = "https://github.com/cntryl/midge", rev = "78b8dc4af402cc179a011128b694a98730b5c4b5", features = ["testkit"] }
+cntryl-midge = { path = "vendor/cntryl-midge", features = ["testkit"] }
 cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "260e5e64060e36aa0d8897658468484443eee095" }
 
 # Patch transitive native-tls so Docker build succeeds (0.2.17 lacks Protocol::Tlsv13 match arm).
@@ -87,11 +88,11 @@ url = "2"
 futures-util = "0.3"
 clap = { version = "4", features = ["derive"] }
 regex = "1"
-criterion = { version = "0.4", features = ["async_futures"] }
+criterion = { version = "0.8", features = ["async_futures"] }
 cntryl-stress = "0.2.3"
 serial_test = "3.5.0"
 tempfile = "3"
-rand = "0.8"
+rand = "0.10"
 proptest = "1"
 
 # Tier 1: Hot Path (Infrastructure - Pure sync internals, <1s, <100ns-10µs ops)

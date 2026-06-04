@@ -4,9 +4,9 @@ use crate::api::admin::troubleshooting::{
     self, DiagnosticSnapshot, ResourceComparison, ResourceComparisonMetrics,
     ResourceComparisonScope, ResourceComparisonSide,
 };
+use crate::api::http::Response;
 use crate::boot::Runtime;
 use crate::runtime::routing::{route_quad, route_triplet};
-use hyper::{Body, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::convert::Infallible;
@@ -1519,7 +1519,7 @@ pub fn rpc_operations(runtime: &Runtime, path: &ResourcePath<'_>) -> OperationCo
 pub async fn list_sessions(
     runtime: Arc<Runtime>,
     realm: Option<&str>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let sessions = runtime.list_sessions(realm);
     crate::api::admin::json_response(SessionsList { sessions })
 }
@@ -1527,7 +1527,7 @@ pub async fn list_sessions(
 pub async fn kv_transactions_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let transactions = runtime
         .kv_list_transactions(Some(path.realm))
         .into_iter()
@@ -1540,7 +1540,7 @@ pub async fn queue_inflight_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
     family: Option<u64>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let inflight = runtime
         .queue_list_inflight(Some(path.realm))
         .into_iter()
@@ -1556,7 +1556,7 @@ pub async fn queue_dead_letters_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
     family: Option<u64>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let messages = runtime
         .queue_list_dead_letters(Some(path.realm))
         .into_iter()
@@ -1571,7 +1571,7 @@ pub async fn queue_dead_letters_for_resource(
 pub async fn notice_subscriptions_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let subscriptions = runtime
         .notice_list_subscriptions(Some(path.realm), None)
         .into_iter()
@@ -1583,7 +1583,7 @@ pub async fn notice_subscriptions_for_resource(
 pub async fn rpc_workers_for_operation(
     runtime: Arc<Runtime>,
     path: &RpcOperationPath<'_>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let workers = runtime
         .rpc_list_workers(Some(path.realm))
         .into_iter()
@@ -1595,7 +1595,7 @@ pub async fn rpc_workers_for_operation(
 pub async fn rpc_pending(
     runtime: Arc<Runtime>,
     realm: Option<&str>,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let requests = runtime.rpc_list_pending(realm);
     crate::api::admin::json_response(RpcPendingList { requests })
 }
@@ -1604,7 +1604,7 @@ pub async fn kv_events_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
     limit: usize,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let transactions = runtime.kv_list_transactions(Some(path.realm));
     crate::api::admin::json_response(troubleshooting::kv_resource_timeline(
         &transactions,
@@ -1618,7 +1618,7 @@ pub async fn queue_events_for_resource(
     path: &ResourcePath<'_>,
     family: Option<u64>,
     limit: usize,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let queues = runtime.queue_list_queues(Some(path.realm));
     let inflight = runtime.queue_list_inflight(Some(path.realm));
     let dead_letters = runtime.queue_list_dead_letters(Some(path.realm));
@@ -1636,7 +1636,7 @@ pub async fn stream_events_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
     limit: usize,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let streams = runtime.stream_list_streams(Some(path.realm));
     crate::api::admin::json_response(troubleshooting::stream_resource_timeline(
         &streams, path, limit,
@@ -1647,7 +1647,7 @@ pub async fn lease_events_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
     limit: usize,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let leases = runtime.lease_list_leases(Some(path.realm));
     crate::api::admin::json_response(troubleshooting::lease_resource_timeline(
         &leases, path, limit,
@@ -1658,7 +1658,7 @@ pub async fn schedule_events_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
     limit: usize,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let schedules = runtime.schedule_list_schedules(Some(path.realm));
     crate::api::admin::json_response(troubleshooting::schedule_resource_timeline(
         &schedules,
@@ -1679,7 +1679,7 @@ pub async fn notice_events_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
     limit: usize,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let subscriptions = runtime.notice_list_subscriptions(Some(path.realm), None);
     let routes = runtime.notice_list_routes(Some(path.realm));
     crate::api::admin::json_response(troubleshooting::notice_resource_timeline(
@@ -1694,7 +1694,7 @@ pub async fn rpc_events_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
     limit: usize,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response, Infallible> {
     let workers = runtime.rpc_list_workers(Some(path.realm));
     let pending = runtime.rpc_list_pending(Some(path.realm));
     crate::api::admin::json_response(troubleshooting::rpc_resource_timeline(

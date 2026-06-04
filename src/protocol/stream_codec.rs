@@ -14,7 +14,6 @@ use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
-use bincode::deserialize;
 
 /// A parsed frame from the stream domain wire protocol.
 ///
@@ -240,10 +239,7 @@ fn parse_read(
     let max_bytes = dec.get_optional_u64()?.map(|u| u as usize);
     let filter = if dec.remaining() > 0 {
         match dec.get_optional_bytes()? {
-            Some(bytes) => Some(
-                deserialize::<StreamFilterSet>(bytes.as_ref())
-                    .map_err(|error| format!("Invalid stream filter: {:?}", error))?,
-            ),
+            Some(bytes) => Some(StreamFilterSet::try_decode(bytes.as_ref())?),
             None => None,
         }
     } else {

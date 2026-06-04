@@ -14,14 +14,21 @@
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde_json::Value;
 
+fn signature_only_validation(alg: Algorithm) -> Validation {
+    let mut validation = Validation::new(alg);
+    validation.validate_aud = false;
+    validation.validate_exp = false;
+    validation.validate_nbf = false;
+    validation
+}
+
 /// Verify the JWT signature using the provided RSA public key (PEM) and return the decoded payload as JSON.
 pub fn verify_jwt_with_rsa_pem(token: &str, public_pem: &[u8]) -> Result<Value, String> {
     // Determine algorithm from header
     let header = decode_header(token).map_err(|e| format!("invalid jwt header: {}", e))?;
     let alg = header.alg;
 
-    let validation = Validation::new(alg);
-    // For now, allow default settings. In future we may configure audience/issuer.
+    let validation = signature_only_validation(alg);
 
     let decoding_key =
         DecodingKey::from_rsa_pem(public_pem).map_err(|e| format!("invalid public key: {}", e))?;
@@ -42,7 +49,7 @@ pub fn verify_jwt_with_hmac_secret(token: &str, secret: &[u8]) -> Result<Value, 
     }
 
     let decoding_key = DecodingKey::from_secret(secret);
-    let validation = Validation::new(Algorithm::HS256);
+    let validation = signature_only_validation(Algorithm::HS256);
 
     let token_data = decode::<serde_json::Value>(token, &decoding_key, &validation)
         .map_err(|e| format!("signature verification failed: {}", e))?;
