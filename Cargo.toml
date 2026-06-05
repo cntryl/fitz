@@ -36,9 +36,9 @@ chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22.1"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 argon2 = "0.5"
-sha1 = "0.10"
-hmac = "0.12"
-sha2 = "0.10"
+sha1 = "0.11"
+hmac = "0.13"
+sha2 = "0.11"
 hex = "0.4"
 hyper-tungstenite = "0.20"
 tokio-rustls = "0.26"
@@ -57,7 +57,7 @@ tracing-appender = "0.2"
 opentelemetry = { version = "0.32", features = ["trace"] }
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
 opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "trace"] }
-prometheus = { version = "0.13", optional = true }
+prometheus = { version = "0.14", optional = true }
 async-trait = "0.1"
 
 # Lock-free / concurrency crates used by lease service
@@ -73,7 +73,7 @@ parking_lot = "0.12"
 smallvec = "1.15"
 tempfile = "3"
 lz4_flex = "0.13.1"
-cntryl-midge = { path = "vendor/cntryl-midge", features = ["testkit"] }
+cntryl-midge = { git = "https://github.com/cntryl/midge", features = ["testkit"] }
 cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "260e5e64060e36aa0d8897658468484443eee095" }
 
 # Patch transitive native-tls so Docker build succeeds (0.2.17 lacks Protocol::Tlsv13 match arm).
