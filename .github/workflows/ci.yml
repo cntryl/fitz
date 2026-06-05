@@ -49,3 +49,7 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      - name: Bench build
+        run: cargo bench --no-run
+        

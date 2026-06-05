@@ -2,15 +2,6 @@ name: Bench
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "benches/**"
-      - "config/**"
-      - "scripts/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
 
 jobs:
   bench:
