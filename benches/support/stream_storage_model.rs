@@ -1079,6 +1079,7 @@ fn encode_stream_read_data(
     let mut encoder = PayloadEncoder::new();
     encoder.put_u32(selected.len() as u32);
     for record in selected {
+        encoder.put_u8(0); // StreamReadItem::Event
         encode_stream_record(&mut encoder, record);
     }
     encoder.put_u64(last_resource_offset);
@@ -1140,9 +1141,7 @@ impl PrototypeStreamReadSink {
         max_bytes: Option<usize>,
     ) -> Result<Vec<u8>, String> {
         if limit == 0 {
-            let mut encoder = PayloadEncoder::new();
-            encoder.put_u32(0);
-            return Ok(encoder.finish());
+            return Ok(encode_stream_read_data(&[], from_offset, 0, max_bytes));
         }
 
         let (realm, area, resource) = parse_stream_read_route(route.as_str())?;
@@ -1170,6 +1169,13 @@ impl PrototypeStreamReadSink {
 
 impl MailboxSink for PrototypeStreamReadSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if envelope
+            .payload::<fitz::runtime::SessionCleanup>()
+            .is_some()
+        {
+            return Ok(());
+        }
+
         let frame_ctx = match envelope.payload::<fitz::protocol::frame_context::FrameContext>() {
             Some(ctx) => ctx.clone(),
             None => return Err(DeliveryError::ActorStopped),

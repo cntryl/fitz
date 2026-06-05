@@ -12,6 +12,14 @@ use tokio::net::TcpStream;
 // on the same connection so there is at most one heap allocation per connection.
 const WRITE_BUF_INIT_CAPACITY: usize = 512;
 
+fn should_ignore_unknown_session_error(error: &crate::session::SessionError) -> bool {
+    matches!(
+        error,
+        crate::session::SessionError::IngressClose(reason)
+            if reason.starts_with("unknown session:")
+    )
+}
+
 async fn close_tcp_session_on_frame_error(
     ingress: &dyn Ingress,
     session_id: u64,
@@ -136,6 +144,14 @@ pub(super) async fn handle_tcp_connection(
             )
             .await
             {
+                if should_ignore_unknown_session_error(&error) {
+                    tracing::debug!(
+                        session_id = session_id,
+                        error = %error,
+                        "TCP frame processing encountered a stale frame for an already-closed session"
+                    );
+                    return Ok(());
+                }
                 tracing::error!(session_id = session_id, error = %error, "TCP frame processing error");
                 let reason =
                     close_tcp_session_on_frame_error(ingress_clone.as_ref(), session_id, error)
@@ -222,7 +238,7 @@ pub(super) async fn handle_tcp_connection(
 
 #[cfg(test)]
 mod tests {
-    use super::close_tcp_session_on_frame_error;
+    use super::{close_tcp_session_on_frame_error, should_ignore_unknown_session_error};
     use crate::protocol::frame::ChannelId;
     use crate::session::manager::{Ingress, IngressDecision};
     use crate::session::{CloseReason, SessionError, SessionInfo};
@@ -278,5 +294,17 @@ mod tests {
             &closes[0],
             CloseReason::Error(message) if message.contains("Backpressure")
         ));
+    }
+
+    #[test]
+    fn should_ignore_unknown_session_ingress_close_errors() {
+        // Arrange
+        let error = SessionError::IngressClose("unknown session: 42".to_string());
+
+        // Act
+        let result = should_ignore_unknown_session_error(&error);
+
+        // Assert
+        assert!(result);
     }
 }

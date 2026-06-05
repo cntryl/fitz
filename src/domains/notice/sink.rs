@@ -7,7 +7,7 @@
 use crate::domains::notice::NoticeMetrics;
 use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
-use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
+use crate::runtime::{DeliveryError, Envelope, MailboxSink, RouteError, Router};
 use chrono::Utc;
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -264,6 +264,8 @@ impl NoticeDomainSink {
     }
 
     fn route_notice_notify(&self, target: &NoticeDeliveryTarget, shared_suffix: &bytes::Bytes) {
+        const MAX_RETRIES: usize = 200;
+
         let notify_payload = crate::protocol::notice_codec::encode_notify_with_shared_suffix(
             target.subscription_id,
             shared_suffix,
@@ -275,9 +277,22 @@ impl NoticeDomainSink {
             notify_payload,
             *target.subscriber.family(),
         );
-        let notify_envelope = Envelope::new(target.subscriber.clone(), notify_ctx);
-        if self.router.route(notify_envelope).is_err() {
-            crate::observability::counter_inc("fitz_notice_delivery_drops_total");
+
+        for attempt in 0..=MAX_RETRIES {
+            let notify_envelope = Envelope::new(target.subscriber.clone(), notify_ctx.clone());
+            match self.router.route(notify_envelope) {
+                Ok(()) => return,
+                Err(RouteError::DeliveryFailed(_, DeliveryError::MailboxFull { .. }))
+                    if attempt < MAX_RETRIES =>
+                {
+                    std::thread::yield_now();
+                    continue;
+                }
+                Err(_) => {
+                    crate::observability::counter_inc("fitz_notice_delivery_drops_total");
+                    return;
+                }
+            }
         }
     }
 
@@ -1331,6 +1346,85 @@ mod tests {
         );
         assert_eq!(sink.subscription_count(), 1);
         assert!(subscriber_mailbox.receiver().try_recv().is_err());
+    }
+
+    #[test]
+    fn should_retry_notice_delivery_when_outbound_mailbox_is_temporarily_full() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let notice_route = "notice://acme/app/events";
+        let notice_address = RouteAddress::new(family, Route::new(notice_route));
+        let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
+        let router = Arc::new(Router::new());
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        let sink = NoticeDomainSink::new(
+            router.clone(),
+            crate::api::admin::read_model::AdminReadModel::new(),
+        );
+
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            notice_route,
+            family,
+        );
+        let subscribe_response = decode_notice_response(&subscriber_mailbox);
+        assert_eq!(subscribe_response.status, 0);
+
+        let retry_state = Arc::new(Mutex::new(vec![
+            Err(DeliveryError::MailboxFull {
+                capacity: 1,
+                current_len: 1,
+            }),
+            Err(DeliveryError::MailboxFull {
+                capacity: 1,
+                current_len: 1,
+            }),
+            Ok(()),
+        ]));
+
+        struct RetrySink {
+            state: Arc<Mutex<Vec<Result<(), DeliveryError>>>>,
+        }
+
+        impl MailboxSink for RetrySink {
+            fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+                self.state.lock().remove(0)
+            }
+
+            fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+                self.deliver(envelope)
+            }
+        }
+
+        router.register(
+            subscriber_address.clone(),
+            Arc::new(RetrySink {
+                state: retry_state.clone(),
+            }),
+        );
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            publisher_address,
+            notice_address,
+            FrameContext::new(
+                11,
+                ChannelId::Sub,
+                MessageType::new(500),
+                encode_notice_publish(notice_route, b"delayed"),
+                family,
+            ),
+        ))
+        .expect("publish notice event");
+
+        // Assert
+        assert!(retry_state.lock().is_empty());
     }
 
     #[test]

@@ -5,6 +5,8 @@ use crate::session::{
     generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind,
 };
 use bytes::Bytes;
+use hyper_tungstenite::tungstenite::error::ProtocolError;
+use hyper_tungstenite::tungstenite::Error as WsError;
 use std::sync::Arc;
 use tracing::info;
 
@@ -17,6 +19,13 @@ fn websocket_close_reason(result: &Result<(), String>) -> CloseReason {
         Ok(()) => CloseReason::ClientClose,
         Err(reason) => CloseReason::Error(reason.clone()),
     }
+}
+
+fn is_normal_websocket_disconnect(error: &WsError) -> bool {
+    matches!(
+        error,
+        WsError::ConnectionClosed | WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake)
+    )
 }
 
 pub(super) async fn handle_websocket(
@@ -212,6 +221,11 @@ where
             }
             Ok(_) => {}
             Err(e) => {
+                if is_normal_websocket_disconnect(&e) {
+                    tracing::info!(session_id = session_id, error = %e, "WS connection terminated by client without a close handshake");
+                    break Ok(());
+                }
+                tracing::error!(session_id = session_id, error = %e, "WS session error");
                 break Err(format!("WebSocket error: {}", e));
             }
         }
@@ -241,9 +255,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{websocket_close_reason, websocket_session_frame_error_reason};
+    use super::{
+        is_normal_websocket_disconnect, websocket_close_reason,
+        websocket_session_frame_error_reason,
+    };
     use crate::protocol::frame::ChannelId;
     use crate::session::{CloseReason, SessionError};
+    use hyper_tungstenite::tungstenite::error::ProtocolError;
+    use hyper_tungstenite::tungstenite::Error as WsError;
 
     #[test]
     fn should_treat_websocket_backpressure_as_terminal_session_error() {
@@ -261,5 +280,17 @@ mod tests {
             close_reason,
             CloseReason::Error(message) if message == reason
         ));
+    }
+
+    #[test]
+    fn should_treat_connection_reset_without_close_handshake_as_graceful_disconnect() {
+        // Arrange
+        let error = WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake);
+
+        // Act
+        let result = is_normal_websocket_disconnect(&error);
+
+        // Assert
+        assert!(result);
     }
 }

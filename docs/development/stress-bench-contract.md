@@ -22,6 +22,7 @@ This document defines the contract for Tier 3 and Tier 4 benchmarks using the `c
 - **tcp**: Full roundtrip through TestServer over TCP — encode frame, send, receive response.
 - **websocket**: Same as tcp but over WS.
 - **multiclient**: N clients (typically 10) making requests — must use `tokio::join!` or `FuturesUnordered` for **actual concurrency**, **not** a sequential for loop. Label it concurrent only if it is actually concurrent.
+- Fanout scenarios must drain every receiving client/subscriber during measurement; aggregate delivery counters are not enough if one receiver can backlog while others advance the total.
 - Network tests must use a **shared runtime** (`shared_bench_runtime()`) consistently across all domains.
 - `ctx.set_elements(n)` = number of meaningful operations per measure iteration (e.g. 2 for begin+append, 1 for single enqueue).
 - **RPC tier4** must test the full **request → worker dispatch → response** cycle over the wire, not just subscribe.

@@ -22,6 +22,8 @@ impl SessionOutboundSink {
 
 impl MailboxSink for SessionOutboundSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        const MAX_OUTBOUND_SEND_RETRIES: usize = 100;
+
         let _deliver_latency =
             crate::observability::ScopedHistogramUs::new(obs::METRIC_OUTBOUND_DELIVER_LATENCY);
         // Expect a FrameContext payload
@@ -46,43 +48,51 @@ impl MailboxSink for SessionOutboundSink {
                 "Outbound sink: sending TLV frame to transport channel"
             );
 
-            // Send TLV frame bytes to the outbound channel without blocking the
-            // transport task. Saturation is surfaced as router backpressure.
-            let send_start = Instant::now();
-            let send_result = self.tx.try_send(bytes);
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_SEND_LATENCY,
-                send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            );
+            let mut attempt = 0;
+            loop {
+                let send_start = Instant::now();
+                let send_result = self.tx.try_send(bytes.clone());
+                crate::observability::hot_path_histogram_observe_us(
+                    obs::METRIC_OUTBOUND_SEND_LATENCY,
+                    send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                );
 
-            match send_result {
-                Ok(()) => {
-                    crate::observability::hot_path_counter_inc(obs::METRIC_FRAMES_SENT);
-                    debug!(
-                        session_id = ctx.session_id,
-                        "Outbound sink: frame sent to transport successfully"
-                    );
-                    Ok(())
-                }
-                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                    let capacity = self.tx.max_capacity();
-                    crate::observability::hot_path_counter_inc(obs::METRIC_OUTBOUND_BACKPRESSURE);
-                    warn!(
-                        session_id = ctx.session_id,
-                        capacity = capacity,
-                        "Outbound sink: transport channel full"
-                    );
-                    Err(DeliveryError::MailboxFull {
-                        capacity,
-                        current_len: capacity,
-                    })
-                }
-                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                    warn!(
-                        session_id = ctx.session_id,
-                        "Outbound sink: transport channel closed"
-                    );
-                    Err(DeliveryError::ActorStopped)
+                match send_result {
+                    Ok(()) => {
+                        crate::observability::hot_path_counter_inc(obs::METRIC_FRAMES_SENT);
+                        debug!(
+                            session_id = ctx.session_id,
+                            "Outbound sink: frame sent to transport successfully"
+                        );
+                        return Ok(());
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        let capacity = self.tx.max_capacity();
+                        crate::observability::hot_path_counter_inc(
+                            obs::METRIC_OUTBOUND_BACKPRESSURE,
+                        );
+                        attempt += 1;
+                        if attempt >= MAX_OUTBOUND_SEND_RETRIES {
+                            warn!(
+                                session_id = ctx.session_id,
+                                capacity = capacity,
+                                "Outbound sink: transport channel full"
+                            );
+                            return Err(DeliveryError::MailboxFull {
+                                capacity,
+                                current_len: capacity,
+                            });
+                        }
+                        std::thread::yield_now();
+                        continue;
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                        warn!(
+                            session_id = ctx.session_id,
+                            "Outbound sink: transport channel closed"
+                        );
+                        return Err(DeliveryError::ActorStopped);
+                    }
                 }
             }
         } else {
@@ -180,6 +190,40 @@ mod tests {
                 current_len: 1,
             })
         );
+        assert_eq!(occupied, Bytes::from_static(b"occupied"));
+    }
+
+    #[tokio::test]
+    async fn should_retry_outbound_send_when_channel_is_briefly_full() {
+        // Arrange
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.try_send(Bytes::from_static(b"occupied")).unwrap();
+
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("create runtime");
+            let occupied = rt.block_on(async { rx.recv().await.expect("drained occupied frame") });
+            ready_tx.send(()).expect("signal ready");
+            release_rx.recv().expect("wait for release");
+            occupied
+        });
+
+        let sink = SessionOutboundSink::new(tx);
+        ready_rx
+            .recv()
+            .expect("wait until receiver drained occupied frame");
+
+        // Act
+        let result = sink.deliver(test_envelope(Bytes::from_static(b"ok")));
+        release_tx.send(()).expect("release receiver thread");
+
+        // Assert
+        assert_eq!(result, Ok(()));
+        let occupied = handle.join().expect("thread joined");
         assert_eq!(occupied, Bytes::from_static(b"occupied"));
     }
 }
