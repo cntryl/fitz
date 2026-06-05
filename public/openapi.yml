@@ -13,8 +13,8 @@ info:
     are current-process or session-scoped only.
 
 servers:
-  - url: http://localhost:4090
-    description: Local development server
+  - url: /
+    description: Same-origin admin API server
 
 tags:
   - name: Auth

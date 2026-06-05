@@ -119,7 +119,7 @@ Minimal matrix:
 - CS-004..CS-006 map to error handling criteria.
 - CS-007..CS-010 enforce timeout/cancel/reconnect behavior parity.
 - CS-011..CS-013 enforce stream semantics.
-- CS-016 enforces filtered stream replay and optional stream metadata.
+- CS-016 enforces filtered stream replay, optional stream metadata, and typed handling of unsupported or malformed filter payloads.
 - CS-014..CS-017 enforce concurrency, bounded-load, and lifecycle cleanup semantics.
 
 ## Adoption Steps

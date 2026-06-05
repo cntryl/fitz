@@ -1,64 +1,65 @@
 # Fitz Message Broker - Docker Compose Configuration
 #
 # This runs two Fitz brokers:
-# - fitz-auth on 4090/4091 with JWT auth required
-# - fitz-anon on 4190/4191 with anonymous access enabled
+# - fitz-auth on configurable HTTP/TCP ports with JWT auth required
+# - fitz-anon on configurable HTTP/TCP ports with anonymous access enabled
 #
 # Access:
-# - Auth HTTP:    http://localhost:4090/
-# - Auth WS:      ws://localhost:4090/ws
-# - Auth TCP:     tcp://localhost:4091
-# - Anon HTTP:    http://localhost:4190/
-# - Anon WS:      ws://localhost:4190/ws
-# - Anon TCP:     tcp://localhost:4191
+# - Auth HTTP:    http://localhost:${FITZ_AUTH_HOST_HTTP_PORT:-4090}/
+# - Auth WS:      ws://localhost:${FITZ_AUTH_HOST_HTTP_PORT:-4090}/ws
+# - Auth TCP:     tcp://localhost:${FITZ_AUTH_HOST_TCP_PORT:-4091}
+# - Anon HTTP:    http://localhost:${FITZ_ANON_HOST_HTTP_PORT:-4190}/
+# - Anon WS:      ws://localhost:${FITZ_ANON_HOST_HTTP_PORT:-4190}/ws
+# - Anon TCP:     tcp://localhost:${FITZ_ANON_HOST_TCP_PORT:-4191}
+
+x-broker-common: &broker-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  stop_grace_period: 15s
+  healthcheck:
+    disable: true
+
+x-broker-common-env: &broker-common-env
+  FITZ_STORAGE_MODE: "local"
+  FITZ_STORAGE_PATH: "/data"
+  RUST_LOG: "info,fitz=trace"
 
 services:
   fitz-auth:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *broker-common
     container_name: fitz-auth
     ports:
-      - "4090:4090"
-      - "4091:4091"
+      - "${FITZ_AUTH_HOST_HTTP_PORT:-4090}:${FITZ_AUTH_HTTP_PORT:-4090}"
+      - "${FITZ_AUTH_HOST_TCP_PORT:-4091}:${FITZ_AUTH_TCP_PORT:-4091}"
     environment:
+      <<: *broker-common-env
       FITZ_AUTH_REQUIRED: "true"
+      FITZ_ADMIN_AUTH_MODE: "protected"
+      FITZ_HTTP_PORT: "${FITZ_AUTH_HTTP_PORT:-4090}"
+      FITZ_TCP_PORT: "${FITZ_AUTH_TCP_PORT:-4091}"
       FITZ_ADMIN_USERNAME: "admin"
       FITZ_ADMIN_PASSWORD_HASH: "$$argon2id$$v=19$$m=19456,t=2,p=1$$Zml0ei1hZG1pbi1zYWx0$$xPKQoXK1gnKwsi41tvU+I136zdFwrtilblZpeSf3HeU"
       FITZ_ADMIN_JWT_SECRET: "test-admin-jwt-secret"
       FITZ_JWT_HMAC_SECRET: "test-secret-key"
       FITZ_JWT_AUDIENCE: "fitz"
-      FITZ_STORAGE_MODE: "local"
-      FITZ_STORAGE_PATH: "/data"
-      RUST_LOG: "info,fitz=trace"
     volumes:
       - fitz_auth_data:/data
-    restart: unless-stopped
-    stop_grace_period: 15s
-    healthcheck:
-      disable: true
   fitz-anon:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *broker-common
     container_name: fitz-anon
     ports:
-      - "4190:4090"
-      - "4191:4091"
+      - "${FITZ_ANON_HOST_HTTP_PORT:-4190}:${FITZ_ANON_HTTP_PORT:-4090}"
+      - "${FITZ_ANON_HOST_TCP_PORT:-4191}:${FITZ_ANON_TCP_PORT:-4091}"
     environment:
+      <<: *broker-common-env
       FITZ_AUTH_REQUIRED: "false"
-      FITZ_ADMIN_USERNAME: "admin"
-      FITZ_ADMIN_PASSWORD_HASH: "$$argon2id$$v=19$$m=19456,t=2,p=1$$Zml0ei1hZG1pbi1zYWx0$$xPKQoXK1gnKwsi41tvU+I136zdFwrtilblZpeSf3HeU"
-      FITZ_ADMIN_JWT_SECRET: "test-admin-jwt-secret"
-      FITZ_STORAGE_MODE: "local"
-      FITZ_STORAGE_PATH: "/data"
-      RUST_LOG: "info,fitz=trace"
+      FITZ_ADMIN_AUTH_MODE: "open"
+      FITZ_HTTP_PORT: "${FITZ_ANON_HTTP_PORT:-4090}"
+      FITZ_TCP_PORT: "${FITZ_ANON_TCP_PORT:-4091}"
     volumes:
       - fitz_anon_data:/data
-    restart: unless-stopped
-    stop_grace_period: 15s
-    healthcheck:
-      disable: true
 
 volumes:
   fitz_auth_data:

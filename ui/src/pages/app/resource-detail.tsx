@@ -100,8 +100,8 @@ export default function ResourceDetailPage() {
     query.error instanceof Error
       ? query.error.message
       : typeof query.error === "string"
-      ? query.error
-      : JSON.stringify(query.error);
+        ? query.error
+        : JSON.stringify(query.error);
   console.log(
     "RESOURCE-DETAIL DEBUG",
     JSON.stringify({

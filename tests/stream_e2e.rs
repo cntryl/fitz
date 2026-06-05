@@ -124,6 +124,34 @@ fn build_stream_read_with_options(
     builder.build()
 }
 
+fn build_stream_read_with_raw_filter(
+    route: &str,
+    start_offset: u64,
+    limit: u64,
+    max_bytes: Option<u64>,
+    filter: &[u8],
+) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(route.len() as u32);
+    buf.put_slice(route.as_bytes());
+    buf.put_u64(start_offset);
+    buf.put_u64(limit);
+    match max_bytes {
+        Some(value) => {
+            buf.put_u8(1);
+            buf.put_u64(value);
+        }
+        None => buf.put_u8(0),
+    }
+    buf.put_u8(1);
+    buf.put_u32(filter.len() as u32);
+    buf.put_slice(filter);
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(604, &buf);
+    builder.build()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WireStreamRecord {
     resource_offset: u64,
@@ -669,6 +697,70 @@ where
     assert_eq!(read.cursor.last_area_offset, None);
     assert_eq!(read.cursor.last_realm_offset, None);
     assert!(!read.cursor.has_more);
+}
+
+async fn should_keep_connection_open_given_malformed_stream_filter_read<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/filters/malformed";
+    commit_stream_record(&mut client, route, b"payload").await;
+    let malformed_filter = [0, 0xF2, 0, 0, 0, 0];
+
+    // Act
+    let malformed_response = client
+        .send_and_receive(
+            &build_stream_read_with_raw_filter(route, 0, 10, None, &malformed_filter),
+            2000,
+        )
+        .await
+        .expect("read malformed stream filter payload");
+    let malformed_error = parse_stream_error_message(&malformed_response);
+
+    let valid_read_response = client
+        .send_and_receive(&build_stream_read(route, 0), 2000)
+        .await
+        .expect("read valid stream history after malformed filter");
+    let valid_read = parse_stream_read_response(&valid_read_response);
+
+    // Assert
+    assert!(malformed_error.contains("ERR_STREAM_FILTER_UNSUPPORTED_VERSION"));
+    assert_eq!(valid_read.records.len(), 1);
+    assert_eq!(valid_read.records[0].body, b"payload".to_vec());
+}
+
+async fn should_keep_connection_open_given_invalid_stream_filter_payload<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://test/filters/invalid-payload";
+    commit_stream_record(&mut client, route, b"payload").await;
+    let invalid_filter = [0, 0xF1, 0, 0, 0, 1, 9];
+
+    // Act
+    let invalid_response = client
+        .send_and_receive(
+            &build_stream_read_with_raw_filter(route, 0, 10, None, &invalid_filter),
+            2000,
+        )
+        .await
+        .expect("read invalid stream filter payload");
+    let invalid_error = parse_stream_error_message(&invalid_response);
+
+    let valid_read_response = client
+        .send_and_receive(&build_stream_read(route, 0), 2000)
+        .await
+        .expect("read valid stream history after invalid filter payload");
+    let valid_read = parse_stream_read_response(&valid_read_response);
+
+    // Assert
+    assert!(invalid_error.contains("ERR_STREAM_FILTER_INVALID_PAYLOAD"));
+    assert_eq!(valid_read.records.len(), 1);
+    assert_eq!(valid_read.records[0].body, b"payload".to_vec());
 }
 
 async fn should_return_none_given_empty_resource_last<C>(server: &TestServer)
@@ -1778,6 +1870,8 @@ define_transport_tests!(
     should_return_session_not_found_given_rollback_to_unknown_session_tcp / should_return_session_not_found_given_rollback_to_unknown_session_ws => should_return_session_not_found_given_rollback_to_unknown_session,
     should_return_error_given_empty_batch_commit_tcp / should_return_error_given_empty_batch_commit_ws => should_return_error_given_empty_batch_commit,
     should_return_empty_success_given_zero_limit_read_tcp / should_return_empty_success_given_zero_limit_read_ws => should_return_empty_success_given_zero_limit_read,
+    should_keep_connection_open_given_malformed_stream_filter_read_tcp / should_keep_connection_open_given_malformed_stream_filter_read_ws => should_keep_connection_open_given_malformed_stream_filter_read,
+    should_keep_connection_open_given_invalid_stream_filter_payload_tcp / should_keep_connection_open_given_invalid_stream_filter_payload_ws => should_keep_connection_open_given_invalid_stream_filter_payload,
     should_return_none_given_empty_resource_last_tcp / should_return_none_given_empty_resource_last_ws => should_return_none_given_empty_resource_last,
     should_return_empty_metadata_given_empty_resource_tcp / should_return_empty_metadata_given_empty_resource_ws => should_return_empty_metadata_given_empty_resource,
     should_allow_append_given_empty_body_tcp / should_allow_append_given_empty_body_ws => should_allow_append_given_empty_body,

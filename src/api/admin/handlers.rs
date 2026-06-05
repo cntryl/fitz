@@ -5,6 +5,7 @@ use crate::api::http::{Body, Response};
 use crate::boot::Runtime;
 use crate::runtime::routing::RouteFamily;
 use hyper::{Method, StatusCode};
+use serde::Serialize;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -12,6 +13,12 @@ use super::list;
 use super::metrics;
 use super::probes;
 use super::stats;
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminFeaturesResponse {
+    admin_auth_required: bool,
+    admin_auth_mode: &'static str,
+}
 
 pub async fn handle_request<B>(
     req: hyper::Request<B>,
@@ -32,6 +39,7 @@ where
         (Method::POST, "/api/v1/session") => handle_login(req, runtime).await,
         (Method::GET, "/api/v1/session") => handle_current_session(req, runtime).await,
         (Method::DELETE, "/api/v1/session") => handle_logout(runtime).await,
+        (Method::GET, "/api/v1/features") => handle_features(runtime).await,
 
         (Method::GET, "/metrics") => {
             if let Err(response) = require_admin(&req, &runtime) {
@@ -455,6 +463,10 @@ where
     B: hyper::body::Body + Send,
 {
     let admin_auth = runtime.admin_auth();
+    if !admin_auth.login_required() {
+        return Ok(no_content_response());
+    }
+
     if !admin_auth.is_configured() {
         return Ok(super::error_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -505,6 +517,14 @@ async fn handle_logout(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
     Ok(auth::session_deleted_response(
         &admin_auth.clear_session_cookie(),
     ))
+}
+
+async fn handle_features(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
+    let admin_auth = runtime.admin_auth();
+    super::json_response(AdminFeaturesResponse {
+        admin_auth_required: admin_auth.login_required(),
+        admin_auth_mode: admin_auth.auth_mode(),
+    })
 }
 
 fn require_admin<B>(

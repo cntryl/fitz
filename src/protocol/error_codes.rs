@@ -33,6 +33,8 @@ pub mod stream {
     pub const ERR_SESSION_NOT_FOUND: u16 = 2003;
     pub const ERR_INVALID_READ_BOUND: u16 = 2004;
     pub const ERR_RESOURCE_NOT_FOUND: u16 = 2005;
+    pub const ERR_STREAM_FILTER_UNSUPPORTED_VERSION: u16 = 2006;
+    pub const ERR_STREAM_FILTER_INVALID_PAYLOAD: u16 = 2007;
     pub const ERR_UNAUTHORIZED: u16 = 2009; // AC-STREAM-005: Permission denied for stream operation
     pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 2010;
     pub const ERR_SUBSCRIPTION_LIMIT: u16 = 2011;

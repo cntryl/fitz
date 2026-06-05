@@ -15,6 +15,17 @@ use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
 
+const ERR_STREAM_FILTER_UNSUPPORTED_VERSION: &str = "ERR_STREAM_FILTER_UNSUPPORTED_VERSION";
+const ERR_STREAM_FILTER_INVALID_PAYLOAD: &str = "ERR_STREAM_FILTER_INVALID_PAYLOAD";
+
+fn map_stream_filter_decode_error(error: String) -> String {
+    if error.contains("missing marker") {
+        return format!("{}: {}", ERR_STREAM_FILTER_UNSUPPORTED_VERSION, error);
+    }
+
+    format!("{}: {}", ERR_STREAM_FILTER_INVALID_PAYLOAD, error)
+}
+
 /// A parsed frame from the stream domain wire protocol.
 ///
 /// Client operation frames (600-606) produce `Op`. Subscription frames (607-608)
@@ -239,7 +250,10 @@ fn parse_read(
     let max_bytes = dec.get_optional_u64()?.map(|u| u as usize);
     let filter = if dec.remaining() > 0 {
         match dec.get_optional_bytes()? {
-            Some(bytes) => Some(StreamFilterSet::try_decode(bytes.as_ref())?),
+            Some(bytes) => Some(
+                StreamFilterSet::try_decode(bytes.as_ref())
+                    .map_err(map_stream_filter_decode_error)?,
+            ),
             None => None,
         }
     } else {

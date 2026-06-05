@@ -185,6 +185,7 @@ Clients should handle these cases explicitly:
 
 - `CONNECT` rejected: close the connection and surface the broker reason.
 - Domain frame sent before `CONNECT`: expect connection close.
+- Malformed or unsupported stream `Read` filter: expect a typed stream error response (2006 or 2007) and keep the connection open.
 - Partial TCP frame: keep buffering until complete or the socket closes.
 - Oversized frame length: fail fast before allocating.
 - Reconnect while work is in flight: treat in-flight work as interrupted unless the domain contract says otherwise.

@@ -1131,7 +1131,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<RealmCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listKvRealms" };
-      return client.get(`http://localhost:4090/api/v1/kv/realms`, undefined, finalOptions);
+      return client.get(`/api/v1/kv/realms`, undefined, finalOptions);
     },
     getKvRealm: (
       realm: string,
@@ -1139,7 +1139,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<RealmDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getKvRealm" };
       return client.get(
-        `http://localhost:4090/api/v1/kv/realms/${encodeURIComponent(String(realm))}`,
+        `/api/v1/kv/realms/${encodeURIComponent(String(realm))}`,
         undefined,
         finalOptions,
       );
@@ -1150,7 +1150,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listKvAreas" };
       return client.get(
-        `http://localhost:4090/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas`,
+        `/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas`,
         undefined,
         finalOptions,
       );
@@ -1162,7 +1162,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getKvArea" };
       return client.get(
-        `http://localhost:4090/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
+        `/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
         undefined,
         finalOptions,
       );
@@ -1174,7 +1174,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<ResourceCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listKvResources" };
       return client.get(
-        `http://localhost:4090/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
+        `/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
         undefined,
         finalOptions,
       );
@@ -1187,7 +1187,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<KvResourceDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getKvResource" };
       return client.get(
-        `http://localhost:4090/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
+        `/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
         undefined,
         finalOptions,
       );
@@ -1205,7 +1205,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
+        `/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1222,7 +1222,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
+        `/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1237,7 +1237,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "listKvTransactions",
       };
       return client.get(
-        `http://localhost:4090/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/transactions`,
+        `/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/transactions`,
         undefined,
         finalOptions,
       );
@@ -1248,7 +1248,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<KvStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getKvStats" };
-      return client.get(`http://localhost:4090/api/v1/kv/stats`, undefined, finalOptions);
+      return client.get(`/api/v1/kv/stats`, undefined, finalOptions);
     },
     listLeaseRealms: (options?: {
       signal?: AbortSignal;
@@ -1256,7 +1256,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<RealmCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listLeaseRealms" };
-      return client.get(`http://localhost:4090/api/v1/lease/realms`, undefined, finalOptions);
+      return client.get(`/api/v1/lease/realms`, undefined, finalOptions);
     },
     getLeaseRealm: (
       realm: string,
@@ -1264,7 +1264,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<RealmDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getLeaseRealm" };
       return client.get(
-        `http://localhost:4090/api/v1/lease/realms/${encodeURIComponent(String(realm))}`,
+        `/api/v1/lease/realms/${encodeURIComponent(String(realm))}`,
         undefined,
         finalOptions,
       );
@@ -1275,7 +1275,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listLeaseAreas" };
       return client.get(
-        `http://localhost:4090/api/v1/lease/realms/${encodeURIComponent(String(realm))}/areas`,
+        `/api/v1/lease/realms/${encodeURIComponent(String(realm))}/areas`,
         undefined,
         finalOptions,
       );
@@ -1287,7 +1287,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getLeaseArea" };
       return client.get(
-        `http://localhost:4090/api/v1/lease/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
+        `/api/v1/lease/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
         undefined,
         finalOptions,
       );
@@ -1302,7 +1302,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "listLeaseResources",
       };
       return client.get(
-        `http://localhost:4090/api/v1/lease/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
+        `/api/v1/lease/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
         undefined,
         finalOptions,
       );
@@ -1315,7 +1315,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<LeaseResourceDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getLeaseResource" };
       return client.get(
-        `http://localhost:4090/api/v1/lease/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
+        `/api/v1/lease/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
         undefined,
         finalOptions,
       );
@@ -1333,7 +1333,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/lease/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
+        `/api/v1/lease/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1350,7 +1350,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/lease/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
+        `/api/v1/lease/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1360,7 +1360,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<LeaseStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getLeaseStats" };
-      return client.get(`http://localhost:4090/api/v1/lease/stats`, undefined, finalOptions);
+      return client.get(`/api/v1/lease/stats`, undefined, finalOptions);
     },
     listNoticeRealms: (options?: {
       signal?: AbortSignal;
@@ -1368,7 +1368,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<RealmCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listNoticeRealms" };
-      return client.get(`http://localhost:4090/api/v1/notice/realms`, undefined, finalOptions);
+      return client.get(`/api/v1/notice/realms`, undefined, finalOptions);
     },
     getNoticeRealm: (
       realm: string,
@@ -1376,7 +1376,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<RealmDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getNoticeRealm" };
       return client.get(
-        `http://localhost:4090/api/v1/notice/realms/${encodeURIComponent(String(realm))}`,
+        `/api/v1/notice/realms/${encodeURIComponent(String(realm))}`,
         undefined,
         finalOptions,
       );
@@ -1387,7 +1387,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listNoticeAreas" };
       return client.get(
-        `http://localhost:4090/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas`,
+        `/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas`,
         undefined,
         finalOptions,
       );
@@ -1399,7 +1399,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getNoticeArea" };
       return client.get(
-        `http://localhost:4090/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
+        `/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
         undefined,
         finalOptions,
       );
@@ -1414,7 +1414,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "listNoticeResources",
       };
       return client.get(
-        `http://localhost:4090/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
+        `/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
         undefined,
         finalOptions,
       );
@@ -1427,7 +1427,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<NoticeResourceDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getNoticeResource" };
       return client.get(
-        `http://localhost:4090/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
+        `/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
         undefined,
         finalOptions,
       );
@@ -1445,7 +1445,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
+        `/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1462,7 +1462,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
+        `/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1477,7 +1477,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "listNoticeSubscriptions",
       };
       return client.get(
-        `http://localhost:4090/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/subscriptions`,
+        `/api/v1/notice/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/subscriptions`,
         undefined,
         finalOptions,
       );
@@ -1488,7 +1488,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<NoticeStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getNoticeStats" };
-      return client.get(`http://localhost:4090/api/v1/notice/stats`, undefined, finalOptions);
+      return client.get(`/api/v1/notice/stats`, undefined, finalOptions);
     },
     listQueueRealms: (options?: {
       signal?: AbortSignal;
@@ -1496,7 +1496,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<RealmCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listQueueRealms" };
-      return client.get(`http://localhost:4090/api/v1/queue/realms`, undefined, finalOptions);
+      return client.get(`/api/v1/queue/realms`, undefined, finalOptions);
     },
     getQueueRealm: (
       realm: string,
@@ -1504,7 +1504,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<RealmDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getQueueRealm" };
       return client.get(
-        `http://localhost:4090/api/v1/queue/realms/${encodeURIComponent(String(realm))}`,
+        `/api/v1/queue/realms/${encodeURIComponent(String(realm))}`,
         undefined,
         finalOptions,
       );
@@ -1515,7 +1515,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listQueueAreas" };
       return client.get(
-        `http://localhost:4090/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas`,
+        `/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas`,
         undefined,
         finalOptions,
       );
@@ -1527,7 +1527,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getQueueArea" };
       return client.get(
-        `http://localhost:4090/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
+        `/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
         undefined,
         finalOptions,
       );
@@ -1542,7 +1542,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "listQueueResources",
       };
       return client.get(
-        `http://localhost:4090/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
+        `/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
         undefined,
         finalOptions,
       );
@@ -1555,7 +1555,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<QueueResourceDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getQueueResource" };
       return client.get(
-        `http://localhost:4090/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
+        `/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
         undefined,
         finalOptions,
       );
@@ -1579,7 +1579,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
+        `/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1596,7 +1596,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/dead-letters` +
+        `/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/dead-letters` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1614,7 +1614,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/dead-letters/${encodeURIComponent(String(message_id))}` +
+        `/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/dead-letters/${encodeURIComponent(String(message_id))}` +
         (queryString ? "?" + queryString : "");
       return client.del(url, undefined, finalOptions);
     },
@@ -1632,7 +1632,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/dead-letters/${encodeURIComponent(String(message_id))}/replay` +
+        `/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/dead-letters/${encodeURIComponent(String(message_id))}/replay` +
         (queryString ? "?" + queryString : "");
       return client.post(url, undefined, undefined, finalOptions);
     },
@@ -1649,7 +1649,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
+        `/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1664,7 +1664,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "listQueueInflightEntries",
       };
       return client.get(
-        `http://localhost:4090/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/inflight`,
+        `/api/v1/queue/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/inflight`,
         undefined,
         finalOptions,
       );
@@ -1675,7 +1675,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<QueueStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getQueueStats" };
-      return client.get(`http://localhost:4090/api/v1/queue/stats`, undefined, finalOptions);
+      return client.get(`/api/v1/queue/stats`, undefined, finalOptions);
     },
     listRpcPendingRequests: (
       query?: { realm?: string },
@@ -1686,8 +1686,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "listRpcPendingRequests",
       };
       const queryString = query ? buildQueryParams(query) : "";
-      const url =
-        `http://localhost:4090/api/v1/rpc/pending` + (queryString ? "?" + queryString : "");
+      const url = `/api/v1/rpc/pending` + (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
     listRpcRealms: (options?: {
@@ -1696,7 +1695,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<RealmCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listRpcRealms" };
-      return client.get(`http://localhost:4090/api/v1/rpc/realms`, undefined, finalOptions);
+      return client.get(`/api/v1/rpc/realms`, undefined, finalOptions);
     },
     getRpcRealm: (
       realm: string,
@@ -1704,7 +1703,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<RealmDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getRpcRealm" };
       return client.get(
-        `http://localhost:4090/api/v1/rpc/realms/${encodeURIComponent(String(realm))}`,
+        `/api/v1/rpc/realms/${encodeURIComponent(String(realm))}`,
         undefined,
         finalOptions,
       );
@@ -1715,7 +1714,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listRpcAreas" };
       return client.get(
-        `http://localhost:4090/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas`,
+        `/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas`,
         undefined,
         finalOptions,
       );
@@ -1727,7 +1726,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getRpcArea" };
       return client.get(
-        `http://localhost:4090/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
+        `/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
         undefined,
         finalOptions,
       );
@@ -1739,7 +1738,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<ResourceCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listRpcResources" };
       return client.get(
-        `http://localhost:4090/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
+        `/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
         undefined,
         finalOptions,
       );
@@ -1752,7 +1751,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<OperationCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getRpcResource" };
       return client.get(
-        `http://localhost:4090/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
+        `/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
         undefined,
         finalOptions,
       );
@@ -1770,7 +1769,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
+        `/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1787,7 +1786,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
+        `/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1799,7 +1798,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<OperationCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listRpcOperations" };
       return client.get(
-        `http://localhost:4090/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/operations`,
+        `/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/operations`,
         undefined,
         finalOptions,
       );
@@ -1813,7 +1812,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<RpcOperationDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getRpcOperation" };
       return client.get(
-        `http://localhost:4090/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/operations/${encodeURIComponent(String(operation))}`,
+        `/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/operations/${encodeURIComponent(String(operation))}`,
         undefined,
         finalOptions,
       );
@@ -1830,7 +1829,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "listRpcOperationWorkers",
       };
       return client.get(
-        `http://localhost:4090/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/operations/${encodeURIComponent(String(operation))}/workers`,
+        `/api/v1/rpc/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/operations/${encodeURIComponent(String(operation))}/workers`,
         undefined,
         finalOptions,
       );
@@ -1841,7 +1840,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<RpcStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getRpcStats" };
-      return client.get(`http://localhost:4090/api/v1/rpc/stats`, undefined, finalOptions);
+      return client.get(`/api/v1/rpc/stats`, undefined, finalOptions);
     },
     listScheduleRealms: (options?: {
       signal?: AbortSignal;
@@ -1852,7 +1851,7 @@ export function createAdapter(client: FetchClient): {
         ...options,
         operationId: options?.operationId ?? "listScheduleRealms",
       };
-      return client.get(`http://localhost:4090/api/v1/schedule/realms`, undefined, finalOptions);
+      return client.get(`/api/v1/schedule/realms`, undefined, finalOptions);
     },
     getScheduleRealm: (
       realm: string,
@@ -1860,7 +1859,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<RealmDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getScheduleRealm" };
       return client.get(
-        `http://localhost:4090/api/v1/schedule/realms/${encodeURIComponent(String(realm))}`,
+        `/api/v1/schedule/realms/${encodeURIComponent(String(realm))}`,
         undefined,
         finalOptions,
       );
@@ -1871,7 +1870,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listScheduleAreas" };
       return client.get(
-        `http://localhost:4090/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas`,
+        `/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas`,
         undefined,
         finalOptions,
       );
@@ -1883,7 +1882,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getScheduleArea" };
       return client.get(
-        `http://localhost:4090/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
+        `/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
         undefined,
         finalOptions,
       );
@@ -1898,7 +1897,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "listScheduleResources",
       };
       return client.get(
-        `http://localhost:4090/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
+        `/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
         undefined,
         finalOptions,
       );
@@ -1914,7 +1913,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "getScheduleResource",
       };
       return client.get(
-        `http://localhost:4090/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
+        `/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
         undefined,
         finalOptions,
       );
@@ -1932,7 +1931,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
+        `/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1949,7 +1948,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
+        `/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -1959,7 +1958,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<ScheduleStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getScheduleStats" };
-      return client.get(`http://localhost:4090/api/v1/schedule/stats`, undefined, finalOptions);
+      return client.get(`/api/v1/schedule/stats`, undefined, finalOptions);
     },
     createAdminSession: (
       body: LoginRequest,
@@ -1969,7 +1968,7 @@ export function createAdapter(client: FetchClient): {
         ...options,
         operationId: options?.operationId ?? "createAdminSession",
       };
-      return client.post(`http://localhost:4090/api/v1/session`, body, undefined, finalOptions);
+      return client.post(`/api/v1/session`, body, undefined, finalOptions);
     },
     deleteAdminSession: (options?: {
       signal?: AbortSignal;
@@ -1980,7 +1979,7 @@ export function createAdapter(client: FetchClient): {
         ...options,
         operationId: options?.operationId ?? "deleteAdminSession",
       };
-      return client.del(`http://localhost:4090/api/v1/session`, undefined, finalOptions);
+      return client.del(`/api/v1/session`, undefined, finalOptions);
     },
     getAdminSession: (options?: {
       signal?: AbortSignal;
@@ -1988,7 +1987,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<SessionResponse>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getAdminSession" };
-      return client.get(`http://localhost:4090/api/v1/session`, undefined, finalOptions);
+      return client.get(`/api/v1/session`, undefined, finalOptions);
     },
     listActiveSessions: (
       query?: { realm?: string },
@@ -1999,7 +1998,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "listActiveSessions",
       };
       const queryString = query ? buildQueryParams(query) : "";
-      const url = `http://localhost:4090/api/v1/sessions` + (queryString ? "?" + queryString : "");
+      const url = `/api/v1/sessions` + (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
     getGlobalStats: (options?: {
@@ -2008,7 +2007,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<GlobalStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getGlobalStats" };
-      return client.get(`http://localhost:4090/api/v1/stats`, undefined, finalOptions);
+      return client.get(`/api/v1/stats`, undefined, finalOptions);
     },
     listStreamRealms: (options?: {
       signal?: AbortSignal;
@@ -2016,7 +2015,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<RealmCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listStreamRealms" };
-      return client.get(`http://localhost:4090/api/v1/stream/realms`, undefined, finalOptions);
+      return client.get(`/api/v1/stream/realms`, undefined, finalOptions);
     },
     getStreamRealm: (
       realm: string,
@@ -2024,7 +2023,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<RealmDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getStreamRealm" };
       return client.get(
-        `http://localhost:4090/api/v1/stream/realms/${encodeURIComponent(String(realm))}`,
+        `/api/v1/stream/realms/${encodeURIComponent(String(realm))}`,
         undefined,
         finalOptions,
       );
@@ -2035,7 +2034,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaCollection>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "listStreamAreas" };
       return client.get(
-        `http://localhost:4090/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas`,
+        `/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas`,
         undefined,
         finalOptions,
       );
@@ -2047,7 +2046,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<AreaDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getStreamArea" };
       return client.get(
-        `http://localhost:4090/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
+        `/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}`,
         undefined,
         finalOptions,
       );
@@ -2062,7 +2061,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "listStreamResources",
       };
       return client.get(
-        `http://localhost:4090/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
+        `/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources`,
         undefined,
         finalOptions,
       );
@@ -2075,7 +2074,7 @@ export function createAdapter(client: FetchClient): {
     ): Promise<FetchResponse<StreamResourceDetail>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getStreamResource" };
       return client.get(
-        `http://localhost:4090/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
+        `/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}`,
         undefined,
         finalOptions,
       );
@@ -2093,7 +2092,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
+        `/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/compare` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -2110,7 +2109,7 @@ export function createAdapter(client: FetchClient): {
       };
       const queryString = query ? buildQueryParams(query) : "";
       const url =
-        `http://localhost:4090/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
+        `/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/events` +
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
@@ -2124,7 +2123,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "getStreamAreaWatermarks",
       };
       return client.get(
-        `http://localhost:4090/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/watermarks`,
+        `/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/watermarks`,
         undefined,
         finalOptions,
       );
@@ -2138,7 +2137,7 @@ export function createAdapter(client: FetchClient): {
         operationId: options?.operationId ?? "getStreamRealmWatermarks",
       };
       return client.get(
-        `http://localhost:4090/api/v1/stream/realms/${encodeURIComponent(String(realm))}/watermarks`,
+        `/api/v1/stream/realms/${encodeURIComponent(String(realm))}/watermarks`,
         undefined,
         finalOptions,
       );
@@ -2149,7 +2148,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<StreamStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getStreamStats" };
-      return client.get(`http://localhost:4090/api/v1/stream/stats`, undefined, finalOptions);
+      return client.get(`/api/v1/stream/stats`, undefined, finalOptions);
     },
     getGlobalTroubleshootingGuidance: (options?: {
       signal?: AbortSignal;
@@ -2160,7 +2159,7 @@ export function createAdapter(client: FetchClient): {
         ...options,
         operationId: options?.operationId ?? "getGlobalTroubleshootingGuidance",
       };
-      return client.get(`http://localhost:4090/api/v1/troubleshooting`, undefined, finalOptions);
+      return client.get(`/api/v1/troubleshooting`, undefined, finalOptions);
     },
     getMetrics: (options?: {
       signal?: AbortSignal;
@@ -2168,7 +2167,7 @@ export function createAdapter(client: FetchClient): {
       operationId?: string;
     }): Promise<FetchResponse<string>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getMetrics" };
-      return client.get(`http://localhost:4090/metrics`, undefined, finalOptions);
+      return client.get(`/metrics`, undefined, finalOptions);
     },
   };
 }

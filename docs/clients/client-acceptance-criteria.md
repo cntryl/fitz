@@ -320,6 +320,8 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 - Missing discriminators are treated as empty strings for matching
 - Client APIs MAY omit filter when replay filtering is not needed
 
+**Wire shape note:** The request layout is `route`, `from_offset`, `limit`, `has_max_bytes`, optional `max_bytes`, `has_filter`, optional `filter_len`, and raw `StreamFilterSet` bytes. The filter bytes use the same stream filter codec defined in `client-spec.md`.
+
 ### AC-STREAM-008: Filtered replay cursor progression
 
 **MUST** preserve offset progress even when replay hides some committed records
@@ -330,6 +332,19 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 - Returned read page may contain `event`, `filtered`, or `filtered_range` items
 - `filtered.offset` reflects the actual skipped committed offset
 - Event-only convenience APIs MAY flatten filtered items away, but they MUST preserve cursor semantics
+
+### AC-STREAM-009: Filter compatibility error contract
+
+**MUST** return a typed stream error for unsupported or malformed filter payloads without dropping the connection
+**Given:** Client sends `Read(..., filter=...)` using a filter payload the broker cannot decode
+**When:** Filter marker/version is unsupported or filter bytes are malformed
+**Then:**
+
+- Server returns stream error `ERR_STREAM_FILTER_UNSUPPORTED_VERSION` (2006) for unsupported marker/version
+- Server returns stream error `ERR_STREAM_FILTER_INVALID_PAYLOAD` (2007) for malformed filter bytes
+- Server keeps the session/transport open so a subsequent valid request can succeed
+
+**Filter codec contract:** `StreamFilterSet` is an opaque client-visible value type, but the wire encoding is fixed and versioned. Clients MUST keep the marker, clause tags, and length prefixes aligned with `client-spec.md`; if the broker responds with 2006 or 2007, the client MUST surface the error and continue using the same connection only for subsequent valid requests.
 
 ### AC-STREAM-010: Subscribe to resource commit notifications
 
@@ -1100,6 +1115,8 @@ Error codes follow the format `XXYY` where:
 | 2003 | ERR_SESSION_NOT_FOUND | Session ID is missing, stale, or already cleaned up | No |
 | 2004 | ERR_INVALID_READ_BOUND | Read range bounds invalid | No |
 | 2005 | ERR_RESOURCE_NOT_FOUND | Stream resource does not exist | No |
+| 2006 | ERR_STREAM_FILTER_UNSUPPORTED_VERSION | Filter marker/version is not supported by this broker | No |
+| 2007 | ERR_STREAM_FILTER_INVALID_PAYLOAD | Filter payload malformed or undecodable | No |
 | 2009 | ERR_UNAUTHORIZED | Permission denied for stream operation | No |
 | 2010 | ERR_INVALID_SUBSCRIPTION_PATTERN | Subscription pattern syntax invalid | No |
 | 2011 | ERR_SUBSCRIPTION_LIMIT | Maximum subscriptions reached | No |

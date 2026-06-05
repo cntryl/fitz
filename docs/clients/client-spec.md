@@ -2555,7 +2555,27 @@ Response (status=1):
 Response: status byte + data
 ```
 
-**Optional filter:** Clients MAY include a `StreamFilterSet` to request server-side replay filtering. The filter uses Fitz's fixed-field stream filter codec and is conjunctive: all clauses must match the record discriminator. Missing discriminators are treated as empty strings for matching.
+**Optional filter:** Clients MAY include a `StreamFilterSet` to request server-side replay filtering. The filter is carried as an optional bytes field after `max_bytes`: a 1-byte presence flag, a u32 BE length when present, and the raw filter payload. The filter payload uses Fitz's custom fixed-field stream filter codec and is conjunctive: all clauses must match the record discriminator.
+
+**StreamFilterSet codec:**
+
+```
+[u8]      marker_0 = 0
+[u8]      marker_1 = 0xF1
+[u32 BE]  clause_count
+repeat clause_count times:
+  [u8]      clause_tag
+  clause payload
+```
+
+Clause payloads:
+
+- `0` = Equals: `[u32 BE string_len][bytes utf8]`
+- `1` = NotEquals: `[u32 BE string_len][bytes utf8]`
+- `2` = StartsWith: `[u32 BE string_len][bytes utf8]`
+- `3` = AnyOf: `[u32 BE value_count][repeat value_count times: u32 BE string_len + bytes utf8]`
+
+Missing discriminators are treated as empty strings for matching. Unsupported marker/version and malformed payloads return typed stream errors instead of closing the connection.
 
 **Read page:** On success, the `data` payload is a count-prefixed sequence of tagged delivery items followed by the read cursor. `event` items contain committed records. `filtered` items contain the skipped committed offset and an optional reason. `filtered_range` may compact contiguous skipped offsets. Clients MAY expose the raw page or flatten event-only results, but they MUST preserve cursor progress.
 
@@ -2679,6 +2699,8 @@ class StreamSession:
 - 2003 = ERR_SESSION_NOT_FOUND
 - 2004 = ERR_INVALID_READ_BOUND
 - 2005 = ERR_RESOURCE_NOT_FOUND
+- 2006 = ERR_STREAM_FILTER_UNSUPPORTED_VERSION (read filter marker/version is not supported by this broker)
+- 2007 = ERR_STREAM_FILTER_INVALID_PAYLOAD (read filter payload malformed)
 - 2010 = ERR_INVALID_SUBSCRIPTION_PATTERN
 - 2011 = ERR_SUBSCRIPTION_LIMIT
 

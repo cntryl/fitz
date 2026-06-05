@@ -13,10 +13,18 @@ use std::sync::Arc;
 
 const ADMIN_SESSION_COOKIE: &str = "fitz_admin_session";
 const DEFAULT_SESSION_TTL_SECS: i64 = 28_800;
+const DEFAULT_OPEN_ADMIN_USERNAME: &str = "admin";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminAuthMode {
+    Protected,
+    Open,
+}
 
 #[derive(Debug, Clone)]
 pub struct AdminAuth {
     settings: Arc<Option<AdminAuthSettings>>,
+    mode: AdminAuthMode,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +63,10 @@ pub struct AdminPrincipal {
 
 impl AdminAuth {
     pub fn from_env() -> Self {
+        let mode = match std::env::var("FITZ_ADMIN_AUTH_MODE") {
+            Ok(value) if value.eq_ignore_ascii_case("open") => AdminAuthMode::Open,
+            _ => AdminAuthMode::Protected,
+        };
         let username = std::env::var("FITZ_ADMIN_USERNAME").ok();
         let password_hash = std::env::var("FITZ_ADMIN_PASSWORD_HASH").ok();
         let jwt_secret = std::env::var("FITZ_ADMIN_JWT_SECRET").ok();
@@ -82,21 +94,37 @@ impl AdminAuth {
                     cookie_secure,
                 })
             }
-            _ => {
+            _ if matches!(mode, AdminAuthMode::Protected) => {
                 tracing::warn!(
                     "Admin auth is not fully configured; session login endpoints will remain unavailable"
                 );
+                None
+            }
+            _ => {
+                tracing::info!("Admin auth open mode enabled; admin login is not required");
                 None
             }
         };
 
         Self {
             settings: Arc::new(settings),
+            mode,
         }
     }
 
     pub fn is_configured(&self) -> bool {
         self.settings.is_some()
+    }
+
+    pub fn auth_mode(&self) -> &'static str {
+        match self.mode {
+            AdminAuthMode::Protected => "protected",
+            AdminAuthMode::Open => "open",
+        }
+    }
+
+    pub fn login_required(&self) -> bool {
+        matches!(self.mode, AdminAuthMode::Protected)
     }
 
     pub fn authenticate_credentials(
@@ -163,6 +191,13 @@ impl AdminAuth {
         &self,
         req: &hyper::Request<B>,
     ) -> Result<AdminPrincipal, AuthFailure> {
+        if matches!(self.mode, AdminAuthMode::Open) {
+            return Ok(AdminPrincipal {
+                username: std::env::var("FITZ_ADMIN_OPEN_USERNAME")
+                    .unwrap_or_else(|_| DEFAULT_OPEN_ADMIN_USERNAME.to_string()),
+            });
+        }
+
         let settings = self
             .settings
             .as_ref()
@@ -294,9 +329,22 @@ mod tests {
             .to_string()
     }
 
+    fn reset_admin_env() {
+        for key in [
+            "FITZ_ADMIN_AUTH_MODE",
+            "FITZ_ADMIN_USERNAME",
+            "FITZ_ADMIN_PASSWORD_HASH",
+            "FITZ_ADMIN_JWT_SECRET",
+            "FITZ_ADMIN_OPEN_USERNAME",
+        ] {
+            std::env::remove_var(key);
+        }
+    }
+
     #[test]
     fn should_authenticate_with_valid_credentials() {
         // Arrange
+        reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
         std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
@@ -312,6 +360,7 @@ mod tests {
     #[test]
     fn should_extract_principal_from_cookie() {
         // Arrange
+        reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
         std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
@@ -331,5 +380,27 @@ mod tests {
 
         // Assert
         assert_eq!(extracted.username, "admin");
+    }
+
+    #[test]
+    fn should_allow_open_admin_without_credentials() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_AUTH_MODE", "open");
+
+        let auth = AdminAuth::from_env();
+        let req = hyper::http::Request::builder()
+            .body(Body::default())
+            .unwrap();
+
+        // Act
+        let principal = auth
+            .principal_from_request(&req)
+            .expect("open mode principal");
+
+        // Assert
+        assert_eq!(auth.auth_mode(), "open");
+        assert!(!auth.login_required());
+        assert_eq!(principal.username, "admin");
     }
 }

@@ -8,7 +8,7 @@ export const sessionRouteAuth: RouteAuthOptions = {
 
       return {
         session,
-        user: session ? { username: session.username } : null,
+        user: session?.authenticated ? { username: session.username } : null,
       };
     } catch {
       return {

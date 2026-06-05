@@ -62,16 +62,19 @@ FROM debian:trixie-slim AS runtime-fs
 RUN mkdir -p /data \
   && chown 65532:65532 /data
 
-FROM gcr.io/distroless/cc-debian12 AS runtime
+FROM gcr.io/distroless/cc-debian13 AS runtime
 
 WORKDIR /app
+
+ENV FITZ_HTTP_PORT=4090 \
+  FITZ_TCP_PORT=4091
 
 COPY --from=runtime-fs --chown=65532:65532 /data /data
 COPY --from=backend /usr/src/fitz/target/release/fitz /app/fitz
 
 USER 65532:65532
 
-EXPOSE 4090 4091
+EXPOSE ${FITZ_HTTP_PORT} ${FITZ_TCP_PORT}
 
 VOLUME ["/data"]
 

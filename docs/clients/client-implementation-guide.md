@@ -142,6 +142,8 @@ Stream clients SHOULD expose an optional discriminator on append and an optional
 
 If your language offers builders, wrap the shared `StreamFilterSet` and `StreamFilterClause` shapes directly instead of inventing a separate filter DSL per SDK.
 
+The wire encoding for stream reads is fixed: `route`, `from_offset`, `limit`, optional `max_bytes`, then an optional raw `StreamFilterSet` blob. Clients SHOULD encode the filter blob with the server's versioned marker and big-endian length fields, and MUST surface `ERR_STREAM_FILTER_UNSUPPORTED_VERSION` and `ERR_STREAM_FILTER_INVALID_PAYLOAD` as typed request errors rather than transport failures.
+
 ---
 
 ## Architecture Patterns
@@ -1247,6 +1249,8 @@ KvClient
 
 2000-2999: Stream
   2001: Concurrency conflict → Retryable: No
+    2006: Unsupported filter version → Retryable: No
+    2007: Invalid filter payload → Retryable: No
   2009: Unauthorized → Retryable: No
 
 3000-3999: Notice

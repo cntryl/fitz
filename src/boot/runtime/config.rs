@@ -275,6 +275,26 @@ mod tests {
     use super::*;
     use crate::prelude;
 
+    fn with_env_var<T>(key: &str, value: &str, test: impl FnOnce() -> T) -> T {
+        let previous = std::env::var(key).ok();
+        unsafe {
+            std::env::set_var(key, value);
+        }
+
+        let result = test();
+
+        match previous {
+            Some(previous) => unsafe {
+                std::env::set_var(key, previous);
+            },
+            None => unsafe {
+                std::env::remove_var(key);
+            },
+        }
+
+        result
+    }
+
     #[test]
     fn should_create_default_boot_config() {
         // Arrange
@@ -308,6 +328,20 @@ mod tests {
         assert_eq!(config.tcp_port, 5091);
         assert_eq!(config.http_port, 5090);
         assert_eq!(config.bind_addr, "127.0.0.1");
+    }
+
+    #[test]
+    fn should_read_listener_ports_from_environment() {
+        // Arrange
+
+        // Act
+        let config = with_env_var("FITZ_HTTP_PORT", "6080", || {
+            with_env_var("FITZ_TCP_PORT", "6081", BootConfig::default)
+        });
+
+        // Assert
+        assert_eq!(config.http_port, 6080);
+        assert_eq!(config.tcp_port, 6081);
     }
 
     #[test]

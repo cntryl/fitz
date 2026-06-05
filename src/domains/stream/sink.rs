@@ -749,12 +749,28 @@ impl MailboxSink for StreamDomainSink {
             }),
         ) {
             Ok(msg) => msg,
-            Err(_) => {
+            Err(error) => {
+                let response = Self::stream_error_response(error);
+                let response_bytes = crate::protocol::stream_codec::encode_response_into(
+                    &mut payload_encoder,
+                    &response,
+                );
+                let response_ctx = FrameContext::new(
+                    frame_ctx.session_id,
+                    frame_ctx.channel_id,
+                    crate::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
+                    bytes::Bytes::from(response_bytes),
+                    frame_ctx.route_family,
+                );
+                if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+                    let _ = self.router.route(response_envelope);
+                }
+
                 if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
                 {
                     metrics.record_failure(started_at);
                 }
-                return Err(DeliveryError::ActorStopped);
+                return Ok(());
             }
         };
 
@@ -1308,6 +1324,21 @@ mod tests {
         crate::benchkit::parse_stream_session_id(response.as_ref()).expect("stream session id")
     }
 
+    fn decode_stream_error_message(payload: &[u8]) -> Result<String, String> {
+        let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(payload);
+        let status = decoder.get_u8()?;
+        if status == 0 {
+            return Err("expected stream error response".to_string());
+        }
+
+        let error = decoder.get_string()?;
+        if !decoder.is_complete() {
+            return Err("Trailing data in stream error response".to_string());
+        }
+
+        Ok(error)
+    }
+
     fn seed_committed_stream_route(
         context: &TestContext,
         route: &str,
@@ -1366,6 +1397,45 @@ mod tests {
         // Assert
         assert_eq!(area_records.len(), 100);
         assert_eq!(response_count, 100);
+    }
+
+    #[test]
+    fn should_keep_sink_alive_given_malformed_filter_payload_on_stream_read() {
+        // Arrange
+        let context = setup_test_context();
+        let route = "stream://bench/events/orders";
+        seed_committed_stream_route(&context, route, 1, b"persisted");
+
+        let mut malformed_read_payload = crate::protocol::payload_codec::PayloadEncoder::new();
+        malformed_read_payload.put_string(route);
+        malformed_read_payload.put_u64(0);
+        malformed_read_payload.put_u64(10);
+        malformed_read_payload.put_optional_u64(None);
+        malformed_read_payload.put_u8(1);
+        malformed_read_payload.put_bytes(&[0, 0xF2, 0, 0, 0, 0]);
+
+        // Act
+        let malformed_response = request(
+            &context,
+            route,
+            604,
+            Bytes::from(malformed_read_payload.finish()),
+        );
+        let malformed_error = decode_stream_error_message(malformed_response.as_ref())
+            .expect("decode malformed stream filter error");
+
+        let valid_read_frame = build_stream_read(route, 0);
+        let (valid_read_msg_type, valid_read_payload) = extract_single_tlv_field(&valid_read_frame);
+        let valid_read_response = request(&context, route, valid_read_msg_type, valid_read_payload);
+        let valid_read_count = count_stream_read_records_from_payload(valid_read_response.as_ref())
+            .expect("count valid stream read records");
+
+        // Assert
+        assert!(
+            malformed_error.contains("ERR_STREAM_FILTER_UNSUPPORTED_VERSION"),
+            "unexpected malformed filter error: {malformed_error}"
+        );
+        assert_eq!(valid_read_count, 1);
     }
 
     #[test]

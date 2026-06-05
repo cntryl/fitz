@@ -309,9 +309,7 @@ export default function QueueResourcePage() {
             <QueryLoadingState description="Loading queue resource..." />
           ) : null}
 
-          {resourceQuery.error && !data ? (
-            <QueryErrorState error={resourceQuery.error} />
-          ) : null}
+          {resourceQuery.error && !data ? <QueryErrorState error={resourceQuery.error} /> : null}
 
           {actionError ? <QueryErrorState error={actionError} /> : null}
         </Stack>
@@ -417,202 +415,202 @@ export default function QueueResourcePage() {
         {actionError ? <QueryErrorState error={actionError} /> : null}
 
         <Stack gap="3">
-            {resourceQuery.refreshing ? (
-              <QueryRefreshingState description="Refreshing queue resource..." />
-            ) : null}
+          {resourceQuery.refreshing ? (
+            <QueryRefreshingState description="Refreshing queue resource..." />
+          ) : null}
 
-            <DomainMetricTable
-              title="Resource metrics"
-              metrics={[
-                { label: "Total messages", value: current.detail.messagesTotal },
-                { label: "Ready", value: current.detail.messagesReady },
-                { label: "Inflight", value: current.detail.messagesInflight },
-                { label: "Dead-lettered", value: current.detail.messagesDeadLettered },
-                { label: "Delayed", value: current.detail.messagesDelayed },
-                {
-                  label: "Oldest age",
-                  value: humanizeSeconds(current.detail.oldestMessageAgeSeconds),
-                },
-              ]}
-            />
+          <DomainMetricTable
+            title="Resource metrics"
+            metrics={[
+              { label: "Total messages", value: current.detail.messagesTotal },
+              { label: "Ready", value: current.detail.messagesReady },
+              { label: "Inflight", value: current.detail.messagesInflight },
+              { label: "Dead-lettered", value: current.detail.messagesDeadLettered },
+              { label: "Delayed", value: current.detail.messagesDelayed },
+              {
+                label: "Oldest age",
+                value: humanizeSeconds(current.detail.oldestMessageAgeSeconds),
+              },
+            ]}
+          />
 
-            <Section size="3">
-              <div class="domain-section-header">
-                <h2>Inflight</h2>
-                <span>{current.inflight.length} entries</span>
+          <Section size="3">
+            <div class="domain-section-header">
+              <h2>Inflight</h2>
+              <span>{current.inflight.length} entries</span>
+            </div>
+
+            {current.inflight.length === 0 ? (
+              <QueryEmptyState description="No inflight messages are visible for this resource." />
+            ) : (
+              <QueueInflightTable messages={current.inflight} />
+            )}
+          </Section>
+
+          <Section size="3">
+            <div class="domain-section-header">
+              <h2>Dead letters</h2>
+              <span>{current.deadLetters.length} messages</span>
+            </div>
+
+            {console.log(
+              "QUEUE-RESOURCE DEAD LETTER",
+              JSON.stringify({
+                length: current.deadLetters.length,
+                messages: current.deadLetters,
+              }),
+            )}
+
+            {current.deadLetters.length === 0 ? (
+              <QueryEmptyState description="No dead-letter messages are visible for this resource." />
+            ) : (
+              <QueueDeadLetterTable
+                messages={current.deadLetters}
+                onReplay={(message) => openDeadLetterConfirmation("replay", message)}
+                onPurge={(message) => openDeadLetterConfirmation("purge", message)}
+                pendingAction={actionKind()}
+                pendingMessageId={actionMessageId()}
+              />
+            )}
+          </Section>
+
+          <Section size="3">
+            <div class="domain-section-header">
+              <h2>Timeline</h2>
+              <span>{current.timeline.derived ? "Derived" : "Live"}</span>
+            </div>
+
+            {current.timeline.events.length === 0 ? (
+              <QueryEmptyState description="No recent queue transitions are visible for this resource." />
+            ) : (
+              <div class="domain-table-wrap">
+                <Table class="domain-table">
+                  <TableHead>
+                    <TableRow>
+                      <TableHeaderCell>Kind</TableHeaderCell>
+                      <TableHeaderCell>Summary</TableHeaderCell>
+                      <TableHeaderCell>Observed</TableHeaderCell>
+                      <TableHeaderCell>Age</TableHeaderCell>
+                      <TableHeaderCell>Context</TableHeaderCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    <For
+                      each={current.timeline.events}
+                      by={(event: QueueResourceTimelineEvent) =>
+                        `${event.observedAt}:${event.summary}`
+                      }
+                    >
+                      {(event: QueueResourceTimelineEvent) => (
+                        <TableRow>
+                          <TableCell>{formatTimelineKind(event.kind)}</TableCell>
+                          <TableCell>{event.summary}</TableCell>
+                          <TableCell>{event.observedAt}</TableCell>
+                          <TableCell>
+                            {event.ageSeconds == null
+                              ? "Unknown"
+                              : humanizeSeconds(event.ageSeconds)}
+                          </TableCell>
+                          <TableCell>
+                            {event.operation ? `Operation: ${event.operation}` : ""}
+                            {event.messageId != null ? ` Message: ${event.messageId}` : ""}
+                            {event.ownerSession ? ` Owner: ${event.ownerSession}` : ""}
+                            {event.workerSession ? ` Worker: ${event.workerSession}` : ""}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </For>
+                  </TableBody>
+                </Table>
               </div>
+            )}
+          </Section>
 
-              {current.inflight.length === 0 ? (
-                <QueryEmptyState description="No inflight messages are visible for this resource." />
-              ) : (
-                <QueueInflightTable messages={current.inflight} />
-              )}
-            </Section>
+          <Section size="3">
+            <div class="domain-section-header">
+              <h2>Compare</h2>
+            </div>
 
-            <Section size="3">
-              <div class="domain-section-header">
-                <h2>Dead letters</h2>
-                <span>{current.deadLetters.length} messages</span>
-              </div>
-
-              {console.log(
-                "QUEUE-RESOURCE DEAD LETTER",
-                JSON.stringify({
-                  length: current.deadLetters.length,
-                  messages: current.deadLetters,
-                }),
-              )}
-
-              {current.deadLetters.length === 0 ? (
-                <QueryEmptyState description="No dead-letter messages are visible for this resource." />
-              ) : (
-                <QueueDeadLetterTable
-                  messages={current.deadLetters}
-                  onReplay={(message) => openDeadLetterConfirmation("replay", message)}
-                  onPurge={(message) => openDeadLetterConfirmation("purge", message)}
-                  pendingAction={actionKind()}
-                  pendingMessageId={actionMessageId()}
-                />
-              )}
-            </Section>
-
-            <Section size="3">
-              <div class="domain-section-header">
-                <h2>Timeline</h2>
-                <span>{current.timeline.derived ? "Derived" : "Live"}</span>
-              </div>
-
-              {current.timeline.events.length === 0 ? (
-                <QueryEmptyState description="No recent queue transitions are visible for this resource." />
-              ) : (
-                <div class="domain-table-wrap">
-                  <Table class="domain-table">
-                    <TableHead>
-                      <TableRow>
-                        <TableHeaderCell>Kind</TableHeaderCell>
-                        <TableHeaderCell>Summary</TableHeaderCell>
-                        <TableHeaderCell>Observed</TableHeaderCell>
-                        <TableHeaderCell>Age</TableHeaderCell>
-                        <TableHeaderCell>Context</TableHeaderCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      <For
-                        each={current.timeline.events}
-                        by={(event: QueueResourceTimelineEvent) =>
-                          `${event.observedAt}:${event.summary}`
-                        }
-                      >
-                        {(event: QueueResourceTimelineEvent) => (
-                          <TableRow>
-                            <TableCell>{formatTimelineKind(event.kind)}</TableCell>
-                            <TableCell>{event.summary}</TableCell>
-                            <TableCell>{event.observedAt}</TableCell>
-                            <TableCell>
-                              {event.ageSeconds == null
-                                ? "Unknown"
-                                : humanizeSeconds(event.ageSeconds)}
-                            </TableCell>
-                            <TableCell>
-                              {event.operation ? `Operation: ${event.operation}` : ""}
-                              {event.messageId != null ? ` Message: ${event.messageId}` : ""}
-                              {event.ownerSession ? ` Owner: ${event.ownerSession}` : ""}
-                              {event.workerSession ? ` Worker: ${event.workerSession}` : ""}
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </For>
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </Section>
-
-            <Section size="3">
-              <div class="domain-section-header">
-                <h2>Compare</h2>
-              </div>
-
-              <Stack asChild gap="3">
-                <form onSubmit={onCompareSubmit}>
-                  <div class="form-grid">
-                    <div class="auth-field">
-                      <Label for="compare-realm">Against realm</Label>
-                      <Input
-                        id="compare-realm"
-                        value={compareRealmValue}
-                        onInput={(event: Event) =>
-                          setCompareRealmInput((event.target as HTMLInputElement).value)
-                        }
-                        placeholder="acme"
-                      />
-                    </div>
-
-                    <div class="auth-field">
-                      <Label for="compare-area">Against area</Label>
-                      <Input
-                        id="compare-area"
-                        value={compareAreaValue}
-                        onInput={(event: Event) =>
-                          setCompareAreaInput((event.target as HTMLInputElement).value)
-                        }
-                        placeholder="payments"
-                      />
-                    </div>
-
-                    <div class="auth-field">
-                      <Label for="compare-resource">Against resource</Label>
-                      <Input
-                        id="compare-resource"
-                        value={compareResourceValue}
-                        onInput={(event: Event) =>
-                          setCompareResourceInput((event.target as HTMLInputElement).value)
-                        }
-                        placeholder="inbox"
-                      />
-                    </div>
-
-                    <div class="auth-field">
-                      <Label for="compare-family">Against family</Label>
-                      <Input
-                        id="compare-family"
-                        value={compareFamilyValue}
-                        onInput={(event: Event) =>
-                          setCompareFamilyInput((event.target as HTMLInputElement).value)
-                        }
-                        placeholder="Optional family"
-                      />
-                    </div>
+            <Stack asChild gap="3">
+              <form onSubmit={onCompareSubmit}>
+                <div class="form-grid">
+                  <div class="auth-field">
+                    <Label for="compare-realm">Against realm</Label>
+                    <Input
+                      id="compare-realm"
+                      value={compareRealmValue}
+                      onInput={(event: Event) =>
+                        setCompareRealmInput((event.target as HTMLInputElement).value)
+                      }
+                      placeholder="acme"
+                    />
                   </div>
 
-                  <Flex gap="1" wrap="wrap">
-                    <Button type="submit">Compare</Button>
-                    <Button
-                      type="button"
-                      onPress={() => {
-                        setCompareRealmInput("");
-                        setCompareAreaInput("");
-                        setCompareResourceInput("");
-                        setCompareFamilyInput("");
-                        navigate(`/queue/${realm}/${area}/${resource}`);
-                      }}
-                    >
-                      Clear
-                    </Button>
-                  </Flex>
-                </form>
-              </Stack>
+                  <div class="auth-field">
+                    <Label for="compare-area">Against area</Label>
+                    <Input
+                      id="compare-area"
+                      value={compareAreaValue}
+                      onInput={(event: Event) =>
+                        setCompareAreaInput((event.target as HTMLInputElement).value)
+                      }
+                      placeholder="payments"
+                    />
+                  </div>
 
-              {compareTarget ? (
-                <QueueResourceComparisonResults
-                  resourceRef={resourceRef}
-                  compareTarget={compareTarget}
-                />
-              ) : (
-                <QueryEmptyState description="Enter another queue scope to compare snapshots." />
-              )}
-            </Section>
-          </Stack>
+                  <div class="auth-field">
+                    <Label for="compare-resource">Against resource</Label>
+                    <Input
+                      id="compare-resource"
+                      value={compareResourceValue}
+                      onInput={(event: Event) =>
+                        setCompareResourceInput((event.target as HTMLInputElement).value)
+                      }
+                      placeholder="inbox"
+                    />
+                  </div>
+
+                  <div class="auth-field">
+                    <Label for="compare-family">Against family</Label>
+                    <Input
+                      id="compare-family"
+                      value={compareFamilyValue}
+                      onInput={(event: Event) =>
+                        setCompareFamilyInput((event.target as HTMLInputElement).value)
+                      }
+                      placeholder="Optional family"
+                    />
+                  </div>
+                </div>
+
+                <Flex gap="1" wrap="wrap">
+                  <Button type="submit">Compare</Button>
+                  <Button
+                    type="button"
+                    onPress={() => {
+                      setCompareRealmInput("");
+                      setCompareAreaInput("");
+                      setCompareResourceInput("");
+                      setCompareFamilyInput("");
+                      navigate(`/queue/${realm}/${area}/${resource}`);
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </Flex>
+              </form>
+            </Stack>
+
+            {compareTarget ? (
+              <QueueResourceComparisonResults
+                resourceRef={resourceRef}
+                compareTarget={compareTarget}
+              />
+            ) : (
+              <QueryEmptyState description="Enter another queue scope to compare snapshots." />
+            )}
+          </Section>
+        </Stack>
 
         {confirmationMessage ? (
           <div
