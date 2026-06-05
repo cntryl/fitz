@@ -1431,48 +1431,45 @@ impl RpcDomainSink {
     /// in-memory state, not linearizable reads of concurrent RPC activity.
     fn maybe_sync_admin_snapshot(&self, force: bool) {
         #[cfg(feature = "bench-no-snapshot")]
-        {
-            let _ = force;
+        if !force {
+            return;
         }
 
-        #[cfg(not(feature = "bench-no-snapshot"))]
+        let now_elapsed_us = self.snapshot_epoch.elapsed().as_micros() as u64;
+        let last_snapshot_elapsed_us = self.last_snapshot_elapsed_us.load(Ordering::Relaxed);
+        let snapshot_dirty = self.snapshot_dirty.load(Ordering::Relaxed);
+
+        if !rpc_admin_snapshot_due(
+            snapshot_dirty,
+            force,
+            now_elapsed_us,
+            last_snapshot_elapsed_us,
+        ) {
+            return;
+        }
+
+        if self
+            .snapshot_syncing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
         {
-            let now_elapsed_us = self.snapshot_epoch.elapsed().as_micros() as u64;
-            let last_snapshot_elapsed_us = self.last_snapshot_elapsed_us.load(Ordering::Relaxed);
-            let snapshot_dirty = self.snapshot_dirty.load(Ordering::Relaxed);
+            return;
+        }
 
-            if !rpc_admin_snapshot_due(
-                snapshot_dirty,
-                force,
-                now_elapsed_us,
-                last_snapshot_elapsed_us,
-            ) {
-                return;
-            }
-
-            if self
-                .snapshot_syncing
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
-                .is_err()
-            {
-                return;
-            }
-
-            if !self.snapshot_dirty.swap(false, Ordering::AcqRel) {
-                self.snapshot_syncing.store(false, Ordering::Release);
-                return;
-            }
-
-            let snapshot_start = Instant::now();
-            self.sync_admin_snapshot();
-            let snapshot_time_us = snapshot_start.elapsed().as_micros() as u64;
-            self.last_snapshot_elapsed_us.store(
-                self.snapshot_epoch.elapsed().as_micros() as u64,
-                Ordering::Relaxed,
-            );
+        if !self.snapshot_dirty.swap(false, Ordering::AcqRel) {
             self.snapshot_syncing.store(false, Ordering::Release);
-            self.histogram_observe_us("rpc_admin_snapshot_us", snapshot_time_us);
+            return;
         }
+
+        let snapshot_start = Instant::now();
+        self.sync_admin_snapshot();
+        let snapshot_time_us = snapshot_start.elapsed().as_micros() as u64;
+        self.last_snapshot_elapsed_us.store(
+            self.snapshot_epoch.elapsed().as_micros() as u64,
+            Ordering::Relaxed,
+        );
+        self.snapshot_syncing.store(false, Ordering::Release);
+        self.histogram_observe_us("rpc_admin_snapshot_us", snapshot_time_us);
     }
 }
 

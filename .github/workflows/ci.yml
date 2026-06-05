@@ -44,10 +44,13 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Check
+        run: cargo check --workspace --all-targets
+
       - name: Build
         run: cargo build --workspace --all-targets
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --all-targets --all-features
 
         
