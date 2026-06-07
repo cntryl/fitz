@@ -167,6 +167,7 @@ impl TestServer {
             max_connections: 1000,
             max_frame_size: 16_777_216, // 16 MB (test config allows larger frames than production 1 MB default)
             channel_capacity: 10_000,
+            cloud_durability: crate::boot::runtime::CloudDurabilityMode::Background,
         };
 
         // Step 1: Initialize storage
@@ -180,19 +181,13 @@ impl TestServer {
         runtime.mark_storage_ready();
 
         // Step 3: Register domain actors
-        let queue_write_options = if matches!(
-            &boot_config.storage_mode,
-            crate::boot::runtime::StorageMode::Memory
-        ) {
-            cntryl_midge::WriteOptions::best_effort()
-        } else {
-            cntryl_midge::WriteOptions::buffered()
-        };
+        let server_write_options = boot_config.server_write_options();
         let domains = crate::boot::domains::setup(
             &router,
             &store,
             &runtime.admin_read_model(),
-            queue_write_options,
+            server_write_options,
+            boot_config.request_sync_write_options(),
             rpc_request_timeout,
             boot_config.stream_storage_layout,
         )?;

@@ -84,7 +84,8 @@ pub fn setup(
     router: &StdArc<Router>,
     store: &StdArc<cntryl_midge::Engine>,
     admin_read_model: &Arc<crate::api::admin::read_model::AdminReadModel>,
-    queue_write_options: cntryl_midge::WriteOptions,
+    server_write_options: cntryl_midge::WriteOptions,
+    request_sync_write_options: cntryl_midge::WriteOptions,
     rpc_request_timeout: Option<std::time::Duration>,
     stream_storage_layout: crate::domains::stream::StreamStorageLayout,
 ) -> BootResult<DomainHandles> {
@@ -92,6 +93,7 @@ pub fn setup(
 
     let kv_sink = Arc::new(
         KvDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
+            .with_sync_write_options(request_sync_write_options)
             .with_metrics(metrics.clone()),
     );
     router.register_domain_pattern(
@@ -105,7 +107,7 @@ pub fn setup(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
-            queue_write_options,
+            server_write_options,
             crate::utils::idempotency::default_dedup_store(),
         )?
         .with_metrics(metrics.clone()),
@@ -133,6 +135,7 @@ pub fn setup(
             admin_read_model.clone(),
             stream_storage_layout,
         )?
+        .with_sync_write_options(request_sync_write_options)
         .with_metrics(metrics.clone()),
     );
     router.register_domain_pattern(
@@ -166,6 +169,7 @@ pub fn setup(
 
     let schedule_sink = Arc::new(
         ScheduleDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
+            .with_write_options(server_write_options)
             .with_metrics(metrics.clone()),
     );
     router.register_domain_pattern(
@@ -279,6 +283,7 @@ mod tests {
             &store,
             &admin_read_model,
             cntryl_midge::WriteOptions::best_effort(),
+            cntryl_midge::WriteOptions::sync(),
             None,
             crate::domains::stream::StreamStorageLayout::default(),
         );
@@ -300,6 +305,7 @@ mod tests {
             &store,
             &admin_read_model,
             cntryl_midge::WriteOptions::best_effort(),
+            cntryl_midge::WriteOptions::sync(),
             None,
             crate::domains::stream::StreamStorageLayout::default(),
         )

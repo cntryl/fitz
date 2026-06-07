@@ -66,6 +66,7 @@ pub struct KvDomainSink {
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     metrics: Option<crate::domains::kv::KvMetrics>,
+    sync_write_options: cntryl_midge::WriteOptions,
     active: AtomicBool,
 }
 
@@ -85,8 +86,14 @@ impl KvDomainSink {
             router,
             admin_read_model,
             metrics: None,
+            sync_write_options: cntryl_midge::WriteOptions::sync(),
             active: AtomicBool::new(true),
         }
+    }
+
+    pub fn with_sync_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
+        self.sync_write_options = write_options;
+        self
     }
 
     pub fn with_metrics(
@@ -313,6 +320,30 @@ impl KvDomainSink {
     pub fn active_transaction_count(&self) -> usize {
         self.tx_to_resource.lock().len()
     }
+
+    fn apply_sync_write_options(
+        &self,
+        message: crate::domains::kv::KvMessage,
+    ) -> crate::domains::kv::KvMessage {
+        match message {
+            crate::domains::kv::KvMessage::Begin {
+                route_family,
+                realm,
+                area,
+                resource,
+                mode,
+                write_options,
+            } if write_options.is_sync() => crate::domains::kv::KvMessage::Begin {
+                route_family,
+                realm,
+                area,
+                resource,
+                mode,
+                write_options: self.sync_write_options,
+            },
+            message => message,
+        }
+    }
 }
 
 impl MailboxSink for KvDomainSink {
@@ -460,6 +491,7 @@ impl MailboxSink for KvDomainSink {
             crate::protocol::kv::ParsedKvFrame::Op(msg) => msg,
             crate::protocol::kv::ParsedKvFrame::Sub(_) => unreachable!(),
         };
+        let kv_message = self.apply_sync_write_options(kv_message);
         let session_id = frame_ctx.session_id;
 
         tracing::trace!(
@@ -772,6 +804,65 @@ mod tests {
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_map_sync_begin_to_cloud_strict_given_strict_cloud_sync_policy() {
+        // Arrange
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = KvDomainSink::new(store, router, admin_read_model)
+            .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
+        let message = crate::domains::kv::KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "acme".to_string(),
+            area: "app".to_string(),
+            resource: "users".to_string(),
+            mode: crate::domains::kv::TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::sync(),
+        };
+
+        // Act
+        let mapped = sink.apply_sync_write_options(message);
+
+        // Assert
+        match mapped {
+            crate::domains::kv::KvMessage::Begin { write_options, .. } => {
+                assert!(write_options.is_cloud_strict());
+            }
+            _ => panic!("expected KV begin message"),
+        }
+    }
+
+    #[test]
+    fn should_preserve_buffered_begin_given_strict_cloud_sync_policy() {
+        // Arrange
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = KvDomainSink::new(store, router, admin_read_model)
+            .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
+        let message = crate::domains::kv::KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "acme".to_string(),
+            area: "app".to_string(),
+            resource: "users".to_string(),
+            mode: crate::domains::kv::TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        };
+
+        // Act
+        let mapped = sink.apply_sync_write_options(message);
+
+        // Assert
+        match mapped {
+            crate::domains::kv::KvMessage::Begin { write_options, .. } => {
+                assert!(!write_options.is_cloud_strict());
+                assert!(!write_options.is_sync());
+            }
+            _ => panic!("expected KV begin message"),
+        }
     }
 
     #[test]

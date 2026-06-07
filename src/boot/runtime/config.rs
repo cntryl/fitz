@@ -2,6 +2,56 @@ use super::BootResult;
 use crate::domains::stream::StreamStorageLayout;
 use std::path::Path;
 
+const DEFAULT_LOCAL_STORAGE_PATH: &str = "./.fitz";
+const DEFAULT_CLOUD_CACHE_PATH: &str = "./.fitz-cloud-cache";
+const DEFAULT_PEAS_ENDPOINT: &str = "http://127.0.0.1:9000";
+const DEFAULT_PEAS_ACCESS_KEY: &str = "admin";
+const DEFAULT_PEAS_SECRET_KEY: &str = "easy-peasy";
+const DEFAULT_PEAS_BUCKET: &str = "fitz";
+
+/// Cloud commit durability policy for broker-selected durable writes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CloudDurabilityMode {
+    /// Local WAL visibility with background provider upload.
+    Background,
+    /// Wait for provider acknowledgement when a cloud-backed sync write is requested.
+    Strict,
+    /// Invalid durability configuration captured for later validation.
+    Invalid { reason: String },
+}
+
+impl CloudDurabilityMode {
+    fn from_env() -> Self {
+        match env_non_empty("FITZ_STORAGE_CLOUD_DURABILITY")
+            .unwrap_or_else(|| "background".to_string())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "background" => Self::Background,
+            "strict" => Self::Strict,
+            other => Self::Invalid {
+                reason: format!(
+                    "unsupported FITZ_STORAGE_CLOUD_DURABILITY='{}'; expected background or strict",
+                    other
+                ),
+            },
+        }
+    }
+}
+
+/// Parsed cloud provider configuration for Midge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudStorageConfig {
+    /// Fitz provider label from FITZ_STORAGE_PROVIDER.
+    pub provider_name: String,
+    /// Provider configuration consumed by Midge.
+    pub provider_config: cntryl_midge::CloudProviderConfig,
+    /// Optional object prefix inside the bucket/container.
+    pub prefix: Option<String>,
+    /// Local cache path used by the cloud-backed engine.
+    pub local_cache_path: String,
+}
+
 /// Storage backend configuration.
 #[derive(Debug, Clone)]
 pub enum StorageMode {
@@ -12,23 +62,16 @@ pub enum StorageMode {
         /// Path to database directory
         db_path: String,
     },
-    /// Cloud-backed storage (S3 or similar)
-    CloudBacked {
-        /// Cloud provider (s3, gcs, azure, etc)
-        provider: String,
-        /// Bucket or container name
-        bucket: String,
-        /// Optional path prefix within bucket
-        prefix: Option<String>,
-        /// Local cache path used by the cloud-backed engine
-        local_cache_path: String,
-    },
+    /// Cloud-backed storage using a typed Midge provider configuration.
+    CloudBacked(Box<CloudStorageConfig>),
+    /// Invalid storage configuration captured for later validation.
+    Invalid { reason: String },
 }
 
 impl Default for StorageMode {
     fn default() -> Self {
         Self::LocalDisk {
-            db_path: "./.fitz".to_string(),
+            db_path: DEFAULT_LOCAL_STORAGE_PATH.to_string(),
         }
     }
 }
@@ -41,43 +84,41 @@ impl StorageMode {
             .to_lowercase();
 
         match mode.as_str() {
-            "memory" | "in-memory" | "inmemory" => {
+            "memory" => {
                 tracing::info!("Storage: IN-MEMORY (ephemeral, no persistence)");
                 Self::Memory
             }
-            "local" | "disk" | "file" => {
-                let db_path =
-                    std::env::var("FITZ_STORAGE_PATH").unwrap_or_else(|_| "./.fitz".to_string());
+            "local" => {
+                let db_path = env_non_empty("FITZ_STORAGE_PATH")
+                    .unwrap_or_else(|| DEFAULT_LOCAL_STORAGE_PATH.to_string());
                 tracing::info!("Storage: LOCAL DISK at {}", db_path);
                 Self::LocalDisk { db_path }
             }
-            "s3" | "gcs" | "azure" | "cloud" => {
-                let provider =
-                    std::env::var("FITZ_STORAGE_PROVIDER").unwrap_or_else(|_| mode.clone());
-                let bucket = std::env::var("FITZ_STORAGE_BUCKET").unwrap_or_default();
-                let prefix = std::env::var("FITZ_STORAGE_PREFIX").ok();
-                let local_cache_path = std::env::var("FITZ_STORAGE_PATH")
-                    .unwrap_or_else(|_| "./.fitz-cloud-cache".to_string());
-
-                tracing::info!(
-                    "Storage: CLOUD ({}) - bucket={} prefix={:?} cache={}",
-                    provider,
-                    bucket,
-                    prefix,
-                    local_cache_path
-                );
-
-                Self::CloudBacked {
-                    provider,
-                    bucket,
-                    prefix,
-                    local_cache_path,
+            "cloud" => match CloudStorageConfig::from_env() {
+                Ok(config) => {
+                    tracing::info!(
+                        provider = %config.provider_name,
+                        namespace = %config.provider_config.bucket_or_container(),
+                        prefix = ?config.prefix,
+                        cache = %config.local_cache_path,
+                        "Storage: CLOUD"
+                    );
+                    Self::CloudBacked(Box::new(config))
                 }
-            }
-            _ => {
-                tracing::warn!("Unknown storage mode '{}', defaulting to local disk", mode);
-                Self::default()
-            }
+                Err(error) => Self::Invalid { reason: error },
+            },
+            "s3" | "gcs" | "azure" => Self::Invalid {
+                reason: format!(
+                    "FITZ_STORAGE_MODE={} is no longer supported; set FITZ_STORAGE_MODE=cloud and FITZ_STORAGE_PROVIDER=...",
+                    mode
+                ),
+            },
+            _ => Self::Invalid {
+                reason: format!(
+                    "unsupported FITZ_STORAGE_MODE='{}'; expected memory, local, or cloud",
+                    mode
+                ),
+            },
         }
     }
 
@@ -90,26 +131,222 @@ impl StorageMode {
                 }
                 Ok(())
             }
-            StorageMode::CloudBacked {
-                provider,
-                bucket,
-                local_cache_path,
-                ..
-            } => {
-                if provider.trim().is_empty() {
-                    return Err("cloud storage requires a provider".to_string());
+            StorageMode::CloudBacked(config) => {
+                if config.provider_name.trim().is_empty() {
+                    return Err("cloud storage requires FITZ_STORAGE_PROVIDER".to_string());
                 }
-                if bucket.trim().is_empty() {
-                    return Err("cloud storage requires a bucket".to_string());
+                if config
+                    .provider_config
+                    .bucket_or_container()
+                    .trim()
+                    .is_empty()
+                {
+                    return Err("cloud storage requires a bucket/container namespace".to_string());
                 }
-                if local_cache_path.trim().is_empty()
-                    || Path::new(local_cache_path).as_os_str().is_empty()
+                if config.local_cache_path.trim().is_empty()
+                    || Path::new(&config.local_cache_path).as_os_str().is_empty()
                 {
                     return Err("cloud storage requires a valid local cache path".to_string());
                 }
                 Ok(())
             }
+            StorageMode::Invalid { reason } => Err(reason.clone()),
         }
+    }
+}
+
+impl CloudStorageConfig {
+    fn from_env() -> Result<Self, String> {
+        let provider_name = required_env("FITZ_STORAGE_PROVIDER")?.to_ascii_lowercase();
+        let prefix = env_non_empty("FITZ_STORAGE_PREFIX");
+        let local_cache_path = env_non_empty("FITZ_STORAGE_CACHE_PATH")
+            .unwrap_or_else(|| DEFAULT_CLOUD_CACHE_PATH.to_string());
+        let provider_config = build_cloud_provider_config(provider_name.as_str())?;
+
+        Ok(Self {
+            provider_name,
+            provider_config,
+            prefix,
+            local_cache_path,
+        })
+    }
+}
+
+fn build_cloud_provider_config(
+    provider: &str,
+) -> Result<cntryl_midge::CloudProviderConfig, String> {
+    match provider {
+        "peas-s3" => Ok(cntryl_midge::CloudProviderConfig::s3_compatible_static(
+            env_non_empty("FITZ_STORAGE_BUCKET").unwrap_or_else(|| DEFAULT_PEAS_BUCKET.to_string()),
+            env_non_empty("FITZ_STORAGE_ENDPOINT")
+                .unwrap_or_else(|| DEFAULT_PEAS_ENDPOINT.to_string()),
+            DEFAULT_PEAS_ACCESS_KEY,
+            DEFAULT_PEAS_SECRET_KEY,
+        )),
+        "peas-azure" => Ok(cntryl_midge::CloudProviderConfig::AzureBlob {
+            account: DEFAULT_PEAS_ACCESS_KEY.to_string(),
+            container: env_non_empty("FITZ_STORAGE_CONTAINER")
+                .unwrap_or_else(|| DEFAULT_PEAS_BUCKET.to_string()),
+            endpoint: Some(
+                env_non_empty("FITZ_STORAGE_ENDPOINT")
+                    .unwrap_or_else(|| DEFAULT_PEAS_ENDPOINT.to_string()),
+            ),
+            credential: cntryl_midge::AzureCredentialSource::shared_key(DEFAULT_PEAS_SECRET_KEY),
+        }),
+        "peas-gcs" => Ok(cntryl_midge::CloudProviderConfig::Gcs {
+            bucket: env_non_empty("FITZ_STORAGE_BUCKET")
+                .unwrap_or_else(|| DEFAULT_PEAS_BUCKET.to_string()),
+            project_id: "peas".to_string(),
+            endpoint: Some(
+                env_non_empty("FITZ_STORAGE_ENDPOINT")
+                    .unwrap_or_else(|| DEFAULT_PEAS_ENDPOINT.to_string()),
+            ),
+            api: cntryl_midge::GcsApiStyle::Xml,
+            credential: cntryl_midge::GcsCredentialSource::hmac_key(
+                DEFAULT_PEAS_ACCESS_KEY,
+                DEFAULT_PEAS_SECRET_KEY,
+            ),
+        }),
+        "aws-s3" => Ok(cntryl_midge::CloudProviderConfig::aws_s3(
+            required_env("FITZ_STORAGE_BUCKET")?,
+            required_region()?,
+        )),
+        "s3-compatible" => Ok(cntryl_midge::CloudProviderConfig::S3Compatible {
+            bucket: required_env("FITZ_STORAGE_BUCKET")?,
+            region: env_non_empty("FITZ_STORAGE_REGION")
+                .unwrap_or_else(|| "us-east-1".to_string()),
+            endpoint: required_env("FITZ_STORAGE_ENDPOINT")?,
+            path_style: env_bool("FITZ_STORAGE_FORCE_PATH_STYLE", true)?,
+            credentials: cntryl_midge::S3CredentialSource::environment(),
+        }),
+        "minio" => Ok(cntryl_midge::CloudProviderConfig::Minio {
+            bucket: required_env("FITZ_STORAGE_BUCKET")?,
+            endpoint: required_env("FITZ_STORAGE_ENDPOINT")?,
+            credentials: cntryl_midge::S3CredentialSource::environment(),
+        }),
+        "wasabi" => Ok(cntryl_midge::CloudProviderConfig::Wasabi {
+            bucket: required_env("FITZ_STORAGE_BUCKET")?,
+            region: required_env("FITZ_STORAGE_REGION")?,
+            endpoint: env_non_empty("FITZ_STORAGE_ENDPOINT"),
+            credentials: cntryl_midge::S3CredentialSource::environment(),
+        }),
+        "oci-s3" => Ok(cntryl_midge::CloudProviderConfig::OciS3Compatible {
+            bucket: required_env("FITZ_STORAGE_BUCKET")?,
+            namespace: required_env("FITZ_STORAGE_NAMESPACE")?,
+            region: required_env("FITZ_STORAGE_REGION")?,
+            endpoint: env_non_empty("FITZ_STORAGE_ENDPOINT"),
+            path_style: env_bool("FITZ_STORAGE_FORCE_PATH_STYLE", false)?,
+            credentials: cntryl_midge::S3CredentialSource::environment(),
+        }),
+        "azure-blob" => build_azure_blob_provider(),
+        "gcs" => build_gcs_provider(),
+        other => Err(format!(
+            "unsupported FITZ_STORAGE_PROVIDER='{}'; expected peas-s3, peas-azure, peas-gcs, aws-s3, s3-compatible, minio, wasabi, oci-s3, azure-blob, or gcs",
+            other
+        )),
+    }
+}
+
+fn build_azure_blob_provider() -> Result<cntryl_midge::CloudProviderConfig, String> {
+    let endpoint = env_non_empty("FITZ_STORAGE_ENDPOINT");
+    let container = required_env("FITZ_STORAGE_CONTAINER")
+        .map_err(|_| "azure-blob storage requires FITZ_STORAGE_CONTAINER".to_string())?;
+
+    let mut provider = if let Some(connection_string) =
+        env_non_empty("AZURE_STORAGE_CONNECTION_STRING")
+    {
+        cntryl_midge::CloudProviderConfig::azure_blob_connection_string(
+            container,
+            connection_string,
+        )
+    } else {
+        let account = env_non_empty("AZURE_STORAGE_ACCOUNT_NAME").ok_or_else(|| {
+            "azure-blob storage requires AZURE_STORAGE_ACCOUNT_NAME or AZURE_STORAGE_CONNECTION_STRING"
+                .to_string()
+        })?;
+        if let Some(account_key) = env_non_empty("AZURE_STORAGE_ACCOUNT_KEY") {
+            cntryl_midge::CloudProviderConfig::azure_blob_shared_key(
+                account,
+                container,
+                account_key,
+            )
+        } else if let Some(sas_token) = env_non_empty("AZURE_STORAGE_SAS_TOKEN") {
+            cntryl_midge::CloudProviderConfig::azure_blob_sas(account, container, sas_token)
+        } else {
+            cntryl_midge::CloudProviderConfig::azure_blob(account, container)
+        }
+    };
+
+    if let Some(endpoint) = endpoint {
+        provider = provider
+            .with_endpoint(endpoint)
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(provider)
+}
+
+fn build_gcs_provider() -> Result<cntryl_midge::CloudProviderConfig, String> {
+    let bucket = required_env("FITZ_STORAGE_BUCKET")?;
+    let mut provider = match (
+        env_non_empty("GCS_HMAC_ACCESS_ID"),
+        env_non_empty("GCS_HMAC_SECRET"),
+    ) {
+        (Some(access_id), Some(secret)) => {
+            cntryl_midge::CloudProviderConfig::gcs_hmac(bucket, access_id, secret)
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(
+                "gcs HMAC storage requires both GCS_HMAC_ACCESS_ID and GCS_HMAC_SECRET".to_string(),
+            )
+        }
+        (None, None) => {
+            if let Some(path) = env_non_empty("GOOGLE_APPLICATION_CREDENTIALS") {
+                cntryl_midge::CloudProviderConfig::gcs_service_account_file(bucket, path)
+            } else {
+                cntryl_midge::CloudProviderConfig::gcs(bucket)
+            }
+        }
+    };
+
+    if let Some(project_id) = env_non_empty("GOOGLE_CLOUD_PROJECT") {
+        provider = provider
+            .with_gcs_project_id(project_id)
+            .map_err(|error| error.to_string())?;
+    }
+    if let Some(endpoint) = env_non_empty("FITZ_STORAGE_ENDPOINT") {
+        provider = provider
+            .with_endpoint(endpoint)
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(provider)
+}
+
+fn env_non_empty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn required_env(key: &str) -> Result<String, String> {
+    env_non_empty(key).ok_or_else(|| format!("cloud storage requires {}", key))
+}
+
+fn required_region() -> Result<String, String> {
+    env_non_empty("FITZ_STORAGE_REGION")
+        .or_else(|| env_non_empty("AWS_REGION"))
+        .or_else(|| env_non_empty("AWS_DEFAULT_REGION"))
+        .ok_or_else(|| "aws-s3 storage requires FITZ_STORAGE_REGION or AWS_REGION".to_string())
+}
+
+fn env_bool(key: &str, default: bool) -> Result<bool, String> {
+    match env_non_empty(key) {
+        Some(value) => value
+            .parse::<bool>()
+            .map_err(|_| format!("{} must be true or false", key)),
+        None => Ok(default),
     }
 }
 
@@ -138,6 +375,8 @@ pub struct BootConfig {
     pub max_frame_size: usize,
     /// Channel capacity between transport and runtime
     pub channel_capacity: usize,
+    /// Provider-ack durability behavior for cloud-backed sync writes.
+    pub cloud_durability: CloudDurabilityMode,
 }
 
 impl BootConfig {
@@ -145,9 +384,27 @@ impl BootConfig {
         match &self.storage_mode {
             StorageMode::LocalDisk { db_path } => db_path.clone(),
             StorageMode::Memory => ":memory:".to_string(),
-            StorageMode::CloudBacked {
-                local_cache_path, ..
-            } => local_cache_path.clone(),
+            StorageMode::CloudBacked(config) => config.local_cache_path.clone(),
+            StorageMode::Invalid { .. } => "<invalid>".to_string(),
+        }
+    }
+
+    pub fn server_write_options(&self) -> cntryl_midge::WriteOptions {
+        match (&self.storage_mode, &self.cloud_durability) {
+            (StorageMode::Memory, _) => cntryl_midge::WriteOptions::best_effort(),
+            (StorageMode::CloudBacked(_), CloudDurabilityMode::Strict) => {
+                cntryl_midge::WriteOptions::cloud_strict()
+            }
+            _ => cntryl_midge::WriteOptions::buffered(),
+        }
+    }
+
+    pub fn request_sync_write_options(&self) -> cntryl_midge::WriteOptions {
+        match (&self.storage_mode, &self.cloud_durability) {
+            (StorageMode::CloudBacked(_), CloudDurabilityMode::Strict) => {
+                cntryl_midge::WriteOptions::cloud_strict()
+            }
+            _ => cntryl_midge::WriteOptions::sync(),
         }
     }
 }
@@ -185,6 +442,7 @@ impl Default for BootConfig {
             max_connections: 10_000,
             max_frame_size: 1024 * 1024,
             channel_capacity: 1000,
+            cloud_durability: CloudDurabilityMode::from_env(),
         }
     }
 }
@@ -247,6 +505,9 @@ impl BootConfig {
     }
 
     pub fn validate(&self) -> BootResult<()> {
+        if let CloudDurabilityMode::Invalid { reason } = &self.cloud_durability {
+            return Err(reason.clone().into());
+        }
         self.storage_mode
             .validate()
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
@@ -274,6 +535,7 @@ impl BootConfig {
 mod tests {
     use super::*;
     use crate::prelude;
+    use serial_test::serial;
 
     fn with_env_var<T>(key: &str, value: &str, test: impl FnOnce() -> T) -> T {
         let previous = std::env::var(key).ok();
@@ -295,6 +557,67 @@ mod tests {
         result
     }
 
+    fn with_storage_env<T>(values: &[(&str, &str)], test: impl FnOnce() -> T) -> T {
+        let keys = [
+            "FITZ_STORAGE_MODE",
+            "FITZ_STORAGE_PROVIDER",
+            "FITZ_STORAGE_BUCKET",
+            "FITZ_STORAGE_CONTAINER",
+            "FITZ_STORAGE_PREFIX",
+            "FITZ_STORAGE_CACHE_PATH",
+            "FITZ_STORAGE_PATH",
+            "FITZ_STORAGE_ENDPOINT",
+            "FITZ_STORAGE_REGION",
+            "FITZ_STORAGE_FORCE_PATH_STYLE",
+            "FITZ_STORAGE_NAMESPACE",
+            "FITZ_STORAGE_ACCOUNT",
+            "FITZ_STORAGE_CLOUD_DURABILITY",
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+            "AZURE_STORAGE_ACCOUNT_NAME",
+            "AZURE_STORAGE_ACCOUNT_KEY",
+            "AZURE_STORAGE_CONNECTION_STRING",
+            "AZURE_STORAGE_SAS_TOKEN",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "GOOGLE_CLOUD_PROJECT",
+            "GCS_HMAC_ACCESS_ID",
+            "GCS_HMAC_SECRET",
+        ];
+        let previous = keys
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+
+        unsafe {
+            for key in keys {
+                std::env::remove_var(key);
+            }
+            for (key, value) in values {
+                std::env::set_var(key, value);
+            }
+        }
+
+        let result = test();
+
+        unsafe {
+            for (key, value) in previous {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+
+        result
+    }
+
+    fn cloud_config(config: &BootConfig) -> &CloudStorageConfig {
+        match &config.storage_mode {
+            StorageMode::CloudBacked(cloud) => cloud.as_ref(),
+            other => panic!("expected cloud storage mode, got {other:?}"),
+        }
+    }
+
     #[test]
     fn should_create_default_boot_config() {
         // Arrange
@@ -307,6 +630,7 @@ mod tests {
         assert_eq!(config.http_port, prelude::DEFAULT_HTTP_PORT);
         assert_eq!(config.bind_addr, "0.0.0.0");
         assert_eq!(config.max_connections, 10_000);
+        assert_eq!(config.cloud_durability, CloudDurabilityMode::Background);
         assert_eq!(config.route_families, vec![1]);
         assert_eq!(
             config.stream_storage_layout,
@@ -414,5 +738,586 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_cloud_mode_without_provider() {
+        with_storage_env(&[("FITZ_STORAGE_MODE", "cloud")], || {
+            // Arrange
+
+            // Act
+            let config = BootConfig::new();
+            let result = config.validate();
+
+            // Assert
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("cloud storage requires FITZ_STORAGE_PROVIDER"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_blank_provider_given_cloud_mode() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "   "),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new().with_auth_config(crate::auth::AuthConfig::Disabled);
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("cloud storage requires FITZ_STORAGE_PROVIDER"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_parse_peas_s3_defaults_given_explicit_provider() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "peas-s3"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let cloud = cloud_config(&config);
+
+                // Assert
+                assert_eq!(cloud.provider_name, "peas-s3");
+                assert_eq!(cloud.local_cache_path, DEFAULT_CLOUD_CACHE_PATH);
+                assert_eq!(cloud.prefix, None);
+                match &cloud.provider_config {
+                    cntryl_midge::CloudProviderConfig::S3Compatible {
+                        bucket,
+                        endpoint,
+                        path_style,
+                        credentials,
+                        ..
+                    } => {
+                        assert_eq!(bucket, DEFAULT_PEAS_BUCKET);
+                        assert_eq!(endpoint, DEFAULT_PEAS_ENDPOINT);
+                        assert!(*path_style);
+                        assert!(matches!(
+                            credentials,
+                            cntryl_midge::S3CredentialSource::Static { access_key, secret_key, .. }
+                                if access_key == DEFAULT_PEAS_ACCESS_KEY
+                                    && secret_key == DEFAULT_PEAS_SECRET_KEY
+                        ));
+                    }
+                    other => panic!("expected Peas S3-compatible config, got {other:?}"),
+                }
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_parse_peas_azure_defaults_given_explicit_provider() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "peas-azure"),
+                ("FITZ_STORAGE_BUCKET", "ignored-by-azure"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let cloud = cloud_config(&config);
+
+                // Assert
+                assert_eq!(cloud.provider_name, "peas-azure");
+                assert!(matches!(
+                    &cloud.provider_config,
+                    cntryl_midge::CloudProviderConfig::AzureBlob {
+                        account,
+                        container,
+                        credential: cntryl_midge::AzureCredentialSource::SharedKey { account_key },
+                        ..
+                    } if account == DEFAULT_PEAS_ACCESS_KEY
+                        && container == DEFAULT_PEAS_BUCKET
+                        && account_key == DEFAULT_PEAS_SECRET_KEY
+                ));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_parse_peas_gcs_defaults_given_explicit_provider() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "peas-gcs"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let cloud = cloud_config(&config);
+
+                // Assert
+                assert_eq!(cloud.provider_name, "peas-gcs");
+                assert!(matches!(
+                    &cloud.provider_config,
+                    cntryl_midge::CloudProviderConfig::Gcs {
+                        bucket,
+                        project_id,
+                        api: cntryl_midge::GcsApiStyle::Xml,
+                        credential: cntryl_midge::GcsCredentialSource::HmacKey { access_id, secret, },
+                        ..
+                    } if bucket == DEFAULT_PEAS_BUCKET
+                        && project_id == "peas"
+                        && access_id == DEFAULT_PEAS_ACCESS_KEY
+                        && secret == DEFAULT_PEAS_SECRET_KEY
+                ));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_parse_aws_s3_provider_given_cloud_env() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "aws-s3"),
+                ("FITZ_STORAGE_BUCKET", "fitz-prod"),
+                ("FITZ_STORAGE_REGION", "us-west-2"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let cloud = cloud_config(&config);
+
+                // Assert
+                assert_eq!(cloud.provider_name, "aws-s3");
+                assert!(matches!(
+                    &cloud.provider_config,
+                    cntryl_midge::CloudProviderConfig::AwsS3 {
+                        bucket,
+                        region,
+                        credentials: cntryl_midge::S3CredentialSource::AwsDefaultChain,
+                    } if bucket == "fitz-prod" && region == "us-west-2"
+                ));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_parse_s3_compatible_provider_given_cloud_env() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "s3-compatible"),
+                ("FITZ_STORAGE_BUCKET", "fitz-dev"),
+                ("FITZ_STORAGE_ENDPOINT", "http://objects:9000"),
+                ("FITZ_STORAGE_REGION", "us-east-2"),
+                ("FITZ_STORAGE_FORCE_PATH_STYLE", "false"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let cloud = cloud_config(&config);
+
+                // Assert
+                assert!(matches!(
+                    &cloud.provider_config,
+                    cntryl_midge::CloudProviderConfig::S3Compatible {
+                        bucket,
+                        region,
+                        endpoint,
+                        path_style: false,
+                        credentials: cntryl_midge::S3CredentialSource::Environment,
+                    } if bucket == "fitz-dev"
+                        && region == "us-east-2"
+                        && endpoint == "http://objects:9000"
+                ));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_parse_s3_family_vendor_providers_given_cloud_env() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "minio"),
+                ("FITZ_STORAGE_BUCKET", "fitz-minio"),
+                ("FITZ_STORAGE_ENDPOINT", "http://minio:9000"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let cloud = cloud_config(&config);
+
+                // Assert
+                assert!(matches!(
+                    &cloud.provider_config,
+                    cntryl_midge::CloudProviderConfig::Minio { bucket, endpoint, .. }
+                        if bucket == "fitz-minio" && endpoint == "http://minio:9000"
+                ));
+            },
+        );
+
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "wasabi"),
+                ("FITZ_STORAGE_BUCKET", "fitz-wasabi"),
+                ("FITZ_STORAGE_REGION", "us-east-1"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let cloud = cloud_config(&config);
+
+                // Assert
+                assert!(matches!(
+                    &cloud.provider_config,
+                    cntryl_midge::CloudProviderConfig::Wasabi { bucket, region, .. }
+                        if bucket == "fitz-wasabi" && region == "us-east-1"
+                ));
+            },
+        );
+
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "oci-s3"),
+                ("FITZ_STORAGE_NAMESPACE", "fitzns"),
+                ("FITZ_STORAGE_BUCKET", "fitz-oci"),
+                ("FITZ_STORAGE_REGION", "us-phoenix-1"),
+                ("FITZ_STORAGE_FORCE_PATH_STYLE", "true"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let cloud = cloud_config(&config);
+
+                // Assert
+                assert!(matches!(
+                    &cloud.provider_config,
+                    cntryl_midge::CloudProviderConfig::OciS3Compatible {
+                        bucket,
+                        namespace,
+                        region,
+                        path_style: true,
+                        ..
+                    } if bucket == "fitz-oci"
+                        && namespace == "fitzns"
+                        && region == "us-phoenix-1"
+                ));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_parse_azure_blob_provider_given_cloud_env() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "azure-blob"),
+                ("FITZ_STORAGE_CONTAINER", "fitz-container"),
+                ("AZURE_STORAGE_ACCOUNT_NAME", "fitzaccount"),
+                ("AZURE_STORAGE_ACCOUNT_KEY", "account-key"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let cloud = cloud_config(&config);
+
+                // Assert
+                assert!(matches!(
+                    &cloud.provider_config,
+                    cntryl_midge::CloudProviderConfig::AzureBlob {
+                        account,
+                        container,
+                        credential: cntryl_midge::AzureCredentialSource::SharedKey { account_key },
+                        ..
+                    } if account == "fitzaccount"
+                        && container == "fitz-container"
+                        && account_key == "account-key"
+                ));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_azure_blob_bucket_alias_given_missing_container() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "azure-blob"),
+                ("FITZ_STORAGE_BUCKET", "fitz-bucket"),
+                ("AZURE_STORAGE_ACCOUNT_NAME", "fitzaccount"),
+                ("AZURE_STORAGE_ACCOUNT_KEY", "account-key"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new().with_auth_config(crate::auth::AuthConfig::Disabled);
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("azure-blob storage requires FITZ_STORAGE_CONTAINER"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_azure_blob_account_alias_given_missing_azure_account_name() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "azure-blob"),
+                ("FITZ_STORAGE_CONTAINER", "fitz-container"),
+                ("FITZ_STORAGE_ACCOUNT", "fitzaccount"),
+                ("AZURE_STORAGE_ACCOUNT_KEY", "account-key"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("AZURE_STORAGE_ACCOUNT_NAME"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_parse_gcs_provider_given_cloud_env() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "gcs"),
+                ("FITZ_STORAGE_BUCKET", "fitz-gcs"),
+                ("GOOGLE_APPLICATION_CREDENTIALS", "/var/run/gcp.json"),
+                ("GOOGLE_CLOUD_PROJECT", "fitz-project"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let cloud = cloud_config(&config);
+
+                // Assert
+                assert!(matches!(
+                    &cloud.provider_config,
+                    cntryl_midge::CloudProviderConfig::Gcs {
+                        bucket,
+                        project_id,
+                        credential: cntryl_midge::GcsCredentialSource::ServiceAccountJsonFile { path },
+                        ..
+                    } if bucket == "fitz-gcs"
+                        && project_id == "fitz-project"
+                        && path == std::path::Path::new("/var/run/gcp.json")
+                ));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_missing_required_cloud_fields_given_real_provider() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "aws-s3"),
+                ("FITZ_STORAGE_REGION", "us-east-1"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_old_cloud_mode_aliases_given_vendor_in_storage_mode() {
+        with_storage_env(&[("FITZ_STORAGE_MODE", "s3")], || {
+            // Arrange
+
+            // Act
+            let config = BootConfig::new();
+            let result = config.validate();
+
+            // Assert
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("FITZ_STORAGE_MODE=s3 is no longer supported"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn should_ignore_storage_path_given_cloud_cache_path() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "peas-s3"),
+                ("FITZ_STORAGE_BUCKET", "   "),
+                ("FITZ_STORAGE_PATH", "/legacy/path"),
+                ("FITZ_STORAGE_CACHE_PATH", "/cache/path"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let cloud = cloud_config(&config);
+
+                // Assert
+                assert_eq!(cloud.local_cache_path, "/cache/path");
+                assert_eq!(
+                    cloud.provider_config.bucket_or_container(),
+                    DEFAULT_PEAS_BUCKET
+                );
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_map_cloud_durability_to_write_options() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "peas-s3"),
+                ("FITZ_STORAGE_CLOUD_DURABILITY", "strict"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+
+                // Assert
+                assert!(config.server_write_options().is_cloud_strict());
+                assert!(config.request_sync_write_options().is_cloud_strict());
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_accept_background_cloud_durability() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "peas-s3"),
+                ("FITZ_STORAGE_CLOUD_DURABILITY", "background"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new().with_auth_config(crate::auth::AuthConfig::Disabled);
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_ok());
+                assert_eq!(config.cloud_durability, CloudDurabilityMode::Background);
+                assert!(!config.server_write_options().is_cloud_strict());
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_invalid_cloud_durability() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "peas-s3"),
+                ("FITZ_STORAGE_CLOUD_DURABILITY", "stict"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unsupported FITZ_STORAGE_CLOUD_DURABILITY='stict'"));
+            },
+        );
+    }
+
+    #[test]
+    fn should_keep_non_cloud_sync_write_options_local() {
+        // Arrange
+        let config = BootConfig::with_local_storage("/data/fitz");
+
+        // Act
+        let write_options = config.request_sync_write_options();
+
+        // Assert
+        assert!(write_options.is_sync());
+        assert!(!write_options.is_cloud_strict());
     }
 }

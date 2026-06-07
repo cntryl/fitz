@@ -186,6 +186,8 @@ pub struct ScheduleDomainSink {
     /// Rolling window of acknowledged handoff timestamps for the legacy
     /// executions-per-minute metric.
     recent_acknowledgement_ms: Mutex<VecDeque<u64>>,
+    /// Write options for schedule persistence.
+    write_options: cntryl_midge::WriteOptions,
     metrics: Option<ScheduleMetrics>,
 }
 
@@ -213,8 +215,14 @@ impl ScheduleDomainSink {
             pending_claim_ttl_ms: SCHEDULE_PENDING_CLAIM_TTL_MS,
             last_pending_claim_cleanup_elapsed_ms: AtomicU64::new(0),
             recent_acknowledgement_ms: Mutex::new(VecDeque::new()),
+            write_options: cntryl_midge::WriteOptions::buffered(),
             metrics: None,
         }
+    }
+
+    pub fn with_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
+        self.write_options = write_options;
+        self
     }
 
     pub fn with_metrics(
@@ -250,7 +258,7 @@ impl ScheduleDomainSink {
             let actor = crate::domains::schedule::ScheduleActor::try_new(
                 family,
                 self.store.clone(),
-                cntryl_midge::WriteOptions::buffered(),
+                self.write_options,
             )?;
             actors.insert(family, actor);
         }
@@ -473,7 +481,7 @@ impl ScheduleDomainSink {
                 let actor = crate::domains::schedule::ScheduleActor::try_new(
                     route_family,
                     self.store.clone(),
-                    cntryl_midge::WriteOptions::buffered(),
+                    self.write_options,
                 )?;
                 Ok(entry.insert(actor))
             }
@@ -1363,6 +1371,21 @@ mod tests {
             subscriber_mailbox.receiver().try_recv().is_err(),
             "ack retry should not republish a schedule notify on the same broker"
         );
+    }
+
+    #[test]
+    fn should_store_cloud_strict_write_options_given_strict_cloud_policy() {
+        // Arrange
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+
+        // Act
+        let sink = ScheduleDomainSink::new(store, router, admin_read_model)
+            .with_write_options(cntryl_midge::WriteOptions::cloud_strict());
+
+        // Assert
+        assert!(sink.write_options.is_cloud_strict());
     }
 
     #[test]

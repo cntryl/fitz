@@ -409,10 +409,10 @@ fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, S
     if offset >= payload.len() {
         return Err("BEGIN durability byte missing".to_string());
     }
-    let write_options = if payload[offset] == 0 {
-        cntryl_midge::WriteOptions::buffered()
-    } else {
-        cntryl_midge::WriteOptions::sync()
+    let write_options = match payload[offset] {
+        0 => cntryl_midge::WriteOptions::buffered(),
+        1 => cntryl_midge::WriteOptions::sync(),
+        value => return Err(format!("Invalid durability mode: {}", value)),
     };
 
     Ok(KvMessage::Begin {
@@ -1150,6 +1150,33 @@ mod tests {
             }
             _ => panic!("Expected KvMessage::Begin with buffered write options"),
         }
+    }
+
+    #[test]
+    fn should_reject_begin_with_invalid_durability() {
+        // Arrange
+        let route = "kv://acme/kv/users";
+        let mut base_payload = Vec::new();
+        base_payload.put_u32(route.len() as u32);
+        base_payload.put_slice(route.as_bytes());
+        base_payload.put_u8(1); // ReadWrite
+
+        // Act
+        let results = [2_u8, 255_u8]
+            .into_iter()
+            .map(|durability| {
+                let mut payload = base_payload.clone();
+                payload.put_u8(durability);
+                parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload)
+            })
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert!(results.iter().all(Result::is_err));
+        assert!(results.iter().all(|result| result
+            .as_ref()
+            .unwrap_err()
+            .contains("Invalid durability mode")));
     }
 
     #[test]

@@ -591,7 +591,7 @@ Wire format specification:
 [u32 BE]  route_len
 [bytes]   route
 [u8]      mode (0=ReadOnly, 1=ReadWrite)
-[u8]      durability (0=Buffered, 1=Sync)
+[u8]      durability (0=Buffered, 1=Sync; other values invalid)
 ```
 
 Actual bytes on wire:
@@ -704,6 +704,10 @@ def decode_kv_message(message_type, payload):
         offset += 1
         durability = payload[offset]
         offset += 1
+        if mode not in (0, 1):
+            raise ProtocolError("Invalid transaction mode")
+        if durability not in (0, 1):
+            raise ProtocolError("Invalid durability mode")
         
         return KvBegin(route=route, mode=mode, durability=durability)
     
@@ -3339,7 +3343,7 @@ Every operation includes full context:
 [u32 BE]  route_len
 [bytes]   route (UTF-8, e.g., "kv://realm/area/resource")
 [u8]      mode (0=ReadOnly, 1=ReadWrite)
-[u8]      durability (0=Buffered, 1=Sync)
+[u8]      durability (0=Buffered, 1=Sync; other values invalid)
 Response (success):
   [u8]     0 (status: success)
   [u64 BE] tx_id
@@ -3565,11 +3569,13 @@ Response (error):
 
 ##### Durability Modes
 
+Only `0` and `1` are valid durability values. Other values are rejected.
+
 **Sync (durability=1):**
 
 - Commits are flushed to durable storage (WAL fsync) before returning
 - Survives broker crash/restart
-- Higher latency, guaranteed durability
+- Higher latency, stronger crash durability at the configured storage layer
 
 **Buffered (durability=0):**
 

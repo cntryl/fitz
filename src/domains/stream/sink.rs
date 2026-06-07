@@ -78,6 +78,7 @@ pub struct StreamDomainSink {
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
     admin_snapshot_dirty: AtomicBool,
+    sync_write_mode: crate::domains::stream::protocol::StreamWriteMode,
     metrics: Option<StreamMetrics>,
     active: AtomicBool,
 }
@@ -121,9 +122,19 @@ impl StreamDomainSink {
             router,
             admin_read_model,
             admin_snapshot_dirty: AtomicBool::new(true),
+            sync_write_mode: crate::domains::stream::protocol::StreamWriteMode::Sync,
             metrics: None,
             active: AtomicBool::new(true),
         })
+    }
+
+    pub fn with_sync_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
+        self.sync_write_mode = if write_options.is_cloud_strict() {
+            crate::domains::stream::protocol::StreamWriteMode::CloudStrict
+        } else {
+            crate::domains::stream::protocol::StreamWriteMode::Sync
+        };
+        self
     }
 
     pub fn with_metrics(
@@ -970,6 +981,11 @@ impl MailboxSink for StreamDomainSink {
                 }
             }
             StreamMessage::Commit { session_id, mode } => {
+                let mode = if mode == crate::domains::stream::protocol::StreamWriteMode::Sync {
+                    self.sync_write_mode
+                } else {
+                    mode
+                };
                 let key = self.session_owners.lock().get(&session_id).cloned();
                 match key {
                     Some(key) => match self.get_or_create_actor(&key) {
@@ -1456,6 +1472,46 @@ mod tests {
         assert_eq!(
             sink.storage_layout(),
             StreamStorageLayout::PromotionFrontier
+        );
+    }
+
+    #[test]
+    fn should_map_sync_commits_to_cloud_strict_given_strict_cloud_sync_policy() {
+        // Arrange
+        let router = Arc::new(Router::new());
+
+        // Act
+        let sink = StreamDomainSink::new(
+            crate::benchkit::create_bench_store(),
+            router,
+            crate::api::admin::read_model::AdminReadModel::new(),
+        )
+        .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
+
+        // Assert
+        assert_eq!(
+            sink.sync_write_mode,
+            crate::domains::stream::protocol::StreamWriteMode::CloudStrict
+        );
+    }
+
+    #[test]
+    fn should_keep_sync_commits_local_given_local_sync_policy() {
+        // Arrange
+        let router = Arc::new(Router::new());
+
+        // Act
+        let sink = StreamDomainSink::new(
+            crate::benchkit::create_bench_store(),
+            router,
+            crate::api::admin::read_model::AdminReadModel::new(),
+        )
+        .with_sync_write_options(cntryl_midge::WriteOptions::sync());
+
+        // Assert
+        assert_eq!(
+            sink.sync_write_mode,
+            crate::domains::stream::protocol::StreamWriteMode::Sync
         );
     }
 

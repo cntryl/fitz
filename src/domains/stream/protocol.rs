@@ -440,6 +440,8 @@ pub enum StreamWriteMode {
     Buffered,
     /// Sync: correctness-first, writes are committed synchronously
     Sync,
+    /// CloudStrict: internal broker mode for cloud provider-ack commits
+    CloudStrict,
 }
 
 /// Batch committed notification from StreamActor to AreaActor

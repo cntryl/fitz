@@ -1,0 +1,75 @@
+name: fitz-cloud
+
+x-broker-common: &broker-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  stop_grace_period: 15s
+  healthcheck:
+    disable: true
+
+x-broker-common-env: &broker-common-env
+  FITZ_STORAGE_MODE: "cloud"
+  FITZ_STORAGE_PROVIDER: "${FITZ_PEAS_PROVIDER:-peas-s3}"
+  FITZ_STORAGE_BUCKET: "${FITZ_STORAGE_BUCKET:-fitz}"
+  FITZ_STORAGE_CONTAINER: "${FITZ_STORAGE_CONTAINER:-fitz}"
+  FITZ_STORAGE_PREFIX: "${FITZ_STORAGE_PREFIX:-dev}"
+  FITZ_STORAGE_ENDPOINT: "http://peas:9000"
+  FITZ_STORAGE_CLOUD_DURABILITY: "${FITZ_STORAGE_CLOUD_DURABILITY:-background}"
+  RUST_LOG: "info,fitz=trace"
+
+services:
+  peas:
+    container_name: peas
+    hostname: peas
+    image: ghcr.io/sqrzl/peas-emulator:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      BLOBS_PATH: /app/blobs
+      ACCESS_KEY_ID: admin
+      SECRET_ACCESS_KEY: easy-peasy
+    volumes:
+      - peas_blobs:/app/blobs
+
+  fitz-auth:
+    <<: *broker-common
+    container_name: fitz-auth
+    depends_on:
+      - peas
+    ports:
+      - "${FITZ_AUTH_HOST_HTTP_PORT:-4090}:${FITZ_AUTH_HTTP_PORT:-4090}"
+      - "${FITZ_AUTH_HOST_TCP_PORT:-4091}:${FITZ_AUTH_TCP_PORT:-4091}"
+    environment:
+      <<: *broker-common-env
+      FITZ_AUTH_REQUIRED: "true"
+      FITZ_ADMIN_AUTH_MODE: "protected"
+      FITZ_HTTP_PORT: "${FITZ_AUTH_HTTP_PORT:-4090}"
+      FITZ_TCP_PORT: "${FITZ_AUTH_TCP_PORT:-4091}"
+      FITZ_ADMIN_USERNAME: "admin"
+      FITZ_ADMIN_PASSWORD_HASH: "$$argon2id$$v=19$$m=19456,t=2,p=1$$Zml0ei1hZG1pbi1zYWx0$$xPKQoXK1gnKwsi41tvU+I136zdFwrtilblZpeSf3HeU"
+      FITZ_ADMIN_JWT_SECRET: "test-admin-jwt-secret"
+      FITZ_JWT_HMAC_SECRET: "test-secret-key"
+      FITZ_JWT_AUDIENCE: "fitz"
+      FITZ_STORAGE_CACHE_PATH: "/tmp/fitz-cloud-cache/auth"
+
+  fitz-anon:
+    <<: *broker-common
+    container_name: fitz-anon
+    depends_on:
+      - peas
+    ports:
+      - "${FITZ_ANON_HOST_HTTP_PORT:-4190}:${FITZ_ANON_HTTP_PORT:-4090}"
+      - "${FITZ_ANON_HOST_TCP_PORT:-4191}:${FITZ_ANON_TCP_PORT:-4091}"
+    environment:
+      <<: *broker-common-env
+      FITZ_AUTH_REQUIRED: "false"
+      FITZ_ADMIN_AUTH_MODE: "open"
+      FITZ_HTTP_PORT: "${FITZ_ANON_HTTP_PORT:-4090}"
+      FITZ_TCP_PORT: "${FITZ_ANON_TCP_PORT:-4091}"
+      FITZ_STORAGE_CACHE_PATH: "/tmp/fitz-cloud-cache/anon"
+
+volumes:
+  peas_blobs:

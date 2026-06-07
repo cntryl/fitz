@@ -1232,6 +1232,7 @@ impl StreamStore {
         let write_options = match mode {
             StreamWriteMode::Sync => cntryl_midge::WriteOptions::sync(),
             StreamWriteMode::Buffered => cntryl_midge::WriteOptions::buffered(),
+            StreamWriteMode::CloudStrict => cntryl_midge::WriteOptions::cloud_strict(),
         };
         txn.commit(write_options)
             .map_err(|e| format!("midge commit error: {:?}", e))?;
