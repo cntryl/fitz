@@ -168,6 +168,7 @@ impl TestServer {
             max_frame_size: 16_777_216, // 16 MB (test config allows larger frames than production 1 MB default)
             channel_capacity: 10_000,
             cloud_durability: crate::boot::runtime::CloudDurabilityMode::Background,
+            storage_memtable: crate::boot::runtime::StorageMemtableConfig::Auto,
         };
 
         // Step 1: Initialize storage

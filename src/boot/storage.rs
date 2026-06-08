@@ -2,7 +2,12 @@
 
 use crate::boot::runtime::{BootConfig, BootResult, CloudStorageConfig, StorageMode};
 use std::sync::Arc;
-use tracing::info;
+use std::time::Duration;
+use tracing::{info, warn};
+
+const LOCAL_DISK_OPEN_MAX_RETRIES: u32 = 10;
+const LOCAL_DISK_OPEN_BASE_BACKOFF: Duration = Duration::from_millis(250);
+const LOCAL_DISK_OPEN_MAX_BACKOFF: Duration = Duration::from_secs(5);
 
 /// Initialize Midge storage engine based on configured storage mode.
 pub async fn init(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
@@ -62,7 +67,8 @@ pub fn ensure_route_family(
 async fn init_memory(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
     info!("Initializing in-memory storage (ephemeral, no persistence)");
 
-    let store = cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
+    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::in_memory(), config)?;
+    let store = cntryl_midge::Engine::open(open_options)
         .map_err(|e| format!("Failed to open in-memory Midge: {}", e))?;
 
     ensure_column_families(&store, config)?;
@@ -82,13 +88,79 @@ async fn init_local_disk(
         .await
         .map_err(|e| format!("Failed to create storage directory {}: {}", db_path, e))?;
 
-    let store = cntryl_midge::Engine::open(cntryl_midge::OpenOptions::local(db_path).build())
-        .map_err(|e| format!("Failed to open Midge at {}: {}", db_path, e))?;
+    let store = open_local_disk_with_retry(config, db_path).await?;
 
     ensure_column_families(&store, config)?;
 
     info!("Local disk storage ready at {}", db_path);
     Ok(Arc::new(store))
+}
+
+async fn open_local_disk_with_retry(
+    config: &BootConfig,
+    db_path: &str,
+) -> BootResult<cntryl_midge::Engine> {
+    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::local(db_path), config)?;
+    let mut retry_attempt = 0;
+
+    loop {
+        match cntryl_midge::Engine::open(open_options.clone()) {
+            Ok(store) => return Ok(store),
+            Err(error)
+                if should_retry_local_disk_open(&error)
+                    && retry_attempt < LOCAL_DISK_OPEN_MAX_RETRIES =>
+            {
+                let delay = local_disk_open_retry_delay(retry_attempt);
+                warn!(
+                    db_path = db_path,
+                    retry_attempt = retry_attempt + 1,
+                    max_retries = LOCAL_DISK_OPEN_MAX_RETRIES,
+                    delay_ms = delay.as_millis() as u64,
+                    error = %error,
+                    "Local disk storage open hit an active writer lease; retrying with exponential backoff"
+                );
+                retry_attempt += 1;
+                tokio::time::sleep(delay).await;
+            }
+            Err(error) => {
+                return Err(format!("Failed to open Midge at {}: {}", db_path, error).into())
+            }
+        }
+    }
+}
+
+fn should_retry_local_disk_open(error: &cntryl_midge::MidgeError) -> bool {
+    matches!(
+        error,
+        cntryl_midge::MidgeError::Internal(message)
+            if message.contains("another Midge instance is already running against this storage")
+    )
+}
+
+fn local_disk_open_retry_delay(attempt: u32) -> Duration {
+    let multiplier = 1_u64.checked_shl(attempt).unwrap_or(u64::MAX);
+    let delay_ms = (LOCAL_DISK_OPEN_BASE_BACKOFF.as_millis() as u64)
+        .saturating_mul(multiplier)
+        .min(LOCAL_DISK_OPEN_MAX_BACKOFF.as_millis() as u64);
+    Duration::from_millis(delay_ms)
+}
+
+fn build_midge_open_options(
+    open_options: cntryl_midge::OpenOptions,
+    config: &BootConfig,
+) -> BootResult<cntryl_midge::OpenOptions> {
+    let open_options = match config.storage_memtable_bytes() {
+        Some(memtable_bytes) => {
+            info!(
+                memtable_bytes = memtable_bytes,
+                "Configuring Midge memtable size from FITZ_STORAGE_MEMTABLE_BYTES"
+            );
+            open_options.with_memtable_size_limit(memtable_bytes)
+        }
+        None => open_options,
+    };
+
+    Ok(open_options.build())
 }
 
 /// Initialize cloud-backed storage.
@@ -113,13 +185,19 @@ async fn init_cloud(
             )
         })?;
 
-    let open_options = cntryl_midge::OpenOptions::cloud(
-        cloud.local_cache_path.clone(),
-        cloud.provider_config.clone(),
-        cloud.prefix.clone().unwrap_or_default(),
-    )
-    .build();
-    let store = cntryl_midge::Engine::open(open_options)
+    let open_options = build_midge_open_options(
+        cntryl_midge::OpenOptions::cloud(
+            cloud.local_cache_path.clone(),
+            cloud.provider_config.clone(),
+            cloud.prefix.clone().unwrap_or_default(),
+        ),
+        config,
+    )?;
+    // Cloud engine bootstrap may create and drop an internal Tokio runtime.
+    // Run it on a blocking thread to avoid dropping that runtime inside async context.
+    let store = tokio::task::spawn_blocking(move || cntryl_midge::Engine::open(open_options))
+        .await
+        .map_err(|e| format!("Cloud-backed Midge open task failed: {}", e))?
         .map_err(|e| format!("Failed to open cloud-backed Midge: {}", e))?;
 
     ensure_column_families(&store, config)?;
@@ -239,6 +317,36 @@ mod tests {
     }
 
     #[test]
+    fn should_apply_configured_storage_memtable_bytes_to_midge_options() {
+        // Arrange
+        let memtable_bytes = 8 * 1024 * 1024;
+        let config = BootConfig::with_memory_storage().with_storage_memtable_bytes(memtable_bytes);
+
+        // Act
+        let open_options =
+            build_midge_open_options(cntryl_midge::OpenOptions::in_memory(), &config)
+                .expect("build open options");
+
+        // Assert
+        assert_eq!(open_options.memtable_size_limit(), memtable_bytes);
+    }
+
+    #[tokio::test]
+    async fn should_open_storage_with_configured_midge_memtable_size() {
+        // Arrange
+        let memtable_bytes = 128 * 1024;
+        let config = BootConfig::with_memory_storage().with_storage_memtable_bytes(memtable_bytes);
+
+        // Act
+        let store = init(&config).await.expect("open memory store");
+        let metrics = store.get_runtime_metrics().expect("runtime metrics");
+
+        // Assert
+        assert_eq!(metrics.memtable_size_limit, memtable_bytes);
+        assert_eq!(metrics.memtable_flush_threshold, memtable_bytes);
+    }
+
+    #[test]
     fn should_support_local_storage_mode() {
         // Arrange
         let config = BootConfig::with_local_storage("/data/fitz");
@@ -255,10 +363,12 @@ mod tests {
 
     #[tokio::test]
     async fn should_persist_local_disk_storage_across_restarts() {
+        // Arrange
         let tempdir = TempDir::new().expect("tempdir");
         let db_path = tempdir.path().join("fitz-local");
         let config = BootConfig::with_local_storage(db_path.to_string_lossy().to_string());
 
+        // Act
         let store = init(&config).await.expect("open first store");
         let cf = store
             .get_column_family("tenant_default")
@@ -271,10 +381,34 @@ mod tests {
             .get_column_family("tenant_default")
             .expect("tenant_default cf after reopen");
 
+        // Assert
         assert_eq!(
             read_marker(reopened.as_ref(), reopened_cf.id(), b"marker"),
             Some(b"value".to_vec())
         );
+    }
+
+    #[tokio::test]
+    async fn should_retry_local_disk_open_given_active_writer_lease_when_holder_releases() {
+        // Arrange
+        let tempdir = TempDir::new().expect("tempdir");
+        let db_path = tempdir.path().join("fitz-local-retry");
+        let config = BootConfig::with_local_storage(db_path.to_string_lossy().to_string());
+        let store = init(&config).await.expect("open first store");
+        let release_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            shutdown_store(store);
+        });
+
+        // Act
+        let reopened = tokio::time::timeout(Duration::from_secs(5), init(&config))
+            .await
+            .expect("local disk retry should not hang")
+            .expect("reopen store after retry");
+
+        // Assert
+        release_task.await.expect("release first store");
+        shutdown_store(reopened);
     }
 
     #[test]
@@ -294,6 +428,41 @@ mod tests {
 
         // Assert
         assert!(validation_result.is_err());
+    }
+
+    #[tokio::test]
+    async fn should_return_error_given_cloud_open_failure_when_called_inside_async_runtime() {
+        // Arrange
+        let tempdir = TempDir::new().expect("tempdir");
+        let config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked(Box::new(
+            CloudStorageConfig {
+                provider_name: "s3-compatible".to_string(),
+                provider_config: cntryl_midge::CloudProviderConfig::s3_compatible_static(
+                    "fitz-runtime-drop-test",
+                    "http://127.0.0.1:1",
+                    "test-access-key",
+                    "test-secret-key",
+                ),
+                prefix: Some(format!("tests/{}/", uuid::Uuid::new_v4())),
+                local_cache_path: tempdir.path().join("cache").to_string_lossy().to_string(),
+            },
+        )));
+
+        // Act
+        let init_result = tokio::time::timeout(Duration::from_secs(5), init(&config))
+            .await
+            .expect("cloud init should not hang");
+
+        // Assert
+        match init_result {
+            Ok(_) => panic!("cloud init should surface an open error"),
+            Err(error) => assert!(
+                error
+                    .to_string()
+                    .contains("Failed to open cloud-backed Midge"),
+                "expected cloud open error, got: {error}"
+            ),
+        }
     }
 
     #[tokio::test]

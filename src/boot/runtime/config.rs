@@ -8,6 +8,7 @@ const DEFAULT_PEAS_ENDPOINT: &str = "http://127.0.0.1:9000";
 const DEFAULT_PEAS_ACCESS_KEY: &str = "admin";
 const DEFAULT_PEAS_SECRET_KEY: &str = "easy-peasy";
 const DEFAULT_PEAS_BUCKET: &str = "fitz";
+const ENV_STORAGE_MEMTABLE_BYTES: &str = "FITZ_STORAGE_MEMTABLE_BYTES";
 
 /// Cloud commit durability policy for broker-selected durable writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +36,56 @@ impl CloudDurabilityMode {
                     other
                 ),
             },
+        }
+    }
+}
+
+/// Optional storage memtable tuning for the embedded Midge engine.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum StorageMemtableConfig {
+    /// Use Midge's storage-mode default.
+    #[default]
+    Auto,
+    /// Requested runtime memtable size in bytes.
+    Bytes(usize),
+    /// Invalid environment configuration captured for later validation.
+    Invalid { reason: String },
+}
+
+impl StorageMemtableConfig {
+    fn from_env() -> Self {
+        let Some(value) = env_non_empty(ENV_STORAGE_MEMTABLE_BYTES) else {
+            return Self::Auto;
+        };
+
+        match value.parse::<usize>() {
+            Ok(0) => Self::Invalid {
+                reason: format!("{ENV_STORAGE_MEMTABLE_BYTES} must be greater than 0"),
+            },
+            Ok(bytes) => Self::Bytes(bytes),
+            Err(_) => Self::Invalid {
+                reason: format!(
+                    "{ENV_STORAGE_MEMTABLE_BYTES} must be an unsigned integer byte count"
+                ),
+            },
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::Auto => Ok(()),
+            Self::Bytes(0) => Err(format!(
+                "{ENV_STORAGE_MEMTABLE_BYTES} must be greater than 0"
+            )),
+            Self::Bytes(_) => Ok(()),
+            Self::Invalid { reason } => Err(reason.clone()),
+        }
+    }
+
+    pub fn bytes(&self) -> Option<usize> {
+        match self {
+            Self::Bytes(bytes) => Some(*bytes),
+            Self::Auto | Self::Invalid { .. } => None,
         }
     }
 }
@@ -377,6 +428,8 @@ pub struct BootConfig {
     pub channel_capacity: usize,
     /// Provider-ack durability behavior for cloud-backed sync writes.
     pub cloud_durability: CloudDurabilityMode,
+    /// Optional explicit Midge memtable size in bytes.
+    pub storage_memtable: StorageMemtableConfig,
 }
 
 impl BootConfig {
@@ -443,6 +496,7 @@ impl Default for BootConfig {
             max_frame_size: 1024 * 1024,
             channel_capacity: 1000,
             cloud_durability: CloudDurabilityMode::from_env(),
+            storage_memtable: StorageMemtableConfig::from_env(),
         }
     }
 }
@@ -504,10 +558,22 @@ impl BootConfig {
         self
     }
 
+    pub fn with_storage_memtable_bytes(mut self, bytes: usize) -> Self {
+        self.storage_memtable = StorageMemtableConfig::Bytes(bytes);
+        self
+    }
+
+    pub fn storage_memtable_bytes(&self) -> Option<usize> {
+        self.storage_memtable.bytes()
+    }
+
     pub fn validate(&self) -> BootResult<()> {
         if let CloudDurabilityMode::Invalid { reason } = &self.cloud_durability {
             return Err(reason.clone().into());
         }
+        self.storage_memtable
+            .validate()
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         self.storage_mode
             .validate()
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
@@ -572,6 +638,7 @@ mod tests {
             "FITZ_STORAGE_NAMESPACE",
             "FITZ_STORAGE_ACCOUNT",
             "FITZ_STORAGE_CLOUD_DURABILITY",
+            "FITZ_STORAGE_MEMTABLE_BYTES",
             "AWS_REGION",
             "AWS_DEFAULT_REGION",
             "AZURE_STORAGE_ACCOUNT_NAME",
@@ -631,6 +698,7 @@ mod tests {
         assert_eq!(config.bind_addr, "0.0.0.0");
         assert_eq!(config.max_connections, 10_000);
         assert_eq!(config.cloud_durability, CloudDurabilityMode::Background);
+        assert_eq!(config.storage_memtable, StorageMemtableConfig::Auto);
         assert_eq!(config.route_families, vec![1]);
         assert_eq!(
             config.stream_storage_layout,
@@ -666,6 +734,63 @@ mod tests {
         // Assert
         assert_eq!(config.http_port, 6080);
         assert_eq!(config.tcp_port, 6081);
+    }
+
+    #[test]
+    #[serial]
+    fn should_read_storage_memtable_bytes_from_environment() {
+        with_storage_env(&[("FITZ_STORAGE_MEMTABLE_BYTES", "8388608")], || {
+            // Arrange
+
+            // Act
+            let config = BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+
+            // Assert
+            assert_eq!(
+                config.storage_memtable,
+                StorageMemtableConfig::Bytes(8 * 1024 * 1024)
+            );
+            assert_eq!(config.storage_memtable_bytes(), Some(8 * 1024 * 1024));
+            assert!(config.validate().is_ok());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_zero_storage_memtable_bytes() {
+        with_storage_env(&[("FITZ_STORAGE_MEMTABLE_BYTES", "0")], || {
+            // Arrange
+
+            // Act
+            let config = BootConfig::default();
+            let result = config.validate();
+
+            // Assert
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("FITZ_STORAGE_MEMTABLE_BYTES must be greater than 0"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_invalid_storage_memtable_bytes() {
+        with_storage_env(&[("FITZ_STORAGE_MEMTABLE_BYTES", "small")], || {
+            // Arrange
+
+            // Act
+            let config = BootConfig::default();
+            let result = config.validate();
+
+            // Assert
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("FITZ_STORAGE_MEMTABLE_BYTES must be an unsigned integer byte count"));
+        });
     }
 
     #[test]

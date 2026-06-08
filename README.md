@@ -113,10 +113,12 @@ If you want a single local service, this is the smallest useful compose file:
 - FITZ_ROUTE_FAMILIES defaults to `1`. Configure a non-empty contiguous list starting at `1`, such as `1,2,3`, before startup.
 - FITZ_STORAGE_MODE can be set to `memory`, `local`, or `cloud`.
 - FITZ_STORAGE_PATH is only for local disk storage and defaults to `./.fitz`.
+- FITZ_STORAGE_MEMTABLE_BYTES optionally sets Midge's runtime memtable size and flush threshold in bytes. Lower values make SST flushes happen sooner for diagnostics and constrained environments.
 - Cloud storage requires FITZ_STORAGE_PROVIDER plus provider-specific values. Supported providers are `peas-s3`, `peas-azure`, `peas-gcs`, `aws-s3`, `s3-compatible`, `minio`, `wasabi`, `oci-s3`, `azure-blob`, and `gcs`.
 - Cloud storage uses FITZ_STORAGE_CACHE_PATH for its local cache and defaults to `./.fitz-cloud-cache`; it does not read FITZ_STORAGE_PATH.
 - FITZ_STORAGE_CLOUD_DURABILITY can be `background` or `strict`; any other value is rejected. `background` keeps provider upload asynchronous; `strict` waits for provider acknowledgement for broker-selected durable cloud writes and request-level sync writes.
 - Authenticated JWT issuers must include `fitz.route_family` with one provisioned non-zero family. Anonymous mode always uses family `1`.
+- FITZ_MIN_MEMORY_BYTES defaults to `134217728` and rejects smaller Linux cgroup memory limits during startup. Set it higher for production headroom, or set it to `0` only when intentionally bypassing the preflight for experiments.
 
 ## Documentation
 

@@ -11,10 +11,12 @@
 
 pub mod domains;
 pub mod observability;
+pub mod resource_limits;
 pub mod runtime;
 pub mod stats;
 pub mod storage;
 
+pub use resource_limits::enforce_startup_resource_limits;
 pub use runtime::{BootConfig, BootResult};
 pub use stats::Runtime;
 
@@ -29,6 +31,8 @@ pub use stats::Runtime;
 /// 5. Wait for Ctrl+C
 /// 6. Graceful shutdown
 pub async fn boot(config: BootConfig) -> BootResult<()> {
+    resource_limits::enforce_startup_resource_limits()?;
+
     // Step 0: Initialize observability (tracing, metrics, OTEL)
     let _metrics = observability::init_observability()?;
 
