@@ -515,7 +515,7 @@ dependencies = [
 [[package]]
 name = "cntryl-midge"
 version = "0.1.0"
-source = "git+https://github.com/cntryl/midge#a4d656f8a82b4f6d22cc1836c37220ef3497b3b0"
+source = "git+https://github.com/cntryl/midge#89675c19355b17aff7121478aa8ccc5cec39ff19"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1558,9 +1558,9 @@ dependencies = [
 
 [[package]]
 name = "http"
-version = "1.4.1"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be7462df143984c4598a256ef469b251d7d7f9e271135073e78fc535414f3d0"
+checksum = "6970f50e31d6fc17d3fa27329444bfa74e196cf62e95052a3f6fee181dba6425"
 dependencies = [
  "bytes",
  "itoa",
