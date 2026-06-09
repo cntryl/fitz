@@ -662,6 +662,7 @@ mod tests {
             "FITZ_ROUTE_FAMILY_MAP",
             "FITZ_ROUTE_FAMILY_CLAIM",
             "FITZ_AUTH_CUSTOM_CLAIM",
+            "FITZ_AUTH_ROLE_CLAIM",
             "FITZ_AUTH_ALLOW_JWT_ROUTE_FAMILY",
         ];
         let previous = keys
@@ -1059,6 +1060,110 @@ mod tests {
                 // Assert
                 assert!(result.is_err());
                 assert!(result.unwrap_err().to_string().contains("unprovisioned"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_removed_legacy_route_family_env() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_AUTH_ALLOW_JWT_ROUTE_FAMILY", "true"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config =
+                    BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_AUTH_ALLOW_JWT_ROUTE_FAMILY has been removed"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_removed_custom_claim_alias_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_AUTH_CUSTOM_CLAIM", "fitz"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config =
+                    BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_AUTH_CUSTOM_CLAIM=fitz is no longer supported"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_overlapping_role_claim_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_ROUTE_FAMILY_CLAIM", "tid"),
+                ("FITZ_AUTH_ROLE_CLAIM", "tid"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config =
+                    BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_AUTH_ROLE_CLAIM must not match FITZ_ROUTE_FAMILY_CLAIM"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_reserved_role_claim_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_AUTH_ROLE_CLAIM", "scope"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config =
+                    BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result.unwrap_err().to_string().contains(
+                    "FITZ_AUTH_ROLE_CLAIM must not overlap with top-level permission sources"
+                ));
             },
         );
     }

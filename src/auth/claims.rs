@@ -5,23 +5,31 @@ use std::collections::HashMap;
 use crate::auth::Permission;
 
 pub const DEFAULT_ROUTE_FAMILY_CLAIM: &str = "tid";
+pub const DEFAULT_ROLE_CLAIM: &str = "roles";
 pub const ENV_ROUTE_FAMILY_CLAIM: &str = "FITZ_ROUTE_FAMILY_CLAIM";
 pub const ENV_ROUTE_FAMILY_MAP: &str = "FITZ_ROUTE_FAMILY_MAP";
 pub const ENV_AUTH_CUSTOM_CLAIM: &str = "FITZ_AUTH_CUSTOM_CLAIM";
-pub const ENV_AUTH_ALLOW_JWT_ROUTE_FAMILY: &str = "FITZ_AUTH_ALLOW_JWT_ROUTE_FAMILY";
+pub const ENV_AUTH_ROLE_CLAIM: &str = "FITZ_AUTH_ROLE_CLAIM";
+
+const REMOVED_ENV_AUTH_ALLOW_JWT_ROUTE_FAMILY: &str = "FITZ_AUTH_ALLOW_JWT_ROUTE_FAMILY";
 
 /// Token-claim normalization knobs shared by HMAC and JWKS verification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthClaimsConfig {
     pub identity_claim: String,
     pub custom_claim: Option<String>,
-    pub allow_legacy_route_family_claim: bool,
+    pub role_claim: String,
     invalid_reason: Option<String>,
 }
 
 impl Default for AuthClaimsConfig {
     fn default() -> Self {
-        Self::from_parts(DEFAULT_ROUTE_FAMILY_CLAIM.to_string(), None, false, None)
+        Self::from_parts(
+            DEFAULT_ROUTE_FAMILY_CLAIM.to_string(),
+            None,
+            DEFAULT_ROLE_CLAIM.to_string(),
+            None,
+        )
     }
 }
 
@@ -30,43 +38,35 @@ impl AuthClaimsConfig {
         let identity_claim = env_non_empty(ENV_ROUTE_FAMILY_CLAIM)
             .unwrap_or_else(|| DEFAULT_ROUTE_FAMILY_CLAIM.to_string());
         let custom_claim = env_non_empty(ENV_AUTH_CUSTOM_CLAIM);
-        let (allow_legacy_route_family_claim, invalid_reason) =
-            match env_bool(ENV_AUTH_ALLOW_JWT_ROUTE_FAMILY, false) {
-                Ok(value) => (value, None),
-                Err(error) => (false, Some(error)),
-            };
+        let role_claim =
+            env_non_empty(ENV_AUTH_ROLE_CLAIM).unwrap_or_else(|| DEFAULT_ROLE_CLAIM.to_string());
 
         Self::from_parts(
             identity_claim,
             custom_claim,
-            allow_legacy_route_family_claim,
-            invalid_reason,
+            role_claim,
+            removed_legacy_route_family_env_reason(),
         )
     }
 
     pub fn new(
         identity_claim: impl Into<String>,
         custom_claim: Option<String>,
-        allow_legacy_route_family_claim: bool,
+        role_claim: impl Into<String>,
     ) -> Self {
-        Self::from_parts(
-            identity_claim.into(),
-            custom_claim,
-            allow_legacy_route_family_claim,
-            None,
-        )
+        Self::from_parts(identity_claim.into(), custom_claim, role_claim.into(), None)
     }
 
     fn from_parts(
         identity_claim: String,
         custom_claim: Option<String>,
-        allow_legacy_route_family_claim: bool,
+        role_claim: String,
         invalid_reason: Option<String>,
     ) -> Self {
         Self {
             identity_claim,
             custom_claim,
-            allow_legacy_route_family_claim,
+            role_claim,
             invalid_reason,
         }
     }
@@ -85,6 +85,29 @@ impl AuthClaimsConfig {
         {
             return Err(format!("{ENV_AUTH_CUSTOM_CLAIM} must not be empty"));
         }
+        if self.custom_claim.as_deref() == Some("fitz") {
+            return Err(format!(
+                "{ENV_AUTH_CUSTOM_CLAIM}=fitz is no longer supported; emit permissions directly or use a namespaced custom claim"
+            ));
+        }
+        if self.role_claim.trim().is_empty() {
+            return Err(format!("{ENV_AUTH_ROLE_CLAIM} must not be empty"));
+        }
+        if self.role_claim == self.identity_claim {
+            return Err(format!(
+                "{ENV_AUTH_ROLE_CLAIM} must not match {ENV_ROUTE_FAMILY_CLAIM}"
+            ));
+        }
+        if self.custom_claim.as_deref() == Some(self.role_claim.as_str()) {
+            return Err(format!(
+                "{ENV_AUTH_ROLE_CLAIM} must not match {ENV_AUTH_CUSTOM_CLAIM}"
+            ));
+        }
+        if matches!(self.role_claim.as_str(), "permissions" | "scope" | "scp") {
+            return Err(format!(
+                "{ENV_AUTH_ROLE_CLAIM} must not overlap with top-level permission sources"
+            ));
+        }
         Ok(())
     }
 }
@@ -94,18 +117,12 @@ impl AuthClaimsConfig {
 pub struct RouteFamilyResolverConfig {
     pub identity_claim: String,
     pub mappings: HashMap<String, u32>,
-    pub allow_legacy_route_family_claim: bool,
     invalid_reason: Option<String>,
 }
 
 impl Default for RouteFamilyResolverConfig {
     fn default() -> Self {
-        Self::from_parts(
-            DEFAULT_ROUTE_FAMILY_CLAIM.to_string(),
-            HashMap::new(),
-            false,
-            None,
-        )
+        Self::from_parts(DEFAULT_ROUTE_FAMILY_CLAIM.to_string(), HashMap::new(), None)
     }
 }
 
@@ -113,18 +130,12 @@ impl RouteFamilyResolverConfig {
     pub fn from_env() -> Self {
         let identity_claim = env_non_empty(ENV_ROUTE_FAMILY_CLAIM)
             .unwrap_or_else(|| DEFAULT_ROUTE_FAMILY_CLAIM.to_string());
-        let (allow_legacy_route_family_claim, bool_error) =
-            match env_bool(ENV_AUTH_ALLOW_JWT_ROUTE_FAMILY, false) {
-                Ok(value) => (value, None),
-                Err(error) => (false, Some(error)),
-            };
         let (mappings, map_error) = parse_route_family_map_env();
 
         Self::from_parts(
             identity_claim,
             mappings,
-            allow_legacy_route_family_claim,
-            bool_error.or(map_error),
+            removed_legacy_route_family_env_reason().or(map_error),
         )
     }
 
@@ -138,7 +149,6 @@ impl RouteFamilyResolverConfig {
                 .into_iter()
                 .map(|(identity, family)| (identity.into(), family))
                 .collect(),
-            false,
             None,
         )
     }
@@ -146,13 +156,11 @@ impl RouteFamilyResolverConfig {
     fn from_parts(
         identity_claim: String,
         mappings: HashMap<String, u32>,
-        allow_legacy_route_family_claim: bool,
         invalid_reason: Option<String>,
     ) -> Self {
         Self {
             identity_claim,
             mappings,
-            allow_legacy_route_family_claim,
             invalid_reason,
         }
     }
@@ -168,7 +176,7 @@ impl RouteFamilyResolverConfig {
         if self.identity_claim.trim().is_empty() {
             return Err(format!("{ENV_ROUTE_FAMILY_CLAIM} must not be empty"));
         }
-        if auth_required && !self.allow_legacy_route_family_claim && self.mappings.is_empty() {
+        if auth_required && self.mappings.is_empty() {
             return Err(format!(
                 "{ENV_ROUTE_FAMILY_MAP} must contain at least one mapping when authentication is required"
             ));
@@ -201,40 +209,30 @@ impl RouteFamilyResolverConfig {
     }
 
     pub fn resolve(&self, raw_claims: &RawClaims) -> Result<u32, String> {
-        if let Some(identity_value) = raw_claims.identity_claim_value(&self.identity_claim)? {
-            if let Some(family) = self.mappings.get(&identity_value) {
-                return Ok(*family);
-            }
-            if !self.allow_legacy_route_family_claim {
-                return Err(format!(
-                    "route family identity claim {}={} is not mapped by {}",
-                    self.identity_claim, identity_value, ENV_ROUTE_FAMILY_MAP
-                ));
-            }
-        } else if !self.allow_legacy_route_family_claim {
+        let Some(identity_value) = raw_claims.identity_claim_value(&self.identity_claim)? else {
             return Err(format!(
                 "route family identity claim '{}' is required",
                 self.identity_claim
             ));
-        }
+        };
 
-        if self.allow_legacy_route_family_claim {
-            return raw_claims
-                .legacy_route_family()
-                .transpose()?
-                .ok_or_else(|| {
-                    format!(
-                        "route family identity claim '{}' is required or legacy fitz.route_family must be present",
-                        self.identity_claim
-                    )
-                });
+        if let Some(family) = self.mappings.get(&identity_value) {
+            return Ok(*family);
         }
 
         Err(format!(
-            "route family identity claim '{}' is required",
-            self.identity_claim
+            "route family identity claim {}={} is not mapped by {}",
+            self.identity_claim, identity_value, ENV_ROUTE_FAMILY_MAP
         ))
     }
+}
+
+fn removed_legacy_route_family_env_reason() -> Option<String> {
+    std::env::var_os(REMOVED_ENV_AUTH_ALLOW_JWT_ROUTE_FAMILY).map(|_| {
+        format!(
+            "{REMOVED_ENV_AUTH_ALLOW_JWT_ROUTE_FAMILY} has been removed; JWT fitz.route_family compatibility is no longer supported"
+        )
+    })
 }
 
 fn env_non_empty(key: &str) -> Option<String> {
@@ -242,15 +240,6 @@ fn env_non_empty(key: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn env_bool(key: &str, default: bool) -> Result<bool, String> {
-    match env_non_empty(key) {
-        Some(value) => value
-            .parse::<bool>()
-            .map_err(|_| format!("{key} must be true or false")),
-        None => Ok(default),
-    }
 }
 
 fn parse_route_family_map_env() -> (HashMap<String, u32>, Option<String>) {
@@ -305,23 +294,8 @@ fn parse_route_family_map_env() -> (HashMap<String, u32>, Option<String>) {
     (mappings, None)
 }
 
-/// Claims normalization and validation layer.
-///
-/// **Strict invariant:** Claims are immutable once produced.
-/// They are the "truth layer" - once normalized at auth time, downstream code
-/// never reinterprets, reparses, or remaps scope/role strings.
-///
-/// - `RawClaims`: unparsed claims from JWT payload
-/// - `Claims`: fully normalized, immutable claims suitable for authorization checks
-///   Portion of the OIDC JWT reserved for Fitz-specific data.
 #[derive(Debug, Clone, Deserialize)]
-pub struct FitzClaims {
-    pub route_family: Option<u32>,
-    pub permissions: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CustomFitzClaims {
+pub struct CustomPermissionsClaim {
     pub permissions: Option<Vec<String>>,
 }
 
@@ -363,21 +337,9 @@ pub struct RawClaims {
     pub exp: u64,
     pub nbf: Option<u64>,
 
-    // External identity context used by the route-family resolver.
-    pub tid: Option<String>,
-    pub tenant_id: Option<String>,
-    pub org_id: Option<String>,
-
-    #[serde(default)]
-    pub fitz: Option<FitzClaims>,
-
     /// Auth0 RBAC permissions claim.
     #[serde(default)]
     pub permissions: Option<Vec<String>>,
-
-    /// Roles claim (array of strings) - identity/provider metadata only.
-    #[serde(default)]
-    pub roles: Option<Vec<String>>,
 
     /// Scopes - could be `scp` (array or string) or `scope` (space-delimited string)
     #[serde(rename = "scp", default)]
@@ -391,23 +353,8 @@ pub struct RawClaims {
 }
 
 impl RawClaims {
-    pub fn legacy_route_family(&self) -> Option<Result<u32, String>> {
-        self.fitz.as_ref().and_then(|fitz| {
-            fitz.route_family.map(|family| {
-                if family == 0 {
-                    Err("fitz.route_family must be non-zero".to_string())
-                } else {
-                    Ok(family)
-                }
-            })
-        })
-    }
-
     pub fn identity_claim_value(&self, claim: &str) -> Result<Option<String>, String> {
         match claim {
-            "tid" => Ok(self.tid.clone()),
-            "tenant_id" => Ok(self.tenant_id.clone()),
-            "org_id" => Ok(self.org_id.clone()),
             "sub" => Ok(Some(self.sub.clone())),
             other => match self.extra.get(other) {
                 Some(value) => value
@@ -458,17 +405,7 @@ impl RawClaims {
             }
         }
 
-        if !claims_config.allow_legacy_route_family_claim && self.legacy_route_family().is_some() {
-            return Err(format!(
-                "fitz.route_family claim is not accepted; configure {} instead",
-                ENV_ROUTE_FAMILY_MAP
-            ));
-        }
-        if claims_config.allow_legacy_route_family_claim {
-            if let Some(route_family) = self.legacy_route_family() {
-                route_family?;
-            }
-        }
+        self.validate_removed_fitz_claims()?;
 
         Ok(())
     }
@@ -476,114 +413,199 @@ impl RawClaims {
     /// Normalize permissions from claims using the prioritized sources:
     /// 1) configured namespaced custom claim
     /// 2) top-level permissions array (Auth0 RBAC)
-    /// 3) scp / scope (space-delimited or array) - exact or coarse mapping
+    /// 3) configured role claim array
+    /// 4) scp (space-delimited or array)
+    /// 5) scope (space-delimited string)
     ///
     /// Returns Err if the chosen source is malformed or produces no permissions.
     pub fn normalized_permissions(
         &self,
         custom_claim: Option<&str>,
+        role_claim: &str,
     ) -> Result<Vec<Permission>, String> {
-        // Helper to parse a list of candidate permission strings
-        fn parse_list(source: &str, cands: Vec<String>) -> Result<Vec<Permission>, String> {
-            let mut out = Vec::new();
-            for raw in cands.into_iter() {
-                let trimmed = raw.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                let p = Permission::parse(trimmed)
-                    .map_err(|e| format!("malformed permission: {} ({})", trimmed, e))?;
-                out.push(p);
-            }
-            if out.is_empty() {
-                return Err(format!("no permissions derived from {}", source));
-            }
-            Ok(out)
-        }
-
         // 1) configured namespaced custom claim
         if let Some(claim_name) = custom_claim {
             if let Some(perms) = self.custom_claim_permissions(claim_name)? {
-                return parse_list(claim_name, perms);
+                return parse_permission_values(claim_name, perms, false, "permission");
             }
         }
 
         // 2) Auth0 RBAC permissions
         if let Some(permissions) = &self.permissions {
-            return parse_list("permissions", permissions.clone());
+            return parse_permission_values(
+                "permissions",
+                permissions.clone(),
+                false,
+                "permission",
+            );
         }
 
-        // 3) scopes (scp or scope)
-        let mut scope_vals: Vec<String> = Vec::new();
+        // 3) configured role claim
+        if let Some(roles) = self.string_array_claim(role_claim, "role")? {
+            return parse_permission_values(role_claim, roles, false, "role");
+        }
+
+        // 4) scp
         if let Some(scp) = &self.scp {
-            match scp {
-                ScopeClaim::String(s) => {
-                    for part in s.split_whitespace() {
-                        scope_vals.push(part.to_string());
-                    }
-                }
-                ScopeClaim::Array(arr) => {
-                    for s in arr.iter() {
-                        scope_vals.push(s.clone());
-                    }
-                }
-            }
-        } else if let Some(s) = &self.scope {
-            for part in s.split_whitespace() {
-                scope_vals.push(part.to_string());
-            }
+            return parse_permission_values("scp", scope_claim_values(scp), true, "scope string");
         }
 
-        if !scope_vals.is_empty() {
-            // For each scope: prefer exact Permission parse; otherwise attempt mapping
-            let mut out: Vec<Permission> = Vec::new();
-            for sc in scope_vals.into_iter() {
-                let trimmed = sc.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-
-                // Determine if this is an exact Fitz permission (must contain a scheme)
-                if trimmed.contains("://") {
-                    let p = Permission::parse(trimmed)
-                        .map_err(|e| format!("malformed permission: {} ({})", trimmed, e))?;
-                    out.push(p);
-                    continue;
-                }
-
-                // Try coarse scope mapping for strings like 'notice.read'
-                if let Some(mapped) = crate::auth::map_coarse_scope(trimmed) {
-                    let p = Permission::parse(mapped)
-                        .map_err(|e| format!("malformed mapped permission: {} ({})", mapped, e))?;
-                    out.push(p);
-                    continue;
-                }
-
-                // Unknown scope string -> malformed
-                return Err(format!("malformed scope string: {}", trimmed));
-            }
-
-            if out.is_empty() {
-                return Err("no permissions derived from scopes".to_string());
-            }
-
-            return Ok(out);
+        // 5) scope
+        if let Some(scope) = &self.scope {
+            return parse_permission_values(
+                "scope",
+                scope.split_whitespace().map(ToOwned::to_owned).collect(),
+                true,
+                "scope string",
+            );
         }
 
         Err("no permission source found".to_string())
     }
 
     fn custom_claim_permissions(&self, claim_name: &str) -> Result<Option<Vec<String>>, String> {
-        if claim_name == "fitz" {
-            return Ok(self.fitz.as_ref().and_then(|fitz| fitz.permissions.clone()));
-        }
-
         let Some(value) = self.extra.get(claim_name) else {
             return Ok(None);
         };
-        let custom_claim: CustomFitzClaims = serde_json::from_value(value.clone())
+        let custom_claim: CustomPermissionsClaim = serde_json::from_value(value.clone())
             .map_err(|e| format!("malformed custom claim {}: {}", claim_name, e))?;
-        Ok(custom_claim.permissions)
+        Ok(Some(custom_claim.permissions.unwrap_or_default()))
+    }
+
+    fn string_array_claim(
+        &self,
+        claim_name: &str,
+        source_kind: &str,
+    ) -> Result<Option<Vec<String>>, String> {
+        let Some(value) = self.extra.get(claim_name) else {
+            return Ok(None);
+        };
+
+        let Some(values) = value.as_array() else {
+            return Err(format!(
+                "{} claim '{}' must be an array of strings",
+                source_kind, claim_name
+            ));
+        };
+
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            let Some(value) = value.as_str() else {
+                return Err(format!(
+                    "{} claim '{}' must be an array of strings",
+                    source_kind, claim_name
+                ));
+            };
+            out.push(value.to_string());
+        }
+
+        Ok(Some(out))
+    }
+
+    fn validate_removed_fitz_claims(&self) -> Result<(), String> {
+        let Some(fitz) = self.extra.get("fitz") else {
+            return Ok(());
+        };
+
+        if fitz
+            .as_object()
+            .is_some_and(|fitz| fitz.contains_key("route_family"))
+        {
+            return Err(format!(
+                "fitz.route_family claim is not accepted; configure {} instead",
+                ENV_ROUTE_FAMILY_MAP
+            ));
+        }
+
+        if fitz
+            .as_object()
+            .is_some_and(|fitz| fitz.contains_key("permissions"))
+        {
+            return Err(
+                "fitz.permissions claim is not accepted; emit permissions directly or use a namespaced custom claim"
+                    .to_string(),
+            );
+        }
+
+        Err("fitz claim is not accepted".to_string())
+    }
+}
+
+fn parse_permission_values(
+    source: &str,
+    values: Vec<String>,
+    allow_resource_prefix: bool,
+    error_kind: &str,
+) -> Result<Vec<Permission>, String> {
+    let mut out = Vec::new();
+    for raw in values {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        out.push(parse_permission_value(
+            trimmed,
+            allow_resource_prefix,
+            error_kind,
+        )?);
+    }
+
+    if out.is_empty() {
+        return Err(format!("no permissions derived from {}", source));
+    }
+
+    Ok(out)
+}
+
+fn parse_permission_value(
+    value: &str,
+    allow_resource_prefix: bool,
+    error_kind: &str,
+) -> Result<Permission, String> {
+    if is_fitz_permission(value) {
+        return Permission::parse(value)
+            .map_err(|error| format!("malformed {}: {} ({})", error_kind, value, error));
+    }
+
+    if let Some(mapped) = crate::auth::map_coarse_scope(value) {
+        return Permission::parse(mapped)
+            .map_err(|error| format!("malformed {}: {} ({})", error_kind, value, error));
+    }
+
+    if allow_resource_prefix {
+        if let Some((_, suffix)) = value.rsplit_once('/') {
+            if is_fitz_permission(suffix) {
+                return Permission::parse(suffix)
+                    .map_err(|error| format!("malformed {}: {} ({})", error_kind, value, error));
+            }
+            if let Some(mapped) = crate::auth::map_coarse_scope(suffix) {
+                return Permission::parse(mapped)
+                    .map_err(|error| format!("malformed {}: {} ({})", error_kind, value, error));
+            }
+        }
+    }
+
+    Err(format!("malformed {}: {}", error_kind, value))
+}
+
+fn is_fitz_permission(value: &str) -> bool {
+    [
+        "kv://",
+        "notice://",
+        "rpc://",
+        "stream://",
+        "queue://",
+        "lease://",
+        "schedule://",
+    ]
+    .iter()
+    .any(|prefix| value.starts_with(prefix))
+}
+
+fn scope_claim_values(scope_claim: &ScopeClaim) -> Vec<String> {
+    match scope_claim {
+        ScopeClaim::String(value) => value.split_whitespace().map(ToOwned::to_owned).collect(),
+        ScopeClaim::Array(values) => values.clone(),
     }
 }
 
@@ -614,11 +636,10 @@ pub fn parse_jwt_noverify(compact: &str) -> Result<RawClaims, String> {
 /// This is produced **once at auth time** from a `RawClaims` and contains:
 /// - subject identity
 /// - optional identity context used by server-side route-family resolution
-/// - roles array (identity/provider metadata, never authorization)
 /// - permissions array (fully normalized, never reparsed)
 /// - expiration time
 ///
-/// **Critical invariant:** Downstream code never reparses scopes or roles.
+/// **Critical invariant:** Downstream code never reparses scopes.
 /// Permissions are fixed when `Claims` is created.
 ///
 /// This makes Claims the "truth layer" — what you see is what you get,
@@ -628,7 +649,6 @@ pub struct Claims {
     pub sub: String,
     pub identity_claim: Option<String>,
     pub identity_value: Option<String>,
-    pub roles: Vec<String>,
     pub permissions: Vec<crate::auth::Permission>,
     pub exp: u64,
 }
@@ -651,103 +671,26 @@ impl RawClaims {
             .as_ref()
             .map(|_| claims_config.identity_claim.clone());
 
-        // Roles (if absent, empty vec). Clone to avoid partially moving `self`.
-        let roles = self.roles.clone().unwrap_or_default();
-
         // Permissions (normalize using existing helper)
-        let permissions = self.normalized_permissions(claims_config.custom_claim.as_deref())?;
+        let permissions = self.normalized_permissions(
+            claims_config.custom_claim.as_deref(),
+            &claims_config.role_claim,
+        )?;
 
         Ok(Claims {
             sub: self.sub.clone(),
             identity_claim,
             identity_value,
-            roles,
             permissions,
             exp: self.exp,
         })
     }
 }
 
-/// Extract permissions from a `serde_json::Value` representing JWT claims.
-/// This is a permissive extractor that returns an empty Vec if no permissions
-/// sources are present instead of failing validation.
-#[allow(dead_code)]
-pub fn normalized_permissions_from_value(
-    value: &serde_json::Value,
-) -> Result<Vec<Permission>, String> {
-    // 1) Auth0 RBAC permissions
-    if let Some(permissions_v) = value.get("permissions") {
-        if permissions_v.is_array() {
-            let mut out = Vec::new();
-            for v in permissions_v.as_array().unwrap().iter() {
-                if let Some(s) = v.as_str() {
-                    let p = Permission::parse(s)
-                        .map_err(|e| format!("malformed permission: {} ({})", s, e))?;
-                    out.push(p);
-                }
-            }
-            return Ok(out);
-        }
-    }
-
-    // 3) scopes: scp (array or string) or scope (string space-delimited)
-    if let Some(scp_v) = value.get("scp") {
-        // scp may be an array of strings
-        if scp_v.is_array() {
-            let mut out = Vec::new();
-            for v in scp_v.as_array().unwrap().iter() {
-                if let Some(s) = v.as_str() {
-                    // map coarse scope -> permission
-                    let mapped = crate::auth::map_coarse_scope(s)
-                        .ok_or_else(|| format!("malformed scope mapping: {}", s))?;
-                    out.push(
-                        Permission::parse(mapped).map_err(|e| {
-                            format!("malformed permission from scope: {} ({})", s, e)
-                        })?,
-                    );
-                }
-            }
-            return Ok(out);
-        } else if scp_v.is_string() {
-            let s = scp_v.as_str().unwrap();
-            let parts: Vec<&str> = s.split_whitespace().collect();
-            let mut out = Vec::new();
-            for p in parts.into_iter() {
-                let mapped = crate::auth::map_coarse_scope(p)
-                    .ok_or_else(|| format!("malformed scope mapping: {}", p))?;
-                out.push(
-                    Permission::parse(mapped)
-                        .map_err(|e| format!("malformed permission from scope: {} ({})", p, e))?,
-                );
-            }
-            return Ok(out);
-        }
-    }
-
-    if let Some(scope_v) = value.get("scope") {
-        if scope_v.is_string() {
-            let s = scope_v.as_str().unwrap();
-            let parts: Vec<&str> = s.split_whitespace().collect();
-            let mut out = Vec::new();
-            for p in parts.into_iter() {
-                let mapped = crate::auth::map_coarse_scope(p)
-                    .ok_or_else(|| format!("malformed scope mapping: {}", p))?;
-                out.push(
-                    Permission::parse(mapped)
-                        .map_err(|e| format!("malformed permission from scope: {} ({})", p, e))?,
-                );
-            }
-            return Ok(out);
-        }
-    }
-
-    Ok(Vec::new())
-}
-
 #[cfg(test)]
 mod claims_tests {
     use crate::auth::parse_jwt_noverify;
-    use crate::auth::{AuthClaimsConfig, RouteFamilyResolverConfig};
+    use crate::auth::{AuthClaimsConfig, RouteFamilyResolverConfig, DEFAULT_ROLE_CLAIM};
     use base64::Engine;
 
     #[test]
@@ -766,7 +709,9 @@ mod claims_tests {
 
         // Act
         let claims = parse_jwt_noverify(&jwt).expect("parse jwt");
-        let perms = claims.normalized_permissions(None).expect("perms");
+        let perms = claims
+            .normalized_permissions(None, DEFAULT_ROLE_CLAIM)
+            .expect("perms");
 
         // Assert
         assert_eq!(claims.iss, "https://idp.example/");
@@ -802,7 +747,6 @@ mod claims_tests {
         // Assert
         assert_eq!(normalized.identity_claim.as_deref(), Some("tid"));
         assert_eq!(normalized.identity_value.as_deref(), Some("acme-prod"));
-        assert_eq!(normalized.roles.len(), 1);
         assert_eq!(normalized.permissions.len(), 1);
         assert_eq!(
             normalized.permissions[0].raw,
@@ -899,7 +843,7 @@ mod claims_tests {
     }
 
     #[test]
-    fn should_reject_zero_legacy_route_family_claim_given_compatibility_enabled() {
+    fn should_reject_legacy_permissions_claim() {
         // Arrange
         let payload = serde_json::json!({
             "iss": "https://idp.example/",
@@ -907,7 +851,7 @@ mod claims_tests {
             "sub": "user:42",
             "exp": 9999999999u64,
             "tid": "acme-prod",
-            "fitz": { "route_family": 0 },
+            "fitz": { "permissions": ["notice://prod/orders/**#read"] },
             "permissions": ["notice://prod/orders/**#read"]
         });
         let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
@@ -919,11 +863,13 @@ mod claims_tests {
             &["https://idp.example/"],
             &["fitz-broker"],
             0,
-            &AuthClaimsConfig::new("tid", None, true),
+            &AuthClaimsConfig::default(),
         );
 
         // Assert
-        assert_eq!(result.unwrap_err(), "fitz.route_family must be non-zero");
+        assert!(result
+            .unwrap_err()
+            .contains("fitz.permissions claim is not accepted"));
     }
 
     #[test]
@@ -997,6 +943,8 @@ mod claims_tests {
             "exp": 9999999999u64,
             "tid": "acme-prod",
             "permissions": ["notice://prod/orders/**#read"],
+            "roles": ["notice.write"],
+            "scp": "notice.read",
             "https://fitz.example.com/claims": {
                 "permissions": ["notice://prod/orders/**#write"]
             }
@@ -1007,11 +955,214 @@ mod claims_tests {
         // Act
         let raw = parse_jwt_noverify(&jwt).expect("parse jwt");
         let permissions = raw
-            .normalized_permissions(Some("https://fitz.example.com/claims"))
+            .normalized_permissions(Some("https://fitz.example.com/claims"), DEFAULT_ROLE_CLAIM)
             .expect("permissions");
 
         // Assert
         assert_eq!(permissions[0].raw, "notice://prod/orders/**#write");
+    }
+
+    #[test]
+    fn should_prefer_top_level_permissions_over_role_claim() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://idp.example/",
+            "aud": "fitz-broker",
+            "sub": "user:42",
+            "exp": 9999999999u64,
+            "tid": "acme-prod",
+            "permissions": ["notice://prod/orders/**#read"],
+            "roles": ["notice.write"]
+        });
+        let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
+
+        // Act
+        let permissions = raw
+            .normalized_permissions(None, DEFAULT_ROLE_CLAIM)
+            .expect("permissions");
+
+        // Assert
+        assert_eq!(permissions.len(), 1);
+        assert_eq!(permissions[0].raw, "notice://prod/orders/**#read");
+    }
+
+    #[test]
+    fn should_prefer_role_claim_over_scp() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://idp.example/",
+            "aud": "fitz-broker",
+            "sub": "user:42",
+            "exp": 9999999999u64,
+            "tid": "acme-prod",
+            "roles": ["notice.write"],
+            "scp": "notice.read"
+        });
+        let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
+
+        // Act
+        let permissions = raw
+            .normalized_permissions(None, DEFAULT_ROLE_CLAIM)
+            .expect("permissions");
+
+        // Assert
+        assert_eq!(permissions.len(), 1);
+        assert_eq!(permissions[0].raw, "notice://**#write");
+    }
+
+    #[test]
+    fn should_prefer_scp_over_scope() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://idp.example/",
+            "aud": "fitz-broker",
+            "sub": "user:42",
+            "exp": 9999999999u64,
+            "tid": "acme-prod",
+            "scp": "notice.read",
+            "scope": "notice.write"
+        });
+        let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
+
+        // Act
+        let permissions = raw
+            .normalized_permissions(None, DEFAULT_ROLE_CLAIM)
+            .expect("permissions");
+
+        // Assert
+        assert_eq!(permissions.len(), 1);
+        assert_eq!(permissions[0].raw, "notice://**#read");
+    }
+
+    #[test]
+    fn should_support_entra_roles_shape() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0",
+            "aud": "api://fitz",
+            "sub": "service-principal-1",
+            "exp": 9999999999u64,
+            "tid": "11111111-1111-1111-1111-111111111111",
+            "roles": ["queue.read"]
+        });
+        let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
+        let resolver = RouteFamilyResolverConfig::from_mappings(
+            "tid",
+            [("11111111-1111-1111-1111-111111111111", 6)],
+        );
+
+        // Act
+        let normalized = raw
+            .normalize(
+                &["https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0"],
+                &["api://fitz"],
+                0,
+                &AuthClaimsConfig::default(),
+            )
+            .expect("normalize");
+        let route_family = resolver.resolve(&raw).expect("resolve route family");
+
+        // Assert
+        assert_eq!(normalized.permissions[0].raw, "queue://**#read");
+        assert_eq!(route_family, 6);
+    }
+
+    #[test]
+    fn should_support_cognito_resource_server_scope_shape() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_Example",
+            "aud": "https://fitz.example.com/api",
+            "sub": "cognito-user-1",
+            "exp": 9999999999u64,
+            "custom:tenant_id": "acme-prod",
+            "scope": "fitz/notice.write"
+        });
+        let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
+        let claims_config = AuthClaimsConfig::new("custom:tenant_id", None, DEFAULT_ROLE_CLAIM);
+
+        // Act
+        let normalized = raw
+            .normalize(
+                &["https://cognito-idp.us-east-1.amazonaws.com/us-east-1_Example"],
+                &["https://fitz.example.com/api"],
+                0,
+                &claims_config,
+            )
+            .expect("normalize");
+
+        // Assert
+        assert_eq!(normalized.permissions[0].raw, "notice://**#write");
+    }
+
+    #[test]
+    fn should_reject_malformed_role_claim() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://idp.example/",
+            "aud": "fitz-broker",
+            "sub": "user:42",
+            "exp": 9999999999u64,
+            "tid": "acme-prod",
+            "roles": ["notice.read", 42]
+        });
+        let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
+
+        // Act
+        let result = raw.normalized_permissions(None, DEFAULT_ROLE_CLAIM);
+
+        // Assert
+        assert!(result.unwrap_err().contains("role claim 'roles'"));
+    }
+
+    #[test]
+    fn should_reject_removed_custom_claim_alias() {
+        // Arrange
+        let config = AuthClaimsConfig::new("tid", Some("fitz".to_string()), DEFAULT_ROLE_CLAIM);
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result
+            .unwrap_err()
+            .contains("FITZ_AUTH_CUSTOM_CLAIM=fitz is no longer supported"));
+    }
+
+    #[test]
+    fn should_reject_overlapping_role_claim_config() {
+        // Arrange
+        let config = AuthClaimsConfig::new(
+            "tid",
+            Some("https://fitz.example.com/claims".to_string()),
+            "tid",
+        );
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result
+            .unwrap_err()
+            .contains("FITZ_AUTH_ROLE_CLAIM must not match FITZ_ROUTE_FAMILY_CLAIM"));
+    }
+
+    #[test]
+    fn should_reject_reserved_role_claim_config() {
+        // Arrange
+        let config = AuthClaimsConfig::new(
+            "tid",
+            Some("https://fitz.example.com/claims".to_string()),
+            "scp",
+        );
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result
+            .unwrap_err()
+            .contains("FITZ_AUTH_ROLE_CLAIM must not overlap with top-level permission sources"));
     }
 
     #[test]
@@ -1026,7 +1177,7 @@ mod claims_tests {
             "permissions": ["notice://prod/orders/**#read"]
         });
         let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
-        let claims_config = AuthClaimsConfig::new("org_id", None, false);
+        let claims_config = AuthClaimsConfig::new("org_id", None, DEFAULT_ROLE_CLAIM);
         let resolver = RouteFamilyResolverConfig::from_mappings("org_id", [("org_acme", 2)]);
 
         // Act
@@ -1103,7 +1254,7 @@ mod claims_tests {
             "scope": "notice.write"
         });
         let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
-        let claims_config = AuthClaimsConfig::new("custom:tenant_id", None, false);
+        let claims_config = AuthClaimsConfig::new("custom:tenant_id", None, DEFAULT_ROLE_CLAIM);
         let resolver =
             RouteFamilyResolverConfig::from_mappings("custom:tenant_id", [("acme-prod", 4)]);
 
@@ -1146,7 +1297,7 @@ mod claims_tests {
         let claims_config = AuthClaimsConfig::new(
             "https://fitz.example.com/identity",
             Some("https://fitz.example.com/claims".to_string()),
-            false,
+            DEFAULT_ROLE_CLAIM,
         );
         let resolver = RouteFamilyResolverConfig::from_mappings(
             "https://fitz.example.com/identity",

@@ -19,7 +19,7 @@ JWT must be signed and must include:
 - `aud` — one of the broker audiences configured by `FITZ_JWT_AUDIENCES`
 - `exp` — token expiration time
 - the configured identity claim — `tid` by default, or `org_id` for Auth0 Organizations
-- `permissions` or `scopes` — authorization rules for subsequent domain requests
+- one supported permission source — configured custom permissions claim, top-level `permissions`, configured role claim array, `scp`, or `scope`
 - `iss` when using JWKS mode; it must match a configured issuer
 
 Configure `FITZ_ROUTE_FAMILY_MAP`, such as `FITZ_ROUTE_FAMILY_MAP=xyz=2`,
@@ -31,17 +31,22 @@ Common identity-provider setups:
 
 | Provider | Identity claim | Permission source | Example Fitz env |
 | --- | --- | --- | --- |
-| Auth0 Organizations | `org_id` | top-level `permissions`, or `FITZ_AUTH_CUSTOM_CLAIM` | `FITZ_ROUTE_FAMILY_CLAIM=org_id` and `FITZ_ROUTE_FAMILY_MAP=org_acme=1` |
-| Microsoft Entra ID | `tid` | `scp`, or `FITZ_AUTH_CUSTOM_CLAIM` | `FITZ_ROUTE_FAMILY_CLAIM=tid` and `FITZ_ROUTE_FAMILY_MAP=<tenant-guid>=1` |
-| Amazon Cognito | `custom:tenant_id` or `sub` | `scope`, or `FITZ_AUTH_CUSTOM_CLAIM` | `FITZ_ROUTE_FAMILY_CLAIM=custom:tenant_id` and `FITZ_ROUTE_FAMILY_MAP=acme=1` |
-| Okta | exact custom or namespaced claim | `scope`, or `FITZ_AUTH_CUSTOM_CLAIM` | `FITZ_ROUTE_FAMILY_CLAIM=https://example.com/identity` and `FITZ_ROUTE_FAMILY_MAP=acme=1` |
+| Auth0 Organizations | `org_id` | top-level `permissions` | `FITZ_ROUTE_FAMILY_CLAIM=org_id` and `FITZ_ROUTE_FAMILY_MAP=org_acme=1` |
+| Microsoft Entra ID delegated | `tid` | `scp` | `FITZ_ROUTE_FAMILY_CLAIM=tid` and `FITZ_ROUTE_FAMILY_MAP=<tenant-guid>=1` |
+| Microsoft Entra ID app-only | `tid` | `roles` | `FITZ_ROUTE_FAMILY_CLAIM=tid` and `FITZ_ROUTE_FAMILY_MAP=<tenant-guid>=1` |
+| Amazon Cognito | `custom:tenant_id` or `sub` | `scope` | `FITZ_ROUTE_FAMILY_CLAIM=custom:tenant_id` and `FITZ_ROUTE_FAMILY_MAP=acme=1` |
+| Okta | exact custom or namespaced claim | `scope`, `FITZ_AUTH_CUSTOM_CLAIM`, or `FITZ_AUTH_ROLE_CLAIM` | `FITZ_ROUTE_FAMILY_CLAIM=https://example.com/identity` and `FITZ_ROUTE_FAMILY_MAP=acme=1` |
 
-`roles` claims are retained as identity-provider metadata but are not treated
-as Fitz permissions by default. Issue route-shaped permissions, coarse scopes
-such as `notice.read`, or a configured namespaced Fitz permissions object.
+If you configure `FITZ_AUTH_ROLE_CLAIM`, every value in that claim must
+already be a Fitz permission string such as `notice://prod/orders/**#read` or
+a recognized coarse scope such as `notice.read`. Fitz does not map provider
+roles to permissions server-side.
 
 If `FITZ_AUTH_REQUIRED=false`, anonymous mode is allowed and the broker uses
 route family `1`.
+
+For the recommended Auth0 Dashboard setup and Fitz environment, see
+[auth0.md](auth0.md).
 
 ## 4. Execute a Simple Operation
 

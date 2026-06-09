@@ -118,8 +118,10 @@ If you want a single local service, this is the smallest useful compose file:
 - Cloud storage uses FITZ_STORAGE_CACHE_PATH for its local cache and defaults to `./.fitz-cloud-cache`; it does not read FITZ_STORAGE_PATH.
 - FITZ_STORAGE_CLOUD_DURABILITY can be `background` or `strict`; any other value is rejected. `background` keeps provider upload asynchronous; `strict` waits for provider acknowledgement for broker-selected durable cloud writes and request-level sync writes.
 - Authenticated JWTs resolve to a route family server-side. Keep `FITZ_ROUTE_FAMILIES=1,2,...` as the provisioned allowlist, set `FITZ_ROUTE_FAMILY_MAP=tid-value=1,other=2`, and use `FITZ_ROUTE_FAMILY_CLAIM` to choose the identity claim (`tid` by default, `org_id` is recommended for Auth0 Organizations).
-- `FITZ_AUTH_CUSTOM_CLAIM` can point at a namespaced JWT object containing `permissions`, for example `https://example.com/fitz`; otherwise Fitz reads Auth0 top-level `permissions` and then `scope`/`scp`.
-- Provider setup is claim-driven: Auth0 can use `org_id` plus top-level `permissions`; Entra can use `tid` plus `scp`; Cognito can use `custom:tenant_id` or `sub` plus `scope`; Okta can use an exact custom/namespaced identity claim plus `scope` or a namespaced Fitz permissions object. `roles` are preserved as identity metadata but are not Fitz permissions by default.
+- `FITZ_AUTH_CUSTOM_CLAIM` can point at a namespaced JWT object containing only `permissions`, for example `https://example.com/fitz`.
+- `FITZ_AUTH_ROLE_CLAIM` defaults to `roles` and is only used when that claim's array values are already direct Fitz permissions or recognized coarse scopes.
+- Permission normalization is fixed: configured custom permission claim, top-level `permissions`, configured role claim array, `scp`, then `scope`.
+- Provider setup is claim-driven: Auth0 uses `org_id` plus top-level `permissions`; Entra delegated uses `tid` plus `scp`; Entra app-only uses `tid` plus `roles`; Cognito uses `custom:tenant_id` or `sub` plus `scope`; Okta uses an exact custom or namespaced identity claim plus `scope`, a configured custom permissions claim, or a configured role claim array.
 - FITZ_MIN_MEMORY_BYTES defaults to `134217728` and rejects smaller Linux cgroup memory limits during startup. Set it higher for production headroom, or set it to `0` only when intentionally bypassing the preflight for experiments.
 
 ## Documentation
@@ -128,5 +130,6 @@ If you want a single local service, this is the smallest useful compose file:
 - Architectural laws: [docs/development/architectural-laws.md](docs/development/architectural-laws.md)
 - Client protocol spec: [docs/clients/client-spec.md](docs/clients/client-spec.md)
 - User onboarding guides: [docs/user-guides](docs/user-guides)
+- Auth0 setup: [docs/user-guides/auth0.md](docs/user-guides/auth0.md)
 - Operations guides: [docs/operations](docs/operations)
 - Local perf loop runner: [docs/development/perf-loop.md](docs/development/perf-loop.md)

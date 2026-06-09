@@ -18,10 +18,16 @@ provisioned families that the node may serve, then configure
 the node. The default identity claim is `tid`; set
 `FITZ_ROUTE_FAMILY_CLAIM=org_id` for Auth0 Organizations.
 
-Update token issuers to emit identity context and route-shaped permissions, but
-do not emit `fitz.route_family` by default. A hardened node rejects authenticated
-`CONNECT` when the configured identity claim is missing, unmapped, or maps to an
-unprovisioned family. Anonymous mode always uses route family `1`.
+For Auth0, configure Fitz with the Auth0 API audience, the Auth0 JWKS URL, and a
+route-family map keyed by Auth0 organization IDs. See
+[../user-guides/auth0.md](../user-guides/auth0.md).
+
+Update token issuers to emit identity context and one supported permission
+source, and stop emitting all removed legacy Fitz auth shapes:
+`fitz.route_family`, `fitz.permissions`, JWT `realm`, JWT `areas`, and JWT
+`scopes`. A hardened node rejects authenticated `CONNECT` when the configured
+identity claim is missing, unmapped, or maps to an unprovisioned family.
+Anonymous mode always uses route family `1`.
 
 ## Pre-Upgrade Checklist
 

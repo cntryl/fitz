@@ -28,13 +28,20 @@ Authenticated JWTs should carry the following:
 - `aud`
 - `exp`
 - the configured route-family identity claim (`tid` by default)
-- `permissions` or `scopes`
+- one supported permission source: configured custom permissions claim, top-level `permissions`, configured role claim array, `scp`, or `scope`
 - `iss` when using JWKS (issuer-based verification)
 
-Fitz reads permissions from the configured namespaced custom claim first, then
-top-level `permissions`, then `scope` or `scp`. `roles` claims are identity
-metadata only and are not treated as permissions unless your issuer maps them
-into one of the supported permission sources.
+Fitz reads permissions in this order: configured namespaced custom claim,
+top-level `permissions`, configured role claim array, `scp`, then `scope`. If
+you configure `FITZ_AUTH_ROLE_CLAIM`, every role value must itself be a Fitz
+permission string or recognized coarse scope.
+
+## How should I configure Auth0?
+
+Use Auth0 Organizations, set `FITZ_ROUTE_FAMILY_CLAIM=org_id`, and enable API
+RBAC with **Add Permissions in the Access Token** so Auth0 emits top-level
+`permissions`. Use an Auth0 API access token whose `aud` includes the Fitz API
+Identifier. See [auth0.md](auth0.md) for the full setup.
 
 ## Where is the full wire protocol?
 

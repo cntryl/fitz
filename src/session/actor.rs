@@ -121,7 +121,6 @@ mod tests {
             sub: "user:42".to_string(),
             identity_claim: Some("tid".to_string()),
             identity_value: Some("prod".to_string()),
-            roles: vec![],
             permissions: vec![p],
             exp: 9999999999,
         };

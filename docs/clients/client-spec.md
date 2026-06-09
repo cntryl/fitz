@@ -1665,7 +1665,8 @@ Authorization behavior depends on server authentication mode:
 **Authenticated Mode (`FITZ_AUTH_REQUIRED=true`):**
 
 - Broker MUST extract identity context and normalized permissions from JWT:
-  configured route-family identity claim, configured custom permissions claim, top-level `permissions`, or `scope`/`scp`
+  configured route-family identity claim plus one explicit permission source in this order:
+  configured custom permissions claim, top-level `permissions`, configured role claim array, `scp`, then `scope`
 - For each request, broker MUST check the request route and access level against compiled route-shaped permission patterns
 - If any check fails, broker returns permission error (domain-specific error code)
   **Anonymous Mode (`FITZ_AUTH_REQUIRED=false`):**
@@ -1697,26 +1698,49 @@ Where `*` is domain prefix (1xxx for KV, 3xxx for Notice, etc.).
 - 1002 = ERR_INVALID_SCOPE
 - 1003 = ERR_REALM_MISMATCH
 
-### JWT Claims Schema
+### JWT Claim Contract
 
-**Required Claims:**
+Authenticated deployments require standard JWT envelope claims plus:
+
+- one configured identity claim used for route-family resolution
+- one supported permission source
+
+Example Auth0 token:
 
 ```json
 {
-  "realm": "prod",
-  "areas": ["app", "system"],
-  "scopes": ["kv:read", "kv:write", "notice:subscribe"],
-  "fitz": { "route_family": 1 },
-  "exp": 1234567890
+  "iss": "https://tenant.auth0.com/",
+  "aud": ["https://fitz.example.com/api", "https://tenant.auth0.com/userinfo"],
+  "sub": "auth0|user-1",
+  "exp": 1234567890,
+  "org_id": "org_acme",
+  "permissions": ["notice://prod/orders/**#read"]
 }
 ```
 
-The deployment configures the accepted contiguous allowlist with
-`FITZ_ROUTE_FAMILIES=1,2,...`, defaulting to `1`. Token issuers must be updated
-before deploying a broker that enforces this claim. Client libraries continue
-to treat the compact JWT as opaque input.
+The broker resolves route family server-side from the configured identity claim
+and `FITZ_ROUTE_FAMILY_MAP`. JWTs do not carry Fitz `route_family`, `realm`,
+`areas`, or legacy `scopes` claims.
 
-**Scope Format:** `{domain}:{verb}` or `{domain}:*` (all verbs in domain)
+First-class provider profiles:
+
+- Auth0 Organizations: `org_id` plus top-level `permissions`
+- Microsoft Entra delegated: `tid` plus `scp`
+- Microsoft Entra app-only: `tid` plus `roles`, where each role string is already a Fitz permission or recognized coarse scope
+- Amazon Cognito: `custom:tenant_id` or `sub` plus `scope`; resource-server prefixes like `api/notice.read` are accepted
+- Okta: exact custom or namespaced identity claim plus `scope`, a configured custom permissions claim, or a configured role claim array
+
+Permission strings must be either route-shaped Fitz permissions such as
+`notice://prod/orders/**#read` or recognized coarse scopes such as
+`notice.read`. Clients should treat the compact JWT as opaque input and let the
+broker enforce the contract.
+
+For Auth0, the intended setup is an API access token for the Fitz API
+Identifier, Organizations enabled so Auth0 emits `org_id`, API RBAC enabled,
+and **Add Permissions in the Access Token** enabled. The broker configuration
+uses `FITZ_ROUTE_FAMILY_CLAIM=org_id`, maps Auth0 organization IDs with
+`FITZ_ROUTE_FAMILY_MAP`, and validates the Auth0 issuer through
+`FITZ_JWT_JWKS_MAP`.
 
 ### Client-Side Guidance
 
@@ -1760,16 +1784,9 @@ client = FitzClient(
 - Attempt token generation or validation
 - Model permission scopes in client code
 
-### Permission Metadata (Optional)
-
-Clients MAY expose permission metadata from JWT claims for **diagnostics only**:
-
-```python
-# Optional, for debugging
-client.permitted_realms()  # Returns list from JWT claims (if exposed)
-```
-
-This is **NOT** used for request validation.
+Clients MAY surface provider-owned token metadata that they already possess from
+their auth layer for diagnostics only, but Fitz authorization decisions still
+belong exclusively to the broker.
 
 ## Transactions
 
@@ -4535,7 +4552,7 @@ If domain exhausts range (>99 error codes allocated):
   These error codes are standardized across ALL domains:
 - `*001` = ERR_UNAUTHORIZED (permission denied, see Permissions section)
 - `*002` = ERR_INVALID_SCOPE (scope mismatch)
-- `*003` = ERR_REALM_MISMATCH (realm not in JWT)
+- `*003` = ERR_REALM_MISMATCH (requested route realm is not authorized by the compiled permission set)
   All other error codes are domain-specific and MUST NOT be reused across domains.
 
 ### Channel IDs (Broker-Internal Reference)
@@ -4646,7 +4663,7 @@ Client implementations MUST pass the following test suite against a reference br
 Client implementations MUST pass these cross-cutting tests:
 **Multi-Realm Isolation:**
 
-- Create two clients with different JWT realms
+- Create two clients with permissions scoped to different route realms
 - One client publishes to realm A, other subscribes in realm B
 - Verify no cross-realm delivery (subscriber receives nothing)
   **Permission Enforcement:**

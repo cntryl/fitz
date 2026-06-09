@@ -681,8 +681,8 @@ impl Default for TlvFrameBuilder {
     }
 }
 
-/// Build CONNECT message (msg_type 1)
-/// Wire format: [u32 realm_len][realm][u32 token_len][jwt_token]
+/// Build CONNECT message (msg_type 1).
+/// The legacy route argument is ignored; CONNECT carries only the JWT payload.
 pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
     // CONNECT frame: [msg_type: 1][length: u16 BE][JWT string bytes]
     // Server expects JWT as plain UTF-8 string, no additional structure
@@ -691,10 +691,10 @@ pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Generate test JWT token for given realm
+/// Generate a provider-shaped test JWT for a single partition string.
 /// Uses HS256 with test secret "test-secret-key"
 /// Token is valid for 1 hour from now
-/// Includes full permissions for the realm
+/// Emits `tid` plus top-level `permissions`
 pub fn generate_test_jwt(realm: &str) -> String {
     generate_test_jwt_for_family(realm, 1)
 }

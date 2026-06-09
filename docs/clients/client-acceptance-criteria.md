@@ -39,7 +39,7 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 ### AC-CONN-002: CONNECT Frame with JWT
 
 **MUST** authenticate with valid JWT
-**Given:** Valid JWT with required claims (`sub`, `iss`, `aud`, `exp`, configured route-family identity claim, and `scopes` or `permissions`)
+**Given:** Valid JWT with required claims (`sub`, `iss`, `aud`, `exp`, configured route-family identity claim, and one supported permission source: configured custom permissions claim, top-level `permissions`, configured role claim array, `scp`, or `scope`)
 **When:** Client sends CONNECT frame as first message after WebSocket upgrade  
 **Then:**
 

@@ -23,7 +23,7 @@ mod token;
 
 pub use claims::{
     parse_jwt_noverify, AuthClaimsConfig, Claims, RawClaims, RouteFamilyResolverConfig,
-    DEFAULT_ROUTE_FAMILY_CLAIM, ENV_AUTH_ALLOW_JWT_ROUTE_FAMILY, ENV_AUTH_CUSTOM_CLAIM,
+    DEFAULT_ROLE_CLAIM, DEFAULT_ROUTE_FAMILY_CLAIM, ENV_AUTH_CUSTOM_CLAIM, ENV_AUTH_ROLE_CLAIM,
     ENV_ROUTE_FAMILY_CLAIM, ENV_ROUTE_FAMILY_MAP,
 };
 pub use errors::AuthError;
@@ -265,33 +265,6 @@ fn verified_session_claims(
     })
 }
 
-fn permissive_session_claims(
-    raw_claims: RawClaims,
-) -> Result<
-    (
-        crate::session::permissions::SessionPermissions,
-        crate::auth::Claims,
-    ),
-    String,
-> {
-    let claims_config = AuthClaimsConfig::default();
-    let identity_value = raw_claims.identity_claim_value(&claims_config.identity_claim)?;
-    let permissions = raw_claims.normalized_permissions(claims_config.custom_claim.as_deref())?;
-    let claims = crate::auth::Claims {
-        sub: raw_claims.sub,
-        identity_claim: identity_value
-            .as_ref()
-            .map(|_| claims_config.identity_claim.clone()),
-        identity_value,
-        roles: raw_claims.roles.unwrap_or_default(),
-        permissions: permissions.clone(),
-        exp: raw_claims.exp,
-    };
-    let session_perms =
-        crate::session::permissions::SessionPermissions::from_permissions(permissions);
-    Ok((session_perms, claims))
-}
-
 /// Map coarse scope strings like `notice.read` into Fitz permission strings.
 /// This is a compatibility helper for OAuth2-style scope claims.
 pub fn map_coarse_scope(s: &str) -> Option<&'static str> {
@@ -312,57 +285,6 @@ pub fn map_coarse_scope(s: &str) -> Option<&'static str> {
         "schedule.write" => Some("schedule://**#write"),
         _ => None,
     }
-}
-
-/// Backwards-compatible helper that returns a `SessionPermissions` snapshot and Claims.
-/// Returns a tuple (SessionPermissions, Claims) for use by the session manager.
-/// The Claims object includes expiration time for security checks.
-pub fn permissions_from_compact_jwt(
-    compact: &str,
-) -> Result<
-    (
-        crate::session::permissions::SessionPermissions,
-        crate::auth::Claims,
-    ),
-    String,
-> {
-    let raw_claims = claims::parse_jwt_noverify(compact)?;
-
-    permissive_session_claims(raw_claims)
-}
-
-pub fn permissions_from_signed_jwt(
-    compact: &str,
-    public_pem: &[u8],
-) -> Result<
-    (
-        crate::session::permissions::SessionPermissions,
-        crate::auth::Claims,
-    ),
-    String,
-> {
-    let claims_value = token::verify_jwt_with_rsa_pem(compact, public_pem)?;
-    let raw_claims: RawClaims =
-        serde_json::from_value(claims_value).map_err(|e| format!("json parse error: {}", e))?;
-
-    permissive_session_claims(raw_claims)
-}
-
-pub fn permissions_from_hmac_jwt(
-    compact: &str,
-    secret: &[u8],
-) -> Result<
-    (
-        crate::session::permissions::SessionPermissions,
-        crate::auth::Claims,
-    ),
-    String,
-> {
-    let claims_value = token::verify_jwt_with_hmac_secret(compact, secret)?;
-    let raw_claims: RawClaims =
-        serde_json::from_value(claims_value).map_err(|e| format!("json parse error: {}", e))?;
-
-    permissive_session_claims(raw_claims)
 }
 
 pub async fn permissions_from_jwt_using_jwks(
@@ -700,7 +622,7 @@ mod auth_tests {
                 &[],
                 &["fitz-broker"],
                 0,
-                &AuthClaimsConfig::new("org_id", None, false),
+                &AuthClaimsConfig::new("org_id", None, DEFAULT_ROLE_CLAIM),
             )
             .unwrap();
 
@@ -711,8 +633,8 @@ mod auth_tests {
         );
     }
 
-    #[test]
-    fn should_use_empty_identity_for_hmac_jwt_given_no_identity_claims() {
+    #[tokio::test]
+    async fn should_use_empty_identity_for_hmac_jwt_given_no_identity_claims() {
         // Arrange
         let claims = json!({
             "iss": "",
@@ -729,10 +651,185 @@ mod auth_tests {
         .unwrap();
 
         // Act
-        let (_perms, normalized_claims) =
-            permissions_from_hmac_jwt(&token, b"test-secret-key").unwrap();
+        let verified = verified_jwt_with_claims_config(
+            &token,
+            &AuthConfig::hmac("test-secret-key", "fitz-broker"),
+            &AuthClaimsConfig::default(),
+        )
+        .await
+        .unwrap();
 
         // Assert
-        assert_eq!(normalized_claims.identity_value, None);
+        assert_eq!(verified.claims.identity_value, None);
+    }
+
+    #[tokio::test]
+    async fn should_verify_auth0_org_id_permissions_given_hmac_token() {
+        // Arrange
+        let claims = json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "auth0|user-1",
+            "exp": 9_999_999_999u64,
+            "org_id": "org_acme",
+            "permissions": ["notice://prod/orders/**#read"]
+        });
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret-key"),
+        )
+        .unwrap();
+
+        // Act
+        let verified = verified_jwt_with_claims_config(
+            &token,
+            &AuthConfig::hmac("test-secret-key", "fitz-broker"),
+            &AuthClaimsConfig::new("org_id", None, DEFAULT_ROLE_CLAIM),
+        )
+        .await
+        .unwrap();
+
+        // Assert
+        assert_eq!(verified.claims.identity_value.as_deref(), Some("org_acme"));
+        let route = crate::runtime::routing::Route::new("notice://prod/orders/1");
+        assert!(verified.permissions.allows(&route, Access::Read));
+    }
+
+    #[tokio::test]
+    async fn should_verify_entra_delegated_scp_given_hmac_token() {
+        // Arrange
+        let claims = json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "entra-user-1",
+            "exp": 9_999_999_999u64,
+            "tid": "entra-tenant-1",
+            "scp": "notice.read kv.write"
+        });
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret-key"),
+        )
+        .unwrap();
+
+        // Act
+        let verified = verified_jwt_with_claims_config(
+            &token,
+            &AuthConfig::hmac("test-secret-key", "fitz-broker"),
+            &AuthClaimsConfig::default(),
+        )
+        .await
+        .unwrap();
+
+        // Assert
+        let notice_route = crate::runtime::routing::Route::new("notice://prod/orders/1");
+        let kv_route = crate::runtime::routing::Route::new("kv://prod/orders/1");
+        assert!(verified.permissions.allows(&notice_route, Access::Read));
+        assert!(verified.permissions.allows(&kv_route, Access::Write));
+    }
+
+    #[tokio::test]
+    async fn should_verify_entra_app_only_roles_given_hmac_token() {
+        // Arrange
+        let claims = json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "service-principal-1",
+            "exp": 9_999_999_999u64,
+            "tid": "realm1",
+            "roles": ["notice.write"]
+        });
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret-key"),
+        )
+        .unwrap();
+
+        // Act
+        let verified = verified_jwt_with_claims_config(
+            &token,
+            &AuthConfig::hmac("test-secret-key", "fitz-broker"),
+            &AuthClaimsConfig::default(),
+        )
+        .await
+        .unwrap();
+
+        // Assert
+        let route = crate::runtime::routing::Route::new("notice://prod/orders/1");
+        assert!(verified.permissions.allows(&route, Access::Write));
+    }
+
+    #[tokio::test]
+    async fn should_verify_cognito_resource_server_scope_given_hmac_token() {
+        // Arrange
+        let claims = json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "cognito-user-1",
+            "exp": 9_999_999_999u64,
+            "custom:tenant_id": "realm1",
+            "scope": "fitz/kv.read"
+        });
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret-key"),
+        )
+        .unwrap();
+
+        // Act
+        let verified = verified_jwt_with_claims_config(
+            &token,
+            &AuthConfig::hmac("test-secret-key", "fitz-broker"),
+            &AuthClaimsConfig::new("custom:tenant_id", None, DEFAULT_ROLE_CLAIM),
+        )
+        .await
+        .unwrap();
+
+        // Assert
+        let route = crate::runtime::routing::Route::new("kv://prod/orders/1");
+        assert!(verified.permissions.allows(&route, Access::Read));
+    }
+
+    #[tokio::test]
+    async fn should_verify_okta_custom_permissions_given_hmac_token() {
+        // Arrange
+        let claims = json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "okta-user-1",
+            "exp": 9_999_999_999u64,
+            "https://fitz.example.com/identity": "okta-acme",
+            "https://fitz.example.com/claims": {
+                "permissions": ["queue://prod/orders/**#read"]
+            }
+        });
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret-key"),
+        )
+        .unwrap();
+
+        // Act
+        let verified = verified_jwt_with_claims_config(
+            &token,
+            &AuthConfig::hmac("test-secret-key", "fitz-broker"),
+            &AuthClaimsConfig::new(
+                "https://fitz.example.com/identity",
+                Some("https://fitz.example.com/claims".to_string()),
+                DEFAULT_ROLE_CLAIM,
+            ),
+        )
+        .await
+        .unwrap();
+
+        // Assert
+        assert_eq!(verified.claims.identity_value.as_deref(), Some("okta-acme"));
+        let route = crate::runtime::routing::Route::new("queue://prod/orders/1");
+        assert!(verified.permissions.allows(&route, Access::Read));
     }
 }

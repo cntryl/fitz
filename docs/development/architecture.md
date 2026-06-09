@@ -109,7 +109,7 @@ This is a hard Fitz rule:
 - **First frame MUST be CONNECT** with JWT payload
 - Validate JWT signature and claims (must validate signature; do NOT trust client parsing)
 - Extract JWT identity context (`tid` by default, or configured claim such as Auth0 `org_id`) and resolve it through the broker's route-family map
-- Extract route-shaped permissions from the configured custom claim, top-level `permissions`, or `scope`/`scp`
+- Extract route-shaped permissions from the configured custom claim, top-level `permissions`, configured role claim array, `scp`, or `scope`
 - Treat `realm` as an opaque route component authorized by permission patterns. Treat RouteFamily as a separate broker-internal routing key, never as a realm fallback or synonym.
 - Establish session with extracted claims
 - Assign unique session ID (internal; NOT sent to client)
@@ -584,7 +584,7 @@ Brokers MUST validate JWT in CONNECT handshake:
 3. **Claim Extraction:** Extract required claims:
    - `sub`: Subject identity
    - configured route-family identity claim (`tid` by default, `org_id` for Auth0 Organizations)
-   - `permissions` or `scope`/`scp`: Route-shaped Fitz permissions or coarse OAuth scopes
+   - one supported permission source: configured custom permissions claim, top-level `permissions`, configured role claim array, `scp`, or `scope`
    - server-side route family from `FITZ_ROUTE_FAMILY_MAP`; the resolved family must be provisioned by `FITZ_ROUTE_FAMILIES`
 4. **Permission Enforcement:** For each request, verify:
    - Request route matches a compiled permission pattern

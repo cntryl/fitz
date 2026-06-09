@@ -2590,6 +2590,242 @@ mod tests {
     }
 
     #[test]
+    fn should_set_permissions_on_connect_for_auth0_shape() {
+        // Arrange
+        let ingress = RuntimeIngress::new(true)
+            .with_auth_claims_config(crate::auth::AuthClaimsConfig::new(
+                "org_id",
+                None,
+                crate::auth::DEFAULT_ROLE_CLAIM,
+            ))
+            .with_route_family_resolver(crate::auth::RouteFamilyResolverConfig::from_mappings(
+                "org_id",
+                [("org_acme", 2)],
+            ))
+            .with_route_families(&[1, 2]);
+        let session = make_session_info(57, TransportKind::Tcp);
+        let jwt = signed_hmac_jwt(serde_json::json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "auth0|user-1",
+            "exp": 9999999999u64,
+            "org_id": "org_acme",
+            "permissions": ["notice://prod/orders/**#read"]
+        }));
+
+        // Act
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            ingress.on_open(session).await.unwrap();
+            assert_eq!(
+                ingress
+                    .on_frame(
+                        57,
+                        ChannelId::Control,
+                        crate::protocol::tlv::MessageType::CONNECT,
+                        Bytes::from(jwt),
+                    )
+                    .await,
+                IngressDecision::Accept
+            );
+        });
+
+        // Assert
+        let retrieved = ingress.get_session(57).unwrap();
+        assert_eq!(retrieved.route_family.id(), 2);
+        assert!(retrieved.permissions_snapshot.allows(
+            &crate::runtime::routing::Route::new("notice://prod/orders/1"),
+            crate::auth::Access::Read
+        ));
+    }
+
+    #[test]
+    fn should_set_permissions_on_connect_for_entra_delegated_shape() {
+        // Arrange
+        let ingress = RuntimeIngress::new(true)
+            .with_route_family_map(&[("entra-tenant-1", 2)])
+            .with_route_families(&[1, 2]);
+        let session = make_session_info(58, TransportKind::Tcp);
+        let jwt = signed_hmac_jwt(serde_json::json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "entra-user-1",
+            "exp": 9999999999u64,
+            "tid": "entra-tenant-1",
+            "scp": "notice.read"
+        }));
+
+        // Act
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            ingress.on_open(session).await.unwrap();
+            assert_eq!(
+                ingress
+                    .on_frame(
+                        58,
+                        ChannelId::Control,
+                        crate::protocol::tlv::MessageType::CONNECT,
+                        Bytes::from(jwt),
+                    )
+                    .await,
+                IngressDecision::Accept
+            );
+        });
+
+        // Assert
+        let retrieved = ingress.get_session(58).unwrap();
+        assert_eq!(retrieved.route_family.id(), 2);
+        assert!(retrieved.permissions_snapshot.allows(
+            &crate::runtime::routing::Route::new("notice://prod/orders/1"),
+            crate::auth::Access::Read
+        ));
+    }
+
+    #[test]
+    fn should_set_permissions_on_connect_for_entra_app_only_shape() {
+        // Arrange
+        let ingress = RuntimeIngress::new(true)
+            .with_route_family_map(&[("entra-tenant-2", 2)])
+            .with_route_families(&[1, 2]);
+        let session = make_session_info(59, TransportKind::Tcp);
+        let jwt = signed_hmac_jwt(serde_json::json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "service-principal-1",
+            "exp": 9999999999u64,
+            "tid": "entra-tenant-2",
+            "roles": ["queue.read"]
+        }));
+
+        // Act
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            ingress.on_open(session).await.unwrap();
+            assert_eq!(
+                ingress
+                    .on_frame(
+                        59,
+                        ChannelId::Control,
+                        crate::protocol::tlv::MessageType::CONNECT,
+                        Bytes::from(jwt),
+                    )
+                    .await,
+                IngressDecision::Accept
+            );
+        });
+
+        // Assert
+        let retrieved = ingress.get_session(59).unwrap();
+        assert_eq!(retrieved.route_family.id(), 2);
+        assert!(retrieved.permissions_snapshot.allows(
+            &crate::runtime::routing::Route::new("queue://prod/orders/1"),
+            crate::auth::Access::Read
+        ));
+    }
+
+    #[test]
+    fn should_set_permissions_on_connect_for_cognito_shape() {
+        // Arrange
+        let ingress = RuntimeIngress::new(true)
+            .with_auth_claims_config(crate::auth::AuthClaimsConfig::new(
+                "custom:tenant_id",
+                None,
+                crate::auth::DEFAULT_ROLE_CLAIM,
+            ))
+            .with_route_family_resolver(crate::auth::RouteFamilyResolverConfig::from_mappings(
+                "custom:tenant_id",
+                [("acme-prod", 2)],
+            ))
+            .with_route_families(&[1, 2]);
+        let session = make_session_info(64, TransportKind::Tcp);
+        let jwt = signed_hmac_jwt(serde_json::json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "cognito-user-1",
+            "exp": 9999999999u64,
+            "custom:tenant_id": "acme-prod",
+            "scope": "fitz/kv.read"
+        }));
+
+        // Act
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            ingress.on_open(session).await.unwrap();
+            assert_eq!(
+                ingress
+                    .on_frame(
+                        64,
+                        ChannelId::Control,
+                        crate::protocol::tlv::MessageType::CONNECT,
+                        Bytes::from(jwt),
+                    )
+                    .await,
+                IngressDecision::Accept
+            );
+        });
+
+        // Assert
+        let retrieved = ingress.get_session(64).unwrap();
+        assert_eq!(retrieved.route_family.id(), 2);
+        assert!(retrieved.permissions_snapshot.allows(
+            &crate::runtime::routing::Route::new("kv://prod/orders/1"),
+            crate::auth::Access::Read
+        ));
+    }
+
+    #[test]
+    fn should_set_permissions_on_connect_for_okta_shape() {
+        // Arrange
+        let ingress = RuntimeIngress::new(true)
+            .with_auth_claims_config(crate::auth::AuthClaimsConfig::new(
+                "https://fitz.example.com/identity",
+                Some("https://fitz.example.com/claims".to_string()),
+                crate::auth::DEFAULT_ROLE_CLAIM,
+            ))
+            .with_route_family_resolver(crate::auth::RouteFamilyResolverConfig::from_mappings(
+                "https://fitz.example.com/identity",
+                [("okta-acme", 2)],
+            ))
+            .with_route_families(&[1, 2]);
+        let session = make_session_info(65, TransportKind::Tcp);
+        let jwt = signed_hmac_jwt(serde_json::json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "okta-user-1",
+            "exp": 9999999999u64,
+            "https://fitz.example.com/identity": "okta-acme",
+            "https://fitz.example.com/claims": {
+                "permissions": ["notice://prod/orders/**#write"]
+            }
+        }));
+
+        // Act
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            ingress.on_open(session).await.unwrap();
+            assert_eq!(
+                ingress
+                    .on_frame(
+                        65,
+                        ChannelId::Control,
+                        crate::protocol::tlv::MessageType::CONNECT,
+                        Bytes::from(jwt),
+                    )
+                    .await,
+                IngressDecision::Accept
+            );
+        });
+
+        // Assert
+        let retrieved = ingress.get_session(65).unwrap();
+        assert_eq!(retrieved.route_family.id(), 2);
+        assert!(retrieved.permissions_snapshot.allows(
+            &crate::runtime::routing::Route::new("notice://prod/orders/1"),
+            crate::auth::Access::Write
+        ));
+    }
+
+    #[test]
     fn should_assign_route_families_from_verified_claims() {
         // Arrange
         let ingress = RuntimeIngress::new(true)
