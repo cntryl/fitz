@@ -316,17 +316,19 @@ const metricsOverview = {
 };
 
 const activeSessions = {
-  realm: null,
   sessions: [
     {
       connectedAt: "2026-05-21T13:00:00Z",
       idleSeconds: 12,
+      identityClaim: "tid",
+      identityValue: "default",
       key: "session-1",
       messagesReceived: 2,
       messagesSent: 3,
-      realm: "default",
       remoteAddress: "127.0.0.1",
+      routeFamily: 1,
       sessionId: "session-1",
+      subject: "user:1",
       transport: "ws",
     },
   ],

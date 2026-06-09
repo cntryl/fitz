@@ -33,7 +33,9 @@ export default function SessionTable({ sessions }: SessionTableProps) {
         <TableHead>
           <TableRow>
             <TableHeaderCell>Session</TableHeaderCell>
-            <TableHeaderCell>Realm</TableHeaderCell>
+            <TableHeaderCell>Family</TableHeaderCell>
+            <TableHeaderCell>Subject</TableHeaderCell>
+            <TableHeaderCell>Identity</TableHeaderCell>
             <TableHeaderCell>Transport</TableHeaderCell>
             <TableHeaderCell>Remote address</TableHeaderCell>
             <TableHeaderCell>Connected</TableHeaderCell>
@@ -46,7 +48,13 @@ export default function SessionTable({ sessions }: SessionTableProps) {
             {(session) => (
               <TableRow>
                 <TableCell>{session.sessionId ?? session.key}</TableCell>
-                <TableCell>{session.realm ?? "All realms"}</TableCell>
+                <TableCell>{session.routeFamily ?? "Unknown"}</TableCell>
+                <TableCell>{session.subject || "Unauthenticated"}</TableCell>
+                <TableCell>
+                  {session.identityClaim && session.identityValue
+                    ? `${session.identityClaim}=${session.identityValue}`
+                    : "Not resolved"}
+                </TableCell>
                 <TableCell>{session.transport ?? "Unknown"}</TableCell>
                 <TableCell>{session.remoteAddress ?? "Unknown"}</TableCell>
                 <TableCell>{formatTimestamp(session.connectedAt)}</TableCell>

@@ -149,20 +149,11 @@ pub struct SessionInfo {
     pub claims: Option<Arc<crate::auth::Claims>>,
     /// Whether the session has completed the connect/auth handshake
     pub authenticated: bool,
-    /// Route family for this session (tenant isolation boundary).
-    /// Resolved from the verified `fitz.route_family` claim at authentication time.
+    /// Route family for this session. Resolved server-side from verified identity context.
     pub route_family: RouteFamily,
 }
 
 impl SessionInfo {
-    pub fn realm(&self) -> String {
-        self.claims
-            .as_ref()
-            .map(|claims| claims.tenant.clone())
-            .filter(|tenant| !tenant.is_empty())
-            .unwrap_or_else(|| self.route_family.as_u64().to_string())
-    }
-
     pub fn connected_at(&self) -> SystemTime {
         self.metadata.connected_at()
     }

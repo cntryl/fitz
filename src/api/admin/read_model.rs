@@ -41,9 +41,17 @@ fn lease_identity_for(info: &LeaseInfo) -> LeaseIdentity {
 }
 
 fn snapshot_session_info(session: &RuntimeSessionInfo, connected_at: String) -> SessionInfo {
+    let claims = session.claims.as_ref();
     SessionInfo {
         session_id: session.session_id.to_string(),
-        realm: session.realm(),
+        route_family: session.route_family.as_u64(),
+        subject: claims.map(|claims| claims.sub.clone()).unwrap_or_default(),
+        identity_claim: claims
+            .and_then(|claims| claims.identity_claim.clone())
+            .unwrap_or_default(),
+        identity_value: claims
+            .and_then(|claims| claims.identity_value.clone())
+            .unwrap_or_default(),
         connected_at,
         idle_seconds: session.idle_seconds(),
         messages_received: session.messages_received(),
@@ -354,9 +362,9 @@ impl AdminReadModel {
         self.sessions.write().remove(&session_id);
     }
 
-    pub fn sessions(&self, realm: Option<&str>) -> Vec<SessionInfo> {
+    pub fn sessions(&self) -> Vec<SessionInfo> {
         let sessions = self.sessions.read();
-        collect_map_value_matches(&sessions, |item| matches_realm(realm, &item.realm))
+        collect_map_value_matches(&sessions, |_| true)
     }
 }
 

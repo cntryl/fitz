@@ -9,15 +9,19 @@ This guide covers safe upgrades between Fitz releases.
 3. Test upgrade path in staging with production-like data.
 4. Plan a bounded maintenance replacement for each Fitz node. Fitz does not coordinate rolling state transfer between nodes.
 
-## Route Family JWT Migration
+## Route Family Identity Map Migration
 
-The hardened broker requires every authenticated JWT to include `fitz.route_family`
-as a non-zero integer. Configure `FITZ_ROUTE_FAMILIES=1,2,...` with the contiguous,
-provisioned families that the node may serve. The default allowlist is `1`.
+The hardened broker resolves route family server-side from verified identity
+context. Configure `FITZ_ROUTE_FAMILIES=1,2,...` with the contiguous,
+provisioned families that the node may serve, then configure
+`FITZ_ROUTE_FAMILY_MAP=identity=family,...` for the identity values accepted by
+the node. The default identity claim is `tid`; set
+`FITZ_ROUTE_FAMILY_CLAIM=org_id` for Auth0 Organizations.
 
-Update token issuers before deploying the hardened broker. A hardened node rejects
-authenticated `CONNECT` when `fitz.route_family` is missing, zero, or absent from
-its provisioned allowlist. Anonymous mode always uses route family `1`.
+Update token issuers to emit identity context and route-shaped permissions, but
+do not emit `fitz.route_family` by default. A hardened node rejects authenticated
+`CONNECT` when the configured identity claim is missing, unmapped, or maps to an
+unprovisioned family. Anonymous mode always uses route family `1`.
 
 ## Pre-Upgrade Checklist
 
@@ -25,7 +29,7 @@ its provisioned allowlist. Anonymous mode always uses route family `1`.
 2. Validate rollback image is available.
 3. Confirm client compatibility for target version.
 4. Freeze nonessential schema or config changes.
-5. Confirm token issuers emit provisioned `fitz.route_family` claims before replacing the broker.
+5. Confirm the broker has `FITZ_ROUTE_FAMILY_MAP` entries for every identity value expected in incoming tokens.
 
 ## During Upgrade
 

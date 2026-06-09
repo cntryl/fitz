@@ -95,15 +95,11 @@ async function signOut(options: ServiceRequestOptions = {}): Promise<void> {
 }
 
 async function listActiveSessions(
-  realm?: string,
   options: ServiceRequestOptions = {},
 ): Promise<ActiveSessionsOverview> {
-  const response = await apiv1.listActiveSessions(realm ? { realm } : undefined, options);
+  const response = await apiv1.listActiveSessions(options);
 
-  return mapActiveSessionsOverview(
-    realm,
-    unwrapResponse(response, "Unable to load active sessions").sessions,
-  );
+  return mapActiveSessionsOverview(unwrapResponse(response, "Unable to load active sessions").sessions);
 }
 
 // Services own app-facing method names and return plain promises/models.

@@ -1003,7 +1003,10 @@ pub struct SessionsList {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub session_id: String,
-    pub realm: String,
+    pub route_family: u64,
+    pub subject: String,
+    pub identity_claim: String,
+    pub identity_value: String,
     pub connected_at: String,
     pub idle_seconds: u64,
     pub messages_received: u64,
@@ -1516,11 +1519,8 @@ pub fn rpc_operations(runtime: &Runtime, path: &ResourcePath<'_>) -> OperationCo
     }
 }
 
-pub async fn list_sessions(
-    runtime: Arc<Runtime>,
-    realm: Option<&str>,
-) -> Result<Response, Infallible> {
-    let sessions = runtime.list_sessions(realm);
+pub async fn list_sessions(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
+    let sessions = runtime.list_sessions();
     crate::api::admin::json_response(SessionsList { sessions })
 }
 

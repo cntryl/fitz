@@ -402,8 +402,8 @@ fn should_check_realm_match_first_in_pipeline() {
 
     let claims = Claims {
         sub: "user:order1".to_string(),
-        tenant: "prod".to_string(),
-        route_family: 1,
+        identity_claim: Some("tid".to_string()),
+        identity_value: Some("prod".to_string()),
         roles: vec![],
         permissions: vec![perm],
         exp: 9999999999,
@@ -430,8 +430,8 @@ fn should_check_area_match_after_realm_in_pipeline() {
 
     let claims = Claims {
         sub: "user:order2".to_string(),
-        tenant: "acme".to_string(),
-        route_family: 1,
+        identity_claim: Some("tid".to_string()),
+        identity_value: Some("acme".to_string()),
         roles: vec![],
         permissions: vec![perm],
         exp: 9999999999,
@@ -458,8 +458,8 @@ fn should_check_scope_match_after_area_in_pipeline() {
 
     let claims = Claims {
         sub: "user:order3".to_string(),
-        tenant: "acme".to_string(),
-        route_family: 1,
+        identity_claim: Some("tid".to_string()),
+        identity_value: Some("acme".to_string()),
         roles: vec![],
         permissions: vec![perm],
         exp: 9999999999,
@@ -486,8 +486,8 @@ fn should_allow_when_all_permission_checks_pass() {
 
     let claims = Claims {
         sub: "user:order4".to_string(),
-        tenant: "acme".to_string(),
-        route_family: 1,
+        identity_claim: Some("tid".to_string()),
+        identity_value: Some("acme".to_string()),
         roles: vec![],
         permissions: vec![perm],
         exp: 9999999999,

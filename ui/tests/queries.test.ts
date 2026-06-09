@@ -701,38 +701,45 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
       mapActiveSession({
         connected_at: "2026-05-04T12:00:00Z",
         idle_seconds: 6,
+        identity_claim: "tid",
+        identity_value: "r",
         messages_received: 7,
         messages_sent: 8,
-        realm: "r",
         remote_addr: "127.0.0.1",
+        route_family: 2,
         session_id: "sess-1",
+        subject: "user:1",
         transport: "ws",
       }),
     ).toEqual({
-      key: "sess-1:r:127.0.0.1:2026-05-04T12:00:00Z",
+      key: "sess-1:2:r:127.0.0.1:2026-05-04T12:00:00Z",
       connectedAt: "2026-05-04T12:00:00Z",
       idleSeconds: 6,
+      identityClaim: "tid",
+      identityValue: "r",
       messagesReceived: 7,
       messagesSent: 8,
-      realm: "r",
       remoteAddress: "127.0.0.1",
+      routeFamily: 2,
       sessionId: "sess-1",
+      subject: "user:1",
       transport: "ws",
     });
 
     expect(
-      mapActiveSessionsOverview("r", [
+      mapActiveSessionsOverview([
         {
           session_id: "sess-1",
-          realm: "r",
+          route_family: 2,
+          identity_value: "r",
         },
       ]),
     ).toEqual({
-      realm: "r",
       sessions: [
         {
-          key: "sess-1:r",
-          realm: "r",
+          key: "sess-1:2:r",
+          identityValue: "r",
+          routeFamily: 2,
           sessionId: "sess-1",
         },
       ],

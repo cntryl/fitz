@@ -1,8 +1,5 @@
-import { state } from "@askrjs/askr";
-import { navigate } from "@askrjs/askr/router";
-import { Input, Label } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
-import { Flex, Section, Stack } from "@askrjs/themes/layouts";
+import { Stack } from "@askrjs/themes/layouts";
 import DomainHeader from "@/components/shared/domain-header";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -14,18 +11,8 @@ import {
 import SessionTable from "@/components/shared/session-table";
 import { createActiveSessionsQuery } from "@/features/session/session-query";
 
-function currentRealmFilter() {
-  if (typeof window === "undefined") {
-    return "";
-  }
-
-  return new URLSearchParams(window.location.search).get("realm") ?? "";
-}
-
 export default function SessionsPage() {
-  const realmFilter = currentRealmFilter();
-  const [realmInput, setRealmInput] = state(realmFilter);
-  const sessionsQuery = createActiveSessionsQuery(realmFilter || undefined);
+  const sessionsQuery = createActiveSessionsQuery();
   const data = sessionsQuery.data;
 
   const sidebar = createDomainSidebar({
@@ -35,9 +22,10 @@ export default function SessionsPage() {
     stats: (current) => [
       { label: "Sessions", value: current.sessions.length },
       {
-        label: "Realm scope",
-        value: realmFilter || "All realms",
-        note: "Optional backend filter",
+        label: "Route families",
+        value: new Set(current.sessions.map((session) => session.routeFamily).filter(Boolean))
+          .size,
+        note: "Resolved",
       },
       {
         label: "Longest idle",
@@ -54,56 +42,14 @@ export default function SessionsPage() {
     ),
   });
 
-  async function onFilterSubmit(event: Event) {
-    event.preventDefault();
-
-    const nextRealm = realmInput().trim();
-    const search = nextRealm ? `?realm=${encodeURIComponent(nextRealm)}` : "";
-    navigate(`/sessions${search}`);
-  }
-
   return (
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
           title="Active sessions"
-          description="Inspect live broker and admin sessions, with optional realm scoping."
+          description="Inspect live broker and admin sessions with resolved route-family identity context."
           onRefresh={() => sessionsQuery.refresh()}
         />
-
-        <Section size="3">
-          <div class="domain-section-header">
-            <h2>Realm scope</h2>
-          </div>
-
-          <Stack asChild gap="3">
-            <form onSubmit={onFilterSubmit}>
-              <div class="auth-field">
-                <Label for="realm-filter">Realm</Label>
-                <Input
-                  id="realm-filter"
-                  value={realmInput()}
-                  onInput={(event: Event) =>
-                    setRealmInput((event.target as HTMLInputElement).value)
-                  }
-                  placeholder="Leave blank for all realms"
-                />
-              </div>
-
-              <Flex gap="1" wrap="wrap">
-                <Button type="submit">Apply filter</Button>
-                <Button
-                  onPress={() => {
-                    setRealmInput("");
-                    navigate("/sessions");
-                  }}
-                >
-                  Clear
-                </Button>
-              </Flex>
-            </form>
-          </Stack>
-        </Section>
 
         {!data && sessionsQuery.loading ? (
           <QueryLoadingState description="Loading active sessions..." />

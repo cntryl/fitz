@@ -39,7 +39,7 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 ### AC-CONN-002: CONNECT Frame with JWT
 
 **MUST** authenticate with valid JWT
-**Given:** Valid JWT with required claims (`sub`, `iss`, `aud`, `exp`, `scopes` or `permissions`, and a provisioned non-zero `fitz.route_family`)
+**Given:** Valid JWT with required claims (`sub`, `iss`, `aud`, `exp`, configured route-family identity claim, and `scopes` or `permissions`)
 **When:** Client sends CONNECT frame as first message after WebSocket upgrade  
 **Then:**
 
@@ -47,12 +47,12 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 - Server responds with success (silent acceptance — no explicit ACK)
 - Client sends no extra shard or routing metadata
 - Client can proceed with domain operations
-- Subsequent frames are authorized per JWT `scopes`
+- Subsequent frames are authorized per normalized route-shaped permissions
 
 ### AC-CONN-003: CONNECT Frame Rejection
 
 **MUST** handle authentication rejection
-**Given:** Invalid or expired JWT, or JWT with missing, zero, or unprovisioned `fitz.route_family`
+**Given:** Invalid or expired JWT, or JWT with missing, unmapped, or unprovisioned route-family identity context
 **When:** Client sends CONNECT frame  
 **Then:**
 

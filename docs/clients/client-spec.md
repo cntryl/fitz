@@ -451,7 +451,7 @@ Use these exact terms. Other terms are forbidden.
 
 **Internal routing rule:** Clients send `CONNECT(jwt)` and opaque route strings only. Broker-internal partitioning, shard placement, and other session routing state are not part of the client contract.
 
-**Realm vs RouteFamily:** `realm` is the application-visible namespace label carried in routes and permissions. `fitz.route_family` is a separate broker-internal routing key. They are orthogonal and must never be inferred or defaulted from one another.
+**Realm vs RouteFamily:** `realm` is the application-visible namespace label carried in routes and permissions. RouteFamily is a separate broker-internal routing key resolved server-side from verified identity context. They are orthogonal and must never be inferred or defaulted from one another.
 
 **Forbidden terminology in client code:**
 
@@ -942,8 +942,8 @@ Clients MUST:
   **Session State After Successful CONNECT:**
   On successful CONNECT, broker creates session and MUST:
 - Assign unique session ID (internal use only)
-- Extract JWT claims (`realm`, `areas`, `scopes`, and provisioned non-zero `fitz.route_family`)
-- Establish permissions for all subsequent requests
+- Extract JWT identity context and resolve route family through server configuration
+- Establish normalized route-shaped permissions for all subsequent requests
 - Track active subscriptions, transactions, and resources
   **Session Cleanup On Disconnect:**
   When client disconnects:
@@ -999,7 +999,7 @@ Fitz brokers support two authentication modes controlled by server configuration
 - JWT authentication is **required** for all connections
 - CONNECT frame MUST include valid JWT
 - Broker validates JWT signature and claims
-- Missing or invalid JWT, including a missing, zero, or unprovisioned `fitz.route_family`, causes immediate connection close
+- Missing or invalid JWT, including missing or unmapped route-family identity context, causes immediate connection close
   **2. Anonymous Mode** (`FITZ_AUTH_REQUIRED=false`):
 - JWT authentication is **optional**
 - CONNECT frame MAY include empty JWT or placeholder value
@@ -1664,11 +1664,9 @@ Clients MUST NOT:
 Authorization behavior depends on server authentication mode:
 **Authenticated Mode (`FITZ_AUTH_REQUIRED=true`):**
 
-- Broker MUST extract claims from JWT: `realm`, `areas` (array), `scopes` (array), `fitz.route_family` (provisioned non-zero integer)
-- For each request, broker MUST check:
-  1. **Realm match**: Route realm ∈ JWT realm (MUST be exact match)
-  2. **Area match**: Route area ∈ JWT areas
-  3. **Scope match**: Request verb ∈ JWT scopes (e.g., `kv:read`, `notice:subscribe`, `queue:send`)
+- Broker MUST extract identity context and normalized permissions from JWT:
+  configured route-family identity claim, configured custom permissions claim, top-level `permissions`, or `scope`/`scp`
+- For each request, broker MUST check the request route and access level against compiled route-shaped permission patterns
 - If any check fails, broker returns permission error (domain-specific error code)
   **Anonymous Mode (`FITZ_AUTH_REQUIRED=false`):**
 - Broker assigns default permissions (typically unrestricted access)
@@ -1680,8 +1678,8 @@ Authorization behavior depends on server authentication mode:
   Broker MUST enforce permissions in this order:
 
 1. **Route validation:** Scheme known, depth valid, shape matches method (if fails: protocol error)
-2. **JWT validation:** Signature valid, not expired, and `fitz.route_family` provisioned and non-zero (if fails: transport error)
-3. **Permission enforcement:** Realm/area/scope match (if fails: domain error with code ERR_UNAUTHORIZED)
+2. **JWT validation:** Signature valid, not expired, and identity context resolves to a provisioned route family (if fails: transport error)
+3. **Permission enforcement:** Route-shaped permission match grants requested access (if fails: domain error with code ERR_UNAUTHORIZED)
 4. **Domain dispatch:** Route to domain handler
 
 ### Permission Error Codes (Authenticated Mode Only)

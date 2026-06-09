@@ -45,6 +45,8 @@ pub fn init(
             .with_router(router.clone())
             .with_admin_read_model(admin_read_model.clone())
             .with_auth_config(config.auth_config.clone())
+            .with_auth_claims_config(config.auth_claims_config.clone())
+            .with_route_family_resolver(config.route_family_resolver.clone())
             .with_route_families(&config.route_families),
     );
 

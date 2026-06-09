@@ -3,9 +3,7 @@ import { sessionService } from "./session-service";
 import type { ActiveSessionsOverview, SessionState } from "./session-models";
 
 const CURRENT_SESSION_KEY = "session:current";
-function activeSessionsKey(realm?: string) {
-  return `session:active:${realm ?? "all"}`;
-}
+const ACTIVE_SESSIONS_KEY = "session:active";
 
 export function createCurrentSessionQuery() {
   return createQuery<SessionState>({
@@ -18,9 +16,9 @@ export function createCurrentSessionQuery() {
   });
 }
 
-export function createActiveSessionsQuery(realm?: string) {
+export function createActiveSessionsQuery() {
   return createQuery<ActiveSessionsOverview>({
-    key: activeSessionsKey(realm),
-    fetch: ({ signal }) => sessionService.listActiveSessions(realm, { signal }),
+    key: ACTIVE_SESSIONS_KEY,
+    fetch: ({ signal }) => sessionService.listActiveSessions({ signal }),
   });
 }

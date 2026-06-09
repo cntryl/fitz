@@ -244,6 +244,10 @@ pub struct RuntimeIngress {
 
     /// Explicit auth configuration used for CONNECT verification when present.
     auth_config: Option<crate::auth::AuthConfig>,
+    /// Claim normalization behavior for CONNECT JWTs.
+    auth_claims_config: crate::auth::AuthClaimsConfig,
+    /// Broker-local route-family resolver for verified identity claims.
+    route_family_resolver: crate::auth::RouteFamilyResolverConfig,
 }
 
 impl RuntimeIngress {
@@ -261,6 +265,8 @@ impl RuntimeIngress {
             auth_required,
             admin_read_model: None,
             auth_config: None,
+            auth_claims_config: crate::auth::AuthClaimsConfig::default(),
+            route_family_resolver: crate::auth::RouteFamilyResolverConfig::default(),
         }
     }
 
@@ -291,6 +297,33 @@ impl RuntimeIngress {
 
     pub fn with_auth_config(mut self, auth_config: crate::auth::AuthConfig) -> Self {
         self.auth_config = Some(auth_config);
+        self
+    }
+
+    pub fn with_auth_claims_config(
+        mut self,
+        auth_claims_config: crate::auth::AuthClaimsConfig,
+    ) -> Self {
+        self.auth_claims_config = auth_claims_config;
+        self
+    }
+
+    pub fn with_route_family_resolver(
+        mut self,
+        route_family_resolver: crate::auth::RouteFamilyResolverConfig,
+    ) -> Self {
+        self.route_family_resolver = route_family_resolver;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_route_family_map(mut self, mappings: &[(&str, u32)]) -> Self {
+        self.route_family_resolver = crate::auth::RouteFamilyResolverConfig::from_mappings(
+            crate::auth::DEFAULT_ROUTE_FAMILY_CLAIM,
+            mappings
+                .iter()
+                .map(|(identity, family)| (*identity, *family)),
+        );
         self
     }
 
@@ -451,16 +484,17 @@ impl RuntimeIngress {
 
     fn resolve_authenticated_route_family(
         &self,
-        claims: &crate::auth::Claims,
+        raw_claims: &crate::auth::RawClaims,
     ) -> Result<crate::runtime::routing::RouteFamily, String> {
-        if !self.route_families.contains(&claims.route_family) {
+        let route_family = self.route_family_resolver.resolve(raw_claims)?;
+        if !self.route_families.contains(&route_family) {
             return Err(format!(
-                "fitz.route_family {} is not provisioned",
-                claims.route_family
+                "resolved route family {} is not provisioned",
+                route_family
             ));
         }
         Ok(crate::runtime::routing::RouteFamily::new(
-            claims.route_family.into(),
+            route_family.into(),
         ))
     }
 
@@ -900,20 +934,27 @@ impl Ingress for RuntimeIngress {
                 .clone()
                 .unwrap_or_else(|| crate::auth::AuthConfig::from_env(true));
 
-            match crate::auth::permissions_from_verified_jwt(&compact, &auth_config).await {
-                Ok((snapshot, claims)) => {
-                    let route_family = match self.resolve_authenticated_route_family(&claims) {
-                        Ok(route_family) => route_family,
-                        Err(e) => {
-                            error!(
-                                session_id = session_id,
-                                error = %e,
-                                "Ingress: CONNECT failed (route family resolution)"
-                            );
-                            return IngressDecision::Close(format!("connect failed: {}", e));
-                        }
-                    };
-                    Some((snapshot, claims, route_family))
+            match crate::auth::verified_jwt_with_claims_config(
+                &compact,
+                &auth_config,
+                &self.auth_claims_config,
+            )
+            .await
+            {
+                Ok(verified) => {
+                    let route_family =
+                        match self.resolve_authenticated_route_family(&verified.raw_claims) {
+                            Ok(route_family) => route_family,
+                            Err(e) => {
+                                error!(
+                                    session_id = session_id,
+                                    error = %e,
+                                    "Ingress: CONNECT failed (route family resolution)"
+                                );
+                                return IngressDecision::Close(format!("connect failed: {}", e));
+                            }
+                        };
+                    Some((verified.permissions, verified.claims, route_family))
                 }
                 Err(e) => {
                     error!(
@@ -1142,12 +1183,6 @@ impl RuntimeIngress {
     ) -> Result<Option<crate::runtime::routing::Route>, String> {
         use crate::protocol::frame_context::FrameContext;
         use crate::runtime::routing::Route;
-
-        let _realm = session_info
-            .claims
-            .as_ref()
-            .map(|c| c.tenant.clone())
-            .unwrap_or_default();
 
         let ctx = FrameContext::new(
             session_info.session_id,
@@ -1517,7 +1552,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_open_session() {
-        let ingress = RuntimeIngress::new(true);
+        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(1, TransportKind::WebSocket);
 
         let result = ingress.on_open(session).await;
@@ -1530,7 +1565,7 @@ mod tests {
     #[test]
     fn should_process_frame() {
         // Arrange
-        let ingress = RuntimeIngress::new(true);
+        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(2, TransportKind::WebSocket);
 
         // Act
@@ -1545,7 +1580,7 @@ mod tests {
                 "sub": "user:2",
                 "exp": 9999999999u64,
                 "tid": "acme-prod",
-                "fitz": { "route_family": 1, "permissions": ["notice://prod/orders/**#read"] }
+                "permissions": ["notice://prod/orders/**#read"]
             });
             let jwt = signed_hmac_jwt(payload);
 
@@ -1565,7 +1600,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_reject_unknown_session() {
-        let ingress = RuntimeIngress::new(true);
+        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
 
         let decision = ingress
             .on_frame(
@@ -1584,9 +1619,11 @@ mod tests {
         // Arrange
         let event_count = Arc::new(AtomicUsize::new(0));
         let count_clone = event_count.clone();
-        let ingress = RuntimeIngress::new(true).with_event_handler(move |_event| {
-            count_clone.fetch_add(1, Ordering::SeqCst);
-        });
+        let ingress = RuntimeIngress::new(true)
+            .with_route_family_map(&[("acme-prod", 1)])
+            .with_event_handler(move |_event| {
+                count_clone.fetch_add(1, Ordering::SeqCst);
+            });
         let session = make_session_info(3, TransportKind::WebSocket);
 
         // Act
@@ -1600,7 +1637,7 @@ mod tests {
                 "sub": "user:3",
                 "exp": 9999999999u64,
                 "tid": "acme-prod",
-                "fitz": { "route_family": 1, "permissions": ["notice://prod/orders/**#read"] }
+                "permissions": ["notice://prod/orders/**#read"]
             });
             let jwt = signed_hmac_jwt(payload);
 
@@ -1713,7 +1750,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         ingress.on_open(session).await.unwrap();
-        assert_eq!(admin_read_model.sessions(None).len(), 1);
+        assert_eq!(admin_read_model.sessions().len(), 1);
 
         // Act
         ingress.on_close(session_id, CloseReason::ClientClose).await;
@@ -1722,7 +1759,7 @@ mod tests {
         assert_eq!(ingress.session_count(), 0);
         assert!(ingress.get_session(session_id).is_none());
         assert!(ingress.get_session_actor(session_id).is_none());
-        assert!(admin_read_model.sessions(None).is_empty());
+        assert!(admin_read_model.sessions().is_empty());
         for sink in sinks {
             assert_eq!(sink.recorded_sessions(), vec![session_id]);
         }
@@ -1763,7 +1800,7 @@ mod tests {
         assert_eq!(ingress.session_count(), 0);
         assert!(ingress.get_session(session_id).is_none());
         assert!(ingress.get_session_actor(session_id).is_none());
-        assert!(admin_read_model.sessions(None).is_empty());
+        assert!(admin_read_model.sessions().is_empty());
         assert!(ingress.pending_session_cleanups.contains_key(&session_id));
     }
 
@@ -2514,7 +2551,7 @@ mod tests {
     #[test]
     fn should_set_permissions_on_connect_with_valid_token() {
         // Arrange
-        let ingress = RuntimeIngress::new(true);
+        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(50, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -2523,7 +2560,7 @@ mod tests {
             "sub": "user:42",
             "exp": 9999999999u64,
             "tid": "acme-prod",
-            "fitz": { "route_family": 1, "permissions": ["notice://prod/orders/**#read"] }
+            "permissions": ["notice://prod/orders/**#read"]
         });
         let jwt = signed_hmac_jwt(payload);
 
@@ -2555,7 +2592,9 @@ mod tests {
     #[test]
     fn should_assign_route_families_from_verified_claims() {
         // Arrange
-        let ingress = RuntimeIngress::new(true).with_route_families(&[1, 2]);
+        let ingress = RuntimeIngress::new(true)
+            .with_route_families(&[1, 2])
+            .with_route_family_map(&[("tenant-a", 2), ("tenant-b", 1)]);
         let session_a = make_session_info(52, TransportKind::Tcp);
         let session_b = make_session_info(53, TransportKind::Tcp);
 
@@ -2565,7 +2604,7 @@ mod tests {
             "sub": "user:a",
             "exp": 9999999999u64,
             "tid": "tenant-a",
-            "fitz": { "route_family": 2, "permissions": ["notice://tenant-a/**#read"] }
+            "permissions": ["notice://tenant-a/**#read"]
         }));
         let jwt_b = signed_hmac_jwt(serde_json::json!({
             "iss": "",
@@ -2573,7 +2612,7 @@ mod tests {
             "sub": "user:b",
             "exp": 9999999999u64,
             "tid": "tenant-b",
-            "fitz": { "route_family": 1, "permissions": ["notice://tenant-b/**#read"] }
+            "permissions": ["notice://tenant-b/**#read"]
         }));
 
         // Act
@@ -2615,9 +2654,11 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_connect_with_unprovisioned_route_family() {
+    fn should_reject_connect_with_unprovisioned_resolved_route_family() {
         // Arrange
-        let ingress = RuntimeIngress::new(true).with_route_families(&[1]);
+        let ingress = RuntimeIngress::new(true)
+            .with_route_families(&[1])
+            .with_route_family_map(&[("acme-prod", 2)]);
         let session = make_session_info(55, TransportKind::Tcp);
         let jwt = signed_hmac_jwt(serde_json::json!({
             "iss": "",
@@ -2625,7 +2666,7 @@ mod tests {
             "sub": "user:55",
             "exp": 9999999999u64,
             "tid": "acme-prod",
-            "fitz": { "route_family": 2, "permissions": ["notice://prod/orders/**#read"] }
+            "permissions": ["notice://prod/orders/**#read"]
         }));
 
         // Act
@@ -2647,21 +2688,57 @@ mod tests {
     }
 
     #[test]
-    fn should_preserve_claimed_route_families_when_sessions_reconnect_in_reverse_order() {
+    fn should_reject_connect_with_unmapped_identity_claim() {
         // Arrange
-        let jwt_for = |subject: &str, route_family| {
+        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("mapped", 1)]);
+        let session = make_session_info(56, TransportKind::Tcp);
+        let jwt = signed_hmac_jwt(serde_json::json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "user:56",
+            "exp": 9999999999u64,
+            "tid": "unmapped",
+            "permissions": ["notice://prod/orders/**#read"]
+        }));
+
+        // Act
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let decision = rt.block_on(async {
+            ingress.on_open(session).await.unwrap();
+            ingress
+                .on_frame(
+                    56,
+                    ChannelId::Control,
+                    crate::protocol::tlv::MessageType::CONNECT,
+                    Bytes::from(jwt),
+                )
+                .await
+        });
+
+        // Assert
+        assert!(matches!(decision, IngressDecision::Close(_)));
+    }
+
+    #[test]
+    fn should_preserve_resolved_route_families_when_sessions_reconnect_in_reverse_order() {
+        // Arrange
+        let jwt_for = |subject: &str| {
             signed_hmac_jwt(serde_json::json!({
                 "iss": "",
                 "aud": "fitz-broker",
                 "sub": subject,
                 "exp": 9999999999u64,
                 "tid": subject,
-                "fitz": { "route_family": route_family, "permissions": ["kv://shared/data/item#read"] }
+                "permissions": ["kv://shared/data/item#read"]
             }))
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let first = RuntimeIngress::new(true).with_route_families(&[1, 2]);
-        let second = RuntimeIngress::new(true).with_route_families(&[1, 2]);
+        let first = RuntimeIngress::new(true)
+            .with_route_families(&[1, 2])
+            .with_route_family_map(&[("tenant-a", 1), ("tenant-b", 2)]);
+        let second = RuntimeIngress::new(true)
+            .with_route_families(&[1, 2])
+            .with_route_family_map(&[("tenant-a", 1), ("tenant-b", 2)]);
 
         // Act
         rt.block_on(async {
@@ -2679,7 +2756,7 @@ mod tests {
                         60,
                         ChannelId::Control,
                         crate::protocol::tlv::MessageType::CONNECT,
-                        Bytes::from(jwt_for("tenant-a", 1)),
+                        Bytes::from(jwt_for("tenant-a")),
                     )
                     .await,
                 IngressDecision::Accept
@@ -2690,7 +2767,7 @@ mod tests {
                         61,
                         ChannelId::Control,
                         crate::protocol::tlv::MessageType::CONNECT,
-                        Bytes::from(jwt_for("tenant-b", 2)),
+                        Bytes::from(jwt_for("tenant-b")),
                     )
                     .await,
                 IngressDecision::Accept
@@ -2710,7 +2787,7 @@ mod tests {
                         62,
                         ChannelId::Control,
                         crate::protocol::tlv::MessageType::CONNECT,
-                        Bytes::from(jwt_for("tenant-b", 2)),
+                        Bytes::from(jwt_for("tenant-b")),
                     )
                     .await,
                 IngressDecision::Accept
@@ -2721,7 +2798,7 @@ mod tests {
                         63,
                         ChannelId::Control,
                         crate::protocol::tlv::MessageType::CONNECT,
-                        Bytes::from(jwt_for("tenant-a", 1)),
+                        Bytes::from(jwt_for("tenant-a")),
                     )
                     .await,
                 IngressDecision::Accept
@@ -2738,7 +2815,7 @@ mod tests {
     #[test]
     fn should_reject_connect_with_malformed_permissions() {
         // Arrange
-        let ingress = RuntimeIngress::new(true);
+        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(51, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -2747,7 +2824,7 @@ mod tests {
             "sub": "user:42",
             "exp": 9999999999u64,
             "tid": "acme-prod",
-            "fitz": { "route_family": 1, "permissions": ["badperm#oops"] }
+            "permissions": ["badperm#oops"]
         });
         let jwt = signed_hmac_jwt(payload);
 
@@ -2780,7 +2857,7 @@ mod tests {
             "sub": "user:54",
             "exp": 9999999999u64,
             "tid": "acme-prod",
-            "fitz": { "route_family": 1, "permissions": ["notice://prod/orders/**#read"] }
+            "permissions": ["notice://prod/orders/**#read"]
         }));
 
         // Act
@@ -2807,13 +2884,15 @@ mod tests {
         use base64::Engine;
         use jsonwebtoken::{EncodingKey, Header};
 
-        let ingress = RuntimeIngress::new(true).with_auth_config(crate::auth::AuthConfig::jwks(
-            vec!["fitz-broker".to_string()],
-            vec![crate::auth::JwksIssuerConfig {
-                issuer: "https://idp.example".to_string(),
-                jwks_url: "https://idp.example/.well-known/jwks.json".to_string(),
-            }],
-        ));
+        let ingress = RuntimeIngress::new(true)
+            .with_auth_config(crate::auth::AuthConfig::jwks(
+                vec!["fitz-broker".to_string()],
+                vec![crate::auth::JwksIssuerConfig {
+                    issuer: "https://idp.example".to_string(),
+                    jwks_url: "https://idp.example/.well-known/jwks.json".to_string(),
+                }],
+            ))
+            .with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(80, TransportKind::Tcp);
 
         // Build a signed HS256 token and cache a matching oct key under the issuer's derived JWKS URL
@@ -2826,7 +2905,7 @@ mod tests {
             "sub": "user:80",
             "exp": 9999999999u64,
             "tid": "acme-prod",
-            "fitz": { "route_family": 1, "permissions": ["notice://prod/orders/**#write"] }
+            "permissions": ["notice://prod/orders/**#write"]
         });
 
         let secret = b"supersecretkey".to_vec();
@@ -2901,15 +2980,17 @@ mod tests {
             );
             socket.write_all(response.as_bytes()).await.unwrap();
         });
-        let ingress = Arc::new(RuntimeIngress::new(true).with_auth_config(
-            crate::auth::AuthConfig::jwks(
-                vec!["fitz-broker".to_string()],
-                vec![crate::auth::JwksIssuerConfig {
-                    issuer: issuer.clone(),
-                    jwks_url,
-                }],
-            ),
-        ));
+        let ingress = Arc::new(
+            RuntimeIngress::new(true)
+                .with_auth_config(crate::auth::AuthConfig::jwks(
+                    vec!["fitz-broker".to_string()],
+                    vec![crate::auth::JwksIssuerConfig {
+                        issuer: issuer.clone(),
+                        jwks_url,
+                    }],
+                ))
+                .with_route_family_map(&[("acme-prod", 1)]),
+        );
         ingress
             .on_open(make_session_info(82, TransportKind::Tcp))
             .await
@@ -2930,7 +3011,7 @@ mod tests {
                 "sub": "user:82",
                 "exp": 9999999999u64,
                 "tid": "acme-prod",
-                "fitz": { "route_family": 1, "permissions": ["notice://prod/orders/**#write"] }
+                "permissions": ["notice://prod/orders/**#write"]
             }),
             &EncodingKey::from_secret(secret),
         )
@@ -3004,7 +3085,7 @@ mod tests {
             "sub": "user:81",
             "exp": 9999999999u64,
             "tid": "acme-prod",
-            "fitz": { "route_family": 1, "permissions": ["notice://prod/orders/**#write"] }
+            "permissions": ["notice://prod/orders/**#write"]
         });
 
         let signing_secret = b"othersecret";
@@ -3062,7 +3143,7 @@ mod tests {
     #[test]
     fn should_update_session_actor_on_connect() {
         // Arrange
-        let ingress = RuntimeIngress::new(true);
+        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(61, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -3071,7 +3152,7 @@ mod tests {
             "sub": "user:42",
             "exp": 9999999999u64,
             "tid": "acme-prod",
-            "fitz": { "route_family": 1, "permissions": ["notice://prod/orders/**#write"] }
+            "permissions": ["notice://prod/orders/**#write"]
         });
         let jwt = signed_hmac_jwt(payload);
 
@@ -3111,7 +3192,7 @@ mod tests {
         use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
         use bytes::Bytes;
 
-        let ingress = RuntimeIngress::new(true);
+        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(70, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -3120,7 +3201,7 @@ mod tests {
             "sub": "user:70",
             "exp": 9999999999u64,
             "tid": "acme-prod",
-            "fitz": { "route_family": 1, "permissions": ["notice://prod/orders/**#read"] }
+            "permissions": ["notice://prod/orders/**#read"]
         });
         let jwt = signed_hmac_jwt(payload);
 
@@ -3177,7 +3258,7 @@ mod tests {
         use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
         use bytes::Bytes;
 
-        let ingress = RuntimeIngress::new(true);
+        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(71, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -3186,7 +3267,7 @@ mod tests {
             "sub": "user:71",
             "exp": 9999999999u64,
             "tid": "acme-prod",
-            "fitz": { "route_family": 1, "permissions": ["notice://prod/orders/**#write"] }
+            "permissions": ["notice://prod/orders/**#write"]
         });
         let jwt = signed_hmac_jwt(payload);
 

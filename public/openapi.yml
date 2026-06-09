@@ -101,13 +101,6 @@ paths:
       operationId: listActiveSessions
       security:
         - sessionCookie: []
-      parameters:
-        - name: realm
-          in: query
-          required: false
-          description: Filter by the session's application-defined realm label. This is never a route_family selector or fallback.
-          schema:
-            type: string
       responses:
         "200":
           description: Active sessions
@@ -3903,9 +3896,18 @@ components:
       type: object
       properties:
         session_id: { type: string }
-        realm:
+        route_family:
+          type: integer
+          description: Resolved Fitz route family for this active session.
+        subject:
           type: string
-          description: Application-defined realm label associated with the session. This is a Fitz realm value, not a route_family alias or fallback.
+          description: JWT subject for this session, when authenticated.
+        identity_claim:
+          type: string
+          description: Claim name used for server-side route-family resolution.
+        identity_value:
+          type: string
+          description: Claim value resolved through the broker route-family map.
         connected_at: { type: string }
         idle_seconds: { type: integer }
         messages_received: { type: integer }

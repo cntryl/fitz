@@ -117,7 +117,9 @@ If you want a single local service, this is the smallest useful compose file:
 - Cloud storage requires FITZ_STORAGE_PROVIDER plus provider-specific values. Supported providers are `peas-s3`, `peas-azure`, `peas-gcs`, `aws-s3`, `s3-compatible`, `minio`, `wasabi`, `oci-s3`, `azure-blob`, and `gcs`.
 - Cloud storage uses FITZ_STORAGE_CACHE_PATH for its local cache and defaults to `./.fitz-cloud-cache`; it does not read FITZ_STORAGE_PATH.
 - FITZ_STORAGE_CLOUD_DURABILITY can be `background` or `strict`; any other value is rejected. `background` keeps provider upload asynchronous; `strict` waits for provider acknowledgement for broker-selected durable cloud writes and request-level sync writes.
-- Authenticated JWT issuers must include `fitz.route_family` with one provisioned non-zero family. Anonymous mode always uses family `1`.
+- Authenticated JWTs resolve to a route family server-side. Keep `FITZ_ROUTE_FAMILIES=1,2,...` as the provisioned allowlist, set `FITZ_ROUTE_FAMILY_MAP=tid-value=1,other=2`, and use `FITZ_ROUTE_FAMILY_CLAIM` to choose the identity claim (`tid` by default, `org_id` is recommended for Auth0 Organizations).
+- `FITZ_AUTH_CUSTOM_CLAIM` can point at a namespaced JWT object containing `permissions`, for example `https://example.com/fitz`; otherwise Fitz reads Auth0 top-level `permissions` and then `scope`/`scp`.
+- Provider setup is claim-driven: Auth0 can use `org_id` plus top-level `permissions`; Entra can use `tid` plus `scp`; Cognito can use `custom:tenant_id` or `sub` plus `scope`; Okta can use an exact custom/namespaced identity claim plus `scope` or a namespaced Fitz permissions object. `roles` are preserved as identity metadata but are not Fitz permissions by default.
 - FITZ_MIN_MEMORY_BYTES defaults to `134217728` and rejects smaller Linux cgroup memory limits during startup. Set it higher for production headroom, or set it to `0` only when intentionally bypassing the preflight for experiments.
 
 ## Documentation

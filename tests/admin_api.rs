@@ -2882,7 +2882,10 @@ async fn should_return_sessions_collection_only() {
     let sessions = payload["sessions"].as_array().unwrap();
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0]["session_id"], "41");
-    assert_eq!(sessions[0]["realm"], "41");
+    assert_eq!(sessions[0]["route_family"], 41);
+    assert_eq!(sessions[0]["subject"], "");
+    assert_eq!(sessions[0]["identity_claim"], "");
+    assert_eq!(sessions[0]["identity_value"], "");
     assert_eq!(sessions[0]["transport"], "websocket");
     assert_eq!(sessions[0]["messages_received"], 2);
     assert_eq!(sessions[0]["messages_sent"], 1);

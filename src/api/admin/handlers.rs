@@ -52,9 +52,7 @@ where
             if let Err(response) = require_admin(&req, &runtime) {
                 return Ok(*response);
             }
-            let params = list::parse_query_params(req.uri());
-            let realm = params.get("realm").map(|s| s.as_str());
-            list::list_sessions(runtime, realm).await
+            list::list_sessions(runtime).await
         }
 
         (Method::GET, "/api/v1/stats") => {

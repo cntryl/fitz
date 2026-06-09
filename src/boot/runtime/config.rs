@@ -418,7 +418,11 @@ pub struct BootConfig {
     pub auth_required: bool,
     /// Explicit auth configuration for token verification
     pub auth_config: crate::auth::AuthConfig,
-    /// Provisioned RouteFamily values accepted from verified JWT claims.
+    /// Claim normalization behavior for authenticated CONNECT JWTs.
+    pub auth_claims_config: crate::auth::AuthClaimsConfig,
+    /// Broker-local route-family resolver for verified identity claims.
+    pub route_family_resolver: crate::auth::RouteFamilyResolverConfig,
+    /// Provisioned RouteFamily values accepted after identity resolution.
     pub route_families: Vec<u32>,
     /// Maximum concurrent connections
     pub max_connections: usize,
@@ -491,6 +495,8 @@ impl Default for BootConfig {
             stream_storage_layout: StreamStorageLayout::from_env(),
             auth_required,
             auth_config: crate::auth::AuthConfig::from_env(auth_required),
+            auth_claims_config: crate::auth::AuthClaimsConfig::from_env(),
+            route_family_resolver: crate::auth::RouteFamilyResolverConfig::from_env(),
             route_families,
             max_connections: 10_000,
             max_frame_size: 1024 * 1024,
@@ -553,6 +559,22 @@ impl BootConfig {
         self
     }
 
+    pub fn with_auth_claims_config(
+        mut self,
+        auth_claims_config: crate::auth::AuthClaimsConfig,
+    ) -> Self {
+        self.auth_claims_config = auth_claims_config;
+        self
+    }
+
+    pub fn with_route_family_resolver(
+        mut self,
+        route_family_resolver: crate::auth::RouteFamilyResolverConfig,
+    ) -> Self {
+        self.route_family_resolver = route_family_resolver;
+        self
+    }
+
     pub fn with_route_families(mut self, route_families: Vec<u32>) -> Self {
         self.route_families = route_families;
         self
@@ -593,6 +615,12 @@ impl BootConfig {
                 .into());
             }
         }
+        self.auth_claims_config
+            .validate()
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+        self.route_family_resolver
+            .validate(&self.route_families, self.auth_required)
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
     }
 }
@@ -618,6 +646,47 @@ mod tests {
             None => unsafe {
                 std::env::remove_var(key);
             },
+        }
+
+        result
+    }
+
+    fn with_auth_env<T>(values: &[(&str, &str)], test: impl FnOnce() -> T) -> T {
+        let keys = [
+            "FITZ_AUTH_REQUIRED",
+            "FITZ_JWT_HMAC_SECRET",
+            "FITZ_JWT_AUDIENCE",
+            "FITZ_JWT_AUDIENCES",
+            "FITZ_JWT_JWKS_MAP",
+            "FITZ_ROUTE_FAMILIES",
+            "FITZ_ROUTE_FAMILY_MAP",
+            "FITZ_ROUTE_FAMILY_CLAIM",
+            "FITZ_AUTH_CUSTOM_CLAIM",
+            "FITZ_AUTH_ALLOW_JWT_ROUTE_FAMILY",
+        ];
+        let previous = keys
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+
+        unsafe {
+            for key in keys {
+                std::env::remove_var(key);
+            }
+            for (key, value) in values {
+                std::env::set_var(key, value);
+            }
+        }
+
+        let result = test();
+
+        unsafe {
+            for (key, value) in previous {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
         }
 
         result
@@ -700,6 +769,11 @@ mod tests {
         assert_eq!(config.cloud_durability, CloudDurabilityMode::Background);
         assert_eq!(config.storage_memtable, StorageMemtableConfig::Auto);
         assert_eq!(config.route_families, vec![1]);
+        assert_eq!(
+            config.auth_claims_config.identity_claim,
+            crate::auth::DEFAULT_ROUTE_FAMILY_CLAIM
+        );
+        assert!(config.route_family_resolver.mappings.is_empty());
         assert_eq!(
             config.stream_storage_layout,
             StreamStorageLayout::PromotionFrontier
@@ -863,6 +937,130 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn should_read_route_family_identity_map_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_ROUTE_FAMILIES", "1,2,3"),
+                ("FITZ_ROUTE_FAMILY_MAP", "abc=1,xyz=2,zzz=3"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config =
+                    BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+
+                // Assert
+                assert_eq!(config.route_family_resolver.mappings.get("abc"), Some(&1));
+                assert_eq!(config.route_family_resolver.mappings.get("xyz"), Some(&2));
+                assert_eq!(config.route_family_resolver.mappings.get("zzz"), Some(&3));
+                assert!(config.validate().is_ok());
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_duplicate_route_family_identity_mapping() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_ROUTE_FAMILY_MAP", "abc=1,abc=2"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config =
+                    BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("duplicate identity"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_zero_route_family_identity_mapping() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_ROUTE_FAMILY_MAP", "abc=0"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config =
+                    BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result.unwrap_err().to_string().contains("route family 0"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_invalid_route_family_identity_mapping_integer() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_ROUTE_FAMILY_MAP", "abc=two"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config =
+                    BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("must be an unsigned integer"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_unprovisioned_route_family_identity_mapping() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_ROUTE_FAMILIES", "1"),
+                ("FITZ_ROUTE_FAMILY_MAP", "xyz=2"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config =
+                    BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result.unwrap_err().to_string().contains("unprovisioned"));
+            },
+        );
     }
 
     #[test]

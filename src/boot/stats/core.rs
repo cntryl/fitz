@@ -2,7 +2,6 @@ use super::Runtime;
 use crate::boot::domains::DomainHandles;
 use crate::runtime::Router;
 use crate::session::manager::RuntimeIngress;
-use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -171,20 +170,7 @@ impl Runtime {
     }
 
     pub fn active_realms(&self) -> Vec<String> {
-        let Some(ingress) = self.ingress.read().clone() else {
-            return vec![];
-        };
-
-        let mut realms = BTreeSet::new();
-        for session in ingress.active_sessions() {
-            if let Some(claims) = &session.claims {
-                if !claims.tenant.is_empty() {
-                    realms.insert(claims.tenant.clone());
-                }
-            }
-        }
-
-        realms.into_iter().collect()
+        Vec::new()
     }
 
     pub fn messages_per_second(&self) -> f64 {

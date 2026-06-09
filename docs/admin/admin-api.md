@@ -588,9 +588,12 @@ If multiple operations exist under the same resource, `cron` is omitted and `nex
 ## Sessions & Connections
 ### List Active Sessions
 ```
-GET /admin/sessions?realm={realm}
+GET /admin/sessions
 ```
-`realm` filters by the session's application-visible realm label only. It is not a `route_family` selector, fallback, or alias.
+Active-session snapshots expose broker-local session identity, resolved
+`route_family`, and the identity claim/value used for route-family resolution.
+They do not expose or synthesize a session realm; realm remains part of Fitz
+routes and resource identities.
 
 **Response**:
 ```json
@@ -598,7 +601,10 @@ GET /admin/sessions?realm={realm}
   "sessions": [
     {
       "session_id": "sess_abc123",
-      "realm": "prod",
+      "route_family": 2,
+      "subject": "auth0|user123",
+      "identity_claim": "org_id",
+      "identity_value": "org_xyz",
       "connected_at": "2026-01-31T10:00:00Z",
       "idle_seconds": 45,
       "messages_received": 1847,

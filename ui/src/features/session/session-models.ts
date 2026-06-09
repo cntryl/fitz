@@ -12,15 +12,17 @@ export interface ActiveSession {
   key: string;
   connectedAt?: string;
   idleSeconds?: number;
+  identityClaim?: string;
+  identityValue?: string;
   messagesReceived?: number;
   messagesSent?: number;
-  realm?: string;
   remoteAddress?: string;
+  routeFamily?: number;
   sessionId?: string;
+  subject?: string;
   transport?: string;
 }
 
 export interface ActiveSessionsOverview {
-  realm?: string;
   sessions: ActiveSession[];
 }

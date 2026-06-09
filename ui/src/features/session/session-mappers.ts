@@ -22,7 +22,7 @@ export function mapLoginPayload(payload: LoginPayload): LoginRequest {
 }
 
 export function mapActiveSession(dto: SessionInfo): ActiveSession {
-  const key = [dto.session_id, dto.realm, dto.remote_addr, dto.connected_at]
+  const key = [dto.session_id, dto.route_family, dto.identity_value, dto.remote_addr, dto.connected_at]
     .filter((value) => value != null && value !== "")
     .join(":");
 
@@ -30,21 +30,20 @@ export function mapActiveSession(dto: SessionInfo): ActiveSession {
     key: key || "session",
     connectedAt: dto.connected_at,
     idleSeconds: dto.idle_seconds,
+    identityClaim: dto.identity_claim,
+    identityValue: dto.identity_value,
     messagesReceived: dto.messages_received,
     messagesSent: dto.messages_sent,
-    realm: dto.realm,
     remoteAddress: dto.remote_addr,
+    routeFamily: dto.route_family,
     sessionId: dto.session_id,
+    subject: dto.subject,
     transport: dto.transport,
   };
 }
 
-export function mapActiveSessionsOverview(
-  realm: string | undefined,
-  sessions: SessionInfo[],
-): ActiveSessionsOverview {
+export function mapActiveSessionsOverview(sessions: SessionInfo[]): ActiveSessionsOverview {
   return {
-    realm,
     sessions: sessions.map(mapActiveSession),
   };
 }

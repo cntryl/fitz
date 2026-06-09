@@ -108,14 +108,15 @@ This is a hard Fitz rule:
 - Receive raw frame from transport
 - **First frame MUST be CONNECT** with JWT payload
 - Validate JWT signature and claims (must validate signature; do NOT trust client parsing)
-- Extract JWT claims: `realm`, `areas` (array), `scopes` (array), `fitz.route_family` (provisioned non-zero integer)
-- Treat `realm` as an opaque application-defined namespace boundary. Treat `fitz.route_family` as a separate broker-internal routing key, never as a realm fallback or synonym.
+- Extract JWT identity context (`tid` by default, or configured claim such as Auth0 `org_id`) and resolve it through the broker's route-family map
+- Extract route-shaped permissions from the configured custom claim, top-level `permissions`, or `scope`/`scp`
+- Treat `realm` as an opaque route component authorized by permission patterns. Treat RouteFamily as a separate broker-internal routing key, never as a realm fallback or synonym.
 - Establish session with extracted claims
 - Assign unique session ID (internal; NOT sent to client)
 - For each subsequent frame:
   - Parse TLV header (MessageType, length)
   - Extract route scheme (kv, notice, rpc, etc.)
-  - Check permissions: realm match, area match, verb scope match
+  - Check route-shaped permissions against the frame's authorization route and access level
   - If permission check fails: return domain error with code ERR_UNAUTHORIZED
   - Route to appropriate domain via Router
 - Return response bytes to transport
@@ -581,14 +582,13 @@ Brokers MUST validate JWT in CONNECT handshake:
 2. **Expiration Check:** Check `exp` claim against current time
    - Reject if expired
 3. **Claim Extraction:** Extract required claims:
-   - `realm` (string): Route realm must match exactly
-   - `areas` (array of strings): Route area must be in array
-   - `scopes` (array of strings): Verb must be in scopes (e.g., `kv:read`, `notice:subscribe`)
-   - `fitz.route_family` (non-zero integer): Family must be provisioned by `FITZ_ROUTE_FAMILIES`
+   - `sub`: Subject identity
+   - configured route-family identity claim (`tid` by default, `org_id` for Auth0 Organizations)
+   - `permissions` or `scope`/`scp`: Route-shaped Fitz permissions or coarse OAuth scopes
+   - server-side route family from `FITZ_ROUTE_FAMILY_MAP`; the resolved family must be provisioned by `FITZ_ROUTE_FAMILIES`
 4. **Permission Enforcement:** For each request, verify:
-   - Route realm ∈ JWT realm (exact match)
-   - Route area ∈ JWT areas
-   - Request verb ∈ JWT scopes
+   - Request route matches a compiled permission pattern
+   - Requested access is granted by the matching permission access fragment
 If any check fails:
 - Reject with domain error code `*001` (ERR_UNAUTHORIZED)
 - Log rejection for audit

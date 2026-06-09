@@ -217,30 +217,36 @@ impl Runtime {
         self.admin_read_model.schedules(realm)
     }
 
-    pub fn list_sessions(&self, realm: Option<&str>) -> Vec<crate::api::admin::SessionInfo> {
+    pub fn list_sessions(&self) -> Vec<crate::api::admin::SessionInfo> {
         let Some(ingress) = self.ingress.read().clone() else {
-            return self.admin_read_model.sessions(realm);
+            return self.admin_read_model.sessions();
         };
 
         ingress
             .active_sessions()
             .into_iter()
-            .filter(|session| match realm {
-                Some(realm) => session.realm() == realm,
-                None => true,
-            })
-            .map(|session| crate::api::admin::SessionInfo {
-                session_id: session.session_id.to_string(),
-                realm: session.realm(),
-                connected_at: DateTime::<Utc>::from(session.connected_at()).to_rfc3339(),
-                idle_seconds: session.idle_seconds(),
-                messages_received: session.messages_received(),
-                messages_sent: session.messages_sent(),
-                transport: session.transport_kind.to_string(),
-                remote_addr: session
-                    .peer_addr
-                    .map(|addr| addr.to_string())
-                    .unwrap_or_default(),
+            .map(|session| {
+                let claims = session.claims.as_ref();
+                crate::api::admin::SessionInfo {
+                    session_id: session.session_id.to_string(),
+                    route_family: session.route_family.as_u64(),
+                    subject: claims.map(|claims| claims.sub.clone()).unwrap_or_default(),
+                    identity_claim: claims
+                        .and_then(|claims| claims.identity_claim.clone())
+                        .unwrap_or_default(),
+                    identity_value: claims
+                        .and_then(|claims| claims.identity_value.clone())
+                        .unwrap_or_default(),
+                    connected_at: DateTime::<Utc>::from(session.connected_at()).to_rfc3339(),
+                    idle_seconds: session.idle_seconds(),
+                    messages_received: session.messages_received(),
+                    messages_sent: session.messages_sent(),
+                    transport: session.transport_kind.to_string(),
+                    remote_addr: session
+                        .peer_addr
+                        .map(|addr| addr.to_string())
+                        .unwrap_or_default(),
+                }
             })
             .collect()
     }

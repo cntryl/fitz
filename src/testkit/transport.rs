@@ -163,6 +163,15 @@ impl TestServer {
             } else {
                 crate::auth::AuthConfig::Disabled
             },
+            auth_claims_config: crate::auth::AuthClaimsConfig::default(),
+            route_family_resolver: if auth_required {
+                crate::auth::RouteFamilyResolverConfig::from_mappings(
+                    crate::auth::DEFAULT_ROUTE_FAMILY_CLAIM,
+                    [("test-realm", 1), ("acme", 1)],
+                )
+            } else {
+                crate::auth::RouteFamilyResolverConfig::default()
+            },
             route_families: vec![1],
             max_connections: 1000,
             max_frame_size: 16_777_216, // 16 MB (test config allows larger frames than production 1 MB default)
@@ -690,25 +699,19 @@ pub fn generate_test_jwt(realm: &str) -> String {
     generate_test_jwt_for_family(realm, 1)
 }
 
-pub fn generate_test_jwt_for_family(realm: &str, route_family: u32) -> String {
+pub fn generate_test_jwt_for_family(realm: &str, _route_family: u32) -> String {
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
-    struct FitzClaims {
-        route_family: u32,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
     struct Claims {
-        iss: String,        // Issuer (empty for test, triggers no-verify path)
-        aud: String,        // Audience
-        tid: String,        // Realm identifier for auth routing
-        sub: String,        // Subject: realm
-        exp: i64,           // Expiration time
-        iat: i64,           // Issued at
-        roles: Vec<String>, // Permissions as role strings
-        fitz: FitzClaims,
+        iss: String,              // Issuer (empty for HMAC test tokens)
+        aud: String,              // Audience
+        tid: String,              // Identity value mapped to RouteFamily by the server
+        sub: String,              // Subject: realm
+        exp: i64,                 // Expiration time
+        iat: i64,                 // Issued at
+        permissions: Vec<String>, // Auth0-style permissions
     }
 
     let now = std::time::SystemTime::now()
@@ -723,7 +726,7 @@ pub fn generate_test_jwt_for_family(realm: &str, route_family: u32) -> String {
         sub: realm.to_string(),
         exp: now + 3600, // Valid for 1 hour
         iat: now,
-        roles: vec![
+        permissions: vec![
             format!("kv://{}/**#*", realm), // Full KV access for this realm
             format!("queue://{}/**#*", realm),
             format!("notice://{}/**#*", realm),
@@ -732,7 +735,6 @@ pub fn generate_test_jwt_for_family(realm: &str, route_family: u32) -> String {
             format!("lease://{}/**#*", realm),
             format!("schedule://{}/**#*", realm),
         ],
-        fitz: FitzClaims { route_family },
     };
 
     let mut header = Header::new(Algorithm::HS256);
@@ -752,11 +754,6 @@ pub fn generate_expired_jwt(realm: &str) -> String {
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
-    struct FitzClaims {
-        route_family: u32,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
     struct Claims {
         iss: String,
         aud: String,
@@ -764,8 +761,7 @@ pub fn generate_expired_jwt(realm: &str) -> String {
         sub: String,
         exp: i64,
         iat: i64,
-        roles: Vec<String>,
-        fitz: FitzClaims,
+        permissions: Vec<String>,
     }
 
     let now = std::time::SystemTime::now()
@@ -780,8 +776,7 @@ pub fn generate_expired_jwt(realm: &str) -> String {
         sub: realm.to_string(),
         exp: now - 3600, // Expired 1 hour ago
         iat: now - 7200,
-        roles: vec![format!("kv://{}/**#*", realm)],
-        fitz: FitzClaims { route_family: 1 },
+        permissions: vec![format!("kv://{}/**#*", realm)],
     };
 
     let header = Header::new(Algorithm::HS256);
@@ -800,11 +795,6 @@ pub fn generate_invalid_signature_jwt(realm: &str) -> String {
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
-    struct FitzClaims {
-        route_family: u32,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
     struct Claims {
         iss: String,
         aud: String,
@@ -812,8 +802,7 @@ pub fn generate_invalid_signature_jwt(realm: &str) -> String {
         sub: String,
         exp: i64,
         iat: i64,
-        roles: Vec<String>,
-        fitz: FitzClaims,
+        permissions: Vec<String>,
     }
 
     let now = std::time::SystemTime::now()
@@ -828,8 +817,7 @@ pub fn generate_invalid_signature_jwt(realm: &str) -> String {
         sub: realm.to_string(),
         exp: now + 3600,
         iat: now,
-        roles: vec![format!("kv://{}/**#*", realm)],
-        fitz: FitzClaims { route_family: 1 },
+        permissions: vec![format!("kv://{}/**#*", realm)],
     };
 
     let header = Header::new(Algorithm::HS256);

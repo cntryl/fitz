@@ -21,7 +21,11 @@ mod jwks;
 mod realm;
 mod token;
 
-pub use claims::{parse_jwt_noverify, Claims, RawClaims};
+pub use claims::{
+    parse_jwt_noverify, AuthClaimsConfig, Claims, RawClaims, RouteFamilyResolverConfig,
+    DEFAULT_ROUTE_FAMILY_CLAIM, ENV_AUTH_ALLOW_JWT_ROUTE_FAMILY, ENV_AUTH_CUSTOM_CLAIM,
+    ENV_ROUTE_FAMILY_CLAIM, ENV_ROUTE_FAMILY_MAP,
+};
 pub use errors::AuthError;
 pub use jwks::{
     cache_jwks_from_json, cache_jwks_from_json_with_ttl, derive_jwks_url_from_issuer,
@@ -235,36 +239,30 @@ fn now_epoch_secs() -> u64 {
         .unwrap_or(0)
 }
 
-// Legacy helper name: this resolves the normalized Fitz realm value from
-// external claim-source names like `tid`, `tenant_id`, or `org_id`.
-// It does not imply that realm is inherently a tenant, and it never consults
-// `route_family`.
-fn resolved_tenant_or_empty(raw_claims: &RawClaims) -> String {
-    raw_claims
-        .tid
-        .clone()
-        .or_else(|| raw_claims.tenant_id.clone())
-        .or_else(|| raw_claims.org_id.clone())
-        .unwrap_or_default()
+#[derive(Debug, Clone)]
+pub struct VerifiedJwt {
+    pub permissions: crate::session::permissions::SessionPermissions,
+    pub claims: crate::auth::Claims,
+    pub raw_claims: RawClaims,
 }
 
-fn validated_session_claims(
+fn verified_session_claims(
     raw_claims: RawClaims,
     allowlist: &[&str],
     audiences: &[String],
-) -> Result<
-    (
-        crate::session::permissions::SessionPermissions,
-        crate::auth::Claims,
-    ),
-    String,
-> {
+    claims_config: &AuthClaimsConfig,
+) -> Result<VerifiedJwt, String> {
     let audience_refs = audiences.iter().map(String::as_str).collect::<Vec<_>>();
-    let claims = raw_claims.normalize(allowlist, &audience_refs, now_epoch_secs())?;
+    let claims =
+        raw_claims.normalize(allowlist, &audience_refs, now_epoch_secs(), claims_config)?;
     let session_perms = crate::session::permissions::SessionPermissions::from_permissions(
         claims.permissions.clone(),
     );
-    Ok((session_perms, claims))
+    Ok(VerifiedJwt {
+        permissions: session_perms,
+        claims,
+        raw_claims,
+    })
 }
 
 fn permissive_session_claims(
@@ -276,16 +274,15 @@ fn permissive_session_claims(
     ),
     String,
 > {
-    // Legacy local variable name retained for compatibility with `Claims.tenant`.
-    // Semantically this is the Fitz realm value normalized from external claim
-    // names, and it remains orthogonal to `route_family`.
-    let tenant = resolved_tenant_or_empty(&raw_claims);
-    let route_family = raw_claims.route_family()?;
-    let permissions = raw_claims.normalized_permissions()?;
+    let claims_config = AuthClaimsConfig::default();
+    let identity_value = raw_claims.identity_claim_value(&claims_config.identity_claim)?;
+    let permissions = raw_claims.normalized_permissions(claims_config.custom_claim.as_deref())?;
     let claims = crate::auth::Claims {
         sub: raw_claims.sub,
-        tenant,
-        route_family,
+        identity_claim: identity_value
+            .as_ref()
+            .map(|_| claims_config.identity_claim.clone()),
+        identity_value,
         roles: raw_claims.roles.unwrap_or_default(),
         permissions: permissions.clone(),
         exp: raw_claims.exp,
@@ -299,6 +296,8 @@ fn permissive_session_claims(
 /// This is a compatibility helper for OAuth2-style scope claims.
 pub fn map_coarse_scope(s: &str) -> Option<&'static str> {
     match s {
+        "kv.read" => Some("kv://**#read"),
+        "kv.write" => Some("kv://**#write"),
         "notice.read" => Some("notice://**#read"),
         "notice.write" => Some("notice://**#write"),
         "rpc.read" => Some("rpc://**#read"),
@@ -377,6 +376,22 @@ pub async fn permissions_from_jwt_using_jwks(
     ),
     String,
 > {
+    let verified = verified_jwt_using_jwks_with_claims_config(
+        compact,
+        issuer,
+        audiences,
+        &AuthClaimsConfig::default(),
+    )
+    .await?;
+    Ok((verified.permissions, verified.claims))
+}
+
+pub async fn verified_jwt_using_jwks_with_claims_config(
+    compact: &str,
+    issuer: &JwksIssuerConfig,
+    audiences: &[String],
+    claims_config: &AuthClaimsConfig,
+) -> Result<VerifiedJwt, String> {
     // Ensure jwks present or fetched
     crate::auth::jwks::ensure_jwks_cached(&issuer.jwks_url)
         .await
@@ -411,7 +426,12 @@ pub async fn permissions_from_jwt_using_jwks(
     let raw_claims: RawClaims = serde_json::from_value(token_data.claims)
         .map_err(|e| format!("json parse error: {}", e))?;
 
-    validated_session_claims(raw_claims, &[issuer.issuer.as_str()], audiences)
+    verified_session_claims(
+        raw_claims,
+        &[issuer.issuer.as_str()],
+        audiences,
+        claims_config,
+    )
 }
 
 /// Verify a JWT using the configured verification path.
@@ -430,6 +450,16 @@ pub async fn permissions_from_verified_jwt(
     ),
     String,
 > {
+    let verified =
+        verified_jwt_with_claims_config(compact, auth_config, &AuthClaimsConfig::default()).await?;
+    Ok((verified.permissions, verified.claims))
+}
+
+pub async fn verified_jwt_with_claims_config(
+    compact: &str,
+    auth_config: &AuthConfig,
+    claims_config: &AuthClaimsConfig,
+) -> Result<VerifiedJwt, String> {
     let raw_claims = parse_jwt_noverify(compact)?;
 
     match auth_config {
@@ -443,13 +473,19 @@ pub async fn permissions_from_verified_jwt(
                 token::verify_jwt_with_hmac_secret(compact, config.secret.as_bytes())?;
             let verified_raw: RawClaims = serde_json::from_value(claims_value)
                 .map_err(|e| format!("json parse error: {}", e))?;
-            validated_session_claims(verified_raw, &[], auth_config.audiences())
+            verified_session_claims(verified_raw, &[], auth_config.audiences(), claims_config)
         }
         AuthConfig::Jwks(_) => {
             let issuer = auth_config
                 .find_issuer(&raw_claims.iss)
                 .ok_or_else(|| "issuer not allowed".to_string())?;
-            permissions_from_jwt_using_jwks(compact, issuer, auth_config.audiences()).await
+            verified_jwt_using_jwks_with_claims_config(
+                compact,
+                issuer,
+                auth_config.audiences(),
+                claims_config,
+            )
+            .await
         }
     }
 }
@@ -515,7 +551,7 @@ mod auth_tests {
             "sub": "user:1",
             "exp": 9999999999u64,
             "tid": "realm1",
-            "fitz": { "route_family": 1, "permissions": ["stream://realm1/area1/orders/*#write"] }
+            "permissions": ["stream://realm1/area1/orders/*#write"]
         });
 
         let header = Header::new(Algorithm::HS256);
@@ -546,7 +582,7 @@ mod auth_tests {
             "sub": "user:1",
             "exp": 9_999_999_999u64,
             "tid": "realm1",
-            "fitz": { "route_family": 1, "permissions": ["stream://realm1/area1/orders/*#write"] }
+            "permissions": ["stream://realm1/area1/orders/*#write"]
         });
 
         let token = jsonwebtoken::encode(
@@ -578,7 +614,7 @@ mod auth_tests {
             "sub": "user:1",
             "exp": 9_999_999_999u64,
             "tid": "realm1",
-            "fitz": { "route_family": 1, "permissions": ["stream://realm1/area1/orders/*#write"] }
+            "permissions": ["stream://realm1/area1/orders/*#write"]
         });
         let token = jsonwebtoken::encode(
             &Header::new(Algorithm::HS256),
@@ -604,7 +640,7 @@ mod auth_tests {
             "exp": now + 300,
             "nbf": now + 120,
             "tid": "realm1",
-            "fitz": { "route_family": 1, "permissions": ["stream://realm1/area1/orders/*#write"] }
+            "permissions": ["stream://realm1/area1/orders/*#write"]
         });
         let token = jsonwebtoken::encode(
             &Header::new(Algorithm::HS256),
@@ -621,7 +657,7 @@ mod auth_tests {
     }
 
     #[tokio::test]
-    async fn should_reject_tokens_with_ambiguous_tenant_claims() {
+    async fn should_keep_configured_identity_claim_given_other_identity_claims() {
         let claims = json!({
             "iss": "",
             "aud": "fitz-broker",
@@ -629,7 +665,7 @@ mod auth_tests {
             "exp": 9_999_999_999u64,
             "tid": "realm1",
             "tenant_id": "realm2",
-            "fitz": { "route_family": 1, "permissions": ["stream://realm1/area1/orders/*#write"] }
+            "permissions": ["stream://realm1/area1/orders/*#write"]
         });
         let token = jsonwebtoken::encode(
             &Header::new(Algorithm::HS256),
@@ -641,12 +677,12 @@ mod auth_tests {
         let config = AuthConfig::hmac("test-secret-key", "fitz-broker");
         let result = permissions_from_verified_jwt(&token, &config).await;
 
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("exactly one tenant id"));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().1.identity_value.as_deref(), Some("realm1"));
     }
 
     #[test]
-    fn should_resolve_org_id_for_compact_jwt_given_primary_tenant_claims_missing() {
+    fn should_resolve_org_id_given_configured_identity_claim() {
         // Arrange
         let claims = json!({
             "iss": "",
@@ -654,31 +690,36 @@ mod auth_tests {
             "sub": "user:1",
             "exp": 9_999_999_999u64,
             "org_id": "realm-from-org",
-            "fitz": { "route_family": 1, "permissions": ["stream://realm-from-org/area1/orders/*#write"] }
+            "permissions": ["stream://realm-from-org/area1/orders/*#write"]
         });
-        let token = jsonwebtoken::encode(
-            &Header::new(Algorithm::HS256),
-            &claims,
-            &EncodingKey::from_secret(b"test-secret-key"),
-        )
-        .unwrap();
+        let raw_claims: RawClaims = serde_json::from_value(claims).unwrap();
 
         // Act
-        let (_perms, normalized_claims) = permissions_from_compact_jwt(&token).unwrap();
+        let normalized_claims = raw_claims
+            .normalize(
+                &[],
+                &["fitz-broker"],
+                0,
+                &AuthClaimsConfig::new("org_id", None, false),
+            )
+            .unwrap();
 
         // Assert
-        assert_eq!(normalized_claims.tenant, "realm-from-org");
+        assert_eq!(
+            normalized_claims.identity_value.as_deref(),
+            Some("realm-from-org")
+        );
     }
 
     #[test]
-    fn should_use_empty_tenant_for_hmac_jwt_given_no_tenant_claims() {
+    fn should_use_empty_identity_for_hmac_jwt_given_no_identity_claims() {
         // Arrange
         let claims = json!({
             "iss": "",
             "aud": "fitz-broker",
             "sub": "user:1",
             "exp": 9_999_999_999u64,
-            "fitz": { "route_family": 1, "permissions": ["stream://realm1/area1/orders/*#write"] }
+            "permissions": ["stream://realm1/area1/orders/*#write"]
         });
         let token = jsonwebtoken::encode(
             &Header::new(Algorithm::HS256),
@@ -692,6 +733,6 @@ mod auth_tests {
             permissions_from_hmac_jwt(&token, b"test-secret-key").unwrap();
 
         // Assert
-        assert_eq!(normalized_claims.tenant, "");
+        assert_eq!(normalized_claims.identity_value, None);
     }
 }

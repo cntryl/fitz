@@ -119,8 +119,8 @@ mod tests {
         // Create minimal claims for testing
         let claims = crate::auth::Claims {
             sub: "user:42".to_string(),
-            tenant: "prod".to_string(),
-            route_family: 1,
+            identity_claim: Some("tid".to_string()),
+            identity_value: Some("prod".to_string()),
             roles: vec![],
             permissions: vec![p],
             exp: 9999999999,
