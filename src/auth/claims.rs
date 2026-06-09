@@ -1051,7 +1051,7 @@ mod claims_tests {
     }
 
     #[test]
-    fn should_support_entra_tid_and_scp_shape() {
+    fn should_support_entra_scp_shape() {
         // Arrange
         let payload = serde_json::json!({
             "iss": "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0",
@@ -1092,7 +1092,7 @@ mod claims_tests {
     }
 
     #[test]
-    fn should_support_cognito_custom_identity_and_scope_shape() {
+    fn should_support_cognito_scope_shape() {
         // Arrange
         let payload = serde_json::json!({
             "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_Example",
@@ -1129,7 +1129,7 @@ mod claims_tests {
     }
 
     #[test]
-    fn should_support_okta_namespaced_identity_and_custom_permissions_shape() {
+    fn should_support_okta_custom_permissions_shape() {
         // Arrange
         let payload = serde_json::json!({
             "iss": "https://dev-123456.okta.com/oauth2/default",
