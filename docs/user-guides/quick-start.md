@@ -18,8 +18,8 @@ JWT must be signed and must include:
 - `sub` — subject identity
 - `aud` — one of the broker audiences configured by `FITZ_JWT_AUDIENCES`
 - `exp` — token expiration time
-- the configured identity claim — `tid` by default, or `org_id` for Auth0 Organizations
-- one supported permission source — configured custom permissions claim, top-level `permissions`, configured role claim array, `scp`, or `scope`
+- the configured identity claim — `tid` by default, or an override via `FITZ_AUTH_ORG_CLAIM` before `FITZ_ROUTE_FAMILY_CLAIM`
+- one supported permission source — configured custom permissions claim, top-level `permissions`, configured `FITZ_AUTH_PERMISSIONS_CLAIM` array, configured role claim array, `scp`, or `scope`
 - `iss` when using JWKS mode; it must match a configured issuer
 
 Configure `FITZ_ROUTE_FAMILY_MAP`, such as `FITZ_ROUTE_FAMILY_MAP=xyz=2`,
@@ -31,7 +31,7 @@ Common identity-provider setups:
 
 | Provider | Identity claim | Permission source | Example Fitz env |
 | --- | --- | --- | --- |
-| Auth0 Organizations | `org_id` | top-level `permissions` | `FITZ_ROUTE_FAMILY_CLAIM=org_id` and `FITZ_ROUTE_FAMILY_MAP=org_acme=1` |
+| Auth0 Organizations | `org_id` or namespaced override | top-level `permissions` or `FITZ_AUTH_PERMISSIONS_CLAIM` | `FITZ_AUTH_ORG_CLAIM=fitz://org_id` and `FITZ_ROUTE_FAMILY_MAP=org_acme=1` |
 | Microsoft Entra ID delegated | `tid` | `scp` | `FITZ_ROUTE_FAMILY_CLAIM=tid` and `FITZ_ROUTE_FAMILY_MAP=<tenant-guid>=1` |
 | Microsoft Entra ID app-only | `tid` | `roles` | `FITZ_ROUTE_FAMILY_CLAIM=tid` and `FITZ_ROUTE_FAMILY_MAP=<tenant-guid>=1` |
 | Amazon Cognito | `custom:tenant_id` or `sub` | `scope` | `FITZ_ROUTE_FAMILY_CLAIM=custom:tenant_id` and `FITZ_ROUTE_FAMILY_MAP=acme=1` |

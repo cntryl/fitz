@@ -10,6 +10,8 @@ pub const ENV_ROUTE_FAMILY_CLAIM: &str = "FITZ_ROUTE_FAMILY_CLAIM";
 pub const ENV_ROUTE_FAMILY_MAP: &str = "FITZ_ROUTE_FAMILY_MAP";
 pub const ENV_AUTH_CUSTOM_CLAIM: &str = "FITZ_AUTH_CUSTOM_CLAIM";
 pub const ENV_AUTH_ROLE_CLAIM: &str = "FITZ_AUTH_ROLE_CLAIM";
+pub const ENV_AUTH_ORG_CLAIM: &str = "FITZ_AUTH_ORG_CLAIM";
+pub const ENV_AUTH_PERMISSIONS_CLAIM: &str = "FITZ_AUTH_PERMISSIONS_CLAIM";
 
 const REMOVED_ENV_AUTH_ALLOW_JWT_ROUTE_FAMILY: &str = "FITZ_AUTH_ALLOW_JWT_ROUTE_FAMILY";
 
@@ -19,6 +21,8 @@ pub struct AuthClaimsConfig {
     pub identity_claim: String,
     pub custom_claim: Option<String>,
     pub role_claim: String,
+    pub org_claim_override: Option<String>,
+    pub permissions_claim_override: Option<String>,
     invalid_reason: Option<String>,
 }
 
@@ -28,6 +32,8 @@ impl Default for AuthClaimsConfig {
             DEFAULT_ROUTE_FAMILY_CLAIM.to_string(),
             None,
             DEFAULT_ROLE_CLAIM.to_string(),
+            None,
+            None,
             None,
         )
     }
@@ -40,11 +46,15 @@ impl AuthClaimsConfig {
         let custom_claim = env_non_empty(ENV_AUTH_CUSTOM_CLAIM);
         let role_claim =
             env_non_empty(ENV_AUTH_ROLE_CLAIM).unwrap_or_else(|| DEFAULT_ROLE_CLAIM.to_string());
+        let org_claim_override = env_non_empty(ENV_AUTH_ORG_CLAIM);
+        let permissions_claim_override = env_non_empty(ENV_AUTH_PERMISSIONS_CLAIM);
 
         Self::from_parts(
             identity_claim,
             custom_claim,
             role_claim,
+            org_claim_override,
+            permissions_claim_override,
             removed_legacy_route_family_env_reason(),
         )
     }
@@ -54,19 +64,47 @@ impl AuthClaimsConfig {
         custom_claim: Option<String>,
         role_claim: impl Into<String>,
     ) -> Self {
-        Self::from_parts(identity_claim.into(), custom_claim, role_claim.into(), None)
+        Self::from_parts(
+            identity_claim.into(),
+            custom_claim,
+            role_claim.into(),
+            None,
+            None,
+            None,
+        )
+    }
+
+    pub fn new_with_overrides(
+        identity_claim: impl Into<String>,
+        custom_claim: Option<String>,
+        role_claim: impl Into<String>,
+        org_claim_override: Option<String>,
+        permissions_claim_override: Option<String>,
+    ) -> Self {
+        Self::from_parts(
+            identity_claim.into(),
+            custom_claim,
+            role_claim.into(),
+            org_claim_override,
+            permissions_claim_override,
+            None,
+        )
     }
 
     fn from_parts(
         identity_claim: String,
         custom_claim: Option<String>,
         role_claim: String,
+        org_claim_override: Option<String>,
+        permissions_claim_override: Option<String>,
         invalid_reason: Option<String>,
     ) -> Self {
         Self {
             identity_claim,
             custom_claim,
             role_claim,
+            org_claim_override,
+            permissions_claim_override,
             invalid_reason,
         }
     }
@@ -90,6 +128,20 @@ impl AuthClaimsConfig {
                 "{ENV_AUTH_CUSTOM_CLAIM}=fitz is no longer supported; emit permissions directly or use a namespaced custom claim"
             ));
         }
+        if self
+            .org_claim_override
+            .as_ref()
+            .is_some_and(|claim| claim.trim().is_empty())
+        {
+            return Err(format!("{ENV_AUTH_ORG_CLAIM} must not be empty"));
+        }
+        if self
+            .permissions_claim_override
+            .as_ref()
+            .is_some_and(|claim| claim.trim().is_empty())
+        {
+            return Err(format!("{ENV_AUTH_PERMISSIONS_CLAIM} must not be empty"));
+        }
         if self.role_claim.trim().is_empty() {
             return Err(format!("{ENV_AUTH_ROLE_CLAIM} must not be empty"));
         }
@@ -101,6 +153,23 @@ impl AuthClaimsConfig {
         if self.custom_claim.as_deref() == Some(self.role_claim.as_str()) {
             return Err(format!(
                 "{ENV_AUTH_ROLE_CLAIM} must not match {ENV_AUTH_CUSTOM_CLAIM}"
+            ));
+        }
+        if self.org_claim_override.as_deref() == Some(self.role_claim.as_str()) {
+            return Err(format!(
+                "{ENV_AUTH_ORG_CLAIM} must not match {ENV_AUTH_ROLE_CLAIM}"
+            ));
+        }
+        if self.permissions_claim_override.as_deref() == Some(self.role_claim.as_str()) {
+            return Err(format!(
+                "{ENV_AUTH_PERMISSIONS_CLAIM} must not match {ENV_AUTH_ROLE_CLAIM}"
+            ));
+        }
+        if self.custom_claim.as_deref() == self.permissions_claim_override.as_deref()
+            && self.permissions_claim_override.is_some()
+        {
+            return Err(format!(
+                "{ENV_AUTH_PERMISSIONS_CLAIM} must not match {ENV_AUTH_CUSTOM_CLAIM}"
             ));
         }
         if matches!(self.role_claim.as_str(), "permissions" | "scope" | "scp") {
@@ -116,13 +185,19 @@ impl AuthClaimsConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteFamilyResolverConfig {
     pub identity_claim: String,
+    pub org_claim_override: Option<String>,
     pub mappings: HashMap<String, u32>,
     invalid_reason: Option<String>,
 }
 
 impl Default for RouteFamilyResolverConfig {
     fn default() -> Self {
-        Self::from_parts(DEFAULT_ROUTE_FAMILY_CLAIM.to_string(), HashMap::new(), None)
+        Self::from_parts(
+            DEFAULT_ROUTE_FAMILY_CLAIM.to_string(),
+            None,
+            HashMap::new(),
+            None,
+        )
     }
 }
 
@@ -130,10 +205,12 @@ impl RouteFamilyResolverConfig {
     pub fn from_env() -> Self {
         let identity_claim = env_non_empty(ENV_ROUTE_FAMILY_CLAIM)
             .unwrap_or_else(|| DEFAULT_ROUTE_FAMILY_CLAIM.to_string());
+        let org_claim_override = env_non_empty(ENV_AUTH_ORG_CLAIM);
         let (mappings, map_error) = parse_route_family_map_env();
 
         Self::from_parts(
             identity_claim,
+            org_claim_override,
             mappings,
             removed_legacy_route_family_env_reason().or(map_error),
         )
@@ -145,6 +222,7 @@ impl RouteFamilyResolverConfig {
     ) -> Self {
         Self::from_parts(
             identity_claim.into(),
+            None,
             mappings
                 .into_iter()
                 .map(|(identity, family)| (identity.into(), family))
@@ -155,11 +233,13 @@ impl RouteFamilyResolverConfig {
 
     fn from_parts(
         identity_claim: String,
+        org_claim_override: Option<String>,
         mappings: HashMap<String, u32>,
         invalid_reason: Option<String>,
     ) -> Self {
         Self {
             identity_claim,
+            org_claim_override,
             mappings,
             invalid_reason,
         }
@@ -209,6 +289,18 @@ impl RouteFamilyResolverConfig {
     }
 
     pub fn resolve(&self, raw_claims: &RawClaims) -> Result<u32, String> {
+        if let Some(org_claim) = self.org_claim_override.as_deref() {
+            if let Some(identity_value) = raw_claims.identity_claim_value(org_claim)? {
+                if let Some(family) = self.mappings.get(&identity_value) {
+                    return Ok(*family);
+                }
+                return Err(format!(
+                    "route family identity claim {}={} is not mapped by {}",
+                    org_claim, identity_value, ENV_ROUTE_FAMILY_MAP
+                ));
+            }
+        }
+
         let Some(identity_value) = raw_claims.identity_claim_value(&self.identity_claim)? else {
             return Err(format!(
                 "route family identity claim '{}' is required",
@@ -421,6 +513,7 @@ impl RawClaims {
     pub fn normalized_permissions(
         &self,
         custom_claim: Option<&str>,
+        permissions_claim_override: Option<&str>,
         role_claim: &str,
     ) -> Result<Vec<Permission>, String> {
         // 1) configured namespaced custom claim
@@ -440,17 +533,24 @@ impl RawClaims {
             );
         }
 
-        // 3) configured role claim
+        // 3) configured permissions override claim
+        if let Some(claim_name) = permissions_claim_override {
+            if let Some(perms) = self.string_array_claim(claim_name, "permission")? {
+                return parse_permission_values(claim_name, perms, false, "permission");
+            }
+        }
+
+        // 4) configured role claim
         if let Some(roles) = self.string_array_claim(role_claim, "role")? {
             return parse_permission_values(role_claim, roles, false, "role");
         }
 
-        // 4) scp
+        // 5) scp
         if let Some(scp) = &self.scp {
             return parse_permission_values("scp", scope_claim_values(scp), true, "scope string");
         }
 
-        // 5) scope
+        // 6) scope
         if let Some(scope) = &self.scope {
             return parse_permission_values(
                 "scope",
@@ -666,14 +766,28 @@ impl RawClaims {
     ) -> Result<Claims, String> {
         // Basic validation (issuer, audience, time checks, legacy route-family policy)
         self.validate(allowlist, audiences, now, claims_config)?;
-        let identity_value = self.identity_claim_value(&claims_config.identity_claim)?;
-        let identity_claim = identity_value
-            .as_ref()
-            .map(|_| claims_config.identity_claim.clone());
+        let identity_value = if let Some(claim_name) = claims_config.org_claim_override.as_deref() {
+            if let Some(identity) = self.identity_claim_value(claim_name)? {
+                Some(identity)
+            } else {
+                self.identity_claim_value(&claims_config.identity_claim)?
+            }
+        } else {
+            self.identity_claim_value(&claims_config.identity_claim)?
+        };
+        let identity_claim = identity_value.as_ref().map(|_| {
+            if let Some(claim_name) = claims_config.org_claim_override.as_deref() {
+                if self.extra.contains_key(claim_name) {
+                    return claim_name.to_string();
+                }
+            }
+            claims_config.identity_claim.clone()
+        });
 
         // Permissions (normalize using existing helper)
         let permissions = self.normalized_permissions(
             claims_config.custom_claim.as_deref(),
+            claims_config.permissions_claim_override.as_deref(),
             &claims_config.role_claim,
         )?;
 
@@ -710,7 +824,7 @@ mod claims_tests {
         // Act
         let claims = parse_jwt_noverify(&jwt).expect("parse jwt");
         let perms = claims
-            .normalized_permissions(None, DEFAULT_ROLE_CLAIM)
+            .normalized_permissions(None, None, DEFAULT_ROLE_CLAIM)
             .expect("perms");
 
         // Assert
@@ -955,7 +1069,11 @@ mod claims_tests {
         // Act
         let raw = parse_jwt_noverify(&jwt).expect("parse jwt");
         let permissions = raw
-            .normalized_permissions(Some("https://fitz.example.com/claims"), DEFAULT_ROLE_CLAIM)
+            .normalized_permissions(
+                Some("https://fitz.example.com/claims"),
+                None,
+                DEFAULT_ROLE_CLAIM,
+            )
             .expect("permissions");
 
         // Assert
@@ -978,7 +1096,7 @@ mod claims_tests {
 
         // Act
         let permissions = raw
-            .normalized_permissions(None, DEFAULT_ROLE_CLAIM)
+            .normalized_permissions(None, None, DEFAULT_ROLE_CLAIM)
             .expect("permissions");
 
         // Assert
@@ -1002,7 +1120,7 @@ mod claims_tests {
 
         // Act
         let permissions = raw
-            .normalized_permissions(None, DEFAULT_ROLE_CLAIM)
+            .normalized_permissions(None, None, DEFAULT_ROLE_CLAIM)
             .expect("permissions");
 
         // Assert
@@ -1026,7 +1144,7 @@ mod claims_tests {
 
         // Act
         let permissions = raw
-            .normalized_permissions(None, DEFAULT_ROLE_CLAIM)
+            .normalized_permissions(None, None, DEFAULT_ROLE_CLAIM)
             .expect("permissions");
 
         // Assert
@@ -1109,7 +1227,7 @@ mod claims_tests {
         let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
 
         // Act
-        let result = raw.normalized_permissions(None, DEFAULT_ROLE_CLAIM);
+        let result = raw.normalized_permissions(None, None, DEFAULT_ROLE_CLAIM);
 
         // Assert
         assert!(result.unwrap_err().contains("role claim 'roles'"));
@@ -1163,6 +1281,213 @@ mod claims_tests {
         assert!(result
             .unwrap_err()
             .contains("FITZ_AUTH_ROLE_CLAIM must not overlap with top-level permission sources"));
+    }
+
+    #[test]
+    fn should_prefer_org_claim_override_over_identity_claim() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://tenant.auth0.com/",
+            "aud": "https://fitz.example.com/api",
+            "sub": "auth0|user-1",
+            "exp": 9999999999u64,
+            "tid": "tid-realm",
+            "fitz://org_id": "org-realm",
+            "permissions": ["notice://prod/orders/**#read"]
+        });
+        let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
+        let claims_config = AuthClaimsConfig::new_with_overrides(
+            "tid",
+            None,
+            DEFAULT_ROLE_CLAIM,
+            Some("fitz://org_id".to_string()),
+            None,
+        );
+
+        // Act
+        let normalized = raw
+            .normalize(
+                &["https://tenant.auth0.com/"],
+                &["https://fitz.example.com/api"],
+                0,
+                &claims_config,
+            )
+            .expect("normalize");
+
+        // Assert
+        assert_eq!(normalized.identity_claim.as_deref(), Some("fitz://org_id"));
+        assert_eq!(normalized.identity_value.as_deref(), Some("org-realm"));
+    }
+
+    #[test]
+    fn should_fallback_to_identity_claim_when_org_claim_override_missing() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://tenant.auth0.com/",
+            "aud": "https://fitz.example.com/api",
+            "sub": "auth0|user-1",
+            "exp": 9999999999u64,
+            "tid": "tid-realm",
+            "permissions": ["notice://prod/orders/**#read"]
+        });
+        let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
+        let claims_config = AuthClaimsConfig::new_with_overrides(
+            "tid",
+            None,
+            DEFAULT_ROLE_CLAIM,
+            Some("fitz://org_id".to_string()),
+            None,
+        );
+
+        // Act
+        let normalized = raw
+            .normalize(
+                &["https://tenant.auth0.com/"],
+                &["https://fitz.example.com/api"],
+                0,
+                &claims_config,
+            )
+            .expect("normalize");
+
+        // Assert
+        assert_eq!(normalized.identity_claim.as_deref(), Some("tid"));
+        assert_eq!(normalized.identity_value.as_deref(), Some("tid-realm"));
+    }
+
+    #[test]
+    fn should_use_permissions_claim_override_before_role_claim() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://tenant.auth0.com/",
+            "aud": "https://fitz.example.com/api",
+            "sub": "auth0|user-1",
+            "exp": 9999999999u64,
+            "tid": "tid-realm",
+            "roles": ["notice.read"],
+            "fitz://permissions": ["notice://prod/orders/**#write"]
+        });
+        let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
+        let claims_config = AuthClaimsConfig::new_with_overrides(
+            "tid",
+            None,
+            DEFAULT_ROLE_CLAIM,
+            None,
+            Some("fitz://permissions".to_string()),
+        );
+
+        // Act
+        let normalized = raw
+            .normalize(
+                &["https://tenant.auth0.com/"],
+                &["https://fitz.example.com/api"],
+                0,
+                &claims_config,
+            )
+            .expect("normalize");
+
+        // Assert
+        assert_eq!(
+            normalized.permissions[0].raw,
+            "notice://prod/orders/**#write"
+        );
+    }
+
+    #[test]
+    fn should_prefer_top_level_permissions_over_permissions_claim_override() {
+        // Arrange
+        let payload = serde_json::json!({
+            "iss": "https://tenant.auth0.com/",
+            "aud": "https://fitz.example.com/api",
+            "sub": "auth0|user-1",
+            "exp": 9999999999u64,
+            "tid": "tid-realm",
+            "permissions": ["notice://prod/orders/**#read"],
+            "fitz://permissions": ["notice://prod/orders/**#write"]
+        });
+        let raw: crate::auth::RawClaims = serde_json::from_value(payload).expect("raw claims");
+        let claims_config = AuthClaimsConfig::new_with_overrides(
+            "tid",
+            None,
+            DEFAULT_ROLE_CLAIM,
+            None,
+            Some("fitz://permissions".to_string()),
+        );
+
+        // Act
+        let normalized = raw
+            .normalize(
+                &["https://tenant.auth0.com/"],
+                &["https://fitz.example.com/api"],
+                0,
+                &claims_config,
+            )
+            .expect("normalize");
+
+        // Assert
+        assert_eq!(
+            normalized.permissions[0].raw,
+            "notice://prod/orders/**#read"
+        );
+    }
+
+    #[test]
+    fn should_reject_permissions_override_matching_role_claim() {
+        // Arrange
+        let config = AuthClaimsConfig::new_with_overrides(
+            "tid",
+            None,
+            "fitz://permissions",
+            None,
+            Some("fitz://permissions".to_string()),
+        );
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result
+            .unwrap_err()
+            .contains("FITZ_AUTH_PERMISSIONS_CLAIM must not match FITZ_AUTH_ROLE_CLAIM"));
+    }
+
+    #[test]
+    fn should_reject_permissions_override_matching_custom_claim() {
+        // Arrange
+        let config = AuthClaimsConfig::new_with_overrides(
+            "tid",
+            Some("fitz://permissions".to_string()),
+            DEFAULT_ROLE_CLAIM,
+            None,
+            Some("fitz://permissions".to_string()),
+        );
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result
+            .unwrap_err()
+            .contains("FITZ_AUTH_PERMISSIONS_CLAIM must not match FITZ_AUTH_CUSTOM_CLAIM"));
+    }
+
+    #[test]
+    fn should_reject_org_override_matching_role_claim() {
+        // Arrange
+        let config = AuthClaimsConfig::new_with_overrides(
+            "tid",
+            None,
+            "fitz://org_id",
+            Some("fitz://org_id".to_string()),
+            None,
+        );
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result
+            .unwrap_err()
+            .contains("FITZ_AUTH_ORG_CLAIM must not match FITZ_AUTH_ROLE_CLAIM"));
     }
 
     #[test]

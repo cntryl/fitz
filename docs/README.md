@@ -52,9 +52,10 @@ For a short durability contract page, read [user-guides/transaction-durability-c
 
 1. [user-guides/overview.md](user-guides/overview.md)
 2. [user-guides/quick-start.md](user-guides/quick-start.md)
-3. [user-guides/auth0.md](user-guides/auth0.md)
-4. [user-guides/api-guide.md](user-guides/api-guide.md)
-5. [user-guides/troubleshooting.md](user-guides/troubleshooting.md)
+3. [user-guides/vars.md](user-guides/vars.md)
+4. [user-guides/auth0.md](user-guides/auth0.md)
+5. [user-guides/api-guide.md](user-guides/api-guide.md)
+6. [user-guides/troubleshooting.md](user-guides/troubleshooting.md)
 
 ## Important Positioning
 

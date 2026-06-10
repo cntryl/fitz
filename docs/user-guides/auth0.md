@@ -73,6 +73,22 @@ the numeric route families provisioned on this Fitz node. A token with
 `org_id=org_acme` resolves to route family `1`; a token with `org_id=org_beta`
 resolves to route family `2`.
 
+## Namespaced Claim Overrides
+
+If your Auth0 tenant emits namespaced custom claims instead of plain `org_id`
+or top-level `permissions`, configure override env vars:
+
+```sh
+FITZ_AUTH_ORG_CLAIM=fitz://org_id
+FITZ_AUTH_PERMISSIONS_CLAIM=fitz://permissions
+```
+
+Identity resolution checks `FITZ_AUTH_ORG_CLAIM` first and falls back to
+`FITZ_ROUTE_FAMILY_CLAIM` when the override claim is missing. Permission
+normalization order remains fixed: `FITZ_AUTH_CUSTOM_CLAIM`, top-level
+`permissions`, `FITZ_AUTH_PERMISSIONS_CLAIM`, `FITZ_AUTH_ROLE_CLAIM`, `scp`,
+then `scope`.
+
 ## Custom Permission Claim
 
 The recommended Auth0 path is top-level `permissions`. If you need a namespaced

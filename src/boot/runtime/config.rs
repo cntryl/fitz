@@ -1118,6 +1118,88 @@ mod tests {
 
     #[test]
     #[serial]
+    fn should_read_org_claim_override_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_AUTH_ORG_CLAIM", "fitz://org_id"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config =
+                    BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+
+                // Assert
+                assert_eq!(
+                    config.auth_claims_config.org_claim_override.as_deref(),
+                    Some("fitz://org_id")
+                );
+                assert_eq!(
+                    config.route_family_resolver.org_claim_override.as_deref(),
+                    Some("fitz://org_id")
+                );
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_read_permissions_claim_override_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_AUTH_PERMISSIONS_CLAIM", "fitz://permissions"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config =
+                    BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+
+                // Assert
+                assert_eq!(
+                    config
+                        .auth_claims_config
+                        .permissions_claim_override
+                        .as_deref(),
+                    Some("fitz://permissions")
+                );
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_invalid_override_collisions_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_AUTH_CUSTOM_CLAIM", "fitz://permissions"),
+                ("FITZ_AUTH_PERMISSIONS_CLAIM", "fitz://permissions"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config =
+                    BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_AUTH_PERMISSIONS_CLAIM must not match FITZ_AUTH_CUSTOM_CLAIM"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
     fn should_reject_overlapping_role_claim_from_environment() {
         with_auth_env(
             &[
