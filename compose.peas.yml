@@ -1,0 +1,18 @@
+name: peas
+services:
+  peas:
+    container_name: peas
+    hostname: peas
+    image: ghcr.io/sqrzl/peas-emulator:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      BLOBS_PATH: /app/blobs
+      ACCESS_KEY_ID: admin
+      SECRET_ACCESS_KEY: easy-peasy
+    volumes:
+      - peas_blobs:/app/blobs
+
+volumes:
+  peas_blobs:

@@ -41,6 +41,9 @@ jobs:
       - name: Validate Test Structure
         run: cntryl-tools validate-tests
 
+      - name: Start peas emulator
+        run: docker compose -f compose.peas.yml up -d
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -53,4 +56,6 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-features
 
-        
+      - name: Stop peas emulator
+        if: always()
+        run: docker compose -f compose.peas.yml down
