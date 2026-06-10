@@ -66,6 +66,9 @@ cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "260e5e6406
 [build-dependencies]
 walkdir = "2"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+cntryl-midge = { git = "https://github.com/cntryl/midge", features = ["testkit", "uring"] }
+
 [dev-dependencies]
 url = "2"
 futures-util = "0.3"

@@ -461,7 +461,7 @@ dependencies = [
 [[package]]
 name = "cntryl-midge"
 version = "0.1.0"
-source = "git+https://github.com/cntryl/midge#fd4a6b21e0ae39d031893b3121c33c0a81ebe423"
+source = "git+https://github.com/cntryl/midge#9beabf20ba10aa12d4c94297755532a2d696b922"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -479,6 +479,7 @@ dependencies = [
  "hex",
  "hmac 0.13.0",
  "hostname",
+ "io-uring",
  "libc",
  "lz4_flex",
  "num_cpus",
@@ -1747,6 +1748,17 @@ dependencies = [
  "hashbrown 0.17.1",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "io-uring"
+version = "0.7.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d09b98f7eace8982db770e4408e7470b028ce513ac28fecdc6bf4c30fe92b62"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "libc",
 ]
 
 [[package]]
