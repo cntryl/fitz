@@ -18,6 +18,8 @@ Legacy values such as `FITZ_STORAGE_MODE=s3`, `FITZ_STORAGE_MODE=gcs`, and `FITZ
 
 Cloud mode uses a local cache plus object storage. `FITZ_STORAGE_PROVIDER` is required; Fitz does not pick a cloud provider implicitly. `FITZ_STORAGE_PATH` is only for local disk storage; cloud mode reads `FITZ_STORAGE_CACHE_PATH` and defaults it to `./.fitz-cloud-cache`.
 
+Cloud-backed storage is tuned for write batching and lower object-store churn by default. `FITZ_STORAGE_MEMTABLE_BYTES` still takes precedence when operators want an exact runtime memtable size or flush threshold.
+
 ## Local Peas
 
 Use the Peas compose file for local cloud storage. This file is intentionally Peas-only; do not use it for real cloud providers.

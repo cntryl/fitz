@@ -149,6 +149,17 @@ fn build_midge_open_options(
     open_options: cntryl_midge::OpenOptions,
     config: &BootConfig,
 ) -> BootResult<cntryl_midge::OpenOptions> {
+    let open_options = if matches!(&config.storage_mode, StorageMode::CloudBacked(_))
+        && config.storage_memtable_bytes().is_none()
+    {
+        info!("Configuring cloud-backed Midge for throughput-oriented write batching");
+        open_options
+            .goal(cntryl_midge::Goal::Throughput)
+            .workload(cntryl_midge::WorkloadProfile::WriteHeavy)
+    } else {
+        open_options
+    };
+
     let open_options = match config.storage_memtable_bytes() {
         Some(memtable_bytes) => {
             info!(
@@ -215,7 +226,7 @@ async fn init_cloud(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cntryl_midge::{TransactionMode, WriteOptions};
+    use cntryl_midge::{Goal, MemoryBudget, TransactionMode, WorkloadProfile, WriteOptions};
     use std::time::Duration;
     use tempfile::TempDir;
 
@@ -344,6 +355,140 @@ mod tests {
         // Assert
         assert_eq!(metrics.memtable_size_limit, memtable_bytes);
         assert_eq!(metrics.memtable_flush_threshold, memtable_bytes);
+    }
+
+    #[test]
+    fn should_apply_cloud_throughput_defaults_when_memtable_is_auto() {
+        // Arrange
+        let config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked(Box::new(
+            CloudStorageConfig {
+                provider_name: "peas-s3".to_string(),
+                provider_config: cntryl_midge::CloudProviderConfig::peas_s3("fitz-cost-tuning"),
+                prefix: Some("tests".to_string()),
+                local_cache_path: "./.fitz-cloud-cache".to_string(),
+            },
+        )));
+
+        let open_options = cntryl_midge::OpenOptions::cloud_simulated(
+            "./target/tmp/fitz-cloud-cost-baseline",
+            "fitz-cost-tuning",
+            "tests",
+        )
+        .memory_budget(MemoryBudget::Bytes(512 * 1024 * 1024));
+
+        // Act
+        let tuned = build_midge_open_options(open_options, &config).expect("build tuned options");
+
+        // Assert
+        assert_eq!(tuned.goal, Goal::Throughput);
+        assert_eq!(tuned.workload, WorkloadProfile::WriteHeavy);
+        assert_eq!(tuned.memtable_size_limit(), 256 * 1024 * 1024);
+        assert_eq!(tuned.wal_buffer_size(), 1024 * 1024);
+        assert_eq!(tuned.target_sst_size(), 512 * 1024 * 1024);
+    }
+
+    #[test]
+    fn should_respect_cloud_memtable_override_before_tuning() {
+        // Arrange
+        let memtable_bytes = 8 * 1024 * 1024;
+        let config = BootConfig::default()
+            .with_storage_memtable_bytes(memtable_bytes)
+            .with_storage_mode(StorageMode::CloudBacked(Box::new(CloudStorageConfig {
+                provider_name: "peas-s3".to_string(),
+                provider_config: cntryl_midge::CloudProviderConfig::peas_s3("fitz-cost-tuning"),
+                prefix: Some("tests".to_string()),
+                local_cache_path: "./.fitz-cloud-cache".to_string(),
+            })));
+
+        let open_options = cntryl_midge::OpenOptions::cloud_simulated(
+            "./target/tmp/fitz-cloud-cost-override",
+            "fitz-cost-tuning",
+            "tests",
+        )
+        .memory_budget(MemoryBudget::Bytes(512 * 1024 * 1024));
+
+        // Act
+        let tuned = build_midge_open_options(open_options, &config).expect("build tuned options");
+
+        // Assert
+        let engine = cntryl_midge::Engine::open(tuned).expect("open tuned cloud engine");
+        let metrics = engine.get_runtime_metrics().expect("runtime metrics");
+
+        assert_eq!(metrics.memtable_size_limit, memtable_bytes);
+        assert_eq!(metrics.memtable_flush_threshold, memtable_bytes);
+    }
+
+    #[test]
+    fn should_reduce_cloud_wal_flush_churn_with_throughput_tuning_on_cloud_simulated_storage() {
+        // Arrange
+        let tempdir = TempDir::new().expect("tempdir");
+        let burst_value = vec![b'x'; 64 * 1024];
+        let write_count = 64;
+        let budget = MemoryBudget::Bytes(512 * 1024 * 1024);
+
+        let config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked(Box::new(
+            CloudStorageConfig {
+                provider_name: "peas-s3".to_string(),
+                provider_config: cntryl_midge::CloudProviderConfig::peas_s3("fitz-cost-tuning"),
+                prefix: Some("tests".to_string()),
+                local_cache_path: tempdir.path().join("cache").to_string_lossy().to_string(),
+            },
+        )));
+
+        let baseline_opts = cntryl_midge::OpenOptions::cloud_simulated(
+            tempdir.path().join("baseline"),
+            "fitz-cost-tuning",
+            "tests",
+        )
+        .memory_budget(budget)
+        .build();
+        let tuned_opts = build_midge_open_options(
+            cntryl_midge::OpenOptions::cloud_simulated(
+                tempdir.path().join("tuned"),
+                "fitz-cost-tuning",
+                "tests",
+            )
+            .memory_budget(budget),
+            &config,
+        )
+        .expect("build tuned cloud options");
+
+        assert_eq!(baseline_opts.wal_buffer_size(), 128 * 1024);
+        assert_eq!(tuned_opts.wal_buffer_size(), 1024 * 1024);
+
+        // Act
+        let baseline_metrics = exercise_cloud_burst(
+            baseline_opts,
+            write_count,
+            &burst_value,
+            Duration::from_secs(1),
+        );
+        let tuned_metrics = exercise_cloud_burst(
+            tuned_opts,
+            write_count,
+            &burst_value,
+            Duration::from_secs(1),
+        );
+
+        // Assert
+        assert!(
+            baseline_metrics.wal_flush_count > tuned_metrics.wal_flush_count,
+            "expected fewer WAL flushes with throughput tuning; baseline={} tuned={}",
+            baseline_metrics.wal_flush_count,
+            tuned_metrics.wal_flush_count
+        );
+        assert!(
+            baseline_metrics.sst_count >= tuned_metrics.sst_count,
+            "expected no more SST churn with throughput tuning; baseline={} tuned={}",
+            baseline_metrics.sst_count,
+            tuned_metrics.sst_count
+        );
+        assert!(
+            baseline_metrics.pending_cloud_uploads >= tuned_metrics.pending_cloud_uploads,
+            "expected no more pending cloud uploads with throughput tuning; baseline={} tuned={}",
+            baseline_metrics.pending_cloud_uploads,
+            tuned_metrics.pending_cloud_uploads
+        );
     }
 
     #[test]
@@ -520,6 +665,30 @@ mod tests {
 
         // Assert
         assert_eq!(recovered, Some(b"value".to_vec()));
+    }
+
+    fn exercise_cloud_burst(
+        engine_opts: cntryl_midge::OpenOptions,
+        write_count: usize,
+        value: &[u8],
+        wait_time: Duration,
+    ) -> cntryl_midge::RuntimeMetricsSnapshot {
+        let engine = cntryl_midge::Engine::open(engine_opts).expect("open cloud-simulated engine");
+        let cf = engine.get_column_family("default").expect("default cf");
+
+        for index in 0..write_count {
+            let mut tx = engine
+                .begin_tx(cf.id(), TransactionMode::ReadWrite)
+                .expect("begin write tx");
+            let key = format!("cloud-cost-key-{index:04}");
+            tx.put(key.into_bytes(), value.to_vec(), None)
+                .expect("write burst value");
+            tx.commit(WriteOptions::buffered())
+                .expect("commit burst value");
+        }
+
+        std::thread::sleep(wait_time);
+        engine.get_runtime_metrics().expect("runtime metrics")
     }
 
     async fn recover_marker_from_peas(
