@@ -6,16 +6,8 @@ on:
     - cron: "0 5 * * *"
   push:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "*.toml"
   pull_request:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "*.toml"
 
 jobs:
   ci:
