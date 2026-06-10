@@ -472,7 +472,7 @@ mod tests {
 
         // Assert
         assert!(
-            baseline_metrics.sst_count > tuned_metrics.sst_count,
+            baseline_metrics.sst_count >= tuned_metrics.sst_count,
             "expected no more SST churn with throughput tuning; baseline={} tuned={}",
             baseline_metrics.sst_count,
             tuned_metrics.sst_count
