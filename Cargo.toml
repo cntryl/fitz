@@ -76,10 +76,6 @@ lz4_flex = "0.13.1"
 cntryl-midge = { git = "https://github.com/cntryl/midge", features = ["testkit"] }
 cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "260e5e64060e36aa0d8897658468484443eee095" }
 
-# Patch transitive native-tls so Docker build succeeds (0.2.17 lacks Protocol::Tlsv13 match arm).
-[patch.crates-io]
-native-tls = { git = "https://github.com/sfackler/rust-native-tls", rev = "ea5426e0847652ca3dd780b69a351b06de91dfd6" }
-
 [build-dependencies]
 walkdir = "2"
 

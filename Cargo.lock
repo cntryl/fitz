@@ -2154,7 +2154,8 @@ dependencies = [
 [[package]]
 name = "native-tls"
 version = "0.2.18"
-source = "git+https://github.com/sfackler/rust-native-tls?rev=ea5426e0847652ca3dd780b69a351b06de91dfd6#ea5426e0847652ca3dd780b69a351b06de91dfd6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "465500e14ea162429d264d44189adc38b199b62b1c21eea9f69e4b73cb03bbf2"
 dependencies = [
  "libc",
  "log",
