@@ -594,7 +594,7 @@ impl RuntimeIngress {
     }
 
     fn skips_route_authorization(msg_type: crate::protocol::tlv::MessageType) -> bool {
-        matches!(msg_type.as_u16(), 502 | 503)
+        matches!(msg_type.as_u16(), 502 | 503 | 601..=603)
     }
 
     fn resolve_authorization_targets<'a>(
@@ -3416,6 +3416,78 @@ mod tests {
             &crate::runtime::routing::Route::new("notice://prod/orders/create"),
             crate::auth::Access::Write
         ));
+    }
+
+    #[test]
+    fn should_allow_stream_append_and_commit_after_begin_without_global_stream_write_permission() {
+        // Arrange
+        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
+        let session = make_session_info(62, TransportKind::Tcp);
+
+        let payload = serde_json::json!({
+            "iss": "",
+            "aud": "fitz-broker",
+            "sub": "user:62",
+            "exp": 9999999999u64,
+            "tid": "acme-prod",
+            "permissions": ["stream://acme/logs/**#write"]
+        });
+        let jwt = signed_hmac_jwt(payload);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            ingress.on_open(session.clone()).await.unwrap();
+
+            let connect_decision = ingress
+                .on_frame(
+                    62,
+                    ChannelId::Control,
+                    crate::protocol::tlv::MessageType::CONNECT,
+                    Bytes::from(jwt),
+                )
+                .await;
+            assert_eq!(connect_decision, IngressDecision::Accept);
+
+            let begin_frame =
+                crate::benchkit::build_stream_begin("stream://acme/logs/events/append");
+            let (begin_msg_type, begin_payload) =
+                crate::benchkit::extract_single_tlv_field(&begin_frame);
+            let begin_decision = ingress
+                .on_frame(
+                    62,
+                    ChannelId::Pub,
+                    crate::protocol::tlv::MessageType::new(begin_msg_type),
+                    begin_payload,
+                )
+                .await;
+            assert_eq!(begin_decision, IngressDecision::Accept);
+
+            let append_frame = crate::benchkit::build_stream_append(7, 0, b"event-1");
+            let (append_msg_type, append_payload) =
+                crate::benchkit::extract_single_tlv_field(&append_frame);
+            let append_decision = ingress
+                .on_frame(
+                    62,
+                    ChannelId::Pub,
+                    crate::protocol::tlv::MessageType::new(append_msg_type),
+                    append_payload,
+                )
+                .await;
+            assert_eq!(append_decision, IngressDecision::Accept);
+
+            let commit_frame = crate::benchkit::build_stream_commit(7, 1);
+            let (commit_msg_type, commit_payload) =
+                crate::benchkit::extract_single_tlv_field(&commit_frame);
+            let commit_decision = ingress
+                .on_frame(
+                    62,
+                    ChannelId::Pub,
+                    crate::protocol::tlv::MessageType::new(commit_msg_type),
+                    commit_payload,
+                )
+                .await;
+            assert_eq!(commit_decision, IngressDecision::Accept);
+        });
     }
 
     #[test]
