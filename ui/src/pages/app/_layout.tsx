@@ -1,14 +1,15 @@
 import { currentRoute, Link, navigate } from "@askrjs/askr/router";
 import { MoonIcon, ShieldIcon, SunIcon } from "@askrjs/lucide";
 import { Button } from "@askrjs/themes/controls";
+import { Stack } from "@askrjs/themes/layouts";
 import {
   NavBrand,
   NavGroup,
   NavLink,
+  Navbar,
   Shell,
   ShellMain,
   ShellNav,
-  Sidebar,
 } from "@askrjs/themes/shells";
 import { ThemeToggle } from "@askrjs/themes/theme";
 import { domainLinks, shellLinks } from "@/shared/navigation/domains";
@@ -22,28 +23,43 @@ export default function Layout({ children }: { children?: unknown }) {
   }
 
   return (
-    <Shell variant="sidebar">
-      <ShellNav>
-        <Sidebar breakpoint="md" aria-label="Admin navigation">
+    <Shell variant="topbar">
+      <ShellNav class="app-shell-nav">
+        <Navbar breakpoint="md" aria-label="Primary navigation">
           <NavBrand>
-            <Link href="/" aria-label="Fitz admin home">
+            <Link href="/" aria-label="Fitz admin home" class="app-brand">
               <ShieldIcon size={18} />
-              Fitz Admin
+              <Stack gap="0" class="app-brand-copy">
+                <strong>Fitz Admin</strong>
+                <span>Broker operations console</span>
+              </Stack>
             </Link>
           </NavBrand>
 
-          <NavGroup label="Workspace" aria-label="Workspace">
+          <NavGroup
+            class="shell-nav-group shell-nav-workspace"
+            label="Workspace"
+            aria-label="Workspace"
+          >
             {shellLinks.map((link) => (
-              <NavLink key={link.href} href={link.href}>
+              <NavLink
+                key={link.href}
+                href={link.href}
+                match={link.href === "/" ? "exact" : "prefix"}
+              >
                 <link.icon size={16} />
                 {link.title}
               </NavLink>
             ))}
           </NavGroup>
 
-          <NavGroup label="Domains" aria-label="Domains">
+          <NavGroup
+            class="shell-nav-group shell-nav-domains"
+            label="Domains"
+            aria-label="Domain workspaces"
+          >
             {domainLinks.map((link) => (
-              <NavLink key={link.href} href={link.href}>
+              <NavLink key={link.href} href={link.href} match="prefix">
                 <link.icon size={16} />
                 {link.title}
               </NavLink>
@@ -56,9 +72,11 @@ export default function Layout({ children }: { children?: unknown }) {
               lightIcon={<SunIcon size={16} />}
               darkIcon={<MoonIcon size={16} />}
             />
-            <Button onPress={onLogout}>Sign out</Button>
+            <Button variant="outline" onPress={onLogout}>
+              Sign out
+            </Button>
           </NavGroup>
-        </Sidebar>
+        </Navbar>
       </ShellNav>
 
       <ShellMain>

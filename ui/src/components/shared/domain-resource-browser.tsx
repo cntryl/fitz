@@ -1,7 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Section } from "@askrjs/themes/layouts";
+import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import { QueryEmptyState } from "./query-state";
 import type { DomainId, ResourceInventory } from "@/features/resource/resource-models";
 
@@ -37,42 +37,44 @@ export default function DomainResourceBrowser({
     ) ?? [];
 
   return (
-    <Section size="3">
-      <div class="domain-section-header">
-        <h2>Resources</h2>
-        <span>{loading ? "Loading" : `${rows.length} visible`}</span>
-      </div>
+    <Card class="domain-resource-browser" padding="sm" variant="default">
+      <CardHeader>
+        <CardTitle>Resources</CardTitle>
+        <p class="domain-muted">{loading ? "Loading" : `${rows.length} visible`}</p>
+      </CardHeader>
 
-      {!loading && rows.length === 0 ? (
-        <QueryEmptyState description="No warm resources are currently visible for this domain." />
-      ) : (
-        <div class="domain-table-wrap">
-          <Table class="domain-table">
-            <TableHead>
-              <TableRow>
-                <TableHeaderCell>Realm</TableHeaderCell>
-                <TableHeaderCell>Area</TableHeaderCell>
-                <TableHeaderCell>Resource</TableHeaderCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              <For each={rows} by={(row) => `${row.realm}:${row.area}:${row.resource}`}>
-                {(row) => (
-                  <TableRow>
-                    <TableCell>{row.realm}</TableCell>
-                    <TableCell>{row.area}</TableCell>
-                    <TableCell>
-                      <Link href={resourceHref(domain, row.realm, row.area, row.resource)}>
-                        {row.resource}
-                      </Link>
-                    </TableCell>
-                  </TableRow>
-                )}
-              </For>
-            </TableBody>
-          </Table>
-        </div>
-      )}
-    </Section>
+      <CardContent>
+        {!loading && rows.length === 0 ? (
+          <QueryEmptyState description="No warm resources are currently visible for this domain." />
+        ) : (
+          <div class="domain-table-wrap">
+            <Table class="domain-table">
+              <TableHead>
+                <TableRow>
+                  <TableHeaderCell>Realm</TableHeaderCell>
+                  <TableHeaderCell>Area</TableHeaderCell>
+                  <TableHeaderCell>Resource</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                <For each={rows} by={(row) => `${row.realm}:${row.area}:${row.resource}`}>
+                  {(row) => (
+                    <TableRow>
+                      <TableCell>{row.realm}</TableCell>
+                      <TableCell>{row.area}</TableCell>
+                      <TableCell>
+                        <Link href={resourceHref(domain, row.realm, row.area, row.resource)}>
+                          {row.resource}
+                        </Link>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </For>
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

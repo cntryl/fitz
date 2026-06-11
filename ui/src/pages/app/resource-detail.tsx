@@ -96,22 +96,6 @@ export default function ResourceDetailPage() {
       : null;
   const query = createResourceQuery(domain, ref, against);
   const data = query.data;
-  const errorMessage =
-    query.error instanceof Error
-      ? query.error.message
-      : typeof query.error === "string"
-        ? query.error
-        : JSON.stringify(query.error);
-  console.log(
-    "RESOURCE-DETAIL DEBUG",
-    JSON.stringify({
-      domain,
-      ref,
-      data: data ? { ...data, raw: undefined } : data,
-      error: errorMessage,
-      loading: query.loading,
-    }),
-  );
   const sidebar = createDomainSidebar({
     data,
     title: `${domainLabels[domain]} resource`,

@@ -15,12 +15,12 @@
     "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts"
   },
   "dependencies": {
-    "@askrjs/askr": "0.0.40",
+    "@askrjs/askr": "0.0.42",
     "@askrjs/logos": "0.0.1",
-    "@askrjs/lucide": "^0.0.2",
-    "@askrjs/themes": "^0.0.6",
-    "@askrjs/ui": "0.0.7",
-    "@askrjs/vite": "0.0.2",
+    "@askrjs/lucide": "^0.0.3",
+    "@askrjs/themes": "^0.0.7",
+    "@askrjs/ui": "0.0.10",
+    "@askrjs/vite": "0.0.4",
     "@fgrzl/fetch": "^2.0.0"
   },
   "devDependencies": {

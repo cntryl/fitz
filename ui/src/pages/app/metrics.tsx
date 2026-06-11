@@ -8,7 +8,8 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@askrjs/ui";
-import { Section, Stack } from "@askrjs/themes/layouts";
+import { Stack } from "@askrjs/themes/layouts";
+import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import {
@@ -37,14 +38,19 @@ export default function MetricsPage() {
           onRefresh={() => metrics.refresh()}
         />
 
-        <div class="auth-field metrics-filter">
-          <Input
-            aria-label="Filter metrics"
-            placeholder="Filter metrics"
-            value={filterValue}
-            onInput={(event: Event) => setFilter((event.target as HTMLInputElement).value)}
-          />
-        </div>
+        <section class="domain-section">
+          <div class="domain-section-header">
+            <h2>Filter metrics</h2>
+          </div>
+          <div class="auth-field metrics-filter">
+            <Input
+              aria-label="Filter metrics"
+              placeholder="Filter metrics"
+              value={filterValue}
+              onInput={(event: Event) => setFilter((event.target as HTMLInputElement).value)}
+            />
+          </div>
+        </section>
 
         {!data && metrics.loading ? (
           <QueryLoadingState description="Loading Prometheus metrics..." />
@@ -58,41 +64,43 @@ export default function MetricsPage() {
               <QueryRefreshingState description="Refreshing Prometheus metrics..." />
             ) : null}
 
-            <Section size="3">
-              <div class="domain-section-header">
-                <h2>Metric families</h2>
-                <span>{families.length} visible</span>
-              </div>
-              <div class="domain-table-wrap">
-                <Table class="domain-table">
-                  <TableHead>
-                    <TableRow>
-                      <TableHeaderCell>Name</TableHeaderCell>
-                      <TableHeaderCell>Type</TableHeaderCell>
-                      <TableHeaderCell>Samples</TableHeaderCell>
-                      <TableHeaderCell>Help</TableHeaderCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {families.map((family) => (
-                      <TableRow key={family.name}>
-                        <TableCell>{family.name}</TableCell>
-                        <TableCell>{family.type ?? "unknown"}</TableCell>
-                        <TableCell>{family.samples.length}</TableCell>
-                        <TableCell>{family.help ?? "n/a"}</TableCell>
+            <Card class="metrics-family-card" padding="sm" variant="default">
+              <CardHeader>
+                <CardTitle>Metric families</CardTitle>
+                <p class="domain-muted">{families.length} visible</p>
+              </CardHeader>
+              <CardContent>
+                <div class="domain-table-wrap">
+                  <Table class="domain-table">
+                    <TableHead>
+                      <TableRow>
+                        <TableHeaderCell>Name</TableHeaderCell>
+                        <TableHeaderCell>Type</TableHeaderCell>
+                        <TableHeaderCell>Samples</TableHeaderCell>
+                        <TableHeaderCell>Help</TableHeaderCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </Section>
+                    </TableHead>
+                    <TableBody>
+                      {families.map((family) => (
+                        <TableRow key={family.name}>
+                          <TableCell>{family.name}</TableCell>
+                          <TableCell>{family.type ?? "unknown"}</TableCell>
+                          <TableCell>{family.samples.length}</TableCell>
+                          <TableCell>{family.help ?? "n/a"}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
 
-            <Section size="3">
+            <section class="domain-section">
               <div class="domain-section-header">
                 <h2>Prometheus payload</h2>
               </div>
               <pre class="resource-raw">{data.raw}</pre>
-            </Section>
+            </section>
           </Stack>
         ) : null}
       </Stack>

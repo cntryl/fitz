@@ -23,8 +23,7 @@ export default function SessionsPage() {
       { label: "Sessions", value: current.sessions.length },
       {
         label: "Route families",
-        value: new Set(current.sessions.map((session) => session.routeFamily).filter(Boolean))
-          .size,
+        value: new Set(current.sessions.map((session) => session.routeFamily).filter(Boolean)).size,
         note: "Resolved",
       },
       {

@@ -22,7 +22,13 @@ export function mapLoginPayload(payload: LoginPayload): LoginRequest {
 }
 
 export function mapActiveSession(dto: SessionInfo): ActiveSession {
-  const key = [dto.session_id, dto.route_family, dto.identity_value, dto.remote_addr, dto.connected_at]
+  const key = [
+    dto.session_id,
+    dto.route_family,
+    dto.identity_value,
+    dto.remote_addr,
+    dto.connected_at,
+  ]
     .filter((value) => value != null && value !== "")
     .join(":");
 

@@ -26,9 +26,7 @@ function featuresUrl() {
   return `${baseUrl}/api/v1/features`;
 }
 
-async function getAdminFeatures(
-  options: ServiceRequestOptions = {},
-): Promise<AdminFeatures> {
+async function getAdminFeatures(options: ServiceRequestOptions = {}): Promise<AdminFeatures> {
   const response = await fetch(featuresUrl(), {
     credentials: "same-origin",
     headers: {
@@ -99,7 +97,9 @@ async function listActiveSessions(
 ): Promise<ActiveSessionsOverview> {
   const response = await apiv1.listActiveSessions(options);
 
-  return mapActiveSessionsOverview(unwrapResponse(response, "Unable to load active sessions").sessions);
+  return mapActiveSessionsOverview(
+    unwrapResponse(response, "Unable to load active sessions").sessions,
+  );
 }
 
 // Services own app-facing method names and return plain promises/models.

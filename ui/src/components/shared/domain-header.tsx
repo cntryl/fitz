@@ -17,6 +17,7 @@ export default function DomainHeader({
   return (
     <header class="domain-header">
       <div class="domain-header-copy">
+        <p class="domain-header-kicker">Broker workspace</p>
         <h1>{title}</h1>
         <p>{description}</p>
       </div>

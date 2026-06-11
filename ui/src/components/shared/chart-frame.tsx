@@ -1,3 +1,6 @@
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Section, Stack } from "@askrjs/themes/layouts";
+
 export interface ChartShellProps {
   children?: unknown;
   className?: string;
@@ -13,24 +16,24 @@ export interface ChartPanelProps {
 
 export function ChartShell({ children, className, description, title }: ChartShellProps) {
   return (
-    <section class={className ? `chart-shell ${className}` : "chart-shell"}>
-      <header class="chart-shell-header">
+    <Section class={className ? `chart-shell ${className}` : "chart-shell"} size="3">
+      <div class="chart-shell-header">
         <h2>{title}</h2>
         {description ? <p>{description}</p> : null}
-      </header>
-      {children}
-    </section>
+      </div>
+      <Stack gap="3">{children}</Stack>
+    </Section>
   );
 }
 
 export function ChartPanel({ children, description, title }: ChartPanelProps) {
   return (
-    <section class="chart-panel">
-      <header class="chart-panel-header">
-        <h3>{title}</h3>
-        {description ? <p>{description}</p> : null}
-      </header>
-      {children}
-    </section>
+    <Card class="chart-panel" padding="sm" variant="default">
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        {description ? <CardDescription>{description}</CardDescription> : null}
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
   );
 }

@@ -3,6 +3,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } fro
 import { Stack } from "@askrjs/themes/layouts";
 import DashboardDomainSignals from "@/components/shared/dashboard-domain-signals";
 import DomainHeader from "@/components/shared/domain-header";
+import DomainIndex from "@/components/shared/domain-index";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import {
@@ -13,6 +14,7 @@ import {
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createSystemOverviewQuery } from "@/features/system/system-query";
 import { formatNumber } from "@/shared/format";
+import { domainLinks } from "@/shared/navigation/domains";
 
 function humanizeSeconds(seconds: number) {
   if (seconds < 60) return `${seconds}s`;
@@ -199,6 +201,12 @@ export default function Home() {
                 </div>
               )}
             </section>
+
+            <DomainIndex
+              title="Browse domains"
+              description="Jump to the primary workspaces from the dashboard."
+              links={domainLinks}
+            />
           </Stack>
         ) : null}
       </Stack>
