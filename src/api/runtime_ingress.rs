@@ -97,12 +97,33 @@ enum AuthorizationTargets<'a> {
     Multiple(Vec<Cow<'a, str>>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AuthorizationPolicy {
+    RouteScoped(crate::auth::Access),
+    SessionOwned,
+    KvBeginModeScoped,
+    MultiRouteScoped(crate::auth::Access),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DomainAuthorizationSpec {
+    domain: DispatchDomain,
+    policy: AuthorizationPolicy,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum AuthorizationFailure {
+    MissingSessionActor,
+    PermissionDenied,
+}
+
 struct DomainDispatchRequest<'a> {
     router: &'a crate::runtime::Router,
     session_id: u64,
+    channel_id: ChannelId,
     route_family: crate::runtime::routing::RouteFamily,
     domain: DispatchDomain,
-    access: crate::auth::Access,
+    policy: AuthorizationPolicy,
     msg_type: crate::protocol::tlv::MessageType,
     preserve_payload_for_handler: bool,
 }
@@ -560,65 +581,261 @@ impl RuntimeIngress {
 
     fn domain_dispatch_for_msg_type(
         msg_type: crate::protocol::tlv::MessageType,
-    ) -> Result<Option<(DispatchDomain, crate::auth::Access)>, &'static str> {
+    ) -> Result<Option<DomainAuthorizationSpec>, &'static str> {
+        use crate::auth::Access;
+
         let mt = msg_type.as_u16();
 
         match mt {
-            100 | 101 | 102 | 104 | 105 | 106 | 107 => {
-                Ok(Some((DispatchDomain::Kv, crate::auth::Access::Write)))
-            }
-            103 | 108 | 109 | 110 => Ok(Some((DispatchDomain::Kv, crate::auth::Access::Read))),
+            100 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Kv,
+                policy: AuthorizationPolicy::KvBeginModeScoped,
+            })),
+            101..=108 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Kv,
+                policy: AuthorizationPolicy::SessionOwned,
+            })),
+            109 | 110 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Kv,
+                policy: AuthorizationPolicy::RouteScoped(Access::Read),
+            })),
             111 => Err("invalid message type: 111 is server-to-client only"),
-            200..=204 => Ok(Some((DispatchDomain::Queue, crate::auth::Access::Write))),
-            207 | 208 => Ok(Some((DispatchDomain::Queue, crate::auth::Access::Read))),
+            200..=204 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Queue,
+                policy: AuthorizationPolicy::RouteScoped(Access::Write),
+            })),
+            207 | 208 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Queue,
+                policy: AuthorizationPolicy::RouteScoped(Access::Read),
+            })),
             209 => Err("invalid message type: 209 is server-to-client only"),
             205 | 206 | 210..=299 => Err("invalid message type: unsupported queue operation"),
-            300..=304 => Ok(Some((DispatchDomain::Rpc, crate::auth::Access::Write))),
-            305..=399 => Ok(Some((DispatchDomain::Rpc, crate::auth::Access::Read))),
-            400..=402 => Ok(Some((DispatchDomain::Lease, crate::auth::Access::Write))),
-            403 => Ok(Some((DispatchDomain::Lease, crate::auth::Access::Read))),
-            407 | 408 => Ok(Some((DispatchDomain::Lease, crate::auth::Access::Read))),
+            300 | 301 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Rpc,
+                policy: AuthorizationPolicy::RouteScoped(Access::All),
+            })),
+            302 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Rpc,
+                policy: AuthorizationPolicy::RouteScoped(Access::Write),
+            })),
+            303 | 304 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Rpc,
+                policy: AuthorizationPolicy::SessionOwned,
+            })),
+            305..=399 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Rpc,
+                policy: AuthorizationPolicy::RouteScoped(Access::Read),
+            })),
+            400..=402 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Lease,
+                policy: AuthorizationPolicy::RouteScoped(Access::Write),
+            })),
+            403 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Lease,
+                policy: AuthorizationPolicy::RouteScoped(Access::Read),
+            })),
+            407 | 408 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Lease,
+                policy: AuthorizationPolicy::RouteScoped(Access::Read),
+            })),
             409 => Err("invalid message type: 409 is server-to-client only"),
             404..=406 | 410..=499 => Err("invalid message type: unsupported lease operation"),
-            500..=503 => Ok(Some((DispatchDomain::Notice, crate::auth::Access::Write))),
+            500 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Notice,
+                policy: AuthorizationPolicy::RouteScoped(Access::Write),
+            })),
+            501 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Notice,
+                policy: AuthorizationPolicy::RouteScoped(Access::Read),
+            })),
+            502 | 503 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Notice,
+                policy: AuthorizationPolicy::SessionOwned,
+            })),
             504 => Err("invalid message type: 504 is server-to-client only"),
             505..=599 => Err("invalid message type: 505-599 are unsupported notice operations"),
-            600..=603 => Ok(Some((DispatchDomain::Stream, crate::auth::Access::Write))),
-            604..=608 => Ok(Some((DispatchDomain::Stream, crate::auth::Access::Read))),
+            600 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Stream,
+                policy: AuthorizationPolicy::RouteScoped(Access::Write),
+            })),
+            601..=603 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Stream,
+                policy: AuthorizationPolicy::SessionOwned,
+            })),
+            604..=608 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Stream,
+                policy: AuthorizationPolicy::RouteScoped(Access::Read),
+            })),
             609 => Err("invalid message type: 609 is server-to-client only"),
-            700 | 701 | 706 => Ok(Some((DispatchDomain::Schedule, crate::auth::Access::Write))),
-            702..=704 => Ok(Some((DispatchDomain::Schedule, crate::auth::Access::Read))),
+            700 | 701 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Schedule,
+                policy: AuthorizationPolicy::RouteScoped(Access::Write),
+            })),
+            706 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Schedule,
+                policy: AuthorizationPolicy::MultiRouteScoped(Access::Write),
+            })),
+            702..=704 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Schedule,
+                policy: AuthorizationPolicy::RouteScoped(Access::Read),
+            })),
             705 => Err("invalid message type: 705 is server-to-client only"),
             _ => Ok(None),
         }
-    }
-
-    fn skips_route_authorization(msg_type: crate::protocol::tlv::MessageType) -> bool {
-        matches!(msg_type.as_u16(), 502 | 503 | 601..=603)
     }
 
     fn resolve_authorization_targets<'a>(
         domain: DispatchDomain,
         msg_type: crate::protocol::tlv::MessageType,
         payload: &'a [u8],
-    ) -> Result<AuthorizationTargets<'a>, String> {
-        if domain == DispatchDomain::Schedule && msg_type.as_u16() == 706 {
-            let routes = crate::protocol::schedule_codec::extract_batch_auth_routes(payload)?
-                .into_iter()
-                .map(|route| canonicalize_dispatch_route_str(domain, route))
-                .collect();
-            return Ok(AuthorizationTargets::Multiple(routes));
+        policy: AuthorizationPolicy,
+    ) -> Result<(AuthorizationTargets<'a>, crate::auth::Access), String> {
+        match policy {
+            AuthorizationPolicy::SessionOwned => Ok((
+                AuthorizationTargets::SessionOwned,
+                crate::auth::Access::Read,
+            )),
+            AuthorizationPolicy::KvBeginModeScoped => {
+                let access = Self::kv_begin_access(payload)?;
+                let route = Self::derive_auth_route_for_frame(domain, msg_type, payload)?
+                    .ok_or_else(|| "KV BEGIN authorization route missing".to_string())?;
+                Ok((AuthorizationTargets::Single(route), access))
+            }
+            AuthorizationPolicy::MultiRouteScoped(access) => {
+                if domain != DispatchDomain::Schedule || msg_type.as_u16() != 706 {
+                    return Err(
+                        "multi-route authorization is only supported for schedule batch create"
+                            .to_string(),
+                    );
+                }
+
+                let routes = crate::protocol::schedule_codec::extract_batch_auth_routes(payload)?
+                    .into_iter()
+                    .map(|route| canonicalize_dispatch_route_str(domain, route))
+                    .collect();
+                Ok((AuthorizationTargets::Multiple(routes), access))
+            }
+            AuthorizationPolicy::RouteScoped(access) => {
+                let target = match Self::derive_auth_route_for_frame(domain, msg_type, payload)? {
+                    Some(route) => AuthorizationTargets::Single(route),
+                    None => AuthorizationTargets::Single(Cow::Borrowed(domain.wildcard_route())),
+                };
+                Ok((target, access))
+            }
+        }
+    }
+
+    fn kv_begin_access(payload: &[u8]) -> Result<crate::auth::Access, String> {
+        if payload.len() < 6 {
+            return Err("BEGIN payload too short".to_string());
         }
 
-        match Self::derive_auth_route_for_frame(domain, msg_type, payload)? {
-            Some(route) => Ok(AuthorizationTargets::Single(route)),
-            None if Self::skips_route_authorization(msg_type) => {
-                Ok(AuthorizationTargets::SessionOwned)
-            }
-            None => Ok(AuthorizationTargets::Single(Cow::Borrowed(
-                domain.wildcard_route(),
-            ))),
+        let route_len =
+            u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+        let mode_offset = 4 + route_len;
+
+        if mode_offset > payload.len() {
+            return Err("BEGIN route overflow".to_string());
         }
+
+        if mode_offset >= payload.len() {
+            return Err("BEGIN mode byte missing".to_string());
+        }
+
+        let access = match payload[mode_offset] {
+            0 => crate::auth::Access::Read,
+            1 => crate::auth::Access::Write,
+            _ => return Err("Invalid transaction mode".to_string()),
+        };
+
+        let durability_offset = mode_offset + 1;
+        if durability_offset >= payload.len() {
+            return Err("BEGIN durability byte missing".to_string());
+        }
+
+        match payload[durability_offset] {
+            0 | 1 => Ok(access),
+            value => Err(format!("Invalid durability mode: {}", value)),
+        }
+    }
+
+    fn unauthorized_error_code(domain: DispatchDomain) -> u16 {
+        match domain {
+            DispatchDomain::Kv => crate::protocol::error_codes::kv::ERR_UNAUTHORIZED,
+            DispatchDomain::Queue => crate::protocol::error_codes::queue::ERR_UNAUTHORIZED,
+            DispatchDomain::Rpc => crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
+            DispatchDomain::Lease => crate::protocol::error_codes::lease::ERR_UNAUTHORIZED,
+            DispatchDomain::Notice => crate::protocol::error_codes::notice::ERR_UNAUTHORIZED,
+            DispatchDomain::Stream => crate::protocol::error_codes::stream::ERR_UNAUTHORIZED,
+            DispatchDomain::Schedule => crate::protocol::error_codes::schedule::ERR_UNAUTHORIZED,
+        }
+    }
+
+    fn encode_domain_error_body(code: u16, message: &str) -> Bytes {
+        let body = crate::protocol::rpc_codec::encode_error_body(code, message);
+        Bytes::from(body)
+    }
+
+    fn route_error_response_delivery_failure(
+        &self,
+        session_id: u64,
+        domain: DispatchDomain,
+        error: crate::runtime::router::RouteError,
+    ) -> IngressDecision {
+        match error {
+            crate::runtime::router::RouteError::DeliveryFailed(
+                _,
+                crate::runtime::router::DeliveryError::MailboxFull { .. }
+                | crate::runtime::router::DeliveryError::HighLaneFull { .. },
+            ) => {
+                warn!(
+                    session_id = session_id,
+                    domain = domain.as_str(),
+                    "Ingress: unauthorized response backpressure"
+                );
+                IngressDecision::Backpressure
+            }
+            error => {
+                error!(
+                    session_id = session_id,
+                    domain = domain.as_str(),
+                    error = %error,
+                    "Ingress: unauthorized response delivery failed"
+                );
+                IngressDecision::Close(format!("unauthorized response delivery failed: {}", error))
+            }
+        }
+    }
+
+    fn send_unauthorized_domain_response(
+        &self,
+        dispatch: &DomainDispatchRequest<'_>,
+    ) -> Result<(), IngressDecision> {
+        let payload = Self::encode_domain_error_body(
+            Self::unauthorized_error_code(dispatch.domain),
+            "unauthorized: permission denied",
+        );
+        let response_ctx = crate::protocol::frame_context::FrameContext::new(
+            dispatch.session_id,
+            dispatch.channel_id,
+            dispatch.msg_type,
+            payload,
+            dispatch.route_family,
+        );
+        let source = crate::runtime::routing::RouteAddress::new(
+            dispatch.route_family,
+            dispatch.domain.inbound_route().clone(),
+        );
+        let destination = crate::runtime::routing::RouteAddress::new(
+            dispatch.route_family,
+            self.cached_session_inbox_route(dispatch.session_id),
+        );
+        let envelope =
+            crate::runtime::envelope::Envelope::from_route(source, destination, response_ctx);
+
+        dispatch.router.route(envelope).map_err(|error| {
+            self.route_error_response_delivery_failure(dispatch.session_id, dispatch.domain, error)
+        })
     }
 
     fn derive_auth_route_for_frame<'a>(
@@ -636,15 +853,13 @@ impl RuntimeIngress {
         domain: DispatchDomain,
         access: crate::auth::Access,
         targets: &AuthorizationTargets<'_>,
-    ) -> Result<(), IngressDecision> {
+    ) -> Result<(), AuthorizationFailure> {
         let Some(actor_ref) = self.get_session_actor(session_id) else {
             warn!(
                 session_id = session_id,
                 "Ingress: missing session actor for authorization"
             );
-            return Err(IngressDecision::Close(
-                "unauthorized: session actor missing".to_string(),
-            ));
+            return Err(AuthorizationFailure::MissingSessionActor);
         };
 
         let (auth_target, auth_target_count) = targets.span_target();
@@ -681,9 +896,7 @@ impl RuntimeIngress {
                 collector.counter_inc(obs::METRIC_AUTH_FAILURES);
             }
 
-            return Err(IngressDecision::Close(
-                "unauthorized: permission denied".to_string(),
-            ));
+            return Err(AuthorizationFailure::PermissionDenied);
         }
 
         Ok(())
@@ -703,7 +916,7 @@ impl RuntimeIngress {
         };
         let ctx = crate::protocol::frame_context::FrameContext::new(
             dispatch.session_id,
-            crate::protocol::frame::ChannelId::Pub,
+            dispatch.channel_id,
             dispatch.msg_type,
             dispatch_payload,
             dispatch.route_family,
@@ -780,8 +993,9 @@ impl RuntimeIngress {
             dispatch.domain,
             dispatch.msg_type,
             payload_ref,
+            dispatch.policy,
         ) {
-            Ok(targets) => targets,
+            Ok((targets, access)) => (targets, access),
             Err(error) => {
                 warn!(
                     session_id = dispatch.session_id,
@@ -795,6 +1009,7 @@ impl RuntimeIngress {
                 )));
             }
         };
+        let (targets, access) = targets;
 
         if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
             collector.histogram_observe_us(
@@ -807,9 +1022,18 @@ impl RuntimeIngress {
             dispatch.session_id,
             dispatch.msg_type,
             dispatch.domain,
-            dispatch.access,
+            access,
             &targets,
-        )?;
+        )
+        .map_err(|failure| match failure {
+            AuthorizationFailure::MissingSessionActor => {
+                IngressDecision::Close("unauthorized: session actor missing".to_string())
+            }
+            AuthorizationFailure::PermissionDenied => self
+                .send_unauthorized_domain_response(&dispatch)
+                .map(|()| IngressDecision::Accept)
+                .unwrap_or_else(|decision| decision),
+        })?;
         self.dispatch_domain_frame(dispatch, message_payload)
     }
 }
@@ -1049,13 +1273,14 @@ impl Ingress for RuntimeIngress {
                     );
                     return IngressDecision::Close(reason.to_string());
                 }
-                Ok(Some((domain, access))) => {
+                Ok(Some(spec)) => {
                     let dispatch = DomainDispatchRequest {
                         router,
                         session_id,
+                        channel_id,
                         route_family,
-                        domain,
-                        access,
+                        domain: spec.domain,
+                        policy: spec.policy,
                         msg_type,
                         preserve_payload_for_handler: should_notify_handler
                             && notify_frame.is_none(),
@@ -1429,6 +1654,48 @@ mod tests {
             authenticated: false,
             route_family: crate::runtime::routing::RouteFamily::new(0), // Test mode = family 0
         }
+    }
+
+    fn permissions_from_strings(raw_permissions: &[&str]) -> SessionPermissions {
+        let permissions = raw_permissions
+            .iter()
+            .map(|permission| crate::auth::Permission::parse(permission).unwrap())
+            .collect();
+        SessionPermissions::from_permissions(permissions)
+    }
+
+    fn make_authenticated_session_info(
+        id: u64,
+        kind: TransportKind,
+        route_family: RouteFamily,
+        raw_permissions: &[&str],
+    ) -> SessionInfo {
+        let mut session = make_session_info(id, kind);
+        session.authenticated = true;
+        session.route_family = route_family;
+        session.permissions_snapshot = permissions_from_strings(raw_permissions);
+        session
+    }
+
+    fn auth_spec(msg_type: u16) -> DomainAuthorizationSpec {
+        RuntimeIngress::domain_dispatch_for_msg_type(MessageType::new(msg_type))
+            .unwrap()
+            .unwrap()
+    }
+
+    fn receive_frame(mailbox: &Mailbox, label: &str) -> FrameContext {
+        mailbox
+            .receiver()
+            .try_recv()
+            .unwrap_or_else(|_| panic!("expected {label}"))
+            .into_payload::<FrameContext>()
+            .unwrap_or_else(|| panic!("expected {label} frame context"))
+    }
+
+    fn decode_domain_error_code(payload: &[u8]) -> u16 {
+        let (code, _) =
+            crate::protocol::rpc_codec::decode_error_body(payload).expect("decode domain error");
+        code
     }
 
     fn signed_hmac_jwt(payload: serde_json::Value) -> String {
@@ -3419,7 +3686,7 @@ mod tests {
     }
 
     #[test]
-    fn should_allow_stream_append_and_commit_after_begin_without_global_stream_write_permission() {
+    fn should_allow_stream_followup_after_begin_without_global_stream_write_permission() {
         // Arrange
         let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(62, TransportKind::Tcp);
@@ -3434,6 +3701,7 @@ mod tests {
         });
         let jwt = signed_hmac_jwt(payload);
 
+        // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             ingress.on_open(session.clone()).await.unwrap();
@@ -3488,6 +3756,9 @@ mod tests {
                 .await;
             assert_eq!(commit_decision, IngressDecision::Accept);
         });
+
+        // Assert
+        assert_eq!(ingress.session_count(), 1);
     }
 
     #[test]
@@ -3815,6 +4086,344 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stream_route.as_str(), "stream://stream-data");
+    }
+
+    #[test]
+    fn should_map_notice_authorization_policies() {
+        // Arrange
+        let publish = auth_spec(500);
+        let subscribe = auth_spec(501);
+        let unsubscribe = auth_spec(502);
+
+        // Act
+        let publish_policy = publish.policy;
+        let subscribe_policy = subscribe.policy;
+        let unsubscribe_policy = unsubscribe.policy;
+
+        // Assert
+        assert_eq!(publish.domain, DispatchDomain::Notice);
+        assert_eq!(
+            publish_policy,
+            AuthorizationPolicy::RouteScoped(Access::Write)
+        );
+        assert_eq!(subscribe.domain, DispatchDomain::Notice);
+        assert_eq!(
+            subscribe_policy,
+            AuthorizationPolicy::RouteScoped(Access::Read)
+        );
+        assert_eq!(unsubscribe.domain, DispatchDomain::Notice);
+        assert_eq!(unsubscribe_policy, AuthorizationPolicy::SessionOwned);
+    }
+
+    #[test]
+    fn should_map_rpc_authorization_policies() {
+        // Arrange
+        let register = auth_spec(300);
+        let unregister = auth_spec(301);
+        let call = auth_spec(302);
+        let response = auth_spec(303);
+        let ack = auth_spec(304);
+
+        // Act
+        let register_policy = register.policy;
+        let unregister_policy = unregister.policy;
+        let call_policy = call.policy;
+
+        // Assert
+        assert_eq!(register.domain, DispatchDomain::Rpc);
+        assert_eq!(
+            register_policy,
+            AuthorizationPolicy::RouteScoped(Access::All)
+        );
+        assert_eq!(
+            unregister_policy,
+            AuthorizationPolicy::RouteScoped(Access::All)
+        );
+        assert_eq!(call_policy, AuthorizationPolicy::RouteScoped(Access::Write));
+        assert_eq!(response.policy, AuthorizationPolicy::SessionOwned);
+        assert_eq!(ack.policy, AuthorizationPolicy::SessionOwned);
+    }
+
+    #[test]
+    fn should_map_kv_authorization_policies() {
+        // Arrange
+        let route = "kv://acme/app/users";
+        let read_only_frame = crate::benchkit::build_kv_begin(route, 0, 0);
+        let read_write_frame = crate::benchkit::build_kv_begin(route, 1, 0);
+        let (_, read_only_payload) = crate::benchkit::extract_single_tlv_field(&read_only_frame);
+        let (_, read_write_payload) = crate::benchkit::extract_single_tlv_field(&read_write_frame);
+
+        // Act
+        let (read_only_targets, read_only_access) = RuntimeIngress::resolve_authorization_targets(
+            DispatchDomain::Kv,
+            MessageType::new(100),
+            read_only_payload.as_ref(),
+            auth_spec(100).policy,
+        )
+        .expect("resolve read-only begin auth");
+        let (read_write_targets, read_write_access) =
+            RuntimeIngress::resolve_authorization_targets(
+                DispatchDomain::Kv,
+                MessageType::new(100),
+                read_write_payload.as_ref(),
+                auth_spec(100).policy,
+            )
+            .expect("resolve read-write begin auth");
+        let (put_targets, _) = RuntimeIngress::resolve_authorization_targets(
+            DispatchDomain::Kv,
+            MessageType::new(104),
+            b"",
+            auth_spec(104).policy,
+        )
+        .expect("resolve put auth");
+
+        // Assert
+        assert_eq!(read_only_access, Access::Read);
+        assert_eq!(read_only_targets.span_target(), (route, 1));
+        assert_eq!(read_write_access, Access::Write);
+        assert_eq!(read_write_targets.span_target(), (route, 1));
+        assert_eq!(put_targets.span_target(), ("<session-owned>", 1));
+        assert_eq!(
+            auth_spec(109).policy,
+            AuthorizationPolicy::RouteScoped(Access::Read)
+        );
+    }
+
+    #[test]
+    fn should_keep_authorization_policies_for_unaffected_domains() {
+        // Arrange
+        let queue_send = auth_spec(200);
+        let queue_watch = auth_spec(207);
+        let lease_acquire = auth_spec(400);
+        let lease_query = auth_spec(403);
+        let stream_begin = auth_spec(600);
+        let stream_append = auth_spec(601);
+        let stream_read = auth_spec(604);
+        let schedule_create = auth_spec(700);
+        let schedule_list = auth_spec(702);
+        let schedule_batch = auth_spec(706);
+
+        // Act
+        let policies = [
+            queue_send.policy,
+            queue_watch.policy,
+            lease_acquire.policy,
+            lease_query.policy,
+            stream_begin.policy,
+            stream_append.policy,
+            stream_read.policy,
+            schedule_create.policy,
+            schedule_list.policy,
+            schedule_batch.policy,
+        ];
+
+        // Assert
+        assert_eq!(queue_send.domain, DispatchDomain::Queue);
+        assert_eq!(policies[0], AuthorizationPolicy::RouteScoped(Access::Write));
+        assert_eq!(policies[1], AuthorizationPolicy::RouteScoped(Access::Read));
+        assert_eq!(lease_acquire.domain, DispatchDomain::Lease);
+        assert_eq!(policies[2], AuthorizationPolicy::RouteScoped(Access::Write));
+        assert_eq!(policies[3], AuthorizationPolicy::RouteScoped(Access::Read));
+        assert_eq!(stream_begin.domain, DispatchDomain::Stream);
+        assert_eq!(policies[4], AuthorizationPolicy::RouteScoped(Access::Write));
+        assert_eq!(policies[5], AuthorizationPolicy::SessionOwned);
+        assert_eq!(policies[6], AuthorizationPolicy::RouteScoped(Access::Read));
+        assert_eq!(schedule_create.domain, DispatchDomain::Schedule);
+        assert_eq!(policies[7], AuthorizationPolicy::RouteScoped(Access::Write));
+        assert_eq!(policies[8], AuthorizationPolicy::RouteScoped(Access::Read));
+        assert_eq!(
+            policies[9],
+            AuthorizationPolicy::MultiRouteScoped(Access::Write)
+        );
+    }
+
+    #[tokio::test]
+    async fn should_return_notice_unauthorized_response_without_closing_session() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 501;
+        let router = Arc::new(crate::runtime::Router::new());
+        let domain_mailbox = Arc::new(Mailbox::new(8));
+        let inbox_mailbox = Arc::new(Mailbox::new(8));
+        router.register_domain_pattern("notice", domain_mailbox.clone());
+        router.register(
+            RouteAddress::new(family, Route::new("inbox://session/501")),
+            inbox_mailbox.clone(),
+        );
+        let ingress = RuntimeIngress::new(true).with_router(router);
+        let session = make_authenticated_session_info(
+            session_id,
+            TransportKind::Tcp,
+            family,
+            &["notice://prod/orders/**#read"],
+        );
+        ingress.on_open(session).await.unwrap();
+
+        // Act
+        let subscribe_decision = ingress
+            .on_frame(
+                session_id,
+                ChannelId::Sub,
+                MessageType::new(501),
+                encode_notice_subscribe("notice://prod/orders/**"),
+            )
+            .await;
+        let subscribe_frame = receive_frame(&domain_mailbox, "notice subscribe dispatch");
+        let publish_decision = ingress
+            .on_frame(
+                session_id,
+                ChannelId::Pub,
+                MessageType::new(500),
+                encode_notice_publish("notice://prod/orders/create", b"hello"),
+            )
+            .await;
+        let unauthorized_frame = receive_frame(&inbox_mailbox, "notice unauthorized response");
+
+        // Assert
+        assert_eq!(subscribe_decision, IngressDecision::Accept);
+        assert_eq!(subscribe_frame.msg_type, MessageType::new(501));
+        assert_eq!(publish_decision, IngressDecision::Accept);
+        assert_eq!(unauthorized_frame.msg_type, MessageType::new(500));
+        assert_eq!(unauthorized_frame.channel_id, ChannelId::Pub);
+        assert_eq!(
+            decode_domain_error_code(unauthorized_frame.payload.as_ref()),
+            crate::protocol::error_codes::notice::ERR_UNAUTHORIZED
+        );
+        assert_eq!(ingress.session_count(), 1);
+        assert!(domain_mailbox.receiver().try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn should_require_all_for_rpc_worker_registration_at_ingress() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let router = Arc::new(crate::runtime::Router::new());
+        let domain_mailbox = Arc::new(Mailbox::new(8));
+        let write_inbox = Arc::new(Mailbox::new(8));
+        let all_inbox = Arc::new(Mailbox::new(8));
+        router.register_domain_pattern("rpc", domain_mailbox.clone());
+        router.register(
+            RouteAddress::new(family, Route::new("inbox://session/610")),
+            write_inbox.clone(),
+        );
+        router.register(
+            RouteAddress::new(family, Route::new("inbox://session/611")),
+            all_inbox.clone(),
+        );
+        let ingress = RuntimeIngress::new(true).with_router(router);
+        let write_session = make_authenticated_session_info(
+            610,
+            TransportKind::Tcp,
+            family,
+            &["rpc://acme/tasks/**#write"],
+        );
+        let all_session = make_authenticated_session_info(
+            611,
+            TransportKind::Tcp,
+            family,
+            &["rpc://acme/tasks/**#*"],
+        );
+        ingress.on_open(write_session).await.unwrap();
+        ingress.on_open(all_session).await.unwrap();
+
+        // Act
+        let register_frame = crate::benchkit::build_rpc_subscribe("rpc://acme/tasks/worker");
+        let (_, register_payload) = crate::benchkit::extract_single_tlv_field(&register_frame);
+        let denied_decision = ingress
+            .on_frame(
+                610,
+                ChannelId::Rpc,
+                MessageType::new(300),
+                register_payload.clone(),
+            )
+            .await;
+        let denied_frame = receive_frame(&write_inbox, "rpc unauthorized response");
+        let allowed_decision = ingress
+            .on_frame(611, ChannelId::Rpc, MessageType::new(300), register_payload)
+            .await;
+        let allowed_frame = receive_frame(&domain_mailbox, "rpc register dispatch");
+
+        // Assert
+        assert_eq!(denied_decision, IngressDecision::Accept);
+        assert_eq!(
+            decode_domain_error_code(denied_frame.payload.as_ref()),
+            crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED
+        );
+        assert_eq!(allowed_decision, IngressDecision::Accept);
+        assert_eq!(allowed_frame.msg_type, MessageType::new(300));
+        assert!(all_inbox.receiver().try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn should_authorize_kv_begin_by_mode_while_keeping_tx_ops_session_owned_at_ingress() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 620;
+        let route = "kv://acme/app/users";
+        let router = Arc::new(crate::runtime::Router::new());
+        let domain_mailbox = Arc::new(Mailbox::new(8));
+        let inbox_mailbox = Arc::new(Mailbox::new(8));
+        router.register_domain_pattern("kv", domain_mailbox.clone());
+        router.register(
+            RouteAddress::new(family, Route::new("inbox://session/620")),
+            inbox_mailbox.clone(),
+        );
+        let ingress = RuntimeIngress::new(true).with_router(router);
+        let session = make_authenticated_session_info(
+            session_id,
+            TransportKind::Tcp,
+            family,
+            &["kv://acme/app/users#read"],
+        );
+        ingress.on_open(session).await.unwrap();
+
+        // Act
+        let read_only_begin = crate::benchkit::build_kv_begin(route, 0, 0);
+        let (_, read_only_payload) = crate::benchkit::extract_single_tlv_field(&read_only_begin);
+        let read_only_decision = ingress
+            .on_frame(
+                session_id,
+                ChannelId::Pub,
+                MessageType::new(100),
+                read_only_payload,
+            )
+            .await;
+        let read_only_frame = receive_frame(&domain_mailbox, "kv read-only begin dispatch");
+
+        let read_write_begin = crate::benchkit::build_kv_begin(route, 1, 0);
+        let (_, read_write_payload) = crate::benchkit::extract_single_tlv_field(&read_write_begin);
+        let read_write_decision = ingress
+            .on_frame(
+                session_id,
+                ChannelId::Pub,
+                MessageType::new(100),
+                read_write_payload,
+            )
+            .await;
+        let denied_frame = receive_frame(&inbox_mailbox, "kv unauthorized response");
+
+        let put_frame = crate::benchkit::build_kv_put(7, route, b"name", b"ada");
+        let (_, put_payload) = crate::benchkit::extract_single_tlv_field(&put_frame);
+        let put_decision = ingress
+            .on_frame(
+                session_id,
+                ChannelId::Pub,
+                MessageType::new(104),
+                put_payload,
+            )
+            .await;
+        let put_dispatch = receive_frame(&domain_mailbox, "kv put dispatch");
+
+        // Assert
+        assert_eq!(read_only_decision, IngressDecision::Accept);
+        assert_eq!(read_only_frame.msg_type, MessageType::new(100));
+        assert_eq!(read_write_decision, IngressDecision::Accept);
+        assert_eq!(
+            decode_domain_error_code(denied_frame.payload.as_ref()),
+            crate::protocol::error_codes::kv::ERR_UNAUTHORIZED
+        );
+        assert_eq!(put_decision, IngressDecision::Accept);
+        assert_eq!(put_dispatch.msg_type, MessageType::new(104));
     }
 
     #[test]
