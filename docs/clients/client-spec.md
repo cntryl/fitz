@@ -1745,7 +1745,8 @@ Identifier, Organizations enabled so Auth0 emits `org_id`, API RBAC enabled,
 and **Add Permissions in the Access Token** enabled. The broker configuration
 uses `FITZ_ROUTE_FAMILY_CLAIM=org_id`, maps Auth0 organization IDs with
 `FITZ_ROUTE_FAMILY_MAP`, and validates the Auth0 issuer through
-`FITZ_JWT_JWKS_MAP`.
+`FITZ_JWT_JWKS_MAP`. Configured JWKS URLs must be absolute HTTPS URLs without
+credentials or fragments.
 
 ### Client-Side Guidance
 

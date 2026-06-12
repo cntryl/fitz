@@ -22,7 +22,7 @@ This page is the central reference for environment variables supported by Fitz r
 | Key | Allowed Values / Format | Default | Description |
 | --- | --- | --- | --- |
 | FITZ_JWT_HMAC_SECRET | Non-empty string | Unset | Enables HMAC JWT verification mode when set. |
-| FITZ_JWT_JWKS_MAP | Comma-separated issuer=jwks_url pairs | Unset | Enables JWKS verification mode when HMAC secret is unset. |
+| FITZ_JWT_JWKS_MAP | Comma-separated issuer=jwks_url pairs | Unset | Enables JWKS verification mode when HMAC secret is unset. JWKS URLs must be absolute HTTPS URLs without credentials or fragments. |
 | FITZ_JWT_AUDIENCES | Comma-separated audience strings | fitz,fitz-broker | Audience allowlist used by HMAC and JWKS modes. |
 | FITZ_JWT_AUDIENCE | Single audience string | Alias fallback | Legacy/single-value fallback if FITZ_JWT_AUDIENCES is unset. |
 

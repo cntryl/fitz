@@ -144,18 +144,18 @@ impl AuthConfig {
         }
 
         if let Ok(raw_map) = std::env::var("FITZ_JWT_JWKS_MAP") {
-            let issuers = raw_map
-                .split(',')
-                .filter_map(|entry| {
-                    let (issuer, jwks_url) = entry.split_once('=')?;
-                    Some(JwksIssuerConfig {
-                        issuer: issuer.trim().to_string(),
-                        jwks_url: jwks_url.trim().to_string(),
-                    })
-                })
-                .collect::<Vec<_>>();
-            if !issuers.is_empty() {
-                return Self::jwks(audiences_from_env(), issuers);
+            let trimmed_map = raw_map.trim();
+            if !trimmed_map.is_empty() {
+                match parse_jwks_issuers_from_env(trimmed_map) {
+                    Ok(issuers) if !issuers.is_empty() => {
+                        return Self::jwks(audiences_from_env(), issuers);
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(error = %error, "Ignoring invalid FITZ_JWT_JWKS_MAP");
+                        return Self::Disabled;
+                    }
+                }
             }
         }
 
@@ -196,8 +196,8 @@ impl AuthConfig {
                             "JWKS auth issuer allowlist entries must not be empty".to_string()
                         );
                     }
-                    url::Url::parse(&issuer.jwks_url).map_err(|e| {
-                        format!("invalid JWKS URL for issuer {}: {}", issuer.issuer, e)
+                    validate_jwks_url(&issuer.jwks_url).map_err(|error| {
+                        format!("invalid JWKS URL for issuer {}: {}", issuer.issuer, error)
                     })?;
                 }
                 Ok(())
@@ -219,6 +219,64 @@ impl AuthConfig {
             AuthConfig::Jwks(config) => &config.audiences,
         }
     }
+}
+
+fn validate_jwks_url(raw: &str) -> Result<(), String> {
+    let url = url::Url::parse(raw).map_err(|error| error.to_string())?;
+    if url.scheme() != "https" {
+        return Err("must use https".to_string());
+    }
+    if url.host_str().is_none() {
+        return Err("must include a host".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("must not include credentials".to_string());
+    }
+    if url.fragment().is_some() {
+        return Err("must not include a fragment".to_string());
+    }
+    Ok(())
+}
+
+fn parse_jwks_issuers_from_env(raw_map: &str) -> Result<Vec<JwksIssuerConfig>, String> {
+    let mut issuers = Vec::new();
+
+    for entry in raw_map.split(',') {
+        let trimmed_entry = entry.trim();
+        if trimmed_entry.is_empty() {
+            return Err("JWKS auth map must not contain empty entries".to_string());
+        }
+
+        let Some((issuer, jwks_url)) = trimmed_entry.split_once('=') else {
+            return Err(format!(
+                "JWKS auth map entry '{}' must use issuer=jwks_url",
+                trimmed_entry
+            ));
+        };
+
+        let issuer = issuer.trim();
+        if issuer.is_empty() {
+            return Err("JWKS auth map entries must not use empty issuers".to_string());
+        }
+
+        let jwks_url = jwks_url.trim();
+        if jwks_url.is_empty() {
+            return Err(format!(
+                "JWKS auth map entry for issuer {} must not use an empty JWKS URL",
+                issuer
+            ));
+        }
+
+        validate_jwks_url(jwks_url)
+            .map_err(|error| format!("invalid JWKS URL for issuer {}: {}", issuer, error))?;
+
+        issuers.push(JwksIssuerConfig {
+            issuer: issuer.to_string(),
+            jwks_url: jwks_url.to_string(),
+        });
+    }
+
+    Ok(issuers)
 }
 
 fn audiences_from_env() -> Vec<String> {
@@ -454,6 +512,144 @@ mod auth_tests {
     use base64::Engine;
     use jsonwebtoken::{Algorithm, EncodingKey, Header};
     use serde_json::json;
+    use serial_test::serial;
+
+    #[test]
+    fn should_reject_http_jwks_url() {
+        // Arrange
+        let config = AuthConfig::jwks(
+            vec!["fitz-broker".to_string()],
+            vec![JwksIssuerConfig {
+                issuer: "https://idp.example/".to_string(),
+                jwks_url: "http://idp.example/.well-known/jwks.json".to_string(),
+            }],
+        );
+
+        // Act
+        let result = config.validate(true);
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must use https"));
+    }
+
+    #[test]
+    fn should_reject_inline_jwks_url_in_validated_auth_config() {
+        // Arrange
+        let config = AuthConfig::jwks(
+            vec!["fitz-broker".to_string()],
+            vec![JwksIssuerConfig {
+                issuer: "https://idp.example/".to_string(),
+                jwks_url: "inline://local".to_string(),
+            }],
+        );
+
+        // Act
+        let result = config.validate(true);
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must use https"));
+    }
+
+    #[test]
+    fn should_reject_jwks_url_with_credentials() {
+        // Arrange
+        let config = AuthConfig::jwks(
+            vec!["fitz-broker".to_string()],
+            vec![JwksIssuerConfig {
+                issuer: "https://idp.example/".to_string(),
+                jwks_url: "https://user:pass@idp.example/.well-known/jwks.json".to_string(),
+            }],
+        );
+
+        // Act
+        let result = config.validate(true);
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must not include credentials"));
+    }
+
+    #[test]
+    fn should_reject_jwks_url_with_fragment() {
+        // Arrange
+        let config = AuthConfig::jwks(
+            vec!["fitz-broker".to_string()],
+            vec![JwksIssuerConfig {
+                issuer: "https://idp.example/".to_string(),
+                jwks_url: "https://idp.example/.well-known/jwks.json#keys".to_string(),
+            }],
+        );
+
+        // Act
+        let result = config.validate(true);
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must not include a fragment"));
+    }
+
+    #[test]
+    fn should_allow_https_jwks_url() {
+        // Arrange
+        let config = AuthConfig::jwks(
+            vec!["fitz-broker".to_string()],
+            vec![JwksIssuerConfig {
+                issuer: "https://idp.example/".to_string(),
+                jwks_url: "https://idp.example/.well-known/jwks.json".to_string(),
+            }],
+        );
+
+        // Act
+        let result = config.validate(true);
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_partially_invalid_jwks_map_from_environment() {
+        // Arrange
+        struct EnvGuard {
+            previous_hmac_secret: Option<String>,
+            previous_jwks_map: Option<String>,
+        }
+
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    match self.previous_hmac_secret.take() {
+                        Some(value) => std::env::set_var("FITZ_JWT_HMAC_SECRET", value),
+                        None => std::env::remove_var("FITZ_JWT_HMAC_SECRET"),
+                    }
+                    match self.previous_jwks_map.take() {
+                        Some(value) => std::env::set_var("FITZ_JWT_JWKS_MAP", value),
+                        None => std::env::remove_var("FITZ_JWT_JWKS_MAP"),
+                    }
+                }
+            }
+        }
+
+        let _guard = EnvGuard {
+            previous_hmac_secret: std::env::var("FITZ_JWT_HMAC_SECRET").ok(),
+            previous_jwks_map: std::env::var("FITZ_JWT_JWKS_MAP").ok(),
+        };
+        unsafe {
+            std::env::remove_var("FITZ_JWT_HMAC_SECRET");
+            std::env::set_var(
+                "FITZ_JWT_JWKS_MAP",
+                "https://idp.example/=https://idp.example/.well-known/jwks.json,bad-entry",
+            );
+        }
+
+        // Act
+        let config = AuthConfig::from_env(true);
+
+        // Assert
+        assert!(matches!(config, AuthConfig::Disabled));
+    }
 
     #[tokio::test]
     async fn should_verify_permissions_using_inline_jwks_for_hmac_token() {

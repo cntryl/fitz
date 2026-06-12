@@ -440,6 +440,7 @@ pub struct BootConfig {
     pub assume_external_tls: bool,
     /// Browser origins allowed to open the WebSocket data-plane endpoint.
     pub ws_allowed_origins: Vec<crate::api::origin::ExactOrigin>,
+    pub(crate) ws_allowed_origins_error: Option<String>,
 }
 
 impl BootConfig {
@@ -495,9 +496,8 @@ impl Default for BootConfig {
             .ok()
             .and_then(|value| value.parse::<bool>().ok())
             .unwrap_or(false);
-        let ws_allowed_origins = env_non_empty("FITZ_WS_ALLOWED_ORIGINS")
-            .and_then(|value| crate::api::origin::parse_exact_origin_list(&value).ok())
-            .unwrap_or_default();
+        let (ws_allowed_origins, ws_allowed_origins_error) =
+            parse_ws_allowed_origins_from_env().unwrap_or_else(|| (Vec::new(), None));
         let route_families = std::env::var("FITZ_ROUTE_FAMILIES")
             .unwrap_or_else(|_| "1".to_string())
             .split(',')
@@ -523,6 +523,7 @@ impl Default for BootConfig {
             storage_memtable: StorageMemtableConfig::from_env(),
             assume_external_tls,
             ws_allowed_origins,
+            ws_allowed_origins_error,
         }
     }
 }
@@ -578,6 +579,7 @@ impl BootConfig {
         origins: Vec<crate::api::origin::ExactOrigin>,
     ) -> Self {
         self.ws_allowed_origins = origins;
+        self.ws_allowed_origins_error = None;
         self
     }
 
@@ -660,7 +662,10 @@ impl BootConfig {
                     .into(),
             );
         }
-        let ws_allowed_origins = configured_ws_allowed_origins(&self.ws_allowed_origins)?;
+        let ws_allowed_origins = configured_ws_allowed_origins(
+            &self.ws_allowed_origins,
+            &self.ws_allowed_origins_error,
+        )?;
         validate_public_origin_security("FITZ_WS_ALLOWED_ORIGINS", &ws_allowed_origins)?;
         if self.auth_required && public_bind && ws_allowed_origins.is_empty() {
             return Err(
@@ -694,12 +699,25 @@ impl BootConfig {
 
 fn configured_ws_allowed_origins(
     configured: &[crate::api::origin::ExactOrigin],
+    configured_error: &Option<String>,
 ) -> BootResult<Vec<crate::api::origin::ExactOrigin>> {
+    if let Some(error) = configured_error {
+        return Err(error.clone().into());
+    }
     match env_non_empty("FITZ_WS_ALLOWED_ORIGINS") {
         Some(value) => crate::api::origin::parse_exact_origin_list(&value)
             .map_err(|error| format!("FITZ_WS_ALLOWED_ORIGINS {error}").into()),
         None => Ok(configured.to_vec()),
     }
+}
+
+fn parse_ws_allowed_origins_from_env(
+) -> Option<(Vec<crate::api::origin::ExactOrigin>, Option<String>)> {
+    env_non_empty("FITZ_WS_ALLOWED_ORIGINS").map(|value| {
+        crate::api::origin::parse_exact_origin_list(&value)
+            .map(|origins| (origins, None))
+            .unwrap_or_else(|error| (Vec::new(), Some(format!("FITZ_WS_ALLOWED_ORIGINS {error}"))))
+    })
 }
 
 fn validate_public_origin_security(
@@ -1383,6 +1401,31 @@ mod tests {
                 assert!(result
                     .unwrap_err()
                     .to_string()
+                    .contains("FITZ_WS_ALLOWED_ORIGINS"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_preserve_invalid_ws_allowed_origins_error_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com/path"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::default();
+
+                // Assert
+                assert!(config.ws_allowed_origins_error.is_some());
+                assert!(config
+                    .ws_allowed_origins_error
+                    .as_deref()
+                    .unwrap()
                     .contains("FITZ_WS_ALLOWED_ORIGINS"));
             },
         );

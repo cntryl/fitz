@@ -539,9 +539,6 @@ async fn handle_logout<B>(
     req: &hyper::Request<B>,
     runtime: Arc<Runtime>,
 ) -> Result<Response, Infallible> {
-    if let Err(response) = require_admin(req, &runtime) {
-        return Ok(*response);
-    }
     if let Err(response) = require_same_origin(req, &runtime) {
         return Ok(*response);
     }

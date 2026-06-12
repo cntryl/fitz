@@ -154,10 +154,32 @@ pub fn get_decoding_key_from_cache(jwks_url: &str, kid: &str) -> Option<jsonwebt
 
 /// Async fetch JWKS from a well-known jwks URL and cache the result.
 pub async fn fetch_and_cache_jwks(jwks_url: &str) -> Result<(), String> {
-    // Simple HTTP fetch, cache with default TTL of 1 hour
-    let resp = reqwest::get(jwks_url)
+    super::validate_jwks_url(jwks_url).map_err(|error| format!("invalid JWKS URL: {}", error))?;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("build jwks client error: {}", error))?;
+
+    // Simple HTTPS fetch, cache with default TTL of 1 hour
+    let resp = client
+        .get(jwks_url)
+        .send()
         .await
         .map_err(|e| format!("fetch jwks error: {}", e))?;
+
+    if resp.status().is_redirection() {
+        return Err(format!(
+            "fetch jwks error: redirect responses are not allowed: {}",
+            resp.status()
+        ));
+    }
+    if !resp.status().is_success() {
+        return Err(format!(
+            "fetch jwks error: unexpected status {}",
+            resp.status()
+        ));
+    }
 
     let text = resp
         .text()

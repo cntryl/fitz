@@ -3590,33 +3590,18 @@ mod tests {
     #[tokio::test]
     async fn should_not_block_unrelated_sessions_while_jwks_fetch_is_pending() {
         // Arrange
-        use base64::Engine;
         use jsonwebtoken::{Algorithm, EncodingKey, Header};
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::sync::oneshot;
-        use tokio::time::{timeout, Duration};
+        use tokio::time::{sleep, timeout, Duration};
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let issuer = format!("http://{}", listener.local_addr().unwrap());
+        let issuer = format!("https://{}", listener.local_addr().unwrap());
         let jwks_url = format!("{issuer}/jwks");
         let secret = b"delayed-secret";
-        let key = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret);
-        let jwks =
-            serde_json::json!({ "keys": [ { "kty": "oct", "kid": "", "k": key } ] }).to_string();
-        let (request_started_tx, request_started_rx) = oneshot::channel();
         let (release_response_tx, release_response_rx) = oneshot::channel();
         let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = [0_u8; 1024];
-            assert!(socket.read(&mut request).await.unwrap() > 0);
-            request_started_tx.send(()).unwrap();
+            let (_socket, _) = listener.accept().await.unwrap();
             release_response_rx.await.unwrap();
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                jwks.len(),
-                jwks
-            );
-            socket.write_all(response.as_bytes()).await.unwrap();
         });
         let ingress = Arc::new(
             RuntimeIngress::new(true)
@@ -3667,10 +3652,7 @@ mod tests {
                 )
                 .await
         });
-        timeout(Duration::from_secs(1), request_started_rx)
-            .await
-            .unwrap()
-            .unwrap();
+        sleep(Duration::from_millis(100)).await;
         timeout(
             Duration::from_millis(100),
             ingress.on_close(83, CloseReason::ClientClose),
@@ -3694,7 +3676,10 @@ mod tests {
         assert!(ingress.get_session(83).is_none());
         assert_eq!(frame_decision, IngressDecision::Accept);
         release_response_tx.send(()).unwrap();
-        assert_eq!(connect.await.unwrap(), IngressDecision::Accept);
+        assert!(matches!(
+            connect.await.unwrap(),
+            IngressDecision::Close(reason) if reason.contains("connect failed")
+        ));
         server.await.unwrap();
     }
 

@@ -68,6 +68,9 @@ FITZ_JWT_AUDIENCES=https://fitz.example.com/api
 FITZ_JWT_JWKS_MAP=https://tenant.auth0.com/=https://tenant.auth0.com/.well-known/jwks.json
 ```
 
+The JWKS URL value must be an absolute HTTPS URL without credentials or a
+fragment.
+
 The keys in `FITZ_ROUTE_FAMILY_MAP` are Auth0 organization IDs. The values are
 the numeric route families provisioned on this Fitz node. A token with
 `org_id=org_acme` resolves to route family `1`; a token with `org_id=org_beta`

@@ -213,6 +213,7 @@ impl TestServer {
             storage_memtable: crate::boot::runtime::StorageMemtableConfig::Auto,
             assume_external_tls: false,
             ws_allowed_origins,
+            ws_allowed_origins_error: None,
         };
 
         // Step 1: Initialize storage

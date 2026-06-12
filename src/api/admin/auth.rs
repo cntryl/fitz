@@ -245,9 +245,7 @@ impl AdminAuth {
             .as_ref()
             .ok_or(AuthFailure::Unavailable)?;
         let expected = expected_admin_origin(req, settings)?;
-        let Some(candidate) = request_origin(req) else {
-            return Err(AuthFailure::Csrf);
-        };
+        let candidate = request_origin(req)?.ok_or(AuthFailure::Csrf)?;
 
         if expected.same_origin(&candidate) {
             Ok(())
@@ -314,13 +312,45 @@ fn request_header<'a, B>(req: &'a hyper::Request<B>, name: &str) -> Option<&'a s
     req.headers().get(name)?.to_str().ok()
 }
 
-fn request_origin<B>(req: &hyper::Request<B>) -> Option<crate::api::origin::ExactOrigin> {
-    if let Some(origin) = request_header(req, "origin") {
-        return crate::api::origin::parse_exact_origin(origin).ok();
+fn single_header_value<'a, B>(
+    req: &'a hyper::Request<B>,
+    name: &str,
+) -> Result<Option<&'a str>, AuthFailure> {
+    let mut values = req.headers().get_all(name).iter();
+    let Some(first) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(AuthFailure::Csrf);
+    }
+    first.to_str().map(Some).map_err(|_| AuthFailure::Csrf)
+}
+
+fn request_origin<B>(
+    req: &hyper::Request<B>,
+) -> Result<Option<crate::api::origin::ExactOrigin>, AuthFailure> {
+    let origin = single_header_value(req, "origin")?;
+    let referer = single_header_value(req, "referer")?;
+    let parsed_referer = referer
+        .map(crate::api::origin::parse_url_origin)
+        .transpose()
+        .map_err(|_| AuthFailure::Csrf)?;
+
+    let Some(origin) = origin else {
+        return Ok(parsed_referer);
+    };
+
+    let parsed_origin =
+        crate::api::origin::parse_exact_origin(origin).map_err(|_| AuthFailure::Csrf)?;
+
+    if parsed_referer
+        .as_ref()
+        .is_some_and(|referer| !parsed_origin.same_origin(referer))
+    {
+        return Err(AuthFailure::Csrf);
     }
 
-    request_header(req, "referer")
-        .and_then(|value| crate::api::origin::parse_url_origin(value).ok())
+    Ok(Some(parsed_origin))
 }
 
 fn expected_admin_origin<B>(
@@ -609,6 +639,98 @@ mod tests {
 
         // Act
         let result = auth.validate_same_origin(&same_origin);
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_duplicate_origin_headers_for_protected_admin_request() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
+        std::env::set_var("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com");
+        let auth = AdminAuth::from_env();
+        let req = hyper::http::Request::builder()
+            .header("origin", "https://admin.example.com")
+            .header("origin", "https://evil.example.com")
+            .body(Body::default())
+            .unwrap();
+
+        // Act
+        let result = auth.validate_same_origin(&req);
+
+        // Assert
+        assert!(matches!(result, Err(AuthFailure::Csrf)));
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_duplicate_referer_headers_for_protected_admin_request() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
+        std::env::set_var("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com");
+        let auth = AdminAuth::from_env();
+        let req = hyper::http::Request::builder()
+            .header("referer", "https://admin.example.com/settings")
+            .header("referer", "https://evil.example.com/settings")
+            .body(Body::default())
+            .unwrap();
+
+        // Act
+        let result = auth.validate_same_origin(&req);
+
+        // Assert
+        assert!(matches!(result, Err(AuthFailure::Csrf)));
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_conflicting_origin_and_referer_for_protected_admin_request() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
+        std::env::set_var("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com");
+        let auth = AdminAuth::from_env();
+        let req = hyper::http::Request::builder()
+            .header("origin", "https://admin.example.com")
+            .header("referer", "https://evil.example.com/settings")
+            .body(Body::default())
+            .unwrap();
+
+        // Act
+        let result = auth.validate_same_origin(&req);
+
+        // Assert
+        assert!(matches!(result, Err(AuthFailure::Csrf)));
+    }
+
+    #[test]
+    #[serial]
+    fn should_validate_same_origin_given_matching_origin_and_referer() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
+        std::env::set_var("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com");
+        let auth = AdminAuth::from_env();
+        let req = hyper::http::Request::builder()
+            .header("origin", "https://admin.example.com")
+            .header("referer", "https://admin.example.com/settings")
+            .body(Body::default())
+            .unwrap();
+
+        // Act
+        let result = auth.validate_same_origin(&req);
 
         // Assert
         assert!(result.is_ok());

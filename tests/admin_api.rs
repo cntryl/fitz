@@ -637,6 +637,40 @@ async fn login_cookie(runtime: Arc<Runtime>) -> String {
         .to_string()
 }
 
+fn expired_admin_cookie() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let claims = serde_json::json!({
+        "sub": "admin",
+        "role": "admin",
+        "iat": now - 7_200,
+        "exp": now - 3_600,
+    });
+    let token = jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(b"jwt-secret"),
+    )
+    .unwrap();
+    format!("fitz_admin_session={token}")
+}
+
+fn assert_clear_admin_cookie(response: &fitz::api::http::Response) {
+    let set_cookie = response
+        .headers()
+        .get(SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(set_cookie.contains("fitz_admin_session=;"));
+    assert!(set_cookie.contains("; Max-Age=0"));
+    assert!(set_cookie.contains("; HttpOnly"));
+    assert!(set_cookie.contains("; Secure"));
+    assert!(set_cookie.contains("; SameSite=Strict"));
+}
+
 #[tokio::test]
 #[serial]
 async fn should_create_admin_session_and_set_cookie() {
@@ -691,6 +725,126 @@ async fn should_reject_admin_login_given_cross_origin() {
 
     // Assert
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_clear_admin_session_cookie_given_valid_logout_cookie() {
+    // Arrange
+    let runtime = test_runtime();
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::DELETE)
+        .uri("/api/v1/session")
+        .header(COOKIE, cookie)
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_clear_admin_cookie(&response);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_clear_admin_session_cookie_given_expired_logout_cookie() {
+    // Arrange
+    let runtime = test_runtime();
+    let req = hyper::http::Request::builder()
+        .method(Method::DELETE)
+        .uri("/api/v1/session")
+        .header(COOKIE, expired_admin_cookie())
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_clear_admin_cookie(&response);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_clear_admin_session_cookie_given_malformed_logout_cookie() {
+    // Arrange
+    let runtime = test_runtime();
+    let req = hyper::http::Request::builder()
+        .method(Method::DELETE)
+        .uri("/api/v1/session")
+        .header(COOKIE, "fitz_admin_session=not-a-jwt")
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_clear_admin_cookie(&response);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_clear_admin_session_cookie_given_missing_logout_cookie() {
+    // Arrange
+    let runtime = test_runtime();
+    let req = hyper::http::Request::builder()
+        .method(Method::DELETE)
+        .uri("/api/v1/session")
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_clear_admin_cookie(&response);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_reject_admin_logout_given_cross_origin() {
+    // Arrange
+    let runtime = test_runtime();
+    let req = hyper::http::Request::builder()
+        .method(Method::DELETE)
+        .uri("/api/v1/session")
+        .header(COOKIE, expired_admin_cookie())
+        .header("host", "localhost")
+        .header("origin", "http://evil.example")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(response.headers().get(SET_COOKIE).is_none());
 }
 
 #[tokio::test]
