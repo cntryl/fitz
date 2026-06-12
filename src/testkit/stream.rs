@@ -2,7 +2,6 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 use crate::domains::stream::StreamActor;
-use crate::runtime::actor::Context;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::router::{MailboxSink, Router};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -73,7 +72,7 @@ pub fn create_test_store_with_layout(
     crate::domains::stream::StreamStore::with_layout(create_test_db(), stream_storage_layout)
 }
 
-/// Create a StreamActor for testing with in-memory storage
+/// Create a StreamActor for testing with in-memory storage.
 ///
 /// # Arguments
 /// * `realm` - Realm name
@@ -81,31 +80,19 @@ pub fn create_test_store_with_layout(
 /// * `resource` - Resource name
 ///
 /// # Returns
-/// Tuple of (StreamActor, Context) ready for testing
-pub fn create_test_stream_actor(
-    realm: &str,
-    area: &str,
-    resource: &str,
-) -> (StreamActor, Context<StreamActor>) {
-    let router = Arc::new(Router::new());
+/// StreamActor ready for testing
+pub fn create_test_stream_actor(realm: &str, area: &str, resource: &str) -> StreamActor {
     let family = RouteFamily::new(1);
-    let addr = RouteAddress::new(
-        family,
-        Route::new(format!("stream://{}/{}/{}/append", realm, area, resource)),
-    );
 
     let store = Arc::new(create_test_store());
-    let actor = StreamActor::new(
+    StreamActor::new(
         family,
         realm.to_string(),
         area.to_string(),
         resource.to_string(),
         store,
     )
-    .expect("create test stream actor");
-    let ctx = Context::new(addr, router);
-
-    (actor, ctx)
+    .expect("create test stream actor")
 }
 
 /// Helper builders used by stream E2E tests

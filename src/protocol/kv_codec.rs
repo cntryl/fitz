@@ -1,10 +1,11 @@
 //! KV domain TLV message types and codec
 
+use crate::domains::kv::KvError;
 use crate::domains::kv::{
     KvMessage, KvNotification, KvResponse, KvSubscriptionMessage, ScanQuery, TxMode,
 };
 use crate::protocol::frame_context::FrameContext;
-use crate::runtime::routing::{route_triplet_tail, Route, RouteAddress, RouteFamily};
+use crate::runtime::routing::{route_exact_triplet, Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 
 /// KV domain message type IDs
@@ -144,13 +145,32 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
             buf.put_u8(if *has_more { 1 } else { 0 });
         }
         KvResponse::Error { error } => {
-            buf.put_u8(1); // status: error
-            let error_msg = error.to_string();
-            buf.put_u32(error_msg.len() as u32);
-            buf.put_slice(error_msg.as_bytes());
+            return crate::protocol::error_codes::encode_error_body(
+                kv_error_code(error),
+                &error.to_string(),
+            );
         }
     }
     buf
+}
+
+fn kv_error_code(error: &KvError) -> u16 {
+    use crate::protocol::error_codes::kv;
+
+    match error {
+        KvError::InvalidTxId | KvError::NoActiveTx => kv::ERR_TRANSACTION_NOT_FOUND,
+        KvError::NotFound => kv::ERR_KEY_NOT_FOUND,
+        KvError::Conflict(_) => kv::ERR_ISOLATION_CONFLICT,
+        KvError::AlreadyExists => kv::ERR_KEY_EXISTS,
+        KvError::RealmMismatch => kv::ERR_REALM_MISMATCH,
+        KvError::BackendUnavailable(_) | KvError::BackendError(_) => kv::ERR_BACKEND_ERROR,
+        KvError::InvalidRoute(_)
+        | KvError::InvalidRequest(_)
+        | KvError::InvalidRealm
+        | KvError::InvalidRouteFamily
+        | KvError::UnknownResource(_)
+        | KvError::TxScopeViolation { .. } => kv::ERR_INVALID_ROUTE,
+    }
 }
 
 // ===== Parsers =====
@@ -158,7 +178,7 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
 /// Parse route string into realm, area, resource components
 /// Expected format: "kv://realm/area/resource" or just "realm/area/resource"
 fn split_route(route_str: &str) -> Option<(&str, &str, &str)> {
-    let parts = route_triplet_tail(route_str)?;
+    let parts = route_exact_triplet(route_str)?;
 
     if parts.realm.is_empty() || parts.area.is_empty() || parts.resource.is_empty() {
         return None;
@@ -1197,7 +1217,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_begin_given_nested_resource_path() {
+    fn should_reject_begin_given_nested_resource_path() {
         // Arrange
         let route = "kv://acme/kv/users/by/id";
         let mut payload = Vec::new();
@@ -1210,10 +1230,7 @@ mod tests {
         let result = parse_request(msg_type::BEGIN, RouteFamily::new(1), &payload);
 
         // Assert
-        match result {
-            Ok(KvMessage::Begin { resource, .. }) => assert_eq!(resource, "users/by/id"),
-            _ => panic!("Expected KvMessage::Begin with nested resource path"),
-        }
+        assert!(result.is_err());
     }
 
     #[test]

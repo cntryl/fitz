@@ -323,7 +323,7 @@ where
     C: KvConnector,
 {
     let mut client = C::connect(server).await.expect("failed to connect");
-    let route = "kv://test/app/user/s";
+    let route = "kv://test/app/users";
 
     let begin_frame = build_kv_begin(route, 1, 0);
     client.request(&begin_frame, 2000).await.expect("BEGIN");

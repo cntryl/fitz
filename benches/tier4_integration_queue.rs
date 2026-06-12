@@ -18,28 +18,15 @@ use fitz::benchkit::{
     build_queue_enqueue, create_bench_queue_actor, parse_queue_response, shared_bench_runtime,
 };
 use fitz::domains::queue::protocol::QueueMessage;
-use fitz::prelude::Actor;
 use fitz::protocol::queue_codec::parse_request as queue_parse_request;
-use fitz::runtime::actor::Context;
-use fitz::runtime::router::Router;
-use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::transport::TlvFrameParser;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-fn setup_queue_actor(
-    route: &str,
-) -> (
-    fitz::domains::queue::QueueActor,
-    Context<fitz::domains::queue::QueueActor>,
-) {
-    let family = RouteFamily::new(1);
-    let actor = create_bench_queue_actor("tier4", "queue", "main", None);
-    let router = Arc::new(Router::new());
-    let addr = RouteAddress::new(family, Route::new(route));
-    let ctx = Context::new(addr, router);
-    (actor, ctx)
+fn setup_queue_actor() -> fitz::domains::queue::QueueActor {
+    create_bench_queue_actor("tier4", "queue", "main", None)
 }
 
 #[stress_test]
@@ -49,22 +36,16 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
     ctx.tag("measurement_scope", "direct_inproc");
     ctx.tag("batch_size", "single_enqueue");
 
-    let route = "queue://tier4/queue/main/enqueue";
-    let family = RouteFamily::new(1);
-    let (mut actor, mut actor_ctx) = setup_queue_actor(route);
+    let mut actor = setup_queue_actor();
 
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            actor.receive(
-                QueueMessage::Send {
-                    family_id: family,
-                    route: Route::new(route),
-                    body: Bytes::from_static(b"msg"),
-                    delay_seconds: None,
-                },
-                &mut actor_ctx,
-            );
+            let response = actor.handle_send(Bytes::from_static(b"msg"), None);
+            assert!(matches!(
+                response,
+                fitz::domains::queue::QueueResponse::Sent { .. }
+            ));
         },
     );
     ctx.set_elements(iterations as u64);
@@ -78,7 +59,7 @@ fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     ctx.tag("batch_size", "single_enqueue");
 
     let route = "queue://tier4/queue/main/enqueue";
-    let (mut actor, mut actor_ctx) = setup_queue_actor(route);
+    let mut actor = setup_queue_actor();
     let enqueue_frame = build_queue_enqueue(route, b"msg");
     let family = RouteFamily::new(1);
 
@@ -88,7 +69,19 @@ fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
             let mut parser = TlvFrameParser::new(&enqueue_frame);
             let (msg_type, payload) = parser.next_field_ref().expect("enqueue field");
             let msg = queue_parse_request(msg_type, family, payload).expect("parse enqueue");
-            actor.receive(msg, &mut actor_ctx);
+            let QueueMessage::Send {
+                body,
+                delay_seconds,
+                ..
+            } = msg
+            else {
+                panic!("expected queue send message");
+            };
+            let response = actor.handle_send(body, delay_seconds);
+            assert!(matches!(
+                response,
+                fitz::domains::queue::QueueResponse::Sent { .. }
+            ));
         },
     );
     ctx.set_elements(iterations as u64);

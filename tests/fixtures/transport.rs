@@ -441,13 +441,7 @@ pub fn parse_lease_acquire_response_type(data: &[u8]) -> Result<u8, String> {
 }
 
 pub fn parse_lease_error_message(data: &[u8]) -> Result<String, String> {
-    let mut decoder = fitz::protocol::payload_codec::PayloadDecoder::new(data);
-    let status = decoder.get_u8()?;
-    if status == 0 {
-        return Err("Lease operation succeeded".to_string());
-    }
-
-    decoder.get_string()
+    fitz::protocol::error_codes::decode_error_body(data).map(|(_, message)| message)
 }
 
 pub fn parse_lease_status_payload(data: &[u8]) -> Result<LeaseStatusPayload, String> {

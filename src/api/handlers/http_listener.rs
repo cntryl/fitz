@@ -24,7 +24,13 @@ pub async fn spawn_http_listener(
     let http_listener = TcpListener::bind(&http_addr).await?;
     info!("HTTP/WebSocket endpoint listening on {}", http_addr);
 
-    spawn_http_listener_with_bound_socket(http_listener, ingress, ingress_config, runtime)
+    spawn_http_listener_with_bound_socket(
+        http_listener,
+        ingress,
+        ingress_config,
+        runtime,
+        config.ws_allowed_origins.clone(),
+    )
 }
 
 /// Spawn HTTP/WebSocket listener with pre-bound socket (eliminates port reallocation race)
@@ -33,9 +39,11 @@ pub fn spawn_http_listener_with_bound_socket(
     ingress: Arc<dyn Ingress>,
     ingress_config: IngressConfig,
     runtime: crate::boot::Runtime,
+    ws_allowed_origins: Vec<crate::api::origin::ExactOrigin>,
 ) -> BootResult<ListenerHandle> {
     let http_config = ingress_config.clone();
     let runtime = Arc::new(runtime);
+    let ws_allowed_origins = Arc::new(ws_allowed_origins);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
 
@@ -60,8 +68,9 @@ pub fn spawn_http_listener_with_bound_socket(
                             let config = http_config.clone();
                             let runtime = runtime.clone();
                             let websocket_tasks = websockets.clone();
+                            let ws_allowed_origins = ws_allowed_origins.clone();
                             connections.lock().await.spawn(async move {
-                                if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime, websocket_tasks).await {
+                                if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime, websocket_tasks, ws_allowed_origins).await {
                                     tracing::error!("HTTP handler error: {}", e);
                                 }
                             });
@@ -90,6 +99,7 @@ async fn handle_http_upgrade(
     config: IngressConfig,
     runtime: Arc<crate::boot::Runtime>,
     websocket_tasks: super::SessionTasks,
+    ws_allowed_origins: Arc<Vec<crate::api::origin::ExactOrigin>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     stream.set_nodelay(true)?;
 
@@ -101,10 +111,19 @@ async fn handle_http_upgrade(
         let config = config.clone();
         let runtime = runtime_clone.clone();
         let websocket_tasks = websocket_tasks.clone();
+        let ws_allowed_origins = ws_allowed_origins.clone();
 
         async move {
             if is_websocket_upgrade(&req) {
-                handle_websocket(req, ingress, config, runtime, websocket_tasks).await
+                handle_websocket(
+                    req,
+                    ingress,
+                    config,
+                    runtime,
+                    websocket_tasks,
+                    ws_allowed_origins,
+                )
+                .await
             } else {
                 crate::api::admin::handlers::handle_request(req, runtime).await
             }

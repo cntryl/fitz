@@ -186,7 +186,7 @@ fn parse_single_received_message(response: &[u8]) -> (u64, u64) {
 }
 
 fn receive_single_message(actor: &mut QueueActor) -> ReservedMessage {
-    match actor.handle_receive(30, Some(1)) {
+    match actor.handle_receive_for_session(CLIENT_SESSION_ID, 30, Some(1)) {
         QueueResponse::Received { mut messages } => {
             assert_eq!(messages.len(), 1, "expected a single reserved message");
             messages.pop().expect("reserved message")
@@ -196,7 +196,7 @@ fn receive_single_message(actor: &mut QueueActor) -> ReservedMessage {
 }
 
 fn receive_batch_messages(actor: &mut QueueActor, batch_size: usize) -> Vec<ReservedMessage> {
-    match actor.handle_receive(30, Some(batch_size)) {
+    match actor.handle_receive_for_session(CLIENT_SESSION_ID, 30, Some(batch_size)) {
         QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), batch_size, "expected a full receive batch");
             messages
@@ -207,7 +207,7 @@ fn receive_batch_messages(actor: &mut QueueActor, batch_size: usize) -> Vec<Rese
 
 fn ack_reserved_messages(actor: &mut QueueActor, messages: Vec<ReservedMessage>) {
     for message in messages {
-        let response = actor.handle_ack(message.id, message.token);
+        let response = actor.handle_ack_for_session(CLIENT_SESSION_ID, message.id, message.token);
         assert_eq!(response, QueueResponse::Acked);
     }
 }
@@ -238,7 +238,8 @@ fn measure_backlog_depth_steady_state(
         || {
             for _ in 0..per_iteration_cycles {
                 let message = receive_single_message(&mut actor);
-                let response = actor.handle_ack(message.id, message.token);
+                let response =
+                    actor.handle_ack_for_session(CLIENT_SESSION_ID, message.id, message.token);
                 assert_eq!(response, QueueResponse::Acked);
 
                 let response = actor.handle_send(payload.clone(), None);
@@ -318,7 +319,8 @@ fn should_complete_capacity_ack_roundtrip(ctx: &mut StressContext) {
             assert!(matches!(response, QueueResponse::Sent { .. }));
 
             let message = receive_single_message(&mut actor);
-            let response = actor.handle_ack(message.id, message.token);
+            let response =
+                actor.handle_ack_for_session(CLIENT_SESSION_ID, message.id, message.token);
             assert_eq!(response, QueueResponse::Acked);
         },
     );
@@ -343,10 +345,12 @@ fn should_complete_capacity_extend_roundtrip(ctx: &mut StressContext) {
             assert!(matches!(response, QueueResponse::Sent { .. }));
 
             let message = receive_single_message(&mut actor);
-            let response = actor.handle_extend(message.id, message.token, 60);
+            let response =
+                actor.handle_extend_for_session(CLIENT_SESSION_ID, message.id, message.token, 60);
             assert_eq!(response, QueueResponse::Extended);
 
-            let response = actor.handle_ack(message.id, message.token);
+            let response =
+                actor.handle_ack_for_session(CLIENT_SESSION_ID, message.id, message.token);
             assert_eq!(response, QueueResponse::Acked);
         },
     );
@@ -374,7 +378,7 @@ fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
         || {
             let _ = actor.handle_send_batch(&batch_50);
             for _ in 0..50 {
-                let _ = actor.handle_receive(30, Some(1));
+                let _ = actor.handle_receive_for_session(CLIENT_SESSION_ID, 30, Some(1));
             }
         },
     );
@@ -427,26 +431,29 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         || {
             let _ = actor.handle_send_batch(&batch_mixed);
 
-            let immediate = match actor.handle_receive(30, Some(80)) {
+            let immediate = match actor.handle_receive_for_session(CLIENT_SESSION_ID, 30, Some(80))
+            {
                 QueueResponse::Received { messages } => messages,
                 other => panic!("expected received immediate batch, got {:?}", other),
             };
             assert_eq!(immediate.len(), 80);
             for message in immediate {
-                let response = actor.handle_ack(message.id, message.token);
+                let response =
+                    actor.handle_ack_for_session(CLIENT_SESSION_ID, message.id, message.token);
                 assert_eq!(response, QueueResponse::Acked);
             }
 
             clock.advance(Duration::from_secs(6));
             actor.process_delayed_messages();
 
-            let delayed = match actor.handle_receive(30, Some(20)) {
+            let delayed = match actor.handle_receive_for_session(CLIENT_SESSION_ID, 30, Some(20)) {
                 QueueResponse::Received { messages } => messages,
                 other => panic!("expected received delayed batch, got {:?}", other),
             };
             assert_eq!(delayed.len(), 20);
             for message in delayed {
-                let response = actor.handle_ack(message.id, message.token);
+                let response =
+                    actor.handle_ack_for_session(CLIENT_SESSION_ID, message.id, message.token);
                 assert_eq!(response, QueueResponse::Acked);
             }
         },
@@ -537,7 +544,7 @@ fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
         || {
             let _ = actor.handle_send_batch(&batch_50);
             for _ in 0..50 {
-                let _ = actor.handle_receive(30, Some(1));
+                let _ = actor.handle_receive_for_session(CLIENT_SESSION_ID, 30, Some(1));
             }
         },
     );

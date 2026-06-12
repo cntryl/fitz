@@ -90,8 +90,11 @@ pub fn encode_response_into(response: &RpcResponseMsg, enc: &mut PayloadEncoder)
             return encode_error_body_into(*code, message, enc);
         }
         RpcResponseMsg::Error(e) => {
-            enc.put_u8(1); // error flag
-            enc.put_string(e);
+            return encode_error_body_into(
+                crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+                e,
+                enc,
+            );
         }
     }
 
@@ -100,37 +103,17 @@ pub fn encode_response_into(response: &RpcResponseMsg, enc: &mut PayloadEncoder)
 
 /// Encode a standard RPC error body with numeric code and message.
 pub fn encode_error_body(code: u16, message: &str) -> Vec<u8> {
-    let mut enc = PayloadEncoder::new();
-    encode_error_body_into(code, message, &mut enc)
+    crate::protocol::error_codes::encode_error_body(code, message)
 }
 
 /// Encode a standard RPC error body into a reusable payload encoder.
 pub fn encode_error_body_into(code: u16, message: &str, enc: &mut PayloadEncoder) -> Vec<u8> {
-    enc.clear();
-    enc.put_u8(1);
-    enc.put_u32(code as u32);
-    enc.put_string(message);
-    enc.finish()
+    crate::protocol::error_codes::encode_error_body_into(code, message, enc)
 }
 
 /// Decode a standard RPC error body with numeric code and message.
 pub fn decode_error_body(payload: &[u8]) -> Result<(u16, String), String> {
-    let mut dec = PayloadDecoder::new(payload);
-    if dec.get_u8()? != 1 {
-        return Err("Payload is not an error envelope".to_string());
-    }
-
-    let code = dec.get_u32()?;
-    if code > u16::MAX as u32 {
-        return Err("Error code exceeds u16 range".to_string());
-    }
-
-    let message = dec.get_string()?;
-    if !dec.is_complete() {
-        return Err("Trailing data in error envelope".to_string());
-    }
-
-    Ok((code as u16, message))
+    crate::protocol::error_codes::decode_error_body(payload)
 }
 
 // ===== Helper Parsers =====

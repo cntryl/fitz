@@ -54,8 +54,11 @@ fn dispatch_session_cleanup(
     failed_domains
 }
 
-fn canonicalize_dispatch_route_str<'a>(domain: DispatchDomain, route: &'a str) -> Cow<'a, str> {
-    RuntimeIngress::canonicalize_domain_route_str(domain.as_str(), route)
+fn canonicalize_dispatch_route_str<'a>(
+    domain: DispatchDomain,
+    route: &'a str,
+) -> Result<Cow<'a, str>, String> {
+    RuntimeIngress::canonicalize_domain_route_str(domain, route)
 }
 
 fn extract_auth_route_for_domain<'a>(
@@ -65,29 +68,53 @@ fn extract_auth_route_for_domain<'a>(
 ) -> Result<Option<Cow<'a, str>>, String> {
     match domain {
         DispatchDomain::Kv => crate::protocol::kv_codec::extract_auth_route(msg_type, payload)
-            .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route))),
+            .and_then(|route| {
+                route
+                    .map(|route| canonicalize_dispatch_route_str(domain, route))
+                    .transpose()
+            }),
         DispatchDomain::Queue => {
-            crate::protocol::queue_codec::extract_auth_route(msg_type, payload)
-                .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route)))
+            crate::protocol::queue_codec::extract_auth_route(msg_type, payload).and_then(|route| {
+                route
+                    .map(|route| canonicalize_dispatch_route_str(domain, route))
+                    .transpose()
+            })
         }
         DispatchDomain::Rpc => crate::protocol::rpc_codec::extract_auth_route(msg_type, payload)
-            .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route))),
+            .and_then(|route| {
+                route
+                    .map(|route| canonicalize_dispatch_route_str(domain, route))
+                    .transpose()
+            }),
         DispatchDomain::Lease => {
-            crate::protocol::lease_codec::extract_auth_route(msg_type, payload)
-                .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route)))
+            crate::protocol::lease_codec::extract_auth_route(msg_type, payload).and_then(|route| {
+                route
+                    .map(|route| canonicalize_dispatch_route_str(domain, route))
+                    .transpose()
+            })
         }
         DispatchDomain::Notice => {
-            crate::protocol::notice_codec::extract_auth_route(msg_type, payload)
-                .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route)))
+            crate::protocol::notice_codec::extract_auth_route(msg_type, payload).and_then(|route| {
+                route
+                    .map(|route| canonicalize_dispatch_route_str(domain, route))
+                    .transpose()
+            })
         }
         DispatchDomain::Stream => {
-            crate::protocol::stream_codec::extract_auth_route(msg_type, payload)
-                .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route)))
+            crate::protocol::stream_codec::extract_auth_route(msg_type, payload).and_then(|route| {
+                route
+                    .map(|route| canonicalize_dispatch_route_str(domain, route))
+                    .transpose()
+            })
         }
-        DispatchDomain::Schedule => {
-            crate::protocol::schedule_codec::extract_auth_route(msg_type, payload)
-                .map(|route| route.map(|route| canonicalize_dispatch_route_str(domain, route)))
-        }
+        DispatchDomain::Schedule => crate::protocol::schedule_codec::extract_auth_route(
+            msg_type, payload,
+        )
+        .and_then(|route| {
+            route
+                .map(|route| canonicalize_dispatch_route_str(domain, route))
+                .transpose()
+        }),
     }
 }
 
@@ -100,6 +127,7 @@ enum AuthorizationTargets<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AuthorizationPolicy {
     RouteScoped(crate::auth::Access),
+    WildcardScoped(crate::auth::Access),
     SessionOwned,
     KvBeginModeScoped,
     MultiRouteScoped(crate::auth::Access),
@@ -155,7 +183,7 @@ impl<'a> AuthorizationTargets<'a> {
         wildcard_route: &'static str,
     ) -> (bool, &str, usize) {
         match self {
-            Self::SessionOwned => (true, "<session-owned>", 0),
+            Self::SessionOwned => (actor_ref.authorize_session_owned(), "<session-owned>", 1),
             Self::Single(route) => {
                 let route = route.as_ref();
                 (actor_ref.authorize_route(route, access), route, 1)
@@ -546,28 +574,83 @@ impl RuntimeIngress {
 
     #[cfg_attr(not(test), allow(dead_code))]
     fn canonicalize_domain_route(
-        domain: &str,
+        domain: DispatchDomain,
         route: crate::runtime::routing::Route,
-    ) -> crate::runtime::routing::Route {
-        let path = route.as_str();
-        if path.contains("://") {
-            return route;
-        }
-
-        crate::runtime::routing::Route::new(format!("{domain}://{}", path.trim_start_matches('/')))
+    ) -> Result<crate::runtime::routing::Route, String> {
+        Self::canonicalize_domain_route_str(domain, route.as_str())
+            .map(|route| crate::runtime::routing::Route::new(route.as_ref()))
     }
 
-    fn canonicalize_domain_route_str<'a>(domain: &str, route: &'a str) -> Cow<'a, str> {
+    fn canonicalize_domain_route_str<'a>(
+        domain: DispatchDomain,
+        route: &'a str,
+    ) -> Result<Cow<'a, str>, String> {
+        match domain {
+            DispatchDomain::Kv => Self::canonicalize_triplet_route_str(domain, route, true),
+            DispatchDomain::Queue | DispatchDomain::Lease | DispatchDomain::Stream => {
+                Self::canonicalize_triplet_route_str(domain, route, false)
+            }
+            DispatchDomain::Rpc | DispatchDomain::Notice | DispatchDomain::Schedule => {
+                Ok(Self::scheme_prefixed_route_str(domain.as_str(), route))
+            }
+        }
+    }
+
+    fn scheme_prefixed_route_str<'a>(domain: &str, route: &'a str) -> Cow<'a, str> {
         if route.contains("://") {
-            return Cow::Borrowed(route);
+            Cow::Borrowed(route)
+        } else {
+            let trimmed = route.trim_start_matches('/');
+            let mut canonical = String::with_capacity(domain.len() + 3 + trimmed.len());
+            canonical.push_str(domain);
+            canonical.push_str("://");
+            canonical.push_str(trimmed);
+            Cow::Owned(canonical)
+        }
+    }
+
+    fn canonicalize_triplet_route_str<'a>(
+        domain: DispatchDomain,
+        route: &'a str,
+        exact: bool,
+    ) -> Result<Cow<'a, str>, String> {
+        let parts = if exact {
+            crate::runtime::routing::route_exact_triplet(route)
+        } else {
+            crate::runtime::routing::route_triplet(route)
+        }
+        .ok_or_else(|| {
+            format!(
+                "{} route must be realm/area/resource{}",
+                domain.as_str(),
+                if exact { "" } else { " or deeper" }
+            )
+        })?;
+
+        if parts.realm.is_empty() || parts.area.is_empty() || parts.resource.is_empty() {
+            return Err(format!(
+                "{} route must include non-empty realm/area/resource",
+                domain.as_str()
+            ));
         }
 
-        let trimmed = route.trim_start_matches('/');
-        let mut canonical = String::with_capacity(domain.len() + 3 + trimmed.len());
-        canonical.push_str(domain);
+        let domain_name = domain.as_str();
+        let mut canonical = String::with_capacity(
+            domain_name.len() + 3 + parts.realm.len() + parts.area.len() + parts.resource.len() + 2,
+        );
+        canonical.push_str(domain_name);
         canonical.push_str("://");
-        canonical.push_str(trimmed);
-        Cow::Owned(canonical)
+        canonical.push_str(parts.realm);
+        canonical.push('/');
+        canonical.push_str(parts.area);
+        canonical.push('/');
+        canonical.push_str(parts.resource);
+
+        if route == canonical {
+            Ok(Cow::Borrowed(route))
+        } else {
+            Ok(Cow::Owned(canonical))
+        }
     }
 
     fn cached_session_inbox_route(&self, session_id: u64) -> crate::runtime::routing::Route {
@@ -675,7 +758,11 @@ impl RuntimeIngress {
                 domain: DispatchDomain::Schedule,
                 policy: AuthorizationPolicy::MultiRouteScoped(Access::Write),
             })),
-            702..=704 => Ok(Some(DomainAuthorizationSpec {
+            702 => Ok(Some(DomainAuthorizationSpec {
+                domain: DispatchDomain::Schedule,
+                policy: AuthorizationPolicy::WildcardScoped(Access::Read),
+            })),
+            703 | 704 => Ok(Some(DomainAuthorizationSpec {
                 domain: DispatchDomain::Schedule,
                 policy: AuthorizationPolicy::RouteScoped(Access::Read),
             })),
@@ -695,6 +782,10 @@ impl RuntimeIngress {
                 AuthorizationTargets::SessionOwned,
                 crate::auth::Access::Read,
             )),
+            AuthorizationPolicy::WildcardScoped(access) => Ok((
+                AuthorizationTargets::Single(Cow::Borrowed(domain.wildcard_route())),
+                access,
+            )),
             AuthorizationPolicy::KvBeginModeScoped => {
                 let access = Self::kv_begin_access(payload)?;
                 let route = Self::derive_auth_route_for_frame(domain, msg_type, payload)?
@@ -712,14 +803,18 @@ impl RuntimeIngress {
                 let routes = crate::protocol::schedule_codec::extract_batch_auth_routes(payload)?
                     .into_iter()
                     .map(|route| canonicalize_dispatch_route_str(domain, route))
-                    .collect();
+                    .collect::<Result<Vec<_>, _>>()?;
                 Ok((AuthorizationTargets::Multiple(routes), access))
             }
             AuthorizationPolicy::RouteScoped(access) => {
-                let target = match Self::derive_auth_route_for_frame(domain, msg_type, payload)? {
-                    Some(route) => AuthorizationTargets::Single(route),
-                    None => AuthorizationTargets::Single(Cow::Borrowed(domain.wildcard_route())),
-                };
+                let target = Self::derive_auth_route_for_frame(domain, msg_type, payload)?
+                    .map(AuthorizationTargets::Single)
+                    .ok_or_else(|| {
+                        format!(
+                            "{} route-scoped authorization route missing",
+                            domain.as_str()
+                        )
+                    })?;
                 Ok((target, access))
             }
         }
@@ -772,7 +867,7 @@ impl RuntimeIngress {
     }
 
     fn encode_domain_error_body(code: u16, message: &str) -> Bytes {
-        let body = crate::protocol::rpc_codec::encode_error_body(code, message);
+        let body = crate::protocol::error_codes::encode_error_body(code, message);
         Bytes::from(body)
     }
 
@@ -1422,10 +1517,13 @@ impl RuntimeIngress {
             100..=110 => {
                 if matches!(mt, 109 | 110) {
                     return crate::protocol::kv_codec::extract_auth_route(mt, payload.as_ref())
-                        .map(|route| {
-                            route.map(|route| {
-                                Route::new(Self::canonicalize_domain_route_str("kv", route))
-                            })
+                        .and_then(|route| {
+                            route
+                                .map(|route| {
+                                    Self::canonicalize_domain_route_str(DispatchDomain::Kv, route)
+                                        .map(|canonical| Route::new(canonical.as_ref()))
+                                })
+                                .transpose()
                         });
                 }
 
@@ -1500,11 +1598,14 @@ impl RuntimeIngress {
                 ),
             ) {
                 Ok(crate::domains::notice::protocol::NotificationMessage::Publish(p)) => Ok(Some(
-                    Self::canonicalize_domain_route("notice", p.route.clone()),
+                    Self::canonicalize_domain_route(DispatchDomain::Notice, p.route.clone())?,
                 )),
-                Ok(crate::domains::notice::protocol::NotificationMessage::Subscribe(s)) => Ok(
-                    Some(Self::canonicalize_domain_route("notice", s.pattern.clone())),
-                ),
+                Ok(crate::domains::notice::protocol::NotificationMessage::Subscribe(s)) => {
+                    Ok(Some(Self::canonicalize_domain_route(
+                        DispatchDomain::Notice,
+                        s.pattern.clone(),
+                    )?))
+                }
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },
@@ -1529,21 +1630,27 @@ impl RuntimeIngress {
                 msg_type.as_u16(),
                 payload.as_ref(),
             )
-            .map(|route| {
-                route.map(|value| {
-                    let canonical = Self::canonicalize_domain_route_str("queue", value);
-                    crate::runtime::routing::Route::new(canonical.as_ref())
-                })
+            .and_then(|route| {
+                route
+                    .map(|value| {
+                        Self::canonicalize_domain_route_str(DispatchDomain::Queue, value).map(
+                            |canonical| crate::runtime::routing::Route::new(canonical.as_ref()),
+                        )
+                    })
+                    .transpose()
             }),
             400..=499 => crate::protocol::lease_codec::extract_auth_route(
                 msg_type.as_u16(),
                 payload.as_ref(),
             )
-            .map(|route| {
-                route.map(|value| {
-                    let canonical = Self::canonicalize_domain_route_str("lease", value);
-                    crate::runtime::routing::Route::new(canonical.as_ref())
-                })
+            .and_then(|route| {
+                route
+                    .map(|value| {
+                        Self::canonicalize_domain_route_str(DispatchDomain::Lease, value).map(
+                            |canonical| crate::runtime::routing::Route::new(canonical.as_ref()),
+                        )
+                    })
+                    .transpose()
             }),
             600..=699 => {
                 match crate::protocol::stream_codec::extract_auth_route(
@@ -1551,9 +1658,9 @@ impl RuntimeIngress {
                     payload.as_ref(),
                 ) {
                     Ok(Some(route_str)) => Ok(Some(Self::canonicalize_domain_route(
-                        "stream",
+                        DispatchDomain::Stream,
                         Route::new(route_str),
-                    ))),
+                    )?)),
                     Ok(None) => Ok(None),
                     Err(e) => Err(e),
                 }
@@ -1574,18 +1681,21 @@ impl RuntimeIngress {
                         cron: _,
                         payload: _,
                     }) => Ok(Some(Self::canonicalize_domain_route(
-                        "schedule",
+                        DispatchDomain::Schedule,
                         Route::new(route),
-                    ))),
-                    Ok(crate::domains::schedule::ScheduleMessage::Subscribe { route, .. }) => Ok(
-                        Some(Self::canonicalize_domain_route("schedule", route.clone())),
-                    ),
+                    )?)),
+                    Ok(crate::domains::schedule::ScheduleMessage::Subscribe { route, .. }) => {
+                        Ok(Some(Self::canonicalize_domain_route(
+                            DispatchDomain::Schedule,
+                            route.clone(),
+                        )?))
+                    }
                     Ok(crate::domains::schedule::ScheduleMessage::Unsubscribe {
                         route, ..
                     }) => Ok(Some(Self::canonicalize_domain_route(
-                        "schedule",
+                        DispatchDomain::Schedule,
                         route.clone(),
-                    ))),
+                    )?)),
                     Ok(_) => Ok(None),
                     Err(e) => Err(e),
                 }
@@ -1677,6 +1787,31 @@ mod tests {
         session
     }
 
+    fn install_expired_session_actor(
+        ingress: &RuntimeIngress,
+        session_id: u64,
+        raw_permissions: &[&str],
+    ) {
+        let permissions = raw_permissions
+            .iter()
+            .map(|permission| crate::auth::Permission::parse(permission).unwrap())
+            .collect::<Vec<_>>();
+        let snapshot = SessionPermissions::from_permissions(permissions.clone());
+        let claims = crate::auth::Claims {
+            sub: format!("test-session-{session_id}"),
+            identity_claim: Some("test".to_string()),
+            identity_value: Some("test".to_string()),
+            permissions,
+            exp: 0,
+        };
+        let mut actor = crate::session::actor::SessionActor::new(
+            crate::session::session::SessionId(session_id),
+            snapshot.clone(),
+        );
+        actor.authenticate(claims, snapshot);
+        ingress.session_actors.insert(session_id, actor);
+    }
+
     fn auth_spec(msg_type: u16) -> DomainAuthorizationSpec {
         RuntimeIngress::domain_dispatch_for_msg_type(MessageType::new(msg_type))
             .unwrap()
@@ -1694,7 +1829,7 @@ mod tests {
 
     fn decode_domain_error_code(payload: &[u8]) -> u16 {
         let (code, _) =
-            crate::protocol::rpc_codec::decode_error_body(payload).expect("decode domain error");
+            crate::protocol::error_codes::decode_error_body(payload).expect("decode domain error");
         code
     }
 
@@ -4009,20 +4144,31 @@ mod tests {
     fn should_canonicalize_scheme_less_domain_routes_for_authorization() {
         // Arrange
         // Act
-        let queue_route = RuntimeIngress::canonicalize_domain_route("queue", Route::new("tasks"));
-        let notice_route =
-            RuntimeIngress::canonicalize_domain_route("notice", Route::new("patterns/*"));
-        let stream_route =
-            RuntimeIngress::canonicalize_domain_route("stream", Route::new("stream-data"));
+        let queue_route = RuntimeIngress::canonicalize_domain_route(
+            DispatchDomain::Queue,
+            Route::new("realm/area/tasks/receive"),
+        )
+        .expect("canonical queue route");
+        let notice_route = RuntimeIngress::canonicalize_domain_route(
+            DispatchDomain::Notice,
+            Route::new("patterns/*"),
+        )
+        .expect("canonical notice route");
+        let stream_route = RuntimeIngress::canonicalize_domain_route(
+            DispatchDomain::Stream,
+            Route::new("realm/area/stream-data/append"),
+        )
+        .expect("canonical stream route");
         let existing_notice_route = RuntimeIngress::canonicalize_domain_route(
-            "notice",
+            DispatchDomain::Notice,
             Route::new("notice://test/notifications/**"),
-        );
+        )
+        .expect("canonical existing notice route");
 
         // Assert
-        assert_eq!(queue_route.as_str(), "queue://tasks");
+        assert_eq!(queue_route.as_str(), "queue://realm/area/tasks");
         assert_eq!(notice_route.as_str(), "notice://patterns/*");
-        assert_eq!(stream_route.as_str(), "stream://stream-data");
+        assert_eq!(stream_route.as_str(), "stream://realm/area/stream-data");
         assert_eq!(
             existing_notice_route.as_str(),
             "notice://test/notifications/**"
@@ -4037,8 +4183,9 @@ mod tests {
         session.route_family = crate::runtime::routing::RouteFamily::new(1);
 
         let mut queue_payload = Vec::new();
-        queue_payload.extend_from_slice(&(5_u32).to_be_bytes());
-        queue_payload.extend_from_slice(b"tasks");
+        let queue_wire_route = b"realm/area/tasks/receive";
+        queue_payload.extend_from_slice(&(queue_wire_route.len() as u32).to_be_bytes());
+        queue_payload.extend_from_slice(queue_wire_route);
         queue_payload.extend_from_slice(&(1_u32).to_be_bytes());
         queue_payload.extend_from_slice(b"x");
         queue_payload.push(0);
@@ -4067,10 +4214,10 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert_eq!(queue_route.as_str(), "queue://tasks");
+        assert_eq!(queue_route.as_str(), "queue://realm/area/tasks");
         assert_eq!(notice_route.as_str(), "notice://patterns/*");
 
-        let stream_name = b"stream-data";
+        let stream_name = b"realm/area/stream-data/read";
         let mut stream_payload = Vec::new();
         stream_payload.extend_from_slice(&(stream_name.len() as u32).to_be_bytes());
         stream_payload.extend_from_slice(stream_name);
@@ -4085,7 +4232,7 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        assert_eq!(stream_route.as_str(), "stream://stream-data");
+        assert_eq!(stream_route.as_str(), "stream://realm/area/stream-data");
     }
 
     #[test]
@@ -4190,6 +4337,81 @@ mod tests {
     }
 
     #[test]
+    fn should_require_explicit_wildcard_policy_for_schedule_list_authorization() {
+        // Arrange
+        let payload = [];
+
+        // Act
+        let wildcard = RuntimeIngress::resolve_authorization_targets(
+            DispatchDomain::Schedule,
+            MessageType::new(702),
+            &payload,
+            AuthorizationPolicy::WildcardScoped(Access::Read),
+        )
+        .expect("resolve schedule list wildcard auth");
+        let missing_route = RuntimeIngress::resolve_authorization_targets(
+            DispatchDomain::Schedule,
+            MessageType::new(702),
+            &payload,
+            AuthorizationPolicy::RouteScoped(Access::Read),
+        );
+
+        // Assert
+        assert_eq!(wildcard.0.span_target(), ("schedule://**", 1));
+        assert_eq!(wildcard.1, Access::Read);
+        assert!(missing_route.is_err());
+    }
+
+    #[test]
+    fn should_canonicalize_domain_identity_routes_for_authorization() {
+        // Arrange
+        let kv_begin = crate::benchkit::build_kv_begin("kv://acme/app/users/extra", 0, 0);
+        let (_, kv_payload) = crate::benchkit::extract_single_tlv_field(&kv_begin);
+        let queue_payload = encode_queue_send("queue://acme/app/jobs/process", b"job");
+        let lease_payload = encode_lease_subscribe("lease://acme/locks/db/migration");
+        let stream_begin = crate::benchkit::build_stream_begin("stream://acme/logs/events/append");
+        let (_, stream_payload) = crate::benchkit::extract_single_tlv_field(&stream_begin);
+
+        // Act
+        let kv_result = RuntimeIngress::resolve_authorization_targets(
+            DispatchDomain::Kv,
+            MessageType::new(100),
+            kv_payload.as_ref(),
+            auth_spec(100).policy,
+        );
+        let queue_targets = RuntimeIngress::resolve_authorization_targets(
+            DispatchDomain::Queue,
+            MessageType::new(200),
+            queue_payload.as_ref(),
+            auth_spec(200).policy,
+        )
+        .expect("resolve queue auth");
+        let lease_targets = RuntimeIngress::resolve_authorization_targets(
+            DispatchDomain::Lease,
+            MessageType::new(407),
+            lease_payload.as_ref(),
+            auth_spec(407).policy,
+        )
+        .expect("resolve lease auth");
+        let stream_targets = RuntimeIngress::resolve_authorization_targets(
+            DispatchDomain::Stream,
+            MessageType::new(600),
+            stream_payload.as_ref(),
+            auth_spec(600).policy,
+        )
+        .expect("resolve stream auth");
+
+        // Assert
+        assert!(kv_result.is_err());
+        assert_eq!(queue_targets.0.span_target(), ("queue://acme/app/jobs", 1));
+        assert_eq!(lease_targets.0.span_target(), ("lease://acme/locks/db", 1));
+        assert_eq!(
+            stream_targets.0.span_target(),
+            ("stream://acme/logs/events", 1)
+        );
+    }
+
+    #[test]
     fn should_keep_authorization_policies_for_unaffected_domains() {
         // Arrange
         let queue_send = auth_spec(200);
@@ -4230,7 +4452,10 @@ mod tests {
         assert_eq!(policies[6], AuthorizationPolicy::RouteScoped(Access::Read));
         assert_eq!(schedule_create.domain, DispatchDomain::Schedule);
         assert_eq!(policies[7], AuthorizationPolicy::RouteScoped(Access::Write));
-        assert_eq!(policies[8], AuthorizationPolicy::RouteScoped(Access::Read));
+        assert_eq!(
+            policies[8],
+            AuthorizationPolicy::WildcardScoped(Access::Read)
+        );
         assert_eq!(
             policies[9],
             AuthorizationPolicy::MultiRouteScoped(Access::Write)
@@ -4424,6 +4649,54 @@ mod tests {
         );
         assert_eq!(put_decision, IngressDecision::Accept);
         assert_eq!(put_dispatch.msg_type, MessageType::new(104));
+    }
+
+    #[tokio::test]
+    async fn should_deny_expired_session_owned_frame_without_closing_session() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 621;
+        let router = Arc::new(crate::runtime::Router::new());
+        let domain_mailbox = Arc::new(Mailbox::new(8));
+        let inbox_mailbox = Arc::new(Mailbox::new(8));
+        router.register_domain_pattern("kv", domain_mailbox.clone());
+        router.register(
+            RouteAddress::new(family, Route::new("inbox://session/621")),
+            inbox_mailbox.clone(),
+        );
+        let ingress = RuntimeIngress::new(true).with_router(router);
+        let session = make_authenticated_session_info(
+            session_id,
+            TransportKind::Tcp,
+            family,
+            &["kv://acme/app/users#*"],
+        );
+        ingress.on_open(session).await.unwrap();
+        install_expired_session_actor(&ingress, session_id, &["kv://acme/app/users#*"]);
+
+        // Act
+        let put_frame = crate::benchkit::build_kv_put(7, "kv://acme/app/users", b"name", b"ada");
+        let (_, put_payload) = crate::benchkit::extract_single_tlv_field(&put_frame);
+        let decision = ingress
+            .on_frame(
+                session_id,
+                ChannelId::Pub,
+                MessageType::new(104),
+                put_payload,
+            )
+            .await;
+        let denied_frame = receive_frame(&inbox_mailbox, "expired session-owned denial");
+
+        // Assert
+        assert_eq!(decision, IngressDecision::Accept);
+        assert_eq!(denied_frame.channel_id, ChannelId::Pub);
+        assert_eq!(denied_frame.msg_type, MessageType::new(104));
+        assert_eq!(
+            decode_domain_error_code(denied_frame.payload.as_ref()),
+            crate::protocol::error_codes::kv::ERR_UNAUTHORIZED
+        );
+        assert_eq!(ingress.session_count(), 1);
+        assert!(domain_mailbox.receiver().try_recv().is_err());
     }
 
     #[test]

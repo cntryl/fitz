@@ -8,8 +8,11 @@ This page is the central reference for environment variables supported by Fitz r
 | --- | --- | --- | --- |
 | FITZ_AUTH_REQUIRED | true or false | true | Enables authenticated CONNECT JWT validation. When false, broker allows anonymous mode. |
 | FITZ_HTTP_PORT | u16 port | 4090 | HTTP and WebSocket listener port. |
+| FITZ_TCP_ENABLED | true or false | true | Enables the raw TCP listener. HTTP, admin routes, and WebSocket remain enabled regardless. |
 | FITZ_TCP_PORT | u16 port | 4091 | Raw TCP listener port. |
 | FITZ_BIND_ADDR | IP or hostname | 0.0.0.0 | Bind address for listeners. |
+| FITZ_ASSUME_EXTERNAL_TLS | true or false | false | Required when runtime auth or configured protected admin auth binds to a non-loopback address and TLS is terminated outside Fitz. |
+| FITZ_WS_ALLOWED_ORIGINS | Comma-separated exact browser origins, e.g. https://app.example.com | Empty | Browser WebSocket Origin allowlist. Required for authenticated non-loopback WebSocket binds. Values are HTTP origins, not wss URLs, and must not include a path, query, fragment, or trailing slash. |
 | FITZ_ROUTE_FAMILIES | Comma-separated u32 list, contiguous from 1 (example: 1,2,3) | 1 | Provisioned route-family allowlist accepted after identity resolution. |
 | FITZ_ROUTE_FAMILY_MAP | Comma-separated identity=family mappings | Empty | Maps verified identity claim values to provisioned route-family numbers. Required when auth is enabled. |
 | FITZ_ROUTE_FAMILY_CLAIM | JWT claim key | tid | Default identity claim key used for route-family resolution. |
@@ -53,8 +56,20 @@ Identity claim lookup precedence is fixed:
 | FITZ_ADMIN_PASSWORD_HASH | Argon2 password hash | Unset | Required with username and JWT secret for protected admin login. |
 | FITZ_ADMIN_JWT_SECRET | Non-empty string | Unset | Required with username and password hash to issue admin session cookies. |
 | FITZ_ADMIN_SESSION_TTL_SECS | Positive integer seconds | 28800 | Admin session cookie lifetime. |
-| FITZ_ADMIN_COOKIE_SECURE | true or false | false | Sets Secure cookie attribute for admin session cookie. |
+| FITZ_ADMIN_COOKIE_SECURE | true or false | true | Sets Secure cookie attribute for admin session cookie. Set false only for loopback/local non-TLS development. |
+| FITZ_ADMIN_PUBLIC_ORIGIN | Exact URL origin, e.g. https://admin.example.com | Request host on local binds | Expected same-origin value for protected unsafe admin requests. Required for protected admin on non-loopback binds. Must not include a path, query, fragment, or trailing slash. |
 | FITZ_ADMIN_OPEN_USERNAME | String | admin | Username exposed by open mode for admin principal identity. |
+
+## Production Browser Baseline
+
+For browser clients behind a TLS-terminating load balancer:
+
+- Set `FITZ_AUTH_REQUIRED=true`.
+- Set `FITZ_ASSUME_EXTERNAL_TLS=true`.
+- Set `FITZ_WS_ALLOWED_ORIGINS` to the exact SPA origins allowed to open runtime WebSockets, without trailing slashes.
+- Set `FITZ_ADMIN_AUTH_MODE=protected`, `FITZ_ADMIN_PUBLIC_ORIGIN=https://admin.example.com`, and keep `FITZ_ADMIN_COOKIE_SECURE=true`.
+- Keep the Fitz backend port reachable only from the load balancer.
+- Use short-lived runtime JWTs with narrow route permissions and reconnect with a fresh token when they expire.
 
 ## Storage and Durability
 

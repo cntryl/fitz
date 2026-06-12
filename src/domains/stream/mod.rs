@@ -7,8 +7,8 @@
 //!   current broker process
 //! - **StreamStore** ([store]): durable authority for committed resource,
 //!   area, and realm ordering
-//! - **SessionActor**: enforces authentication and authorization before
-//!   forwarding to the stream runtime
+//! - **StreamDomainSink** ([sink]): enforces live session ownership before
+//!   forwarding append-session operations to the stream runtime
 //!
 //! # Ordering
 //!
@@ -42,7 +42,6 @@ pub mod constants;
 pub mod events;
 pub mod metrics;
 pub mod protocol;
-pub mod session;
 pub mod sink;
 pub mod storage;
 pub mod store;
@@ -60,5 +59,4 @@ pub use protocol::{
     StreamFilterClause, StreamFilterSet, StreamFilteredReason, StreamMessage, StreamMetadata,
     StreamReadItem, StreamRecord,
 };
-pub use session::SessionActor;
 pub use store::{StreamStorageLayout, StreamStore};

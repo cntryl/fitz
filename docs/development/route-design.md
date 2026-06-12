@@ -74,6 +74,8 @@ kv://{realm}/{area}/{resource}
 (RouteFamily, realm, area, resource)
 ```
 
+Authorization uses this exact triplet. KV routes with additional path segments are malformed and are rejected before dispatch.
+
 #### Supported Operations
 
 | Operation | Message Type | Description | Access Level |
@@ -108,7 +110,7 @@ kv://tenant-123/orders/items
 **Invalid**:
 ```
 kv://acme/app              # Too few segments
-kv://acme/app/users/get    # Operation in path (not supported)
+kv://acme/app/users/extra  # Extra path segment (not supported)
 kv://                      # Missing realm/area/resource
 ```
 
@@ -154,6 +156,8 @@ queue://{realm}/{area}/{resource}
 ```rust
 (RouteFamily, realm, area, resource)
 ```
+
+Authorization canonicalizes to this triplet. A request route such as `queue://acme/jobs/email/receive` is authorized as `queue://acme/jobs/email`.
 
 #### Supported Operations
 
@@ -327,6 +331,8 @@ lease://{realm}/{area}/{resource}
 ```rust
 (RouteFamily, realm, area, resource)
 ```
+
+Authorization canonicalizes to this triplet. A request route such as `lease://acme/locks/db/renew` is authorized as `lease://acme/locks/db`.
 
 #### Supported Operations
 
@@ -519,6 +525,8 @@ stream://{realm}/{area}/{resource}
 ```rust
 (RouteFamily, realm, area, resource)
 ```
+
+Authorization canonicalizes to this triplet. A request route such as `stream://acme/events/orders/append` is authorized as `stream://acme/events/orders`.
 
 #### Supported Operations
 
@@ -835,14 +843,14 @@ rpc://tenant-a/**#write   # RPC request access
 
 ### Implementation File Locations
 
-| Domain | Protocol | Actor | Codec | Session |
-|--------|----------|-------|-------|---------|
+| Domain | Protocol | Actor | Codec | Session / Sink |
+|--------|----------|-------|-------|----------------|
 | KV | [domains/kv/protocol.rs](../../src/domains/kv/protocol.rs) | [domains/kv/actor.rs](../../src/domains/kv/actor.rs) | [protocol/kv_codec.rs](../../src/protocol/kv_codec.rs) | [domains/kv/session.rs](../../src/domains/kv/session.rs) |
-| Queue | [domains/queue/protocol.rs](../../src/domains/queue/protocol.rs) | [domains/queue/actor.rs](../../src/domains/queue/actor.rs) | [protocol/queue_codec.rs](../../src/protocol/queue_codec.rs) | [domains/queue/session.rs](../../src/domains/queue/session.rs) |
+| Queue | [domains/queue/protocol.rs](../../src/domains/queue/protocol.rs) | [domains/queue/actor.rs](../../src/domains/queue/actor.rs) | [protocol/queue_codec.rs](../../src/protocol/queue_codec.rs) | [domains/queue/sink.rs](../../src/domains/queue/sink.rs) |
 | RPC | [domains/rpc/protocol.rs](../../src/domains/rpc/protocol.rs) | [domains/rpc/actor.rs](../../src/domains/rpc/actor.rs) | [protocol/rpc_codec.rs](../../src/protocol/rpc_codec.rs) | [domains/rpc/session.rs](../../src/domains/rpc/session.rs) |
 | Lease | [domains/lease/protocol.rs](../../src/domains/lease/protocol.rs) | [domains/lease/actor.rs](../../src/domains/lease/actor.rs) | [protocol/lease_codec.rs](../../src/protocol/lease_codec.rs) | [domains/lease/session.rs](../../src/domains/lease/session.rs) |
 | Notice | [domains/notice/protocol.rs](../../src/domains/notice/protocol.rs) | [domains/notice/actor.rs](../../src/domains/notice/actor.rs) | [protocol/notice_codec.rs](../../src/protocol/notice_codec.rs) | [domains/notice/session.rs](../../src/domains/notice/session.rs) |
-| Stream | [domains/stream/protocol.rs](../../src/domains/stream/protocol.rs) | [domains/stream/actor.rs](../../src/domains/stream/actor.rs) | [protocol/stream_codec.rs](../../src/protocol/stream_codec.rs) | [domains/stream/session.rs](../../src/domains/stream/session.rs) |
+| Stream | [domains/stream/protocol.rs](../../src/domains/stream/protocol.rs) | [domains/stream/actor.rs](../../src/domains/stream/actor.rs) | [protocol/stream_codec.rs](../../src/protocol/stream_codec.rs) | [domains/stream/sink.rs](../../src/domains/stream/sink.rs) |
 | Schedule | [domains/schedule/protocol.rs](../../src/domains/schedule/protocol.rs) | [domains/schedule/actor.rs](../../src/domains/schedule/actor.rs) | [protocol/schedule_codec.rs](../../src/protocol/schedule_codec.rs) | [domains/schedule/session.rs](../../src/domains/schedule/session.rs) |
 
 ---

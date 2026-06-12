@@ -14,6 +14,7 @@ use std::sync::Arc;
 const ADMIN_SESSION_COOKIE: &str = "fitz_admin_session";
 const DEFAULT_SESSION_TTL_SECS: i64 = 28_800;
 const DEFAULT_OPEN_ADMIN_USERNAME: &str = "admin";
+const ADMIN_PUBLIC_ORIGIN_ENV: &str = "FITZ_ADMIN_PUBLIC_ORIGIN";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdminAuthMode {
@@ -34,6 +35,7 @@ struct AdminAuthSettings {
     jwt_secret: String,
     session_ttl_secs: i64,
     cookie_secure: bool,
+    public_origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,7 +84,10 @@ impl AdminAuth {
                 let cookie_secure = std::env::var("FITZ_ADMIN_COOKIE_SECURE")
                     .ok()
                     .and_then(|value| value.parse::<bool>().ok())
-                    .unwrap_or(false);
+                    .unwrap_or(true);
+                let public_origin = std::env::var(ADMIN_PUBLIC_ORIGIN_ENV)
+                    .ok()
+                    .filter(|value| !value.trim().is_empty());
 
                 tracing::info!(session_ttl_secs, cookie_secure, "Admin auth configured");
 
@@ -92,6 +97,7 @@ impl AdminAuth {
                     jwt_secret,
                     session_ttl_secs,
                     cookie_secure,
+                    public_origin,
                 })
             }
             _ if matches!(mode, AdminAuthMode::Protected) => {
@@ -184,7 +190,13 @@ impl AdminAuth {
     }
 
     pub fn clear_session_cookie(&self) -> String {
-        clear_cookie()
+        let secure = self
+            .settings
+            .as_ref()
+            .as_ref()
+            .map(|settings| settings.cookie_secure)
+            .unwrap_or(true);
+        clear_cookie(secure)
     }
 
     pub fn principal_from_request<B>(
@@ -221,6 +233,43 @@ impl AdminAuth {
             username: claims.sub,
         })
     }
+
+    pub fn validate_same_origin<B>(&self, req: &hyper::Request<B>) -> Result<(), AuthFailure> {
+        if matches!(self.mode, AdminAuthMode::Open) {
+            return Ok(());
+        }
+
+        let settings = self
+            .settings
+            .as_ref()
+            .as_ref()
+            .ok_or(AuthFailure::Unavailable)?;
+        let expected = expected_admin_origin(req, settings)?;
+        let Some(candidate) = request_origin(req) else {
+            return Err(AuthFailure::Csrf);
+        };
+
+        if expected.same_origin(&candidate) {
+            Ok(())
+        } else {
+            Err(AuthFailure::Csrf)
+        }
+    }
+}
+
+pub fn protected_admin_configured_from_env() -> bool {
+    let mode = match std::env::var("FITZ_ADMIN_AUTH_MODE") {
+        Ok(value) if value.eq_ignore_ascii_case("open") => AdminAuthMode::Open,
+        _ => AdminAuthMode::Protected,
+    };
+
+    if matches!(mode, AdminAuthMode::Open) {
+        return false;
+    }
+
+    env_non_empty("FITZ_ADMIN_USERNAME").is_some()
+        && env_non_empty("FITZ_ADMIN_PASSWORD_HASH").is_some()
+        && env_non_empty("FITZ_ADMIN_JWT_SECRET").is_some()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -229,6 +278,7 @@ pub enum AuthFailure {
     MissingSession,
     InvalidSession,
     InvalidCredentials,
+    Csrf,
 }
 
 impl AuthFailure {
@@ -238,6 +288,7 @@ impl AuthFailure {
             AuthFailure::MissingSession
             | AuthFailure::InvalidSession
             | AuthFailure::InvalidCredentials => StatusCode::UNAUTHORIZED,
+            AuthFailure::Csrf => StatusCode::FORBIDDEN,
         }
     }
 
@@ -247,8 +298,47 @@ impl AuthFailure {
             AuthFailure::MissingSession => "Authentication required",
             AuthFailure::InvalidSession => "Invalid or expired session",
             AuthFailure::InvalidCredentials => "Invalid username or password",
+            AuthFailure::Csrf => "Admin request origin is not allowed",
         }
     }
+}
+
+fn env_non_empty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn request_header<'a, B>(req: &'a hyper::Request<B>, name: &str) -> Option<&'a str> {
+    req.headers().get(name)?.to_str().ok()
+}
+
+fn request_origin<B>(req: &hyper::Request<B>) -> Option<crate::api::origin::ExactOrigin> {
+    if let Some(origin) = request_header(req, "origin") {
+        return crate::api::origin::parse_exact_origin(origin).ok();
+    }
+
+    request_header(req, "referer")
+        .and_then(|value| crate::api::origin::parse_url_origin(value).ok())
+}
+
+fn expected_admin_origin<B>(
+    req: &hyper::Request<B>,
+    settings: &AdminAuthSettings,
+) -> Result<crate::api::origin::ExactOrigin, AuthFailure> {
+    if let Some(origin) = &settings.public_origin {
+        return crate::api::origin::parse_exact_origin(origin).map_err(|_| AuthFailure::Csrf);
+    }
+
+    let host = request_header(req, "host").ok_or(AuthFailure::Csrf)?;
+    let proto = request_header(req, "x-forwarded-proto")
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("http");
+    crate::api::origin::parse_exact_origin(&format!("{proto}://{host}"))
+        .map_err(|_| AuthFailure::Csrf)
 }
 
 pub async fn parse_login_request<B>(req: hyper::Request<B>) -> Result<LoginRequest, AuthFailure>
@@ -295,7 +385,7 @@ fn extract_cookie_value<B>(req: &hyper::Request<B>, cookie_name: &str) -> Option
 
 fn build_cookie(token: &str, secure: bool, max_age: i64) -> String {
     let mut cookie = format!(
-        "{}={}; HttpOnly; Path=/; SameSite=Lax; Max-Age={}",
+        "{}={}; HttpOnly; Path=/; SameSite=Strict; Max-Age={}",
         ADMIN_SESSION_COOKIE, token, max_age
     );
 
@@ -306,11 +396,15 @@ fn build_cookie(token: &str, secure: bool, max_age: i64) -> String {
     cookie
 }
 
-fn clear_cookie() -> String {
-    format!(
-        "{}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0",
+fn clear_cookie(secure: bool) -> String {
+    let mut cookie = format!(
+        "{}=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0",
         ADMIN_SESSION_COOKIE
-    )
+    );
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    cookie
 }
 
 #[cfg(test)]
@@ -320,6 +414,7 @@ mod tests {
         password_hash::{rand_core::OsRng, SaltString},
         PasswordHasher,
     };
+    use serial_test::serial;
 
     fn password_hash_for(password: &str) -> String {
         let salt = SaltString::generate(&mut OsRng);
@@ -336,12 +431,15 @@ mod tests {
             "FITZ_ADMIN_PASSWORD_HASH",
             "FITZ_ADMIN_JWT_SECRET",
             "FITZ_ADMIN_OPEN_USERNAME",
+            "FITZ_ADMIN_COOKIE_SECURE",
+            "FITZ_ADMIN_PUBLIC_ORIGIN",
         ] {
             std::env::remove_var(key);
         }
     }
 
     #[test]
+    #[serial]
     fn should_authenticate_with_valid_credentials() {
         // Arrange
         reset_admin_env();
@@ -358,6 +456,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn should_extract_principal_from_cookie() {
         // Arrange
         reset_admin_env();
@@ -383,6 +482,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn should_allow_open_admin_without_credentials() {
         // Arrange
         reset_admin_env();
@@ -402,5 +502,115 @@ mod tests {
         assert_eq!(auth.auth_mode(), "open");
         assert!(!auth.login_required());
         assert_eq!(principal.username, "admin");
+    }
+
+    #[test]
+    #[serial]
+    fn should_mark_admin_session_cookie_secure_by_default() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
+        let auth = AdminAuth::from_env();
+        let principal = auth.authenticate_credentials("admin", "pwd123").unwrap();
+
+        // Act
+        let cookie = auth.issue_session_cookie(&principal).unwrap();
+
+        // Assert
+        assert!(cookie.contains("; Secure"));
+        assert!(cookie.contains("; SameSite=Strict"));
+    }
+
+    #[test]
+    #[serial]
+    fn should_allow_admin_session_cookie_secure_opt_out() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
+        std::env::set_var("FITZ_ADMIN_COOKIE_SECURE", "false");
+        let auth = AdminAuth::from_env();
+        let principal = auth.authenticate_credentials("admin", "pwd123").unwrap();
+
+        // Act
+        let cookie = auth.issue_session_cookie(&principal).unwrap();
+
+        // Assert
+        assert!(!cookie.contains("; Secure"));
+        assert!(cookie.contains("; SameSite=Strict"));
+    }
+
+    #[test]
+    #[serial]
+    fn should_clear_admin_session_cookie_with_matching_secure_attributes() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
+        let auth = AdminAuth::from_env();
+
+        // Act
+        let cookie = auth.clear_session_cookie();
+
+        // Assert
+        assert!(cookie.contains("fitz_admin_session=;"));
+        assert!(cookie.contains("; HttpOnly"));
+        assert!(cookie.contains("; Secure"));
+        assert!(cookie.contains("; SameSite=Strict"));
+        assert!(cookie.contains("; Max-Age=0"));
+    }
+
+    #[test]
+    #[serial]
+    fn should_validate_same_origin_for_protected_admin_request() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
+        std::env::set_var("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com");
+        let auth = AdminAuth::from_env();
+        let same_origin = hyper::http::Request::builder()
+            .header("origin", "https://admin.example.com")
+            .body(Body::default())
+            .unwrap();
+        let cross_origin = hyper::http::Request::builder()
+            .header("origin", "https://evil.example.com")
+            .body(Body::default())
+            .unwrap();
+
+        // Act
+        let allowed = auth.validate_same_origin(&same_origin);
+        let denied = auth.validate_same_origin(&cross_origin);
+
+        // Assert
+        assert!(allowed.is_ok());
+        assert!(matches!(denied, Err(AuthFailure::Csrf)));
+    }
+
+    #[test]
+    #[serial]
+    fn should_validate_same_origin_referer_for_protected_admin_request() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
+        std::env::set_var("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com");
+        let auth = AdminAuth::from_env();
+        let same_origin = hyper::http::Request::builder()
+            .header("referer", "https://admin.example.com/settings?tab=security")
+            .body(Body::default())
+            .unwrap();
+
+        // Act
+        let result = auth.validate_same_origin(&same_origin);
+
+        // Assert
+        assert!(result.is_ok());
     }
 }

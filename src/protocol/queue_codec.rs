@@ -105,34 +105,33 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
             buf.put_u8(0); // status: success
                            // Empty response
         }
-        QueueResponse::InvalidToken => {
-            buf.put_u8(1); // status: error
-            buf.put_u8(1); // error_code: InvalidToken
-        }
-        QueueResponse::InflightExpired => {
-            buf.put_u8(1); // status: error
-            buf.put_u8(2); // error_code: InflightExpired
-        }
-        QueueResponse::NotFound => {
-            buf.put_u8(1); // status: error
-            buf.put_u8(3); // error_code: NotFound
-        }
-        QueueResponse::BadRequest { reason } => {
-            buf.put_u8(1); // status: error
-            buf.put_u32(reason.len() as u32);
-            buf.put_slice(reason.as_bytes());
-        }
-        QueueResponse::QueueNotFound => {
-            buf.put_u8(1); // status: error
-            buf.put_u8(4); // error_code: QueueNotFound
-        }
-        QueueResponse::Error { message } => {
-            buf.put_u8(1); // status: error
-            buf.put_u32(message.len() as u32);
-            buf.put_slice(message.as_bytes());
+        QueueResponse::InvalidToken
+        | QueueResponse::InflightExpired
+        | QueueResponse::NotFound
+        | QueueResponse::BadRequest { .. }
+        | QueueResponse::QueueNotFound
+        | QueueResponse::Error { .. } => {
+            let (code, message) = queue_error_code_and_message(response);
+            return crate::protocol::error_codes::encode_error_body(code, &message);
         }
     }
     buf
+}
+
+fn queue_error_code_and_message(response: &QueueResponse) -> (u16, String) {
+    use crate::protocol::error_codes::queue;
+
+    match response {
+        QueueResponse::InvalidToken => (queue::ERR_INVALID_TOKEN, "InvalidToken".to_string()),
+        QueueResponse::InflightExpired => {
+            (queue::ERR_INFLIGHT_EXPIRED, "InflightExpired".to_string())
+        }
+        QueueResponse::NotFound => (queue::ERR_MESSAGE_NOT_FOUND, "NotFound".to_string()),
+        QueueResponse::BadRequest { reason } => (queue::ERR_BAD_REQUEST, reason.clone()),
+        QueueResponse::QueueNotFound => (queue::ERR_QUEUE_NOT_FOUND, "QueueNotFound".to_string()),
+        QueueResponse::Error { message } => (queue::ERR_BACKEND_ERROR, message.clone()),
+        _ => unreachable!("queue_error_code_and_message called for success response"),
+    }
 }
 
 // ===== Parsers =====

@@ -218,18 +218,36 @@ pub fn encode_domain_response_into(
             enc.put_u32(0); // pending_waiters
             enc.finish()
         }
-        DomainLeaseResponse::Timeout => encode_error_into(enc, "Timeout"),
-        DomainLeaseResponse::QueueFull { pending_count } => {
-            encode_error_into(enc, &format!("QueueFull: {} pending", pending_count))
-        }
-        DomainLeaseResponse::HeldByOther { current_owner } => {
-            encode_error_into(enc, &format!("HeldByOther: {}", current_owner))
-        }
-        DomainLeaseResponse::NotHeld => encode_error_into(enc, "NotHeld"),
-        DomainLeaseResponse::Fenced { current_token } => {
-            encode_error_into(enc, &format!("Fenced: current_token={}", current_token))
-        }
-        DomainLeaseResponse::Expired => encode_error_into(enc, "Expired"),
+        DomainLeaseResponse::Timeout => encode_error_into(
+            enc,
+            crate::protocol::error_codes::lease::ERR_TIMEOUT,
+            "Timeout",
+        ),
+        DomainLeaseResponse::QueueFull { pending_count } => encode_error_into(
+            enc,
+            crate::protocol::error_codes::lease::ERR_QUEUE_FULL,
+            &format!("QueueFull: {} pending", pending_count),
+        ),
+        DomainLeaseResponse::HeldByOther { current_owner } => encode_error_into(
+            enc,
+            crate::protocol::error_codes::lease::ERR_LEASE_HELD,
+            &format!("HeldByOther: {}", current_owner),
+        ),
+        DomainLeaseResponse::NotHeld => encode_error_into(
+            enc,
+            crate::protocol::error_codes::lease::ERR_LEASE_NOT_FOUND,
+            "NotHeld",
+        ),
+        DomainLeaseResponse::Fenced { current_token } => encode_error_into(
+            enc,
+            crate::protocol::error_codes::lease::ERR_INVALID_FENCE,
+            &format!("Fenced: current_token={}", current_token),
+        ),
+        DomainLeaseResponse::Expired => encode_error_into(
+            enc,
+            crate::protocol::error_codes::lease::ERR_LEASE_EXPIRED,
+            "Expired",
+        ),
         DomainLeaseResponse::SubscribeOk { subscription_id } => {
             enc.put_u8(0);
             enc.put_u64(*subscription_id);
@@ -242,11 +260,8 @@ pub fn encode_domain_response_into(
     }
 }
 
-fn encode_error_into(enc: &mut PayloadEncoder, msg: &str) -> Vec<u8> {
-    enc.clear();
-    enc.put_u8(1);
-    enc.put_string(msg);
-    enc.finish()
+fn encode_error_into(enc: &mut PayloadEncoder, code: u16, msg: &str) -> Vec<u8> {
+    crate::protocol::error_codes::encode_error_body_into(code, msg, enc)
 }
 
 // ===== Helper Parsers =====

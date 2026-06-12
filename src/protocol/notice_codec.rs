@@ -119,12 +119,28 @@ pub fn encode_response_into(response: &NoticeResponse, enc: &mut PayloadEncoder)
             enc.put_optional_u64(Some(*subscription_id));
         }
         NoticeResponse::Error(e) => {
-            enc.put_u8(1); // error flag
-            enc.put_string(e);
+            return crate::protocol::error_codes::encode_error_body_into(
+                notice_error_code_for_message(e),
+                e,
+                enc,
+            );
         }
     }
 
     enc.finish()
+}
+
+fn notice_error_code_for_message(message: &str) -> u16 {
+    use crate::protocol::error_codes::notice;
+
+    match message {
+        "empty pattern" => notice::ERR_INVALID_PATTERN,
+        message if message.contains("subscription") && message.contains("limit") => {
+            notice::ERR_SUBSCRIPTION_LIMIT
+        }
+        message if message.contains("route") => notice::ERR_INVALID_ROUTE,
+        _ => notice::ERR_BACKEND_ERROR,
+    }
 }
 
 // ===== Helper Parsers =====

@@ -46,25 +46,21 @@
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::sync::OnceLock;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use fxhash::FxBuildHasher;
 
 use crate::api::admin::QueueAgeBuckets;
 use crate::observability as obs;
-use crate::prelude::Actor;
-use crate::runtime::actor::Context;
 use crate::runtime::clock::{Clock, SystemClock};
 use crate::runtime::routing::RouteFamily;
 use crate::utils::storage_key::{self, DomainKeyspace};
 
 use super::{
     MessageId, QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueInflightSnapshot, QueueKey,
-    QueueMessage, QueueResponse, ReservedMessage,
+    QueueResponse, ReservedMessage,
 };
 
 #[cfg(test)]
@@ -947,30 +943,10 @@ impl QueueActor {
 
     /// Generate a random inflight token
     fn generate_token() -> u64 {
-        static TOKEN_COUNTER: AtomicU64 = AtomicU64::new(1);
-        static TOKEN_SEED: OnceLock<u64> = OnceLock::new();
-
-        let seed = *TOKEN_SEED.get_or_init(|| {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_else(|_| Duration::from_secs(0))
-                .as_nanos() as u64;
-            now ^ ((std::process::id() as u64) << 32) ^ 0x9E37_79B9_7F4A_7C15
-        });
-
-        let mixed = TOKEN_COUNTER
-            .fetch_add(1, Ordering::Relaxed)
-            .wrapping_add(seed);
-
-        Self::mix_u64(mixed)
-    }
-
-    #[inline]
-    fn mix_u64(mut value: u64) -> u64 {
-        value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        value ^ (value >> 31)
+        let uuid = uuid::Uuid::new_v4();
+        let mut token = [0_u8; 8];
+        token.copy_from_slice(&uuid.as_bytes()[..8]);
+        u64::from_be_bytes(token)
     }
 
     fn prefixed_queue_key(queue_key: &QueueKey, suffix: String) -> Vec<u8> {
@@ -2288,19 +2264,6 @@ impl QueueActor {
         QueueResponse::SentBatch { ids }
     }
 
-    /// Handle reserve operation
-    ///
-    /// IMPORTANT: This method ALWAYS returns immediately (never blocks).
-    /// QueueDomainSink owns queue watch notifications outside the actor.
-    /// QueueActor never stores subscriptions or blocks on empty queues.
-    pub fn handle_receive(
-        &mut self,
-        inflight_seconds: u64,
-        batch_size: Option<usize>,
-    ) -> QueueResponse {
-        self.handle_receive_internal(None, inflight_seconds, batch_size)
-    }
-
     pub fn handle_receive_for_session(
         &mut self,
         session_id: u64,
@@ -2416,8 +2379,24 @@ impl QueueActor {
         QueueResponse::Received { messages }
     }
 
-    /// Handle extend operation
-    pub fn handle_extend(
+    /// Handle session-bound extend operation
+    pub fn handle_extend_for_session(
+        &mut self,
+        session_id: u64,
+        id: MessageId,
+        token: u64,
+        inflight_seconds: u64,
+    ) -> QueueResponse {
+        match self.inflight.get(&id) {
+            Some(inflight) if inflight.owner_session_id == Some(session_id) => {
+                self.handle_extend_authorized(id, token, inflight_seconds)
+            }
+            Some(_) => QueueResponse::NotFound,
+            None => QueueResponse::NotFound,
+        }
+    }
+
+    fn handle_extend_authorized(
         &mut self,
         id: MessageId,
         token: u64,
@@ -2479,8 +2458,28 @@ impl QueueActor {
         QueueResponse::Extended
     }
 
-    /// Handle acknowledge operation
-    pub fn handle_ack(&mut self, id: MessageId, token: u64) -> QueueResponse {
+    /// Handle session-bound acknowledge operation
+    pub fn handle_ack_for_session(
+        &mut self,
+        session_id: u64,
+        id: MessageId,
+        token: u64,
+    ) -> QueueResponse {
+        match self.inflight.get(&id) {
+            Some(inflight) if inflight.owner_session_id == Some(session_id) => {
+                self.handle_ack_authorized(session_id, id, token)
+            }
+            Some(_) => QueueResponse::NotFound,
+            None => self.handle_ack_authorized(session_id, id, token),
+        }
+    }
+
+    fn handle_ack_authorized(
+        &mut self,
+        owner_session_id: u64,
+        id: MessageId,
+        token: u64,
+    ) -> QueueResponse {
         use crate::utils::idempotency::{DedupIdentifier, DedupKey, Domain};
 
         let now = self.clock.now_instant();
@@ -2493,6 +2492,7 @@ impl QueueActor {
                 family: self.queue_key.family.as_u64(),
                 area: self.queue_key.area.clone(),
                 resource: self.queue_key.resource.clone(),
+                owner_session_id,
                 message_id: id.as_u64(),
                 token,
             },
@@ -2852,51 +2852,6 @@ impl QueueActor {
     }
 }
 
-impl Actor for QueueActor {
-    type Message = QueueMessage;
-
-    fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
-        self.process_due_work();
-
-        let response = match msg {
-            QueueMessage::Send {
-                body,
-                delay_seconds,
-                ..
-            } => self.handle_send(body, delay_seconds),
-
-            QueueMessage::Receive {
-                inflight_seconds,
-                batch_size,
-                ..
-            } => self.handle_receive(inflight_seconds, batch_size),
-
-            QueueMessage::Extend {
-                id,
-                token,
-                inflight_seconds,
-                ..
-            } => self.handle_extend(id, token, inflight_seconds),
-
-            QueueMessage::Ack { id, token, .. } => self.handle_ack(id, token),
-
-            QueueMessage::InflightExpired { id } => {
-                self.handle_inflight_expired(id);
-                return; // No response needed for internal timer message
-            }
-        };
-
-        // Send response back to the client via reply
-        let _ = ctx.reply(response).ok();
-    }
-
-    fn started(&mut self, _ctx: &mut Context<Self>) {
-        // Recovery is handled during actor construction; started() is a no-op.
-    }
-
-    fn on_timer(&mut self, _timer_id: crate::runtime::context::TimerId, _ctx: &mut Context<Self>) {}
-}
-
 impl QueueActor {
     fn reset_recovery_state(&mut self) {
         self.reset_live_ready_state();
@@ -2936,6 +2891,8 @@ pub mod tests {
     use crate::runtime::routing::RouteFamily;
     use crate::testkit::create_test_engine_with_cfs;
     use uuid::Uuid;
+
+    const TEST_SESSION_ID: u64 = 1;
 
     /// Mock clock for deterministic testing
     #[derive(Clone)]
@@ -2998,7 +2955,7 @@ pub mod tests {
             _ => panic!("Expected Sent response"),
         };
 
-        let receive_response = actor.handle_receive(30, Some(1));
+        let receive_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
         match receive_response {
             QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);
@@ -3226,7 +3183,7 @@ pub mod tests {
 
         // Assert
         assert_eq!(actor.ready_len(), 1);
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
         match reserve_response {
             QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);
@@ -3554,7 +3511,7 @@ pub mod tests {
         clock.advance(Duration::from_secs(2));
         actor.process_delayed_messages();
 
-        let reserved = match actor.handle_receive(30, Some(1)) {
+        let reserved = match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
             QueueResponse::Received { messages } => messages,
             other => panic!("Expected Received response, got {:?}", other),
         };
@@ -3562,7 +3519,7 @@ pub mod tests {
 
         let message = &reserved[0];
         assert!(matches!(
-            actor.handle_ack(message.id, message.token),
+            actor.handle_ack_for_session(TEST_SESSION_ID, message.id, message.token),
             QueueResponse::Acked
         ));
         // Assert
@@ -3614,7 +3571,7 @@ pub mod tests {
         // Assert
         assert_eq!(actor.ready_len(), 1);
 
-        match actor.handle_receive(30, Some(1)) {
+        match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
             QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);
                 assert_eq!(messages[0].id, msg_id);
@@ -3645,7 +3602,7 @@ pub mod tests {
         let response = actor.handle_send(oversized.clone(), None);
         assert!(matches!(response, QueueResponse::Sent { .. }));
 
-        match actor.handle_receive(30, Some(1)) {
+        match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
             QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);
                 assert_eq!(messages[0].body, oversized);
@@ -3692,7 +3649,7 @@ pub mod tests {
         assert_eq!(actor.body_cache.len(), QueueActor::BODY_CACHE_LIMIT);
 
         // Act
-        let response = actor.handle_receive(30, Some(1));
+        let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         // Assert
         match response {
@@ -3728,7 +3685,7 @@ pub mod tests {
         assert!(actor.body_cache.contains_key(&message_id));
 
         // Act
-        let response = actor.handle_receive(30, Some(1));
+        let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         // Assert
         match response {
@@ -3765,7 +3722,7 @@ pub mod tests {
                 QueueResponse::Sent { id } => id,
                 _ => panic!("Expected Sent response"),
             };
-            let response = actor.handle_receive(30, Some(1));
+            let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
             let token = match response {
                 QueueResponse::Received { messages } => {
                     assert_eq!(messages.len(), 1);
@@ -3773,7 +3730,10 @@ pub mod tests {
                 }
                 _ => panic!("Expected Received response"),
             };
-            assert_eq!(actor.handle_ack(id, token), QueueResponse::Acked);
+            assert_eq!(
+                actor.handle_ack_for_session(TEST_SESSION_ID, id, token),
+                QueueResponse::Acked
+            );
         }
 
         // Assert
@@ -3802,7 +3762,7 @@ pub mod tests {
         );
 
         // Act
-        let response = actor.handle_receive(30, Some(10));
+        let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(10));
 
         // Assert - empty queue returns Received with no messages (not NotFound)
         match response {
@@ -3830,7 +3790,7 @@ pub mod tests {
 
         let body = Bytes::from("test message");
         actor.handle_send(body, None);
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         let (msg_id, token) = match reserve_response {
             QueueResponse::Received { messages } => (messages[0].id, messages[0].token),
@@ -3838,7 +3798,7 @@ pub mod tests {
         };
 
         // Act
-        let response = actor.handle_ack(msg_id, token);
+        let response = actor.handle_ack_for_session(TEST_SESSION_ID, msg_id, token);
 
         // Assert
         assert_eq!(response, QueueResponse::Acked);
@@ -3866,7 +3826,7 @@ pub mod tests {
             QueueResponse::Sent { id } => id,
             _ => panic!("Expected Sent response"),
         };
-        let reserved = match actor.handle_receive(30, Some(1)) {
+        let reserved = match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
             QueueResponse::Received { messages } => messages,
             _ => panic!("Expected Received response"),
         };
@@ -3874,7 +3834,7 @@ pub mod tests {
         QueueActor::fail_next_ack_commit_for_tests();
 
         // Act
-        let response = actor.handle_ack(id, token);
+        let response = actor.handle_ack_for_session(TEST_SESSION_ID, id, token);
 
         // Assert
         assert!(matches!(response, QueueResponse::Error { .. }));
@@ -3913,7 +3873,7 @@ pub mod tests {
             .expect("commit queue header delete");
 
         // Act
-        let response = actor.handle_receive(30, Some(1));
+        let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         // Assert
         match response {
@@ -3950,6 +3910,7 @@ pub mod tests {
                     family: queue_key.family.as_u64(),
                     area: queue_key.area.clone(),
                     resource: queue_key.resource.clone(),
+                    owner_session_id: TEST_SESSION_ID,
                     message_id: message_id.as_u64(),
                     token,
                 },
@@ -3958,7 +3919,7 @@ pub mod tests {
         );
 
         // Act
-        let response = actor.handle_ack(message_id, token);
+        let response = actor.handle_ack_for_session(TEST_SESSION_ID, message_id, token);
 
         // Assert
         assert_eq!(response, QueueResponse::Acked);
@@ -4046,7 +4007,7 @@ pub mod tests {
 
         let body = Bytes::from("test message");
         actor.handle_send(body, None);
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         let msg_id = match reserve_response {
             QueueResponse::Received { messages } => messages[0].id,
@@ -4054,7 +4015,7 @@ pub mod tests {
         };
 
         // Act
-        let response = actor.handle_ack(msg_id, 99999);
+        let response = actor.handle_ack_for_session(TEST_SESSION_ID, msg_id, 99999);
 
         // Assert
         assert_eq!(response, QueueResponse::InvalidToken);
@@ -4097,8 +4058,10 @@ pub mod tests {
         }
 
         // Act
-        let first_response = first_actor.handle_ack(first_id, first_token);
-        let second_response = second_actor.handle_ack(second_id, first_token);
+        let first_response =
+            first_actor.handle_ack_for_session(TEST_SESSION_ID, first_id, first_token);
+        let second_response =
+            second_actor.handle_ack_for_session(TEST_SESSION_ID, second_id, first_token);
 
         // Assert
         assert_eq!(first_id, second_id);
@@ -4149,8 +4112,10 @@ pub mod tests {
         }
 
         // Act
-        let first_response = first_actor.handle_ack(first_id, first_token);
-        let second_response = second_actor.handle_ack(second_id, first_token);
+        let first_response =
+            first_actor.handle_ack_for_session(TEST_SESSION_ID, first_id, first_token);
+        let second_response =
+            second_actor.handle_ack_for_session(TEST_SESSION_ID, second_id, first_token);
 
         // Assert
         assert_eq!(first_id, second_id);
@@ -4178,7 +4143,7 @@ pub mod tests {
 
         let body = Bytes::from("test message");
         actor.handle_send(body, None);
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         let (msg_id, token) = match reserve_response {
             QueueResponse::Received { messages } => (messages[0].id, messages[0].token),
@@ -4189,7 +4154,7 @@ pub mod tests {
 
         // Act
         clock.advance(Duration::from_secs(15));
-        let response = actor.handle_extend(msg_id, token, 60);
+        let response = actor.handle_extend_for_session(TEST_SESSION_ID, msg_id, token, 60);
 
         // Assert
         assert_eq!(response, QueueResponse::Extended);
@@ -4215,7 +4180,7 @@ pub mod tests {
 
         let body = Bytes::from("test message");
         actor.handle_send(body, None);
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         let msg_id = match reserve_response {
             QueueResponse::Received { messages } => messages[0].id,
@@ -4223,7 +4188,7 @@ pub mod tests {
         };
 
         // Act
-        let response = actor.handle_extend(msg_id, 99999, 60);
+        let response = actor.handle_extend_for_session(TEST_SESSION_ID, msg_id, 99999, 60);
 
         // Assert
         assert_eq!(response, QueueResponse::InvalidToken);
@@ -4249,7 +4214,7 @@ pub mod tests {
 
         let body = Bytes::from("test message");
         actor.handle_send(body.clone(), None);
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         let msg_id = match reserve_response {
             QueueResponse::Received { messages } => messages[0].id,
@@ -4269,7 +4234,7 @@ pub mod tests {
         assert!(actor.ready_contains(msg_id));
 
         // Reserve again after expiration.
-        let redelivery_response = actor.handle_receive(30, Some(1));
+        let redelivery_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         // Assert
         match redelivery_response {
@@ -4305,7 +4270,7 @@ pub mod tests {
         }
 
         // Act
-        let response = actor.handle_receive(30, Some(3));
+        let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(3));
 
         // Assert
         match response {
@@ -4343,7 +4308,7 @@ pub mod tests {
         // Act
         let mut reserved_all = Vec::new();
         loop {
-            match actor.handle_receive(30, Some(2)) {
+            match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(2)) {
                 QueueResponse::Received { messages } => {
                     if messages.is_empty() {
                         // Queue is empty (actor returns empty Received, not NotFound)
@@ -4352,7 +4317,7 @@ pub mod tests {
                     for m in messages {
                         reserved_all.push(m.body);
                         // Simulate immediate completion to prevent redelivery
-                        let _ = actor.handle_ack(m.id, m.token);
+                        let _ = actor.handle_ack_for_session(TEST_SESSION_ID, m.id, m.token);
                     }
                 }
                 QueueResponse::NotFound => {
@@ -4390,7 +4355,7 @@ pub mod tests {
 
         let body = Bytes::from("test message");
         actor.handle_send(body, None);
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         let (msg_id, token) = match reserve_response {
             QueueResponse::Received { messages } => (messages[0].id, messages[0].token),
@@ -4400,7 +4365,7 @@ pub mod tests {
 
         // Act - Extend before first timer expires
         clock.advance(Duration::from_secs(15));
-        actor.handle_extend(msg_id, token, 60);
+        actor.handle_extend_for_session(TEST_SESSION_ID, msg_id, token, 60);
         let extended_epoch = actor.inflight.get(&msg_id).unwrap().inflight_epoch;
 
         // Advance to first timer expiration (30s total)
@@ -4433,7 +4398,7 @@ pub mod tests {
 
         let body = Bytes::from("test message");
         actor.handle_send(body, None);
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         let (msg_id, token) = match reserve_response {
             QueueResponse::Received { messages } => (messages[0].id, messages[0].token),
@@ -4446,17 +4411,17 @@ pub mod tests {
         // Assert - Extend fails (entry would be cleaned up if timer processed)
         // Since we're calling directly without going through actor receive,
         // the entry still exists but is expired
-        let _extend_response = actor.handle_extend(msg_id, token, 60);
+        let _extend_response = actor.handle_extend_for_session(TEST_SESSION_ID, msg_id, token, 60);
         // However the logic checks expiration first, so it returns InflightExpired
         // before being removed, OR it could be NotFound if already cleaned up
         // Let's process timers explicitly to make this deterministic
         actor.process_expired_timers();
 
         // Now the entry is definitely gone
-        let extend_response2 = actor.handle_extend(msg_id, token, 60);
+        let extend_response2 = actor.handle_extend_for_session(TEST_SESSION_ID, msg_id, token, 60);
         assert_eq!(extend_response2, QueueResponse::NotFound);
 
-        let complete_response = actor.handle_ack(msg_id, token);
+        let complete_response = actor.handle_ack_for_session(TEST_SESSION_ID, msg_id, token);
         assert_eq!(complete_response, QueueResponse::NotFound);
     }
 
@@ -4478,8 +4443,8 @@ pub mod tests {
         let fake_id = MessageId::new(99999);
 
         // Act
-        let extend_response = actor.handle_extend(fake_id, 12345, 60);
-        let complete_response = actor.handle_ack(fake_id, 12345);
+        let extend_response = actor.handle_extend_for_session(TEST_SESSION_ID, fake_id, 12345, 60);
+        let complete_response = actor.handle_ack_for_session(TEST_SESSION_ID, fake_id, 12345);
 
         // Assert
         assert_eq!(extend_response, QueueResponse::NotFound);
@@ -4518,7 +4483,7 @@ pub mod tests {
         assert_eq!(actor.delayed.len(), 1);
 
         // Immediate reserve should still be empty.
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
         match reserve_response {
             QueueResponse::NotFound => {}
             QueueResponse::Received { messages } if messages.is_empty() => {}
@@ -4534,7 +4499,7 @@ pub mod tests {
         assert_eq!(actor.delayed.len(), 0);
 
         // Final reserve should succeed.
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
         // Assert
         match reserve_response {
             QueueResponse::Received { messages } => {
@@ -4575,7 +4540,7 @@ pub mod tests {
         // Simulate 3 failed delivery attempts
         for attempt in 1..=3 {
             // Reserve
-            let reserve_response = actor.handle_receive(30, Some(1));
+            let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
             match reserve_response {
                 QueueResponse::Received { messages } => {
                     assert_eq!(messages.len(), 1);
@@ -4652,7 +4617,7 @@ pub mod tests {
             };
 
             for _ in 0..2 {
-                match actor.handle_receive(30, Some(1)) {
+                match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
                     QueueResponse::Received { messages } => assert_eq!(messages.len(), 1),
                     other => panic!("Expected Received response, found {other:?}"),
                 }
@@ -4673,7 +4638,7 @@ pub mod tests {
             Some(2),
             crate::utils::idempotency::default_dedup_store(),
         );
-        let reserve_response = recovered.handle_receive(30, Some(1));
+        let reserve_response = recovered.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         // Assert
         assert_eq!(recovered.ready_len(), 0);
@@ -4713,7 +4678,7 @@ pub mod tests {
             other => panic!("Expected Sent response, found {other:?}"),
         };
         for _ in 0..2 {
-            match actor.handle_receive(30, Some(1)) {
+            match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
                 QueueResponse::Received { messages } => assert_eq!(messages.len(), 1),
                 other => panic!("Expected Received response, found {other:?}"),
             }
@@ -4760,7 +4725,7 @@ pub mod tests {
             other => panic!("Expected Sent response, found {other:?}"),
         };
         for _ in 0..2 {
-            match actor.handle_receive(30, Some(1)) {
+            match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
                 QueueResponse::Received { messages } => assert_eq!(messages.len(), 1),
                 other => panic!("Expected Received response, found {other:?}"),
             }
@@ -4772,7 +4737,7 @@ pub mod tests {
         let replayed = actor
             .replay_dead_letter(msg_id)
             .expect("replay dead letter");
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         // Assert
         assert!(replayed);
@@ -4809,7 +4774,7 @@ pub mod tests {
             other => panic!("Expected Sent response, found {other:?}"),
         };
         for _ in 0..2 {
-            match actor.handle_receive(30, Some(1)) {
+            match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
                 QueueResponse::Received { messages } => assert_eq!(messages.len(), 1),
                 other => panic!("Expected Received response, found {other:?}"),
             }
@@ -4819,7 +4784,7 @@ pub mod tests {
 
         // Act
         let purged = actor.purge_dead_letter(msg_id).expect("purge dead letter");
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
         // Assert
         assert!(purged);
@@ -4856,7 +4821,7 @@ pub mod tests {
         // Simulate 10 failed delivery attempts
         for attempt in 1..=10 {
             // Reserve
-            let reserve_response = actor.handle_receive(30, Some(1));
+            let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
             match reserve_response {
                 QueueResponse::Received { messages } => {
                     assert_eq!(messages.len(), 1);
@@ -4875,7 +4840,7 @@ pub mod tests {
         }
 
         // Assert - Message still available after 10 attempts
-        let reserve_response = actor.handle_receive(30, Some(1));
+        let reserve_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
         match reserve_response {
             QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 1);

@@ -4,7 +4,7 @@ use crate::boot::domains::DomainHandles;
 use crate::runtime::Router;
 use crate::session::manager::RuntimeIngress;
 use parking_lot::RwLock;
-use std::sync::atomic::{AtomicU64, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -60,4 +60,7 @@ pub struct Runtime {
 
     /// Auth configuration used by admin/auth surfaces
     pub(crate) auth_config: Arc<RwLock<crate::auth::AuthConfig>>,
+
+    /// Whether a validated external TLS terminator protects public browser traffic.
+    pub(crate) assume_external_tls: Arc<AtomicBool>,
 }

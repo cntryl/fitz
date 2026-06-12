@@ -14,6 +14,15 @@ fn test_runtime() -> Arc<Runtime> {
     Arc::new(Runtime::new(Arc::new(Router::new())))
 }
 
+fn assert_browser_security_headers(headers: &hyper::HeaderMap) {
+    assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+    assert_eq!(headers.get("referrer-policy").unwrap(), "no-referrer");
+    assert_eq!(
+        headers.get("content-security-policy").unwrap(),
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    );
+}
+
 struct CurrentDirGuard {
     original: PathBuf,
 }
@@ -120,6 +129,58 @@ async fn should_serve_embedded_svg_with_etag_and_compression() {
 
     assert_eq!(not_modified_status, StatusCode::NOT_MODIFIED);
     assert!(not_modified_body.is_empty());
+}
+
+#[tokio::test]
+#[serial]
+async fn should_add_security_headers_to_static_asset_response() {
+    // Arrange
+    let runtime = test_runtime();
+    let request = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(request, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_browser_security_headers(response.headers());
+}
+
+#[tokio::test]
+#[serial]
+async fn should_add_security_headers_to_not_modified_asset_response() {
+    // Arrange
+    let runtime = test_runtime();
+    let asset_request = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/favicon.svg")
+        .body(Body::default())
+        .unwrap();
+    let asset_response = fitz::api::admin::handlers::handle_request(asset_request, runtime.clone())
+        .await
+        .unwrap();
+    let etag = asset_response.headers().get(ETAG).unwrap().clone();
+    let request = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/favicon.svg")
+        .header(header::IF_NONE_MATCH, etag)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(request, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    assert_browser_security_headers(response.headers());
 }
 
 #[tokio::test]

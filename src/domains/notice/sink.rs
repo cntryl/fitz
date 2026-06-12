@@ -747,6 +747,7 @@ mod tests {
                 error: None,
             }
         } else {
+            let _error_code = decoder.get_u32().expect("notice response error code");
             let error = decoder.get_string().expect("notice response error");
             assert!(decoder.is_complete());
             NoticeResponsePayload {

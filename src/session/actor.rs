@@ -90,6 +90,12 @@ impl SessionActor {
         self.permissions.allows_route(route, access)
     }
 
+    /// Session-owned domain state has already been bound to this session, but
+    /// the session token must still be fresh before follow-up operations run.
+    pub fn authorize_session_owned(&self) -> bool {
+        !self.is_token_expired()
+    }
+
     /// Batch authorization check (useful for multi-operation requests)
     pub fn authorize_all(&self, checks: &[(Route, Access)]) -> bool {
         checks

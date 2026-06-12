@@ -20,6 +20,7 @@ pub mod handlers;
 pub mod http;
 pub mod ingress;
 pub mod mcp;
+pub mod origin;
 pub mod outbound;
 pub mod runtime_ingress;
 pub mod session;

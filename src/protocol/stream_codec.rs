@@ -153,12 +153,40 @@ pub fn encode_response_into(enc: &mut PayloadEncoder, response: &StreamResponse)
             enc.put_bytes(data);
         }
         StreamResponse::Error(e) => {
-            enc.put_u8(1); // error flag
-            enc.put_string(e);
+            return crate::protocol::error_codes::encode_error_body_into(
+                stream_error_code_for_message(e),
+                e,
+                enc,
+            );
         }
     }
 
     enc.finish()
+}
+
+fn stream_error_code_for_message(message: &str) -> u16 {
+    use crate::protocol::error_codes::stream;
+
+    if message.contains(ERR_STREAM_FILTER_UNSUPPORTED_VERSION) {
+        return stream::ERR_STREAM_FILTER_UNSUPPORTED_VERSION;
+    }
+    if message.contains(ERR_STREAM_FILTER_INVALID_PAYLOAD) {
+        return stream::ERR_STREAM_FILTER_INVALID_PAYLOAD;
+    }
+
+    match message {
+        "session already active" => stream::ERR_SESSION_ALREADY_ACTIVE,
+        "session not found" => stream::ERR_SESSION_NOT_FOUND,
+        "concurrency conflict" | "ERR_CONCURRENCY_CONFLICT" => stream::ERR_CONCURRENCY_CONFLICT,
+        "resource not found" => stream::ERR_RESOURCE_NOT_FOUND,
+        message if message.contains("read") || message.contains("bound") => {
+            stream::ERR_INVALID_READ_BOUND
+        }
+        message if message.contains("subscription") && message.contains("pattern") => {
+            stream::ERR_INVALID_SUBSCRIPTION_PATTERN
+        }
+        _ => stream::ERR_BACKEND_ERROR,
+    }
 }
 
 // ===== Helper Parsers =====

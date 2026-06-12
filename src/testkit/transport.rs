@@ -14,7 +14,10 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 use tokio_tungstenite::{
     client_async,
-    tungstenite::{client::IntoClientRequest, protocol::Message},
+    tungstenite::{
+        client::IntoClientRequest, handshake::client::Request as WebSocketRequest,
+        protocol::Message,
+    },
     MaybeTlsStream, WebSocketStream,
 };
 
@@ -51,6 +54,7 @@ impl TestServer {
             None,
             crate::boot::runtime::StorageMode::Memory,
             crate::domains::stream::StreamStorageLayout::default(),
+            Vec::new(),
         )
         .await
     }
@@ -63,6 +67,7 @@ impl TestServer {
             Some(rpc_request_timeout),
             crate::boot::runtime::StorageMode::Memory,
             crate::domains::stream::StreamStorageLayout::default(),
+            Vec::new(),
         )
         .await
     }
@@ -74,6 +79,29 @@ impl TestServer {
             None,
             crate::boot::runtime::StorageMode::Memory,
             crate::domains::stream::StreamStorageLayout::default(),
+            Vec::new(),
+        )
+        .await
+    }
+
+    pub async fn start_with_ws_allowed_origins(
+        origins: &[&str],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let origins = origins
+            .iter()
+            .map(|origin| {
+                crate::api::origin::parse_exact_origin(origin).map_err(|error| {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidInput, error))
+                        as Box<dyn std::error::Error>
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::start_with_options(
+            false,
+            None,
+            crate::boot::runtime::StorageMode::Memory,
+            crate::domains::stream::StreamStorageLayout::default(),
+            origins,
         )
         .await
     }
@@ -86,6 +114,7 @@ impl TestServer {
             None,
             crate::boot::runtime::StorageMode::Memory,
             stream_storage_layout,
+            Vec::new(),
         )
         .await
     }
@@ -100,6 +129,7 @@ impl TestServer {
                 db_path: db_path.into(),
             },
             crate::domains::stream::StreamStorageLayout::default(),
+            Vec::new(),
         )
         .await
     }
@@ -115,6 +145,7 @@ impl TestServer {
                 db_path: db_path.into(),
             },
             stream_storage_layout,
+            Vec::new(),
         )
         .await
     }
@@ -124,6 +155,7 @@ impl TestServer {
         rpc_request_timeout: Option<Duration>,
         storage_mode: crate::boot::runtime::StorageMode,
         stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+        ws_allowed_origins: Vec<crate::api::origin::ExactOrigin>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let permit = test_server_semaphore()
             .clone()
@@ -154,6 +186,7 @@ impl TestServer {
         let boot_config = crate::boot::BootConfig {
             bind_addr: "127.0.0.1".to_string(),
             tcp_port: tcp_addr.port(),
+            tcp_enabled: true,
             http_port: ws_addr.port(), // Use discovered WS port
             storage_mode,
             stream_storage_layout,
@@ -178,6 +211,8 @@ impl TestServer {
             channel_capacity: 10_000,
             cloud_durability: crate::boot::runtime::CloudDurabilityMode::Background,
             storage_memtable: crate::boot::runtime::StorageMemtableConfig::Auto,
+            assume_external_tls: false,
+            ws_allowed_origins,
         };
 
         // Step 1: Initialize storage
@@ -220,6 +255,7 @@ impl TestServer {
             ingress.clone(),
             ingress_config.clone(),
             runtime.clone(),
+            boot_config.ws_allowed_origins.clone(),
         )?;
 
         let crate::api::handlers::ListenerHandle {
@@ -278,6 +314,62 @@ impl TestServer {
     pub async fn connect_ws(&self) -> Result<TestWebSocketClient, Box<dyn std::error::Error>> {
         let url = format!("ws://{}/", self.ws_addr);
         TestWebSocketClient::connect(&url).await
+    }
+
+    pub async fn connect_ws_with_origin(
+        &self,
+        origin: &str,
+    ) -> Result<TestWebSocketClient, Box<dyn std::error::Error>> {
+        let url = format!("ws://{}/", self.ws_addr);
+        TestWebSocketClient::connect_with_origin(&url, origin).await
+    }
+
+    pub async fn websocket_upgrade_status(
+        &self,
+        origin: Option<&str>,
+    ) -> Result<u16, Box<dyn std::error::Error>> {
+        match origin {
+            Some(origin) => {
+                self.websocket_upgrade_status_with_origin_headers(&[origin])
+                    .await
+            }
+            None => self.websocket_upgrade_status_with_origin_headers(&[]).await,
+        }
+    }
+
+    pub async fn websocket_upgrade_status_with_origin_headers(
+        &self,
+        origins: &[&str],
+    ) -> Result<u16, Box<dyn std::error::Error>> {
+        let mut stream = TcpStream::connect(self.ws_addr).await?;
+        stream.set_nodelay(true)?;
+        let origin_headers = origins
+            .iter()
+            .map(|origin| format!("Origin: {origin}\r\n"))
+            .collect::<String>();
+        let request = format!(
+            "GET / HTTP/1.1\r\n\
+             Host: {}\r\n\
+             Upgrade: websocket\r\n\
+             Connection: Upgrade\r\n\
+             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+             Sec-WebSocket-Version: 13\r\n\
+             {origin_headers}\r\n",
+            self.ws_addr
+        );
+        stream.write_all(request.as_bytes()).await?;
+        let mut response = [0_u8; 1024];
+        let bytes_read = stream.read(&mut response).await?;
+        let status_line = std::str::from_utf8(&response[..bytes_read])?
+            .lines()
+            .next()
+            .ok_or_else(|| std::io::Error::other("missing HTTP status line"))?;
+        let status = status_line
+            .split_whitespace()
+            .nth(1)
+            .ok_or_else(|| std::io::Error::other("missing HTTP status code"))?
+            .parse::<u16>()?;
+        Ok(status)
     }
 
     async fn wait_for_condition<F>(
@@ -473,6 +565,21 @@ impl TestWebSocketClient {
     /// Connect to a WebSocket server
     pub async fn connect(url: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let request = url.into_client_request()?;
+        Self::connect_request(request).await
+    }
+
+    pub async fn connect_with_origin(
+        url: &str,
+        origin: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut request = url.into_client_request()?;
+        request.headers_mut().insert("Origin", origin.parse()?);
+        Self::connect_request(request).await
+    }
+
+    async fn connect_request(
+        request: WebSocketRequest,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let uri = request.uri();
         let host = uri.host().ok_or_else(|| {
             std::io::Error::new(
@@ -919,5 +1026,97 @@ mod tests {
 
         // Assert
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn should_accept_websocket_upgrade_given_allowed_origin() {
+        // Arrange
+        let server = TestServer::start_with_ws_allowed_origins(&["https://app.example.com"])
+            .await
+            .expect("start test server");
+
+        // Act
+        let _websocket = server
+            .connect_ws_with_origin("https://app.example.com")
+            .await
+            .expect("connect websocket");
+
+        // Assert
+        server
+            .wait_for_session_count(1)
+            .await
+            .expect("wait for websocket session");
+    }
+
+    #[tokio::test]
+    async fn should_reject_websocket_upgrade_given_disallowed_origin() {
+        // Arrange
+        let server = TestServer::start_with_ws_allowed_origins(&["https://app.example.com"])
+            .await
+            .expect("start test server");
+
+        // Act
+        let status = server
+            .websocket_upgrade_status(Some("https://evil.example.com"))
+            .await
+            .expect("read websocket status");
+
+        // Assert
+        assert_eq!(status, 403);
+        assert_eq!(server.runtime.session_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn should_reject_websocket_upgrade_given_missing_origin_when_origins_configured() {
+        // Arrange
+        let server = TestServer::start_with_ws_allowed_origins(&["https://app.example.com"])
+            .await
+            .expect("start test server");
+
+        // Act
+        let status = server
+            .websocket_upgrade_status(None)
+            .await
+            .expect("read websocket status");
+
+        // Assert
+        assert_eq!(status, 403);
+        assert_eq!(server.runtime.session_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn should_reject_websocket_upgrade_given_duplicate_origin_headers() {
+        // Arrange
+        let server = TestServer::start_with_ws_allowed_origins(&["https://app.example.com"])
+            .await
+            .expect("start test server");
+
+        // Act
+        let status = server
+            .websocket_upgrade_status_with_origin_headers(&[
+                "https://app.example.com",
+                "https://app.example.com",
+            ])
+            .await
+            .expect("read websocket status");
+
+        // Assert
+        assert_eq!(status, 403);
+        assert_eq!(server.runtime.session_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn should_allow_loopback_websocket_upgrade_without_origin_config() {
+        // Arrange
+        let server = TestServer::start().await.expect("start test server");
+
+        // Act
+        let status = server
+            .websocket_upgrade_status(None)
+            .await
+            .expect("read websocket status");
+
+        // Assert
+        assert_eq!(status, 101);
     }
 }

@@ -32,6 +32,7 @@ impl Runtime {
             ingress: Arc::new(parking_lot::RwLock::new(None)),
             domains: Arc::new(parking_lot::RwLock::new(None)),
             auth_config: Arc::new(parking_lot::RwLock::new(crate::auth::AuthConfig::Disabled)),
+            assume_external_tls: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -65,6 +66,15 @@ impl Runtime {
 
     pub fn auth_config(&self) -> crate::auth::AuthConfig {
         self.auth_config.read().clone()
+    }
+
+    pub fn set_assume_external_tls(&self, assume_external_tls: bool) {
+        self.assume_external_tls
+            .store(assume_external_tls, Ordering::SeqCst);
+    }
+
+    pub fn assume_external_tls(&self) -> bool {
+        self.assume_external_tls.load(Ordering::SeqCst)
     }
 
     pub fn mark_storage_ready(&self) {

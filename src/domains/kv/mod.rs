@@ -17,10 +17,10 @@
 //!
 //! # Routes
 //!
-//! Format: `kv://{realm}/{area}/{resource}/{operation}`
+//! Format: `kv://{realm}/{area}/{resource}`
 //!
 //! Transaction control:
-//! - `begin` - Start a transaction bound to {resource}
+//! - `begin` - Start a transaction bound to `{resource}`
 //! - `commit` - Commit the active transaction
 //! - `rollback` - Abort the active transaction
 //!

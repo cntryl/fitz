@@ -68,13 +68,20 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     runtime.mark_domains_ready();
 
     // Step 4: Start transport listeners
-    let tcp_listener = crate::api::handlers::spawn_tcp_listener(
-        &config,
-        ingress.clone(),
-        ingress_config.clone(),
-        runtime.clone(),
-    )
-    .await?;
+    let tcp_listener = if config.tcp_enabled {
+        Some(
+            crate::api::handlers::spawn_tcp_listener(
+                &config,
+                ingress.clone(),
+                ingress_config.clone(),
+                runtime.clone(),
+            )
+            .await?,
+        )
+    } else {
+        tracing::info!("TCP listener disabled");
+        None
+    };
     let ws_listener = crate::api::handlers::spawn_http_listener(
         &config,
         ingress.clone(),
@@ -83,24 +90,29 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     )
     .await?;
 
-    let crate::api::handlers::ListenerHandle {
-        ready: tcp_ready,
-        shutdown: tcp_shutdown,
-        join: tcp_join,
-    } = tcp_listener;
+    let (tcp_shutdown, tcp_join) = if let Some(tcp_listener) = tcp_listener {
+        let crate::api::handlers::ListenerHandle {
+            ready: tcp_ready,
+            shutdown,
+            join,
+        } = tcp_listener;
+        tcp_ready.await.map_err(|e| {
+            Box::new(std::io::Error::other(format!(
+                "TCP listener failed to start: {}",
+                e
+            ))) as Box<dyn std::error::Error>
+        })?;
+        (Some(shutdown), Some(join))
+    } else {
+        (None, None)
+    };
     let crate::api::handlers::ListenerHandle {
         ready: ws_ready,
         shutdown: ws_shutdown,
         join: ws_join,
     } = ws_listener;
 
-    // Wait for listeners to be ready before accepting traffic
-    tcp_ready.await.map_err(|e| {
-        Box::new(std::io::Error::other(format!(
-            "TCP listener failed to start: {}",
-            e
-        ))) as Box<dyn std::error::Error>
-    })?;
+    // Wait for listeners to be ready before accepting traffic.
     ws_ready.await.map_err(|e| {
         Box::new(std::io::Error::other(format!(
             "WebSocket listener failed to start: {}",
@@ -112,14 +124,20 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     runtime.mark_startup_complete();
 
     tracing::info!("Fitz broker ready");
-    tracing::info!("  TCP:  {}:{}", config.bind_addr, config.tcp_port);
+    if config.tcp_enabled {
+        tracing::info!("  TCP:  {}:{}", config.bind_addr, config.tcp_port);
+    } else {
+        tracing::info!("  TCP:  disabled");
+    }
     tracing::info!("  HTTP: {}:{}", config.bind_addr, config.http_port);
 
     // Step 5: Wait for shutdown signal
     tokio::signal::ctrl_c().await?;
     tracing::info!("Shutting down Fitz broker");
 
-    let _ = tcp_shutdown.send(());
+    if let Some(tcp_shutdown) = tcp_shutdown {
+        let _ = tcp_shutdown.send(());
+    }
     let _ = ws_shutdown.send(());
 
     let wait_for_listener = async |name, join: tokio::task::JoinHandle<()>| {
@@ -128,12 +146,10 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
             .map_err(|_| format!("{} listener shutdown timed out", name))?
             .map_err(|error| format!("{} listener join failed: {}", name, error))
     };
-    let (tcp_result, ws_result) = tokio::join!(
-        wait_for_listener("TCP", tcp_join),
-        wait_for_listener("HTTP", ws_join)
-    );
-    tcp_result?;
-    ws_result?;
+    if let Some(tcp_join) = tcp_join {
+        wait_for_listener("TCP", tcp_join).await?;
+    }
+    wait_for_listener("HTTP", ws_join).await?;
 
     let domains = runtime.detach_domains();
     if let Some(domains) = &domains {

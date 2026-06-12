@@ -167,13 +167,17 @@ pub(crate) fn route_triplet(route: &str) -> Option<RouteTriplet<'_>> {
     })
 }
 
-pub(crate) fn route_triplet_tail(route: &str) -> Option<RouteTriplet<'_>> {
-    let mut segments = route_path(route).trim_start_matches('/').splitn(3, '/');
-    Some(RouteTriplet {
+pub(crate) fn route_exact_triplet(route: &str) -> Option<RouteTriplet<'_>> {
+    let mut segments = route_segments(route);
+    let triplet = RouteTriplet {
         realm: segments.next()?,
         area: segments.next()?,
         resource: segments.next()?,
-    })
+    };
+    if segments.next().is_some() {
+        return None;
+    }
+    Some(triplet)
 }
 
 pub(crate) fn route_quad(route: &str) -> Option<RouteQuad<'_>> {
@@ -632,22 +636,15 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_route_triplet_tail_given_nested_resource() {
+    fn should_reject_exact_route_triplet_given_nested_resource() {
         // Arrange
         let route = "kv://acme/app/orders/by/id";
 
         // Act
-        let parsed = route_triplet_tail(route);
+        let parsed = route_exact_triplet(route);
 
         // Assert
-        assert_eq!(
-            parsed,
-            Some(RouteTriplet {
-                realm: "acme",
-                area: "app",
-                resource: "orders/by/id",
-            })
-        );
+        assert!(parsed.is_none());
     }
 
     #[test]

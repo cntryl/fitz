@@ -34,9 +34,18 @@ pub(super) async fn handle_websocket(
     config: IngressConfig,
     runtime: Arc<crate::boot::Runtime>,
     websocket_tasks: super::SessionTasks,
+    ws_allowed_origins: Arc<Vec<crate::api::origin::ExactOrigin>>,
 ) -> Result<Response, std::convert::Infallible> {
     // Note: increment_connections / decrement_connections are handled by the
     // HTTP listener wrapper (handle_http_upgrade) — no additional counter here.
+    if !websocket_origin_allowed(&req, ws_allowed_origins.as_slice()) {
+        tracing::warn!("WebSocket upgrade rejected: origin not allowed");
+        return Ok(hyper::http::Response::builder()
+            .status(403)
+            .body(Body::from("WebSocket origin not allowed"))
+            .unwrap());
+    }
+
     match hyper_tungstenite::upgrade(req, None) {
         Ok((response, websocket_fut)) => {
             let runtime_clone = runtime.clone();
@@ -68,6 +77,34 @@ pub(super) async fn handle_websocket(
                 .unwrap())
         }
     }
+}
+
+fn websocket_origin_allowed<B>(
+    req: &hyper::Request<B>,
+    allowed_origins: &[crate::api::origin::ExactOrigin],
+) -> bool {
+    if allowed_origins.is_empty() {
+        return true;
+    }
+
+    let mut origin_values = req.headers().get_all("origin").iter();
+    let Some(origin_value) = origin_values.next() else {
+        return false;
+    };
+    if origin_values.next().is_some() {
+        return false;
+    };
+    let Some(origin) = origin_value
+        .to_str()
+        .ok()
+        .and_then(|value| crate::api::origin::parse_exact_origin(value).ok())
+    else {
+        return false;
+    };
+
+    allowed_origins
+        .iter()
+        .any(|allowed| allowed.same_origin(&origin))
 }
 
 async fn run_websocket_session<S>(
@@ -256,11 +293,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        is_normal_websocket_disconnect, websocket_close_reason,
+        is_normal_websocket_disconnect, websocket_close_reason, websocket_origin_allowed,
         websocket_session_frame_error_reason,
     };
     use crate::protocol::frame::ChannelId;
     use crate::session::{CloseReason, SessionError};
+    use hyper::Request;
     use hyper_tungstenite::tungstenite::error::ProtocolError;
     use hyper_tungstenite::tungstenite::Error as WsError;
 
@@ -292,5 +330,40 @@ mod tests {
 
         // Assert
         assert!(result);
+    }
+
+    #[test]
+    fn should_allow_configured_websocket_origin() {
+        // Arrange
+        let allowed = vec![
+            crate::api::origin::parse_exact_origin("https://app.example.com").expect("origin"),
+        ];
+        let request = Request::builder()
+            .header("Origin", "https://app.example.com")
+            .body(crate::api::http::Body::default())
+            .expect("request");
+
+        // Act
+        let result = websocket_origin_allowed(&request, &allowed);
+
+        // Assert
+        assert!(result);
+    }
+
+    #[test]
+    fn should_reject_missing_websocket_origin_when_origins_are_configured() {
+        // Arrange
+        let allowed = vec![
+            crate::api::origin::parse_exact_origin("https://app.example.com").expect("origin"),
+        ];
+        let request = Request::builder()
+            .body(crate::api::http::Body::default())
+            .expect("request");
+
+        // Act
+        let result = websocket_origin_allowed(&request, &allowed);
+
+        // Assert
+        assert!(!result);
     }
 }

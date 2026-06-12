@@ -3,14 +3,11 @@
 use bytes::Bytes;
 use std::sync::Arc;
 
-use crate::prelude::Actor;
-use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
 
 use super::protocol::{
-    AppendResponse, BeginSessionResponse, CommitSessionResponse, GetMetadataResponse,
-    IngestMetadata, PeekResponse, ReadResponse, StreamDiscriminator, StreamError, StreamFilterSet,
-    StreamMessage, StreamResponse, StreamWriteMode, MAX_EVENT_SIZE,
+    CommitSessionResponse, GetMetadataResponse, IngestMetadata, PeekResponse, ReadResponse,
+    StreamDiscriminator, StreamFilterSet, StreamWriteMode, MAX_EVENT_SIZE,
 };
 use super::store::{CommitRecordsParams, EventPayload, StreamStore};
 
@@ -39,7 +36,6 @@ pub struct StreamActor {
     store: Arc<StreamStore>,
     next_resource_offset: u64,
     active_session: Option<ActiveAppendSession>,
-    next_local_session_id: u64,
 }
 
 impl StreamActor {
@@ -61,19 +57,7 @@ impl StreamActor {
             store,
             next_resource_offset,
             active_session: None,
-            next_local_session_id: 1,
         })
-    }
-
-    fn map_error(error: &str) -> StreamError {
-        match error {
-            "session already active" => StreamError::SessionAlreadyActive,
-            "session not found" => StreamError::SessionNotFound,
-            "concurrency conflict" | "ERR_CONCURRENCY_CONFLICT" => StreamError::ConcurrencyConflict,
-            "event too large" => StreamError::EventTooLarge,
-            "batch too large" => StreamError::BatchTooLarge,
-            _ => StreamError::InvalidReadBound,
-        }
     }
 
     pub fn resource_identity(&self) -> (&str, &str, &str) {
@@ -111,24 +95,9 @@ impl StreamActor {
         Ok(stream_session_id)
     }
 
-    pub fn append_to_session(
+    pub fn append_to_session_with_discriminator_for_owner(
         &mut self,
-        stream_session_id: u64,
-        expected_offset: u64,
-        body: Bytes,
-        metadata: Option<Bytes>,
-    ) -> Result<u64, String> {
-        self.append_to_session_with_discriminator(
-            stream_session_id,
-            expected_offset,
-            body,
-            metadata,
-            None,
-        )
-    }
-
-    pub fn append_to_session_with_discriminator(
-        &mut self,
+        owner_session_id: u64,
         stream_session_id: u64,
         expected_offset: u64,
         body: Bytes,
@@ -138,7 +107,10 @@ impl StreamActor {
         let session = self
             .active_session
             .as_mut()
-            .filter(|session| session.stream_session_id == stream_session_id)
+            .filter(|session| {
+                session.stream_session_id == stream_session_id
+                    && session.owner_session_id == owner_session_id
+            })
             .ok_or_else(|| "session not found".to_string())?;
 
         let assigned_offset = match session.expected_offset {
@@ -185,8 +157,9 @@ impl StreamActor {
         Ok(assigned_offset)
     }
 
-    pub fn commit_session(
+    pub fn commit_session_for_owner(
         &mut self,
+        owner_session_id: u64,
         stream_session_id: u64,
         mode: StreamWriteMode,
     ) -> Result<CommitSessionResponse, String> {
@@ -195,7 +168,9 @@ impl StreamActor {
             .take()
             .ok_or_else(|| "session not found".to_string())?;
 
-        if session.stream_session_id != stream_session_id {
+        if session.stream_session_id != stream_session_id
+            || session.owner_session_id != owner_session_id
+        {
             self.active_session = Some(session);
             return Err("session not found".to_string());
         }
@@ -242,13 +217,19 @@ impl StreamActor {
         })
     }
 
-    pub fn rollback_session(&mut self, stream_session_id: u64) -> Result<(), String> {
+    pub fn rollback_session_for_owner(
+        &mut self,
+        owner_session_id: u64,
+        stream_session_id: u64,
+    ) -> Result<(), String> {
         let session = self
             .active_session
             .take()
             .ok_or_else(|| "session not found".to_string())?;
 
-        if session.stream_session_id != stream_session_id {
+        if session.stream_session_id != stream_session_id
+            || session.owner_session_id != owner_session_id
+        {
             self.active_session = Some(session);
             return Err("session not found".to_string());
         }
@@ -329,71 +310,6 @@ impl StreamActor {
             &self.resource,
         )?;
         Ok(GetMetadataResponse { metadata })
-    }
-}
-
-impl Actor for StreamActor {
-    type Message = StreamMessage;
-
-    fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
-        let response = match msg {
-            StreamMessage::Begin {
-                ingest_metadata, ..
-            } => {
-                let stream_session_id = self.next_local_session_id;
-                self.next_local_session_id = self.next_local_session_id.saturating_add(1);
-                match self.begin_append_session(0, stream_session_id, ingest_metadata) {
-                    Ok(session_id) => StreamResponse::BeginOk(BeginSessionResponse { session_id }),
-                    Err(error) => StreamResponse::Error(Self::map_error(&error)),
-                }
-            }
-            StreamMessage::Append {
-                session_id,
-                expected_offset,
-                body,
-                metadata,
-                discriminator,
-            } => match self.append_to_session_with_discriminator(
-                session_id,
-                expected_offset,
-                body,
-                metadata,
-                discriminator,
-            ) {
-                Ok(_) => StreamResponse::AppendOk(AppendResponse { success: true }),
-                Err(error) => StreamResponse::Error(Self::map_error(&error)),
-            },
-            StreamMessage::Commit { session_id, mode } => {
-                match self.commit_session(session_id, mode) {
-                    Ok(response) => StreamResponse::CommitOk(response),
-                    Err(error) => StreamResponse::Error(Self::map_error(&error)),
-                }
-            }
-            StreamMessage::Rollback { session_id } => match self.rollback_session(session_id) {
-                Ok(()) => StreamResponse::RollbackOk,
-                Err(error) => StreamResponse::Error(Self::map_error(&error)),
-            },
-            StreamMessage::Read {
-                from_offset,
-                limit,
-                max_bytes,
-                filter,
-                ..
-            } => match self.read_with_filter(from_offset, limit, max_bytes, filter.as_ref()) {
-                Ok(response) => StreamResponse::ReadOk(response),
-                Err(error) => StreamResponse::Error(Self::map_error(&error)),
-            },
-            StreamMessage::Last { .. } => match self.last() {
-                Ok(response) => StreamResponse::LastOk(response),
-                Err(error) => StreamResponse::Error(Self::map_error(&error)),
-            },
-            StreamMessage::GetMetadata { .. } => match self.metadata() {
-                Ok(response) => StreamResponse::MetadataOk(response),
-                Err(error) => StreamResponse::Error(Self::map_error(&error)),
-            },
-        };
-
-        let _ = ctx.reply(response).ok();
     }
 }
 

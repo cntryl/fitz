@@ -16,6 +16,8 @@ use fitz::runtime::routing::RouteFamily;
 use fitz::utils::storage_key::{self, DomainKeyspace};
 use uuid::Uuid;
 
+const TEST_SESSION_ID: u64 = 1;
+
 fn unique_queue_key(resource_prefix: &str) -> QueueKey {
     QueueKey {
         family: RouteFamily::new(0),
@@ -97,7 +99,7 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     let mut _consumer_c_msgs = Vec::new();
 
     // Consumer A reserves 10 messages
-    match actor.handle_receive(30, Some(10)) {
+    match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(10)) {
         QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 10);
             _consumer_a_msgs = messages;
@@ -106,7 +108,7 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     }
 
     // Consumer B reserves 10 messages
-    match actor.handle_receive(30, Some(10)) {
+    match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(10)) {
         QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 10);
             _consumer_b_msgs = messages;
@@ -115,7 +117,7 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     }
 
     // Consumer C reserves remaining 10 messages
-    match actor.handle_receive(30, Some(10)) {
+    match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(10)) {
         QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 10);
             _consumer_c_msgs = messages;
@@ -172,7 +174,7 @@ fn should_redeliver_messages_after_crash() {
         }
 
         // Consumer reserves 5 messages (simulating in-flight state)
-        match actor.handle_receive(30, Some(5)) {
+        match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(5)) {
             QueueResponse::Received { messages } => {
                 assert_eq!(messages.len(), 5);
             }
@@ -211,7 +213,7 @@ fn should_redeliver_messages_after_crash() {
     let mut recovered_count = 0;
     let mut recovered_bodies = Vec::new();
     loop {
-        match actor.handle_receive(30, Some(5)) {
+        match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(5)) {
             QueueResponse::Received { messages } => {
                 if messages.is_empty() {
                     break;
@@ -262,7 +264,7 @@ fn should_preserve_fifo_order_after_recovery() {
 
     let mut expected_order = Vec::new();
     loop {
-        match reference_actor.handle_receive(30, Some(4)) {
+        match reference_actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(4)) {
             QueueResponse::Received { messages } => {
                 if messages.is_empty() {
                     break;
@@ -309,7 +311,7 @@ fn should_preserve_fifo_order_after_recovery() {
 
     let mut recovered_bodies = Vec::new();
     loop {
-        match actor.handle_receive(30, Some(4)) {
+        match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(4)) {
             QueueResponse::Received { messages } => {
                 if messages.is_empty() {
                     break;
@@ -372,7 +374,7 @@ fn should_preserve_delayed_visibility_across_restart() {
     // Note: delayed is private field, so verify behavior through reserve instead
 
     // Verify immediately visible
-    match actor.handle_receive(30, Some(1)) {
+    match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
         QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 1);
             assert_eq!(messages[0].body, Bytes::from("immediate"));
@@ -477,7 +479,7 @@ fn should_redeliver_message_on_lease_expiration() {
 
     // Act
     actor.handle_send(Bytes::from("work"), None);
-    let first = match actor.handle_receive(30, Some(1)) {
+    let first = match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
         QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 1);
             messages[0].clone()
@@ -486,7 +488,7 @@ fn should_redeliver_message_on_lease_expiration() {
     };
     clock.advance(Duration::from_secs(31));
     actor.process_expired_timers();
-    let second = match actor.handle_receive(30, Some(1)) {
+    let second = match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
         QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 1);
             messages[0].clone()
@@ -531,7 +533,7 @@ fn should_dlq_message_after_max_attempts() {
         };
 
         for expected_attempt in 1..=3 {
-            match actor.handle_receive(30, Some(1)) {
+            match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
                 QueueResponse::Received { messages } => {
                     assert_eq!(messages.len(), 1);
                     assert_eq!(messages[0].attempts, expected_attempt);
@@ -555,7 +557,7 @@ fn should_dlq_message_after_max_attempts() {
         Some(3),
         fitz::utils::idempotency::default_dedup_store(),
     );
-    let reserve_response = recovered.handle_receive(30, Some(1));
+    let reserve_response = recovered.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
     // Assert
     match reserve_response {

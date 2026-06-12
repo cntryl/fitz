@@ -15,7 +15,7 @@ use fitz::boot::domains::{
     DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
     ScheduleDomainSink, StreamDomainSink,
 };
-use fitz::boot::Runtime;
+use fitz::boot::{BootConfig, Runtime};
 use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
 use fitz::domains::schedule::store::{ScheduleFireClaim, ScheduleInsert, ScheduleStore};
 use fitz::domains::stream::protocol::StreamWriteMode;
@@ -53,6 +53,50 @@ fn test_runtime() -> Arc<Runtime> {
     configure_admin_auth();
     let router = Arc::new(Router::new());
     Arc::new(Runtime::new(router))
+}
+
+fn test_runtime_from_boot_config(assume_external_tls: bool) -> Arc<Runtime> {
+    fitz::boot::observability::metrics().clear();
+    configure_admin_auth();
+    let config = BootConfig::new()
+        .with_auth_config(fitz::auth::AuthConfig::Disabled)
+        .with_bind_addr("127.0.0.1".to_string())
+        .with_assume_external_tls(assume_external_tls);
+    let store = fitz::testkit::create_test_engine_with_cfs(vec![1]);
+    let (_, _, _, runtime) =
+        fitz::boot::runtime::init(&config, &store).expect("initialize runtime");
+    Arc::new(runtime)
+}
+
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvGuard {
+    fn unset(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+fn assert_browser_security_headers(headers: &hyper::HeaderMap) {
+    assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+    assert_eq!(headers.get("referrer-policy").unwrap(), "no-referrer");
+    assert_eq!(
+        headers.get("content-security-policy").unwrap(),
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    );
 }
 
 fn assert_prometheus_counter(metrics: &str, name: &str, value: u64) {
@@ -178,6 +222,8 @@ fn current_epoch_ms() -> u64 {
 }
 
 fn seed_dead_lettered_queue_message(store: Arc<cntryl_midge::Engine>) -> u64 {
+    const ADMIN_QUEUE_SEED_SESSION_ID: u64 = 1;
+
     let family = RouteFamily::new(1);
     let queue_key = QueueKey {
         family,
@@ -198,7 +244,7 @@ fn seed_dead_lettered_queue_message(store: Arc<cntryl_midge::Engine>) -> u64 {
     };
 
     for _ in 0..2 {
-        match actor.handle_receive(0, Some(1)) {
+        match actor.handle_receive_for_session(ADMIN_QUEUE_SEED_SESSION_ID, 0, Some(1)) {
             QueueResponse::Received { messages } => assert_eq!(messages.len(), 1),
             other => panic!("Expected Received response, found {other:?}"),
         }
@@ -570,6 +616,8 @@ async fn login_cookie(runtime: Arc<Runtime>) -> String {
         .method(Method::POST)
         .uri("/api/v1/session")
         .header("Content-Type", "application/json")
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
         .body(Body::from(r#"{"username":"admin","password":"pwd123"}"#))
         .unwrap();
 
@@ -592,26 +640,57 @@ async fn login_cookie(runtime: Arc<Runtime>) -> String {
 #[tokio::test]
 #[serial]
 async fn should_create_admin_session_and_set_cookie() {
+    // Arrange
     let runtime = test_runtime();
     let req = hyper::http::Request::builder()
         .method(Method::POST)
         .uri("/api/v1/session")
         .header("Content-Type", "application/json")
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
         .body(Body::from(r#"{"username":"admin","password":"pwd123"}"#))
         .unwrap();
 
+    // Act
     let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
         .await
         .unwrap();
 
+    // Assert
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert!(response
+    let set_cookie = response
         .headers()
         .get(SET_COOKIE)
         .unwrap()
         .to_str()
-        .unwrap()
-        .contains("fitz_admin_session="));
+        .unwrap();
+    assert!(set_cookie.contains("fitz_admin_session="));
+    assert!(set_cookie.contains("; HttpOnly"));
+    assert!(set_cookie.contains("; Secure"));
+    assert!(set_cookie.contains("; SameSite=Strict"));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_reject_admin_login_given_cross_origin() {
+    // Arrange
+    let runtime = test_runtime();
+    let req = hyper::http::Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/session")
+        .header("Content-Type", "application/json")
+        .header("host", "localhost")
+        .header("origin", "http://evil.example")
+        .body(Body::from(r#"{"username":"admin","password":"pwd123"}"#))
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -629,6 +708,98 @@ async fn should_require_auth_for_hierarchical_route() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_add_security_headers_to_admin_json_response() {
+    // Arrange
+    let runtime = test_runtime();
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/features")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_browser_security_headers(response.headers());
+}
+
+#[tokio::test]
+#[serial]
+async fn should_add_security_headers_to_admin_error_response() {
+    // Arrange
+    let runtime = test_runtime();
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/sessions")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_browser_security_headers(response.headers());
+}
+
+#[tokio::test]
+#[serial]
+async fn should_add_hsts_given_external_tls_ack() {
+    // Arrange
+    let _guard = EnvGuard::unset("FITZ_ASSUME_EXTERNAL_TLS");
+    let runtime = test_runtime_from_boot_config(true);
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/features")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_browser_security_headers(response.headers());
+    assert_eq!(
+        response.headers().get("strict-transport-security").unwrap(),
+        "max-age=31536000"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn should_omit_hsts_without_external_tls_ack() {
+    // Arrange
+    let _guard = EnvGuard::unset("FITZ_ASSUME_EXTERNAL_TLS");
+    let runtime = test_runtime_from_boot_config(false);
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/features")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_browser_security_headers(response.headers());
+    assert!(response
+        .headers()
+        .get("strict-transport-security")
+        .is_none());
 }
 
 #[tokio::test]
@@ -1217,6 +1388,8 @@ async fn should_reject_dead_letter_replay_given_missing_family_query_param() {
             message_id
         ))
         .header(COOKIE, cookie)
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
         .body(Body::default())
         .unwrap();
 
@@ -1227,6 +1400,35 @@ async fn should_reject_dead_letter_replay_given_missing_family_query_param() {
 
     // Assert
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_reject_unsafe_admin_request_given_cross_origin() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    let message_id = seed_dead_lettered_queue_message(store);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = hyper::http::Request::builder()
+        .method(Method::POST)
+        .uri(format!(
+            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{}/replay?family=1",
+            message_id
+        ))
+        .header(COOKIE, cookie)
+        .header("host", "localhost")
+        .header("origin", "http://evil.example")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -1244,6 +1446,8 @@ async fn should_replay_dead_letter_given_family_targeted_admin_request() {
             message_id
         ))
         .header(COOKIE, cookie.clone())
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
         .body(Body::default())
         .unwrap();
 
@@ -1302,6 +1506,8 @@ async fn should_purge_dead_letter_given_family_targeted_admin_request() {
             message_id
         ))
         .header(COOKIE, cookie.clone())
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
         .body(Body::default())
         .unwrap();
 

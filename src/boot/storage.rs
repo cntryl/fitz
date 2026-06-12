@@ -226,6 +226,7 @@ async fn init_cloud(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::boot::runtime::StorageMemtableConfig;
     use cntryl_midge::{Goal, MemoryBudget, TransactionMode, WorkloadProfile, WriteOptions};
     use std::time::Duration;
     use tempfile::TempDir;
@@ -360,14 +361,15 @@ mod tests {
     #[test]
     fn should_apply_cloud_throughput_defaults_when_memtable_is_auto() {
         // Arrange
-        let config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked(Box::new(
-            CloudStorageConfig {
+        let mut config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked(
+            Box::new(CloudStorageConfig {
                 provider_name: "peas-s3".to_string(),
                 provider_config: cntryl_midge::CloudProviderConfig::peas_s3("fitz-cost-tuning"),
                 prefix: Some("tests".to_string()),
                 local_cache_path: "./.fitz-cloud-cache".to_string(),
-            },
-        )));
+            }),
+        ));
+        config.storage_memtable = StorageMemtableConfig::Auto;
 
         let open_options = cntryl_midge::OpenOptions::cloud_simulated(
             "./target/tmp/fitz-cloud-cost-baseline",
@@ -426,14 +428,15 @@ mod tests {
         let write_count = 80;
         let budget = MemoryBudget::Bytes(512 * 1024 * 1024);
 
-        let config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked(Box::new(
-            CloudStorageConfig {
+        let mut config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked(
+            Box::new(CloudStorageConfig {
                 provider_name: "peas-s3".to_string(),
                 provider_config: cntryl_midge::CloudProviderConfig::peas_s3("fitz-cost-tuning"),
                 prefix: Some("tests".to_string()),
                 local_cache_path: tempdir.path().join("cache").to_string_lossy().to_string(),
-            },
-        )));
+            }),
+        ));
+        config.storage_memtable = StorageMemtableConfig::Auto;
 
         let baseline_opts = cntryl_midge::OpenOptions::cloud_simulated(
             tempdir.path().join("baseline"),

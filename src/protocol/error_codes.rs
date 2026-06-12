@@ -11,6 +11,40 @@
 //! - Other domains: connection may close if internal buffers overflow
 //! - Notice PUBLISH: silently drops notifications on backpressure (fire-and-forget semantics, no response sent)
 
+use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
+
+pub fn encode_error_body(code: u16, message: &str) -> Vec<u8> {
+    let mut enc = PayloadEncoder::new();
+    encode_error_body_into(code, message, &mut enc)
+}
+
+pub fn encode_error_body_into(code: u16, message: &str, enc: &mut PayloadEncoder) -> Vec<u8> {
+    enc.clear();
+    enc.put_u8(1);
+    enc.put_u32(code as u32);
+    enc.put_string(message);
+    enc.finish()
+}
+
+pub fn decode_error_body(payload: &[u8]) -> Result<(u16, String), String> {
+    let mut dec = PayloadDecoder::new(payload);
+    if dec.get_u8()? != 1 {
+        return Err("Payload is not an error envelope".to_string());
+    }
+
+    let code = dec.get_u32()?;
+    if code > u16::MAX as u32 {
+        return Err("Error code exceeds u16 range".to_string());
+    }
+
+    let message = dec.get_string()?;
+    if !dec.is_complete() {
+        return Err("Trailing data in error envelope".to_string());
+    }
+
+    Ok((code as u16, message))
+}
+
 /// KV domain error codes (per CLIENT_SPEC KV Domain section)
 pub mod kv {
     pub const ERR_TRANSACTION_NOT_FOUND: u16 = 1001;
@@ -38,6 +72,7 @@ pub mod stream {
     pub const ERR_UNAUTHORIZED: u16 = 2009; // AC-STREAM-005: Permission denied for stream operation
     pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 2010;
     pub const ERR_SUBSCRIPTION_LIMIT: u16 = 2011;
+    pub const ERR_BACKEND_ERROR: u16 = 2012;
 }
 
 /// Notice domain error codes (per CLIENT_SPEC Notice Domain section)
@@ -46,6 +81,7 @@ pub mod notice {
     pub const ERR_INVALID_PATTERN: u16 = 3002;
     pub const ERR_SUBSCRIPTION_LIMIT: u16 = 3003;
     pub const ERR_TRANSPORT_CLOSED: u16 = 3004;
+    pub const ERR_BACKEND_ERROR: u16 = 3005;
     pub const ERR_UNAUTHORIZED: u16 = 3009; // AC-NOTICE-009: Permission denied for notice operation
 }
 
@@ -56,6 +92,8 @@ pub mod queue {
     pub const ERR_MESSAGE_NOT_FOUND: u16 = 4003;
     pub const ERR_QUEUE_NOT_FOUND: u16 = 4004;
     pub const ERR_QUEUE_FULL: u16 = 4005; // Backpressure: queue at capacity, client should retry with backoff
+    pub const ERR_BAD_REQUEST: u16 = 4006;
+    pub const ERR_BACKEND_ERROR: u16 = 4007;
     pub const ERR_UNAUTHORIZED: u16 = 4009; // AC-QUEUE-008: Permission denied for queue operation
 }
 
@@ -66,6 +104,8 @@ pub mod lease {
     pub const ERR_LEASE_EXPIRED: u16 = 5003;
     pub const ERR_LEASE_NOT_FOUND: u16 = 5004;
     pub const ERR_INVALID_TOKEN: u16 = 5005; // AC-LEASE-009: Invalid or wrong lease token
+    pub const ERR_TIMEOUT: u16 = 5006;
+    pub const ERR_QUEUE_FULL: u16 = 5007;
     pub const ERR_UNAUTHORIZED: u16 = 5009; // AC-LEASE-010: Permission denied for lease operation
 }
 
@@ -80,6 +120,7 @@ pub mod rpc {
     pub const ERR_RPC_DUPLICATE_CORRELATION: u16 = 6007; // Caller attempted to reuse a live correlation ID
     pub const ERR_RPC_WRONG_WORKER: u16 = 6008; // Response or ACK came from a worker that does not own the request
     pub const ERR_UNAUTHORIZED: u16 = 6009; // AC-RPC-007, AC-RPC-008: Permission denied for RPC operation
+    pub const ERR_BACKEND_ERROR: u16 = 6010;
 }
 
 /// Schedule domain error codes (per CLIENT_SPEC Schedule Domain section)

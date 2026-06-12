@@ -38,6 +38,7 @@ fn decode_notice_subscription_id(data: &[u8]) -> Option<u64> {
 
 fn decode_notice_error_message(data: &[u8]) -> String {
     let mut decoder = PayloadDecoder::new(data);
+    let _error_code = decoder.get_u32().expect("notice error code");
     let error = decoder.get_string().expect("notice error message");
     assert!(decoder.is_complete());
     error

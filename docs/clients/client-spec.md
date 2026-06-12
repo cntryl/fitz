@@ -1047,6 +1047,9 @@ Clients MUST:
 - Reject expired certificates
 - Reject revoked certificates (if OCSP stapling available)
 - Reject self-signed certificates (unless explicitly in trust store via deployment config)
+
+Browser WebSocket deployments must also send a normal HTTP `Origin` header during the upgrade. Production brokers are expected to allow only exact configured browser origins, such as `https://app.example.com`, before accepting the WebSocket. Configured origins must not include paths, query strings, fragments, wildcards, or trailing slashes.
+
   **Development/Testing (MAY Skip with Explicit Flag):**
   Clients MAY accept self-signed or invalid certificates ONLY if:
 - Explicitly enabled via configuration flag (e.g., `insecure_skip_verify=true`)
@@ -1086,12 +1089,15 @@ Brokers signal backpressure through **domain error responses**. There is no sepa
 
 ## Routing
 
-Routes are **opaque URI-like strings** that address resources and operations.
+Routes are **opaque URI-like strings** that address domain resources. The
+message type identifies the operation; some domains accept operation suffixes
+for live protocol ergonomics and canonicalize them to the resource identity for
+authorization.
 
 ### Route Format
 
 ```
-{scheme}://{realm}/{area}/{resource}/{operation}
+{scheme}://{realm}/{area}/{resource}
 ```
 
 **Components:**
@@ -1101,13 +1107,12 @@ Routes are **opaque URI-like strings** that address resources and operations.
 | `realm` | string | `prod`, `tenant-123` | Opaque to client; case-sensitive |
 | `area` | string | `app`, `system` | Opaque to client; case-sensitive |
 | `resource` | string | `users`, `orders` | Opaque to client; may be omitted for admin operations |
-| `operation` | string | `get`, `put`, `subscribe` | Verb; MUST match defined verb set |
 **Route Examples:**
 
 ```
-kv://prod/app/users/get          # KV read operation
-queue://prod/app/orders/send     # Queue enqueue
-notice://prod/app/events/publish # Pub/sub publish
+kv://prod/app/users              # KV resource
+queue://prod/app/orders/send     # Queue enqueue route, authorized as queue://prod/app/orders
+notice://prod/app/events         # Pub/sub route
 ```
 
 ## HTTP-Like Design Principle

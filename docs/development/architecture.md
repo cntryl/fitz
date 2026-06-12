@@ -88,7 +88,7 @@ This is a hard Fitz rule:
 **Files:** `src/api/tcp.rs`, `src/api/ws.rs`
 **Responsibility:** Socket I/O and framing.
 **Behavior:**
-- Accept connections (TCP: port 4091, WebSocket: port 4090)
+- Accept connections (WebSocket/HTTP: port 4090; TCP: port 4091 when enabled)
 - Read frames with configurable max size
 - Write frames back to client
 - Handle connection lifecycle (close, timeout, error)
@@ -593,19 +593,18 @@ If any check fails:
 - Reject with domain error code `*001` (ERR_UNAUTHORIZED)
 - Log rejection for audit
 - Continue accepting subsequent requests from same session
-### TLS Configuration
-Brokers SHOULD support TLS for both WebSocket and TCP:
-1. **WebSocket TLS:**
-   - Listen on port 4090 (default) with TLS
-   - Use `wss://` scheme
-   - Configure certificate and private key
-2. **TCP TLS:**
-   - Listen on port 4091 (default) with TLS
-   - Upgrade connection after handshake
-   - Configure certificate and private key
+### TLS And Browser Perimeter
+Brokers deployed with runtime auth or protected admin on non-loopback binds must be protected by TLS at the network edge:
+1. **WebSocket browser traffic:**
+   - Clients use the public `wss://` scheme through the TLS-terminating load balancer
+   - Fitz requires `FITZ_ASSUME_EXTERNAL_TLS=true` for authenticated public binds
+   - Fitz requires exact `FITZ_WS_ALLOWED_ORIGINS` for authenticated public WebSocket binds
+2. **TCP traffic:**
+   - Use a TLS-capable load balancer, sidecar, or private trusted network for raw TCP
+   - Disable raw TCP with `FITZ_TCP_ENABLED=false` when only browser traffic is needed
 3. **Certificate Management:**
-   - Load from file on startup
-   - Support certificate rotation without restart (future enhancement)
+   - Managed by the external TLS terminator in current deployments
+   - Native listener TLS and in-process certificate rotation are future enhancements
    - Log certificate expiry warnings
 4. **Cipher Suites:**
    - Use strong modern cipher suites (TLS 1.2+)
@@ -634,11 +633,13 @@ pub async fn boot(config: BootConfig) -> Result<()> {
     domains::setup(&router)?;
     
     // 5. Spawn transport listeners
-    tokio::spawn(handlers::spawn_tcp_listener(
-        &config,
-        ingress.clone(),
-        ingress_config.clone(),
-    ));
+    if config.tcp_enabled {
+        tokio::spawn(handlers::spawn_tcp_listener(
+            &config,
+            ingress.clone(),
+            ingress_config.clone(),
+        ));
+    }
     
     tokio::spawn(handlers::spawn_http_listener(
         &config,
@@ -659,6 +660,7 @@ pub async fn boot(config: BootConfig) -> Result<()> {
 pub struct BootConfig {
     pub http_port: u16,              // WebSocket listener (default: 4090)
     pub tcp_port: u16,               // TCP listener (default: 4091)
+    pub tcp_enabled: bool,           // TCP listener enabled (default: true)
     pub bind_addr: String,           // Listen address (default: "0.0.0.0")
     pub storage_path: String,        // Midge LSM path (default: "./.fitz")
     pub max_connections: usize,      // Connection limit (default: 10000)
@@ -670,6 +672,7 @@ impl BootConfig {
     
     pub fn with_http_port(mut self, port: u16) -> Self { self.http_port = port; self }
     pub fn with_tcp_port(mut self, port: u16) -> Self { self.tcp_port = port; self }
+    pub fn with_tcp_enabled(mut self, enabled: bool) -> Self { self.tcp_enabled = enabled; self }
     pub fn with_storage_path(mut self, path: String) -> Self { self.storage_path = path; self }
 }
 ```

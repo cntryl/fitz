@@ -67,11 +67,17 @@ impl StreamActorKey {
     }
 }
 
+#[derive(Debug, Clone)]
+struct StreamSessionOwner {
+    key: StreamActorKey,
+    owner_session_id: u64,
+}
+
 pub struct StreamDomainSink {
     store: Arc<cntryl_midge::Engine>,
     stream_store: Arc<StreamStore>,
     actors: Mutex<HashMap<StreamActorKey, Arc<Mutex<StreamActor>>>>,
-    session_owners: Mutex<HashMap<u64, StreamActorKey>>,
+    session_owners: Mutex<HashMap<u64, StreamSessionOwner>>,
     families: Mutex<HashMap<u64, RoutedSubscriptionSet<StreamSubscription>>>,
     next_sub_id: AtomicU64,
     next_session_id: AtomicU64,
@@ -914,7 +920,13 @@ impl MailboxSink for StreamDomainSink {
                         );
                         match outcome {
                             Ok(session_id) => {
-                                self.session_owners.lock().insert(session_id, key);
+                                self.session_owners.lock().insert(
+                                    session_id,
+                                    StreamSessionOwner {
+                                        key,
+                                        owner_session_id: frame_ctx.session_id,
+                                    },
+                                );
                                 self.counter_inc("fitz_stream_append_sessions_started_total");
                                 (
                                     StreamResponse::Ok {
@@ -944,17 +956,19 @@ impl MailboxSink for StreamDomainSink {
                 metadata,
                 discriminator,
             } => {
-                let key = self.session_owners.lock().get(&session_id).cloned();
-                match key {
-                    Some(key) => match self.get_or_create_actor(&key) {
+                let owner = self.session_owners.lock().get(&session_id).cloned();
+                match owner.filter(|owner| owner.owner_session_id == frame_ctx.session_id) {
+                    Some(owner) => match self.get_or_create_actor(&owner.key) {
                         Ok(actor) => {
-                            let outcome = actor.lock().append_to_session_with_discriminator(
-                                session_id,
-                                expected_offset,
-                                body,
-                                metadata,
-                                discriminator,
-                            );
+                            let outcome =
+                                actor.lock().append_to_session_with_discriminator_for_owner(
+                                    frame_ctx.session_id,
+                                    session_id,
+                                    expected_offset,
+                                    body,
+                                    metadata,
+                                    discriminator,
+                                );
                             match outcome {
                                 Ok(assigned_offset) => {
                                     let mut encoder = PayloadEncoder::new();
@@ -986,11 +1000,15 @@ impl MailboxSink for StreamDomainSink {
                 } else {
                     mode
                 };
-                let key = self.session_owners.lock().get(&session_id).cloned();
-                match key {
-                    Some(key) => match self.get_or_create_actor(&key) {
+                let owner = self.session_owners.lock().get(&session_id).cloned();
+                match owner.filter(|owner| owner.owner_session_id == frame_ctx.session_id) {
+                    Some(owner) => match self.get_or_create_actor(&owner.key) {
                         Ok(actor) => {
-                            let outcome = actor.lock().commit_session(session_id, mode);
+                            let outcome = actor.lock().commit_session_for_owner(
+                                frame_ctx.session_id,
+                                session_id,
+                                mode,
+                            );
                             match outcome {
                                 Ok(commit) => {
                                     self.session_owners.lock().remove(&session_id);
@@ -1009,7 +1027,7 @@ impl MailboxSink for StreamDomainSink {
                                             session_id: None,
                                             data: vec![],
                                         },
-                                        Some((key.resource_route(), payload)),
+                                        Some((owner.key.resource_route(), payload)),
                                         true,
                                     )
                                 }
@@ -1026,11 +1044,13 @@ impl MailboxSink for StreamDomainSink {
                 }
             }
             StreamMessage::Rollback { session_id } => {
-                let key = self.session_owners.lock().get(&session_id).cloned();
-                match key {
-                    Some(key) => match self.get_or_create_actor(&key) {
+                let owner = self.session_owners.lock().get(&session_id).cloned();
+                match owner.filter(|owner| owner.owner_session_id == frame_ctx.session_id) {
+                    Some(owner) => match self.get_or_create_actor(&owner.key) {
                         Ok(actor) => {
-                            let outcome = actor.lock().rollback_session(session_id);
+                            let outcome = actor
+                                .lock()
+                                .rollback_session_for_owner(frame_ctx.session_id, session_id);
                             match outcome {
                                 Ok(()) => {
                                     self.session_owners.lock().remove(&session_id);
@@ -1209,6 +1229,34 @@ mod tests {
             .expect("stream response")
     }
 
+    fn request_from_session(
+        context: &TestContext,
+        source: &RouteAddress,
+        inbox: &FrameQueueSink,
+        session_id: u64,
+        destination: &str,
+        msg_type: u16,
+        payload: Bytes,
+    ) -> Bytes {
+        route_frame(
+            context.router.as_ref(),
+            source,
+            destination,
+            session_id,
+            ChannelId::Pub,
+            msg_type,
+            payload,
+            context.family,
+        )
+        .expect("stream route");
+
+        let responses = inbox.drain();
+        responses
+            .last()
+            .map(|frame| frame.payload.clone())
+            .expect("stream response")
+    }
+
     #[derive(Debug)]
     struct DecodedStreamWireRecord {
         resource_offset: u64,
@@ -1341,18 +1389,7 @@ mod tests {
     }
 
     fn decode_stream_error_message(payload: &[u8]) -> Result<String, String> {
-        let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(payload);
-        let status = decoder.get_u8()?;
-        if status == 0 {
-            return Err("expected stream error response".to_string());
-        }
-
-        let error = decoder.get_string()?;
-        if !decoder.is_complete() {
-            return Err("Trailing data in stream error response".to_string());
-        }
-
-        Ok(error)
+        crate::protocol::error_codes::decode_error_body(payload).map(|(_, message)| message)
     }
 
     fn seed_committed_stream_route(
@@ -1372,6 +1409,85 @@ mod tests {
         let commit_frame = build_stream_commit(session_id, 1);
         let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
         let _ = request(context, route, commit_msg_type, commit_payload);
+    }
+
+    #[test]
+    fn should_reject_append_session_followups_from_non_owner_session() {
+        // Arrange
+        let context = setup_test_context();
+        let route = "stream://bench/events/orders";
+        let stream_session_id = begin_stream(&context, route);
+        let (other_source, other_inbox) =
+            register_session_queue_sink(&context.router, context.family, 2);
+
+        // Act
+        let other_append = build_stream_append(stream_session_id, 0, b"stolen");
+        let (append_msg_type, append_payload) = extract_single_tlv_field(&other_append);
+        let other_append_response = request_from_session(
+            &context,
+            &other_source,
+            &other_inbox,
+            2,
+            route,
+            append_msg_type,
+            append_payload,
+        );
+
+        let owner_append = build_stream_append(stream_session_id, 0, b"owner");
+        let (owner_append_type, owner_append_payload) = extract_single_tlv_field(&owner_append);
+        let owner_append_response =
+            request(&context, route, owner_append_type, owner_append_payload);
+
+        let other_commit = build_stream_commit(stream_session_id, 1);
+        let (commit_msg_type, commit_payload) = extract_single_tlv_field(&other_commit);
+        let other_commit_response = request_from_session(
+            &context,
+            &other_source,
+            &other_inbox,
+            2,
+            route,
+            commit_msg_type,
+            commit_payload,
+        );
+
+        let owner_commit = build_stream_commit(stream_session_id, 1);
+        let (owner_commit_type, owner_commit_payload) = extract_single_tlv_field(&owner_commit);
+        let owner_commit_response =
+            request(&context, route, owner_commit_type, owner_commit_payload);
+
+        let rollback_session_id = begin_stream(&context, route);
+        let mut rollback_encoder = PayloadEncoder::new();
+        rollback_encoder.put_u64(rollback_session_id);
+        let rollback_payload = Bytes::from(rollback_encoder.finish());
+        let other_rollback_response = request_from_session(
+            &context,
+            &other_source,
+            &other_inbox,
+            2,
+            route,
+            603,
+            rollback_payload,
+        );
+
+        // Assert
+        assert_eq!(
+            decode_stream_error_message(other_append_response.as_ref())
+                .expect("non-owner append error"),
+            "session not found"
+        );
+        assert!(decode_stream_error_message(owner_append_response.as_ref()).is_err());
+        assert_eq!(
+            decode_stream_error_message(other_commit_response.as_ref())
+                .expect("non-owner commit error"),
+            "session not found"
+        );
+        assert!(decode_stream_error_message(owner_commit_response.as_ref()).is_err());
+        assert_eq!(
+            decode_stream_error_message(other_rollback_response.as_ref())
+                .expect("non-owner rollback error"),
+            "session not found"
+        );
+        assert_eq!(context.sink.append_session_count(), 1);
     }
 
     #[test]

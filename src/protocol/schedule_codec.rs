@@ -123,38 +123,30 @@ pub fn encode_response_into(enc: &mut PayloadEncoder, response: &ScheduleRespons
             enc.put_u8(0); // end sentinel
         }
         ScheduleResponse::Error(e) => {
-            enc.put_u8(1); // error flag
-            if let Some(code) = schedule_error_code_for_message(e) {
-                enc.put_u32(code);
-                enc.put_string(e);
-            } else {
-                enc.put_string(e);
-            }
+            return crate::protocol::error_codes::encode_error_body_into(
+                schedule_error_code_for_message(e),
+                e,
+                enc,
+            );
         }
     }
 
     enc.finish()
 }
 
-fn schedule_error_code_for_message(message: &str) -> Option<u32> {
+fn schedule_error_code_for_message(message: &str) -> u16 {
     match message {
-        "schedule not found" => Some(schedule_error_codes::ERR_SCHEDULE_NOT_FOUND as u32),
-        "Cron expression must have exactly 5 fields" => {
-            Some(schedule_error_codes::ERR_INVALID_CRON as u32)
-        }
+        "schedule not found" => schedule_error_codes::ERR_SCHEDULE_NOT_FOUND,
+        "Cron expression must have exactly 5 fields" => schedule_error_codes::ERR_INVALID_CRON,
         "schedule route must be schedule://{realm}/{area}/{resource}/{operation}" => {
-            Some(schedule_error_codes::ERR_INVALID_TARGET as u32)
+            schedule_error_codes::ERR_INVALID_TARGET
         }
-        "schedule route scheme must be schedule" => {
-            Some(schedule_error_codes::ERR_INVALID_TARGET as u32)
-        }
-        "schedule route must not contain wildcards" => {
-            Some(schedule_error_codes::ERR_INVALID_TARGET as u32)
-        }
+        "schedule route scheme must be schedule" => schedule_error_codes::ERR_INVALID_TARGET,
+        "schedule route must not contain wildcards" => schedule_error_codes::ERR_INVALID_TARGET,
         "schedule subscription state is owned by the schedule domain sink" => {
-            Some(schedule_error_codes::ERR_INVALID_TARGET as u32)
+            schedule_error_codes::ERR_INVALID_TARGET
         }
-        _ => None,
+        _ => schedule_error_codes::ERR_PARSE_ERROR,
     }
 }
 

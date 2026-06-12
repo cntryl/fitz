@@ -140,7 +140,6 @@ pub mod events;
 pub mod metrics;
 pub mod projection;
 pub mod protocol;
-pub mod session;
 pub mod sink;
 
 pub use crate::runtime::clock::{Clock, SystemClock};
@@ -149,4 +148,3 @@ pub use core::{MessageId, QueueKey, ReservedMessage};
 pub use metrics::QueueMetrics;
 pub use projection::{QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueInflightSnapshot};
 pub use protocol::{QueueMessage, QueueNotification, QueueResponse, QueueSubscriptionMessage};
-pub use session::SessionActor;

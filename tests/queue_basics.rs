@@ -9,6 +9,8 @@ use fitz::runtime::routing::RouteFamily;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+const TEST_SESSION_ID: u64 = 1;
+
 #[derive(Clone)]
 struct TestClock {
     state: Arc<Mutex<(Instant, u64)>>,
@@ -104,14 +106,22 @@ impl QueueProtocolHarness {
                 inflight_seconds,
                 batch_size,
                 ..
-            } => self.actor.handle_receive(inflight_seconds, batch_size),
+            } => {
+                self.actor
+                    .handle_receive_for_session(TEST_SESSION_ID, inflight_seconds, batch_size)
+            }
             QueueMessage::Extend {
                 id,
                 token,
                 inflight_seconds,
                 ..
-            } => self.actor.handle_extend(id, token, inflight_seconds),
-            QueueMessage::Ack { id, token, .. } => self.actor.handle_ack(id, token),
+            } => self
+                .actor
+                .handle_extend_for_session(TEST_SESSION_ID, id, token, inflight_seconds),
+            QueueMessage::Ack { id, token, .. } => {
+                self.actor
+                    .handle_ack_for_session(TEST_SESSION_ID, id, token)
+            }
             QueueMessage::InflightExpired { .. } => unreachable!("internal queue message"),
         }
     }

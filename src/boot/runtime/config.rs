@@ -408,6 +408,8 @@ pub struct BootConfig {
     pub http_port: u16,
     /// TCP port
     pub tcp_port: u16,
+    /// Whether the raw TCP listener is enabled.
+    pub tcp_enabled: bool,
     /// Bind address (default: "0.0.0.0")
     pub bind_addr: String,
     /// Storage mode (memory, local disk, or cloud)
@@ -434,6 +436,10 @@ pub struct BootConfig {
     pub cloud_durability: CloudDurabilityMode,
     /// Optional explicit Midge memtable size in bytes.
     pub storage_memtable: StorageMemtableConfig,
+    /// Whether an external TLS terminator is explicitly protecting public listeners.
+    pub assume_external_tls: bool,
+    /// Browser origins allowed to open the WebSocket data-plane endpoint.
+    pub ws_allowed_origins: Vec<crate::api::origin::ExactOrigin>,
 }
 
 impl BootConfig {
@@ -480,7 +486,18 @@ impl Default for BootConfig {
             .ok()
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(crate::prelude::DEFAULT_TCP_PORT);
+        let tcp_enabled = std::env::var("FITZ_TCP_ENABLED")
+            .ok()
+            .and_then(|value| value.parse::<bool>().ok())
+            .unwrap_or(true);
         let bind_addr = std::env::var("FITZ_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
+        let assume_external_tls = std::env::var("FITZ_ASSUME_EXTERNAL_TLS")
+            .ok()
+            .and_then(|value| value.parse::<bool>().ok())
+            .unwrap_or(false);
+        let ws_allowed_origins = env_non_empty("FITZ_WS_ALLOWED_ORIGINS")
+            .and_then(|value| crate::api::origin::parse_exact_origin_list(&value).ok())
+            .unwrap_or_default();
         let route_families = std::env::var("FITZ_ROUTE_FAMILIES")
             .unwrap_or_else(|_| "1".to_string())
             .split(',')
@@ -490,6 +507,7 @@ impl Default for BootConfig {
         Self {
             http_port,
             tcp_port,
+            tcp_enabled,
             bind_addr,
             storage_mode: StorageMode::from_env(),
             stream_storage_layout: StreamStorageLayout::from_env(),
@@ -503,6 +521,8 @@ impl Default for BootConfig {
             channel_capacity: 1000,
             cloud_durability: CloudDurabilityMode::from_env(),
             storage_memtable: StorageMemtableConfig::from_env(),
+            assume_external_tls,
+            ws_allowed_origins,
         }
     }
 }
@@ -538,8 +558,26 @@ impl BootConfig {
         self
     }
 
+    pub fn with_tcp_enabled(mut self, enabled: bool) -> Self {
+        self.tcp_enabled = enabled;
+        self
+    }
+
     pub fn with_bind_addr(mut self, addr: String) -> Self {
         self.bind_addr = addr;
+        self
+    }
+
+    pub fn with_assume_external_tls(mut self, assume_external_tls: bool) -> Self {
+        self.assume_external_tls = assume_external_tls;
+        self
+    }
+
+    pub fn with_ws_allowed_origins(
+        mut self,
+        origins: Vec<crate::api::origin::ExactOrigin>,
+    ) -> Self {
+        self.ws_allowed_origins = origins;
         self
     }
 
@@ -599,9 +637,38 @@ impl BootConfig {
         self.storage_mode
             .validate()
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+        if let Some(value) = env_non_empty("FITZ_TCP_ENABLED") {
+            value.parse::<bool>().map_err(|_| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "FITZ_TCP_ENABLED must be true or false",
+                )) as Box<dyn std::error::Error>
+            })?;
+        }
         self.auth_config
             .validate(self.auth_required)
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+        let protected_admin_configured =
+            crate::api::admin::auth::protected_admin_configured_from_env();
+        let public_bind = !bind_addr_is_loopback(&self.bind_addr);
+        if (self.auth_required || protected_admin_configured)
+            && !self.assume_external_tls
+            && public_bind
+        {
+            return Err(
+                "FITZ_ASSUME_EXTERNAL_TLS=true is required when authenticated or protected-admin listeners bind to a non-loopback address"
+                    .into(),
+            );
+        }
+        let ws_allowed_origins = configured_ws_allowed_origins(&self.ws_allowed_origins)?;
+        validate_public_origin_security("FITZ_WS_ALLOWED_ORIGINS", &ws_allowed_origins)?;
+        if self.auth_required && public_bind && ws_allowed_origins.is_empty() {
+            return Err(
+                "FITZ_WS_ALLOWED_ORIGINS is required when authenticated WebSocket listeners bind to a non-loopback address"
+                    .into(),
+            );
+        }
+        validate_admin_browser_security(protected_admin_configured, public_bind)?;
         if self.route_families.is_empty() {
             return Err("FITZ_ROUTE_FAMILIES must contain at least one family".into());
         }
@@ -623,6 +690,86 @@ impl BootConfig {
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
     }
+}
+
+fn configured_ws_allowed_origins(
+    configured: &[crate::api::origin::ExactOrigin],
+) -> BootResult<Vec<crate::api::origin::ExactOrigin>> {
+    match env_non_empty("FITZ_WS_ALLOWED_ORIGINS") {
+        Some(value) => crate::api::origin::parse_exact_origin_list(&value)
+            .map_err(|error| format!("FITZ_WS_ALLOWED_ORIGINS {error}").into()),
+        None => Ok(configured.to_vec()),
+    }
+}
+
+fn validate_public_origin_security(
+    env_key: &str,
+    origins: &[crate::api::origin::ExactOrigin],
+) -> BootResult<()> {
+    for origin in origins {
+        if origin.scheme() == "http" && !origin.is_loopback() {
+            return Err(format!(
+                "{env_key} entries must use https unless they are loopback origins"
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_admin_browser_security(
+    protected_admin_configured: bool,
+    public_bind: bool,
+) -> BootResult<()> {
+    if let Some(value) = env_non_empty("FITZ_ADMIN_COOKIE_SECURE") {
+        let cookie_secure = value.parse::<bool>().map_err(|_| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "FITZ_ADMIN_COOKIE_SECURE must be true or false",
+            )) as Box<dyn std::error::Error>
+        })?;
+        if protected_admin_configured && public_bind && !cookie_secure {
+            return Err(
+                "FITZ_ADMIN_COOKIE_SECURE=false is only allowed on loopback admin listeners".into(),
+            );
+        }
+    }
+
+    let Some(public_origin) = env_non_empty("FITZ_ADMIN_PUBLIC_ORIGIN") else {
+        if protected_admin_configured && public_bind {
+            return Err(
+                "FITZ_ADMIN_PUBLIC_ORIGIN is required when protected admin binds to a non-loopback address"
+                    .into(),
+            );
+        }
+        return Ok(());
+    };
+
+    let origin = crate::api::origin::parse_exact_origin(&public_origin)
+        .map_err(|error| format!("FITZ_ADMIN_PUBLIC_ORIGIN {error}"))?;
+    if protected_admin_configured && public_bind && origin.scheme() != "https" {
+        return Err(
+            "FITZ_ADMIN_PUBLIC_ORIGIN must use https on non-loopback admin listeners".into(),
+        );
+    }
+    validate_public_origin_security("FITZ_ADMIN_PUBLIC_ORIGIN", std::slice::from_ref(&origin))?;
+
+    Ok(())
+}
+
+fn bind_addr_is_loopback(bind_addr: &str) -> bool {
+    let host = bind_addr
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+
+    host.parse::<std::net::IpAddr>()
+        .map(|addr| addr.is_loopback())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -664,6 +811,15 @@ mod tests {
             "FITZ_AUTH_CUSTOM_CLAIM",
             "FITZ_AUTH_ROLE_CLAIM",
             "FITZ_AUTH_ALLOW_JWT_ROUTE_FAMILY",
+            "FITZ_ASSUME_EXTERNAL_TLS",
+            "FITZ_TCP_ENABLED",
+            "FITZ_WS_ALLOWED_ORIGINS",
+            "FITZ_ADMIN_AUTH_MODE",
+            "FITZ_ADMIN_USERNAME",
+            "FITZ_ADMIN_PASSWORD_HASH",
+            "FITZ_ADMIN_JWT_SECRET",
+            "FITZ_ADMIN_COOKIE_SECURE",
+            "FITZ_ADMIN_PUBLIC_ORIGIN",
         ];
         let previous = keys
             .iter()
@@ -719,6 +875,10 @@ mod tests {
             "GOOGLE_CLOUD_PROJECT",
             "GCS_HMAC_ACCESS_ID",
             "GCS_HMAC_SECRET",
+            "FITZ_ADMIN_AUTH_MODE",
+            "FITZ_ADMIN_USERNAME",
+            "FITZ_ADMIN_PASSWORD_HASH",
+            "FITZ_ADMIN_JWT_SECRET",
         ];
         let previous = keys
             .iter()
@@ -756,6 +916,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn should_create_default_boot_config() {
         // Arrange
 
@@ -765,10 +926,12 @@ mod tests {
         // Assert
         assert_eq!(config.tcp_port, prelude::DEFAULT_TCP_PORT);
         assert_eq!(config.http_port, prelude::DEFAULT_HTTP_PORT);
+        assert!(config.tcp_enabled);
         assert_eq!(config.bind_addr, "0.0.0.0");
         assert_eq!(config.max_connections, 10_000);
         assert_eq!(config.cloud_durability, CloudDurabilityMode::Background);
         assert_eq!(config.storage_memtable, StorageMemtableConfig::Auto);
+        assert!(!config.assume_external_tls);
         assert_eq!(config.route_families, vec![1]);
         assert_eq!(
             config.auth_claims_config.identity_claim,
@@ -788,13 +951,334 @@ mod tests {
         // Act
         let config = BootConfig::new()
             .with_tcp_port(5091)
+            .with_tcp_enabled(false)
             .with_http_port(5090)
             .with_bind_addr("127.0.0.1".to_string());
 
         // Assert
         assert_eq!(config.tcp_port, 5091);
+        assert!(!config.tcp_enabled);
         assert_eq!(config.http_port, 5090);
         assert_eq!(config.bind_addr, "127.0.0.1");
+    }
+
+    fn auth_ready_config() -> BootConfig {
+        BootConfig::new()
+            .with_auth_config(crate::auth::AuthConfig::hmac("test-secret-key", "fitz"))
+            .with_route_family_resolver(crate::auth::RouteFamilyResolverConfig::from_mappings(
+                "tid",
+                [("acme", 1)],
+            ))
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_public_bind_without_external_tls_when_auth_required() {
+        // Arrange
+        let config = auth_ready_config()
+            .with_bind_addr("0.0.0.0".to_string())
+            .with_assume_external_tls(false);
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("FITZ_ASSUME_EXTERNAL_TLS=true is required"));
+    }
+
+    #[test]
+    #[serial]
+    fn should_allow_public_bind_with_external_tls_ack_when_auth_required() {
+        with_auth_env(
+            &[("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com")],
+            || {
+                // Arrange
+                let config = auth_ready_config()
+                    .with_bind_addr("0.0.0.0".to_string())
+                    .with_assume_external_tls(true);
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_ok());
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_public_auth_bind_without_ws_allowed_origins() {
+        // Arrange
+        let config = auth_ready_config()
+            .with_bind_addr("0.0.0.0".to_string())
+            .with_assume_external_tls(true);
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("FITZ_WS_ALLOWED_ORIGINS is required"));
+    }
+
+    #[test]
+    #[serial]
+    fn should_allow_public_auth_bind_with_ws_allowed_origins() {
+        with_auth_env(
+            &[("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com")],
+            || {
+                // Arrange
+                let config = auth_ready_config()
+                    .with_bind_addr("0.0.0.0".to_string())
+                    .with_assume_external_tls(true);
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_ok());
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_allow_loopback_bind_without_external_tls_when_auth_required() {
+        // Arrange
+        let config = auth_ready_config()
+            .with_bind_addr("127.0.0.1".to_string())
+            .with_assume_external_tls(false);
+
+        // Act
+        let result = config.validate();
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_public_bind_without_external_tls_when_protected_admin_configured() {
+        with_auth_env(
+            &[
+                ("FITZ_ADMIN_USERNAME", "admin"),
+                (
+                    "FITZ_ADMIN_PASSWORD_HASH",
+                    "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
+                ),
+                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::new()
+                    .with_auth_config(crate::auth::AuthConfig::Disabled)
+                    .with_bind_addr("0.0.0.0".to_string())
+                    .with_assume_external_tls(false);
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_ASSUME_EXTERNAL_TLS=true is required"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_allow_loopback_bind_without_external_tls_when_protected_admin_configured() {
+        with_auth_env(
+            &[
+                ("FITZ_ADMIN_USERNAME", "admin"),
+                (
+                    "FITZ_ADMIN_PASSWORD_HASH",
+                    "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
+                ),
+                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::new()
+                    .with_auth_config(crate::auth::AuthConfig::Disabled)
+                    .with_bind_addr("127.0.0.1".to_string())
+                    .with_assume_external_tls(false);
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_ok());
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_allow_public_bind_with_external_tls_ack_when_protected_admin_configured() {
+        with_auth_env(
+            &[
+                ("FITZ_ADMIN_USERNAME", "admin"),
+                (
+                    "FITZ_ADMIN_PASSWORD_HASH",
+                    "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
+                ),
+                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
+                ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::new()
+                    .with_auth_config(crate::auth::AuthConfig::Disabled)
+                    .with_bind_addr("0.0.0.0".to_string())
+                    .with_assume_external_tls(true);
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_ok());
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_public_protected_admin_without_public_origin() {
+        with_auth_env(
+            &[
+                ("FITZ_ADMIN_USERNAME", "admin"),
+                (
+                    "FITZ_ADMIN_PASSWORD_HASH",
+                    "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
+                ),
+                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::new()
+                    .with_auth_config(crate::auth::AuthConfig::Disabled)
+                    .with_bind_addr("0.0.0.0".to_string())
+                    .with_assume_external_tls(true);
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_ADMIN_PUBLIC_ORIGIN is required"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_insecure_public_admin_origin() {
+        with_auth_env(
+            &[
+                ("FITZ_ADMIN_USERNAME", "admin"),
+                (
+                    "FITZ_ADMIN_PASSWORD_HASH",
+                    "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
+                ),
+                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
+                ("FITZ_ADMIN_PUBLIC_ORIGIN", "http://admin.example.com"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::new()
+                    .with_auth_config(crate::auth::AuthConfig::Disabled)
+                    .with_bind_addr("0.0.0.0".to_string())
+                    .with_assume_external_tls(true);
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_ADMIN_PUBLIC_ORIGIN must use https"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_insecure_admin_cookie_on_public_bind() {
+        with_auth_env(
+            &[
+                ("FITZ_ADMIN_USERNAME", "admin"),
+                (
+                    "FITZ_ADMIN_PASSWORD_HASH",
+                    "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
+                ),
+                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
+                ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
+                ("FITZ_ADMIN_COOKIE_SECURE", "false"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::new()
+                    .with_auth_config(crate::auth::AuthConfig::Disabled)
+                    .with_bind_addr("0.0.0.0".to_string())
+                    .with_assume_external_tls(true);
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_ADMIN_COOKIE_SECURE=false is only allowed on loopback"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_allow_public_bind_without_external_tls_when_admin_open_mode_configured() {
+        with_auth_env(
+            &[
+                ("FITZ_ADMIN_AUTH_MODE", "open"),
+                ("FITZ_ADMIN_USERNAME", "admin"),
+                (
+                    "FITZ_ADMIN_PASSWORD_HASH",
+                    "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
+                ),
+                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::new()
+                    .with_auth_config(crate::auth::AuthConfig::Disabled)
+                    .with_bind_addr("0.0.0.0".to_string())
+                    .with_assume_external_tls(false);
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_ok());
+            },
+        );
     }
 
     #[test]
@@ -809,6 +1293,203 @@ mod tests {
         // Assert
         assert_eq!(config.http_port, 6080);
         assert_eq!(config.tcp_port, 6081);
+    }
+
+    #[test]
+    #[serial]
+    fn should_read_tcp_enabled_from_environment() {
+        // Arrange
+
+        // Act
+        let config = with_env_var("FITZ_TCP_ENABLED", "false", BootConfig::default);
+
+        // Assert
+        assert!(!config.tcp_enabled);
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_invalid_tcp_enabled_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_TCP_ENABLED", "maybe"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::default();
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_TCP_ENABLED must be true or false"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_read_ws_allowed_origins_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                (
+                    "FITZ_WS_ALLOWED_ORIGINS",
+                    "https://app.example.com,http://localhost:3000",
+                ),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::default();
+
+                // Assert
+                assert_eq!(config.ws_allowed_origins.len(), 2);
+                assert_eq!(
+                    config.ws_allowed_origins[0].as_str(),
+                    "https://app.example.com"
+                );
+                assert_eq!(
+                    config.ws_allowed_origins[1].as_str(),
+                    "http://localhost:3000"
+                );
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_invalid_ws_allowed_origins_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com/path"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::default();
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_WS_ALLOWED_ORIGINS"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_ws_allowed_origin_with_trailing_slash_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com/"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::default();
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_WS_ALLOWED_ORIGINS"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_admin_public_origin_with_trailing_slash_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_ADMIN_USERNAME", "admin"),
+                (
+                    "FITZ_ADMIN_PASSWORD_HASH",
+                    "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
+                ),
+                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
+                ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com/"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::new()
+                    .with_auth_config(crate::auth::AuthConfig::Disabled)
+                    .with_bind_addr("0.0.0.0".to_string())
+                    .with_assume_external_tls(true);
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_ADMIN_PUBLIC_ORIGIN"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_allow_localhost_http_ws_allowed_origin() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_WS_ALLOWED_ORIGINS", "http://localhost:3000"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::default();
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_ok());
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_public_http_ws_allowed_origin() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                ("FITZ_WS_ALLOWED_ORIGINS", "http://app.example.com"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::default();
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FITZ_WS_ALLOWED_ORIGINS entries must use https"));
+            },
+        );
     }
 
     #[test]

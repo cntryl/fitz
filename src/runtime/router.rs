@@ -421,8 +421,8 @@ impl Router {
     /// # Multi-Tenant Support
     ///
     /// Domain patterns enable multi-tenant routing:
-    /// - Tenant "acme" (family 1) sends `kv://acme/app/users/get` → kv_domain_sink
-    /// - Tenant "xyz" (family 2) sends `kv://xyz/app/users/get` → same kv_domain_sink
+    /// - Realm "acme" (family 1) sends `kv://acme/app/users` → kv_domain_sink
+    /// - Realm "xyz" (family 2) sends `kv://xyz/app/users` → same kv_domain_sink
     ///
     /// The domain sink receives the full RouteAddress (family + route) and can
     /// enforce tenant isolation internally.
@@ -629,8 +629,8 @@ mod tests {
         router.register_domain_pattern("kv", sink.clone());
 
         // Act - Send messages from different tenants (route families)
-        let tenant_acme = test_address(1, "kv://acme/app/users/get");
-        let tenant_xyz = test_address(2, "kv://xyz/app/users/get");
+        let tenant_acme = test_address(1, "kv://acme/app/users");
+        let tenant_xyz = test_address(2, "kv://xyz/app/users");
 
         router.route(Envelope::new(tenant_acme, "msg1")).unwrap();
         router.route(Envelope::new(tenant_xyz, "msg2")).unwrap();
@@ -646,7 +646,7 @@ mod tests {
         let exact_sink = Arc::new(MockSink::new());
         let pattern_sink = Arc::new(MockSink::new());
 
-        let address = test_address(1, "kv://acme/app/users/get");
+        let address = test_address(1, "kv://acme/app/users");
 
         // Register both exact and pattern
         router.register(address.clone(), exact_sink.clone());

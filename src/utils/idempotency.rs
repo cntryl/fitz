@@ -64,11 +64,12 @@ use uuid::Uuid;
 /// Unique identifier for a context-dependent operation that requires deduplication
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DedupIdentifier {
-    /// Queue COMPLETE: (family, area, resource, message_id, token)
+    /// Queue COMPLETE: (family, area, resource, owner_session_id, message_id, token)
     QueueComplete {
         family: u64,
         area: String,
         resource: String,
+        owner_session_id: u64,
         message_id: u64,
         token: u64,
     },

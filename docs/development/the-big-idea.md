@@ -19,7 +19,7 @@ exactly-once delivery.
 ## Core Principles 🔧
 - **Async at the edges, sync in the core** — transport adapters are async; engine, runtime, and domains are fully synchronous. No .await in domain code.
 - **Actor-based runtime** — small deterministic actors, per-actor state, mailboxes, and a scheduler for fair, low-latency execution.
-- **Route-first addressing** — use the pair `(RouteFamily, Route)`. The `Route` itself follows the pattern `{scheme}://{realm}/{area}/{resource}/{operation}` and the `RouteFamily` is a separate broker-internal isolation id (for example: RouteFamily=1 with route `kv://acme/app/users/get`).
+- **Route-first addressing** — use the pair `(RouteFamily, Route)`. The `Route` itself follows the pattern `{scheme}://{realm}/{area}/{resource}` with domain-specific suffixes where documented, and the `RouteFamily` is a separate broker-internal isolation id (for example: RouteFamily=1 with route `kv://acme/app/users`).
 - **Realm isolation** — realms are first-class, opaque application-defined isolation boundaries. A realm may model a tenant, department, cost center, user, environment, or any other developer-chosen partition, but Fitz does not assign one business meaning.
 - **Pluggable codecs & adapters** — TLV, JSON, Protobuf, binary, gRPC/HTTP/WS/TCP adapters, and streaming bridges.
 - **Performance by construction** — microbenchmarks first, no allocations in hot paths, precomputed buffers, and deterministic routing.
@@ -65,7 +65,7 @@ exactly-once delivery.
 ---
 
 ## Runtime Design Details ⚙️
-- RouteFamily is a broker-internal isolation key selected from verified JWT claims. Example: a full address is the pair `(RouteFamily=1, route="kv://acme/app/users/get")`.
+- RouteFamily is a broker-internal isolation key selected from verified JWT claims. Example: a full address is the pair `(RouteFamily=1, route="kv://acme/app/users")`.
 - RouteFamily is never a public or business namespace label. It must never be treated as a realm alias or realm fallback.
 - Anonymous mode always uses RouteFamily `1`; authenticated families must be provisioned before readiness.
 - Actors are single responsibility, synchronous objects with clearly typed messages/responses.

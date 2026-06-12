@@ -53,11 +53,8 @@ fn parse_stream_error_message(frame: &[u8]) -> String {
     let (_msg_type, status, payload) = parse_stream_response(frame);
     assert_eq!(status, 1, "expected failing stream response");
 
-    let mut dec = PayloadDecoder::new(&payload);
-    let error_flag = dec.get_u8().expect("stream error flag");
-    assert_eq!(error_flag, 1, "expected stream error payload");
-    let message = dec.get_string().expect("stream error message");
-    assert!(dec.is_complete(), "expected complete stream error payload");
+    let (_code, message) =
+        fitz::protocol::error_codes::decode_error_body(&payload).expect("stream error envelope");
     message
 }
 
@@ -69,6 +66,31 @@ fn event_records(items: &[StreamReadItem]) -> Vec<StreamRecord> {
             _ => None,
         })
         .collect()
+}
+
+fn append_for_owner(
+    actor: &mut StreamActor,
+    owner_session_id: u64,
+    stream_session_id: u64,
+    expected_offset: u64,
+    body: Bytes,
+) {
+    actor
+        .append_to_session_with_discriminator_for_owner(
+            owner_session_id,
+            stream_session_id,
+            expected_offset,
+            body,
+            None,
+            None,
+        )
+        .unwrap();
+}
+
+fn commit_for_owner(actor: &mut StreamActor, owner_session_id: u64, stream_session_id: u64) {
+    actor
+        .commit_session_for_owner(owner_session_id, stream_session_id, StreamWriteMode::Sync)
+        .unwrap();
 }
 
 fn build_stream_last(route: &str) -> Vec<u8> {
@@ -1581,10 +1603,8 @@ async fn should_rebuild_stream_admin_from_durable_metadata_after_restart() {
     let store = Arc::new(StreamStore::new(engine.clone()));
     let mut actor = make_stream_actor(store.clone(), "test", "events", "admin");
     actor.begin_append_session(10, 100, None).unwrap();
-    actor
-        .append_to_session(100, 0, Bytes::from_static(b"persisted"), None)
-        .unwrap();
-    actor.commit_session(100, StreamWriteMode::Sync).unwrap();
+    append_for_owner(&mut actor, 10, 100, 0, Bytes::from_static(b"persisted"));
+    commit_for_owner(&mut actor, 10, 100);
     drop(actor);
     drop(store);
     drop(engine);
@@ -1618,10 +1638,8 @@ async fn should_preserve_monotonic_stream_resource_offsets_after_restart() {
     let store = Arc::new(StreamStore::new(engine.clone()));
     let mut actor = make_stream_actor(store.clone(), "test", "events", "orders");
     actor.begin_append_session(10, 100, None).unwrap();
-    actor
-        .append_to_session(100, 0, Bytes::from_static(b"one"), None)
-        .unwrap();
-    actor.commit_session(100, StreamWriteMode::Sync).unwrap();
+    append_for_owner(&mut actor, 10, 100, 0, Bytes::from_static(b"one"));
+    commit_for_owner(&mut actor, 10, 100);
     drop(actor);
     drop(store);
     drop(engine);
@@ -1633,10 +1651,8 @@ async fn should_preserve_monotonic_stream_resource_offsets_after_restart() {
     let store = Arc::new(StreamStore::new(engine));
     let mut actor = make_stream_actor(store, "test", "events", "orders");
     actor.begin_append_session(10, 101, None).unwrap();
-    actor
-        .append_to_session(101, 1, Bytes::from_static(b"two"), None)
-        .unwrap();
-    actor.commit_session(101, StreamWriteMode::Sync).unwrap();
+    append_for_owner(&mut actor, 10, 101, 1, Bytes::from_static(b"two"));
+    commit_for_owner(&mut actor, 10, 101);
 
     let records = actor
         .read(0, 10, None)
@@ -1664,15 +1680,11 @@ async fn should_preserve_monotonic_stream_area_offsets_after_restart() {
     let mut orders = make_stream_actor(store.clone(), "test", "events", "orders");
     let mut audits = make_stream_actor(store.clone(), "test", "events", "audits");
     orders.begin_append_session(10, 100, None).unwrap();
-    orders
-        .append_to_session(100, 0, Bytes::from_static(b"one"), None)
-        .unwrap();
-    orders.commit_session(100, StreamWriteMode::Sync).unwrap();
+    append_for_owner(&mut orders, 10, 100, 0, Bytes::from_static(b"one"));
+    commit_for_owner(&mut orders, 10, 100);
     audits.begin_append_session(20, 200, None).unwrap();
-    audits
-        .append_to_session(200, 0, Bytes::from_static(b"two"), None)
-        .unwrap();
-    audits.commit_session(200, StreamWriteMode::Sync).unwrap();
+    append_for_owner(&mut audits, 20, 200, 0, Bytes::from_static(b"two"));
+    commit_for_owner(&mut audits, 20, 200);
     drop(orders);
     drop(audits);
     drop(store);
@@ -1685,10 +1697,8 @@ async fn should_preserve_monotonic_stream_area_offsets_after_restart() {
     let store = Arc::new(StreamStore::new(engine));
     let mut orders = make_stream_actor(store.clone(), "test", "events", "orders");
     orders.begin_append_session(10, 101, None).unwrap();
-    orders
-        .append_to_session(101, 1, Bytes::from_static(b"three"), None)
-        .unwrap();
-    orders.commit_session(101, StreamWriteMode::Sync).unwrap();
+    append_for_owner(&mut orders, 10, 101, 1, Bytes::from_static(b"three"));
+    commit_for_owner(&mut orders, 10, 101);
 
     let records = store
         .read_area(1, "test", "events", 0, 10, None)
@@ -1714,15 +1724,11 @@ async fn should_preserve_monotonic_stream_realm_offsets_after_restart() {
     let mut area_a = make_stream_actor(store.clone(), "test", "area-a", "orders");
     let mut area_b = make_stream_actor(store.clone(), "test", "area-b", "orders");
     area_a.begin_append_session(10, 100, None).unwrap();
-    area_a
-        .append_to_session(100, 0, Bytes::from_static(b"one"), None)
-        .unwrap();
-    area_a.commit_session(100, StreamWriteMode::Sync).unwrap();
+    append_for_owner(&mut area_a, 10, 100, 0, Bytes::from_static(b"one"));
+    commit_for_owner(&mut area_a, 10, 100);
     area_b.begin_append_session(20, 200, None).unwrap();
-    area_b
-        .append_to_session(200, 0, Bytes::from_static(b"two"), None)
-        .unwrap();
-    area_b.commit_session(200, StreamWriteMode::Sync).unwrap();
+    append_for_owner(&mut area_b, 20, 200, 0, Bytes::from_static(b"two"));
+    commit_for_owner(&mut area_b, 20, 200);
     drop(area_a);
     drop(area_b);
     drop(store);
@@ -1735,10 +1741,8 @@ async fn should_preserve_monotonic_stream_realm_offsets_after_restart() {
     let store = Arc::new(StreamStore::new(engine));
     let mut area_a = make_stream_actor(store.clone(), "test", "area-a", "orders");
     area_a.begin_append_session(10, 101, None).unwrap();
-    area_a
-        .append_to_session(101, 1, Bytes::from_static(b"three"), None)
-        .unwrap();
-    area_a.commit_session(101, StreamWriteMode::Sync).unwrap();
+    append_for_owner(&mut area_a, 10, 101, 1, Bytes::from_static(b"three"));
+    commit_for_owner(&mut area_a, 10, 101);
 
     let records = store
         .read_realm(1, "test", 0, 10, None)
@@ -1763,9 +1767,7 @@ async fn should_drop_uncommitted_stream_batch_on_restart() {
     let store = Arc::new(StreamStore::new(engine.clone()));
     let mut actor = make_stream_actor(store.clone(), "test", "events", "restart-loss");
     actor.begin_append_session(10, 100, None).unwrap();
-    actor
-        .append_to_session(100, 0, Bytes::from_static(b"staged"), None)
-        .unwrap();
+    append_for_owner(&mut actor, 10, 100, 0, Bytes::from_static(b"staged"));
     drop(actor);
     drop(store);
     drop(engine);
@@ -1777,10 +1779,8 @@ async fn should_drop_uncommitted_stream_batch_on_restart() {
     let store = Arc::new(StreamStore::new(engine));
     let mut actor = make_stream_actor(store, "test", "events", "restart-loss");
     actor.begin_append_session(10, 101, None).unwrap();
-    actor
-        .append_to_session(101, 0, Bytes::from_static(b"committed"), None)
-        .unwrap();
-    actor.commit_session(101, StreamWriteMode::Sync).unwrap();
+    append_for_owner(&mut actor, 10, 101, 0, Bytes::from_static(b"committed"));
+    commit_for_owner(&mut actor, 10, 101);
 
     let records = actor
         .read(0, 10, None)

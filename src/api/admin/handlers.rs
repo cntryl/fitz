@@ -27,6 +27,21 @@ pub async fn handle_request<B>(
 where
     B: hyper::body::Body + Send,
 {
+    let assume_external_tls = runtime.assume_external_tls();
+    let response = handle_request_inner(req, runtime).await?;
+    Ok(super::with_browser_security_headers(
+        response,
+        assume_external_tls,
+    ))
+}
+
+async fn handle_request_inner<B>(
+    req: hyper::Request<B>,
+    runtime: Arc<Runtime>,
+) -> Result<Response, Infallible>
+where
+    B: hyper::body::Body + Send,
+{
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 
@@ -38,7 +53,7 @@ where
 
         (Method::POST, "/api/v1/session") => handle_login(req, runtime).await,
         (Method::GET, "/api/v1/session") => handle_current_session(req, runtime).await,
-        (Method::DELETE, "/api/v1/session") => handle_logout(runtime).await,
+        (Method::DELETE, "/api/v1/session") => handle_logout(&req, runtime).await,
         (Method::GET, "/api/v1/features") => handle_features(runtime).await,
 
         (Method::GET, "/metrics") => {
@@ -80,11 +95,17 @@ where
             if let Err(response) = require_admin(&req, &runtime) {
                 return Ok(*response);
             }
+            if let Err(response) = require_same_origin(&req, &runtime) {
+                return Ok(*response);
+            }
             handle_hierarchical_post(&req, runtime).await
         }
 
         (Method::DELETE, path) if path.starts_with("/api/v1/") => {
             if let Err(response) = require_admin(&req, &runtime) {
+                return Ok(*response);
+            }
+            if let Err(response) = require_same_origin(&req, &runtime) {
                 return Ok(*response);
             }
             handle_hierarchical_delete(&req, runtime).await
@@ -472,6 +493,10 @@ where
         ));
     }
 
+    if let Err(response) = require_same_origin(&req, &runtime) {
+        return Ok(*response);
+    }
+
     let login = match auth::parse_login_request(req).await {
         Ok(login) => login,
         Err(_) => {
@@ -510,7 +535,16 @@ async fn handle_current_session<B>(
     })
 }
 
-async fn handle_logout(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
+async fn handle_logout<B>(
+    req: &hyper::Request<B>,
+    runtime: Arc<Runtime>,
+) -> Result<Response, Infallible> {
+    if let Err(response) = require_admin(req, &runtime) {
+        return Ok(*response);
+    }
+    if let Err(response) = require_same_origin(req, &runtime) {
+        return Ok(*response);
+    }
     let admin_auth = runtime.admin_auth();
     Ok(auth::session_deleted_response(
         &admin_auth.clear_session_cookie(),
@@ -532,6 +566,16 @@ fn require_admin<B>(
     runtime
         .admin_auth()
         .principal_from_request(req)
+        .map_err(|err| Box::new(auth_error_response(err)))
+}
+
+fn require_same_origin<B>(
+    req: &hyper::Request<B>,
+    runtime: &Arc<Runtime>,
+) -> Result<(), Box<Response>> {
+    runtime
+        .admin_auth()
+        .validate_same_origin(req)
         .map_err(|err| Box::new(auth_error_response(err)))
 }
 
