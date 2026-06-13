@@ -11,8 +11,8 @@ This page is the central reference for environment variables supported by Fitz r
 | FITZ_TCP_ENABLED | true or false | true | Enables the raw TCP listener. HTTP, admin routes, and WebSocket remain enabled regardless. |
 | FITZ_TCP_PORT | u16 port | 4091 | Raw TCP listener port. |
 | FITZ_BIND_ADDR | IP or hostname | 0.0.0.0 | Bind address for listeners. |
-| FITZ_ASSUME_EXTERNAL_TLS | true or false | false | Required when runtime auth or configured protected admin auth binds to a non-loopback address and TLS is terminated outside Fitz. |
-| FITZ_WS_ALLOWED_ORIGINS | Comma-separated exact browser origins, e.g. https://app.example.com | Empty | Browser WebSocket Origin allowlist. Required for authenticated non-loopback WebSocket binds. Values are HTTP origins, not wss URLs, and must not include a path, query, fragment, or trailing slash. |
+| FITZ_ASSUME_EXTERNAL_TLS | true or false | false | Enables TLS-dependent browser response behavior such as HSTS when TLS is terminated outside Fitz. Local development can leave this unset. |
+| FITZ_WS_ALLOWED_ORIGINS | Comma-separated exact browser origins, e.g. https://app.example.com | Local loopback origins for ports 3000 and 4090 | Browser WebSocket Origin allowlist. Values are HTTP origins, not wss URLs, and must not include a path, query, fragment, or trailing slash. Public browser deployments should set this to their exact SPA origins. |
 | FITZ_ROUTE_FAMILIES | Comma-separated u32 list, contiguous from 1 (example: 1,2,3) | 1 | Provisioned route-family allowlist accepted after identity resolution. |
 | FITZ_ROUTE_FAMILY_MAP | Comma-separated identity=family mappings | Empty | Maps verified identity claim values to provisioned route-family numbers. Required when auth is enabled. |
 | FITZ_ROUTE_FAMILY_CLAIM | JWT claim key | tid | Default identity claim key used for route-family resolution. |
@@ -65,8 +65,8 @@ Identity claim lookup precedence is fixed:
 For browser clients behind a TLS-terminating load balancer:
 
 - Set `FITZ_AUTH_REQUIRED=true`.
-- Set `FITZ_ASSUME_EXTERNAL_TLS=true`.
-- Set `FITZ_WS_ALLOWED_ORIGINS` to the exact SPA origins allowed to open runtime WebSockets, without trailing slashes.
+- Set `FITZ_ASSUME_EXTERNAL_TLS=true` to emit TLS-dependent browser headers such as HSTS.
+- Set `FITZ_WS_ALLOWED_ORIGINS` to the exact SPA origins allowed to open runtime WebSockets, without trailing slashes. The built-in loopback defaults are only for local development.
 - Set `FITZ_ADMIN_AUTH_MODE=protected`, `FITZ_ADMIN_PUBLIC_ORIGIN=https://admin.example.com`, and keep `FITZ_ADMIN_COOKIE_SECURE=true`.
 - Keep the Fitz backend port reachable only from the load balancer.
 - Use short-lived runtime JWTs with narrow route permissions and reconnect with a fresh token when they expire.

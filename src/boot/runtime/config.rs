@@ -9,6 +9,12 @@ const DEFAULT_PEAS_ACCESS_KEY: &str = "admin";
 const DEFAULT_PEAS_SECRET_KEY: &str = "easy-peasy";
 const DEFAULT_PEAS_BUCKET: &str = "fitz";
 const ENV_STORAGE_MEMTABLE_BYTES: &str = "FITZ_STORAGE_MEMTABLE_BYTES";
+const DEFAULT_LOCAL_WS_ALLOWED_ORIGIN_VALUES: [&str; 4] = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:4090",
+    "http://127.0.0.1:4090",
+];
 
 /// Cloud commit durability policy for broker-selected durable writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -497,7 +503,7 @@ impl Default for BootConfig {
             .and_then(|value| value.parse::<bool>().ok())
             .unwrap_or(false);
         let (ws_allowed_origins, ws_allowed_origins_error) =
-            parse_ws_allowed_origins_from_env().unwrap_or_else(|| (Vec::new(), None));
+            parse_ws_allowed_origins_from_env().unwrap_or_else(default_local_ws_allowed_origins);
         let route_families = std::env::var("FITZ_ROUTE_FAMILIES")
             .unwrap_or_else(|_| "1".to_string())
             .split(',')
@@ -653,15 +659,6 @@ impl BootConfig {
         let protected_admin_configured =
             crate::api::admin::auth::protected_admin_configured_from_env();
         let public_bind = !bind_addr_is_loopback(&self.bind_addr);
-        if (self.auth_required || protected_admin_configured)
-            && !self.assume_external_tls
-            && public_bind
-        {
-            return Err(
-                "FITZ_ASSUME_EXTERNAL_TLS=true is required when authenticated or protected-admin listeners bind to a non-loopback address"
-                    .into(),
-            );
-        }
         let ws_allowed_origins = configured_ws_allowed_origins(
             &self.ws_allowed_origins,
             &self.ws_allowed_origins_error,
@@ -718,6 +715,17 @@ fn parse_ws_allowed_origins_from_env(
             .map(|origins| (origins, None))
             .unwrap_or_else(|error| (Vec::new(), Some(format!("FITZ_WS_ALLOWED_ORIGINS {error}"))))
     })
+}
+
+fn default_local_ws_allowed_origins() -> (Vec<crate::api::origin::ExactOrigin>, Option<String>) {
+    let origins = DEFAULT_LOCAL_WS_ALLOWED_ORIGIN_VALUES
+        .iter()
+        .map(|origin| {
+            crate::api::origin::parse_exact_origin(origin)
+                .expect("default local WebSocket origin must be valid")
+        })
+        .collect();
+    (origins, None)
 }
 
 fn validate_public_origin_security(
@@ -963,6 +971,33 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn should_use_implicit_local_ws_allowed_origins_by_default() {
+        with_auth_env(&[("FITZ_AUTH_REQUIRED", "false")], || {
+            // Arrange
+
+            // Act
+            let config = BootConfig::default();
+
+            // Assert
+            let origins = config
+                .ws_allowed_origins
+                .iter()
+                .map(crate::api::origin::ExactOrigin::as_str)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                origins,
+                vec![
+                    "http://localhost:3000",
+                    "http://127.0.0.1:3000",
+                    "http://localhost:4090",
+                    "http://127.0.0.1:4090",
+                ]
+            );
+        });
+    }
+
+    #[test]
     fn should_customize_boot_config() {
         // Arrange
 
@@ -991,21 +1026,20 @@ mod tests {
 
     #[test]
     #[serial]
-    fn should_reject_public_bind_without_external_tls_when_auth_required() {
-        // Arrange
-        let config = auth_ready_config()
-            .with_bind_addr("0.0.0.0".to_string())
-            .with_assume_external_tls(false);
+    fn should_allow_public_bind_without_external_tls_ack_when_auth_required() {
+        with_auth_env(&[], || {
+            // Arrange
+            let config = auth_ready_config()
+                .with_bind_addr("0.0.0.0".to_string())
+                .with_assume_external_tls(false);
 
-        // Act
-        let result = config.validate();
+            // Act
+            let result = config.validate();
 
-        // Assert
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("FITZ_ASSUME_EXTERNAL_TLS=true is required"));
+            // Assert
+            assert!(result.is_ok());
+            assert!(!config.assume_external_tls);
+        });
     }
 
     #[test]
@@ -1030,21 +1064,23 @@ mod tests {
 
     #[test]
     #[serial]
-    fn should_reject_public_auth_bind_without_ws_allowed_origins() {
-        // Arrange
-        let config = auth_ready_config()
-            .with_bind_addr("0.0.0.0".to_string())
-            .with_assume_external_tls(true);
+    fn should_reject_public_auth_bind_with_empty_ws_allowed_origins() {
+        with_auth_env(&[], || {
+            // Arrange
+            let config = auth_ready_config()
+                .with_bind_addr("0.0.0.0".to_string())
+                .with_ws_allowed_origins(Vec::new());
 
-        // Act
-        let result = config.validate();
+            // Act
+            let result = config.validate();
 
-        // Assert
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("FITZ_WS_ALLOWED_ORIGINS is required"));
+            // Assert
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("FITZ_WS_ALLOWED_ORIGINS is required"));
+        });
     }
 
     #[test]
@@ -1084,7 +1120,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn should_reject_public_bind_without_external_tls_when_protected_admin_configured() {
+    fn should_allow_public_bind_without_external_tls_ack_when_protected_admin_configured() {
         with_auth_env(
             &[
                 ("FITZ_ADMIN_USERNAME", "admin"),
@@ -1093,6 +1129,7 @@ mod tests {
                     "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
                 ),
                 ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
+                ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
             ],
             || {
                 // Arrange
@@ -1105,11 +1142,8 @@ mod tests {
                 let result = config.validate();
 
                 // Assert
-                assert!(result.is_err());
-                assert!(result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("FITZ_ASSUME_EXTERNAL_TLS=true is required"));
+                assert!(result.is_ok());
+                assert!(!config.assume_external_tls);
             },
         );
     }
