@@ -13,6 +13,7 @@ use super::list;
 use super::metrics;
 use super::probes;
 use super::stats;
+use super::topology;
 
 #[derive(Debug, Clone, Serialize)]
 struct AdminFeaturesResponse {
@@ -75,6 +76,13 @@ where
                 return Ok(*response);
             }
             stats::handle_global_stats(runtime).await
+        }
+
+        (Method::GET, "/api/v1/topology") => {
+            if let Err(response) = require_admin(&req, &runtime) {
+                return Ok(*response);
+            }
+            topology::handle_topology(runtime).await
         }
 
         (Method::GET, "/api/v1/troubleshooting") => {

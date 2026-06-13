@@ -21,7 +21,7 @@ export default function LeasePage() {
   const sidebar = createDomainSidebar({
     data,
     title: "Lease snapshot",
-    description: "Live lease health and realm coverage.",
+    description: "Current ownership coordination and waiter pressure.",
     stats: (current) => [
       { label: "Active leases", value: current.stats.leasesActive },
       {
@@ -37,7 +37,7 @@ export default function LeasePage() {
       <Stack gap="3">
         <DomainHeader
           title="Lease overview"
-          description="Lease realm coverage and live lease load."
+          description="Current lease load, waiter pressure, and realm coverage."
           onRefresh={() => overview.refresh()}
         />
 

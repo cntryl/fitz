@@ -21,7 +21,7 @@ export default function StreamPage() {
   const sidebar = createDomainSidebar({
     data,
     title: "Stream snapshot",
-    description: "Stream throughput and subscription coverage.",
+    description: "Durable history volume and live subscription coverage.",
     stats: (current) => [
       { label: "Streams", value: current.stats.streamsActive },
       { label: "Subscriptions", value: current.stats.subscriptionsActive },
@@ -40,7 +40,7 @@ export default function StreamPage() {
         <DomainHeader
           domain="Stream"
           title="Stream overview"
-          description="Stream throughput, active subscriptions, and live realm inventory."
+          description="Committed stream history, live subscriptions, and realm inventory."
           onRefresh={() => overview.refresh()}
         />
 

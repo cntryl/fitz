@@ -21,7 +21,7 @@ export default function KvPage() {
   const sidebar = createDomainSidebar({
     data,
     title: "KV snapshot",
-    description: "Current key-value broker state and realm inventory.",
+    description: "Authoritative current state and transactional pressure.",
     stats: (current) => [
       { label: "Keys", value: current.stats.keysTotal },
       { label: "Transactions", value: current.stats.transactionsActive },
@@ -39,7 +39,7 @@ export default function KvPage() {
         <DomainHeader
           domain="KV"
           title="KV overview"
-          description="Key-value broker statistics and live realm inventory."
+          description="Current KV state, transactional pressure, and realm inventory."
           onRefresh={() => overview.refresh()}
         />
 

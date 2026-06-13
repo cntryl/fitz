@@ -2,7 +2,7 @@ import { createQuery } from "@askrjs/askr/data";
 import { systemService } from "./system-service";
 import type { SystemOverview } from "./system-models";
 
-const SYSTEM_OVERVIEW_KEY = "system:overview";
+export const SYSTEM_OVERVIEW_KEY = "system:overview";
 
 export function createSystemOverviewQuery() {
   return createQuery<SystemOverview>({

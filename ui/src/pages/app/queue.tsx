@@ -19,7 +19,7 @@ export default function QueuePage() {
   const sidebar = createDomainSidebar({
     data,
     title: "Queue snapshot",
-    description: "Current queue health across messages and broker activity.",
+    description: "Durable backlog pressure and current queue activity.",
     stats: (current) => [
       { label: "Ready", value: current.stats.messagesReady },
       { label: "Inflight", value: current.stats.inflightActive },
@@ -39,7 +39,7 @@ export default function QueuePage() {
       <Stack gap="3">
         <DomainHeader
           title="Queue overview"
-          description="Live queue statistics, realms, and resource drill-down."
+          description="Current queue pressure, realms, and resource drill-down."
           onRefresh={() => overview.refresh()}
         />
 

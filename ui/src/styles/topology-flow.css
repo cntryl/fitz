@@ -1,0 +1,241 @@
+.flow-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.34fr);
+  gap: var(--ak-space-3, 0.75rem);
+  align-items: start;
+}
+
+.flow-map {
+  display: grid;
+  grid-template-columns: minmax(12rem, 0.85fr) minmax(22rem, 1.6fr) minmax(12rem, 0.85fr);
+  gap: var(--ak-space-3, 0.75rem);
+  align-items: stretch;
+  padding: var(--ak-space-3, 0.75rem);
+  border: 1px solid var(--ak-color-border, color-mix(in srgb, CanvasText 12%, transparent));
+  border-radius: var(--ak-radius-2, 0.5rem);
+  background: var(--ak-color-surface, color-mix(in srgb, Canvas 94%, CanvasText 6%));
+}
+
+.flow-column {
+  display: grid;
+  gap: var(--ak-space-3, 0.75rem);
+  min-width: 0;
+}
+
+.flow-column-label {
+  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.flow-column-edge {
+  align-content: start;
+}
+
+.flow-column-core {
+  position: relative;
+}
+
+.flow-column-core::before,
+.flow-column-core::after {
+  position: absolute;
+  top: 4.75rem;
+  width: var(--ak-space-3, 0.75rem);
+  border-top: 1px solid var(--ak-color-border, color-mix(in srgb, CanvasText 18%, transparent));
+  content: "";
+}
+
+.flow-column-core::before {
+  right: 100%;
+}
+
+.flow-column-core::after {
+  left: 100%;
+}
+
+.flow-node,
+.flow-lane,
+.flow-resource-row,
+.flow-connection-row {
+  min-width: 0;
+  border: 1px solid var(--ak-color-border, color-mix(in srgb, CanvasText 12%, transparent));
+  border-radius: var(--ak-radius-2, 0.5rem);
+  background: var(--ak-color-bg, Canvas);
+}
+
+.flow-node {
+  display: grid;
+  gap: 0.125rem;
+  padding: var(--ak-space-3, 0.75rem);
+}
+
+.flow-selectable {
+  width: 100%;
+  appearance: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.flow-selectable:focus-visible {
+  outline: 2px solid var(--ak-color-accent, CanvasText);
+  outline-offset: 2px;
+}
+
+.flow-selected {
+  border-color: color-mix(in srgb, var(--ak-color-accent, CanvasText) 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ak-color-accent, CanvasText) 30%, transparent);
+}
+
+.flow-node span,
+.flow-node small,
+.flow-lane small,
+.flow-resource-row span,
+.flow-connection-row span {
+  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+}
+
+.flow-node strong {
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+
+.flow-node-broker {
+  border-color: color-mix(in srgb, var(--ak-color-accent, CanvasText) 35%, transparent);
+}
+
+.flow-lane-stack,
+.flow-session-list,
+.flow-resource-list,
+.flow-connection-list {
+  display: grid;
+  gap: var(--ak-space-2, 0.5rem);
+}
+
+.flow-lane {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(8rem, 0.7fr);
+  gap: var(--ak-space-3, 0.75rem);
+  align-items: center;
+  padding: var(--ak-space-2, 0.5rem) var(--ak-space-3, 0.75rem);
+  text-decoration: none;
+}
+
+.flow-lane:hover,
+.flow-resource-row:hover,
+.flow-connection-row:hover {
+  background: var(--ak-color-muted, color-mix(in srgb, CanvasText 5%, transparent));
+}
+
+.flow-lane-pulse {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 999px;
+  background: var(--ak-color-muted-fg, currentColor);
+}
+
+.flow-lane-flowing .flow-lane-pulse {
+  background: var(--ak-color-success, #168a4a);
+}
+
+.flow-lane-pressure .flow-lane-pulse {
+  background: var(--ak-color-warning, #9a6700);
+}
+
+.flow-lane-blocked .flow-lane-pulse {
+  background: var(--ak-color-danger, #c7362f);
+}
+
+.flow-lane-flowing {
+  border-color: color-mix(in srgb, var(--ak-color-success, #168a4a) 35%, transparent);
+}
+
+.flow-lane-pressure {
+  border-color: color-mix(in srgb, var(--ak-color-warning, #9a6700) 40%, transparent);
+}
+
+.flow-lane-blocked {
+  border-color: color-mix(in srgb, var(--ak-color-danger, #c7362f) 45%, transparent);
+}
+
+.flow-lane strong,
+.flow-lane small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.flow-resource-row,
+.flow-connection-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ak-space-2, 0.5rem);
+  align-items: center;
+  padding: var(--ak-space-2, 0.5rem) var(--ak-space-3, 0.75rem);
+}
+
+.flow-resource-row strong,
+.flow-connection-row strong {
+  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.flow-inspector {
+  position: sticky;
+  top: calc(var(--ak-layout-navbar-height, 0px) + var(--ak-space-3, 0.75rem));
+  min-width: 0;
+}
+
+.flow-inspector-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ak-space-2, 0.5rem);
+}
+
+.flow-inspector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr));
+  gap: var(--ak-space-2, 0.5rem);
+}
+
+.flow-inspector-grid div {
+  min-width: 0;
+  padding: var(--ak-space-2, 0.5rem);
+  border: 1px solid var(--ak-color-border, color-mix(in srgb, CanvasText 10%, transparent));
+  border-radius: var(--ak-radius-1, 0.375rem);
+  background: var(--ak-color-bg, Canvas);
+}
+
+.flow-inspector-grid span,
+.flow-scope-list dt {
+  display: block;
+  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+  font-size: 0.75rem;
+}
+
+.flow-inspector-grid strong,
+.flow-scope-list dd {
+  overflow-wrap: anywhere;
+}
+
+.flow-scope-list {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--ak-space-1, 0.25rem) var(--ak-space-2, 0.5rem);
+  margin: var(--ak-space-3, 0.75rem) 0 0;
+}
+
+.flow-scope-list dd {
+  margin: 0;
+}
+
+.flow-inspector-link {
+  display: inline-flex;
+  margin-top: var(--ak-space-3, 0.75rem);
+  font-weight: 650;
+}

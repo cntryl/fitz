@@ -21,7 +21,7 @@ export default function SchedulePage() {
   const sidebar = createDomainSidebar({
     data,
     title: "Schedule snapshot",
-    description: "Execution health and claim pressure across scheduled work.",
+    description: "Durable timing intent and current claim pressure.",
     stats: (current) => [
       { label: "Schedules", value: current.stats.schedulesActive },
       { label: "Subscriptions", value: current.stats.subscriptionsActive },
@@ -40,7 +40,7 @@ export default function SchedulePage() {
         <DomainHeader
           domain="Schedule"
           title="Schedule overview"
-          description="Scheduled execution health and live realm inventory."
+          description="Scheduled timing pressure, live subscriptions, and realm inventory."
           onRefresh={() => overview.refresh()}
         />
 

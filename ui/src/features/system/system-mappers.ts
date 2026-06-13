@@ -119,6 +119,7 @@ export function mapSystemOverview(stats: GlobalStats, metricsValue: unknown): Sy
         subscriptionsActive: stats.domains.stream.subscriptions_active,
       },
     },
+    fetchedAt: new Date().toISOString(),
     metrics: {
       raw,
       lines: lines.slice(0, 8),

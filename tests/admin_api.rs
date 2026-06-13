@@ -7,8 +7,8 @@ use argon2::{
 use bytes::Bytes;
 use fitz::api::admin::{
     KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueAgeBuckets,
-    QueueDeadLetter, QueueInfo, RpcPendingRequest, RpcWorker, StreamAreaWatermark,
-    StreamAreaWatermarkDetail, StreamInfo,
+    QueueDeadLetter, QueueInflight, QueueInfo, RpcPendingRequest, RpcWorker, ScheduleInfo,
+    StreamAreaWatermark, StreamAreaWatermarkDetail, StreamInfo,
 };
 use fitz::api::http::Body;
 use fitz::boot::domains::{
@@ -2948,6 +2948,270 @@ async fn should_return_global_stats() {
             .as_str()
             .expect("queue confidence rationale")
             .contains("telemetry freshness")
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn should_require_admin_for_topology() {
+    // Arrange
+    let runtime = test_runtime();
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/topology")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_messaging_topology_given_live_admin_snapshots() {
+    // Arrange
+    let runtime = test_runtime();
+    let ingress = Arc::new(
+        RuntimeIngress::new(true)
+            .with_router(runtime.router())
+            .with_admin_read_model(runtime.admin_read_model()),
+    );
+    runtime.attach_ingress(ingress.clone());
+
+    for (session_id, family) in [(11, 41), (12, 41), (22, 7)] {
+        let session = RuntimeSessionInfo {
+            session_id,
+            transport_kind: TransportKind::WebSocket,
+            peer_addr: None,
+            metadata: Arc::new(SessionMetadata::new()),
+            permissions_snapshot: SessionPermissions::empty(),
+            claims: None,
+            authenticated: false,
+            route_family: RouteFamily::new(family),
+        };
+        ingress.on_open(session).await.unwrap();
+    }
+    ingress.record_frame_received(11);
+    ingress.record_frame_received(11);
+    ingress.record_frame_sent(11);
+    ingress.record_frame_received(12);
+
+    let read_model = runtime.admin_read_model();
+    read_model.replace_queues(vec![QueueInfo {
+        family: 41,
+        realm: "prod".to_string(),
+        area: "jobs".to_string(),
+        resource: "worker".to_string(),
+        messages_ready: 10,
+        messages_delayed: 0,
+        messages_inflight: 1,
+        messages_dead_lettered: 2,
+        messages_total: 13,
+        oldest_message_age_seconds: 30,
+        oldest_backlog_age_seconds: 600,
+        backlog_age_buckets: QueueAgeBuckets {
+            under_1m: 0,
+            under_5m: 0,
+            under_15m: 1,
+            over_15m: 1,
+        },
+        delay_age_buckets: QueueAgeBuckets {
+            under_1m: 0,
+            under_5m: 0,
+            under_15m: 0,
+            over_15m: 0,
+        },
+    }]);
+    read_model.replace_queue_inflight(vec![QueueInflight {
+        message_id: 99,
+        family: 41,
+        realm: "prod".to_string(),
+        area: "jobs".to_string(),
+        resource: "worker".to_string(),
+        inflight_token: "token-99".to_string(),
+        session_id: "11".to_string(),
+        expires_at: "2026-03-14T12:05:00Z".to_string(),
+        attempts: 2,
+    }]);
+    read_model.replace_notice_subscriptions(vec![NoticeSubscription {
+        subscription_id: 7,
+        session_id: "12".to_string(),
+        realm: "prod".to_string(),
+        pattern: "notice://prod/events/orders".to_string(),
+        created_at: "2026-03-14T12:00:00Z".to_string(),
+        notifications_received: 5,
+    }]);
+    read_model.replace_rpc_workers(vec![RpcWorker {
+        session_id: "22".to_string(),
+        realm: "prod".to_string(),
+        route: "rpc://prod/api/users/get".to_string(),
+        registered_at: "2026-03-14T12:00:00Z".to_string(),
+        requests_handled: 12,
+        average_latency_ms: 4.5,
+    }]);
+    read_model.replace_rpc_pending(vec![RpcPendingRequest {
+        correlation_id: "corr-get".to_string(),
+        route: "rpc://prod/api/users/get".to_string(),
+        submitted_at: "2026-03-14T12:00:07Z".to_string(),
+        age_seconds: 7,
+        worker_session_id: Some("22".to_string()),
+    }]);
+    read_model.replace_leases(vec![LeaseInfo {
+        realm: "prod".to_string(),
+        area: "locks".to_string(),
+        resource: "leader".to_string(),
+        owner_session_id: "11".to_string(),
+        acquired_at: "2026-03-14T12:00:00Z".to_string(),
+        expires_at: "2026-03-14T12:01:00Z".to_string(),
+        renewals: 3,
+        fencing_token: 8,
+    }]);
+    read_model.replace_streams(vec![StreamInfo {
+        realm: "prod".to_string(),
+        area: "events".to_string(),
+        resource: "orders".to_string(),
+        offset: 42,
+        watermark: 40,
+        size_bytes: 4096,
+        sessions_active: 1,
+    }]);
+    read_model.replace_schedules(vec![ScheduleInfo {
+        realm: "prod".to_string(),
+        area: "jobs".to_string(),
+        resource: "sweeper".to_string(),
+        operation: "run".to_string(),
+        cron: "* * * * *".to_string(),
+        next_run: "2026-03-14T12:01:00Z".to_string(),
+        last_run: None,
+        executions_total: 4,
+        enabled: true,
+    }]);
+    read_model.replace_kv_transactions(vec![KvTransaction {
+        tx_id: 501,
+        realm: "prod".to_string(),
+        area: "state".to_string(),
+        resource: "users".to_string(),
+        mode: "session:12:readwrite".to_string(),
+        started_at: "2026-03-14T12:00:00Z".to_string(),
+        operations_count: 3,
+        idle_seconds: 1,
+    }]);
+
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/topology")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(payload["generated_at"].as_str().unwrap().contains('T'));
+
+    let lane_ids = payload["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|lane| lane["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lane_ids,
+        vec!["queue", "rpc", "notice", "schedule", "stream", "lease", "kv"]
+    );
+    assert_eq!(payload["lanes"][0]["state"], "blocked");
+    assert_eq!(
+        payload["lanes"][0]["top_scoped_resources"][0]["scope"]["route_family"],
+        41
+    );
+    assert_eq!(
+        payload["lanes"][0]["top_scoped_resources"][0]["scope"]["realm"],
+        "prod"
+    );
+
+    let groups = payload["session_groups"].as_array().unwrap();
+    let family_41 = groups
+        .iter()
+        .find(|group| group["route_family"] == 41)
+        .expect("route family 41 group");
+    assert_eq!(family_41["sessions"], 2);
+    assert_eq!(family_41["messages_received"], 3);
+    assert_eq!(family_41["messages_sent"], 1);
+
+    let connections = payload["connections"]["items"].as_array().unwrap();
+    let kinds = connections
+        .iter()
+        .map(|connection| connection["kind"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(kinds.contains(&"queue_inflight_consumer"));
+    assert!(kinds.contains(&"notice_subscription"));
+    assert!(kinds.contains(&"rpc_worker"));
+    assert!(kinds.contains(&"rpc_pending_assignment"));
+    assert!(kinds.contains(&"lease_owner"));
+    assert!(kinds.contains(&"stream_append_activity"));
+    assert!(kinds.contains(&"kv_transaction_activity"));
+
+    let notice_connection = connections
+        .iter()
+        .find(|connection| connection["kind"] == "notice_subscription")
+        .expect("notice subscription edge");
+    assert_eq!(notice_connection["scope"]["realm"], "prod");
+    assert!(notice_connection["scope"].get("route_family").is_none());
+}
+
+#[tokio::test]
+#[serial]
+async fn should_truncate_topology_connections_given_large_snapshot() {
+    // Arrange
+    let runtime = test_runtime();
+    let read_model = runtime.admin_read_model();
+    read_model.replace_notice_subscriptions(
+        (0..260)
+            .map(|index| NoticeSubscription {
+                subscription_id: index,
+                session_id: format!("session-{index}"),
+                realm: "prod".to_string(),
+                pattern: format!("notice://prod/events/topic-{index}"),
+                created_at: "2026-03-14T12:00:00Z".to_string(),
+                notifications_received: 0,
+            })
+            .collect(),
+    );
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/topology")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["connections"]["limit"], 250);
+    assert!(payload["connections"]["truncated"].as_bool().unwrap());
+    assert!(payload["connections"]["total"].as_u64().unwrap() > 250);
+    assert_eq!(
+        payload["connections"]["items"].as_array().unwrap().len(),
+        250
     );
 }
 

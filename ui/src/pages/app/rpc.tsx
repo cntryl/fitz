@@ -21,7 +21,7 @@ export default function RpcPage() {
   const sidebar = createDomainSidebar({
     data,
     title: "RPC snapshot",
-    description: "Worker registrations and pending request pressure.",
+    description: "Live worker coverage and pending request pressure.",
     stats: (current) => [
       { label: "Workers", value: current.stats.workersRegistered },
       { label: "Requests pending", value: current.stats.requestsPending },
@@ -38,7 +38,7 @@ export default function RpcPage() {
       <Stack gap="3">
         <DomainHeader
           title="RPC overview"
-          description="Pending RPC work, worker registrations, and live realm inventory."
+          description="Live request/response pressure, worker registrations, and realm inventory."
           onRefresh={() => overview.refresh()}
         />
 

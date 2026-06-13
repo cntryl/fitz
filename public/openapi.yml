@@ -132,6 +132,26 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /api/v1/topology:
+    get:
+      tags: [Topology]
+      summary: Get current messaging topology
+      description: Returns a bounded, read-only snapshot of current broker-visible messaging flow, sessions, domain lanes, and bottleneck signals. This endpoint is observability only and does not imply durable tracing or recovery of session-scoped state.
+      operationId: getMessagingTopology
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Current messaging topology snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingTopology"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /api/v1/troubleshooting:
     get:
       tags: [Troubleshooting]
@@ -2808,7 +2828,15 @@ components:
     BrokerStats:
       type: object
       required:
-        [uptime_seconds, connections, sessions, realms, messages_per_second]
+        [
+          uptime_seconds,
+          connections,
+          sessions,
+          realms,
+          messages_per_second,
+          router_backpressure_total,
+          router_high_lane_backpressure_total,
+        ]
       properties:
         uptime_seconds:
           type: integer
@@ -2822,6 +2850,216 @@ components:
             type: string
         messages_per_second:
           type: number
+        router_backpressure_total:
+          type: integer
+          format: int64
+        router_high_lane_backpressure_total:
+          type: integer
+          format: int64
+
+    MessagingTopology:
+      type: object
+      required:
+        [generated_at, broker, diagnostics, session_groups, lanes, connections]
+      properties:
+        generated_at:
+          type: string
+          description: Server timestamp for this topology snapshot.
+        broker:
+          $ref: "#/components/schemas/BrokerStats"
+        diagnostics:
+          $ref: "#/components/schemas/GlobalTroubleshootingDiagnostics"
+        session_groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopologySessionGroup"
+        lanes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopologyLane"
+        connections:
+          $ref: "#/components/schemas/TopologyConnectionPage"
+
+    TopologySessionGroup:
+      type: object
+      required:
+        [
+          route_family,
+          sessions,
+          messages_received,
+          messages_sent,
+          transports,
+          max_idle_seconds,
+          representative_sessions,
+        ]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        sessions:
+          type: integer
+        messages_received:
+          type: integer
+          format: int64
+        messages_sent:
+          type: integer
+          format: int64
+        transports:
+          type: array
+          items:
+            type: string
+        max_idle_seconds:
+          type: integer
+          format: int64
+        representative_sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionInfo"
+
+    TopologyState:
+      type: string
+      enum: [quiet, flowing, pressure, blocked]
+
+    TopologyCounter:
+      type: object
+      required: [key, label, value]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        value:
+          type: number
+
+    TopologyScope:
+      type: object
+      properties:
+        realm:
+          type: string
+        route_family:
+          type: integer
+          format: int64
+        area:
+          type: string
+        resource:
+          type: string
+        operation:
+          type: string
+        route:
+          type: string
+        pattern:
+          type: string
+        session_id:
+          type: string
+
+    TopologyScopedResource:
+      type: object
+      required: [id, label, state, scope, counters]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        state:
+          $ref: "#/components/schemas/TopologyState"
+        scope:
+          $ref: "#/components/schemas/TopologyScope"
+        counters:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopologyCounter"
+
+    TopologyLane:
+      type: object
+      required:
+        [
+          id,
+          title,
+          state,
+          activity_per_second,
+          diagnostics,
+          counters,
+          consumers,
+          observers,
+          top_scoped_resources,
+        ]
+      properties:
+        id:
+          type: string
+          enum: [queue, rpc, notice, schedule, stream, lease, kv]
+        title:
+          type: string
+        state:
+          $ref: "#/components/schemas/TopologyState"
+        activity_per_second:
+          type: number
+        diagnostics:
+          $ref: "#/components/schemas/DiagnosticSnapshot"
+        counters:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopologyCounter"
+        consumers:
+          type: integer
+        observers:
+          type: integer
+        top_scoped_resources:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopologyScopedResource"
+
+    TopologyConnectionKind:
+      type: string
+      enum:
+        [
+          broker_domain_flow,
+          notice_subscription,
+          rpc_worker,
+          rpc_pending_assignment,
+          queue_inflight_consumer,
+          lease_owner,
+          stream_append_activity,
+          schedule_subscription_activity,
+          kv_transaction_activity,
+        ]
+
+    TopologyConnection:
+      type: object
+      required: [id, kind, source, target, label, state, scope, metrics]
+      properties:
+        id:
+          type: string
+        kind:
+          $ref: "#/components/schemas/TopologyConnectionKind"
+        source:
+          type: string
+        target:
+          type: string
+        label:
+          type: string
+        state:
+          $ref: "#/components/schemas/TopologyState"
+        scope:
+          $ref: "#/components/schemas/TopologyScope"
+        metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopologyCounter"
+
+    TopologyConnectionPage:
+      type: object
+      required: [items, total, truncated, limit]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopologyConnection"
+        total:
+          type: integer
+        truncated:
+          type: boolean
+        limit:
+          type: integer
 
     DomainStats:
       type: object

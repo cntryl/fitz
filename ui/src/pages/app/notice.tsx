@@ -21,7 +21,7 @@ export default function NoticePage() {
   const sidebar = createDomainSidebar({
     data,
     title: "Notice snapshot",
-    description: "Fanout health and active subscription coverage.",
+    description: "Live fanout activity and subscription coverage.",
     stats: (current) => [
       {
         label: "Publishes / sec",
@@ -37,7 +37,7 @@ export default function NoticePage() {
         <DomainHeader
           domain="Notice"
           title="Notice overview"
-          description="Notice fanout metrics and live realm inventory."
+          description="Live fanout pressure, subscription coverage, and realm inventory."
           onRefresh={() => overview.refresh()}
         />
 

@@ -1,0 +1,35 @@
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background: var(--ak-color-bg, Canvas);
+}
+
+a {
+  color: inherit;
+}
+
+[data-slot="shell-main"] {
+  min-width: 0;
+  background: var(--ak-color-bg, Canvas);
+}
+
+.route-transition-surface {
+  min-width: 0;
+  animation: route-enter 180ms var(--ak-ease-standard, ease) both;
+}
+
+@keyframes route-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

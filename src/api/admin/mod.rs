@@ -11,6 +11,7 @@ mod metrics;
 mod probes;
 pub(crate) mod read_model;
 mod stats;
+mod topology;
 pub(crate) mod troubleshooting;
 
 pub(crate) use stats::{build_global_stats, build_global_troubleshooting};

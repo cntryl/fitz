@@ -1,0 +1,50 @@
+.resource-workbench,
+.resource-workbench-title {
+  min-width: 0;
+}
+
+.resource-workbench h2,
+.resource-workbench-title h2 {
+  margin: 0;
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+.resource-workbench h2 {
+  font-size: 1rem;
+}
+
+.resource-workbench-title h2 {
+  font-size: clamp(1.4rem, 1rem + 0.9vw, 2rem);
+}
+
+.resource-workbench-title p {
+  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+}
+
+.resource-workbench-hero {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--ak-space-3, 0.75rem);
+  padding: 0 0 var(--ak-space-2, 0.5rem);
+  border-bottom: 1px solid var(--ak-color-border, color-mix(in srgb, CanvasText 10%, transparent));
+}
+
+.queue-action-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ak-space-2, 0.5rem);
+}
+
+.resource-raw {
+  max-height: 28rem;
+  margin: 0;
+  padding: var(--ak-space-3, 0.75rem);
+  overflow: auto;
+  border: 0;
+  border-radius: var(--ak-radius-2, 0.5rem);
+  background: var(--ak-color-muted, color-mix(in srgb, CanvasText 5%, transparent));
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}

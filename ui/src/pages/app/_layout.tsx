@@ -12,7 +12,7 @@ import {
   ShellNav,
 } from "@askrjs/themes/shells";
 import { ThemeToggle } from "@askrjs/themes/theme";
-import { domainLinks, shellLinks } from "@/shared/navigation/domains";
+import { shellLinks } from "@/shared/navigation/domains";
 
 export default function Layout({ children }: { children?: unknown }) {
   const route = currentRoute();
@@ -47,19 +47,6 @@ export default function Layout({ children }: { children?: unknown }) {
                 href={link.href}
                 match={link.href === "/" ? "exact" : "prefix"}
               >
-                <link.icon size={16} />
-                {link.title}
-              </NavLink>
-            ))}
-          </NavGroup>
-
-          <NavGroup
-            class="shell-nav-group shell-nav-domains"
-            label="Domains"
-            aria-label="Domain workspaces"
-          >
-            {domainLinks.map((link) => (
-              <NavLink key={link.href} href={link.href} match="prefix">
                 <link.icon size={16} />
                 {link.title}
               </NavLink>

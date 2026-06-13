@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp, createSPA } from "@askrjs/askr/boot";
 import type { RouteHandler } from "@askrjs/askr/router";
+import {
+  dashboardDiagnostics as diagnostics,
+  topologyOverview,
+} from "./fixtures/topology";
 
 type QueryState<T> = {
   data: T | null;
@@ -66,6 +70,10 @@ vi.mock("@/features/session/session-mutation", () => ({
 
 vi.mock("@/features/system/system-query", () => ({
   createSystemOverviewQuery: () => mocks.queryStates.system,
+}));
+
+vi.mock("@/features/topology/topology-query", () => ({
+  createMessagingTopologyQuery: () => mocks.queryStates.topology,
 }));
 
 vi.mock("@/features/metrics/metrics-query", () => ({
@@ -225,27 +233,6 @@ const streamOverview = {
   },
 };
 
-const diagnostics = {
-  hotspots: [
-    {
-      area: "ops",
-      current_stage: "healthy",
-      domain: "queue",
-      likely_bottleneck: null,
-      realm: "default",
-      resource: "primary",
-      severity: "informational",
-    },
-  ],
-  incident_summary: {
-    explanation: "No active pressure detected",
-    recommended_next_query: "Check queue",
-    status: "healthy",
-    title: "Healthy",
-  },
-  top_bottleneck: null,
-};
-
 const systemOverview = {
   broker: {
     connections: 2,
@@ -296,6 +283,7 @@ const systemOverview = {
       successTotal: 1,
     },
   },
+  fetchedAt: "2026-05-21T13:10:00.000Z",
   metrics: {
     lineCount: 1,
     lines: ["fitz_broker_up 1"],
@@ -434,6 +422,7 @@ function resetQueries() {
   mocks.queryStates.currentSession = makeQuery({ username: "admin" });
   mocks.queryStates.activeSessions = makeQuery(activeSessions);
   mocks.queryStates.system = makeQuery(systemOverview);
+  mocks.queryStates.topology = makeQuery(topologyOverview);
   mocks.queryStates.metrics = makeQuery(metricsOverview);
   mocks.queryStates.queue = makeQuery(queueOverview);
   mocks.queryStates.queueDeadLetters = makeQuery([]);
@@ -486,7 +475,7 @@ describe("admin page smoke tests", () => {
   it("mounts every authenticated route with success data", async () => {
     const pages = [
       {
-        assertText: "Welcome, admin",
+        assertText: "Fitz status",
         module: () => import("@/pages/app/home"),
         path: "/",
         routePath: "/",
@@ -571,6 +560,45 @@ describe("admin page smoke tests", () => {
       document.body.innerHTML = "";
     }
   }, 15000);
+
+  it("renders the status-first dashboard sections", async () => {
+    const { default: Home } = await import("@/pages/app/home");
+
+    const root = await mountRoute("/", "/", Home);
+    const text = root.textContent ?? "";
+
+    expect(text).toContain("Broker status");
+    expect(text).toContain("Healthy");
+    expect(text).toContain("Messaging flow");
+    expect(text).toContain("Connected sessions");
+    expect(text).toContain("Fitz broker");
+    expect(text).toContain("Consumers and observers");
+    expect(text).toContain("Top scoped resources");
+    expect(text).toContain("Visible connections");
+    expect(text).toContain("Flow inspector");
+    expect(text).toContain("Work backlog");
+    expect(text).toContain("Live paths");
+    expect(text).toContain("Durable state/history");
+    expect(text).toContain("Attention");
+    expect(text).toContain("Domain workspaces");
+    expect(text).toContain("Open scope");
+
+    const scopeLink = root.querySelector('a[href="/queue/default/ops/primary"]');
+    expect(scopeLink).toBeTruthy();
+  });
+
+  it("keeps dashboard behavior visible while refresh is in flight", async () => {
+    const { default: Home } = await import("@/pages/app/home");
+
+    mocks.queryStates.topology = makeQuery(topologyOverview, { refreshing: true, stale: true });
+
+    const root = await mountRoute("/", "/", Home);
+    const text = root.textContent ?? "";
+
+    expect(text).toContain("Refreshing messaging topology");
+    expect(text).toContain("Work backlog");
+    expect(text).toContain("Queue");
+  });
 
   it("mounts representative loading, error, and empty states", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");

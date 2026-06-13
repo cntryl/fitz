@@ -1,0 +1,86 @@
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  gap: var(--ak-space-3, 0.75rem);
+}
+
+.domain-chart-shell,
+.chart-shell,
+.chart-panel {
+  margin: 0;
+}
+
+.chart-shell,
+.chart-panel {
+  display: grid;
+  gap: var(--ak-space-3, 0.75rem);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.chart-shell-header,
+.chart-panel-header {
+  display: grid;
+  gap: var(--ak-space-1, 0.25rem);
+}
+
+.chart-shell-header h2,
+.chart-panel-header h3 {
+  margin: 0;
+  line-height: 1.2;
+}
+
+.chart-shell-header p,
+.chart-panel-header p {
+  margin: 0;
+  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+  line-height: 1.45;
+}
+
+.chart-meter-grid {
+  display: grid;
+  gap: var(--ak-space-3, 0.75rem);
+}
+
+.chart-meter {
+  display: grid;
+  gap: var(--ak-space-2, 0.5rem);
+}
+
+.chart-meter-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ak-space-3, 0.75rem);
+  align-items: baseline;
+}
+
+.chart-meter-label {
+  font-weight: 600;
+}
+
+.chart-meter-value,
+.chart-meter-description {
+  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+  font-size: 0.875rem;
+}
+
+.chart-meter-description {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.chart-meter-track {
+  overflow: hidden;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--ak-color-muted, color-mix(in srgb, CanvasText 8%, transparent));
+}
+
+.chart-meter-fill {
+  display: block;
+  height: 100%;
+  min-width: 0.25rem;
+  border-radius: inherit;
+  background: var(--ak-color-accent, currentColor);
+}

@@ -1,0 +1,103 @@
+.dashboard-status-strip {
+  display: grid;
+  gap: var(--ak-space-4, 1rem);
+  padding: var(--ak-space-4, 1rem);
+  border: 1px solid var(--ak-color-border, color-mix(in srgb, CanvasText 12%, transparent));
+  border-radius: var(--ak-radius-2, 0.5rem);
+  background: var(--ak-color-surface, color-mix(in srgb, Canvas 92%, CanvasText 8%));
+}
+
+.dashboard-status-summary {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--ak-space-3, 0.75rem);
+}
+
+.dashboard-status-summary h2 {
+  margin: 0;
+  font-size: clamp(1.25rem, 1rem + 0.6vw, 1.65rem);
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+.dashboard-status-summary p {
+  max-width: 72ch;
+  margin: var(--ak-space-1, 0.25rem) 0 0;
+  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+  line-height: 1.45;
+}
+
+.dashboard-status-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  gap: var(--ak-space-2, 0.5rem);
+  margin: 0;
+}
+
+.dashboard-status-metrics div {
+  min-width: 0;
+  padding-block-start: var(--ak-space-2, 0.5rem);
+  border-top: 1px solid var(--ak-color-border, color-mix(in srgb, CanvasText 10%, transparent));
+}
+
+.dashboard-status-metrics dt,
+.dashboard-status-metrics dd {
+  margin: 0;
+}
+
+.dashboard-status-metrics dt {
+  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+  font-size: 0.8125rem;
+}
+
+.dashboard-status-metrics dd {
+  margin-top: 0.125rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-behavior-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: var(--ak-space-3, 0.75rem);
+  margin-top: var(--ak-space-3, 0.75rem);
+}
+
+.dashboard-behavior-card {
+  min-width: 0;
+}
+
+.dashboard-behavior-list {
+  display: grid;
+  gap: var(--ak-space-2, 0.5rem);
+}
+
+.dashboard-behavior-row {
+  display: grid;
+  gap: 0.125rem;
+  padding: 0.75rem;
+  border: 1px solid var(--ak-color-border, color-mix(in srgb, CanvasText 10%, transparent));
+  border-radius: var(--ak-radius-2, 0.5rem);
+  text-decoration: none;
+}
+
+.dashboard-behavior-row:hover {
+  background: var(--ak-color-muted, color-mix(in srgb, CanvasText 5%, transparent));
+}
+
+.dashboard-behavior-row span,
+.dashboard-behavior-row strong,
+.dashboard-behavior-row small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-behavior-row span {
+  font-weight: 650;
+}
+
+.dashboard-behavior-row small {
+  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+  line-height: 1.4;
+}

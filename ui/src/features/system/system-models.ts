@@ -100,5 +100,6 @@ export interface SystemOverview {
   broker: BrokerStatsSummary;
   diagnostics: GlobalTroubleshootingDiagnostics;
   domains: SystemDomainStatsSummary;
+  fetchedAt: string;
   metrics: MetricsPreview;
 }
