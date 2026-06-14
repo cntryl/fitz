@@ -53,8 +53,11 @@ COPY --from=frontend /ui/dist/ /usr/src/fitz/embedded-ui/
 
 ENV FITZ_EMBED_UI_DIR=/usr/src/fitz/embedded-ui
 
+# cargo-chef primes the target dir with a placeholder binary for dependency caching.
+# Remove that stub so the final image always contains a binary built from the real sources.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-  cargo build --release --locked \
+  rm -f target/release/fitz target/release/deps/fitz* \
+  && cargo build --release --locked --bin fitz \
   && strip target/release/fitz || true
 
 FROM debian:trixie-slim AS runtime-fs

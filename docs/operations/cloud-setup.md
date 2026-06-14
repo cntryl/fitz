@@ -28,6 +28,10 @@ Use the Peas compose file for local cloud storage. This file is intentionally Pe
 docker compose -f compose.cloud.yml up --build
 ```
 
+Expect the Fitz brokers to reach readiness eventually rather than instantly on first
+boot. In the local Peas flow, cloud writer leases can cause brief restart loops
+before `/readyz` settles.
+
 The default provider is `peas-s3`. To exercise the other Peas front doors, use the compose-only `FITZ_PEAS_PROVIDER` variable:
 
 ```sh
@@ -41,7 +45,7 @@ Peas defaults:
 - Host endpoint for local tests: `http://127.0.0.1:9000`
 - Access key: `admin`
 - Secret key: `easy-peasy`
-- Bucket/container: `fitz`
+- Bucket/container: optional; set `FITZ_STORAGE_BUCKET` or `FITZ_STORAGE_CONTAINER` only when you want a fixed namespace name
 
 ## Provider Values
 

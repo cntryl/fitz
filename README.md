@@ -50,21 +50,25 @@ The repository includes [compose.yml](compose.yml) with two services:
 - fitz-auth: auth required on 4090 and 4091
 - fitz-anon: auth disabled on 4190 and 4191
 
-The compose file also configures admin auth for the local UI and admin API. Use these credentials when signing in:
-
-- Username: `admin`
-- Password: `pwd123`
+This compose file is for local development only. It publishes ports on loopback,
+keeps the admin surface open for local use, and configures `fitz-auth` with a
+shared HS256 dev secret.
 
 Run both:
 
 		docker compose up --build
 
+If you want to exercise issuer/JWKS verification locally instead of the default
+HMAC path, layer in the JWKS mock overlay:
+
+		docker compose -f compose.yml -f compose.jwks.yml up --build
+
 If you want to use published images only, use a compose file that sets `image: ghcr.io/cntryl/fitz:latest` and removes `build`.
 
 Quick checks:
 
-		curl http://localhost:4090/healthz
-		curl http://localhost:4190/healthz
+		curl http://127.0.0.1:4090/healthz
+		curl http://127.0.0.1:4190/healthz
 
 Stop:
 
@@ -76,12 +80,19 @@ Stop:
 
 		docker compose -f compose.cloud.yml up --build
 
+It keeps the same local-only auth/admin defaults as `compose.yml`: loopback-only
+port publishing, open admin, and HMAC auth on `fitz-auth`.
+
+To exercise the local JWKS mock with Peas-backed storage:
+
+		docker compose -f compose.cloud.yml -f compose.jwks.yml up --build
+
 Peas provider flips stay in a compose-only environment variable:
 
 		FITZ_PEAS_PROVIDER=peas-azure docker compose -f compose.cloud.yml up --build
 		FITZ_PEAS_PROVIDER=peas-gcs docker compose -f compose.cloud.yml up --build
 
-Peas uses `http://peas:9000` inside compose and publishes `http://127.0.0.1:9000` for local host tests. The default namespace is `fitz`, with access key `admin` and secret `easy-peasy`. Real cloud providers use explicit `FITZ_STORAGE_MODE=cloud` plus `FITZ_STORAGE_PROVIDER=...` runtime env instead of this Peas compose file.
+Peas uses `http://peas:9000` inside compose and publishes `http://127.0.0.1:9000` for local host tests. The built-in access key is `admin` and the secret is `easy-peasy`. Bucket/container envs are optional in this local-emulator flow. Real cloud providers use explicit `FITZ_STORAGE_MODE=cloud` plus `FITZ_STORAGE_PROVIDER=...` runtime env instead of this Peas compose file.
 
 ### Minimal Compose Example
 
@@ -91,8 +102,8 @@ If you want a single local service, this is the smallest useful compose file:
 			fitz:
 				image: ghcr.io/cntryl/fitz:latest
 				ports:
-					- "4090:4090"
-					- "4091:4091"
+					- "127.0.0.1:4090:4090"
+					- "127.0.0.1:4091:4091"
 				environment:
 					FITZ_AUTH_REQUIRED: "false"
 					FITZ_STORAGE_MODE: "local"

@@ -114,6 +114,9 @@ pub struct JwksIssuerConfig {
     pub jwks_url: String,
 }
 
+const ENV_ALLOW_INSECURE_JWKS_HTTP: &str = "FITZ_JWT_ALLOW_INSECURE_HTTP";
+const ENV_JWT_HMAC_SECRET: &str = "FITZ_JWT_HMAC_SECRET";
+
 impl AuthConfig {
     pub fn disabled() -> Self {
         Self::Disabled
@@ -139,16 +142,15 @@ impl AuthConfig {
             return Self::Disabled;
         }
 
-        if let Ok(secret) = std::env::var("FITZ_JWT_HMAC_SECRET") {
-            return Self::hmac_with_audiences(secret, audiences_from_env());
-        }
+        let audiences = audiences_from_env();
 
         if let Ok(raw_map) = std::env::var("FITZ_JWT_JWKS_MAP") {
+            let allow_insecure_http = allow_insecure_jwks_http();
             let trimmed_map = raw_map.trim();
             if !trimmed_map.is_empty() {
-                match parse_jwks_issuers_from_env(trimmed_map) {
+                match parse_jwks_issuers_from_env(trimmed_map, allow_insecure_http) {
                     Ok(issuers) if !issuers.is_empty() => {
-                        return Self::jwks(audiences_from_env(), issuers);
+                        return Self::jwks(audiences.clone(), issuers);
                     }
                     Ok(_) => {}
                     Err(error) => {
@@ -156,6 +158,17 @@ impl AuthConfig {
                         return Self::Disabled;
                     }
                 }
+            }
+        }
+
+        if let Ok(secret) = std::env::var(ENV_JWT_HMAC_SECRET) {
+            let secret = secret.trim();
+            if !secret.is_empty() {
+                tracing::warn!(
+                    secret = %secret.len(),
+                    "Using FITZ_JWT_HMAC_SECRET for runtime auth. This is insecure and intended only for testing/prototyping."
+                );
+                return Self::hmac_with_audiences(secret.to_string(), audiences);
             }
         }
 
@@ -190,13 +203,14 @@ impl AuthConfig {
                 if config.issuers.is_empty() {
                     return Err("JWKS auth requires at least one configured issuer".to_string());
                 }
+                let allow_insecure_http = allow_insecure_jwks_http();
                 for issuer in &config.issuers {
                     if issuer.issuer.trim().is_empty() {
                         return Err(
                             "JWKS auth issuer allowlist entries must not be empty".to_string()
                         );
                     }
-                    validate_jwks_url(&issuer.jwks_url).map_err(|error| {
+                    validate_jwks_url(&issuer.jwks_url, allow_insecure_http).map_err(|error| {
                         format!("invalid JWKS URL for issuer {}: {}", issuer.issuer, error)
                     })?;
                 }
@@ -221,9 +235,12 @@ impl AuthConfig {
     }
 }
 
-fn validate_jwks_url(raw: &str) -> Result<(), String> {
+fn validate_jwks_url(raw: &str, allow_insecure_http: bool) -> Result<(), String> {
     let url = url::Url::parse(raw).map_err(|error| error.to_string())?;
-    if url.scheme() != "https" {
+    if !allow_insecure_http && url.scheme() != "https" {
+        return Err("must use https".to_string());
+    }
+    if allow_insecure_http && url.scheme() != "https" && url.scheme() != "http" {
         return Err("must use https".to_string());
     }
     if url.host_str().is_none() {
@@ -238,7 +255,10 @@ fn validate_jwks_url(raw: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_jwks_issuers_from_env(raw_map: &str) -> Result<Vec<JwksIssuerConfig>, String> {
+fn parse_jwks_issuers_from_env(
+    raw_map: &str,
+    allow_insecure_http: bool,
+) -> Result<Vec<JwksIssuerConfig>, String> {
     let mut issuers = Vec::new();
 
     for entry in raw_map.split(',') {
@@ -267,7 +287,7 @@ fn parse_jwks_issuers_from_env(raw_map: &str) -> Result<Vec<JwksIssuerConfig>, S
             ));
         }
 
-        validate_jwks_url(jwks_url)
+        validate_jwks_url(jwks_url, allow_insecure_http)
             .map_err(|error| format!("invalid JWKS URL for issuer {}: {}", issuer, error))?;
 
         issuers.push(JwksIssuerConfig {
@@ -295,6 +315,13 @@ fn now_epoch_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+fn allow_insecure_jwks_http() -> bool {
+    std::env::var(ENV_ALLOW_INSECURE_JWKS_HTTP)
+        .ok()
+        .and_then(|value| value.parse::<bool>().ok())
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone)]
@@ -418,7 +445,7 @@ pub async fn verified_jwt_using_jwks_with_claims_config(
 ///
 /// Rules:
 /// - Tokens with `iss` must verify against issuer-derived JWKS.
-/// - Tokens without `iss` must verify with `FITZ_JWT_HMAC_SECRET`.
+/// - Tokens without `iss` may be accepted only with explicit HMAC auth config.
 /// - There is no permissive no-verify fallback.
 pub async fn permissions_from_verified_jwt(
     compact: &str,
@@ -610,20 +637,80 @@ mod auth_tests {
 
     #[test]
     #[serial]
+    fn should_allow_http_jwks_url_when_insecure_http_env_is_enabled() {
+        // Arrange
+        let previous_allow_insecure = std::env::var("FITZ_JWT_ALLOW_INSECURE_HTTP").ok();
+        let previous_jwks_map = std::env::var("FITZ_JWT_JWKS_MAP").ok();
+
+        unsafe {
+            std::env::set_var("FITZ_JWT_ALLOW_INSECURE_HTTP", "true");
+            std::env::set_var(
+                "FITZ_JWT_JWKS_MAP",
+                "https://idp.example/http=http://idp.example/.well-known/jwks.json",
+            );
+        }
+
+        let config = AuthConfig::from_env(true);
+
+        unsafe {
+            match previous_allow_insecure {
+                Some(value) => std::env::set_var("FITZ_JWT_ALLOW_INSECURE_HTTP", value),
+                None => std::env::remove_var("FITZ_JWT_ALLOW_INSECURE_HTTP"),
+            }
+            match previous_jwks_map {
+                Some(value) => std::env::set_var("FITZ_JWT_JWKS_MAP", value),
+                None => std::env::remove_var("FITZ_JWT_JWKS_MAP"),
+            }
+        }
+
+        assert!(matches!(config, AuthConfig::Jwks(_)));
+        if let AuthConfig::Jwks(config) = config {
+            assert_eq!(config.issuers[0].jwks_url, "http://idp.example/.well-known/jwks.json");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn should_build_auth_config_from_fallback_hmac_secret() {
+        let previous_hmac_secret = std::env::var("FITZ_JWT_HMAC_SECRET").ok();
+        let previous_jwks_map = std::env::var("FITZ_JWT_JWKS_MAP").ok();
+
+        unsafe {
+            std::env::set_var("FITZ_JWT_HMAC_SECRET", "test-secret-key");
+            std::env::remove_var("FITZ_JWT_JWKS_MAP");
+        }
+
+        let config = AuthConfig::from_env(true);
+
+        unsafe {
+            match previous_hmac_secret {
+                Some(value) => std::env::set_var("FITZ_JWT_HMAC_SECRET", value),
+                None => std::env::remove_var("FITZ_JWT_HMAC_SECRET"),
+            }
+            match previous_jwks_map {
+                Some(value) => std::env::set_var("FITZ_JWT_JWKS_MAP", value),
+                None => std::env::remove_var("FITZ_JWT_JWKS_MAP"),
+            }
+        }
+
+        assert!(matches!(config, AuthConfig::Hmac(_)));
+        if let AuthConfig::Hmac(config) = config {
+            assert_eq!(config.secret, "test-secret-key");
+            assert_eq!(config.audiences, vec!["fitz", "fitz-broker"]);
+        }
+    }
+
+    #[test]
+    #[serial]
     fn should_reject_partially_invalid_jwks_map_from_environment() {
         // Arrange
         struct EnvGuard {
-            previous_hmac_secret: Option<String>,
             previous_jwks_map: Option<String>,
         }
 
         impl Drop for EnvGuard {
             fn drop(&mut self) {
                 unsafe {
-                    match self.previous_hmac_secret.take() {
-                        Some(value) => std::env::set_var("FITZ_JWT_HMAC_SECRET", value),
-                        None => std::env::remove_var("FITZ_JWT_HMAC_SECRET"),
-                    }
                     match self.previous_jwks_map.take() {
                         Some(value) => std::env::set_var("FITZ_JWT_JWKS_MAP", value),
                         None => std::env::remove_var("FITZ_JWT_JWKS_MAP"),
@@ -633,11 +720,9 @@ mod auth_tests {
         }
 
         let _guard = EnvGuard {
-            previous_hmac_secret: std::env::var("FITZ_JWT_HMAC_SECRET").ok(),
             previous_jwks_map: std::env::var("FITZ_JWT_JWKS_MAP").ok(),
         };
         unsafe {
-            std::env::remove_var("FITZ_JWT_HMAC_SECRET");
             std::env::set_var(
                 "FITZ_JWT_JWKS_MAP",
                 "https://idp.example/=https://idp.example/.well-known/jwks.json,bad-entry",
@@ -649,6 +734,33 @@ mod auth_tests {
 
         // Assert
         assert!(matches!(config, AuthConfig::Disabled));
+    }
+
+    #[test]
+    #[serial]
+    fn should_build_auth_config_from_valid_jwks_map_environment() {
+        let previous_jwks_map = std::env::var("FITZ_JWT_JWKS_MAP").ok();
+        unsafe {
+            std::env::set_var(
+                "FITZ_JWT_JWKS_MAP",
+                "https://idp.example/=https://idp.example/.well-known/jwks.json",
+            );
+        }
+
+        let config = AuthConfig::from_env(true);
+
+        unsafe {
+            match previous_jwks_map {
+                Some(value) => std::env::set_var("FITZ_JWT_JWKS_MAP", value),
+                None => std::env::remove_var("FITZ_JWT_JWKS_MAP"),
+            }
+        }
+
+        assert!(matches!(config, AuthConfig::Jwks(_)));
+        if let AuthConfig::Jwks(config) = config {
+            assert_eq!(config.issuers.len(), 1);
+            assert_eq!(config.issuers[0].issuer, "https://idp.example/");
+        }
     }
 
     #[tokio::test]

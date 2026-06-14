@@ -1,3 +1,11 @@
+#
+# Fitz Message Broker + Peas - local development only
+#
+# This file is a loopback-only example for local development with the Peas emulator.
+# It is not a production deployment manifest.
+# Cloud-backed local brokers may restart briefly while writer leases settle;
+# wait for /readyz instead of expecting immediate first-boot readiness.
+#
 name: fitz-cloud
 
 x-broker-common: &broker-common
@@ -12,9 +20,6 @@ x-broker-common: &broker-common
 x-broker-common-env: &broker-common-env
   FITZ_STORAGE_MODE: "cloud"
   FITZ_STORAGE_PROVIDER: "${FITZ_PEAS_PROVIDER:-peas-s3}"
-  FITZ_STORAGE_BUCKET: "${FITZ_STORAGE_BUCKET:-fitz}"
-  FITZ_STORAGE_CONTAINER: "${FITZ_STORAGE_CONTAINER:-fitz}"
-  FITZ_STORAGE_PREFIX: "${FITZ_STORAGE_PREFIX:-dev}"
   FITZ_STORAGE_ENDPOINT: "http://peas:9000"
   FITZ_STORAGE_CLOUD_DURABILITY: "${FITZ_STORAGE_CLOUD_DURABILITY:-background}"
   RUST_LOG: "info,fitz=trace"
@@ -25,8 +30,8 @@ services:
     hostname: peas
     image: ghcr.io/sqrzl/peas-emulator:latest
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     environment:
       BLOBS_PATH: /app/blobs
       ACCESS_KEY_ID: admin
@@ -40,19 +45,21 @@ services:
     depends_on:
       - peas
     ports:
-      - "${FITZ_AUTH_HOST_HTTP_PORT:-4090}:${FITZ_AUTH_HTTP_PORT:-4090}"
-      - "${FITZ_AUTH_HOST_TCP_PORT:-4091}:${FITZ_AUTH_TCP_PORT:-4091}"
+      - "127.0.0.1:${FITZ_AUTH_HOST_HTTP_PORT:-4090}:${FITZ_AUTH_HTTP_PORT:-4090}"
+      - "127.0.0.1:${FITZ_AUTH_HOST_TCP_PORT:-4091}:${FITZ_AUTH_TCP_PORT:-4091}"
     environment:
       <<: *broker-common-env
       FITZ_AUTH_REQUIRED: "true"
-      FITZ_ADMIN_AUTH_MODE: "protected"
+      FITZ_ADMIN_AUTH_MODE: "open"
       FITZ_HTTP_PORT: "${FITZ_AUTH_HTTP_PORT:-4090}"
       FITZ_TCP_PORT: "${FITZ_AUTH_TCP_PORT:-4091}"
-      FITZ_ADMIN_USERNAME: "admin"
-      FITZ_ADMIN_PASSWORD_HASH: "$$argon2id$$v=19$$m=19456,t=2,p=1$$Zml0ei1hZG1pbi1zYWx0$$xPKQoXK1gnKwsi41tvU+I136zdFwrtilblZpeSf3HeU"
-      FITZ_ADMIN_JWT_SECRET: "test-admin-jwt-secret"
-      FITZ_JWT_HMAC_SECRET: "test-secret-key"
+      FITZ_JWT_HMAC_SECRET: "${FITZ_JWT_HMAC_SECRET:-dev-test-secret}"
       FITZ_JWT_AUDIENCE: "fitz"
+      FITZ_ROUTE_FAMILY_MAP: "dev=1"
+      FITZ_WS_ALLOWED_ORIGINS: "http://localhost:${FITZ_AUTH_HOST_HTTP_PORT:-4090},http://127.0.0.1:${FITZ_AUTH_HOST_HTTP_PORT:-4090}"
+      FITZ_STORAGE_BUCKET: "${FITZ_AUTH_STORAGE_BUCKET:-fitz-auth}"
+      FITZ_STORAGE_CONTAINER: "${FITZ_AUTH_STORAGE_CONTAINER:-fitz-auth}"
+      FITZ_STORAGE_PREFIX: "${FITZ_AUTH_STORAGE_PREFIX:-dev-auth}"
       FITZ_STORAGE_CACHE_PATH: "/tmp/fitz-cloud-cache/auth"
 
   fitz-anon:
@@ -61,14 +68,17 @@ services:
     depends_on:
       - peas
     ports:
-      - "${FITZ_ANON_HOST_HTTP_PORT:-4190}:${FITZ_ANON_HTTP_PORT:-4090}"
-      - "${FITZ_ANON_HOST_TCP_PORT:-4191}:${FITZ_ANON_TCP_PORT:-4091}"
+      - "127.0.0.1:${FITZ_ANON_HOST_HTTP_PORT:-4190}:${FITZ_ANON_HTTP_PORT:-4090}"
+      - "127.0.0.1:${FITZ_ANON_HOST_TCP_PORT:-4191}:${FITZ_ANON_TCP_PORT:-4091}"
     environment:
       <<: *broker-common-env
       FITZ_AUTH_REQUIRED: "false"
       FITZ_ADMIN_AUTH_MODE: "open"
       FITZ_HTTP_PORT: "${FITZ_ANON_HTTP_PORT:-4090}"
       FITZ_TCP_PORT: "${FITZ_ANON_TCP_PORT:-4091}"
+      FITZ_STORAGE_BUCKET: "${FITZ_ANON_STORAGE_BUCKET:-fitz-anon}"
+      FITZ_STORAGE_CONTAINER: "${FITZ_ANON_STORAGE_CONTAINER:-fitz-anon}"
+      FITZ_STORAGE_PREFIX: "${FITZ_ANON_STORAGE_PREFIX:-dev-anon}"
       FITZ_STORAGE_CACHE_PATH: "/tmp/fitz-cloud-cache/anon"
 
 volumes:

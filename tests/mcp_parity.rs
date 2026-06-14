@@ -27,7 +27,6 @@ fn password_hash_for(password: &str) -> String {
 fn configure_admin_auth() {
     std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
     std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
-    std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
     std::env::set_var("FITZ_ADMIN_SESSION_TTL_SECS", "3600");
 }
 

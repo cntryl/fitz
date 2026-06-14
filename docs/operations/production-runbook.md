@@ -4,7 +4,7 @@ This runbook describes standard operating procedures for Fitz in production.
 
 ## Startup Procedure
 
-1. Verify config and secrets are present.
+1. Verify config and secrets are present. Use [production-auth.md](production-auth.md) for the auth/browser perimeter baseline and [cloud-setup.md](cloud-setup.md) for storage configuration.
 2. Start Fitz and wait for `/startupz` then `/readyz` success.
 3. Confirm metrics ingestion from `/metrics`.
 4. Validate one authenticated client round trip on `/ws`.

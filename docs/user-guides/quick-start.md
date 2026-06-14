@@ -5,6 +5,13 @@ This guide provides the fastest path to a successful first Fitz request.
 ## 1. Start Fitz
 
 Use the repository compose or local runtime command and confirm readiness via `/readyz`.
+The repo compose files are local-only examples and publish ports on loopback
+only. In those defaults:
+
+- `fitz-anon` on `4190` accepts anonymous CONNECT.
+- `fitz-auth` on `4090` uses a shared HS256 dev secret by default.
+- Layering `compose.jwks.yml` onto a compose file switches `fitz-auth` to a
+  local mock JWKS issuer flow.
 
 ## 2. Connect a Client
 
@@ -21,6 +28,58 @@ JWT must be signed and must include:
 - the configured identity claim — `tid` by default, or an override via `FITZ_AUTH_ORG_CLAIM` before `FITZ_ROUTE_FAMILY_CLAIM`
 - one supported permission source — configured custom permissions claim, top-level `permissions`, configured `FITZ_AUTH_PERMISSIONS_CLAIM` array, configured role claim array, `scp`, or `scope`
 - `iss` when using JWKS mode; it must match a configured issuer
+
+For the repo compose defaults, `fitz-auth` verifies HS256 tokens with the local
+dev secret `dev-test-secret`. When you add `compose.jwks.yml`, use the secret
+`fitz-jwks-dev-secret`, include `iss=https://fitz.mock/`, and set the JWT
+header `kid` to `dev-hs256`.
+
+You can mint a local token without extra dependencies:
+
+```sh
+python3 - <<'PY'
+import base64
+import hashlib
+import hmac
+import json
+import time
+
+secret = b"dev-test-secret"
+issuer = None
+kid = None
+
+def b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+header = {"alg": "HS256", "typ": "JWT"}
+if kid:
+    header["kid"] = kid
+
+payload = {
+    "sub": "local-dev",
+    "aud": "fitz",
+    "exp": int(time.time()) + 3600,
+    "tid": "dev",
+    "permissions": ["notice://dev/**#read"],
+}
+if issuer:
+    payload["iss"] = issuer
+
+parts = [
+    b64url(json.dumps(header, separators=(",", ":"), sort_keys=True).encode()),
+    b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()),
+]
+signing_input = ".".join(parts).encode()
+signature = hmac.new(secret, signing_input, hashlib.sha256).digest()
+print(".".join(parts + [b64url(signature)]))
+PY
+```
+
+For `compose.jwks.yml`, change the snippet values to:
+
+- `secret = b"fitz-jwks-dev-secret"`
+- `issuer = "https://fitz.mock/"`
+- `kid = "dev-hs256"`
 
 Configure `FITZ_ROUTE_FAMILY_MAP`, such as `FITZ_ROUTE_FAMILY_MAP=xyz=2`,
 to translate the verified identity claim value to a provisioned route family.

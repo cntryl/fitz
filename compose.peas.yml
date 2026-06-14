@@ -1,3 +1,9 @@
+#
+# Peas storage emulator - local development only
+#
+# This file is a loopback-only example for local development.
+# It is not a production deployment manifest.
+#
 name: peas
 services:
   peas:
@@ -5,8 +11,8 @@ services:
     hostname: peas
     image: ghcr.io/sqrzl/peas-emulator:latest
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     environment:
       BLOBS_PATH: /app/blobs
       ACCESS_KEY_ID: admin

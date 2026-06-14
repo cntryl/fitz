@@ -10,6 +10,7 @@ use hyper::StatusCode;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use uuid::Uuid;
 
 const ADMIN_SESSION_COOKIE: &str = "fitz_admin_session";
 const DEFAULT_SESSION_TTL_SECS: i64 = 28_800;
@@ -69,12 +70,13 @@ impl AdminAuth {
             Ok(value) if value.eq_ignore_ascii_case("open") => AdminAuthMode::Open,
             _ => AdminAuthMode::Protected,
         };
-        let username = std::env::var("FITZ_ADMIN_USERNAME").ok();
-        let password_hash = std::env::var("FITZ_ADMIN_PASSWORD_HASH").ok();
-        let jwt_secret = std::env::var("FITZ_ADMIN_JWT_SECRET").ok();
+        let username = env_non_empty("FITZ_ADMIN_USERNAME");
+        let password_hash = env_non_empty("FITZ_ADMIN_PASSWORD_HASH");
 
-        let settings = match (username, password_hash, jwt_secret) {
-            (Some(username), Some(password_hash), Some(jwt_secret)) => {
+        let settings = match (username, password_hash) {
+            (Some(username), Some(password_hash)) => {
+                let jwt_secret = env_non_empty("FITZ_ADMIN_JWT_SECRET")
+                    .unwrap_or_else(|| Uuid::new_v4().to_string());
                 let session_ttl_secs = std::env::var("FITZ_ADMIN_SESSION_TTL_SECS")
                     .ok()
                     .and_then(|value| value.parse::<i64>().ok())
@@ -267,7 +269,6 @@ pub fn protected_admin_configured_from_env() -> bool {
 
     env_non_empty("FITZ_ADMIN_USERNAME").is_some()
         && env_non_empty("FITZ_ADMIN_PASSWORD_HASH").is_some()
-        && env_non_empty("FITZ_ADMIN_JWT_SECRET").is_some()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -459,7 +460,6 @@ mod tests {
             "FITZ_ADMIN_AUTH_MODE",
             "FITZ_ADMIN_USERNAME",
             "FITZ_ADMIN_PASSWORD_HASH",
-            "FITZ_ADMIN_JWT_SECRET",
             "FITZ_ADMIN_OPEN_USERNAME",
             "FITZ_ADMIN_COOKIE_SECURE",
             "FITZ_ADMIN_PUBLIC_ORIGIN",
@@ -475,7 +475,6 @@ mod tests {
         reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
-        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
 
         // Act
         let auth = AdminAuth::from_env();
@@ -487,12 +486,56 @@ mod tests {
 
     #[test]
     #[serial]
+    fn should_configure_protected_admin_without_jwt_secret() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+        std::env::remove_var("FITZ_ADMIN_JWT_SECRET");
+
+        // Act
+        let auth = AdminAuth::from_env();
+
+        // Assert
+        assert!(auth.is_configured());
+        assert!(protected_admin_configured_from_env());
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_cookie_signed_by_different_admin_auth_instance() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+        std::env::remove_var("FITZ_ADMIN_JWT_SECRET");
+
+        let issuing_auth = AdminAuth::from_env();
+        let principal = issuing_auth
+            .authenticate_credentials("admin", "pwd123")
+            .expect("admin principal");
+        let cookie = issuing_auth.issue_session_cookie(&principal).unwrap();
+        let cookie_value = cookie.split(';').next().unwrap().to_string();
+        let req = hyper::http::Request::builder()
+            .header(COOKIE, cookie_value)
+            .body(Body::default())
+            .unwrap();
+
+        // Act
+        let validating_auth = AdminAuth::from_env();
+        let extracted = validating_auth.principal_from_request(&req);
+
+        // Assert
+        assert!(matches!(extracted, Err(AuthFailure::InvalidSession)));
+    }
+
+    #[test]
+    #[serial]
     fn should_extract_principal_from_cookie() {
         // Arrange
         reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
-        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
 
         let auth = AdminAuth::from_env();
         let principal = auth.authenticate_credentials("admin", "pwd123").unwrap();
@@ -541,7 +584,6 @@ mod tests {
         reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
-        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
         let auth = AdminAuth::from_env();
         let principal = auth.authenticate_credentials("admin", "pwd123").unwrap();
 
@@ -560,7 +602,6 @@ mod tests {
         reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
-        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
         std::env::set_var("FITZ_ADMIN_COOKIE_SECURE", "false");
         let auth = AdminAuth::from_env();
         let principal = auth.authenticate_credentials("admin", "pwd123").unwrap();
@@ -580,7 +621,6 @@ mod tests {
         reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
-        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
         let auth = AdminAuth::from_env();
 
         // Act
@@ -601,7 +641,6 @@ mod tests {
         reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
-        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
         std::env::set_var("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com");
         let auth = AdminAuth::from_env();
         let same_origin = hyper::http::Request::builder()
@@ -629,7 +668,6 @@ mod tests {
         reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
-        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
         std::env::set_var("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com");
         let auth = AdminAuth::from_env();
         let same_origin = hyper::http::Request::builder()
@@ -651,7 +689,6 @@ mod tests {
         reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
-        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
         std::env::set_var("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com");
         let auth = AdminAuth::from_env();
         let req = hyper::http::Request::builder()
@@ -674,7 +711,6 @@ mod tests {
         reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
-        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
         std::env::set_var("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com");
         let auth = AdminAuth::from_env();
         let req = hyper::http::Request::builder()
@@ -697,7 +733,6 @@ mod tests {
         reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
-        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
         std::env::set_var("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com");
         let auth = AdminAuth::from_env();
         let req = hyper::http::Request::builder()
@@ -720,7 +755,6 @@ mod tests {
         reset_admin_env();
         std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
         std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
-        std::env::set_var("FITZ_ADMIN_JWT_SECRET", "jwt-secret");
         std::env::set_var("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com");
         let auth = AdminAuth::from_env();
         let req = hyper::http::Request::builder()

@@ -21,10 +21,11 @@ This page is the central reference for environment variables supported by Fitz r
 
 | Key | Allowed Values / Format | Default | Description |
 | --- | --- | --- | --- |
-| FITZ_JWT_HMAC_SECRET | Non-empty string | Unset | Enables HMAC JWT verification mode when set. |
-| FITZ_JWT_JWKS_MAP | Comma-separated issuer=jwks_url pairs | Unset | Enables JWKS verification mode when HMAC secret is unset. JWKS URLs must be absolute HTTPS URLs without credentials or fragments. |
-| FITZ_JWT_AUDIENCES | Comma-separated audience strings | fitz,fitz-broker | Audience allowlist used by HMAC and JWKS modes. |
+| FITZ_JWT_JWKS_MAP | Comma-separated issuer=jwks_url pairs | Unset | Preferred runtime token verification mode when `FITZ_AUTH_REQUIRED=true`. JWKS URLs must be absolute URLs without credentials or fragments. By default, only `https` is accepted. |
+| FITZ_JWT_HMAC_SECRET | Secret string | Unset | Testing/prototyping-only. Enables legacy HS256 tokens when JWKS is not configured. **Do not use in production**. |
+| FITZ_JWT_AUDIENCES | Comma-separated audience strings | fitz,fitz-broker | Audience allowlist used by runtime JWKS verification. |
 | FITZ_JWT_AUDIENCE | Single audience string | Alias fallback | Legacy/single-value fallback if FITZ_JWT_AUDIENCES is unset. |
+| FITZ_JWT_ALLOW_INSECURE_HTTP | true or false | false | Allows `http://` JWKS URLs for local mock environments when set to `true`. Never enable this outside local development. |
 
 ## Claim Normalization
 
@@ -52,24 +53,45 @@ Identity claim lookup precedence is fixed:
 | Key | Allowed Values / Format | Default | Description |
 | --- | --- | --- | --- |
 | FITZ_ADMIN_AUTH_MODE | protected or open | protected | Admin auth mode. Open mode bypasses session login. |
-| FITZ_ADMIN_USERNAME | Non-empty string | Unset | Required with password hash and JWT secret for protected admin login. |
-| FITZ_ADMIN_PASSWORD_HASH | Argon2 password hash | Unset | Required with username and JWT secret for protected admin login. |
-| FITZ_ADMIN_JWT_SECRET | Non-empty string | Unset | Required with username and password hash to issue admin session cookies. |
+| FITZ_ADMIN_USERNAME | Non-empty string | Unset | Required with password hash for protected admin login. |
+| FITZ_ADMIN_PASSWORD_HASH | Argon2 password hash | Unset | Required with username for protected admin login. |
 | FITZ_ADMIN_SESSION_TTL_SECS | Positive integer seconds | 28800 | Admin session cookie lifetime. |
 | FITZ_ADMIN_COOKIE_SECURE | true or false | true | Sets Secure cookie attribute for admin session cookie. Set false only for loopback/local non-TLS development. |
 | FITZ_ADMIN_PUBLIC_ORIGIN | Exact URL origin, e.g. https://admin.example.com | Request host on local binds | Expected same-origin value for protected unsafe admin requests. Required for protected admin on non-loopback binds. Must not include a path, query, fragment, or trailing slash. |
 | FITZ_ADMIN_OPEN_USERNAME | String | admin | Username exposed by open mode for admin principal identity. |
 
-## Production Browser Baseline
+`FITZ_ADMIN_JWT_SECRET` is no longer required; Fitz generates a process-ephemeral signing key for admin session cookies when protected mode is configured. Admin session cookies therefore do not survive broker restarts.
 
-For browser clients behind a TLS-terminating load balancer:
+## Local Development Baseline
+
+The repo compose files are local-development examples only:
+
+- `compose.yml`, `compose.cloud.yml`, and `compose.peas.yml` publish only to loopback and are not production deployment manifests.
+- `compose.yml` and `compose.cloud.yml` keep `fitz-auth` on `FITZ_JWT_HMAC_SECRET` by default so `docker compose up` stays the shortest successful path.
+- Those same compose files keep `FITZ_ADMIN_AUTH_MODE=open` because the admin surface is loopback-only and meant for local inspection.
+- The built-in loopback defaults for `FITZ_WS_ALLOWED_ORIGINS` are only for local development.
+
+To exercise issuer/JWKS plumbing locally instead of the default HMAC flow:
+
+- Start `docker compose -f compose.yml -f compose.jwks.yml up --build`, or layer the same overlay onto `compose.cloud.yml`.
+- `compose.jwks.yml` starts a local `fitz-jwks` service and sets:
+  - `FITZ_JWT_ALLOW_INSECURE_HTTP=true`
+  - `FITZ_JWT_JWKS_MAP="https://fitz.mock/=http://fitz-jwks:8080/.well-known/jwks.json"`
+- Tokens in that mode must use `iss=https://fitz.mock/` and the mock JWKS key material documented in [quick-start.md](quick-start.md).
+
+## Production Baseline
+
+For authenticated browser or API deployments outside local development:
 
 - Set `FITZ_AUTH_REQUIRED=true`.
-- Set `FITZ_ASSUME_EXTERNAL_TLS=true` to emit TLS-dependent browser headers such as HSTS.
-- Set `FITZ_WS_ALLOWED_ORIGINS` to the exact SPA origins allowed to open runtime WebSockets, without trailing slashes. The built-in loopback defaults are only for local development.
+- Configure runtime JWT verification with `FITZ_JWT_JWKS_MAP`. Do not rely on `FITZ_JWT_HMAC_SECRET` in production.
+- Set `FITZ_ASSUME_EXTERNAL_TLS=true` when TLS terminates outside Fitz.
+- Set `FITZ_WS_ALLOWED_ORIGINS` to the exact public SPA origins allowed to open browser WebSockets.
 - Set `FITZ_ADMIN_AUTH_MODE=protected`, `FITZ_ADMIN_PUBLIC_ORIGIN=https://admin.example.com`, and keep `FITZ_ADMIN_COOKIE_SECURE=true`.
-- Keep the Fitz backend port reachable only from the load balancer.
-- Use short-lived runtime JWTs with narrow route permissions and reconnect with a fresh token when they expire.
+- Expect protected-admin session cookies to expire on broker restart because the signing key is generated in memory per process.
+- Keep Fitz reachable only from your TLS terminator or other trusted network boundary.
+
+For the complete production auth and browser-perimeter checklist, see [../operations/production-auth.md](../operations/production-auth.md).
 
 ## Storage and Durability
 

@@ -154,7 +154,8 @@ pub fn get_decoding_key_from_cache(jwks_url: &str, kid: &str) -> Option<jsonwebt
 
 /// Async fetch JWKS from a well-known jwks URL and cache the result.
 pub async fn fetch_and_cache_jwks(jwks_url: &str) -> Result<(), String> {
-    super::validate_jwks_url(jwks_url).map_err(|error| format!("invalid JWKS URL: {}", error))?;
+    super::validate_jwks_url(jwks_url, super::allow_insecure_jwks_http())
+        .map_err(|error| format!("invalid JWKS URL: {}", error))?;
 
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())

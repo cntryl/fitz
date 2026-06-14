@@ -1723,7 +1723,14 @@ mod tests {
     use crate::session::{SessionInfo, SessionMetadata, SessionPermissions, TransportKind};
     use bytes::Bytes;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, Once};
+
+    const TEST_AUTH_ISSUER: &str = "https://idp.example";
+    const TEST_AUTH_AUDIENCE: &str = "fitz-broker";
+    const TEST_AUTH_SECRET: &str = "test-secret-key";
+    const TEST_AUTH_JWKS_URL: &str = "https://idp.example/.well-known/jwks.json";
+
+    static TEST_AUTH_JWKS_CACHE: Once = Once::new();
 
     #[derive(Default)]
     struct CleanupTrackingSink {
@@ -1833,14 +1840,63 @@ mod tests {
         code
     }
 
-    fn signed_hmac_jwt(payload: serde_json::Value) -> String {
+    fn runtime_auth_config() -> crate::auth::AuthConfig {
+        crate::auth::AuthConfig::jwks(
+            vec![TEST_AUTH_AUDIENCE.to_string()],
+            vec![crate::auth::JwksIssuerConfig {
+                issuer: TEST_AUTH_ISSUER.to_string(),
+                jwks_url: TEST_AUTH_JWKS_URL.to_string(),
+            }],
+        )
+    }
+
+    fn runtime_ingress_with_jwks_auth() -> RuntimeIngress {
+        RuntimeIngress::new(true).with_auth_config(runtime_auth_config())
+    }
+
+    fn seed_runtime_jwks_cache() {
+        TEST_AUTH_JWKS_CACHE.call_once(|| {
+            use base64::Engine;
+
+            let key = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(TEST_AUTH_SECRET);
+            let jwks = serde_json::json!({
+                "keys": [
+                    {
+                        "kty": "oct",
+                        "kid": "",
+                        "k": key,
+                    }
+                ]
+            })
+            .to_string();
+
+            crate::auth::cache_jwks_from_json(TEST_AUTH_JWKS_URL, &jwks).unwrap();
+        });
+    }
+
+    fn signed_jwks_jwt(mut payload: serde_json::Value) -> String {
         use jsonwebtoken::{Algorithm, EncodingKey, Header};
 
-        std::env::set_var("FITZ_JWT_HMAC_SECRET", "test-secret-key");
+        seed_runtime_jwks_cache();
+        if let Some(map) = payload.as_object_mut() {
+            match map.get("iss") {
+                Some(serde_json::Value::String(value)) if !value.is_empty() => {}
+                _ => {
+                    map.insert(
+                        "iss".to_string(),
+                        serde_json::Value::String(TEST_AUTH_ISSUER.to_string()),
+                    );
+                }
+            }
+
+            map.entry("aud".to_string())
+                .or_insert_with(|| serde_json::Value::String(TEST_AUTH_AUDIENCE.to_string()));
+        }
+
         jsonwebtoken::encode(
             &Header::new(Algorithm::HS256),
             &payload,
-            &EncodingKey::from_secret(b"test-secret-key"),
+            &EncodingKey::from_secret(TEST_AUTH_SECRET.as_bytes()),
         )
         .unwrap()
     }
@@ -1947,14 +2003,14 @@ mod tests {
         router: Arc<crate::runtime::Router>,
         admin_read_model: Arc<AdminReadModel>,
     ) -> RuntimeIngress {
-        RuntimeIngress::new(true)
+        runtime_ingress_with_jwks_auth()
             .with_router(router)
             .with_admin_read_model(admin_read_model)
     }
 
     #[tokio::test]
     async fn should_open_session() {
-        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
+        let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(1, TransportKind::WebSocket);
 
         let result = ingress.on_open(session).await;
@@ -1967,7 +2023,7 @@ mod tests {
     #[test]
     fn should_process_frame() {
         // Arrange
-        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
+        let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(2, TransportKind::WebSocket);
 
         // Act
@@ -1984,7 +2040,7 @@ mod tests {
                 "tid": "acme-prod",
                 "permissions": ["notice://prod/orders/**#read"]
             });
-            let jwt = signed_hmac_jwt(payload);
+            let jwt = signed_jwks_jwt(payload);
 
             let decision = ingress
                 .on_frame(
@@ -2002,7 +2058,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_reject_unknown_session() {
-        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
+        let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("acme-prod", 1)]);
 
         let decision = ingress
             .on_frame(
@@ -2021,7 +2077,7 @@ mod tests {
         // Arrange
         let event_count = Arc::new(AtomicUsize::new(0));
         let count_clone = event_count.clone();
-        let ingress = RuntimeIngress::new(true)
+        let ingress = runtime_ingress_with_jwks_auth()
             .with_route_family_map(&[("acme-prod", 1)])
             .with_event_handler(move |_event| {
                 count_clone.fetch_add(1, Ordering::SeqCst);
@@ -2041,7 +2097,7 @@ mod tests {
                 "tid": "acme-prod",
                 "permissions": ["notice://prod/orders/**#read"]
             });
-            let jwt = signed_hmac_jwt(payload);
+            let jwt = signed_jwks_jwt(payload);
 
             ingress
                 .on_frame(
@@ -2897,7 +2953,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_reject_non_connect_before_auth() {
-        let ingress = RuntimeIngress::new(true);
+        let ingress = runtime_ingress_with_jwks_auth();
         let session = make_session_info(4, TransportKind::WebSocket);
         ingress.on_open(session).await.unwrap();
 
@@ -2915,7 +2971,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_reject_control_non_connect_before_auth() {
-        let ingress = RuntimeIngress::new(true);
+        let ingress = runtime_ingress_with_jwks_auth();
         let session = make_session_info(5, TransportKind::WebSocket);
         ingress.on_open(session).await.unwrap();
 
@@ -2935,7 +2991,7 @@ mod tests {
     #[test]
     fn should_retrieve_session_info() {
         // Arrange
-        let ingress = RuntimeIngress::new(true);
+        let ingress = runtime_ingress_with_jwks_auth();
         let session = make_session_info(42, TransportKind::Tcp);
 
         // Act
@@ -2953,7 +3009,7 @@ mod tests {
     #[test]
     fn should_set_permissions_on_connect_with_valid_token() {
         // Arrange
-        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
+        let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(50, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -2964,7 +3020,7 @@ mod tests {
             "tid": "acme-prod",
             "permissions": ["notice://prod/orders/**#read"]
         });
-        let jwt = signed_hmac_jwt(payload);
+        let jwt = signed_jwks_jwt(payload);
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -2994,7 +3050,7 @@ mod tests {
     #[test]
     fn should_set_permissions_on_connect_for_auth0_shape() {
         // Arrange
-        let ingress = RuntimeIngress::new(true)
+        let ingress = runtime_ingress_with_jwks_auth()
             .with_auth_claims_config(crate::auth::AuthClaimsConfig::new(
                 "org_id",
                 None,
@@ -3006,7 +3062,7 @@ mod tests {
             ))
             .with_route_families(&[1, 2]);
         let session = make_session_info(57, TransportKind::Tcp);
-        let jwt = signed_hmac_jwt(serde_json::json!({
+        let jwt = signed_jwks_jwt(serde_json::json!({
             "iss": "",
             "aud": "fitz-broker",
             "sub": "auth0|user-1",
@@ -3044,11 +3100,11 @@ mod tests {
     #[test]
     fn should_set_permissions_on_connect_for_entra_delegated_shape() {
         // Arrange
-        let ingress = RuntimeIngress::new(true)
+        let ingress = runtime_ingress_with_jwks_auth()
             .with_route_family_map(&[("entra-tenant-1", 2)])
             .with_route_families(&[1, 2]);
         let session = make_session_info(58, TransportKind::Tcp);
-        let jwt = signed_hmac_jwt(serde_json::json!({
+        let jwt = signed_jwks_jwt(serde_json::json!({
             "iss": "",
             "aud": "fitz-broker",
             "sub": "entra-user-1",
@@ -3086,11 +3142,11 @@ mod tests {
     #[test]
     fn should_set_permissions_on_connect_for_entra_app_only_shape() {
         // Arrange
-        let ingress = RuntimeIngress::new(true)
+        let ingress = runtime_ingress_with_jwks_auth()
             .with_route_family_map(&[("entra-tenant-2", 2)])
             .with_route_families(&[1, 2]);
         let session = make_session_info(59, TransportKind::Tcp);
-        let jwt = signed_hmac_jwt(serde_json::json!({
+        let jwt = signed_jwks_jwt(serde_json::json!({
             "iss": "",
             "aud": "fitz-broker",
             "sub": "service-principal-1",
@@ -3128,7 +3184,7 @@ mod tests {
     #[test]
     fn should_set_permissions_on_connect_for_cognito_shape() {
         // Arrange
-        let ingress = RuntimeIngress::new(true)
+        let ingress = runtime_ingress_with_jwks_auth()
             .with_auth_claims_config(crate::auth::AuthClaimsConfig::new(
                 "custom:tenant_id",
                 None,
@@ -3140,7 +3196,7 @@ mod tests {
             ))
             .with_route_families(&[1, 2]);
         let session = make_session_info(64, TransportKind::Tcp);
-        let jwt = signed_hmac_jwt(serde_json::json!({
+        let jwt = signed_jwks_jwt(serde_json::json!({
             "iss": "",
             "aud": "fitz-broker",
             "sub": "cognito-user-1",
@@ -3178,7 +3234,7 @@ mod tests {
     #[test]
     fn should_set_permissions_on_connect_for_okta_shape() {
         // Arrange
-        let ingress = RuntimeIngress::new(true)
+        let ingress = runtime_ingress_with_jwks_auth()
             .with_auth_claims_config(crate::auth::AuthClaimsConfig::new(
                 "https://fitz.example.com/identity",
                 Some("https://fitz.example.com/claims".to_string()),
@@ -3190,7 +3246,7 @@ mod tests {
             ))
             .with_route_families(&[1, 2]);
         let session = make_session_info(65, TransportKind::Tcp);
-        let jwt = signed_hmac_jwt(serde_json::json!({
+        let jwt = signed_jwks_jwt(serde_json::json!({
             "iss": "",
             "aud": "fitz-broker",
             "sub": "okta-user-1",
@@ -3230,13 +3286,13 @@ mod tests {
     #[test]
     fn should_assign_route_families_from_verified_claims() {
         // Arrange
-        let ingress = RuntimeIngress::new(true)
+        let ingress = runtime_ingress_with_jwks_auth()
             .with_route_families(&[1, 2])
             .with_route_family_map(&[("tenant-a", 2), ("tenant-b", 1)]);
         let session_a = make_session_info(52, TransportKind::Tcp);
         let session_b = make_session_info(53, TransportKind::Tcp);
 
-        let jwt_a = signed_hmac_jwt(serde_json::json!({
+        let jwt_a = signed_jwks_jwt(serde_json::json!({
             "iss": "",
             "aud": "fitz-broker",
             "sub": "user:a",
@@ -3244,7 +3300,7 @@ mod tests {
             "tid": "tenant-a",
             "permissions": ["notice://tenant-a/**#read"]
         }));
-        let jwt_b = signed_hmac_jwt(serde_json::json!({
+        let jwt_b = signed_jwks_jwt(serde_json::json!({
             "iss": "",
             "aud": "fitz-broker",
             "sub": "user:b",
@@ -3294,11 +3350,11 @@ mod tests {
     #[test]
     fn should_reject_connect_with_unprovisioned_resolved_route_family() {
         // Arrange
-        let ingress = RuntimeIngress::new(true)
+        let ingress = runtime_ingress_with_jwks_auth()
             .with_route_families(&[1])
             .with_route_family_map(&[("acme-prod", 2)]);
         let session = make_session_info(55, TransportKind::Tcp);
-        let jwt = signed_hmac_jwt(serde_json::json!({
+        let jwt = signed_jwks_jwt(serde_json::json!({
             "iss": "",
             "aud": "fitz-broker",
             "sub": "user:55",
@@ -3328,9 +3384,9 @@ mod tests {
     #[test]
     fn should_reject_connect_with_unmapped_identity_claim() {
         // Arrange
-        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("mapped", 1)]);
+        let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("mapped", 1)]);
         let session = make_session_info(56, TransportKind::Tcp);
-        let jwt = signed_hmac_jwt(serde_json::json!({
+        let jwt = signed_jwks_jwt(serde_json::json!({
             "iss": "",
             "aud": "fitz-broker",
             "sub": "user:56",
@@ -3361,7 +3417,7 @@ mod tests {
     fn should_preserve_resolved_route_families_when_sessions_reconnect_in_reverse_order() {
         // Arrange
         let jwt_for = |subject: &str| {
-            signed_hmac_jwt(serde_json::json!({
+            signed_jwks_jwt(serde_json::json!({
                 "iss": "",
                 "aud": "fitz-broker",
                 "sub": subject,
@@ -3371,10 +3427,10 @@ mod tests {
             }))
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let first = RuntimeIngress::new(true)
+        let first = runtime_ingress_with_jwks_auth()
             .with_route_families(&[1, 2])
             .with_route_family_map(&[("tenant-a", 1), ("tenant-b", 2)]);
-        let second = RuntimeIngress::new(true)
+        let second = runtime_ingress_with_jwks_auth()
             .with_route_families(&[1, 2])
             .with_route_family_map(&[("tenant-a", 1), ("tenant-b", 2)]);
 
@@ -3453,7 +3509,7 @@ mod tests {
     #[test]
     fn should_reject_connect_with_malformed_permissions() {
         // Arrange
-        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
+        let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(51, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -3464,7 +3520,7 @@ mod tests {
             "tid": "acme-prod",
             "permissions": ["badperm#oops"]
         });
-        let jwt = signed_hmac_jwt(payload);
+        let jwt = signed_jwks_jwt(payload);
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -3487,9 +3543,9 @@ mod tests {
     #[test]
     fn should_reject_connect_when_issuer_cannot_derive_jwks() {
         // Arrange
-        let ingress = RuntimeIngress::new(true);
+        let ingress = runtime_ingress_with_jwks_auth();
         let session = make_session_info(54, TransportKind::Tcp);
-        let jwt = signed_hmac_jwt(serde_json::json!({
+        let jwt = signed_jwks_jwt(serde_json::json!({
             "iss": "not-a-valid-issuer",
             "aud": "fitz-broker",
             "sub": "user:54",
@@ -3521,24 +3577,23 @@ mod tests {
         // Arrange
         use base64::Engine;
         use jsonwebtoken::{EncodingKey, Header};
+        let issuer = "https://idp.example/jwks-valid";
+        let jwks_url = "https://idp.example/jwks-valid/.well-known/jwks.json";
 
-        let ingress = RuntimeIngress::new(true)
+        let ingress = runtime_ingress_with_jwks_auth()
             .with_auth_config(crate::auth::AuthConfig::jwks(
                 vec!["fitz-broker".to_string()],
                 vec![crate::auth::JwksIssuerConfig {
-                    issuer: "https://idp.example".to_string(),
-                    jwks_url: "https://idp.example/.well-known/jwks.json".to_string(),
+                    issuer: issuer.to_string(),
+                    jwks_url: jwks_url.to_string(),
                 }],
             ))
             .with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(80, TransportKind::Tcp);
 
         // Build a signed HS256 token and cache a matching oct key under the issuer's derived JWKS URL
-        let iss = "https://idp.example";
-        let jwks_url = crate::auth::derive_jwks_url_from_issuer(iss).unwrap();
-
         let payload = serde_json::json!({
-            "iss": iss,
+            "iss": issuer,
             "aud": "fitz-broker",
             "sub": "user:80",
             "exp": 9999999999u64,
@@ -3559,7 +3614,7 @@ mod tests {
         let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&secret);
         let jwks =
             serde_json::json!({ "keys": [ { "kty": "oct", "kid": "", "k": k_b64 } ] }).to_string();
-        crate::auth::cache_jwks_from_json(&jwks_url, &jwks).unwrap();
+        crate::auth::cache_jwks_from_json(jwks_url, &jwks).unwrap();
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -3604,7 +3659,7 @@ mod tests {
             release_response_rx.await.unwrap();
         });
         let ingress = Arc::new(
-            RuntimeIngress::new(true)
+            runtime_ingress_with_jwks_auth()
                 .with_auth_config(crate::auth::AuthConfig::jwks(
                     vec!["fitz-broker".to_string()],
                     vec![crate::auth::JwksIssuerConfig {
@@ -3688,22 +3743,21 @@ mod tests {
         // Arrange
         use base64::Engine;
         use jsonwebtoken::{EncodingKey, Header};
+        let issuer = "https://idp.example/jwks-invalid";
+        let jwks_url = "https://idp.example/jwks-invalid/.well-known/jwks.json";
 
-        let ingress = RuntimeIngress::new(true).with_auth_config(crate::auth::AuthConfig::jwks(
+        let ingress = runtime_ingress_with_jwks_auth().with_auth_config(crate::auth::AuthConfig::jwks(
             vec!["fitz-broker".to_string()],
             vec![crate::auth::JwksIssuerConfig {
-                issuer: "https://idp.example".to_string(),
-                jwks_url: "https://idp.example/.well-known/jwks.json".to_string(),
+                issuer: issuer.to_string(),
+                jwks_url: jwks_url.to_string(),
             }],
         ));
         let session = make_session_info(81, TransportKind::Tcp);
 
-        let iss = "https://idp.example";
-        let jwks_url = crate::auth::derive_jwks_url_from_issuer(iss).unwrap();
-
         // Create a token signed with a secret NOT in the JWKS cache
         let payload = serde_json::json!({
-            "iss": iss,
+            "iss": issuer,
             "aud": "fitz-broker",
             "sub": "user:81",
             "exp": 9999999999u64,
@@ -3721,7 +3775,7 @@ mod tests {
         let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"supersecretkey");
         let jwks =
             serde_json::json!({ "keys": [ { "kty": "oct", "kid": "", "k": k_b64 } ] }).to_string();
-        crate::auth::cache_jwks_from_json(&jwks_url, &jwks).unwrap();
+        crate::auth::cache_jwks_from_json(jwks_url, &jwks).unwrap();
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -3744,7 +3798,7 @@ mod tests {
     #[test]
     fn should_create_session_actor_on_open() {
         // Arrange
-        let ingress = RuntimeIngress::new(true);
+        let ingress = runtime_ingress_with_jwks_auth();
         let session = make_session_info(60, TransportKind::Tcp);
 
         // Act
@@ -3766,7 +3820,7 @@ mod tests {
     #[test]
     fn should_update_session_actor_on_connect() {
         // Arrange
-        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
+        let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(61, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -3777,7 +3831,7 @@ mod tests {
             "tid": "acme-prod",
             "permissions": ["notice://prod/orders/**#write"]
         });
-        let jwt = signed_hmac_jwt(payload);
+        let jwt = signed_jwks_jwt(payload);
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -3808,7 +3862,7 @@ mod tests {
     #[test]
     fn should_allow_stream_followup_after_begin_without_global_stream_write_permission() {
         // Arrange
-        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
+        let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(62, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -3819,7 +3873,7 @@ mod tests {
             "tid": "acme-prod",
             "permissions": ["stream://acme/logs/**#write"]
         });
-        let jwt = signed_hmac_jwt(payload);
+        let jwt = signed_jwks_jwt(payload);
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -3891,7 +3945,7 @@ mod tests {
         use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
         use bytes::Bytes;
 
-        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
+        let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(70, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -3902,7 +3956,7 @@ mod tests {
             "tid": "acme-prod",
             "permissions": ["notice://prod/orders/**#read"]
         });
-        let jwt = signed_hmac_jwt(payload);
+        let jwt = signed_jwks_jwt(payload);
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -3957,7 +4011,7 @@ mod tests {
         use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
         use bytes::Bytes;
 
-        let ingress = RuntimeIngress::new(true).with_route_family_map(&[("acme-prod", 1)]);
+        let ingress = runtime_ingress_with_jwks_auth().with_route_family_map(&[("acme-prod", 1)]);
         let session = make_session_info(71, TransportKind::Tcp);
 
         let payload = serde_json::json!({
@@ -3968,7 +4022,7 @@ mod tests {
             "tid": "acme-prod",
             "permissions": ["notice://prod/orders/**#write"]
         });
-        let jwt = signed_hmac_jwt(payload);
+        let jwt = signed_jwks_jwt(payload);
 
         // Act
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -4072,7 +4126,7 @@ mod tests {
     #[test]
     fn should_list_sessions() {
         // Arrange
-        let ingress = RuntimeIngress::new(true);
+        let ingress = runtime_ingress_with_jwks_auth();
         let rt = tokio::runtime::Runtime::new().unwrap();
 
         // Act
@@ -4460,7 +4514,7 @@ mod tests {
             RouteAddress::new(family, Route::new("inbox://session/501")),
             inbox_mailbox.clone(),
         );
-        let ingress = RuntimeIngress::new(true).with_router(router);
+        let ingress = runtime_ingress_with_jwks_auth().with_router(router);
         let session = make_authenticated_session_info(
             session_id,
             TransportKind::Tcp,
@@ -4520,7 +4574,7 @@ mod tests {
             RouteAddress::new(family, Route::new("inbox://session/611")),
             all_inbox.clone(),
         );
-        let ingress = RuntimeIngress::new(true).with_router(router);
+        let ingress = runtime_ingress_with_jwks_auth().with_router(router);
         let write_session = make_authenticated_session_info(
             610,
             TransportKind::Tcp,
@@ -4578,7 +4632,7 @@ mod tests {
             RouteAddress::new(family, Route::new("inbox://session/620")),
             inbox_mailbox.clone(),
         );
-        let ingress = RuntimeIngress::new(true).with_router(router);
+        let ingress = runtime_ingress_with_jwks_auth().with_router(router);
         let session = make_authenticated_session_info(
             session_id,
             TransportKind::Tcp,
@@ -4649,7 +4703,7 @@ mod tests {
             RouteAddress::new(family, Route::new("inbox://session/621")),
             inbox_mailbox.clone(),
         );
-        let ingress = RuntimeIngress::new(true).with_router(router);
+        let ingress = runtime_ingress_with_jwks_auth().with_router(router);
         let session = make_authenticated_session_info(
             session_id,
             TransportKind::Tcp,

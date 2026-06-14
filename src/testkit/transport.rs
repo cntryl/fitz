@@ -21,17 +21,36 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 
-static AUTH_ENV_INIT: Once = Once::new();
 static TEST_SERVER_SEMAPHORE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+static AUTH_JWT_TEST_CACHE: Once = Once::new();
 
-fn init_auth_env() {
-    AUTH_ENV_INIT.call_once(|| {
-        std::env::set_var("FITZ_JWT_HMAC_SECRET", "test-secret-key");
-    });
-}
+const TEST_ISSUER: &str = "https://idp.example";
+const TEST_AUDIENCE: &str = "fitz-broker";
+const TEST_RUNTIME_AUTH_SECRET: &str = "test-secret-key";
 
 fn test_server_semaphore() -> &'static Arc<tokio::sync::Semaphore> {
     TEST_SERVER_SEMAPHORE.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+}
+
+fn init_test_runtime_jwks_cache() {
+    AUTH_JWT_TEST_CACHE.call_once(|| {
+        use base64::Engine;
+
+        let jwks_url = crate::auth::derive_jwks_url_from_issuer(TEST_ISSUER).unwrap();
+        let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(TEST_RUNTIME_AUTH_SECRET);
+        let jwks = serde_json::json!({
+            "keys": [
+                {
+                    "kty": "oct",
+                    "kid": "",
+                    "k": k_b64,
+                }
+            ]
+        })
+        .to_string();
+
+        crate::auth::cache_jwks_from_json(&jwks_url, &jwks).unwrap();
+    });
 }
 
 /// Test server that starts Fitz on random available ports (TCP + WebSocket)
@@ -168,7 +187,7 @@ impl TestServer {
         let _ = crate::observability::try_init_observability();
 
         if auth_required {
-            init_auth_env();
+            init_test_runtime_jwks_cache();
         }
 
         // Find available ports and keep listeners bound to prevent reallocation race
@@ -192,7 +211,13 @@ impl TestServer {
             stream_storage_layout,
             auth_required,
             auth_config: if auth_required {
-                crate::auth::AuthConfig::hmac("test-secret-key", "fitz")
+                crate::auth::AuthConfig::jwks(
+                    vec![TEST_AUDIENCE.to_string()],
+                    vec![crate::auth::JwksIssuerConfig {
+                        issuer: TEST_ISSUER.to_string(),
+                        jwks_url: crate::auth::derive_jwks_url_from_issuer(TEST_ISSUER).unwrap(),
+                    }],
+                )
             } else {
                 crate::auth::AuthConfig::Disabled
             },
@@ -800,7 +825,7 @@ pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
 }
 
 /// Generate a provider-shaped test JWT for a single partition string.
-/// Uses HS256 with test secret "test-secret-key"
+/// Uses JWKS-mode token shape signed with the shared test issuer secret.
 /// Token is valid for 1 hour from now
 /// Emits `tid` plus top-level `permissions`
 pub fn generate_test_jwt(realm: &str) -> String {
@@ -808,18 +833,19 @@ pub fn generate_test_jwt(realm: &str) -> String {
 }
 
 pub fn generate_test_jwt_for_family(realm: &str, _route_family: u32) -> String {
+    init_test_runtime_jwks_cache();
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
     struct Claims {
-        iss: String,              // Issuer (empty for HMAC test tokens)
-        aud: String,              // Audience
-        tid: String,              // Identity value mapped to RouteFamily by the server
-        sub: String,              // Subject: realm
-        exp: i64,                 // Expiration time
-        iat: i64,                 // Issued at
-        permissions: Vec<String>, // Auth0-style permissions
+        iss: String,
+        aud: String,
+        tid: String,
+        sub: String,
+        exp: i64,
+        iat: i64,
+        permissions: Vec<String>,
     }
 
     let now = std::time::SystemTime::now()
@@ -828,8 +854,8 @@ pub fn generate_test_jwt_for_family(realm: &str, _route_family: u32) -> String {
         .as_secs() as i64;
 
     let claims = Claims {
-        iss: "".to_string(),     // Empty issuer = no signature verification
-        aud: "fitz".to_string(), // Standard audience
+        iss: TEST_ISSUER.to_string(),
+        aud: TEST_AUDIENCE.to_string(),
         tid: realm.to_string(),
         sub: realm.to_string(),
         exp: now + 3600, // Valid for 1 hour
@@ -851,13 +877,14 @@ pub fn generate_test_jwt_for_family(realm: &str, _route_family: u32) -> String {
     encode(
         &header,
         &claims,
-        &EncodingKey::from_secret("test-secret-key".as_bytes()),
+        &EncodingKey::from_secret(TEST_RUNTIME_AUTH_SECRET.as_bytes()),
     )
     .unwrap()
 }
 
 /// Generate expired JWT (for testing rejection)
 pub fn generate_expired_jwt(realm: &str) -> String {
+    init_test_runtime_jwks_cache();
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     use serde::{Deserialize, Serialize};
 
@@ -878,8 +905,8 @@ pub fn generate_expired_jwt(realm: &str) -> String {
         .as_secs() as i64;
 
     let claims = Claims {
-        iss: "".to_string(),
-        aud: "fitz".to_string(),
+        iss: TEST_ISSUER.to_string(),
+        aud: TEST_AUDIENCE.to_string(),
         tid: realm.to_string(),
         sub: realm.to_string(),
         exp: now - 3600, // Expired 1 hour ago
@@ -892,13 +919,14 @@ pub fn generate_expired_jwt(realm: &str) -> String {
     encode(
         &header,
         &claims,
-        &EncodingKey::from_secret("test-secret-key".as_bytes()),
+        &EncodingKey::from_secret(TEST_RUNTIME_AUTH_SECRET.as_bytes()),
     )
     .unwrap()
 }
 
 /// Generate JWT with invalid signature (for testing rejection)
 pub fn generate_invalid_signature_jwt(realm: &str) -> String {
+    init_test_runtime_jwks_cache();
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     use serde::{Deserialize, Serialize};
 
@@ -919,8 +947,8 @@ pub fn generate_invalid_signature_jwt(realm: &str) -> String {
         .as_secs() as i64;
 
     let claims = Claims {
-        iss: "".to_string(),
-        aud: "fitz".to_string(),
+        iss: TEST_ISSUER.to_string(),
+        aud: TEST_AUDIENCE.to_string(),
         tid: realm.to_string(),
         sub: realm.to_string(),
         exp: now + 3600,

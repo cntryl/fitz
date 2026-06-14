@@ -827,10 +827,11 @@ mod tests {
     fn with_auth_env<T>(values: &[(&str, &str)], test: impl FnOnce() -> T) -> T {
         let keys = [
             "FITZ_AUTH_REQUIRED",
-            "FITZ_JWT_HMAC_SECRET",
             "FITZ_JWT_AUDIENCE",
             "FITZ_JWT_AUDIENCES",
             "FITZ_JWT_JWKS_MAP",
+            "FITZ_JWT_HMAC_SECRET",
+            "FITZ_JWT_ALLOW_INSECURE_HTTP",
             "FITZ_ROUTE_FAMILIES",
             "FITZ_ROUTE_FAMILY_MAP",
             "FITZ_ROUTE_FAMILY_CLAIM",
@@ -843,7 +844,6 @@ mod tests {
             "FITZ_ADMIN_AUTH_MODE",
             "FITZ_ADMIN_USERNAME",
             "FITZ_ADMIN_PASSWORD_HASH",
-            "FITZ_ADMIN_JWT_SECRET",
             "FITZ_ADMIN_COOKIE_SECURE",
             "FITZ_ADMIN_PUBLIC_ORIGIN",
         ];
@@ -904,7 +904,6 @@ mod tests {
             "FITZ_ADMIN_AUTH_MODE",
             "FITZ_ADMIN_USERNAME",
             "FITZ_ADMIN_PASSWORD_HASH",
-            "FITZ_ADMIN_JWT_SECRET",
         ];
         let previous = keys
             .iter()
@@ -1128,7 +1127,6 @@ mod tests {
                     "FITZ_ADMIN_PASSWORD_HASH",
                     "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
                 ),
-                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
                 ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
             ],
             || {
@@ -1158,7 +1156,6 @@ mod tests {
                     "FITZ_ADMIN_PASSWORD_HASH",
                     "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
                 ),
-                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
             ],
             || {
                 // Arrange
@@ -1186,7 +1183,6 @@ mod tests {
                     "FITZ_ADMIN_PASSWORD_HASH",
                     "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
                 ),
-                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
                 ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
             ],
             || {
@@ -1215,7 +1211,6 @@ mod tests {
                     "FITZ_ADMIN_PASSWORD_HASH",
                     "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
                 ),
-                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
             ],
             || {
                 // Arrange
@@ -1247,7 +1242,6 @@ mod tests {
                     "FITZ_ADMIN_PASSWORD_HASH",
                     "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
                 ),
-                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
                 ("FITZ_ADMIN_PUBLIC_ORIGIN", "http://admin.example.com"),
             ],
             || {
@@ -1280,7 +1274,6 @@ mod tests {
                     "FITZ_ADMIN_PASSWORD_HASH",
                     "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
                 ),
-                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
                 ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
                 ("FITZ_ADMIN_COOKIE_SECURE", "false"),
             ],
@@ -1315,7 +1308,6 @@ mod tests {
                     "FITZ_ADMIN_PASSWORD_HASH",
                     "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
                 ),
-                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
             ],
             || {
                 // Arrange
@@ -1500,7 +1492,6 @@ mod tests {
                     "FITZ_ADMIN_PASSWORD_HASH",
                     "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
                 ),
-                ("FITZ_ADMIN_JWT_SECRET", "admin-jwt-secret"),
                 ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com/"),
             ],
             || {

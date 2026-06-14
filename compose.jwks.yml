@@ -1,0 +1,20 @@
+# Fitz local JWKS parity overlay
+#
+# Layer this file onto compose.yml or compose.cloud.yml to exercise issuer/JWKS
+# plumbing locally. This is still a local-only development example.
+
+services:
+  fitz-jwks:
+    container_name: fitz-jwks
+    image: busybox:1.36
+    command: ["sh", "-c", "httpd -f -p 8080 -h /srv"]
+    ports:
+      - "127.0.0.1:${FITZ_JWKS_HOST_PORT:-4280}:8080"
+    volumes:
+      - ./compose/jwks-mock:/srv:ro
+
+  fitz-auth:
+    environment:
+      FITZ_JWT_HMAC_SECRET: ""
+      FITZ_JWT_JWKS_MAP: "https://fitz.mock/=http://fitz-jwks:8080/.well-known/jwks.json"
+      FITZ_JWT_ALLOW_INSECURE_HTTP: "true"
