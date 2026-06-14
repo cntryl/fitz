@@ -1,8 +1,10 @@
-import { createQuery } from "@askrjs/askr/data";
+import { createQuery, queryScope } from "@askrjs/askr/data";
 import { rpcService } from "./rpc-service";
 import type { RpcOverview } from "./rpc-models";
 
-const RPC_OVERVIEW_KEY = "rpc:overview";
+const rpcQueries = queryScope("rpc");
+
+const RPC_OVERVIEW_KEY = rpcQueries.key("overview");
 
 export function createRpcOverviewQuery() {
   return createQuery<RpcOverview>({

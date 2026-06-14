@@ -105,7 +105,8 @@ export function MessagingFlow({
                       <span>Route family {group.routeFamily}</span>
                       <strong>{formatNumber(group.sessions)} sessions</strong>
                       <small>
-                        {formatNumber(group.messagesReceived)} received / {formatNumber(group.messagesSent)} sent
+                        {formatNumber(group.messagesReceived)} received /{" "}
+                        {formatNumber(group.messagesSent)} sent
                       </small>
                     </FlowButton>
                   );
@@ -124,7 +125,8 @@ export function MessagingFlow({
               <span>Fitz broker</span>
               <strong>{formatTopologyRate(topology.broker.messagesPerSecond)} msg/sec</strong>
               <small>
-                {formatNumber(topology.broker.sessions)} sessions / {formatNumber(topology.broker.realms.length)} realms
+                {formatNumber(topology.broker.sessions)} sessions /{" "}
+                {formatNumber(topology.broker.realms.length)} realms
               </small>
             </FlowButton>
 
@@ -205,7 +207,8 @@ export function MessagingFlow({
               ))}
               {topology.connections.truncated ? (
                 <span class="domain-muted">
-                  Showing {formatNumber(topology.connections.items.length)} of {formatNumber(topology.connections.total)} connections.
+                  Showing {formatNumber(topology.connections.items.length)} of{" "}
+                  {formatNumber(topology.connections.total)} connections.
                 </span>
               ) : null}
             </div>
@@ -225,7 +228,8 @@ function TopologyInspector({
   history: TopologyTrendPoint[];
   selected: TopologySelection;
 }) {
-  const selectedLaneId = selected.kind === "lane" ? topologyLaneIdFromSelectionId(selected.id) : null;
+  const selectedLaneId =
+    selected.kind === "lane" ? topologyLaneIdFromSelectionId(selected.id) : null;
   const trend =
     selected.kind === "broker"
       ? topologyTrendDirection(history, "messagesPerSecond")

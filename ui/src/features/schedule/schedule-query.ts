@@ -1,8 +1,10 @@
-import { createQuery } from "@askrjs/askr/data";
+import { createQuery, queryScope } from "@askrjs/askr/data";
 import { scheduleService } from "./schedule-service";
 import type { ScheduleOverview } from "./schedule-models";
 
-const SCHEDULE_OVERVIEW_KEY = "schedule:overview";
+const scheduleQueries = queryScope("schedule");
+
+const SCHEDULE_OVERVIEW_KEY = scheduleQueries.key("overview");
 
 export function createScheduleOverviewQuery() {
   return createQuery<ScheduleOverview>({

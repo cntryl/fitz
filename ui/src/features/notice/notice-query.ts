@@ -1,8 +1,10 @@
-import { createQuery } from "@askrjs/askr/data";
+import { createQuery, queryScope } from "@askrjs/askr/data";
 import { noticeService } from "./notice-service";
 import type { NoticeOverview } from "./notice-models";
 
-const NOTICE_OVERVIEW_KEY = "notice:overview";
+const noticeQueries = queryScope("notice");
+
+const NOTICE_OVERVIEW_KEY = noticeQueries.key("overview");
 
 export function createNoticeOverviewQuery() {
   return createQuery<NoticeOverview>({

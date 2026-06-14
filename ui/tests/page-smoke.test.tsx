@@ -1,20 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp, createSPA } from "@askrjs/askr/boot";
+import type { Query } from "@askrjs/askr/data";
 import type { RouteHandler } from "@askrjs/askr/router";
-import {
-  dashboardDiagnostics as diagnostics,
-  topologyOverview,
-} from "./fixtures/topology";
-
-type QueryState<T> = {
-  data: T | null;
-  error: Error | null;
-  loading: boolean;
-  refreshing: boolean;
-  stale: boolean;
-  consistency: "fresh" | "stale" | "refreshing" | "pending-write";
-  refresh: () => Promise<void>;
-};
+import { queryState } from "@askrjs/askr/testing";
+import { dashboardDiagnostics as diagnostics, topologyOverview } from "./fixtures/topology";
 
 type MutationState = {
   abort: ReturnType<typeof vi.fn>;
@@ -39,23 +28,14 @@ const mocks = vi.hoisted(() => {
   };
 
   return {
-    queryStates: {} as Record<string, QueryState<unknown>>,
+    queryStates: {} as Record<string, Query<{}>>,
     refresh,
     mutation,
   };
 });
 
-function makeQuery<T>(data: T | null, overrides: Partial<QueryState<T>> = {}): QueryState<T> {
-  return {
-    consistency: "fresh",
-    data,
-    error: null,
-    loading: false,
-    refresh: mocks.refresh,
-    refreshing: false,
-    stale: false,
-    ...overrides,
-  };
+function queryOptions() {
+  return { refresh: mocks.refresh };
 }
 
 vi.mock("@/features/session/session-query", () => ({
@@ -419,24 +399,24 @@ const resourceDetail = {
 };
 
 function resetQueries() {
-  mocks.queryStates.currentSession = makeQuery({ username: "admin" });
-  mocks.queryStates.activeSessions = makeQuery(activeSessions);
-  mocks.queryStates.system = makeQuery(systemOverview);
-  mocks.queryStates.topology = makeQuery(topologyOverview);
-  mocks.queryStates.metrics = makeQuery(metricsOverview);
-  mocks.queryStates.queue = makeQuery(queueOverview);
-  mocks.queryStates.queueDeadLetters = makeQuery([]);
-  mocks.queryStates.queueResource = makeQuery(queueResource);
-  mocks.queryStates.queueTimeline = makeQuery(queueResource.timeline);
-  mocks.queryStates.queueComparison = makeQuery(queueComparison);
-  mocks.queryStates.kv = makeQuery(kvOverview);
-  mocks.queryStates.lease = makeQuery(leaseOverview);
-  mocks.queryStates.notice = makeQuery(noticeOverview);
-  mocks.queryStates.rpc = makeQuery(rpcOverview);
-  mocks.queryStates.schedule = makeQuery(scheduleOverview);
-  mocks.queryStates.stream = makeQuery(streamOverview);
-  mocks.queryStates.inventory = makeQuery(inventory);
-  mocks.queryStates.resource = makeQuery(resourceDetail);
+  mocks.queryStates.currentSession = queryState.fresh({ username: "admin" }, queryOptions());
+  mocks.queryStates.activeSessions = queryState.fresh(activeSessions, queryOptions());
+  mocks.queryStates.system = queryState.fresh(systemOverview, queryOptions());
+  mocks.queryStates.topology = queryState.fresh(topologyOverview, queryOptions());
+  mocks.queryStates.metrics = queryState.fresh(metricsOverview, queryOptions());
+  mocks.queryStates.queue = queryState.fresh(queueOverview, queryOptions());
+  mocks.queryStates.queueDeadLetters = queryState.fresh([], queryOptions());
+  mocks.queryStates.queueResource = queryState.fresh(queueResource, queryOptions());
+  mocks.queryStates.queueTimeline = queryState.fresh(queueResource.timeline, queryOptions());
+  mocks.queryStates.queueComparison = queryState.fresh(queueComparison, queryOptions());
+  mocks.queryStates.kv = queryState.fresh(kvOverview, queryOptions());
+  mocks.queryStates.lease = queryState.fresh(leaseOverview, queryOptions());
+  mocks.queryStates.notice = queryState.fresh(noticeOverview, queryOptions());
+  mocks.queryStates.rpc = queryState.fresh(rpcOverview, queryOptions());
+  mocks.queryStates.schedule = queryState.fresh(scheduleOverview, queryOptions());
+  mocks.queryStates.stream = queryState.fresh(streamOverview, queryOptions());
+  mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
+  mocks.queryStates.resource = queryState.fresh(resourceDetail, queryOptions());
   mocks.mutation.error = null;
   mocks.mutation.pending = false;
   mocks.mutation.result = null;
@@ -590,7 +570,7 @@ describe("admin page smoke tests", () => {
   it("keeps dashboard behavior visible while refresh is in flight", async () => {
     const { default: Home } = await import("@/pages/app/home");
 
-    mocks.queryStates.topology = makeQuery(topologyOverview, { refreshing: true, stale: true });
+    mocks.queryStates.topology = queryState.refreshing(topologyOverview, queryOptions());
 
     const root = await mountRoute("/", "/", Home);
     const text = root.textContent ?? "";
@@ -603,24 +583,31 @@ describe("admin page smoke tests", () => {
   it("mounts representative loading, error, and empty states", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");
 
-    mocks.queryStates.queue = makeQuery(null, { loading: true });
+    mocks.queryStates.queue = queryState.loading(queryOptions());
     let root = await mountRoute("/queue", "/queue", QueuePage);
     expect(root.textContent).toContain("Loading queue overview");
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.queue = makeQuery(null, { error: new Error("Queue unavailable") });
+    mocks.queryStates.queue = queryState.error(
+      new Error("Queue unavailable"),
+      undefined,
+      queryOptions(),
+    );
     root = await mountRoute("/queue", "/queue", QueuePage);
     expect(root.textContent).toContain("Queue unavailable");
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.queue = makeQuery({
-      ...queueOverview,
-      realms: [],
-    });
+    mocks.queryStates.queue = queryState.fresh(
+      {
+        ...queueOverview,
+        realms: [],
+      },
+      queryOptions(),
+    );
     root = await mountRoute("/queue", "/queue", QueuePage);
     expect(root.textContent).toContain("No queue realms are currently visible");
   });
@@ -628,7 +615,7 @@ describe("admin page smoke tests", () => {
   it("keeps queue overview content visible while refresh is in flight", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");
 
-    mocks.queryStates.queue = makeQuery(queueOverview, { refreshing: true });
+    mocks.queryStates.queue = queryState.refreshing(queueOverview, queryOptions());
 
     const root = await mountRoute("/queue", "/queue", QueuePage);
 
@@ -649,13 +636,16 @@ describe("admin page smoke tests", () => {
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.resource = makeQuery({
-      ...resourceDetail,
-      comparison: {
-        metrics: [{ label: "Delta", value: 0 }],
-        summary: "No material difference",
+    mocks.queryStates.resource = queryState.fresh(
+      {
+        ...resourceDetail,
+        comparison: {
+          metrics: [{ label: "Delta", value: 0 }],
+          summary: "No material difference",
+        },
       },
-    });
+      queryOptions(),
+    );
 
     const { default: ResourceDetailPage } = await import("@/pages/app/resource-detail");
     root = await mountRoute(
@@ -669,18 +659,21 @@ describe("admin page smoke tests", () => {
 
   it("opens an accessible queue dead-letter confirmation dialog", async () => {
     const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");
-    mocks.queryStates.queueResource = makeQuery({
-      ...queueResource,
-      deadLetters: [
-        {
-          attempts: 2,
-          deadLetteredAt: "2026-05-21T13:05:00Z",
-          family: 1,
-          messageId: 42,
-          reason: "handler failed",
-        },
-      ],
-    });
+    mocks.queryStates.queueResource = queryState.fresh(
+      {
+        ...queueResource,
+        deadLetters: [
+          {
+            attempts: 2,
+            deadLetteredAt: "2026-05-21T13:05:00Z",
+            family: 1,
+            messageId: 42,
+            reason: "handler failed",
+          },
+        ],
+      },
+      queryOptions(),
+    );
 
     const root = await mountRoute(
       "/queue/default/ops/primary",

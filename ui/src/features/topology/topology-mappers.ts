@@ -19,7 +19,15 @@ import {
   type TrendDirection,
 } from "./topology-models";
 
-const LANE_ORDER: TopologyDomain[] = ["queue", "rpc", "notice", "schedule", "stream", "lease", "kv"];
+const LANE_ORDER: TopologyDomain[] = [
+  "queue",
+  "rpc",
+  "notice",
+  "schedule",
+  "stream",
+  "lease",
+  "kv",
+];
 const TREND_HISTORY_LIMIT = 12;
 
 const selectionPrefix = {
@@ -234,7 +242,9 @@ export function mapMessagingTopology(dto: MessagingTopology): MessagingTopologyO
 }
 
 function lanePressureScore(lane: TopologyLane) {
-  return stateRank[lane.state] * 1_000 + lane.counters.reduce((sum, counter) => sum + counter.value, 0);
+  return (
+    stateRank[lane.state] * 1_000 + lane.counters.reduce((sum, counter) => sum + counter.value, 0)
+  );
 }
 
 function counterScore(counters: TopologyCounter[]) {
@@ -357,7 +367,11 @@ export function resolveTopologySelection(
       counters: [
         { key: "sessions", label: "Sessions", value: topology.broker.sessions },
         { key: "connections", label: "Connections", value: topology.broker.connections },
-        { key: "messages_per_second", label: "Messages/sec", value: topology.broker.messagesPerSecond },
+        {
+          key: "messages_per_second",
+          label: "Messages/sec",
+          value: topology.broker.messagesPerSecond,
+        },
         { key: "realms", label: "Realms", value: topology.broker.realms.length },
         {
           key: "router_backpressure",
@@ -368,7 +382,10 @@ export function resolveTopologySelection(
       description: topology.diagnostics.incident_summary?.explanation ?? "Broker snapshot.",
       id: "broker",
       kind: "broker",
-      state: topology.diagnostics.incident_summary?.severity === "informational" ? "flowing" : "pressure",
+      state:
+        topology.diagnostics.incident_summary?.severity === "informational"
+          ? "flowing"
+          : "pressure",
       title: "Fitz broker",
     };
   }
@@ -401,7 +418,8 @@ export function resolveTopologySelection(
     if (lane) {
       return {
         counters: lane.counters,
-        description: lane.diagnostics.explanation_hints?.[0] ?? selectionDescriptionForState(lane.state),
+        description:
+          lane.diagnostics.explanation_hints?.[0] ?? selectionDescriptionForState(lane.state),
         href: lane.href,
         id: selectionId,
         kind: "lane",

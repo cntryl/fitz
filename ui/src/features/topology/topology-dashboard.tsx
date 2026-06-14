@@ -25,7 +25,9 @@ export function TopologyDashboard({
 }) {
   return (
     <Stack gap="3">
-      {isRefreshing ? <QueryRefreshingState description="Refreshing messaging topology..." /> : null}
+      {isRefreshing ? (
+        <QueryRefreshingState description="Refreshing messaging topology..." />
+      ) : null}
 
       <BrokerStatusStrip history={history} topology={topology} refreshState={refreshState} />
       <MessagingFlow

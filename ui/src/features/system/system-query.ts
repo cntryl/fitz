@@ -1,8 +1,10 @@
-import { createQuery } from "@askrjs/askr/data";
+import { createQuery, queryScope } from "@askrjs/askr/data";
 import { systemService } from "./system-service";
 import type { SystemOverview } from "./system-models";
 
-export const SYSTEM_OVERVIEW_KEY = "system:overview";
+const systemQueries = queryScope("system");
+
+export const SYSTEM_OVERVIEW_KEY = systemQueries.key("overview");
 
 export function createSystemOverviewQuery() {
   return createQuery<SystemOverview>({

@@ -1,9 +1,13 @@
-import { createQuery } from "@askrjs/askr/data";
+import { createQuery, queryScope } from "@askrjs/askr/data";
 import { sessionService } from "./session-service";
 import type { ActiveSessionsOverview, SessionState } from "./session-models";
 
-const CURRENT_SESSION_KEY = "session:current";
-const ACTIVE_SESSIONS_KEY = "session:active";
+const sessionQueries = queryScope("session");
+
+export const SESSION_QUERY_PREFIX = sessionQueries.prefix();
+
+const CURRENT_SESSION_KEY = sessionQueries.key("current");
+const ACTIVE_SESSIONS_KEY = sessionQueries.key("active");
 
 async function fetchCurrentSession({ signal }: { signal: AbortSignal }) {
   return (

@@ -4,7 +4,7 @@ import type { DeadLetterMessage, QueueResourceRef } from "./queue-models";
 import { QUEUE_OVERVIEW_KEY, queueDeadLettersQueryPrefix } from "./queue-query";
 import { queueResourceQueryKey, queueResourceTimelineQueryKey } from "./queue-resource-query";
 
-function affectedQueueKeys(resourceRef: QueueResourceRef) {
+export function affectedQueueKeys(resourceRef: QueueResourceRef) {
   return [
     QUEUE_OVERVIEW_KEY,
     queueResourceQueryKey(resourceRef),

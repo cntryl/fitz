@@ -2,15 +2,21 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   createQueueDeadLettersQuery,
   createQueueOverviewQuery,
+  QUEUE_OVERVIEW_KEY,
+  queueDeadLettersQueryKey,
+  queueDeadLettersQueryPrefix,
 } from "@/features/queue/queue-query";
 import {
   createQueueResourceQuery,
   createQueueResourceTimelineQuery,
   createQueueResourceComparisonQuery,
+  queueResourceQueryKey,
+  queueResourceTimelineQueryKey,
 } from "@/features/queue/queue-resource-query";
 import {
   createActiveSessionsQuery,
   createCurrentSessionQuery,
+  SESSION_QUERY_PREFIX,
 } from "@/features/session/session-query";
 import { createSignInMutation, createSignOutMutation } from "@/features/session/session-mutation";
 import { mapQueueDeadLetter, mapQueueStats } from "@/features/queue/queue-mappers";
@@ -53,6 +59,7 @@ import { mapRpcStats } from "@/features/rpc/rpc-mappers";
 import { mapScheduleStats } from "@/features/schedule/schedule-mappers";
 import { mapStreamStats } from "@/features/stream/stream-mappers";
 import {
+  affectedQueueKeys,
   createPurgeQueueDeadLetterMutation,
   createReplayQueueDeadLetterMutation,
 } from "@/features/queue/queue-actions";
@@ -67,11 +74,7 @@ import {
   topologyScopeHref,
   topologyTrendDirection,
 } from "@/features/topology/topology-mappers";
-import {
-  healthyDiagnostics,
-  healthyGlobalDiagnostics,
-  topologyDtoLane,
-} from "./fixtures/topology";
+import { healthyDiagnostics, healthyGlobalDiagnostics, topologyDtoLane } from "./fixtures/topology";
 
 describe("Data query layer", () => {
   it("exports session query helpers", () => {
@@ -100,6 +103,27 @@ describe("Data query layer", () => {
     expect(typeof createReplayQueueDeadLetterMutation).toBe("function");
     expect(createPurgeQueueDeadLetterMutation).toBeDefined();
     expect(typeof createPurgeQueueDeadLetterMutation).toBe("function");
+  });
+
+  it("builds prefix-friendly queue mutation affected keys", () => {
+    const ref = {
+      area: "ops",
+      realm: "default",
+      resource: "primary",
+    };
+
+    expect(SESSION_QUERY_PREFIX.length).toBeGreaterThan(0);
+    expect(queueResourceTimelineQueryKey(ref).startsWith(queueResourceQueryKey(ref))).toBe(true);
+    expect(queueDeadLettersQueryKey(ref).startsWith(queueDeadLettersQueryPrefix(ref))).toBe(true);
+    expect(
+      queueDeadLettersQueryKey(ref, { family: 4 }).startsWith(queueDeadLettersQueryPrefix(ref)),
+    ).toBe(true);
+    expect(affectedQueueKeys(ref)).toEqual([
+      QUEUE_OVERVIEW_KEY,
+      queueResourceQueryKey(ref),
+      queueResourceTimelineQueryKey(ref),
+      queueDeadLettersQueryPrefix(ref),
+    ]);
   });
 
   it("exports domain overview queries and service boundaries", () => {

@@ -52,7 +52,7 @@ export default function Home() {
     : trendHistoryValue;
 
   const selectedId = topology
-    ? selectedIdValue ?? resolveTopologySelection(topology, null).id
+    ? (selectedIdValue ?? resolveTopologySelection(topology, null).id)
     : "broker";
   const selected = topology ? resolveTopologySelection(topology, selectedId) : null;
 

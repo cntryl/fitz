@@ -1,22 +1,33 @@
-import { createQuery } from "@askrjs/askr/data";
+import { createQuery, queryScope } from "@askrjs/askr/data";
 import { queueService } from "./queue-service";
 import type { DeadLetterFilters, QueueOverview, QueueResourceRef } from "./queue-models";
 
 export type { DeadLetterFilters, DeadLetterMessage, QueueResourceRef } from "./queue-models";
 
-export const QUEUE_OVERVIEW_KEY = "queue:overview";
+const queueQueries = queryScope("queue");
+
+export const QUEUE_OVERVIEW_KEY = queueQueries.key("overview");
 
 export function queueDeadLettersQueryKey(
   resourceRef: QueueResourceRef,
   filters: DeadLetterFilters = {},
 ) {
-  return `queue:dead-letters:${resourceRef.realm}:${resourceRef.area}:${resourceRef.resource}:${
-    filters.family ?? "all"
-  }`;
+  return queueQueries.key(
+    "dead-letters",
+    resourceRef.realm,
+    resourceRef.area,
+    resourceRef.resource,
+    filters.family ?? "all",
+  );
 }
 
 export function queueDeadLettersQueryPrefix(resourceRef: QueueResourceRef) {
-  return `queue:dead-letters:${resourceRef.realm}:${resourceRef.area}:${resourceRef.resource}:`;
+  return queueQueries.prefix(
+    "dead-letters",
+    resourceRef.realm,
+    resourceRef.area,
+    resourceRef.resource,
+  );
 }
 
 export function createQueueOverviewQuery() {

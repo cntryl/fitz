@@ -1,4 +1,10 @@
-import type { MessagingTopologyOverview, TopologyDomain, TopologyLane, TopologyState, TrendDirection } from "./topology-models";
+import type {
+  MessagingTopologyOverview,
+  TopologyDomain,
+  TopologyLane,
+  TopologyState,
+  TrendDirection,
+} from "./topology-models";
 import { formatNumber } from "@/shared/format";
 import { isTopologyDomain, topologyScopeHref } from "./topology-mappers";
 
@@ -154,7 +160,12 @@ export function topologyBehaviorGroups(topology: MessagingTopologyOverview): Beh
   ];
 }
 
-export function scopeText(scope: { domain?: string; realm?: string | null; area?: string | null; resource?: string | null }) {
+export function scopeText(scope: {
+  domain?: string;
+  realm?: string | null;
+  area?: string | null;
+  resource?: string | null;
+}) {
   return [scope.domain, scope.realm, scope.area, scope.resource].filter(Boolean).join(" / ");
 }
 

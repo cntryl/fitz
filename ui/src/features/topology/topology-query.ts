@@ -1,8 +1,10 @@
-import { createQuery } from "@askrjs/askr/data";
+import { createQuery, queryScope } from "@askrjs/askr/data";
 import { topologyService } from "./topology-service";
 import type { MessagingTopologyOverview } from "./topology-models";
 
-export const MESSAGING_TOPOLOGY_KEY = "system:topology";
+const topologyQueries = queryScope("topology");
+
+export const MESSAGING_TOPOLOGY_KEY = topologyQueries.key("overview");
 
 function fetchMessagingTopology({ signal }: { signal: AbortSignal }) {
   return topologyService.getOverview({ signal });

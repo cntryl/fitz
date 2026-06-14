@@ -1,8 +1,7 @@
 import { createMutation } from "@askrjs/askr/data";
 import type { LoginPayload } from "./session-models";
+import { SESSION_QUERY_PREFIX } from "./session-query";
 import { sessionService } from "./session-service";
-
-const SESSION_QUERY_PREFIX = "session:";
 
 export function createSignInMutation() {
   return createMutation<LoginPayload, void>({
