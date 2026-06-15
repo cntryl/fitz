@@ -4,7 +4,9 @@ This guide provides the fastest path to a successful first Fitz request.
 
 ## 1. Start Fitz
 
-Use the repository compose or local runtime command and confirm readiness via `/readyz`.
+Use the repository compose or local runtime command and confirm traffic readiness via `/healthz` or `/readyz`.
+Use `/healthz` when you want the deployment-safe single-endpoint traffic gate, `/readyz`
+for native readiness probes, and `/livez` only for liveness or restart checks.
 The repo compose files are local-only examples and publish ports on loopback
 only. In those defaults:
 

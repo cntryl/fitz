@@ -37,7 +37,8 @@ fn init_test_runtime_jwks_cache() {
         use base64::Engine;
 
         let jwks_url = crate::auth::derive_jwks_url_from_issuer(TEST_ISSUER).unwrap();
-        let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(TEST_RUNTIME_AUTH_SECRET);
+        let k_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(TEST_RUNTIME_AUTH_SECRET);
         let jwks = serde_json::json!({
             "keys": [
                 {
@@ -247,6 +248,8 @@ impl TestServer {
         // Step 2: Initialize runtime
         let (router, ingress, ingress_config, runtime) =
             crate::boot::runtime::init(&boot_config, &store)?;
+
+        runtime.mark_auth_config_ready();
 
         // Mark storage ready
         runtime.mark_storage_ready();
@@ -478,6 +481,8 @@ impl TestServer {
             _permit: permit,
             ..
         } = self;
+
+        runtime.begin_shutdown();
 
         let _ = tcp_shutdown.send(());
         let _ = ws_shutdown.send(());

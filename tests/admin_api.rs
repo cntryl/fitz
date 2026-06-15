@@ -672,6 +672,90 @@ fn assert_clear_admin_cookie(response: &fitz::api::http::Response) {
 
 #[tokio::test]
 #[serial]
+async fn should_keep_healthz_unhealthy_until_readiness_checks_pass() {
+    // Arrange
+    let runtime = test_runtime();
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/healthz")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["status"], "not_ready");
+    assert_eq!(payload["checks"]["storage"], "not_ready");
+    assert_eq!(payload["checks"]["storage_writer_lease"], "not_ready");
+    assert_eq!(payload["checks"]["auth_configuration"], "not_ready");
+    assert_eq!(payload["checks"]["startup_complete"], "not_ready");
+}
+
+#[tokio::test]
+#[serial]
+async fn should_keep_healthz_unhealthy_given_shutdown_when_runtime_was_ready() {
+    // Arrange
+    let runtime = test_runtime();
+    runtime.mark_storage_ready();
+    runtime.mark_domains_ready();
+    runtime.mark_auth_config_ready();
+    runtime.mark_startup_complete();
+    runtime.begin_shutdown();
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/healthz")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["status"], "not_ready");
+    assert_eq!(payload["checks"]["storage"], "ok");
+    assert_eq!(payload["checks"]["storage_writer_lease"], "ok");
+    assert_eq!(payload["checks"]["domains_initialized"], "ok");
+    assert_eq!(payload["checks"]["auth_configuration"], "ok");
+    assert_eq!(payload["checks"]["startup_complete"], "ok");
+    assert_eq!(payload["checks"]["accepting_traffic"], "not_ready");
+}
+
+#[tokio::test]
+#[serial]
+async fn should_report_livez_ok_given_runtime_not_ready() {
+    // Arrange
+    let runtime = test_runtime();
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/livez")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["status"], "ok");
+}
+
+#[tokio::test]
+#[serial]
 async fn should_create_admin_session_and_set_cookie() {
     // Arrange
     let runtime = test_runtime();

@@ -22,7 +22,9 @@ impl Runtime {
             startup_time: now,
             storage_ready: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             domains_ready: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            auth_config_ready: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             startup_complete: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            shutdown_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             connection_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             session_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             messages_received: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -93,12 +95,36 @@ impl Runtime {
         self.domains_ready.load(Ordering::SeqCst) == 1
     }
 
+    pub fn mark_auth_config_ready(&self) {
+        self.auth_config_ready.store(1, Ordering::SeqCst);
+    }
+
+    pub fn is_auth_config_ready(&self) -> bool {
+        self.auth_config_ready.load(Ordering::SeqCst) == 1
+    }
+
     pub fn mark_startup_complete(&self) {
         self.startup_complete.store(1, Ordering::SeqCst);
     }
 
     pub fn is_startup_complete(&self) -> bool {
         self.startup_complete.load(Ordering::SeqCst) == 1
+    }
+
+    pub fn begin_shutdown(&self) {
+        self.shutdown_started.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutdown_started.load(Ordering::SeqCst)
+    }
+
+    pub fn is_ready_for_traffic(&self) -> bool {
+        self.is_storage_ready()
+            && self.are_domains_ready()
+            && self.is_auth_config_ready()
+            && self.is_startup_complete()
+            && !self.is_shutting_down()
     }
 
     pub fn startup_duration(&self) -> Duration {
@@ -226,6 +252,20 @@ mod tests {
     }
 
     #[test]
+    fn should_track_auth_configuration_readiness() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let runtime = Runtime::new(router);
+
+        // Act
+        assert!(!runtime.is_auth_config_ready());
+        runtime.mark_auth_config_ready();
+
+        // Assert
+        assert!(runtime.is_auth_config_ready());
+    }
+
+    #[test]
     fn should_track_startup_completion() {
         // Arrange
         let router = Arc::new(Router::new());
@@ -319,5 +359,39 @@ mod tests {
         // Assert
         assert!(uptime.as_millis() >= 50);
         let _uptime_secs = runtime.uptime_seconds();
+    }
+
+    #[test]
+    fn should_report_ready_for_traffic_given_all_readiness_checks_pass() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let runtime = Runtime::new(router);
+
+        // Act
+        runtime.mark_storage_ready();
+        runtime.mark_domains_ready();
+        runtime.mark_auth_config_ready();
+        runtime.mark_startup_complete();
+
+        // Assert
+        assert!(runtime.is_ready_for_traffic());
+    }
+
+    #[test]
+    fn should_stop_reporting_ready_for_traffic_when_shutdown_begins() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let runtime = Runtime::new(router);
+        runtime.mark_storage_ready();
+        runtime.mark_domains_ready();
+        runtime.mark_auth_config_ready();
+        runtime.mark_startup_complete();
+
+        // Act
+        runtime.begin_shutdown();
+
+        // Assert
+        assert!(runtime.is_shutting_down());
+        assert!(!runtime.is_ready_for_traffic());
     }
 }

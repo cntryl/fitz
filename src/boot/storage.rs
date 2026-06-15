@@ -2,12 +2,13 @@
 
 use crate::boot::runtime::{BootConfig, BootResult, CloudStorageConfig, StorageMode};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 
-const LOCAL_DISK_OPEN_MAX_RETRIES: u32 = 10;
-const LOCAL_DISK_OPEN_BASE_BACKOFF: Duration = Duration::from_millis(250);
-const LOCAL_DISK_OPEN_MAX_BACKOFF: Duration = Duration::from_secs(5);
+const STORAGE_OPEN_RETRY_BUDGET: Duration = Duration::from_secs(60);
+const STORAGE_OPEN_BASE_BACKOFF: Duration = Duration::from_millis(250);
+const STORAGE_OPEN_MAX_BACKOFF: Duration = Duration::from_secs(5);
+const STORAGE_OPEN_MAX_JITTER_MS: u64 = 250;
 
 /// Initialize Midge storage engine based on configured storage mode.
 pub async fn init(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
@@ -101,20 +102,21 @@ async fn open_local_disk_with_retry(
     db_path: &str,
 ) -> BootResult<cntryl_midge::Engine> {
     let open_options = build_midge_open_options(cntryl_midge::OpenOptions::local(db_path), config)?;
+    let retry_started_at = Instant::now();
     let mut retry_attempt = 0;
 
     loop {
         match cntryl_midge::Engine::open(open_options.clone()) {
             Ok(store) => return Ok(store),
-            Err(error)
-                if should_retry_local_disk_open(&error)
-                    && retry_attempt < LOCAL_DISK_OPEN_MAX_RETRIES =>
-            {
-                let delay = local_disk_open_retry_delay(retry_attempt);
+            Err(error) if should_retry_storage_open(&error) => {
+                let Some(delay) = storage_open_retry_delay(retry_started_at, retry_attempt) else {
+                    return Err(format!("Failed to open Midge at {}: {}", db_path, error).into());
+                };
                 warn!(
                     db_path = db_path,
                     retry_attempt = retry_attempt + 1,
-                    max_retries = LOCAL_DISK_OPEN_MAX_RETRIES,
+                    retry_budget_ms = STORAGE_OPEN_RETRY_BUDGET.as_millis() as u64,
+                    elapsed_ms = retry_started_at.elapsed().as_millis() as u64,
                     delay_ms = delay.as_millis() as u64,
                     error = %error,
                     "Local disk storage open hit an active writer lease; retrying with exponential backoff"
@@ -129,7 +131,7 @@ async fn open_local_disk_with_retry(
     }
 }
 
-fn should_retry_local_disk_open(error: &cntryl_midge::MidgeError) -> bool {
+fn should_retry_storage_open(error: &cntryl_midge::MidgeError) -> bool {
     matches!(
         error,
         cntryl_midge::MidgeError::Internal(message)
@@ -137,12 +139,25 @@ fn should_retry_local_disk_open(error: &cntryl_midge::MidgeError) -> bool {
     )
 }
 
-fn local_disk_open_retry_delay(attempt: u32) -> Duration {
+fn storage_open_retry_delay(started_at: Instant, attempt: u32) -> Option<Duration> {
+    let remaining_budget = STORAGE_OPEN_RETRY_BUDGET.checked_sub(started_at.elapsed())?;
     let multiplier = 1_u64.checked_shl(attempt).unwrap_or(u64::MAX);
-    let delay_ms = (LOCAL_DISK_OPEN_BASE_BACKOFF.as_millis() as u64)
+    let base_delay_ms = (STORAGE_OPEN_BASE_BACKOFF.as_millis() as u64)
         .saturating_mul(multiplier)
-        .min(LOCAL_DISK_OPEN_MAX_BACKOFF.as_millis() as u64);
-    Duration::from_millis(delay_ms)
+        .min(STORAGE_OPEN_MAX_BACKOFF.as_millis() as u64);
+    let jitter_ms = storage_open_retry_jitter_ms(attempt);
+    let delay = Duration::from_millis(base_delay_ms.saturating_add(jitter_ms));
+
+    Some(delay.min(remaining_budget))
+}
+
+fn storage_open_retry_jitter_ms(attempt: u32) -> u64 {
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as u64;
+    let salt = now_nanos ^ (attempt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    salt % (STORAGE_OPEN_MAX_JITTER_MS + 1)
 }
 
 fn build_midge_open_options(
@@ -204,12 +219,7 @@ async fn init_cloud(
         ),
         config,
     )?;
-    // Cloud engine bootstrap may create and drop an internal Tokio runtime.
-    // Run it on a blocking thread to avoid dropping that runtime inside async context.
-    let store = tokio::task::spawn_blocking(move || cntryl_midge::Engine::open(open_options))
-        .await
-        .map_err(|e| format!("Cloud-backed Midge open task failed: {}", e))?
-        .map_err(|e| format!("Failed to open cloud-backed Midge: {}", e))?;
+    let store = open_cloud_with_retry(open_options, cloud).await?;
 
     ensure_column_families(&store, config)?;
 
@@ -221,6 +231,50 @@ async fn init_cloud(
         cloud.local_cache_path
     );
     Ok(Arc::new(store))
+}
+
+async fn open_cloud_with_retry(
+    open_options: cntryl_midge::OpenOptions,
+    cloud: &CloudStorageConfig,
+) -> BootResult<cntryl_midge::Engine> {
+    let retry_started_at = Instant::now();
+    let mut retry_attempt = 0;
+
+    loop {
+        let cloud_open_options = open_options.clone();
+
+        // Cloud engine bootstrap may create and drop an internal Tokio runtime.
+        // Run it on a blocking thread to avoid dropping that runtime inside async context.
+        match tokio::task::spawn_blocking(move || cntryl_midge::Engine::open(cloud_open_options))
+            .await
+        {
+            Ok(Ok(store)) => return Ok(store),
+            Ok(Err(error)) if should_retry_storage_open(&error) => {
+                let Some(delay) = storage_open_retry_delay(retry_started_at, retry_attempt) else {
+                    return Err(format!("Failed to open cloud-backed Midge: {}", error).into());
+                };
+                warn!(
+                    provider = %cloud.provider_name,
+                    namespace = %cloud.provider_config.bucket_or_container(),
+                    prefix = ?cloud.prefix,
+                    retry_attempt = retry_attempt + 1,
+                    retry_budget_ms = STORAGE_OPEN_RETRY_BUDGET.as_millis() as u64,
+                    elapsed_ms = retry_started_at.elapsed().as_millis() as u64,
+                    delay_ms = delay.as_millis() as u64,
+                    error = %error,
+                    "Cloud-backed storage open hit an active writer lease; retrying with exponential backoff"
+                );
+                retry_attempt += 1;
+                tokio::time::sleep(delay).await;
+            }
+            Ok(Err(error)) => {
+                return Err(format!("Failed to open cloud-backed Midge: {}", error).into())
+            }
+            Err(error) => {
+                return Err(format!("Cloud-backed Midge open task failed: {}", error).into())
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -551,6 +605,32 @@ mod tests {
         // Assert
         release_task.await.expect("release first store");
         shutdown_store(reopened);
+    }
+
+    #[test]
+    fn should_detect_retryable_storage_open_error_given_active_writer_lease() {
+        // Arrange
+        let error = cntryl_midge::MidgeError::Internal(
+            "FATAL: another Midge instance is already running against this storage".to_string(),
+        );
+
+        // Act
+        let should_retry = should_retry_storage_open(&error);
+
+        // Assert
+        assert!(should_retry);
+    }
+
+    #[test]
+    fn should_not_retry_storage_open_error_given_non_lease_failure() {
+        // Arrange
+        let error = cntryl_midge::MidgeError::Internal("permission denied".to_string());
+
+        // Act
+        let should_retry = should_retry_storage_open(&error);
+
+        // Assert
+        assert!(!should_retry);
     }
 
     #[test]

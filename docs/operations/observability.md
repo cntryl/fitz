@@ -20,6 +20,12 @@ This guide explains how to instrument each layer of Fitz with comprehensive obse
 - `session_id`, `connection_id` (session context)
 - `operation`, `error_type` (operation context)
 
+**Health Endpoints:**
+- `/livez` reports process liveness only and should drive restart policies.
+- `/readyz` reports native readiness for platforms that support a dedicated readiness probe.
+- `/healthz` mirrors readiness and should drive external traffic admission on platforms that only support one HTTP health check.
+- `/startupz` reports whether Fitz has completed startup and is safe to begin liveness checks.
+
 ---
 
 ## Layer-by-Layer Instrumentation

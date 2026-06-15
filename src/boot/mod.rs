@@ -20,6 +20,20 @@ pub use resource_limits::enforce_startup_resource_limits;
 pub use runtime::{BootConfig, BootResult};
 pub use stats::Runtime;
 
+enum ShutdownSignal {
+    CtrlC,
+    Sigterm,
+}
+
+impl ShutdownSignal {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::CtrlC => "ctrl_c",
+            Self::Sigterm => "sigterm",
+        }
+    }
+}
+
 /// Complete broker boot sequence
 ///
 /// # Steps
@@ -46,6 +60,8 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     // Step 2: Create runtime infrastructure
     let (router, ingress, ingress_config, runtime) = runtime::init(&config, &store)?;
     tracing::info!("Runtime initialized");
+
+    runtime.mark_auth_config_ready();
 
     // Mark storage ready
     runtime.mark_storage_ready();
@@ -132,8 +148,9 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     tracing::info!("  HTTP: {}:{}", config.bind_addr, config.http_port);
 
     // Step 5: Wait for shutdown signal
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("Shutting down Fitz broker");
+    let signal = wait_for_shutdown_signal().await?;
+    tracing::info!(signal = signal.as_str(), "Shutting down Fitz broker");
+    runtime.begin_shutdown();
 
     if let Some(tcp_shutdown) = tcp_shutdown {
         let _ = tcp_shutdown.send(());
@@ -178,6 +195,28 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         .map_err(|error| format!("Midge shutdown failed: {}", error))?;
 
     Ok(())
+}
+
+async fn wait_for_shutdown_signal() -> BootResult<ShutdownSignal> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+
+        let mut terminate = signal(SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                result?;
+                Ok(ShutdownSignal::CtrlC)
+            }
+            _ = terminate.recv() => Ok(ShutdownSignal::Sigterm),
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await?;
+        Ok(ShutdownSignal::CtrlC)
+    }
 }
 
 #[cfg(test)]

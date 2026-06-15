@@ -47,10 +47,11 @@ where
     let method = req.method().clone();
 
     match (method, path.as_str()) {
-        (Method::GET, "/healthz") => probes::handle_liveness().await,
+        (Method::GET, "/livez") => probes::handle_liveness().await,
+        (Method::GET, "/healthz") => probes::handle_healthz(runtime).await,
         (Method::GET, "/readyz") => probes::handle_readiness(runtime).await,
         (Method::GET, "/startupz") => probes::handle_startup(runtime).await,
-        (Method::GET, "/health") => probes::handle_health().await,
+        (Method::GET, "/health") => probes::handle_health(runtime).await,
 
         (Method::POST, "/api/v1/session") => handle_login(req, runtime).await,
         (Method::GET, "/api/v1/session") => handle_current_session(req, runtime).await,

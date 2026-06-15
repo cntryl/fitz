@@ -29,8 +29,9 @@ docker compose -f compose.cloud.yml up --build
 ```
 
 Expect the Fitz brokers to reach readiness eventually rather than instantly on first
-boot. In the local Peas flow, cloud writer leases can cause brief restart loops
-before `/readyz` settles.
+boot. Fitz now retries single-writer lease-held storage opens for a bounded window
+before failing startup, so brief handoff races should delay `/healthz` and `/readyz`
+rather than immediately crashing the new process.
 
 The default provider is `peas-s3`. To exercise the other Peas front doors, use the compose-only `FITZ_PEAS_PROVIDER` variable:
 
@@ -144,6 +145,6 @@ This setting does not change Fitz domain semantics. Notice, RPC, and Lease remai
 3. Use a stable `FITZ_STORAGE_PREFIX` per environment, such as `dev`, `staging`, or `prod`.
 4. Start Peas locally with `compose.cloud.yml`; only `FITZ_PEAS_PROVIDER=peas-s3|peas-azure|peas-gcs` is supported there.
 5. Move to production by using explicit runtime env for `FITZ_STORAGE_PROVIDER`, namespace, endpoint/region, and provider credentials.
-6. Configure `/healthz`, `/readyz`, `/startupz`, and `/metrics` monitoring before customer traffic.
+6. Configure `/livez`, `/healthz`, `/readyz`, `/startupz`, and `/metrics` monitoring before customer traffic.
 
 Details for endpoints are in [admin/admin-api.md](../admin/admin-api.md) and [operations/observability.md](observability.md).

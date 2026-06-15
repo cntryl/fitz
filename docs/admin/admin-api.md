@@ -6,12 +6,12 @@
   - `/` - Single Page Application (SPA) static files
   - `/api/v1/*` - Admin REST API endpoints
   - `/metrics` - Prometheus metrics endpoint
-  - `/healthz`, `/readyz`, `/startupz` - Kubernetes health probes
+  - `/livez`, `/healthz`, `/readyz`, `/startupz` - Kubernetes and load balancer probes
   - `/ws` - WebSocket upgrade for data plane
 **Data Plane**: WebSocket upgrade on `/ws`, TCP on same port (protocol detection)  
 **Authentication**:  
   - `/` - No authentication (SPA public access)
-  - `/healthz`, `/readyz`, `/startupz` - No authentication (for load balancer health checks)  
+  - `/livez`, `/healthz`, `/readyz`, `/startupz` - No authentication (for load balancer health checks)  
   - `/metrics` - **Requires authentication** (JWT or API key)  
   - `/api/v1/*` - **Requires authentication** (JWT or API key with admin permissions)
 ## Design Principles
@@ -26,7 +26,8 @@
 /                          → SPA (index.html)
 /assets/*                  → SPA static assets (JS, CSS, images)
 /ws                        → WebSocket upgrade (data plane)
-/healthz                   → Kubernetes liveness probe
+/livez                     → Kubernetes liveness probe
+/healthz                   → Deployment-safe health gate (mirrors readiness)
 /readyz                    → Kubernetes readiness probe
 /startupz                  → Kubernetes startup probe
 /metrics                   → Prometheus metrics (auth required)
@@ -40,14 +41,14 @@
 ```
 **Authentication Rules**:
 - SPA (`/`, `/assets/*`) - Public access
-- Health probes (`/healthz`, `/readyz`, `/startupz`) - Public access (for K8s/load balancers)
+- Health probes (`/livez`, `/healthz`, `/readyz`, `/startupz`) - Public access (for K8s/load balancers)
 - Metrics (`/metrics`) - Requires JWT Bearer token
 - Admin API (`/api/v1/*`) - Requires JWT Bearer token with admin scope
 ## Global Endpoints
 ### Kubernetes Probes
 #### Liveness Probe
 ```
-GET /healthz
+GET /livez
 ```
 **Authentication**: None (public endpoint for kubelet)
 **Purpose**: Indicates if the application is alive and should be restarted if unhealthy.
@@ -63,12 +64,47 @@ GET /healthz
 - Runtime is responsive
 - No critical failures (panics, deadlocks)
 - Does NOT check downstream dependencies
+#### Health Gate
+```
+GET /healthz
+```
+**Authentication**: None (public endpoint for load balancers)
+**Purpose**: Safe traffic gate for orchestrators and load balancers that only support one HTTP health endpoint. This intentionally mirrors readiness so traffic does not arrive before the broker has acquired the active single-writer storage lease or after shutdown starts.
+**Use this when**:
+- Your platform can check only one unauthenticated HTTP endpoint before routing traffic
+- You need a single-writer-safe cutover signal for startup, lease handoff, and shutdown
+**Do not use this as**:
+- A liveness restart signal. `/healthz` is expected to return `503` during startup and shutdown handoff.
+- A replacement for Kubernetes liveness. Use `/livez` for restart decisions.
+**Response**:
+- `200 OK` - Ready to accept traffic
+- `503 Service Unavailable` - Not ready, remove from load balancer
+```json
+{
+  "status": "ready",
+  "checks": {
+    "storage": "ok",
+    "storage_writer_lease": "ok",
+    "domains_initialized": "ok",
+    "auth_configuration": "ok",
+    "startup_complete": "ok",
+    "accepting_traffic": "ok"
+  }
+}
+```
+**Criteria**:
+- Storage engine initialized
+- Active single-writer storage lease acquired
+- Domain actors started
+- Auth configuration validated during boot
+- Listener startup completed
+- Not in shutdown handoff
 #### Readiness Probe
 ```
 GET /readyz
 ```
 **Authentication**: None (public endpoint for kubelet)
-**Purpose**: Indicates if the application is ready to accept traffic.
+**Purpose**: Indicates if the application is ready to accept traffic. This currently uses the same readiness contract as `/healthz`, but is intended for native readiness probes while `/healthz` is the external traffic-gate alias.
 **Response**: 
 - `200 OK` - Ready to accept traffic
 - `503 Service Unavailable` - Not ready, remove from load balancer
@@ -77,15 +113,26 @@ GET /readyz
   "status": "ready",
   "checks": {
     "storage": "ok",
-    "domains_initialized": "ok"
+    "storage_writer_lease": "ok",
+    "domains_initialized": "ok",
+    "auth_configuration": "ok",
+    "startup_complete": "ok",
+    "accepting_traffic": "ok"
   }
 }
 ```
 **Criteria**: 
-- Storage engine initialized
+- Storage engine initialized and holding the active single-writer lease
 - All domain actors started
+- Auth configuration validated during boot
 - TCP/WebSocket listeners bound
+- Not in shutdown handoff
 - Ready to process requests
+#### Probe Selection
+- Use `/livez` to decide when Fitz should be restarted.
+- Use `/readyz` when your orchestrator supports a distinct readiness probe.
+- Use `/healthz` when your platform has only one health endpoint and that endpoint controls traffic admission.
+- Use `/startupz` to suppress premature liveness checks during long startup windows.
 #### Startup Probe
 ```
 GET /startupz
@@ -110,15 +157,7 @@ GET /startupz
 GET /health
 ```
 **Authentication**: None (public endpoint for load balancers)
-**Purpose**: General health check for non-Kubernetes environments.
-**Response**: 200 OK if healthy, 503 Service Unavailable if degraded
-```json
-{
-  "status": "healthy",
-  "uptime_seconds": 86400,
-  "version": "0.1.0"
-}
-```
+**Purpose**: Legacy alias for `/healthz`.
 ### Metrics (Prometheus Format)
 ```
 GET /metrics
@@ -624,7 +663,8 @@ POST /admin/sessions/{session_id}/close
 ## Implementation Status
 ### ✅ Implemented Endpoints
 **Health Probes (No Auth)**:
-- `GET /healthz` - Liveness probe
+- `GET /livez` - Liveness probe
+- `GET /healthz` - Deployment-safe health gate
 - `GET /readyz` - Readiness probe
 - `GET /startupz` - Startup probe
 - `GET /health` - Legacy health check
@@ -720,7 +760,7 @@ pub enum AdminCommand {
 ```
 ### Safety Considerations
 1. **Authentication**: 
-   - `/healthz`, `/readyz`, `/startupz`, `/health` - No auth (for kubelet/load balancers)
+   - `/livez`, `/healthz`, `/readyz`, `/startupz`, `/health` - No auth (for kubelet/load balancers)
    - `/metrics` - Requires JWT or API key (prevents information disclosure)
    - `/admin/*` - Requires JWT or API key with `admin:read` permission
 2. **Authorization**: 
@@ -745,12 +785,16 @@ pub async fn handle_liveness() -> Result<Response<Body>, Infallible> {
 }
 pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     // Check if ready to accept traffic
-    if !runtime.storage_initialized() || !runtime.domains_ready() {
+    if !runtime.is_ready_for_traffic() {
         let response = json!({
             "status": "not_ready",
             "checks": {
-                "storage": if runtime.storage_initialized() { "ok" } else { "not_ready" },
-                "domains_initialized": if runtime.domains_ready() { "ok" } else { "not_ready" }
+                "storage": if runtime.is_storage_ready() { "ok" } else { "not_ready" },
+                "storage_writer_lease": if runtime.is_storage_ready() { "ok" } else { "not_ready" },
+                "domains_initialized": if runtime.are_domains_ready() { "ok" } else { "not_ready" },
+                "auth_configuration": if runtime.is_auth_config_ready() { "ok" } else { "not_ready" },
+                "startup_complete": if runtime.is_startup_complete() { "ok" } else { "not_ready" },
+                "accepting_traffic": if !runtime.is_shutting_down() { "ok" } else { "not_ready" }
             }
         });
         return Ok(Response::builder()
@@ -764,7 +808,11 @@ pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, I
         "status": "ready",
         "checks": {
             "storage": "ok",
-            "domains_initialized": "ok"
+            "storage_writer_lease": "ok",
+            "domains_initialized": "ok",
+            "auth_configuration": "ok",
+            "startup_complete": "ok",
+            "accepting_traffic": "ok"
         }
     });
     Ok(Response::builder()
@@ -775,7 +823,7 @@ pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response<Body>, I
 }
 pub async fn handle_startup(runtime: Arc<Runtime>) -> Result<Response<Body>, Infallible> {
     // Check if startup complete
-    if !runtime.startup_complete() {
+    if !runtime.is_startup_complete() {
         let response = json!({ "status": "starting" });
         return Ok(Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
@@ -872,7 +920,8 @@ impl DomainStats for KvActor {
 ## Recommended Deployment
 1. **Admin API on same port** as data plane (e.g., 8080) for cloud platform compatibility
 2. **Path-based routing**:
-   - `/healthz` - Kubernetes liveness probe (no auth)
+   - `/livez` - Kubernetes liveness probe (no auth)
+   - `/healthz` - Deployment-safe health gate (no auth)
    - `/readyz` - Kubernetes readiness probe (no auth)
    - `/startupz` - Kubernetes startup probe (no auth)
    - `/health` - Legacy health check (no auth)
@@ -926,7 +975,7 @@ spec:
         # Liveness probe - restart if unhealthy
         livenessProbe:
           httpGet:
-            path: /healthz
+            path: /livez
             port: 8080
           initialDelaySeconds: 10
           periodSeconds: 10
@@ -981,10 +1030,11 @@ pub async fn handle_request(
     
     match (method, path) {
         // Kubernetes probes (no auth)
-        (&Method::GET, "/healthz") => handle_liveness().await,
+        (&Method::GET, "/livez") => handle_liveness().await,
+        (&Method::GET, "/healthz") => handle_healthz(runtime).await,
         (&Method::GET, "/readyz") => handle_readiness(runtime).await,
         (&Method::GET, "/startupz") => handle_startup(runtime).await,
-        (&Method::GET, "/health") => handle_health().await,
+        (&Method::GET, "/health") => handle_health(runtime).await,
         
         // Metrics (requires auth)
         (&Method::GET, "/metrics") => {
@@ -1040,7 +1090,7 @@ fn admin_router() -> Router {
 ### Protocol Detection
 On port 8080:
 1. **HTTP GET/POST** → Check path:
-   - `/healthz`, `/readyz`, `/startupz`, `/health` → Health probes (no auth)
+   - `/livez`, `/healthz`, `/readyz`, `/startupz`, `/health` → Health probes (no auth)
    - `/metrics` → Metrics (check JWT/API key)
    - `/admin/*` → Admin API (check JWT/API key + admin permission)
    - `/ws` with Upgrade header → WebSocket handler
@@ -1048,16 +1098,17 @@ On port 8080:
 ## Minimal Initial Implementation
 Start with these essential endpoints:
 ### Phase 1: Health & Observability
-1. `GET /healthz` - Kubernetes liveness probe
-2. `GET /readyz` - Kubernetes readiness probe  
-3. `GET /startupz` - Kubernetes startup probe
-4. `GET /health` - Legacy health check
-5. `GET /metrics` - Prometheus metrics (with auth)
-6. `GET /admin/stats` - Human-readable overview
+1. `GET /livez` - Kubernetes liveness probe
+2. `GET /healthz` - Deployment-safe health gate
+3. `GET /readyz` - Kubernetes readiness probe  
+4. `GET /startupz` - Kubernetes startup probe
+5. `GET /health` - Legacy health check
+6. `GET /metrics` - Prometheus metrics (with auth)
+7. `GET /admin/stats` - Human-readable overview
 ### Phase 2: Domain Visibility
-7. `GET /admin/kv/stats` - KV visibility
-8. `GET /admin/notice/subscriptions` - Notice visibility
-9. `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}` - Queue warm-state visibility
+8. `GET /admin/kv/stats` - KV visibility
+9. `GET /admin/notice/subscriptions` - Notice visibility
+10. `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}` - Queue warm-state visibility
 10. `GET /admin/sessions` - Active connections
 ### Phase 3: Admin Commands
 11. Domain-specific commands (rollback, cancel, release) with `X-Confirm: true`

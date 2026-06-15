@@ -31,8 +31,14 @@ pub struct Runtime {
     /// Domains initialized flag
     pub(crate) domains_ready: Arc<AtomicU64>,
 
+    /// Auth configuration validated flag
+    pub(crate) auth_config_ready: Arc<AtomicU64>,
+
     /// Startup complete flag
     pub(crate) startup_complete: Arc<AtomicU64>,
+
+    /// Shutdown started flag
+    pub(crate) shutdown_started: Arc<AtomicBool>,
 
     /// Active connection count
     pub(crate) connection_count: Arc<AtomicUsize>,
