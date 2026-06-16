@@ -19,9 +19,13 @@ export default function Layout({ children }: { children?: unknown }) {
             <NavGroup align="end">
               <ThemeToggle
                 aria-label="Toggle color theme"
-                lightIcon={<SunIcon size={16} />}
-                darkIcon={<MoonIcon size={16} />}
-              />
+              >
+                {({ nextTheme }) => (
+                  <span key={nextTheme} aria-hidden="true">
+                    {nextTheme === "dark" ? <MoonIcon size={16} /> : <SunIcon size={16} />}
+                  </span>
+                )}
+              </ThemeToggle>
             </NavGroup>
           </Navbar>
         </Container>

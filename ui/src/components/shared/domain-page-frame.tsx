@@ -9,7 +9,7 @@ export default function DomainPageFrame({ children, sidebar }: DomainPageFramePr
   const hasSidebar = sidebar !== undefined && sidebar !== null;
 
   return (
-    <Container class="page-frame" fluid padding="4">
+    <Container maxWidth="var(--ak-layout-content-max-width)">
       <div
         class={
           hasSidebar ? "page-frame-layout page-frame-layout-with-sidebar" : "page-frame-layout"

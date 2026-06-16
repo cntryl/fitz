@@ -143,9 +143,8 @@ export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
     <Stack gap="4" class="resource-workbench">
       <section class="resource-workbench-hero">
         <Stack gap="1" class="resource-workbench-summary">
-          <p class="domain-header-kicker">Snapshot summary</p>
-          <h2>What to know</h2>
-          <p>{summary.detail}</p>
+          <p class="domain-header-kicker">Operational evidence</p>
+          <h2>Where to inspect next</h2>
           <p class="domain-muted">{summary.nextStep}</p>
         </Stack>
         <Stack gap="2" class="resource-workbench-summary-actions">
@@ -155,8 +154,8 @@ export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
       </section>
 
       <DomainMetricTable
-        title="Current snapshot"
-        description="Exact values for the current resource snapshot."
+        title="Current values"
+        description="Exact values for the current resource."
         metrics={detail.detailMetrics}
       />
 

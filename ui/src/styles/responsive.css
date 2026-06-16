@@ -5,14 +5,6 @@
 }
 
 @media (max-width: 48rem) {
-  .app-shell-nav {
-    padding-block: var(--ak-space-1, 0.25rem);
-  }
-
-  .app-brand-copy span {
-    display: none;
-  }
-
   :where(.navbar-panel, [data-slot="navbar-panel"]) {
     gap: var(--ak-space-2, 0.5rem);
     padding: var(--ak-space-sm, 0.625rem);
@@ -66,6 +58,9 @@
 
   .page-frame-layout-with-sidebar {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "main"
+      "sidebar";
   }
 
   .page-frame-sidebar {

@@ -29,14 +29,16 @@ export function BrokerStatusStrip({
 }) {
   const severity = incidentSeverity(topology);
   const messageTrend = topologyTrendDirection(history, "messagesPerSecond");
+  const nextQuery = topology.diagnostics.incident_summary?.recommended_next_query ?? "No follow-up needed";
 
   return (
-    <section class="dashboard-status-strip" aria-label="Broker status">
+    <section class="dashboard-status-strip" aria-label="Broker snapshot">
       <div class="dashboard-status-summary">
         <div>
-          <p class="domain-header-kicker">Broker status</p>
+          <p class="domain-header-kicker">Current snapshot</p>
           <h2>{incidentTitle(topology)}</h2>
           <p>{incidentDescription(topology)}</p>
+          <p class="domain-muted">Next: {nextQuery}</p>
         </div>
         <Badge variant={badgeVariant(severity)}>{severity}</Badge>
       </div>

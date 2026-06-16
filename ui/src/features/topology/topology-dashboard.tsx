@@ -1,5 +1,4 @@
 import { Stack } from "@askrjs/themes/layouts";
-import { QueryRefreshingState } from "@/components/shared/query-state";
 import type {
   MessagingTopologyOverview,
   TopologySelection,
@@ -10,14 +9,12 @@ import { BehaviorMatrix, BrokerStatusStrip, DiagnosticsPanel } from "./topology-
 
 export function TopologyDashboard({
   history,
-  isRefreshing,
   refreshState,
   selected,
   setSelectedId,
   topology,
 }: {
   history: TopologyTrendPoint[];
-  isRefreshing: boolean;
   refreshState: string;
   selected: TopologySelection;
   setSelectedId: (id: string) => void;
@@ -25,10 +22,6 @@ export function TopologyDashboard({
 }) {
   return (
     <Stack gap="3">
-      {isRefreshing ? (
-        <QueryRefreshingState description="Refreshing messaging topology..." />
-      ) : null}
-
       <BrokerStatusStrip history={history} topology={topology} refreshState={refreshState} />
       <MessagingFlow
         history={history}

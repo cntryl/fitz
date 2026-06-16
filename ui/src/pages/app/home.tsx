@@ -95,7 +95,6 @@ export default function Home() {
           <Stack gap="3">
             <TopologyDashboard
               history={trendHistory}
-              isRefreshing={topologyQuery.refreshing}
               refreshState={refreshState}
               selected={selected}
               setSelectedId={setSelectedId}

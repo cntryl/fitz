@@ -551,6 +551,7 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Healthy");
     expect(text).toContain("Messaging flow");
     expect(text).toContain("Connected sessions");
+    expect(text).toContain("Next: Check queue");
     expect(text).toContain("Fitz broker");
     expect(text).toContain("Consumers and observers");
     expect(text).toContain("Top scoped resources");
@@ -575,9 +576,51 @@ describe("admin page smoke tests", () => {
     const root = await mountRoute("/", "/", Home);
     const text = root.textContent ?? "";
 
-    expect(text).toContain("Refreshing messaging topology");
+    expect(text).toContain("Refreshing");
     expect(text).toContain("Work backlog");
     expect(text).toContain("Queue");
+  });
+
+  it("renders a metrics posture summary and empty search state", async () => {
+    const { default: MetricsPage } = await import("@/pages/app/metrics");
+
+    const root = await mountRoute("/admin/metrics", "/admin/metrics", MetricsPage);
+
+    expect(root.textContent).toContain("Live state");
+    expect(root.textContent).toContain("Broker snapshot");
+    expect(root.textContent).toContain("Quiet");
+    expect(root.textContent).toContain("No backlog, contention, or failure pressure detected");
+
+    const filter = root.querySelector('input[aria-label="Filter metrics"]') as HTMLInputElement | null;
+    expect(filter).toBeTruthy();
+
+    if (filter) {
+      filter.value = "zzz";
+      filter.dispatchEvent(new Event("input", { bubbles: true }));
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+    }
+
+    expect(root.textContent).toContain("No matching metric families");
+    expect(root.textContent).toContain("Clear the filter");
+  });
+
+  it("renders a sessions posture summary and empty state", async () => {
+    const { default: SessionsPage } = await import("@/pages/app/sessions");
+
+    let root = await mountRoute("/sessions", "/sessions", SessionsPage);
+
+    expect(root.textContent).toContain("Session summary");
+    expect(root.textContent).toContain("Healthy");
+    expect(root.textContent).toContain("Unresolved sessions");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.activeSessions = queryState.fresh({ sessions: [] }, queryOptions());
+    root = await mountRoute("/sessions", "/sessions", SessionsPage);
+
+    expect(root.textContent).toContain("No active sessions");
+    expect(root.textContent).toContain("No live broker or admin sessions are currently connected");
   });
 
   it("mounts representative loading, error, and empty states", async () => {
@@ -619,7 +662,8 @@ describe("admin page smoke tests", () => {
 
     const root = await mountRoute("/queue", "/queue", QueuePage);
 
-    expect(root.textContent).toContain("Refreshing queue overview");
+    expect(root.textContent).toContain("Refreshing");
+    expect(root.textContent).toContain("Scope summary");
     expect(root.textContent).toContain("Queue metrics");
   });
 

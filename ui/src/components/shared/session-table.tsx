@@ -1,8 +1,15 @@
 import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Card, CardContent } from "@askrjs/themes/surfaces";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@askrjs/themes/surfaces";
 import type { ActiveSession } from "@/features/session/session-models";
 import { formatTimestamp } from "@/shared/format";
+import { QueryEmptyState } from "./query-state";
 
 export interface SessionTableProps {
   sessions: ActiveSession[];
@@ -28,8 +35,24 @@ function formatDuration(value?: number) {
 }
 
 export default function SessionTable({ sessions }: SessionTableProps) {
+  if (sessions.length === 0) {
+    return (
+      <QueryEmptyState
+        title="No active sessions"
+        description="No live broker or admin sessions are currently connected."
+      />
+    );
+  }
+
   return (
     <Card class="domain-table-card" padding="sm" variant="default">
+      <CardHeader>
+        <CardTitle>Live sessions</CardTitle>
+        <CardDescription>
+          Each row is one live broker or admin connection. Route family, identity claim, and idle
+          time show how the session is resolved.
+        </CardDescription>
+      </CardHeader>
       <CardContent>
         <div class="domain-table-wrap">
           <Table class="domain-table">
