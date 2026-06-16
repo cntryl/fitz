@@ -37,17 +37,27 @@ export default function KvPage() {
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
-          domain="KV"
+          eyebrow="Authoritative state"
           title="KV overview"
           description="Current KV state, transactional pressure, and realm inventory."
-          onRefresh={() => overview.refresh()}
+          primaryAction={{
+            label: "Refresh KV",
+            onPress: () => overview.refresh(),
+          }}
+          status={{
+            detail: "Current values are authoritative state, not a history of prior writes.",
+            label: overview.refreshing ? "Refreshing" : overview.stale ? "Stale" : "Live",
+            tone: overview.refreshing ? "info" : overview.stale ? "warning" : "success",
+          }}
         />
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading KV overview..." />
         ) : null}
 
-        {!data && overview.error ? <QueryErrorState error={overview.error} /> : null}
+        {!data && overview.error ? (
+          <QueryErrorState error={overview.error} onRetry={() => overview.refresh()} />
+        ) : null}
 
         {data ? (
           <Stack gap="3">
@@ -57,6 +67,7 @@ export default function KvPage() {
 
             <DomainMetricTable
               title="KV metrics"
+              description="Current authoritative state and transaction pressure."
               metrics={[
                 { label: "Keys", value: data.stats.keysTotal },
                 { label: "Transactions", value: data.stats.transactionsActive },
@@ -74,10 +85,19 @@ export default function KvPage() {
               title="KV signal"
               description="Current key volume, transactional pressure, and throughput."
               label="KV state snapshot"
+              scope="Live KV snapshot"
               data={[
-                ["Keys", data.stats.keysTotal],
-                ["Transactions", data.stats.transactionsActive],
-                ["Ops / sec", data.stats.operationsPerSecond],
+                { label: "Keys", unitLabel: "keys", value: data.stats.keysTotal },
+                {
+                  label: "Transactions",
+                  unitLabel: "transactions",
+                  value: data.stats.transactionsActive,
+                },
+                {
+                  label: "Ops / sec",
+                  unitLabel: "ops/sec",
+                  value: data.stats.operationsPerSecond,
+                },
               ]}
             />
 

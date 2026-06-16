@@ -1,10 +1,10 @@
 .page-frame {
-  max-width: 96rem;
+  max-width: 94rem;
 }
 
 .page-frame-layout {
   display: grid;
-  gap: var(--ak-space-4, 1rem);
+  gap: var(--ak-space-5, 1.25rem);
 }
 
 .page-frame-layout-with-sidebar {

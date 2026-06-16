@@ -14,6 +14,7 @@ import {
 import type { TopologyTrendPoint } from "@/features/topology/topology-models";
 import { createMessagingTopologyQuery } from "@/features/topology/topology-query";
 import { domainLinks } from "@/shared/navigation/domains";
+import { formatRelativeTime } from "@/shared/format";
 
 export default function Home() {
   const session = createCurrentSessionQuery();
@@ -37,7 +38,7 @@ export default function Home() {
   }
 
   if (session.error && !session.data) {
-    return <QueryErrorState error={session.error} />;
+    return <QueryErrorState error={session.error} onRetry={() => session.refresh()} />;
   }
 
   const username = session.data?.username ?? "admin";
@@ -46,7 +47,7 @@ export default function Home() {
     ? "Refreshing"
     : topologyQuery.stale
       ? "Stale"
-      : "Last updated";
+      : "Live";
   const trendHistory = topology
     ? appendTopologyTrendPoint(trendHistoryValue, topology)
     : trendHistoryValue;
@@ -60,16 +61,35 @@ export default function Home() {
     <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
-          title="Fitz status"
+          eyebrow="Broker workspace"
+          title="Broker status"
           description={`Welcome, ${username}. Current broker behavior, messaging flow, and attention signals.`}
-          onRefresh={() => topologyQuery.refresh()}
+          primaryAction={{
+            label: "Refresh topology",
+            onPress: () => topologyQuery.refresh(),
+          }}
+          status={{
+            detail: topology
+              ? `Snapshot ${formatRelativeTime(topology.generatedAt)}`
+              : "Loading the live broker snapshot.",
+            label: refreshState,
+            tone: topologyQuery.refreshing
+              ? "info"
+              : topologyQuery.stale
+                ? "warning"
+                : topology
+                  ? "success"
+                  : "info",
+          }}
         />
 
         {!topology && topologyQuery.loading ? (
           <QueryLoadingState description="Loading messaging topology..." />
         ) : null}
 
-        {!topology && topologyQuery.error ? <QueryErrorState error={topologyQuery.error} /> : null}
+        {!topology && topologyQuery.error ? (
+          <QueryErrorState error={topologyQuery.error} onRetry={() => topologyQuery.refresh()} />
+        ) : null}
 
         {topology && selected ? (
           <Stack gap="3">

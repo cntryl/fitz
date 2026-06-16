@@ -37,7 +37,7 @@ export const shellLinks: ShellLink[] = [
     icon: UsersIcon,
   },
   {
-    href: "/metrics",
+    href: "/admin/metrics",
     title: "Metrics",
     icon: LineChartIcon,
   },

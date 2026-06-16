@@ -38,17 +38,27 @@ export default function StreamPage() {
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
-          domain="Stream"
+          eyebrow="Committed history"
           title="Stream overview"
           description="Committed stream history, live subscriptions, and realm inventory."
-          onRefresh={() => overview.refresh()}
+          primaryAction={{
+            label: "Refresh stream",
+            onPress: () => overview.refresh(),
+          }}
+          status={{
+            detail: "Stream is the durable history and replay surface.",
+            label: overview.refreshing ? "Refreshing" : overview.stale ? "Stale" : "Live",
+            tone: overview.refreshing ? "info" : overview.stale ? "warning" : "success",
+          }}
         />
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading stream overview..." />
         ) : null}
 
-        {!data && overview.error ? <QueryErrorState error={overview.error} /> : null}
+        {!data && overview.error ? (
+          <QueryErrorState error={overview.error} onRetry={() => overview.refresh()} />
+        ) : null}
 
         {data ? (
           <Stack gap="3">
@@ -58,6 +68,7 @@ export default function StreamPage() {
 
             <DomainMetricTable
               title="Stream metrics"
+              description="Committed history volume, subscriptions, and append activity."
               metrics={[
                 { label: "Streams", value: data.stats.streamsActive },
                 { label: "Subscriptions", value: data.stats.subscriptionsActive },
@@ -73,11 +84,20 @@ export default function StreamPage() {
               title="Stream signal"
               description="Current stream footprint, active subscriptions, and event volume."
               label="Stream state snapshot"
+              scope="Live stream snapshot"
               data={[
-                ["Streams", data.stats.streamsActive],
-                ["Subscriptions", data.stats.subscriptionsActive],
-                ["Events", data.stats.eventsTotal],
-                ["Ops / sec", data.stats.operationsPerSecond],
+                { label: "Streams", unitLabel: "streams", value: data.stats.streamsActive },
+                {
+                  label: "Subscriptions",
+                  unitLabel: "subscriptions",
+                  value: data.stats.subscriptionsActive,
+                },
+                { label: "Events", unitLabel: "events", value: data.stats.eventsTotal },
+                {
+                  label: "Ops / sec",
+                  unitLabel: "ops/sec",
+                  value: data.stats.operationsPerSecond,
+                },
               ]}
             />
 

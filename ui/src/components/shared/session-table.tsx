@@ -36,12 +36,12 @@ export default function SessionTable({ sessions }: SessionTableProps) {
             <TableHead>
               <TableRow>
                 <TableHeaderCell>Session</TableHeaderCell>
-                <TableHeaderCell>Family</TableHeaderCell>
+                <TableHeaderCell>Route family</TableHeaderCell>
                 <TableHeaderCell>Subject</TableHeaderCell>
-                <TableHeaderCell>Identity</TableHeaderCell>
+                <TableHeaderCell>Identity claim</TableHeaderCell>
                 <TableHeaderCell>Transport</TableHeaderCell>
                 <TableHeaderCell>Remote address</TableHeaderCell>
-                <TableHeaderCell>Connected</TableHeaderCell>
+                <TableHeaderCell>Connected at</TableHeaderCell>
                 <TableHeaderCell>Idle</TableHeaderCell>
                 <TableHeaderCell>Messages</TableHeaderCell>
               </TableRow>

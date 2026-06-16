@@ -1,6 +1,6 @@
 import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import { formatDisplayValue } from "@/shared/format";
 
 export interface DomainMetric {
@@ -10,15 +10,17 @@ export interface DomainMetric {
 }
 
 export interface DomainMetricTableProps {
+  description?: string;
   title: string;
   metrics: DomainMetric[];
 }
 
-export default function DomainMetricTable({ title, metrics }: DomainMetricTableProps) {
+export default function DomainMetricTable({ description, metrics, title }: DomainMetricTableProps) {
   return (
     <Card class="domain-metric-card" padding="sm" variant="default">
       <CardHeader>
         <CardTitle>{title}</CardTitle>
+        {description ? <CardDescription>{description}</CardDescription> : null}
       </CardHeader>
       <CardContent>
         <div class="domain-table-wrap">

@@ -5,7 +5,18 @@
 body {
   min-height: 100vh;
   margin: 0;
-  background: var(--ak-color-bg, Canvas);
+  background:
+    radial-gradient(
+      circle at top left,
+      color-mix(in srgb, var(--ak-color-accent, CanvasText) 5%, transparent),
+      transparent 28rem
+    ),
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, CanvasText 3%, transparent),
+      transparent 24rem
+    ),
+    var(--ak-color-bg, Canvas);
 }
 
 a {

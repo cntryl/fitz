@@ -36,16 +36,27 @@ export default function LeasePage() {
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
+          eyebrow="Ownership coordination"
           title="Lease overview"
           description="Current lease load, waiter pressure, and realm coverage."
-          onRefresh={() => overview.refresh()}
+          primaryAction={{
+            label: "Refresh lease",
+            onPress: () => overview.refresh(),
+          }}
+          status={{
+            detail: "Leases are ephemeral ownership claims and must be reacquired after loss.",
+            label: overview.refreshing ? "Refreshing" : overview.stale ? "Stale" : "Live",
+            tone: overview.refreshing ? "info" : overview.stale ? "warning" : "success",
+          }}
         />
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading lease overview..." />
         ) : null}
 
-        {!data && overview.error ? <QueryErrorState error={overview.error} /> : null}
+        {!data && overview.error ? (
+          <QueryErrorState error={overview.error} onRetry={() => overview.refresh()} />
+        ) : null}
 
         {data ? (
           <Stack gap="3">
@@ -55,6 +66,7 @@ export default function LeasePage() {
 
             <DomainMetricTable
               title="Lease metrics"
+              description="Ephemeral ownership claims, waiters, and lease age."
               metrics={[
                 { label: "Active leases", value: data.stats.leasesActive },
                 { label: "Waiters", value: data.stats.waiterDepth },
@@ -76,10 +88,19 @@ export default function LeasePage() {
               title="Lease signal"
               description="Current lease load, waiter pressure, and oldest lease age."
               label="Lease state snapshot"
+              scope="Live lease snapshot"
               data={[
-                ["Active leases", data.stats.leasesActive],
-                ["Waiters", data.stats.waiterDepth],
-                ["Oldest age", data.stats.oldestLeaseAgeSeconds],
+                {
+                  label: "Active leases",
+                  unitLabel: "leases",
+                  value: data.stats.leasesActive,
+                },
+                { label: "Waiters", unitLabel: "waiters", value: data.stats.waiterDepth },
+                {
+                  label: "Oldest age",
+                  unitLabel: "seconds",
+                  value: data.stats.oldestLeaseAgeSeconds,
+                },
               ]}
             />
 

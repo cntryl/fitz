@@ -13,7 +13,7 @@ import {
 } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
 import { Flex, Stack } from "@askrjs/themes/layouts";
-import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -35,7 +35,11 @@ import {
   createQueueResourceComparisonQuery,
   createQueueResourceQuery,
 } from "@/features/queue/queue-resource-query";
-import type { QueueResourceTimelineEvent } from "@/features/queue/queue-resource-models";
+import type {
+  QueueResourceDetail,
+  QueueResourceRef,
+  QueueResourceTimelineEvent,
+} from "@/features/queue/queue-resource-models";
 
 interface QueueComparisonTarget {
   area: string;
@@ -43,6 +47,8 @@ interface QueueComparisonTarget {
   realm: string;
   resource: string;
 }
+
+type QueueStateTone = "info" | "success" | "warning" | "danger";
 
 function trimmedOrNull(value: string) {
   const trimmed = value.trim();
@@ -99,6 +105,66 @@ function parseOptionalNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function formatQueueScope(scope: Pick<QueueComparisonTarget, "area" | "realm" | "resource"> & { family?: number | null }) {
+  const base = `${scope.realm} / ${scope.area} / ${scope.resource}`;
+  return scope.family == null ? base : `${base} / family ${scope.family}`;
+}
+
+function describeQueueState(
+  detail: QueueResourceDetail,
+  compareTarget: QueueComparisonTarget | null,
+): { detail: string; label: string; tone: QueueStateTone } {
+  const counts = [
+    detail.messagesReady > 0 ? `${detail.messagesReady} ready` : null,
+    detail.messagesInflight > 0 ? `${detail.messagesInflight} inflight` : null,
+    detail.messagesDelayed > 0 ? `${detail.messagesDelayed} delayed` : null,
+    detail.messagesDeadLettered > 0 ? `${detail.messagesDeadLettered} dead-lettered` : null,
+  ].filter((value): value is string => value !== null);
+
+  const snapshotSentence = counts.length
+    ? `Current queue snapshot: ${counts.join(", ")}.`
+    : "No ready, inflight, delayed, or dead-lettered messages are visible.";
+  const ageSentence = `Oldest visible message age: ${humanizeSeconds(detail.oldestMessageAgeSeconds)}.`;
+  const compareSentence = compareTarget
+    ? ` Compare against ${formatQueueScope(compareTarget)} below.`
+    : " Use the compare card below to inspect another scope.";
+
+  if (detail.messagesDeadLettered > 0) {
+    return {
+      detail: `${snapshotSentence} ${ageSentence} Dead letters need attention.${compareSentence}`,
+      label: "Pressure",
+      tone: "danger",
+    };
+  }
+
+  if (detail.messagesDelayed > 0) {
+    return {
+      detail: `${snapshotSentence} ${ageSentence} Delayed work is visible. Use the timeline and inflight tables to confirm where work is waiting.${compareSentence}`,
+      label: "Pressure",
+      tone: "warning",
+    };
+  }
+
+  if (
+    detail.messagesReady === 0 &&
+    detail.messagesInflight === 0 &&
+    detail.messagesDelayed === 0 &&
+    detail.messagesDeadLettered === 0
+  ) {
+    return {
+      detail: `${snapshotSentence} ${ageSentence}${compareSentence}`,
+      label: "Idle",
+      tone: "success",
+    };
+  }
+
+  return {
+    detail: `${snapshotSentence} ${ageSentence} The queue is active without visible delay or dead-letter pressure.${compareSentence}`,
+    label: "Healthy",
+    tone: "success",
+  };
+}
+
 function currentCompareScope() {
   if (typeof window === "undefined") {
     return {
@@ -121,11 +187,7 @@ function currentCompareScope() {
 
 interface QueueResourceComparisonResultsProps {
   compareTarget: QueueComparisonTarget;
-  resourceRef: {
-    area: string;
-    realm: string;
-    resource: string;
-  };
+  resourceRef: QueueResourceRef;
 }
 
 function QueueResourceComparisonResults({
@@ -142,7 +204,11 @@ function QueueResourceComparisonResults({
       ) : null}
 
       {comparisonQuery.error && !comparison ? (
-        <QueryErrorState error={comparisonQuery.error} />
+        <QueryErrorState
+          error={comparisonQuery.error}
+          onRetry={() => comparisonQuery.refresh()}
+          title="Unable to compare"
+        />
       ) : null}
 
       {comparison ? (
@@ -153,6 +219,7 @@ function QueueResourceComparisonResults({
 
           <DomainMetricTable
             title="Comparison summary"
+            description={`Current scope: ${formatQueueScope(resourceRef)}. Target scope: ${formatQueueScope(compareTarget)}.`}
             metrics={[
               { label: "Summary", value: comparison.summary },
               { label: "Mode", value: comparison.comparisonMode },
@@ -161,7 +228,8 @@ function QueueResourceComparisonResults({
           />
 
           <DomainMetricTable
-            title="Current snapshot"
+            title="Current scope"
+            description={`Live metrics for ${formatQueueScope(comparison.left.scope)}.`}
             metrics={[
               { label: "Backlog", value: comparison.left.metrics.backlog ?? "n/a" },
               { label: "Inflight", value: comparison.left.metrics.inflight ?? "n/a" },
@@ -179,7 +247,8 @@ function QueueResourceComparisonResults({
           />
 
           <DomainMetricTable
-            title="Comparison target"
+            title="Target scope"
+            description={`Live metrics for ${formatQueueScope(comparison.right.scope)}.`}
             metrics={[
               { label: "Backlog", value: comparison.right.metrics.backlog ?? "n/a" },
               { label: "Inflight", value: comparison.right.metrics.inflight ?? "n/a" },
@@ -197,7 +266,8 @@ function QueueResourceComparisonResults({
           />
 
           <DomainMetricTable
-            title="Delta"
+            title="Difference"
+            description="Positive values mean the current queue resource is ahead of the target."
             metrics={[
               { label: "Backlog delta", value: formatComparisonValue(comparison.delta.backlog) },
               { label: "Inflight delta", value: formatComparisonValue(comparison.delta.inflight) },
@@ -257,11 +327,25 @@ export default function QueueResourcePage() {
   const confirmationMessage = confirmMessage();
   const confirmationKind = confirmKind();
   const actionPending = actionKind() !== null;
+  const stateSummary = data ? describeQueueState(data.detail, compareTarget) : null;
+  const headerStatus = {
+    detail: stateSummary?.detail ?? "Loading queue actor state and comparison tools.",
+    label: resourceQuery.refreshing
+      ? "Refreshing"
+      : resourceQuery.stale
+        ? "Stale"
+        : stateSummary?.label ?? (data ? "Live" : "Loading"),
+    tone: resourceQuery.refreshing
+      ? "info"
+      : resourceQuery.stale
+        ? "warning"
+        : stateSummary?.tone ?? (data ? "success" : "info"),
+  } as const;
 
   const sidebar = createDomainSidebar({
     data,
-    title: "Resource snapshot",
-    description: "Current queue actor state for this resource.",
+    title: "Queue snapshot",
+    description: "Durable backlog pressure and current queue activity.",
     stats: (current) => [
       { label: "Realm", value: current.detail.realm },
       { label: "Area", value: current.detail.area },
@@ -289,16 +373,23 @@ export default function QueueResourcePage() {
       <DomainPageFrame sidebar={sidebar}>
         <Stack gap="3">
           <DomainHeader
-            title="Resource drill-down"
-            description={`${realm} / ${area} / ${resource}`}
-            onRefresh={() => resourceQuery.refresh()}
+            eyebrow="Queue resource"
+            title="Queue resource inspection"
+            description={`${realm} / ${area} / ${resource}. Inspect the current queue actor state and compare it with another scope from the comparison card below.`}
+            primaryAction={{
+              label: "Refresh resource",
+              onPress: () => resourceQuery.refresh(),
+            }}
+            status={headerStatus}
           />
 
           {resourceQuery.loading && !data ? (
             <QueryLoadingState description="Loading queue resource..." />
           ) : null}
 
-          {resourceQuery.error && !data ? <QueryErrorState error={resourceQuery.error} /> : null}
+          {resourceQueryError ? (
+            <QueryErrorState error={resourceQueryError} onRetry={() => resourceQuery.refresh()} />
+          ) : null}
 
           {actionError ? <QueryErrorState error={actionError} /> : null}
         </Stack>
@@ -360,8 +451,10 @@ export default function QueueResourcePage() {
       nextQuery.set("againstResource", nextResource);
     }
 
-    if (nextFamily) {
-      nextQuery.set("againstFamily", nextFamily);
+    const nextFamilyValue = parseOptionalNumber(nextFamily ?? "");
+
+    if (nextFamilyValue != null) {
+      nextQuery.set("againstFamily", String(nextFamilyValue));
     }
 
     const search = nextQuery.toString();
@@ -372,16 +465,19 @@ export default function QueueResourcePage() {
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
-          title="Resource drill-down"
-          description={`${realm} / ${area} / ${resource}`}
-          onRefresh={() => resourceQuery.refresh()}
+          eyebrow="Queue resource"
+          title="Queue resource inspection"
+          description={`${realm} / ${area} / ${resource}. Inspect the current queue actor state, then compare it with another scope from the card below.`}
+          primaryAction={{
+            label: "Refresh resource",
+            onPress: () => resourceQuery.refresh(),
+          }}
+          status={headerStatus}
         />
 
         {resourceQuery.loading && !data ? (
           <QueryLoadingState description="Loading queue resource..." />
         ) : null}
-
-        {resourceQueryError && !data ? <QueryErrorState error={resourceQueryError} /> : null}
 
         {actionError ? <QueryErrorState error={actionError} /> : null}
 
@@ -391,7 +487,8 @@ export default function QueueResourcePage() {
           ) : null}
 
           <DomainMetricTable
-            title="Resource metrics"
+            title="Current snapshot"
+            description="Point-in-time queue counters for this resource."
             metrics={[
               { label: "Total messages", value: current.detail.messagesTotal },
               { label: "Ready", value: current.detail.messagesReady },
@@ -407,8 +504,107 @@ export default function QueueResourcePage() {
 
           <Card class="domain-table-card" variant="raised">
             <CardHeader>
-              <CardTitle>Inflight</CardTitle>
-              <p class="domain-muted">{current.inflight.length} entries</p>
+              <CardTitle>Compare scopes</CardTitle>
+              <CardDescription>
+                Enter a target realm, area, and resource to compare the current queue scope.
+                All three are required. Family is optional and narrows the comparison to one queue
+                family.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Stack gap="3">
+                <form onSubmit={onCompareSubmit}>
+                  <div class="form-grid">
+                    <div class="auth-field">
+                      <Label for="compare-realm">Target realm</Label>
+                      <Input
+                        id="compare-realm"
+                        value={compareRealmValue}
+                        onInput={(event: Event) =>
+                          setCompareRealmInput((event.target as HTMLInputElement).value)
+                        }
+                        placeholder="acme"
+                      />
+                    </div>
+
+                    <div class="auth-field">
+                      <Label for="compare-area">Target area</Label>
+                      <Input
+                        id="compare-area"
+                        value={compareAreaValue}
+                        onInput={(event: Event) =>
+                          setCompareAreaInput((event.target as HTMLInputElement).value)
+                        }
+                        placeholder="payments"
+                      />
+                    </div>
+
+                    <div class="auth-field">
+                      <Label for="compare-resource">Target resource</Label>
+                      <Input
+                        id="compare-resource"
+                        value={compareResourceValue}
+                        onInput={(event: Event) =>
+                          setCompareResourceInput((event.target as HTMLInputElement).value)
+                        }
+                        placeholder="inbox"
+                      />
+                    </div>
+
+                    <div class="auth-field">
+                      <Label for="compare-family">Target family</Label>
+                      <Input
+                        id="compare-family"
+                        value={compareFamilyValue}
+                        onInput={(event: Event) =>
+                          setCompareFamilyInput((event.target as HTMLInputElement).value)
+                        }
+                        placeholder="Optional family"
+                      />
+                    </div>
+                  </div>
+
+                  <Flex gap="1" wrap="wrap">
+                    <Button type="submit">Compare scope</Button>
+                    <Button
+                      type="button"
+                      onPress={() => {
+                        setCompareRealmInput("");
+                        setCompareAreaInput("");
+                        setCompareResourceInput("");
+                        setCompareFamilyInput("");
+                        navigate(`/queue/${realm}/${area}/${resource}`);
+                      }}
+                    >
+                      Clear comparison
+                    </Button>
+                  </Flex>
+                </form>
+
+                {compareTarget ? (
+                  <QueueResourceComparisonResults
+                    resourceRef={resourceRef}
+                    compareTarget={compareTarget}
+                  />
+                ) : (
+                  <QueryEmptyState
+                    title="Add a comparison"
+                    description="Enter a target realm, area, and resource. All three are required. Family is optional and narrows the comparison to one queue family."
+                  />
+                )}
+              </Stack>
+            </CardContent>
+          </Card>
+
+          <Card class="domain-table-card" variant="raised">
+            <CardHeader>
+              <Flex justify="between" gap="3" align="start" wrap="wrap">
+                <Stack gap="1">
+                  <CardTitle>Inflight</CardTitle>
+                  <CardDescription>Messages currently owned by active queue sessions.</CardDescription>
+                </Stack>
+                <Badge variant="info">{current.inflight.length} entries</Badge>
+              </Flex>
             </CardHeader>
             <CardContent>
               {current.inflight.length === 0 ? (
@@ -421,8 +617,15 @@ export default function QueueResourcePage() {
 
           <Card class="domain-table-card" variant="raised">
             <CardHeader>
-              <CardTitle>Dead letters</CardTitle>
-              <p class="domain-muted">{current.deadLetters.length} messages</p>
+              <Flex justify="between" gap="3" align="start" wrap="wrap">
+                <Stack gap="1">
+                  <CardTitle>Dead letters</CardTitle>
+                  <CardDescription>Messages that need replay or purge decisions.</CardDescription>
+                </Stack>
+                <Badge variant={current.deadLetters.length > 0 ? "warning" : "success"}>
+                  {current.deadLetters.length} messages
+                </Badge>
+              </Flex>
             </CardHeader>
             <CardContent>
               {current.deadLetters.length === 0 ? (
@@ -441,12 +644,26 @@ export default function QueueResourcePage() {
 
           <Card class="domain-table-card" variant="raised">
             <CardHeader>
-              <CardTitle>Timeline</CardTitle>
-              <p class="domain-muted">{current.timeline.derived ? "Derived" : "Live"}</p>
+              <Flex justify="between" gap="3" align="start" wrap="wrap">
+                <Stack gap="1">
+                  <CardTitle>Timeline</CardTitle>
+                  <CardDescription>
+                    {current.timeline.derived
+                      ? "Derived timeline built from surrounding evidence."
+                      : "Live queue transitions observed for this resource."}
+                  </CardDescription>
+                </Stack>
+                <Badge variant={current.timeline.derived ? "info" : "success"}>
+                  {current.timeline.derived ? "Derived" : "Live"}
+                </Badge>
+              </Flex>
             </CardHeader>
             <CardContent>
               {current.timeline.events.length === 0 ? (
-                <QueryEmptyState description="No recent queue transitions are visible for this resource." />
+                <QueryEmptyState
+                  title={current.timeline.derived ? "Derived timeline" : "Live timeline"}
+                  description="No recent queue transitions are visible for this resource. Use the current snapshot or compare results for context."
+                />
               ) : (
                 <div class="domain-table-wrap">
                   <Table class="domain-table">
@@ -488,92 +705,6 @@ export default function QueueResourcePage() {
                     </TableBody>
                   </Table>
                 </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card class="domain-table-card" variant="raised">
-            <CardHeader>
-              <CardTitle>Compare</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Stack asChild gap="3">
-                <form onSubmit={onCompareSubmit}>
-                  <div class="form-grid">
-                    <div class="auth-field">
-                      <Label for="compare-realm">Against realm</Label>
-                      <Input
-                        id="compare-realm"
-                        value={compareRealmValue}
-                        onInput={(event: Event) =>
-                          setCompareRealmInput((event.target as HTMLInputElement).value)
-                        }
-                        placeholder="acme"
-                      />
-                    </div>
-
-                    <div class="auth-field">
-                      <Label for="compare-area">Against area</Label>
-                      <Input
-                        id="compare-area"
-                        value={compareAreaValue}
-                        onInput={(event: Event) =>
-                          setCompareAreaInput((event.target as HTMLInputElement).value)
-                        }
-                        placeholder="payments"
-                      />
-                    </div>
-
-                    <div class="auth-field">
-                      <Label for="compare-resource">Against resource</Label>
-                      <Input
-                        id="compare-resource"
-                        value={compareResourceValue}
-                        onInput={(event: Event) =>
-                          setCompareResourceInput((event.target as HTMLInputElement).value)
-                        }
-                        placeholder="inbox"
-                      />
-                    </div>
-
-                    <div class="auth-field">
-                      <Label for="compare-family">Against family</Label>
-                      <Input
-                        id="compare-family"
-                        value={compareFamilyValue}
-                        onInput={(event: Event) =>
-                          setCompareFamilyInput((event.target as HTMLInputElement).value)
-                        }
-                        placeholder="Optional family"
-                      />
-                    </div>
-                  </div>
-
-                  <Flex gap="1" wrap="wrap">
-                    <Button type="submit">Compare</Button>
-                    <Button
-                      type="button"
-                      onPress={() => {
-                        setCompareRealmInput("");
-                        setCompareAreaInput("");
-                        setCompareResourceInput("");
-                        setCompareFamilyInput("");
-                        navigate(`/queue/${realm}/${area}/${resource}`);
-                      }}
-                    >
-                      Clear
-                    </Button>
-                  </Flex>
-                </form>
-              </Stack>
-
-              {compareTarget ? (
-                <QueueResourceComparisonResults
-                  resourceRef={resourceRef}
-                  compareTarget={compareTarget}
-                />
-              ) : (
-                <QueryEmptyState description="Enter another queue scope to compare snapshots." />
               )}
             </CardContent>
           </Card>

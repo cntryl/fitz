@@ -6,6 +6,7 @@ type ChartValueFormatter = (value: number) => string;
 type ValueChartDatumObject = {
   description?: string;
   label: string;
+  unitLabel?: string;
   value: number;
 };
 
@@ -17,6 +18,7 @@ export interface DomainBarChartProps {
   data: ValueChartDatumInput[];
   description: string;
   label: string;
+  scope?: string;
   title: string;
   valueFormatter?: ChartValueFormatter;
 }
@@ -36,6 +38,7 @@ function normalizeData(data: ValueChartDatumInput[]) {
     return {
       description: objectEntry.description,
       label: objectEntry.label,
+      unitLabel: objectEntry.unitLabel,
       value: objectEntry.value,
     };
   });
@@ -45,6 +48,7 @@ export default function DomainBarChart({
   data,
   description,
   label,
+  scope,
   title,
   valueFormatter,
 }: DomainBarChartProps) {
@@ -52,7 +56,12 @@ export default function DomainBarChart({
   const max = Math.max(1, ...normalized.map((entry) => entry.value));
 
   return (
-    <ChartShell className="domain-chart-shell" title={title} description={description}>
+    <ChartShell
+      className="domain-chart-shell"
+      title={title}
+      description={description}
+      scope={scope}
+    >
       <ChartPanel title={label}>
         <div class="chart-meter-grid">
           {normalized.map((entry) => (
@@ -62,6 +71,7 @@ export default function DomainBarChart({
                 value={entry.value}
                 max={max}
                 description={entry.description}
+                unitLabel={entry.unitLabel}
                 valueFormatter={valueFormatter}
               />
             </div>

@@ -455,7 +455,7 @@ describe("admin page smoke tests", () => {
   it("mounts every authenticated route with success data", async () => {
     const pages = [
       {
-        assertText: "Fitz status",
+        assertText: "Broker status",
         module: () => import("@/pages/app/home"),
         path: "/",
         routePath: "/",
@@ -469,8 +469,8 @@ describe("admin page smoke tests", () => {
       {
         assertText: "Metrics explorer",
         module: () => import("@/pages/app/metrics"),
-        path: "/metrics",
-        routePath: "/metrics",
+        path: "/admin/metrics",
+        routePath: "/admin/metrics",
       },
       {
         assertText: "Queue overview",
@@ -479,7 +479,7 @@ describe("admin page smoke tests", () => {
         routePath: "/queue",
       },
       {
-        assertText: "Resource drill-down",
+        assertText: "Queue resource inspection",
         module: () => import("@/pages/app/queue-resource"),
         path: "/queue/default/ops/primary",
         routePath: "/queue/{realm}/{area}/{resource}",
@@ -521,7 +521,7 @@ describe("admin page smoke tests", () => {
         routePath: "/stream",
       },
       {
-        assertText: "primary",
+        assertText: "resource inspection",
         module: () => import("@/pages/app/resource-detail"),
         path: "/kv/default/ops/primary",
         routePath: "/kv/{realm}/{area}/{resource}",
@@ -631,6 +631,10 @@ describe("admin page smoke tests", () => {
       QueueResourcePage,
     );
 
+    expect(root.textContent).toContain("Comparison summary");
+    expect(root.textContent).toContain("Current scope");
+    expect(root.textContent).toContain("Target scope");
+    expect(root.textContent).toContain("Difference");
     expect(root.textContent).toContain("Snapshots match");
 
     cleanupApp(root);
@@ -654,7 +658,9 @@ describe("admin page smoke tests", () => {
       ResourceDetailPage,
     );
 
-    expect(root.textContent).toContain("Compare: No material difference");
+    expect(root.textContent).toContain("Comparison details");
+    expect(root.textContent).toContain("Matched");
+    expect(root.textContent).toContain("No material difference");
   });
 
   it("opens an accessible queue dead-letter confirmation dialog", async () => {

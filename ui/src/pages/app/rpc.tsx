@@ -37,16 +37,27 @@ export default function RpcPage() {
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
+          eyebrow="Live request/response"
           title="RPC overview"
           description="Live request/response pressure, worker registrations, and realm inventory."
-          onRefresh={() => overview.refresh()}
+          primaryAction={{
+            label: "Refresh RPC",
+            onPress: () => overview.refresh(),
+          }}
+          status={{
+            detail: "RPC pending state is ephemeral and only exists while workers are live.",
+            label: overview.refreshing ? "Refreshing" : overview.stale ? "Stale" : "Live",
+            tone: overview.refreshing ? "info" : overview.stale ? "warning" : "success",
+          }}
         />
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading RPC overview..." />
         ) : null}
 
-        {!data && overview.error ? <QueryErrorState error={overview.error} /> : null}
+        {!data && overview.error ? (
+          <QueryErrorState error={overview.error} onRetry={() => overview.refresh()} />
+        ) : null}
 
         {data ? (
           <Stack gap="3">
@@ -56,6 +67,7 @@ export default function RpcPage() {
 
             <DomainMetricTable
               title="RPC metrics"
+              description="Live workers, pending requests, and request/response failure pressure."
               metrics={[
                 { label: "Workers", value: data.stats.workersRegistered },
                 { label: "Requests pending", value: data.stats.requestsPending },
@@ -84,10 +96,15 @@ export default function RpcPage() {
               title="RPC signal"
               description="Worker capacity, pending request pressure, and current throughput."
               label="RPC state snapshot"
+              scope="Live RPC snapshot"
               data={[
-                ["Workers", data.stats.workersRegistered],
-                ["Pending", data.stats.requestsPending],
-                ["Ops / sec", data.stats.operationsPerSecond],
+                { label: "Workers", unitLabel: "workers", value: data.stats.workersRegistered },
+                { label: "Pending", unitLabel: "requests", value: data.stats.requestsPending },
+                {
+                  label: "Ops / sec",
+                  unitLabel: "ops/sec",
+                  value: data.stats.operationsPerSecond,
+                },
               ]}
             />
 

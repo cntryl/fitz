@@ -38,17 +38,27 @@ export default function SchedulePage() {
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
-          domain="Schedule"
+          eyebrow="Timing intent"
           title="Schedule overview"
           description="Scheduled timing pressure, live subscriptions, and realm inventory."
-          onRefresh={() => overview.refresh()}
+          primaryAction={{
+            label: "Refresh schedule",
+            onPress: () => overview.refresh(),
+          }}
+          status={{
+            detail: "Schedule persists timing intent, not downstream execution outcomes.",
+            label: overview.refreshing ? "Refreshing" : overview.stale ? "Stale" : "Live",
+            tone: overview.refreshing ? "info" : overview.stale ? "warning" : "success",
+          }}
         />
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading schedule overview..." />
         ) : null}
 
-        {!data && overview.error ? <QueryErrorState error={overview.error} /> : null}
+        {!data && overview.error ? (
+          <QueryErrorState error={overview.error} onRetry={() => overview.refresh()} />
+        ) : null}
 
         {data ? (
           <Stack gap="3">
@@ -58,6 +68,7 @@ export default function SchedulePage() {
 
             <DomainMetricTable
               title="Schedule metrics"
+              description="Durable timing intent, pending claims, and execution rate."
               metrics={[
                 { label: "Schedules", value: data.stats.schedulesActive },
                 { label: "Subscriptions", value: data.stats.subscriptionsActive },
@@ -85,11 +96,28 @@ export default function SchedulePage() {
               title="Schedule signal"
               description="Scheduled volume, subscriptions, claims, and execution rate."
               label="Schedule state snapshot"
+              scope="Live schedule snapshot"
               data={[
-                ["Schedules", data.stats.schedulesActive],
-                ["Subscriptions", data.stats.subscriptionsActive],
-                ["Pending claims", data.stats.pendingFireClaims],
-                ["Exec / min", data.stats.executionsPerMinute],
+                {
+                  label: "Schedules",
+                  unitLabel: "schedules",
+                  value: data.stats.schedulesActive,
+                },
+                {
+                  label: "Subscriptions",
+                  unitLabel: "subscriptions",
+                  value: data.stats.subscriptionsActive,
+                },
+                {
+                  label: "Pending claims",
+                  unitLabel: "claims",
+                  value: data.stats.pendingFireClaims,
+                },
+                {
+                  label: "Exec / min",
+                  unitLabel: "ops/min",
+                  value: data.stats.executionsPerMinute,
+                },
               ]}
             />
 

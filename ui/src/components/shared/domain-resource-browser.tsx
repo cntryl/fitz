@@ -45,7 +45,7 @@ export default function DomainResourceBrowser({
 
       <CardContent>
         {!loading && rows.length === 0 ? (
-          <QueryEmptyState description="No warm resources are currently visible for this domain." />
+          <QueryEmptyState description="No live resources are currently visible for this domain." />
         ) : (
           <div class="domain-table-wrap">
             <Table class="domain-table">

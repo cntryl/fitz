@@ -38,16 +38,27 @@ export default function QueuePage() {
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
+          eyebrow="Durable work"
           title="Queue overview"
-          description="Current queue pressure, realms, and resource drill-down."
-          onRefresh={() => overview.refresh()}
+          description="Current queue pressure, realm coverage, and resource drill-down."
+          primaryAction={{
+            label: "Refresh queue",
+            onPress: () => overview.refresh(),
+          }}
+          status={{
+            detail: "Durable backlog pressure and current queue activity.",
+            label: overview.refreshing ? "Refreshing" : overview.stale ? "Stale" : "Live",
+            tone: overview.refreshing ? "info" : overview.stale ? "warning" : "success",
+          }}
         />
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading queue overview..." />
         ) : null}
 
-        {!data && overview.error ? <QueryErrorState error={overview.error} /> : null}
+        {!data && overview.error ? (
+          <QueryErrorState error={overview.error} onRetry={() => overview.refresh()} />
+        ) : null}
 
         {data ? (
           <Stack gap="3">
@@ -57,6 +68,7 @@ export default function QueuePage() {
 
             <DomainMetricTable
               title="Queue metrics"
+              description="Current ready, inflight, pending, delayed, and dead-letter pressure."
               metrics={[
                 { label: "Inflight", value: data.stats.inflightActive },
                 { label: "Ready", value: data.stats.messagesReady },

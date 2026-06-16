@@ -3,8 +3,12 @@
   gap: var(--ak-space-4, 1rem);
   padding: var(--ak-space-4, 1rem);
   border: 1px solid var(--ak-color-border, color-mix(in srgb, CanvasText 12%, transparent));
-  border-radius: var(--ak-radius-2, 0.5rem);
-  background: var(--ak-color-surface, color-mix(in srgb, Canvas 92%, CanvasText 8%));
+  border-radius: var(--ak-radius-3, 0.75rem);
+  background: linear-gradient(
+    180deg,
+    var(--ak-color-surface, color-mix(in srgb, Canvas 92%, CanvasText 8%)),
+    color-mix(in srgb, var(--ak-color-surface, Canvas) 96%, CanvasText 4%)
+  );
 }
 
 .dashboard-status-summary {
@@ -80,10 +84,21 @@
   border: 1px solid var(--ak-color-border, color-mix(in srgb, CanvasText 10%, transparent));
   border-radius: var(--ak-radius-2, 0.5rem);
   text-decoration: none;
+  transition:
+    background-color 120ms var(--ak-ease-standard, ease),
+    border-color 120ms var(--ak-ease-standard, ease),
+    transform 120ms var(--ak-ease-standard, ease);
 }
 
 .dashboard-behavior-row:hover {
   background: var(--ak-color-muted, color-mix(in srgb, CanvasText 5%, transparent));
+  border-color: color-mix(in srgb, var(--ak-color-accent, CanvasText) 22%, transparent);
+  transform: translateY(-1px);
+}
+
+.dashboard-behavior-row:focus-visible {
+  outline: 2px solid var(--ak-color-accent, CanvasText);
+  outline-offset: 2px;
 }
 
 .dashboard-behavior-row span,

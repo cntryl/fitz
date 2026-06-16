@@ -9,33 +9,64 @@ function formatRate(value: number) {
 
 function currentVolumeData(overview: SystemOverview) {
   return [
-    { description: "Ready messages", label: "Queue", value: overview.domains.queue.messagesReady },
-    { description: "Tracked keys", label: "KV", value: overview.domains.kv.keysTotal },
-    { description: "Active leases", label: "Lease", value: overview.domains.lease.leasesActive },
+    {
+      description: "Ready messages",
+      label: "Queue",
+      unitLabel: "messages",
+      value: overview.domains.queue.messagesReady,
+    },
+    {
+      description: "Tracked keys",
+      label: "KV",
+      unitLabel: "keys",
+      value: overview.domains.kv.keysTotal,
+    },
+    {
+      description: "Active leases",
+      label: "Lease",
+      unitLabel: "leases",
+      value: overview.domains.lease.leasesActive,
+    },
     {
       description: "Active subscriptions",
       label: "Notice",
+      unitLabel: "subscriptions",
       value: overview.domains.notice.subscriptionsActive,
     },
-    { description: "Pending requests", label: "RPC", value: overview.domains.rpc.requestsPending },
+    {
+      description: "Pending requests",
+      label: "RPC",
+      unitLabel: "requests",
+      value: overview.domains.rpc.requestsPending,
+    },
     {
       description: "Pending claims",
       label: "Schedule",
+      unitLabel: "claims",
       value: overview.domains.schedule.pendingFireClaims,
     },
-    { description: "Total events", label: "Stream", value: overview.domains.stream.eventsTotal },
+    {
+      description: "Total events",
+      label: "Stream",
+      unitLabel: "events",
+      value: overview.domains.stream.eventsTotal,
+    },
   ];
 }
 
 function activityRateData(overview: SystemOverview) {
   return [
-    { label: "Queue", value: overview.domains.queue.operationsPerSecond },
-    { label: "KV", value: overview.domains.kv.operationsPerSecond },
-    { label: "Lease", value: overview.domains.lease.operationsPerSecond },
-    { label: "Notice", value: overview.domains.notice.publishesPerSecond },
-    { label: "RPC", value: overview.domains.rpc.operationsPerSecond },
-    { label: "Schedule", value: overview.domains.schedule.executionsPerMinute / 60 },
-    { label: "Stream", value: overview.domains.stream.operationsPerSecond },
+    { label: "Queue", unitLabel: "ops/sec", value: overview.domains.queue.operationsPerSecond },
+    { label: "KV", unitLabel: "ops/sec", value: overview.domains.kv.operationsPerSecond },
+    { label: "Lease", unitLabel: "ops/sec", value: overview.domains.lease.operationsPerSecond },
+    { label: "Notice", unitLabel: "ops/sec", value: overview.domains.notice.publishesPerSecond },
+    { label: "RPC", unitLabel: "ops/sec", value: overview.domains.rpc.operationsPerSecond },
+    {
+      label: "Schedule",
+      unitLabel: "ops/sec",
+      value: overview.domains.schedule.executionsPerMinute / 60,
+    },
+    { label: "Stream", unitLabel: "ops/sec", value: overview.domains.stream.operationsPerSecond },
   ];
 }
 
@@ -53,10 +84,14 @@ export default function DashboardDomainSignals({ overview }: { overview: SystemO
     <ChartShell
       className="domain-chart-shell"
       title="Domain signals"
-      description="Live broker snapshot across domains."
+      description="Live broker snapshot across domains, with counts and normalized activity rates."
+      scope="Current broker snapshot"
     >
       <div class="chart-grid">
-        <ChartPanel title="Current volume" description="Representative live counts by domain.">
+        <ChartPanel
+          title="Current volume"
+          description="Representative live counts by domain. Use this to see which domain currently carries the most state."
+        >
           <div class="chart-meter-grid">
             {volume.map((entry) => (
               <div key={`volume-${entry.label}`}>
@@ -65,6 +100,7 @@ export default function DashboardDomainSignals({ overview }: { overview: SystemO
                   value={entry.value}
                   max={volumeMax}
                   description={entry.description}
+                  unitLabel={entry.unitLabel}
                   valueFormatter={formatNumber}
                 />
               </div>
@@ -74,7 +110,7 @@ export default function DashboardDomainSignals({ overview }: { overview: SystemO
 
         <ChartPanel
           title="Activity rate"
-          description="Current operations per second across domains."
+          description="Normalized operations per second across domains."
         >
           <div class="chart-meter-grid">
             {activity.map((entry) => (
@@ -83,6 +119,7 @@ export default function DashboardDomainSignals({ overview }: { overview: SystemO
                   label={entry.label}
                   value={entry.value}
                   max={activityMax}
+                  unitLabel={entry.unitLabel}
                   valueFormatter={formatRate}
                 />
               </div>

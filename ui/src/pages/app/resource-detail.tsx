@@ -4,7 +4,8 @@ import { currentRoute, navigate } from "@askrjs/askr/router";
 import { Button } from "@askrjs/themes/controls";
 import { Stack } from "@askrjs/themes/layouts";
 import { Input, Label } from "@askrjs/ui";
-import ResourceWorkbench from "@/components/shared/resource-workbench";
+import DomainHeader from "@/components/shared/domain-header";
+import ResourceWorkbench, { describeResourceDetail } from "@/components/shared/resource-workbench";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import {
@@ -96,16 +97,30 @@ export default function ResourceDetailPage() {
       : null;
   const query = createResourceQuery(domain, ref, against);
   const data = query.data;
+  const resourceSummary = data ? describeResourceDetail(data) : null;
+  const headerStatus = {
+    detail: resourceSummary?.detail ?? "Inspect the current snapshot, timeline, and related records.",
+    label: query.refreshing
+      ? "Refreshing"
+      : query.stale
+        ? "Stale"
+        : resourceSummary?.label ?? (data ? "Live" : "Loading"),
+    tone: query.refreshing
+      ? "info"
+      : query.stale
+        ? "warning"
+        : resourceSummary?.tone ?? (data ? "success" : "info"),
+  } as const;
   const sidebar = createDomainSidebar({
     data,
     title: `${domainLabels[domain]} resource`,
     description: `${ref.realm} / ${ref.area} / ${ref.resource}`,
     stats: (current) => current.detailMetrics.slice(0, 6),
     footer: (
-      <Stack asChild gap="3">
+      <Stack gap="3">
         <form onSubmit={onCompareSubmit}>
           <div class="auth-field">
-            <Label for="compare-realm">Against realm</Label>
+            <Label for="compare-realm">Target realm</Label>
             <Input
               id="compare-realm"
               value={compareRealmValue}
@@ -113,7 +128,7 @@ export default function ResourceDetailPage() {
             />
           </div>
           <div class="auth-field">
-            <Label for="compare-area">Against area</Label>
+            <Label for="compare-area">Target area</Label>
             <Input
               id="compare-area"
               value={compareAreaValue}
@@ -121,7 +136,7 @@ export default function ResourceDetailPage() {
             />
           </div>
           <div class="auth-field">
-            <Label for="compare-resource">Against resource</Label>
+            <Label for="compare-resource">Target resource</Label>
             <Input
               id="compare-resource"
               value={compareResourceValue}
@@ -130,8 +145,12 @@ export default function ResourceDetailPage() {
               }
             />
           </div>
-          <Button type="submit">Compare</Button>
+          <Button type="submit">Compare scope</Button>
         </form>
+        <p class="domain-muted">
+          All three fields are required to compare the current snapshot. Leave them blank if you
+          only need the live resource view.
+        </p>
       </Stack>
     ),
   });
@@ -157,12 +176,23 @@ export default function ResourceDetailPage() {
   return (
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
+        <DomainHeader
+          eyebrow={`${domainLabels[domain]} detail`}
+          title={`${domainLabels[domain]} resource inspection`}
+          description={`${ref.realm} / ${ref.area} / ${ref.resource}. Inspect the current snapshot, comparison, timeline, and related records.`}
+          primaryAction={{
+            label: "Refresh resource",
+            onPress: () => query.refresh(),
+          }}
+          status={headerStatus}
+        />
+
         <Show when={query.loading && !data}>
           <QueryLoadingState description={`Loading ${domainLabels[domain]} resource...`} />
         </Show>
 
         <Show when={query.error && !data}>
-          <QueryErrorState error={query.error} />
+          <QueryErrorState error={query.error} onRetry={() => query.refresh()} />
         </Show>
 
         {data ? (

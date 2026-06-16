@@ -42,11 +42,18 @@ The browser client reads these public Vite env vars through `src/shared/config.t
 
 The workspace-local `skills/` docs describe the intended Askr workflow for each slice. Pick the narrowest applicable skill for the files you are changing, and treat the docs as guidance for that surface rather than a checklist to force onto unrelated code.
 
+## UI Clarity
+
+- [UI clarity charter](docs/ui-clarity-charter.md)
+- Treat it as the visual and copy standard for new screens and feature surfaces.
+
 ## Routing
 
 - `/` boots the SPA
 - `/login` is the admin sign-in route
 - `/admin` is the authenticated landing page
+- `/admin/metrics` is the browser metrics explorer
+- `/metrics` remains the raw Prometheus endpoint served by the broker
 
 The SPA uses the existing admin session endpoints at `/api/v1/session`.
 

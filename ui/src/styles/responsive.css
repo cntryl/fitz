@@ -45,8 +45,23 @@
     flex-direction: column;
   }
 
-  .domain-header > button {
+  .resource-workbench-hero {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .domain-header-actions {
+    align-items: flex-start;
+  }
+
+  .domain-header-actions > button {
     align-self: start;
+  }
+
+  .chart-shell-header,
+  .chart-panel-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .page-frame-layout-with-sidebar {
@@ -80,5 +95,9 @@
 
   .flow-lane > span:last-child {
     grid-column: 2;
+  }
+
+  .resource-workbench-summary-actions {
+    align-items: flex-start;
   }
 }

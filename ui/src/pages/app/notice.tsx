@@ -35,17 +35,27 @@ export default function NoticePage() {
     <DomainPageFrame sidebar={sidebar}>
       <Stack gap="3">
         <DomainHeader
-          domain="Notice"
+          eyebrow="Live awareness"
           title="Notice overview"
           description="Live fanout pressure, subscription coverage, and realm inventory."
-          onRefresh={() => overview.refresh()}
+          primaryAction={{
+            label: "Refresh notice",
+            onPress: () => overview.refresh(),
+          }}
+          status={{
+            detail: "Notice is live fanout only; delivery ends when the subscriber disconnects.",
+            label: overview.refreshing ? "Refreshing" : overview.stale ? "Stale" : "Live",
+            tone: overview.refreshing ? "info" : overview.stale ? "warning" : "success",
+          }}
         />
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading notice overview..." />
         ) : null}
 
-        {!data && overview.error ? <QueryErrorState error={overview.error} /> : null}
+        {!data && overview.error ? (
+          <QueryErrorState error={overview.error} onRetry={() => overview.refresh()} />
+        ) : null}
 
         {data ? (
           <Stack gap="3">
@@ -55,6 +65,7 @@ export default function NoticePage() {
 
             <DomainMetricTable
               title="Notice metrics"
+              description="Live fanout pressure and active subscription coverage."
               metrics={[
                 {
                   label: "Publishes / sec",
@@ -68,9 +79,18 @@ export default function NoticePage() {
               title="Notice signal"
               description="Current publish rate and live subscription footprint."
               label="Notice state snapshot"
+              scope="Live notice snapshot"
               data={[
-                ["Publishes / sec", data.stats.publishesPerSecond],
-                ["Subscriptions", data.stats.subscriptionsActive],
+                {
+                  label: "Publishes / sec",
+                  unitLabel: "ops/sec",
+                  value: data.stats.publishesPerSecond,
+                },
+                {
+                  label: "Subscriptions",
+                  unitLabel: "subscriptions",
+                  value: data.stats.subscriptionsActive,
+                },
               ]}
             />
 
