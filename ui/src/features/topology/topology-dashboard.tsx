@@ -27,6 +27,7 @@ export function TopologyDashboard({
 }) {
   return (
     <Stack gap="3">
+      <DiagnosticsPanel topology={topology} />
       <BrokerStatusStrip history={history} topology={topology} refreshState={refreshState} />
 
       {topology.lanes.length === 0 ? (
@@ -55,7 +56,6 @@ export function TopologyDashboard({
             topology={topology}
           />
           <DashboardDomainSignals topology={topology} />
-          <DiagnosticsPanel topology={topology} />
         </>
       )}
     </Stack>

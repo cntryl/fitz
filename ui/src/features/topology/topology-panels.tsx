@@ -1,7 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Badge, Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Alert, Badge, Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import { formatNumber, formatTimestamp } from "@/shared/format";
 import { topologyTrendDirection } from "./topology-mappers";
 import type { MessagingTopologyOverview, TopologyTrendPoint } from "./topology-models";
@@ -122,21 +122,26 @@ export function BehaviorMatrix({ topology }: { topology: MessagingTopologyOvervi
 }
 
 export function DiagnosticsPanel({ topology }: { topology: MessagingTopologyOverview }) {
+  const severity = incidentSeverity(topology);
   const hotspots = topology.diagnostics.hotspots.slice(0, 6);
+  const isMeaningful = severity !== "informational" || hotspots.length > 0;
+
+  if (!isMeaningful) {
+    return null;
+  }
+
+  const alertVariant =
+    severity === "critical" || severity === "high"
+      ? "danger"
+      : severity === "medium" || severity === "low"
+        ? "warning"
+        : "success";
 
   return (
     <section class="domain-section">
-      <div class="domain-section-header">
-        <div>
-          <h2>Attention</h2>
-          <p>{incidentDescription(topology)}</p>
-        </div>
-        <span>{hotspots.length} hotspots</span>
-      </div>
+      <Alert variant={alertVariant} title="Attention" description={incidentDescription(topology)} />
 
-      {hotspots.length === 0 ? (
-        <p class="domain-muted">No active hotspots reported.</p>
-      ) : (
+      {hotspots.length > 0 ? (
         <div class="domain-table-wrap">
           <Table>
             <TableHead>
@@ -172,7 +177,7 @@ export function DiagnosticsPanel({ topology }: { topology: MessagingTopologyOver
             </TableBody>
           </Table>
         </div>
-      )}
+      ) : null}
     </section>
   );
 }
