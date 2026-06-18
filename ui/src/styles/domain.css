@@ -112,6 +112,53 @@
   font-variant-numeric: tabular-nums;
 }
 
+.metrics-table-wrap {
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+}
+
+.metrics-family-cell {
+  display: block;
+  min-width: 0;
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metrics-labels-cell,
+.metrics-value-cell {
+  display: block;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.metrics-labels-cell {
+  max-width: 24rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.75rem;
+  color: var(--fitz-text-muted);
+}
+
+.metrics-value-cell {
+  font-family: var(--ak-font-family-mono, ui-monospace, Consolas, "SFMono-Regular", Menlo, Monaco, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metrics-family-header,
+.metrics-type-header,
+.metrics-labels-header,
+.metrics-value-header {
+  white-space: nowrap;
+}
+
+.metrics-type-header,
+.metrics-value-header {
+  width: 8rem;
+}
+
 .session-table-desktop {
   display: block;
 }
@@ -326,6 +373,22 @@
 }
 
 @media (max-width: 48rem) {
+  .metrics-table-wrap {
+    max-width: 100%;
+  }
+
+  .metrics-family-cell {
+    max-width: 11rem;
+  }
+
+  .metrics-labels-cell {
+    max-width: 12rem;
+  }
+
+  .metrics-shortcut {
+    width: 100%;
+  }
+
   .domain-table-wrap {
     overflow-x: visible;
   }

@@ -1,3 +1,4 @@
+import { For } from "@askrjs/askr/control";
 import { state } from "@askrjs/askr";
 import {
   Input,
@@ -8,6 +9,7 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@askrjs/ui";
+import { Button } from "@askrjs/themes/controls";
 import { Stack } from "@askrjs/themes/layouts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import DomainHeader from "@/components/shared/domain-header";
@@ -22,14 +24,65 @@ import type { PrometheusMetricFamily } from "@/features/metrics/metrics-models";
 import { createMetricsOverviewQuery } from "@/features/metrics/metrics-query";
 import { formatNumber } from "@/shared/format";
 
+type MetricsHeaderTone = "default" | "info" | "success" | "warning" | "danger";
+
+type MetricsSampleRow = {
+  family: string;
+  labels: string;
+  type: string;
+  value: number;
+};
+
+interface MetricsPostureSummary {
+  detail: string;
+  label: string;
+  nextStep: string;
+  tone: MetricsHeaderTone;
+}
+
+interface MetricsShortcut {
+  label: string;
+  query: string;
+  test: (name: string) => boolean;
+}
+
+const metricsShortcuts: MetricsShortcut[] = [
+  { label: "Queue", query: "queue", test: (name: string) => name.includes("queue") },
+  { label: "RPC", query: "rpc", test: (name: string) => name.includes("rpc") },
+  { label: "Stream", query: "stream", test: (name: string) => name.includes("stream") },
+  { label: "Lease", query: "lease", test: (name: string) => name.includes("lease") },
+  { label: "Notice", query: "notice", test: (name: string) => name.includes("notice") },
+  { label: "KV", query: "kv", test: (name: string) => name.includes("kv") },
+  {
+    label: "Failures",
+    query: "fail",
+    test(name: string) {
+      return /\b(fail|reject|drop|timeout|rollback|invalid|wrong|missing|error)\b/.test(name);
+    },
+  },
+  {
+    label: "Counters",
+    query: "_total",
+    test(name: string) {
+      return name.endsWith("_total") || name.includes("total");
+    },
+  },
+];
+
+const emptySummaryCards = {
+  broker: [],
+  delivery: [],
+  coordination: [],
+  state: [],
+  failures: [],
+};
+
 function buildFamilyIndex(families: PrometheusMetricFamily[]) {
   return new Map(families.map((family) => [family.name, family]));
 }
 
 function familyValue(index: Map<string, PrometheusMetricFamily>, name: string) {
-  return (
-    index.get(name)?.samples.reduce((sum, sample) => sum + sample.value, 0) ?? 0
-  );
+  return index.get(name)?.samples.reduce((sum, sample) => sum + sample.value, 0) ?? 0;
 }
 
 function signalValue(
@@ -41,15 +94,6 @@ function signalValue(
 
 function signalText(label: string, value: number) {
   return `${label} ${formatNumber(value)}`;
-}
-
-type MetricsHeaderTone = "default" | "info" | "success" | "warning" | "danger";
-
-interface MetricsPostureSummary {
-  detail: string;
-  label: string;
-  nextStep: string;
-  tone: MetricsHeaderTone;
 }
 
 function summarizeSnapshot(index: Map<string, PrometheusMetricFamily>): MetricsPostureSummary {
@@ -149,7 +193,8 @@ function summarizeSnapshot(index: Map<string, PrometheusMetricFamily>): MetricsP
         .map((signal) => signalText(signal.label, signal.value))
         .join(", ")}.`,
       label: "Pressure",
-      nextStep: "Open the delivery pressure and coordination state cards to see where load is building.",
+      nextStep:
+        "Open the delivery pressure and coordination state cards to see where load is building.",
       tone: "warning" as const,
     };
   }
@@ -162,272 +207,318 @@ function summarizeSnapshot(index: Map<string, PrometheusMetricFamily>): MetricsP
   };
 }
 
-function familyMetrics(family?: PrometheusMetricFamily) {
-  return family?.samples.reduce((sum, sample) => sum + sample.value, 0) ?? 0;
-}
-
 function familyCardMetrics(index: Map<string, PrometheusMetricFamily>) {
   return {
     broker: [
-      { label: "Uptime", value: familyMetrics(index.get("fitz_uptime_seconds")), caption: "seconds" },
+      { label: "Uptime", value: familyValue(index, "fitz_uptime_seconds"), caption: "seconds" },
       {
         label: "Connections",
-        value: familyMetrics(index.get("fitz_connections_total")),
+        value: familyValue(index, "fitz_connections_total"),
         caption: "open",
       },
       {
         label: "Sessions",
-        value: familyMetrics(index.get("fitz_sessions_total")),
+        value: familyValue(index, "fitz_sessions_total"),
         caption: "active",
       },
       {
         label: "Messages received",
-        value: familyMetrics(index.get("fitz_messages_received_total")),
+        value: familyValue(index, "fitz_messages_received_total"),
         caption: "lifetime total",
       },
       {
         label: "Messages sent",
-        value: familyMetrics(index.get("fitz_messages_sent_total")),
+        value: familyValue(index, "fitz_messages_sent_total"),
         caption: "lifetime total",
       },
       {
         label: "Router backpressure",
-        value: familyMetrics(index.get("fitz_router_backpressure_total")),
+        value: familyValue(index, "fitz_router_backpressure_total"),
         caption: "drops",
       },
       {
         label: "High-lane backpressure",
-        value: familyMetrics(index.get("fitz_router_high_lane_backpressure_total")),
+        value: familyValue(index, "fitz_router_high_lane_backpressure_total"),
         caption: "drops",
       },
     ],
     delivery: [
       {
         label: "Queue ready",
-        value: familyMetrics(index.get("fitz_queue_ready_gauge")),
+        value: familyValue(index, "fitz_queue_ready_gauge"),
         caption: "messages",
       },
       {
         label: "Queue inflight",
-        value: familyMetrics(index.get("fitz_queue_inflight_active")),
+        value: familyValue(index, "fitz_queue_inflight_active"),
         caption: "messages",
       },
       {
         label: "Queue pending",
-        value: familyMetrics(index.get("fitz_queue_messages_pending")),
+        value: familyValue(index, "fitz_queue_messages_pending"),
         caption: "messages",
       },
       {
         label: "Queue delayed",
-        value: familyMetrics(index.get("fitz_queue_delayed_gauge")),
+        value: familyValue(index, "fitz_queue_delayed_gauge"),
         caption: "messages",
       },
       {
         label: "Queue oldest message age",
-        value: familyMetrics(index.get("fitz_queue_oldest_message_age_seconds")),
+        value: familyValue(index, "fitz_queue_oldest_message_age_seconds"),
         caption: "seconds",
       },
       {
         label: "Queue backlog age",
-        value: familyMetrics(index.get("fitz_queue_oldest_backlog_age_seconds")),
+        value: familyValue(index, "fitz_queue_oldest_backlog_age_seconds"),
         caption: "seconds",
       },
       {
         label: "RPC workers",
-        value: familyMetrics(index.get("fitz_rpc_workers_registered")),
+        value: familyValue(index, "fitz_rpc_workers_registered"),
         caption: "registered",
       },
       {
         label: "RPC pending",
-        value: familyMetrics(index.get("fitz_rpc_requests_pending")),
+        value: familyValue(index, "fitz_rpc_requests_pending"),
         caption: "requests",
       },
       {
         label: "RPC oldest pending age",
-        value: familyMetrics(index.get("fitz_rpc_oldest_pending_request_age_seconds")),
+        value: familyValue(index, "fitz_rpc_oldest_pending_request_age_seconds"),
         caption: "seconds",
       },
     ],
     coordination: [
       {
         label: "Lease active",
-        value: familyMetrics(index.get("fitz_lease_active")),
+        value: familyValue(index, "fitz_lease_active"),
         caption: "claims",
       },
       {
         label: "Lease waiters",
-        value: familyMetrics(index.get("fitz_lease_waiter_depth")),
+        value: familyValue(index, "fitz_lease_waiter_depth"),
         caption: "waiters",
       },
       {
         label: "Lease oldest age",
-        value: familyMetrics(index.get("fitz_lease_oldest_lease_age_seconds")),
+        value: familyValue(index, "fitz_lease_oldest_lease_age_seconds"),
         caption: "seconds",
       },
       {
         label: "Schedule active",
-        value: familyMetrics(index.get("fitz_schedule_active")),
+        value: familyValue(index, "fitz_schedule_active"),
         caption: "jobs",
       },
       {
         label: "Schedule pending claims",
-        value: familyMetrics(index.get("fitz_schedule_pending_fire_claims")),
+        value: familyValue(index, "fitz_schedule_pending_fire_claims"),
         caption: "claims",
       },
       {
         label: "Schedule ack retries",
-        value: familyMetrics(index.get("fitz_schedule_pending_ack_retries")),
+        value: familyValue(index, "fitz_schedule_pending_ack_retries"),
         caption: "retries",
       },
       {
         label: "Stream append sessions",
-        value: familyMetrics(index.get("fitz_stream_append_sessions_active")),
+        value: familyValue(index, "fitz_stream_append_sessions_active"),
         caption: "sessions",
       },
       {
         label: "Stream subscriptions",
-        value: familyMetrics(index.get("fitz_stream_subscriptions_active")),
+        value: familyValue(index, "fitz_stream_subscriptions_active"),
         caption: "subscriptions",
       },
     ],
     state: [
       {
         label: "KV keys",
-        value: familyMetrics(index.get("fitz_kv_keys_total")),
+        value: familyValue(index, "fitz_kv_keys_total"),
         caption: "keys",
       },
       {
         label: "KV transactions",
-        value: familyMetrics(index.get("fitz_kv_transactions_active")),
+        value: familyValue(index, "fitz_kv_transactions_active"),
         caption: "active",
       },
       {
         label: "Notice subscriptions",
-        value: familyMetrics(index.get("fitz_notice_subscriptions_active")),
+        value: familyValue(index, "fitz_notice_subscriptions_active"),
         caption: "subscriptions",
       },
       {
         label: "Notice routes",
-        value: familyMetrics(index.get("fitz_notice_routes_active")),
+        value: familyValue(index, "fitz_notice_routes_active"),
         caption: "routes",
       },
       {
         label: "Notice peak subscribers",
-        value: familyMetrics(index.get("fitz_notice_max_route_subscribers")),
+        value: familyValue(index, "fitz_notice_max_route_subscribers"),
         caption: "peak",
       },
       {
         label: "Stream active",
-        value: familyMetrics(index.get("fitz_stream_active")),
+        value: familyValue(index, "fitz_stream_active"),
         caption: "streams",
       },
       {
         label: "Stream events",
-        value: familyMetrics(index.get("fitz_stream_events_total")),
+        value: familyValue(index, "fitz_stream_events_total"),
         caption: "committed",
       },
       {
         label: "Schedule executions / min",
-        value: familyMetrics(index.get("fitz_schedule_executions_per_minute")).toFixed(2),
+        value: familyValue(index, "fitz_schedule_executions_per_minute").toFixed(2),
         caption: "per minute",
       },
     ],
     failures: [
       {
         label: "Queue redeliveries",
-        value: familyMetrics(index.get("fitz_queue_redeliveries_total")),
+        value: familyValue(index, "fitz_queue_redeliveries_total"),
         caption: "events",
       },
       {
         label: "Queue notify drops",
-        value: familyMetrics(index.get("fitz_queue_notify_drops_total")),
+        value: familyValue(index, "fitz_queue_notify_drops_total"),
         caption: "drops",
       },
       {
         label: "RPC backpressure rejects",
-        value: familyMetrics(index.get("fitz_rpc_backpressure_rejects_total")),
+        value: familyValue(index, "fitz_rpc_backpressure_rejects_total"),
         caption: "drops",
       },
       {
         label: "RPC request timeouts",
-        value: familyMetrics(index.get("fitz_rpc_request_timeouts_total")),
+        value: familyValue(index, "fitz_rpc_request_timeouts_total"),
         caption: "timeouts",
       },
       {
         label: "RPC missing pending",
-        value: familyMetrics(index.get("fitz_rpc_responses_missing_pending_total")),
+        value: familyValue(index, "fitz_rpc_responses_missing_pending_total"),
         caption: "responses",
       },
       {
         label: "Lease acquire timeouts",
-        value: familyMetrics(index.get("fitz_lease_acquire_timeouts_total")),
+        value: familyValue(index, "fitz_lease_acquire_timeouts_total"),
         caption: "timeouts",
       },
       {
         label: "Lease forced releases",
-        value: familyMetrics(index.get("fitz_lease_forced_releases_total")),
+        value: familyValue(index, "fitz_lease_forced_releases_total"),
         caption: "releases",
       },
       {
         label: "Lease invalid tokens",
-        value: familyMetrics(index.get("fitz_lease_invalid_token_rejects_total")),
+        value: familyValue(index, "fitz_lease_invalid_token_rejects_total"),
         caption: "rejects",
       },
       {
         label: "Notice delivery drops",
-        value: familyMetrics(index.get("fitz_notice_delivery_drops_total")),
+        value: familyValue(index, "fitz_notice_delivery_drops_total"),
         caption: "drops",
       },
       {
         label: "Notice wildcard rejects",
-        value: familyMetrics(index.get("fitz_notice_wildcard_limit_rejects_total")),
+        value: familyValue(index, "fitz_notice_wildcard_limit_rejects_total"),
         caption: "rejects",
       },
       {
         label: "Schedule notify failures",
-        value: familyMetrics(index.get("fitz_schedule_notify_failures_total")),
+        value: familyValue(index, "fitz_schedule_notify_failures_total"),
         caption: "failures",
       },
       {
         label: "Schedule ack failures",
-        value: familyMetrics(index.get("fitz_schedule_ack_failures_total")),
+        value: familyValue(index, "fitz_schedule_ack_failures_total"),
         caption: "failures",
       },
       {
         label: "Stream notify drops",
-        value: familyMetrics(index.get("fitz_stream_notify_drops_total")),
+        value: familyValue(index, "fitz_stream_notify_drops_total"),
         caption: "drops",
       },
       {
         label: "KV commit failures",
-        value: familyMetrics(index.get("fitz_kv_commits_failed_total")),
+        value: familyValue(index, "fitz_kv_commits_failed_total"),
         caption: "failures",
       },
       {
         label: "KV rollbacks",
-        value: familyMetrics(index.get("fitz_kv_rollbacks_total")),
+        value: familyValue(index, "fitz_kv_rollbacks_total"),
         caption: "rollbacks",
       },
     ],
   };
 }
 
+function familyNameMatches(familyName: string, query: string) {
+  return query.length === 0 || familyName.toLowerCase().includes(query);
+}
+
+function formatLabels(labels: Record<string, string>) {
+  const entries = Object.entries(labels).sort(([left], [right]) => left.localeCompare(right));
+
+  if (entries.length === 0) {
+    return "n/a";
+  }
+
+  return entries.map(([key, value]) => `${key}="${value}"`).join(", ");
+}
+
+function buildRows(families: PrometheusMetricFamily[], filterValue: string): MetricsSampleRow[] {
+  return families
+    .filter((family) => familyNameMatches(family.name, filterValue))
+    .flatMap((family) =>
+      family.samples.map((sample) => ({
+        family: sample.name ?? family.name,
+        labels: formatLabels(sample.labels),
+        type: family.type ?? "unknown",
+        value: sample.value,
+      })),
+    );
+}
+
+function buildSummaryShortcuts(families: PrometheusMetricFamily[]) {
+  return metricsShortcuts
+    .map((shortcut) => ({
+      label: shortcut.label,
+      query: shortcut.query,
+      count: families.filter((family) => shortcut.test(family.name.toLowerCase())).length,
+      test: shortcut.test,
+    }))
+    .filter((shortcut) => shortcut.count > 0);
+}
+
 export default function MetricsPage() {
   const metrics = createMetricsOverviewQuery();
   const [filter, setFilter] = state("");
   const data = metrics.data;
-  const filterValue = filter();
+  const filterValue = filter().trim().toLowerCase();
   const familyIndex = data ? buildFamilyIndex(data.families) : null;
   const families =
-    data?.families.filter((family) =>
-      family.name.toLowerCase().includes(filterValue.trim().toLowerCase()),
-    ) ?? [];
+    data?.families.filter((family) => familyNameMatches(family.name.toLowerCase(), filterValue)) ?? [];
+  const sampleRows = data ? buildRows(data.families, filterValue) : [];
   const sampleCount = data?.families.reduce((sum, family) => sum + family.samples.length, 0) ?? 0;
   const snapshotSummary = familyIndex ? summarizeSnapshot(familyIndex) : null;
-  const summaryCards = familyIndex ? familyCardMetrics(familyIndex) : null;
+  const summaryCards = familyIndex ? familyCardMetrics(familyIndex) : emptySummaryCards;
+  const shortcutCards = data ? buildSummaryShortcuts(data.families) : [];
+
+  const detailSummary = data
+    ? filterValue.length === 0
+      ? `${formatNumber(data.families.length)} families / ${formatNumber(sampleCount)} samples in the current snapshot.`
+        : `${formatNumber(families.length)} of ${formatNumber(data.families.length)} families match “${filterValue}” with ${formatNumber(
+          sampleRows.length,
+        )} matching samples.`
+    : "Searching metric families and samples for current counter values.";
+
   const headerStatus: { detail: string; label: string; tone: MetricsHeaderTone } = snapshotSummary
     ? {
-        detail: `${formatNumber(data?.families.length ?? 0)} families / ${formatNumber(sampleCount)} samples. ${snapshotSummary.detail}`,
+        detail:
+          filterValue.length === 0
+            ? `${detailSummary} ${snapshotSummary.detail}`
+            : `${detailSummary} ${snapshotSummary.nextStep}`,
         label: metrics.refreshing
           ? "Refreshing"
           : metrics.stale
@@ -440,7 +531,7 @@ export default function MetricsPage() {
             : snapshotSummary.tone,
       }
     : {
-        detail: "Search the metric families and inspect the raw payload below.",
+        detail: "Searching metric families and samples from Prometheus response.",
         label: metrics.refreshing ? "Refreshing" : metrics.stale ? "Stale" : "Loading",
         tone: metrics.refreshing ? "info" : metrics.stale ? "warning" : "info",
       };
@@ -451,7 +542,7 @@ export default function MetricsPage() {
         <DomainHeader
           eyebrow="Metrics inspection"
           title="Metrics explorer"
-          description="Read the live broker state first, then drill into the exact Prometheus families behind it."
+          description="Use the filters below to inspect live broker metric families and sample labels."
           primaryAction={{
             label: "Refresh metrics",
             onPress: () => metrics.refresh(),
@@ -460,125 +551,165 @@ export default function MetricsPage() {
         />
 
         {!data && metrics.loading ? (
-          <QueryLoadingState description="Loading Prometheus metrics..." />
+          <QueryLoadingState title="Loading metrics snapshot" description="Reading the current /metrics payload." />
         ) : null}
 
         {!data && metrics.error ? (
-          <QueryErrorState error={metrics.error} onRetry={() => metrics.refresh()} />
+          <QueryErrorState title="Unable to load metrics snapshot" error={metrics.error} onRetry={() => metrics.refresh()} />
         ) : null}
 
-        {data ? (
-          <Stack gap="3">
-            <section class="domain-section">
-              <div class="domain-section-header">
-                <div>
-                  <h2>Live state</h2>
-                  <p>
-                    The summary below turns raw metric families into the broker state picture.
-                    It stays unfiltered even when the table search is narrowed.
-                  </p>
-                </div>
+        <Stack gap="3">
+          <section class="domain-section">
+            <div class="domain-section-header">
+              <div>
+                <h2>Live state</h2>
+                <p>The summary below reflects the full snapshot, even when the sample table is filtered.</p>
               </div>
+            </div>
+            <div class="chart-grid">
+              <DomainMetricTable
+                title="Broker snapshot"
+                description="The broker process itself: uptime, connections, sessions, and routing pressure."
+                metrics={summaryCards.broker}
+              />
 
-              {summaryCards ? (
-                <div class="chart-grid">
-                  <DomainMetricTable
-                    title="Broker snapshot"
-                    description="The broker process itself: uptime, connections, sessions, and routing pressure."
-                    metrics={summaryCards.broker}
-                  />
+              <DomainMetricTable
+                title="Delivery pressure"
+                description="Where queued work and request/response load will show up first."
+                metrics={summaryCards.delivery}
+              />
 
-                  <DomainMetricTable
-                    title="Delivery pressure"
-                    description="Where queued work and request/response load will show up first."
-                    metrics={summaryCards.delivery}
-                  />
+              <DomainMetricTable
+                title="Coordination state"
+                description="Lease ownership, schedule claims, and stream append activity."
+                metrics={summaryCards.coordination}
+              />
 
-                  <DomainMetricTable
-                    title="Coordination state"
-                    description="Lease ownership, schedule claims, and stream append activity."
-                    metrics={summaryCards.coordination}
-                  />
+              <DomainMetricTable
+                title="Durable surfaces"
+                description="The long-lived state and live fanout that make Fitz useful."
+                metrics={summaryCards.state}
+              />
 
-                  <DomainMetricTable
-                    title="Durable surfaces"
-                    description="The long-lived state and live fanout that make Fitz useful."
-                    metrics={summaryCards.state}
-                  />
+              <DomainMetricTable
+                title="Failure counters"
+                description="These should stay flat; non-zero values usually need a closer look."
+                metrics={summaryCards.failures}
+              />
+            </div>
+          </section>
 
-                  <DomainMetricTable
-                    title="Failure counters"
-                    description="These should stay flat; non-zero values usually need a closer look."
-                    metrics={summaryCards.failures}
-                  />
-                </div>
-              ) : null}
-            </section>
-
-            <section class="domain-section">
-              <div class="domain-section-header">
-                <div>
-                  <h2>Search metrics</h2>
-                  <p>
-                    Filter by family name to drill into the table below. The state summary stays
-                    focused on the live broker snapshot.
-                  </p>
-                </div>
+          <section class="domain-section">
+            <div class="domain-section-header">
+              <div>
+                <h2>Search metrics</h2>
+                <p>Filter by family name, then scan sample name, labels, and value in one compact table.</p>
               </div>
-              <div class="auth-field metrics-filter">
+            </div>
+            <div class="metrics-toolbar">
+              <div class="metrics-filter">
                 <Input
                   aria-label="Filter metrics"
-                  placeholder="Search metrics"
-                  value={filterValue}
+                  placeholder="Search metric families"
+                  type="search"
+                  value={filter()}
                   onInput={(event: Event) => setFilter((event.target as HTMLInputElement).value)}
                 />
               </div>
-            </section>
 
-            <Card padding="sm" variant="default">
-              <CardHeader>
-                <CardTitle>Metric families</CardTitle>
-                <CardDescription>
-                  {families.length} visible of {data.families.length} families
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {families.length === 0 ? (
-                  <QueryEmptyState
-                    title="No matching metric families"
-                    description={
-                      filterValue.trim()
-                        ? `No families match "${filterValue.trim()}". Clear the filter to return to the full broker snapshot.`
-                        : "No metric families are available in this snapshot."
-                    }
-                  />
-                ) : (
-                  <div class="domain-table-wrap">
-                    <Table>
-                      <TableHead>
-                        <TableRow>
-                          <TableHeaderCell>Name</TableHeaderCell>
-                          <TableHeaderCell>Type</TableHeaderCell>
-                          <TableHeaderCell>Samples</TableHeaderCell>
-                          <TableHeaderCell>Help</TableHeaderCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {families.map((family) => (
-                          <TableRow key={family.name}>
-                            <TableCell>{family.name}</TableCell>
-                            <TableCell>{family.type ?? "unknown"}</TableCell>
-                            <TableCell>{family.samples.length}</TableCell>
-                            <TableCell>{family.help ?? "n/a"}</TableCell>
+              <div class="metrics-shortcuts" role="group" aria-label="Metric family shortcuts">
+                <For each={shortcutCards} by={(shortcut) => shortcut.label}>
+                  {(shortcut) => (
+                    <Button
+                      size="sm"
+                      class="metrics-shortcut"
+                      variant={filterValue === shortcut.query ? "outline" : "ghost"}
+                      onPress={() => setFilter(shortcut.query)}
+                    >
+                      {shortcut.label} ({formatNumber(shortcut.count)})
+                    </Button>
+                  )}
+                </For>
+
+                <For each={filterValue.length > 0 ? ["clear"] : []} by={() => "clear-filters"}>
+                  {() => (
+                    <Button
+                      size="sm"
+                      class="metrics-shortcut"
+                      variant="ghost"
+                      onPress={() => {
+                        setFilter("");
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  )}
+                </For>
+              </div>
+            </div>
+          </section>
+
+          <Card padding="sm" variant="default">
+            <CardHeader>
+              <CardTitle>Metric samples</CardTitle>
+              <CardDescription>
+                {data
+                  ? families.length === 0
+                    ? `${formatNumber(sampleRows.length)} visible samples`
+                    : `Showing ${formatNumber(sampleRows.length)} of ${formatNumber(sampleCount)} samples`
+                  : "Loading metric samples"}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {data && sampleRows.length === 0 ? (
+                <QueryEmptyState
+                  title={filterValue.length > 0 ? "No matching metrics" : "No metrics available"}
+                  description={
+                    filterValue.length > 0
+                      ? `No metric families match "${filterValue}". Use clear filters to return to the full table.`
+                      : "No metric families were returned in this snapshot."
+                  }
+                />
+              ) : (
+                <div class="metrics-table-wrap">
+                  <Table>
+                    <TableHead>
+                      <TableRow>
+                        <TableHeaderCell class="metrics-family-header">Metric</TableHeaderCell>
+                        <TableHeaderCell class="metrics-type-header">Type</TableHeaderCell>
+                        <TableHeaderCell class="metrics-labels-header">Labels</TableHeaderCell>
+                        <TableHeaderCell class="metrics-value-header">Value</TableHeaderCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      <For each={sampleRows} by={(row) => `${row.family}:${row.labels}:${row.value}`}>
+                        {(row) => (
+                          <TableRow>
+                            <TableCell>
+                              <span class="metrics-family-cell" title={row.family}>
+                                {row.family}
+                              </span>
+                            </TableCell>
+                            <TableCell>{row.type}</TableCell>
+                            <TableCell>
+                              <code class="metrics-labels-cell" title={row.labels}>
+                                {row.labels}
+                              </code>
+                            </TableCell>
+                            <TableCell>
+                              <code class="metrics-value-cell">{row.value}</code>
+                            </TableCell>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                        )}
+                      </For>
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
+          {data ? (
             <section class="domain-section">
               <div class="domain-section-header">
                 <div>
@@ -588,8 +719,8 @@ export default function MetricsPage() {
               </div>
               <pre class="resource-raw">{data.raw}</pre>
             </section>
-          </Stack>
-        ) : null}
+          ) : null}
+        </Stack>
       </Stack>
     </DomainPageFrame>
   );

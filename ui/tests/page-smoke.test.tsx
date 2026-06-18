@@ -291,8 +291,20 @@ const metricsOverview = {
       samples: [{ labels: {}, name: "fitz_broker_up", value: 1 }],
       type: "gauge",
     },
+    {
+      help: "Queue depth",
+      name: "fitz_queue_depth_current",
+      samples: [{ labels: { area: "primary" }, name: "fitz_queue_depth_current", value: 4 }],
+      type: "gauge",
+    },
+    {
+      help: "RPC request latency sum",
+      name: "fitz_rpc_latency_histogram_sum",
+      samples: [{ labels: { route: "all" }, name: "fitz_rpc_latency_histogram_sum", value: 12.5 }],
+      type: "gauge",
+    },
   ],
-  raw: "fitz_broker_up 1",
+  raw: "fitz_broker_up 1\nfitz_queue_depth_current 4\nfitz_rpc_latency_histogram_sum 12.5",
 };
 
   const activeSessions = {
@@ -630,18 +642,49 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Broker snapshot");
     expect(root.textContent).toContain("Quiet");
     expect(root.textContent).toContain("No backlog, contention, or failure pressure detected");
+    expect(root.textContent).toContain("Metric samples");
+    expect(root.textContent).toContain("Showing 3 of 3 samples");
 
     const filter = root.querySelector('input[aria-label="Filter metrics"]') as HTMLInputElement | null;
     expect(filter).toBeTruthy();
 
     if (filter) {
-      filter.value = "zzz";
-      filter.dispatchEvent(new Event("input", { bubbles: true }));
-      await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
-    }
+      const queueShortcut = Array.from(root.querySelectorAll("button")).find((button) =>
+        button.textContent?.startsWith("Queue "),
+      ) as HTMLButtonElement | undefined;
 
-    expect(root.textContent).toContain("No matching metric families");
-    expect(root.textContent).toContain("Clear the filter");
+      expect(queueShortcut).toBeTruthy();
+      queueShortcut?.click();
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
+      expect(root.textContent).toContain("Showing 1 of 3 samples");
+
+      const clearShortcut = Array.from(root.querySelectorAll("button")).find((button) =>
+        button.textContent === "Clear filters",
+      ) as HTMLButtonElement | undefined;
+
+      expect(clearShortcut).toBeTruthy();
+      clearShortcut?.click();
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
+      expect(root.textContent).toContain("Showing 3 of 3 samples");
+    }
+  });
+
+  it("renders metrics loading and error states", async () => {
+    const { default: MetricsPage } = await import("@/pages/app/metrics");
+
+    mocks.queryStates.metrics = queryState.loading(queryOptions());
+    let root = await mountRoute("/admin/metrics", "/admin/metrics", MetricsPage);
+    expect(root.textContent).toContain("Loading metrics snapshot");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.metrics = queryState.error(new Error("metrics endpoint unavailable"), undefined, queryOptions());
+    root = await mountRoute("/admin/metrics", "/admin/metrics", MetricsPage);
+    expect(root.textContent).toContain("Unable to load metrics snapshot");
+    expect(root.textContent).toContain("metrics endpoint unavailable");
   });
 
   it("renders a sessions posture summary and empty state", async () => {

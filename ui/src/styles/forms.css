@@ -37,7 +37,24 @@
 }
 
 .metrics-filter {
-  max-width: 24rem;
+  width: min(100%, 24rem);
+  min-width: 0;
+}
+
+.metrics-toolbar {
+  display: grid;
+  gap: var(--ak-space-2, 0.5rem);
+}
+
+.metrics-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ak-space-2, 0.5rem);
+  align-items: center;
+}
+
+.metrics-shortcuts > [data-slot="button"] {
+  white-space: nowrap;
 }
 
 .dialog-overlay {

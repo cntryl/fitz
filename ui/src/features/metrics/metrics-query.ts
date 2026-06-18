@@ -7,6 +7,6 @@ const metricsQueries = queryScope("metrics");
 export function createMetricsOverviewQuery() {
   return createQuery<MetricsOverview>({
     key: metricsQueries.key("overview"),
-    fetch: ({ signal }) => metricsService.getOverview({ signal }),
+    fetch: metricsService.getOverview,
   });
 }

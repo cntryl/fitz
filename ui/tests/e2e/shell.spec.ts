@@ -80,6 +80,17 @@ const sessionsEmpty: SessionsPayload = {
   sessions: [],
 };
 
+const metricsPayload = `# HELP fitz_broker_uptime_seconds Broker up
+# TYPE fitz_broker_uptime_seconds gauge
+fitz_broker_uptime_seconds 120
+# HELP fitz_queue_ready Gauge
+# TYPE fitz_queue_ready gauge
+fitz_queue_ready{realm="default",area="jobs"} 7
+# HELP fitz_rpc_requests_total rpc requests
+# TYPE fitz_rpc_requests_total counter
+fitz_rpc_requests_total{realm="default"} 19
+`;
+
 async function mockSessionsApi(page: Page, payload: SessionsPayload) {
   await page.route("**/api/v1/features", async (route) => {
     await route.fulfill({
@@ -92,6 +103,27 @@ async function mockSessionsApi(page: Page, payload: SessionsPayload) {
       json: payload,
     });
   });
+}
+
+async function mockMetricsApi(page: Page, payload = metricsPayload) {
+  await page.route("**/api/v1/features", async (route) => {
+    await route.fulfill({
+      json: adminFeatures,
+    });
+  });
+
+  await page.route(
+    (url) => {
+      const parsedUrl = new URL(url);
+      return parsedUrl.pathname === "/metrics";
+    },
+    async (route) => {
+      await route.fulfill({
+        body: payload,
+        contentType: "text/plain; charset=utf-8",
+      });
+    },
+  );
 }
 
 test("captures the desktop dashboard shell", async ({ page }, testInfo) => {
@@ -263,6 +295,72 @@ test("captures sessions on mobile", async ({ page }, testInfo) => {
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("sessions-mobile.png"),
+    animations: "disabled",
+  });
+});
+
+test("captures metrics desktop", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockMetricsApi(page);
+  await page.goto("/admin/metrics");
+
+  await expect(page.getByRole("heading", { name: "Metrics explorer" })).toBeVisible();
+  await expect(page.locator('input[aria-label="Filter metrics"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh metrics" })).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("metrics-desktop.png"),
+    animations: "disabled",
+  });
+});
+
+test("captures metrics filtered empty state", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockMetricsApi(page);
+  await page.goto("/admin/metrics");
+
+  const filter = page.locator('input[aria-label="Filter metrics"]');
+  await filter.fill("does-not-exist");
+  await expect(page.getByText("No matching metrics")).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("metrics-filtered-empty.png"),
+    animations: "disabled",
+  });
+});
+
+test("captures metrics on mobile", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockMetricsApi(page);
+  await page.goto("/admin/metrics");
+
+  await expect(page.getByRole("heading", { name: "Metrics explorer" })).toBeVisible();
+  await expect(page.locator('input[aria-label="Filter metrics"]')).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("metrics-mobile.png"),
+    animations: "disabled",
+  });
+});
+
+test("captures metrics in dark mode", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockMetricsApi(page);
+  await page.addInitScript(() => {
+    localStorage.setItem("fitz-admin-theme", "dark");
+  });
+
+  await page.goto("/admin/metrics");
+
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.getByRole("heading", { name: "Metrics explorer" })).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("metrics-dark.png"),
     animations: "disabled",
   });
 });
