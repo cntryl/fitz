@@ -29,6 +29,7 @@ import {
   QueryEmptyState,
   QueryErrorState,
   QueryLoadingState,
+  QueryRefreshingState,
 } from "@/components/shared/query-state";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
@@ -54,6 +55,11 @@ interface QueueComparisonTarget {
   resource: string;
 }
 
+interface ParsedQueueFamily {
+  valid: boolean;
+  value: number | null;
+}
+
 type QueueStateTone = "info" | "success" | "warning" | "danger";
 
 function trimmedOrNull(value: string) {
@@ -61,10 +67,37 @@ function trimmedOrNull(value: string) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function parseFamilyInput(value: string): ParsedQueueFamily {
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return { value: null, valid: true };
+  }
+
+  if (!/^\d+$/.test(trimmed)) {
+    return { value: null, valid: false };
+  }
+
+  const parsed = Number(trimmed);
+
+  if (!Number.isSafeInteger(parsed)) {
+    return { value: null, valid: false };
+  }
+
+  return { value: parsed, valid: true };
+}
+
 function humanizeSeconds(seconds: number) {
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
+
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+
   const hours = Math.floor(minutes / 60);
   return `${hours}h`;
 }
@@ -100,17 +133,6 @@ function formatComparisonValue(value: number | null | undefined) {
   return value > 0 ? `+${value}` : `${value}`;
 }
 
-function parseOptionalNumber(value: string) {
-  const trimmed = value.trim();
-
-  if (!trimmed) {
-    return null;
-  }
-
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function formatQueueScope(
   scope: Pick<QueueComparisonTarget, "area" | "realm" | "resource"> & { family?: number | null },
 ) {
@@ -130,25 +152,28 @@ function describeQueueState(
   ].filter((value): value is string => value !== null);
 
   const snapshotSentence = counts.length
-    ? `Current queue snapshot: ${counts.join(", ")}.`
+    ? `Current scope has ${counts.join(", ")}.`
     : "No ready, inflight, delayed, or dead-lettered messages are visible.";
-  const ageSentence = `Oldest visible message age: ${humanizeSeconds(detail.oldestMessageAgeSeconds)}.`;
+
+  const ageSentence = `Oldest visible message age: ${humanizeSeconds(
+    detail.oldestMessageAgeSeconds,
+  )}.`;
   const compareSentence = compareTarget
-    ? ` Compare against ${formatQueueScope(compareTarget)} below.`
-    : " Use the compare card below to inspect another scope.";
+    ? ` Comparing against ${formatQueueScope(compareTarget)}.`
+    : "";
 
   if (detail.messagesDeadLettered > 0) {
     return {
       detail: `${snapshotSentence} ${ageSentence} Dead letters need attention.${compareSentence}`,
-      label: "Pressure",
+      label: "Attention",
       tone: "danger",
     };
   }
 
   if (detail.messagesDelayed > 0) {
     return {
-      detail: `${snapshotSentence} ${ageSentence} Delayed work is visible. Use the timeline and inflight tables to confirm where work is waiting.${compareSentence}`,
-      label: "Pressure",
+      detail: `${snapshotSentence} ${ageSentence} Delayed work is visible.${compareSentence}`,
+      label: "Warning",
       tone: "warning",
     };
   }
@@ -161,13 +186,13 @@ function describeQueueState(
   ) {
     return {
       detail: `${snapshotSentence} ${ageSentence}${compareSentence}`,
-      label: "Idle",
+      label: "Healthy",
       tone: "success",
     };
   }
 
   return {
-    detail: `${snapshotSentence} ${ageSentence} The queue is active without visible delay or dead-letter pressure.${compareSentence}`,
+    detail: `${snapshotSentence} ${ageSentence} The queue is active and moving messages.${compareSentence}`,
     label: "Healthy",
     tone: "success",
   };
@@ -191,6 +216,18 @@ function currentCompareScope() {
     realm: query.get("againstRealm") ?? "",
     resource: query.get("againstResource") ?? "",
   };
+}
+
+function formatTimelineContext(event: QueueResourceTimelineEvent) {
+  return [
+    `Scope: ${event.realm} / ${event.area} / ${event.resource}`,
+    event.operation ? `Operation: ${event.operation}` : null,
+    event.messageId != null ? `Message: ${event.messageId}` : null,
+    event.attempts != null ? `Attempts: ${event.attempts}` : null,
+    event.ownerSession ? `Owner session: ${event.ownerSession}` : null,
+    event.workerSession ? `Worker session: ${event.workerSession}` : null,
+    event.correlationId ? `Correlation: ${event.correlationId}` : null,
+  ].filter((value): value is string => value !== null);
 }
 
 interface QueueResourceComparisonResultsProps {
@@ -238,6 +275,7 @@ function QueueResourceComparisonResults({
               { label: "Backlog", value: comparison.left.metrics.backlog ?? "n/a" },
               { label: "Inflight", value: comparison.left.metrics.inflight ?? "n/a" },
               { label: "Ready", value: comparison.left.metrics.ready ?? "n/a" },
+              { label: "Delayed", value: comparison.left.metrics.delayed ?? "n/a" },
               { label: "Dead letters", value: comparison.left.metrics.deadLetters ?? "n/a" },
               { label: "Waiters", value: comparison.left.metrics.waiters ?? "n/a" },
               {
@@ -257,6 +295,7 @@ function QueueResourceComparisonResults({
               { label: "Backlog", value: comparison.right.metrics.backlog ?? "n/a" },
               { label: "Inflight", value: comparison.right.metrics.inflight ?? "n/a" },
               { label: "Ready", value: comparison.right.metrics.ready ?? "n/a" },
+              { label: "Delayed", value: comparison.right.metrics.delayed ?? "n/a" },
               { label: "Dead letters", value: comparison.right.metrics.deadLetters ?? "n/a" },
               { label: "Waiters", value: comparison.right.metrics.waiters ?? "n/a" },
               {
@@ -271,7 +310,7 @@ function QueueResourceComparisonResults({
 
           <DomainMetricTable
             title="Difference"
-            description="Positive values mean the current queue resource is ahead of the target."
+            description="Positive values mean the current scope is ahead of the target."
             metrics={[
               { label: "Backlog delta", value: formatComparisonValue(comparison.delta.backlog) },
               { label: "Inflight delta", value: formatComparisonValue(comparison.delta.inflight) },
@@ -289,6 +328,10 @@ function QueueResourceComparisonResults({
           />
         </Stack>
       ) : null}
+
+      {comparison && comparisonQuery.refreshing ? (
+        <QueryRefreshingState description="Updating queue comparison..." />
+      ) : null}
     </>
   );
 }
@@ -297,6 +340,8 @@ export default function QueueResourcePage() {
   const { realm, area, resource } = currentRoute().params;
   const resourceRef = { realm, area, resource };
   const resourceQuery = createQueueResourceQuery(resourceRef);
+  const scopeLabel = formatQueueScope(resourceRef);
+
   const compareScope = currentCompareScope();
   const [compareRealmInput, setCompareRealmInput] = state(compareScope.realm);
   const [compareAreaInput, setCompareAreaInput] = state(compareScope.area);
@@ -309,16 +354,37 @@ export default function QueueResourcePage() {
   const compareRealmTrimmed = trimmedOrNull(compareRealmValue);
   const compareAreaTrimmed = trimmedOrNull(compareAreaValue);
   const compareResourceTrimmed = trimmedOrNull(compareResourceValue);
-  const compareFamilyTrimmed = trimmedOrNull(compareFamilyValue);
+  const compareFamilyParsed = parseFamilyInput(compareFamilyValue);
+
   const compareTarget =
-    compareRealmTrimmed && compareAreaTrimmed && compareResourceTrimmed
+    compareRealmTrimmed &&
+    compareAreaTrimmed &&
+    compareResourceTrimmed &&
+    compareFamilyParsed.valid
       ? {
           area: compareAreaTrimmed,
-          family: compareFamilyTrimmed ? parseOptionalNumber(compareFamilyTrimmed) : null,
+          family: compareFamilyParsed.value,
           realm: compareRealmTrimmed,
           resource: compareResourceTrimmed,
         }
       : null;
+
+  const compareTargetReady =
+    Boolean(compareRealmTrimmed && compareAreaTrimmed && compareResourceTrimmed) &&
+    compareFamilyParsed.valid;
+  const compareHasInput =
+    compareRealmTrimmed != null ||
+    compareAreaTrimmed != null ||
+    compareResourceTrimmed != null ||
+    compareFamilyValue.trim().length > 0;
+
+  const compareHint =
+    compareFamilyValue.trim().length > 0 && !compareFamilyParsed.valid
+      ? "Family must be a non-negative integer if provided."
+      : compareHasInput && !compareTargetReady
+        ? "Target realm, area, and resource are required to compare."
+        : null;
+
   const replayMutation = createReplayQueueDeadLetterMutation(resourceRef);
   const purgeMutation = createPurgeQueueDeadLetterMutation(resourceRef);
   const [actionMessageId, setActionMessageId] = state<number | null>(null);
@@ -332,8 +398,9 @@ export default function QueueResourcePage() {
   const confirmationKind = confirmKind();
   const actionPending = actionKind() !== null;
   const stateSummary = data ? describeQueueState(data.detail, compareTarget) : null;
+
   const headerStatus = {
-    detail: stateSummary?.detail ?? "Loading queue actor state and comparison tools.",
+    detail: stateSummary?.detail ?? "Inspecting queue state and comparison tools.",
     label: resourceQuery.refreshing
       ? "Refreshing"
       : resourceQuery.stale
@@ -349,7 +416,7 @@ export default function QueueResourcePage() {
   const sidebar = createDomainSidebar({
     data,
     title: "Scope summary",
-    description: "Backlog pressure and live queue activity.",
+    description: scopeLabel,
     stats: (current) => [
       { label: "Realm", value: current.detail.realm },
       { label: "Area", value: current.detail.area },
@@ -361,7 +428,7 @@ export default function QueueResourcePage() {
       {
         label: "Oldest age",
         value: humanizeSeconds(current.detail.oldestMessageAgeSeconds),
-        note: "Point-in-time broker snapshot",
+        note: "Point-in-time snapshot",
       },
     ],
     footer: (
@@ -379,7 +446,7 @@ export default function QueueResourcePage() {
           <DomainHeader
             eyebrow="Queue resource"
             title="Queue resource inspection"
-            description={`${realm} / ${area} / ${resource}`}
+            description={`${scopeLabel}`}
             primaryAction={{
               label: "Refresh resource",
               onPress: () => resourceQuery.refresh(),
@@ -387,9 +454,7 @@ export default function QueueResourcePage() {
             status={headerStatus}
           />
 
-          {resourceQuery.loading && !data ? (
-            <QueryLoadingState description="Loading queue resource..." />
-          ) : null}
+          {resourceQuery.loading ? <QueryLoadingState description="Loading queue resource..." /> : null}
 
           {resourceQueryError ? (
             <QueryErrorState error={resourceQueryError} onRetry={() => resourceQuery.refresh()} />
@@ -437,32 +502,29 @@ export default function QueueResourcePage() {
       return;
     }
 
+    if (!compareTargetReady) {
+      return;
+    }
+
     const nextQuery = new URLSearchParams();
-    const nextRealm = trimmedOrNull(compareRealmInput());
-    const nextArea = trimmedOrNull(compareAreaInput());
-    const nextResource = trimmedOrNull(compareResourceInput());
-    const nextFamily = trimmedOrNull(compareFamilyInput());
 
-    if (nextRealm) {
-      nextQuery.set("againstRealm", nextRealm);
+    if (compareRealmTrimmed) {
+      nextQuery.set("againstRealm", compareRealmTrimmed);
     }
 
-    if (nextArea) {
-      nextQuery.set("againstArea", nextArea);
+    if (compareAreaTrimmed) {
+      nextQuery.set("againstArea", compareAreaTrimmed);
     }
 
-    if (nextResource) {
-      nextQuery.set("againstResource", nextResource);
+    if (compareResourceTrimmed) {
+      nextQuery.set("againstResource", compareResourceTrimmed);
     }
 
-    const nextFamilyValue = parseOptionalNumber(nextFamily ?? "");
-
-    if (nextFamilyValue != null) {
-      nextQuery.set("againstFamily", String(nextFamilyValue));
+    if (compareFamilyParsed.value != null) {
+      nextQuery.set("againstFamily", String(compareFamilyParsed.value));
     }
 
-    const search = nextQuery.toString();
-    navigate(`/queue/${realm}/${area}/${resource}${search ? `?${search}` : ""}`);
+    navigate(`/queue/${realm}/${area}/${resource}?${nextQuery.toString()}`);
   }
 
   return (
@@ -471,7 +533,7 @@ export default function QueueResourcePage() {
         <DomainHeader
           eyebrow="Queue resource"
           title="Queue resource inspection"
-          description={`${realm} / ${area} / ${resource}. Inspect the current queue actor state, then compare it with another scope from the card below.`}
+          description={`${scopeLabel}. Inspect live and historical signals for this queue resource.`}
           primaryAction={{
             label: "Refresh resource",
             onPress: () => resourceQuery.refresh(),
@@ -479,8 +541,12 @@ export default function QueueResourcePage() {
           status={headerStatus}
         />
 
-        {resourceQuery.loading && !data ? (
-          <QueryLoadingState description="Loading queue resource..." />
+        {resourceQuery.refreshing ? <QueryRefreshingState description="Refreshing queue resource..." /> : null}
+
+        {resourceQuery.loading ? <QueryLoadingState description="Loading queue resource..." /> : null}
+
+        {resourceQueryError ? (
+          <QueryErrorState error={resourceQueryError} onRetry={() => resourceQuery.refresh()} />
         ) : null}
 
         {actionError ? <QueryErrorState error={actionError} /> : null}
@@ -488,16 +554,28 @@ export default function QueueResourcePage() {
         <Stack gap="3">
           <DomainMetricTable
             title="Current values"
-            description="Point-in-time queue counters for this resource."
+            description="Point-in-time queue counters for this scope."
             metrics={[
-              { label: "Total messages", value: current.detail.messagesTotal },
               { label: "Ready", value: current.detail.messagesReady },
+              {
+                label: "Delayed",
+                value: current.detail.messagesDelayed,
+                caption: current.detail.messagesDelayed > 0 ? "Delayed messages visible" : undefined,
+              },
               { label: "Inflight", value: current.detail.messagesInflight },
-              { label: "Dead-lettered", value: current.detail.messagesDeadLettered },
-              { label: "Delayed", value: current.detail.messagesDelayed },
+              {
+                label: "Dead letters",
+                value: current.detail.messagesDeadLettered,
+                caption:
+                  current.detail.messagesDeadLettered > 0
+                    ? "Needs action before work resumes"
+                    : undefined,
+              },
+              { label: "Total messages", value: current.detail.messagesTotal },
               {
                 label: "Oldest age",
                 value: humanizeSeconds(current.detail.oldestMessageAgeSeconds),
+                caption: "Live snapshot",
               },
             ]}
           />
@@ -506,9 +584,7 @@ export default function QueueResourcePage() {
             <CardHeader>
               <CardTitle>Compare scopes</CardTitle>
               <CardDescription>
-                Enter a target realm, area, and resource to compare the current queue scope. All
-                three are required. Family is optional and narrows the comparison to one queue
-                family.
+                Enter target realm, area, and resource values. Family is optional.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -552,22 +628,27 @@ export default function QueueResourcePage() {
                     </div>
 
                     <div class="auth-field">
-                      <Label for="compare-family">Target family</Label>
+                      <Label for="compare-family">Target family (optional)</Label>
                       <Input
                         id="compare-family"
                         value={compareFamilyValue}
                         onInput={(event: Event) =>
                           setCompareFamilyInput((event.target as HTMLInputElement).value)
                         }
-                        placeholder="Optional family"
+                        placeholder="2"
                       />
                     </div>
                   </div>
 
-                  <Flex gap="1" wrap="wrap">
-                    <Button type="submit">Compare scope</Button>
+                  {compareHint ? <p class="domain-muted">{compareHint}</p> : null}
+
+                  <Flex gap="2" wrap="wrap">
+                    <Button type="submit" disabled={!compareTargetReady}>
+                      Compare scope
+                    </Button>
                     <Button
                       type="button"
+                      variant="outline"
                       onPress={() => {
                         setCompareRealmInput("");
                         setCompareAreaInput("");
@@ -588,8 +669,8 @@ export default function QueueResourcePage() {
                   />
                 ) : (
                   <QueryEmptyState
-                    title="Add a comparison"
-                    description="Enter a target realm, area, and resource. All three are required. Family is optional and narrows the comparison to one queue family."
+                    title="No comparison active"
+                    description="Enter a target realm, area, and resource. Family is optional."
                   />
                 )}
               </Stack>
@@ -608,6 +689,7 @@ export default function QueueResourcePage() {
                 <Badge variant="info">{current.inflight.length} entries</Badge>
               </Flex>
             </CardHeader>
+
             <CardContent>
               {current.inflight.length === 0 ? (
                 <QueryEmptyState description="No inflight messages are visible for this resource." />
@@ -622,13 +704,16 @@ export default function QueueResourcePage() {
               <Flex justify="between" gap="3" align="start" wrap="wrap">
                 <Stack gap="1">
                   <CardTitle>Dead letters</CardTitle>
-                  <CardDescription>Messages that need replay or purge decisions.</CardDescription>
+                  <CardDescription>
+                    Messages that need explicit replay or purge decisions.
+                  </CardDescription>
                 </Stack>
                 <Badge variant={current.deadLetters.length > 0 ? "warning" : "success"}>
                   {current.deadLetters.length} messages
                 </Badge>
               </Flex>
             </CardHeader>
+
             <CardContent>
               {current.deadLetters.length === 0 ? (
                 <QueryEmptyState description="No dead-letter messages are visible for this resource." />
@@ -660,11 +745,12 @@ export default function QueueResourcePage() {
                 </Badge>
               </Flex>
             </CardHeader>
+
             <CardContent>
               {current.timeline.events.length === 0 ? (
                 <QueryEmptyState
                   title={current.timeline.derived ? "Derived timeline" : "Live timeline"}
-                  description="No recent queue transitions are visible for this resource. Use the current snapshot or compare results for context."
+                  description="No recent transitions are visible for this resource. Use current metrics for context."
                 />
               ) : (
                 <div class="domain-table-wrap">
@@ -678,31 +764,35 @@ export default function QueueResourcePage() {
                         <TableHeaderCell>Context</TableHeaderCell>
                       </TableRow>
                     </TableHead>
+
                     <TableBody>
                       <For
                         each={current.timeline.events}
-                        by={(event: QueueResourceTimelineEvent) =>
-                          `${event.observedAt}:${event.summary}`
-                        }
+                        by={(event) => `${event.observedAt}:${event.summary}`}
                       >
-                        {(event: QueueResourceTimelineEvent) => (
-                          <TableRow>
-                            <TableCell>{formatTimelineKind(event.kind)}</TableCell>
-                            <TableCell>{event.summary}</TableCell>
-                            <TableCell>{event.observedAt}</TableCell>
-                            <TableCell>
-                              {event.ageSeconds == null
-                                ? "Unknown"
-                                : humanizeSeconds(event.ageSeconds)}
-                            </TableCell>
-                            <TableCell>
-                              {event.operation ? `Operation: ${event.operation}` : ""}
-                              {event.messageId != null ? ` Message: ${event.messageId}` : ""}
-                              {event.ownerSession ? ` Owner: ${event.ownerSession}` : ""}
-                              {event.workerSession ? ` Worker: ${event.workerSession}` : ""}
-                            </TableCell>
-                          </TableRow>
-                        )}
+                        {(event) => {
+                          const timelineContext = formatTimelineContext(event);
+
+                          return (
+                            <TableRow>
+                              <TableCell>{formatTimelineKind(event.kind)}</TableCell>
+                              <TableCell>{event.summary}</TableCell>
+                              <TableCell>{event.observedAt}</TableCell>
+                              <TableCell>
+                                {event.ageSeconds == null
+                                  ? "Unknown"
+                                  : humanizeSeconds(event.ageSeconds)}
+                              </TableCell>
+                              <TableCell>
+                                <div class="queue-timeline-context">
+                                  {timelineContext.length > 0
+                                    ? timelineContext.map((line) => <span>{line}</span>)
+                                    : <span>Context unavailable</span>}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        }}
                       </For>
                     </TableBody>
                   </Table>
@@ -725,11 +815,13 @@ export default function QueueResourcePage() {
                 ? "Replay dead-letter message?"
                 : "Purge dead-letter message?"}
             </h2>
+
             <p id="queue-dead-letter-dialog-description">
               {confirmationKind === "replay"
-                ? `Replay message ${confirmationMessage.messageId} in ${realm} / ${area} / ${resource}.`
-                : `Purge message ${confirmationMessage.messageId} from ${realm} / ${area} / ${resource}.`}
+                ? `Replay message ${confirmationMessage.messageId} in ${scopeLabel}.`
+                : `Purge message ${confirmationMessage.messageId} from ${scopeLabel}. This is permanent.`}
             </p>
+
             <Flex gap="2" align="end">
               <Button
                 variant="secondary"
@@ -742,7 +834,9 @@ export default function QueueResourcePage() {
               >
                 Cancel
               </Button>
+
               <Button
+                variant={confirmationKind === "purge" ? "destructive" : undefined}
                 type="button"
                 onPress={() => runDeadLetterAction(confirmationKind!, confirmationMessage)}
                 disabled={actionPending}
@@ -753,8 +847,8 @@ export default function QueueResourcePage() {
                     ? "Replaying..."
                     : "Purging..."
                   : confirmationKind === "replay"
-                    ? "Replay"
-                    : "Purge"}
+                    ? "Replay message"
+                    : "Purge message"}
               </Button>
             </Flex>
           </div>

@@ -63,6 +63,8 @@
   margin: var(--ak-space-1, 0.25rem) 0 0;
   color: var(--fitz-text-muted);
   line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .domain-header p {
@@ -119,6 +121,27 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.queue-dead-letter-reason {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-timeline-context {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.queue-timeline-context > span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .domain-link-cell {

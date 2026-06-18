@@ -1,5 +1,6 @@
 import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import { RefreshCwIcon, Trash2Icon } from "@askrjs/lucide";
 import { Button } from "@askrjs/themes/controls";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
 import { formatTimestamp } from "@/shared/format";
@@ -25,6 +26,7 @@ export default function QueueDeadLetterTable({
         <TableHead>
           <TableRow>
             <TableHeaderCell>Message</TableHeaderCell>
+            <TableHeaderCell>Context</TableHeaderCell>
             <TableHeaderCell>Family</TableHeaderCell>
             <TableHeaderCell>Attempts</TableHeaderCell>
             <TableHeaderCell>Dead-lettered</TableHeaderCell>
@@ -36,11 +38,27 @@ export default function QueueDeadLetterTable({
           <For each={messages} by={(message) => message.messageId}>
             {(message) => (
               <TableRow>
-                <TableCell>{message.messageId}</TableCell>
+                <TableCell>
+                  <span class="domain-table-cell-truncate" title={String(message.messageId)}>
+                    {message.messageId}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <span
+                    class="domain-table-cell-truncate"
+                    title={`${message.realm} / ${message.area} / ${message.resource}`}
+                  >
+                    {message.realm} / {message.area} / {message.resource}
+                  </span>
+                </TableCell>
                 <TableCell>{message.family}</TableCell>
                 <TableCell>{message.attempts}</TableCell>
                 <TableCell>{formatTimestamp(message.deadLetteredAt)}</TableCell>
-                <TableCell>{message.reason}</TableCell>
+                <TableCell>
+                  <span class="queue-dead-letter-reason" title={message.reason}>
+                    {message.reason}
+                  </span>
+                </TableCell>
                 {onReplay || onPurge ? (
                   <TableCell>
                     <div class="queue-action-cell">
@@ -53,6 +71,7 @@ export default function QueueDeadLetterTable({
                           onPress={() => onReplay(message)}
                           disabled={pendingMessageId === message.messageId}
                         >
+                          <RefreshCwIcon size={15} />
                           {pendingAction === "replay" && pendingMessageId === message.messageId
                             ? "Replaying..."
                             : "Replay"}
@@ -67,6 +86,7 @@ export default function QueueDeadLetterTable({
                           onPress={() => onPurge(message)}
                           disabled={pendingMessageId === message.messageId}
                         >
+                          <Trash2Icon size={15} />
                           {pendingAction === "purge" && pendingMessageId === message.messageId
                             ? "Purging..."
                             : "Purge"}

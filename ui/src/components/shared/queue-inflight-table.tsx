@@ -14,9 +14,11 @@ export default function QueueInflightTable({ messages }: QueueInflightTableProps
         <TableHead>
           <TableRow>
             <TableHeaderCell>Message</TableHeaderCell>
+            <TableHeaderCell>Context</TableHeaderCell>
+            <TableHeaderCell>Owner token</TableHeaderCell>
+            <TableHeaderCell>Session</TableHeaderCell>
             <TableHeaderCell>Family</TableHeaderCell>
             <TableHeaderCell>Attempts</TableHeaderCell>
-            <TableHeaderCell>Session</TableHeaderCell>
             <TableHeaderCell>Expires</TableHeaderCell>
           </TableRow>
         </TableHead>
@@ -24,10 +26,28 @@ export default function QueueInflightTable({ messages }: QueueInflightTableProps
           <For each={messages} by={(message) => message.messageId}>
             {(message) => (
               <TableRow>
-                <TableCell>{message.messageId}</TableCell>
+                <TableCell>
+                  <span class="domain-table-cell-truncate" title={String(message.messageId)}>
+                    {message.messageId}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <span class="domain-table-cell-truncate" title={`${message.realm} / ${message.area} / ${message.resource}`}>
+                    {message.realm} / {message.area} / {message.resource}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <span class="domain-table-cell-truncate" title={message.inflightToken}>
+                    {message.inflightToken}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <span class="domain-table-cell-truncate" title={message.sessionId}>
+                    {message.sessionId}
+                  </span>
+                </TableCell>
                 <TableCell>{message.family}</TableCell>
                 <TableCell>{message.attempts}</TableCell>
-                <TableCell>{message.sessionId}</TableCell>
                 <TableCell>{formatTimestamp(message.expiresAt)}</TableCell>
               </TableRow>
             )}
