@@ -789,4 +789,36 @@ describe("admin page smoke tests", () => {
 
     expect(root.textContent).toContain("Bad credentials");
   });
+
+  it("uses mutation-owned logout pending, success, and error states", async () => {
+    const { default: Logout } = await import("@/pages/auth/logout");
+
+    mocks.mutation.execute.mockImplementationOnce(() => new Promise<void>(() => {}));
+
+    let root = await mountRoute("/logout", "/logout", Logout);
+
+    expect(root.textContent).toContain("Signing out");
+    expect(root.textContent).toContain("Clearing your session.");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.mutation.execute.mockResolvedValueOnce(undefined);
+    root = await mountRoute("/logout", "/logout", Logout);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(root.textContent).toContain("Signed out");
+    expect(root.textContent).toContain("Go to sign in");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.mutation.execute.mockRejectedValueOnce(new Error("Logout failed"));
+    root = await mountRoute("/logout", "/logout", Logout);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(root.textContent).toContain("Sign out failed");
+    expect(root.textContent).toContain("Logout failed");
+    expect(root.textContent).toContain("Try again");
+  });
 });

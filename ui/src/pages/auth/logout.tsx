@@ -14,44 +14,84 @@ import {
 import { createSignOutMutation } from "@/features/session/session-mutation";
 import { formatUnknownError } from "@/shared/errors/format";
 
+type LogoutPhase = "pending" | "success" | "error";
+
 export default function Logout() {
   const signOut = createSignOutMutation();
+  const [phase, setPhase] = state<LogoutPhase>("pending");
   const [error, setError] = state("");
 
-  async function signOutAndRedirect() {
+  async function signOutAndSetPhase() {
+    setPhase("pending");
+    setError("");
+
     try {
-      setError("");
       await signOut.execute(undefined);
-      navigate("/login", { history: "replace" });
+      setPhase("success");
     } catch (err) {
       setError(formatUnknownError(err));
+      setPhase("error");
     }
   }
 
   task(async () => {
-    await signOutAndRedirect();
+    await signOutAndSetPhase();
   });
+
+  const currentPhase = phase();
+  const errorMessage = error();
+  const title =
+    currentPhase === "success"
+      ? "Signed out"
+      : currentPhase === "error"
+        ? "Sign out failed"
+        : "Signing out";
+  const description =
+    currentPhase === "success"
+      ? "Your Fitz Admin session has been cleared."
+      : currentPhase === "error"
+        ? "We could not clear your session. You may still be signed in."
+        : "Clearing your Fitz Admin session.";
 
   return (
     <Card class="auth-card" variant="raised">
       <CardHeader>
-        <CardTitle>Signing out</CardTitle>
-        <CardDescription>Ending your Fitz admin session.</CardDescription>
+        <CardTitle>{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent>
-        {error() ? (
-          <Alert
-            variant="danger"
-            title="Sign out failed"
-            description={error()}
-            actions={<Button onPress={() => void signOutAndRedirect()}>Try again</Button>}
-          />
-        ) : (
-          <div class="auth-status">
-            <Spinner label="Signing out" />
-            <p>Please wait while we clear your session.</p>
-          </div>
-        )}
+        <div class="auth-status-shell" aria-live="polite" aria-atomic="true">
+          {currentPhase === "pending" ? (
+            <div class="auth-status">
+              <Spinner label="Signing out" />
+              <p>Clearing your session.</p>
+            </div>
+          ) : null}
+
+          {currentPhase === "success" ? (
+            <Alert
+              variant="success"
+              description="You can sign back in from here."
+              actions={
+                <Button onPress={() => navigate("/login", { history: "replace" })}>
+                  Go to sign in
+                </Button>
+              }
+            />
+          ) : null}
+
+          {currentPhase === "error" ? (
+            <Alert
+              variant="danger"
+              description={`${errorMessage || "We could not clear your session."} Your session may still be active.`}
+              actions={
+                <Button variant="outline" onPress={() => void signOutAndSetPhase()}>
+                  Try again
+                </Button>
+              }
+            />
+          ) : null}
+        </div>
       </CardContent>
     </Card>
   );

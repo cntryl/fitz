@@ -1,23 +1,44 @@
-import { currentRoute } from "@askrjs/askr/router";
+import { currentRoute, Link } from "@askrjs/askr/router";
 import { MoonIcon, ShieldIcon, SunIcon } from "@askrjs/lucide";
+import { Badge } from "@askrjs/themes/surfaces";
 import { Container, Flex } from "@askrjs/themes/layouts";
 import { Header, Navbar, NavBrand, NavGroup } from "@askrjs/themes/shells";
 import { ThemeToggle } from "@askrjs/themes/theme";
+import { createCurrentSessionQuery } from "@/features/session/session-query";
 
 export default function Layout({ children }: { children?: unknown }) {
   const route = currentRoute();
   const routeKey = route.path || "/";
+  const currentSession = createCurrentSessionQuery();
+  const accountLabel = currentSession.data?.authenticated ? currentSession.data.username : "Guest";
 
   return (
     <>
+      <a class="skip-link" href="#main-content">
+        Skip to main content
+      </a>
+
       <Header>
         <Container size="xl">
-          <Navbar>
+          <Navbar breakpoint="md" aria-label="Primary navigation">
             <NavBrand>
-              <ShieldIcon size={18} />
-              <span>Fitz Admin</span>
+              <Link href="/" aria-label="Fitz admin home">
+                <ShieldIcon size={18} />
+                <span>Fitz Admin</span>
+              </Link>
             </NavBrand>
-            <NavGroup align="end">
+            <NavGroup align="end" aria-label="Account" role="group">
+              <Badge
+                variant="outline"
+                style={{
+                  maxInlineSize: "12rem",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {accountLabel}
+              </Badge>
               <ThemeToggle
                 aria-label="Toggle color theme"
                 variant="ghost"
@@ -29,15 +50,16 @@ export default function Layout({ children }: { children?: unknown }) {
           </Navbar>
         </Container>
       </Header>
+
       <Container size="sm" p="4">
         <Flex
           align="center"
           justify="center"
-          style={{ minHeight: "min(42rem, calc(100dvh - 6rem))" }}
+          style={{ minHeight: "calc(100dvh - var(--ak-layout-navbar-height, 60px))" }}
         >
-          <div key={routeKey} class="route-transition-surface">
+          <main id="main-content" key={routeKey} class="route-transition-surface">
             {children}
-          </div>
+          </main>
         </Flex>
       </Container>
     </>
