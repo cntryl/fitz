@@ -4,6 +4,7 @@ import { mapQueueDeadLetter, mapQueueOverview } from "./queue-mappers";
 import type {
   DeadLetterFilters,
   DeadLetterMessage,
+  QueueInventory,
   QueueOverview,
   QueueResourceRef,
 } from "./queue-models";
@@ -37,6 +38,36 @@ async function listDeadLetters(
 
   const dto = unwrapResponse(response, "Unable to load queue dead-letter messages");
   return dto.messages.map(mapQueueDeadLetter);
+}
+
+async function listInventory(options: ServiceRequestOptions = {}): Promise<QueueInventory> {
+  const realms = unwrapResponse(
+    await apiv1.listQueueRealms(options),
+    "Unable to load queue realms for inventory",
+  ).realms;
+
+  const inventoryRealms = await Promise.all(
+    realms.map(async ({ realm }) => {
+      const areas = unwrapResponse(
+        await apiv1.listQueueAreas(realm, options),
+        `Unable to load queue areas for ${realm}`,
+      ).areas;
+
+      const inventoryAreas = await Promise.all(
+        areas.map(async ({ area }) => ({
+          area,
+          resources: unwrapResponse(
+            await apiv1.listQueueResources(realm, area, options),
+            `Unable to load queue resources for ${realm}/${area}`,
+          ).resources.map((entry) => entry.resource),
+        })),
+      );
+
+      return { areas: inventoryAreas, realm };
+    }),
+  );
+
+  return { domain: "queue", realms: inventoryRealms };
 }
 
 async function replayDeadLetter(
@@ -80,6 +111,7 @@ async function purgeDeadLetter(
 // Services are the app contract boundary: no Askr resources and no FetchResponse leaks.
 export const queueService = {
   getOverview,
+  listInventory,
   purgeDeadLetter,
   listDeadLetters,
   replayDeadLetter,

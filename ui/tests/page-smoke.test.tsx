@@ -63,6 +63,7 @@ vi.mock("@/features/metrics/metrics-query", () => ({
 vi.mock("@/features/queue/queue-query", () => ({
   createQueueDeadLettersQuery: () => mocks.queryStates.queueDeadLetters,
   createQueueOverviewQuery: () => mocks.queryStates.queue,
+  createQueueInventoryQuery: () => mocks.queryStates.queueInventory,
 }));
 
 vi.mock("@/features/queue/queue-resource-query", () => ({
@@ -130,8 +131,24 @@ const queueOverview = {
     messagesDelayed: 1,
     messagesPending: 3,
     messagesReady: 4,
+    oldestBacklogAgeSeconds: 17,
     operationsPerSecond: 1.25,
   },
+};
+
+const queueInventory = {
+  domain: "queue",
+  realms: [
+    {
+      realm: "default",
+      areas: [
+        {
+          area: "ops",
+          resources: ["primary"],
+        },
+      ],
+    },
+  ],
 };
 
 const kvOverview = {
@@ -545,6 +562,7 @@ function resetQueries() {
   mocks.queryStates.metrics = queryState.fresh(metricsOverview, queryOptions());
   mocks.queryStates.queue = queryState.fresh(queueOverview, queryOptions());
   mocks.queryStates.queueDeadLetters = queryState.fresh([], queryOptions());
+  mocks.queryStates.queueInventory = queryState.fresh(queueInventory, queryOptions());
   mocks.queryStates.queueResource = queryState.fresh(queueResource, queryOptions());
   mocks.queryStates.queueTimeline = queryState.fresh(queueResource.timeline, queryOptions());
   mocks.queryStates.queueComparison = queryState.fresh(queueComparison, queryOptions());

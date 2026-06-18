@@ -4,15 +4,16 @@ import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import {
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
 } from "@/components/shared/query-state";
-import { createQueueOverviewQuery } from "@/features/queue/queue-query";
+import { createQueueInventoryQuery, createQueueOverviewQuery } from "@/features/queue/queue-query";
 import type { QueueStatsSummary } from "@/features/queue/queue-models";
-import { formatNumber } from "@/shared/format";
+import { formatDurationSeconds, formatNumber } from "@/shared/format";
 
 type QueuePostureTone = "info" | "success" | "warning" | "danger";
 
@@ -30,6 +31,7 @@ function describeQueueOverview(stats: QueueStatsSummary): QueuePostureSummary {
   const inflight = stats.inflightActive;
   const deadLetters = stats.messagesDeadLettered;
   const backlog = ready + pending + delayed;
+  const oldestAgeText = formatDurationSeconds(stats.oldestBacklogAgeSeconds);
 
   const visibleCounts = [
     ready > 0 ? `${formatNumber(ready)} ready` : null,
@@ -50,6 +52,16 @@ function describeQueueOverview(stats: QueueStatsSummary): QueuePostureSummary {
       label: "Attention",
       nextStep: "Open the affected queue resource and inspect dead-letter handling first.",
       tone: "danger",
+    };
+  }
+
+  if (stats.oldestBacklogAgeSeconds > 30 && backlog > 0) {
+    return {
+      detail: `${stateSentence} Oldest backlog age is ${oldestAgeText}, so visibility should follow through to resources. ${throughputSentence}`,
+      label: "Pressure",
+      nextStep:
+        "Open queue resources with large ready or delayed counts and inspect inflight activity.",
+      tone: "warning",
     };
   }
 
@@ -82,6 +94,7 @@ function describeQueueOverview(stats: QueueStatsSummary): QueuePostureSummary {
 
 export default function QueuePage() {
   const overview = createQueueOverviewQuery();
+  const inventory = createQueueInventoryQuery();
   const data = overview.data;
   const posture = data ? describeQueueOverview(data.stats) : null;
 
@@ -90,11 +103,16 @@ export default function QueuePage() {
     title: "Scope summary",
     description: "Backlog pressure and live queue activity.",
     stats: (current) => [
+      { label: "Visible queue realms", value: current.realms.length },
       { label: "Ready", value: current.stats.messagesReady },
-      { label: "Inflight", value: current.stats.inflightActive },
+      { label: "Delayed", value: current.stats.messagesDelayed },
       { label: "Pending", value: current.stats.messagesPending },
       { label: "Dead-lettered", value: current.stats.messagesDeadLettered },
-      { label: "Delayed", value: current.stats.messagesDelayed },
+      { label: "Inflight", value: current.stats.inflightActive },
+      {
+        label: "Oldest backlog age",
+        value: formatDurationSeconds(current.stats.oldestBacklogAgeSeconds),
+      },
       {
         label: "Ops / sec",
         value: current.stats.operationsPerSecond.toFixed(2),
@@ -109,13 +127,13 @@ export default function QueuePage() {
         <DomainHeader
           eyebrow="Durable work"
           title="Queue overview"
-          description="Current queue pressure, realm coverage, and the next place to inspect."
+          description="Queue delivery pressure, in-flight ownership, and resource paths."
           primaryAction={{
             label: "Refresh queue",
             onPress: () => overview.refresh(),
           }}
           status={{
-            detail: posture?.detail ?? "Durable backlog pressure and current queue activity.",
+            detail: posture?.detail ?? "Durable delivery pressure and current queue activity.",
             label: overview.refreshing
               ? "Refreshing"
               : overview.stale
@@ -149,13 +167,27 @@ export default function QueuePage() {
 
             <DomainMetricTable
               title="Queue metrics"
-              description="Current ready, inflight, pending, delayed, and dead-letter pressure."
+              description="Current ready, delayed, inflight, dead-letter, and pending pressure."
               metrics={[
-                { label: "Inflight", value: data.stats.inflightActive },
                 { label: "Ready", value: data.stats.messagesReady },
-                { label: "Pending", value: data.stats.messagesPending },
-                { label: "Dead-lettered", value: data.stats.messagesDeadLettered },
                 { label: "Delayed", value: data.stats.messagesDelayed },
+                { label: "Inflight", value: data.stats.inflightActive },
+                {
+                  label: "Dead-lettered",
+                  value: data.stats.messagesDeadLettered,
+                  caption: data.stats.messagesDeadLettered > 0 ? "attention" : undefined,
+                },
+                { label: "Total pending", value: data.stats.messagesPending },
+                {
+                  label: "Oldest backlog age",
+                  value: formatDurationSeconds(data.stats.oldestBacklogAgeSeconds),
+                  caption:
+                    data.stats.oldestBacklogAgeSeconds > 30
+                      ? "pressure"
+                      : data.stats.oldestBacklogAgeSeconds > 0
+                        ? "watch"
+                        : undefined,
+                },
                 {
                   label: "Ops / sec",
                   value: data.stats.operationsPerSecond.toFixed(2),
@@ -169,6 +201,12 @@ export default function QueuePage() {
               title="Queue realms"
               realms={data.realms}
               emptyMessage="No queue realms are currently visible."
+            />
+
+            <DomainResourceBrowser
+              domain="queue"
+              inventory={inventory.data}
+              loading={inventory.loading}
             />
           </Stack>
         ) : null}

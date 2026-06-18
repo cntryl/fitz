@@ -4,10 +4,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } fro
 import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import { QueryEmptyState } from "./query-state";
 import type { DomainId, ResourceInventory } from "@/features/resource/resource-models";
+import type { QueueInventory } from "@/features/queue/queue-models";
 
 export interface DomainResourceBrowserProps {
   domain: DomainId | "queue";
-  inventory?: ResourceInventory | null;
+  inventory?: (ResourceInventory | QueueInventory) | null;
   loading?: boolean;
 }
 

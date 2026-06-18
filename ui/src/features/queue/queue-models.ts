@@ -14,6 +14,7 @@ export interface QueueStatsSummary {
   messagesDelayed: number;
   messagesPending: number;
   messagesReady: number;
+  oldestBacklogAgeSeconds: number;
   operationsPerSecond: number;
 }
 
@@ -35,4 +36,19 @@ export interface DeadLetterMessage {
   attempts: number;
   reason: string;
   deadLetteredAt: string;
+}
+
+export interface QueueInventoryArea {
+  area: string;
+  resources: string[];
+}
+
+export interface QueueInventoryRealm {
+  areas: QueueInventoryArea[];
+  realm: string;
+}
+
+export interface QueueInventory {
+  domain: "queue";
+  realms: QueueInventoryRealm[];
 }
