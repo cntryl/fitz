@@ -534,8 +534,57 @@ const resourceDetail = {
   timeline: {
     derived: false,
     events: [],
+    limit: 10,
+    area: "ops",
+    realm: "default",
+    resource: "primary",
   },
 };
+
+const genericResourceRoutes = [
+  {
+    assertText: "KV resource inspection",
+    domain: "kv",
+    path: "/kv/default/ops/primary",
+    routePath: "/kv/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/resource-detail"),
+  },
+  {
+    assertText: "Lease resource inspection",
+    domain: "lease",
+    path: "/lease/default/ops/primary",
+    routePath: "/lease/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/resource-detail"),
+  },
+  {
+    assertText: "Notice resource inspection",
+    domain: "notice",
+    path: "/notice/default/ops/primary",
+    routePath: "/notice/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/resource-detail"),
+  },
+  {
+    assertText: "RPC resource inspection",
+    domain: "rpc",
+    path: "/rpc/default/ops/primary",
+    routePath: "/rpc/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/resource-detail"),
+  },
+  {
+    assertText: "Schedule resource inspection",
+    domain: "schedule",
+    path: "/schedule/default/ops/primary",
+    routePath: "/schedule/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/resource-detail"),
+  },
+  {
+    assertText: "Stream resource inspection",
+    domain: "stream",
+    path: "/stream/default/ops/primary",
+    routePath: "/stream/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/resource-detail"),
+  },
+];
 
 type DomainOverviewFixture = {
   realms: Array<{ realm: string }>;
@@ -677,13 +726,19 @@ describe("admin page smoke tests", () => {
         path: "/stream",
         routePath: "/stream",
       },
-      {
-        assertText: "resource inspection",
-        module: () => import("@/pages/app/resource-detail"),
-        path: "/kv/default/ops/primary",
-        routePath: "/kv/{realm}/{area}/{resource}",
-      },
     ];
+
+    for (const page of genericResourceRoutes) {
+      const { default: Component } = await page.module();
+      const root = await mountRoute(page.path, page.routePath, Component);
+
+      expect(root.textContent).toContain(page.assertText);
+      expect(root.textContent).toContain(`Scope: default / ops / primary`);
+      expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
 
     for (const page of pages) {
       const { default: Component } = await page.module();
@@ -714,6 +769,38 @@ describe("admin page smoke tests", () => {
       cleanupApp(root);
       document.body.innerHTML = "";
     }
+  });
+
+  it("covers generic detail route loading and error states", async () => {
+    for (const page of genericResourceRoutes) {
+      mocks.queryStates.resource = queryState.loading(queryOptions());
+
+      const { default: Component } = await page.module();
+      const root = await mountRoute(page.path, page.routePath, Component);
+
+      expect(root.textContent).toContain(`Loading ${page.domain.toUpperCase()} resource...`);
+      expect(root.textContent).toContain(`Scope: default / ops / primary`);
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+
+      const loadError = `${page.domain} unavailable`;
+      mocks.queryStates.resource = queryState.error(
+        new Error(loadError),
+        undefined,
+        queryOptions(),
+      );
+
+      const errorRoot = await mountRoute(page.path, page.routePath, Component);
+
+      expect(errorRoot.textContent).toContain(loadError);
+      expect(errorRoot.textContent).toContain("Unable to load");
+
+      cleanupApp(errorRoot);
+      document.body.innerHTML = "";
+    }
+
+    mocks.queryStates.resource = queryState.fresh(resourceDetail, queryOptions());
   });
 
   it("renders domain overview loading states consistently", async () => {
@@ -1280,7 +1367,19 @@ describe("admin page smoke tests", () => {
       {
         ...resourceDetail,
         comparison: {
+          comparisonMode: "resource",
+          derived: false,
           metrics: [{ label: "Delta", value: 0 }],
+          leftScope: {
+            area: "ops",
+            realm: "default",
+            resource: "primary",
+          },
+          rightScope: {
+            area: "ops",
+            realm: "default",
+            resource: "secondary",
+          },
           summary: "No material difference",
         },
       },
@@ -1294,7 +1393,7 @@ describe("admin page smoke tests", () => {
       ResourceDetailPage,
     );
 
-    expect(root.textContent).toContain("Comparison details");
+    expect(root.textContent).toContain("Comparison summary");
     expect(root.textContent).toContain("Matched");
     expect(root.textContent).toContain("No material difference");
   });

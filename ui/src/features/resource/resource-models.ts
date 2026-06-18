@@ -12,18 +12,35 @@ export interface ResourceMetric {
   caption?: string;
 }
 
+export interface ResourceScope {
+  area: string;
+  realm: string;
+  resource: string;
+}
+
 export interface ResourceTimelineEvent {
   ageSeconds?: number | null;
+  attempts?: number | null;
+  area: string;
   correlationId?: string | null;
   kind: string;
+  messageId?: number | null;
   observedAt: string;
+  operation?: string | null;
+  ownerSession?: string | null;
+  realm: string;
+  resource: string;
   summary: string;
+  workerSession?: string | null;
 }
 
 export interface ResourceTimeline {
   derived: boolean;
   events: ResourceTimelineEvent[];
   limit: number;
+  area: string;
+  realm: string;
+  resource: string;
 }
 
 export interface ResourceComparison {
@@ -31,6 +48,8 @@ export interface ResourceComparison {
   derived: boolean;
   metrics: ResourceMetric[];
   summary: string;
+  leftScope?: ResourceScope;
+  rightScope?: ResourceScope;
 }
 
 export interface ResourceRelatedTable {
