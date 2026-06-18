@@ -186,7 +186,7 @@
 .dashboard-signal-metrics {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem 0.45rem;
+  gap: 0.35rem var(--ak-space-2, 0.5rem);
   margin: 0;
 }
 
