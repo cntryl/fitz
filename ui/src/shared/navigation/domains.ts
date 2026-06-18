@@ -1,14 +1,14 @@
 import {
   DatabaseIcon,
+  FileLockIcon,
   BoxesIcon,
   LayoutDashboardIcon,
   LineChartIcon,
   MessagesSquareIcon,
   NetworkIcon,
-  RadioTowerIcon,
+  DatabaseZapIcon,
   Rows3Icon,
   TimerResetIcon,
-  KeyRoundIcon,
   UsersIcon,
 } from "@askrjs/lucide";
 
@@ -48,7 +48,7 @@ export const domainLinks: DomainLink[] = [
     href: "/lease",
     title: "Lease",
     description: "Lease realm coverage and live lease load.",
-    icon: KeyRoundIcon,
+    icon: FileLockIcon,
   },
   {
     href: "/notice",
@@ -78,7 +78,7 @@ export const domainLinks: DomainLink[] = [
     href: "/stream",
     title: "Stream",
     description: "Stream throughput, subscriptions, and realm structure.",
-    icon: RadioTowerIcon,
+    icon: DatabaseZapIcon,
   },
   {
     href: "/kv",
