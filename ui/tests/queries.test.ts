@@ -684,16 +684,20 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
         failure_total: 6,
         publishes_per_second: 1.25,
         routes_active: 2,
+        max_route_subscribers: 5,
         requests_total: 7,
         success_total: 8,
         subscriptions_active: 9,
         unsubscribes_total: 10,
-        max_route_subscribers: 5,
         wildcard_limit_rejects_total: 10,
       }),
     ).toEqual({
       publishesPerSecond: 1.25,
+      deliveryDropsTotal: 4,
+      routesActive: 2,
+      wildcardLimitRejectsTotal: 10,
       subscriptionsActive: 9,
+      maxRouteSubscribers: 5,
     });
 
     expect(

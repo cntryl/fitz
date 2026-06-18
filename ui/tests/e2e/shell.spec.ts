@@ -105,8 +105,12 @@ const domainOverviewData: Record<string, DomainOverviewFixture> = {
   notice: {
     realms: [{ realm: "default" }],
     stats: {
+      delivery_drops_total: 0,
       publishes_per_second: 4.1,
+      routes_active: 2,
+      wildcard_limit_rejects_total: 0,
       subscriptions_active: 9,
+      max_route_subscribers: 8,
     },
   },
   rpc: {
@@ -493,6 +497,33 @@ test("captures lease overview empty state", async ({ page }, testInfo) => {
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("lease-empty-desktop.png"),
+    animations: "disabled",
+  });
+});
+
+test("captures notice overview empty state", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockDomainOverviewApis(page, {
+    notice: {
+      realms: [],
+      stats: {
+        delivery_drops_total: 0,
+        publishes_per_second: 0,
+        routes_active: 0,
+        wildcard_limit_rejects_total: 0,
+        subscriptions_active: 0,
+        max_route_subscribers: 0,
+      },
+    },
+  });
+
+  await page.goto("/notice");
+  await expect(page.getByRole("heading", { name: "Notice overview" })).toBeVisible();
+  await expect(page.getByText("No notice realms are currently visible.")).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("notice-empty-desktop.png"),
     animations: "disabled",
   });
 });

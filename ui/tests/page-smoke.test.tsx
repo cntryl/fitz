@@ -163,7 +163,11 @@ const noticeOverview = {
   realms: [realm],
   stats: {
     publishesPerSecond: 0.75,
+    deliveryDropsTotal: 0,
+    routesActive: 0,
+    wildcardLimitRejectsTotal: 0,
     subscriptionsActive: 7,
+    maxRouteSubscribers: 0,
   },
 };
 
@@ -241,9 +245,10 @@ const domainOverviews = [
     module: () => import("@/pages/app/notice"),
     path: "/notice",
     routePath: "/notice",
+    errorTitle: "Notice overview loading failure",
     emptyText: "No notice realms are currently visible.",
-    errorText: "Notice overview unavailable",
-    loadingText: "Loading notice overview",
+    errorText: "Notice overview loading failure",
+    loadingText: "Loading notice overview snapshot...",
   },
   {
     assertText: "RPC overview",
@@ -787,6 +792,46 @@ describe("admin page smoke tests", () => {
       cleanupApp(root);
       document.body.innerHTML = "";
     }
+  });
+
+  it("renders notice risk and fanout-priority metrics", async () => {
+    mocks.queryStates.notice = queryState.fresh(
+      {
+        ...noticeOverview,
+        stats: {
+          ...noticeOverview.stats,
+          subscriptionsActive: 14,
+          publishesPerSecond: 18.5,
+          deliveryDropsTotal: 2,
+          wildcardLimitRejectsTotal: 1,
+          routesActive: 4,
+          maxRouteSubscribers: 9,
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: NoticePage } = await import("@/pages/app/notice");
+    const root = await mountRoute("/notice", "/notice", NoticePage);
+    const text = root.textContent ?? "";
+    const labels = [
+      "Active subscriptions",
+      "Publish rate",
+      "Delivery drops",
+      "Wildcard limit rejects",
+    ];
+
+    let cursor = -1;
+    for (const label of labels) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    expect(text).toContain("2");
+    expect(text).toContain("1");
+    expect(text).toContain("Attention");
+    expect(text).toContain("live fanout");
   });
 
   it("renders the status-first dashboard sections", async () => {
