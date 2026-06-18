@@ -230,9 +230,10 @@ const domainOverviews = [
     module: () => import("@/pages/app/lease"),
     path: "/lease",
     routePath: "/lease",
+    errorTitle: "Lease overview loading failure",
     emptyText: "No lease realms are currently visible.",
-    errorText: "Lease overview unavailable",
-    loadingText: "Loading lease overview",
+    errorText: "Lease overview loading failure",
+    loadingText: "Loading lease overview snapshot...",
   },
   {
     assertText: "Notice overview",
@@ -713,12 +714,54 @@ describe("admin page smoke tests", () => {
       const { default: Component } = await page.module();
       const root = await mountRoute(page.path, page.routePath, Component);
 
-      expect(root.textContent).toContain("Unable to load");
+      expect(root.textContent).toContain(page.errorTitle ?? "Unable to load");
       expect(root.textContent).toContain(page.errorText);
 
       cleanupApp(root);
       document.body.innerHTML = "";
     }
+  });
+
+  it("renders lease risk and ownership-pressure priority metrics", async () => {
+    mocks.queryStates.lease = queryState.fresh(
+      {
+        ...leaseOverview,
+        stats: {
+          ...leaseOverview.stats,
+          acquireTimeoutsTotal: 2,
+          forcedReleasesTotal: 1,
+          invalidTokenRejectsTotal: 3,
+          waiterDepth: 4,
+          oldestLeaseAgeSeconds: 3700,
+          leasesActive: 12,
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: LeasePage } = await import("@/pages/app/lease");
+    const root = await mountRoute("/lease", "/lease", LeasePage);
+    const text = root.textContent ?? "";
+    const labels = [
+      "Active leases",
+      "Waiters",
+      "Oldest lease age",
+      "Ownership pressure",
+      "Acquire timeouts",
+      "Forced releases",
+      "Token rejects",
+    ];
+
+    let cursor = -1;
+    for (const label of labels) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    expect(text).toContain("1h");
+    expect(text).toContain("Attention");
+    expect(text).toContain("acquire timeout");
   });
 
   it("renders domain overviews with empty realm tables", async () => {

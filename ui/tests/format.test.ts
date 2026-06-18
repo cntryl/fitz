@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { formatDisplayValue, formatNumber, formatTimestamp } from "@/shared/format";
+import {
+  formatDisplayValue,
+  formatDurationSeconds,
+  formatNumber,
+  formatTimestamp,
+} from "@/shared/format";
 
 describe("shared format helpers", () => {
   it("formats display values and numbers", () => {
@@ -14,5 +19,13 @@ describe("shared format helpers", () => {
     expect(formatTimestamp(timestamp)).toBe(new Date(timestamp).toLocaleString());
     expect(formatTimestamp("not-a-date")).toBe("not-a-date");
     expect(formatTimestamp()).toBe("Unknown");
+  });
+
+  it("formats durations into readable units", () => {
+    expect(formatDurationSeconds(0)).toBe("0s");
+    expect(formatDurationSeconds(42)).toBe("42s");
+    expect(formatDurationSeconds(125)).toBe("2m");
+    expect(formatDurationSeconds(3700)).toBe("1h");
+    expect(formatDurationSeconds(172_800)).toBe("2d");
   });
 });

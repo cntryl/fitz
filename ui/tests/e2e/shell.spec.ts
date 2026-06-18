@@ -165,6 +165,21 @@ const domainOverviewData: Record<string, DomainOverviewFixture> = {
   },
 };
 
+type DomainOverviewOverride = Partial<DomainOverviewFixture>;
+
+function applyLeaseOverride(overrides?: DomainOverviewOverride) {
+  const base = domainOverviewData.lease;
+  return {
+    ...base,
+    ...overrides,
+    realms: overrides?.realms ?? base.realms,
+    stats: {
+      ...base.stats,
+      ...overrides?.stats,
+    },
+  };
+}
+
 function domainAreasByRealm(_domain: string, _realm: string) {
   return ["default", "analytics"];
 }
@@ -182,7 +197,10 @@ function domainResourcesByArea(domain: string, realm: string, area: string) {
   }[domain]?.[realm]?.[area] ?? [{ resource: "primary" }];
 }
 
-async function mockDomainOverviewApis(page: Page) {
+async function mockDomainOverviewApis(
+  page: Page,
+  overrides: Partial<Record<string, DomainOverviewOverride>> = {},
+) {
   await page.route("**/api/v1/features", async (route) => {
     await route.fulfill({
       json: adminFeatures,
@@ -198,7 +216,19 @@ async function mockDomainOverviewApis(page: Page) {
     }
 
     const domain = segments[2] ?? "";
-    const domainFixture = domainOverviewData[domain as keyof typeof domainOverviewData];
+    const baseFixture = domainOverviewData[domain as keyof typeof domainOverviewData];
+    const override = overrides[domain];
+    const domainFixture = baseFixture
+      ? {
+          ...baseFixture,
+          ...override,
+          realms: override?.realms ?? baseFixture.realms,
+          stats: {
+            ...baseFixture.stats,
+            ...override?.stats,
+          },
+        }
+      : null;
     if (!domainFixture) {
       await route.continue();
       return;
@@ -447,6 +477,23 @@ test("captures a sidebar domain page", async ({ page }, testInfo) => {
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("queue-sidebar.png"),
+    animations: "disabled",
+  });
+});
+
+test("captures lease overview empty state", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockDomainOverviewApis(page, {
+    lease: applyLeaseOverride({ realms: [] }),
+  });
+
+  await page.goto("/lease");
+  await expect(page.getByRole("heading", { name: "Lease overview" })).toBeVisible();
+  await expect(page.getByText("No lease realms are currently visible.")).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("lease-empty-desktop.png"),
     animations: "disabled",
   });
 });
