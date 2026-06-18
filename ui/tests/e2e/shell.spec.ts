@@ -530,6 +530,37 @@ test("captures notice overview empty state", async ({ page }, testInfo) => {
   });
 });
 
+test("captures stream overview empty state", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockDomainOverviewApis(page, {
+    stream: {
+      realms: [],
+      stats: {
+        events_total: 0,
+        operations_per_second: 0,
+        streams_active: 0,
+        subscriptions_active: 0,
+        watermark_lag_buckets: {
+          caught_up: 0,
+          over_100: 0,
+          under_10: 0,
+          under_100: 0,
+        },
+      },
+    },
+  });
+
+  await page.goto("/stream");
+  await expect(page.getByRole("heading", { name: "Stream overview" })).toBeVisible();
+  await expect(page.getByText("No stream realms are currently visible.")).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("stream-empty-desktop.png"),
+    animations: "disabled",
+  });
+});
+
 test("captures rpc overview empty state", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await mockDomainOverviewApis(page, {

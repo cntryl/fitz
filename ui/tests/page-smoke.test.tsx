@@ -902,6 +902,50 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("pending fire claim(s)");
   });
 
+  it("renders stream replay-priority metrics and readable lag buckets", async () => {
+    mocks.queryStates.stream = queryState.fresh(
+      {
+        ...streamOverview,
+        stats: {
+          ...streamOverview.stats,
+          eventsTotal: 4200,
+          streamsActive: 7,
+          subscriptionsActive: 5,
+          watermarkLagBuckets: {
+            caughtUp: 6,
+            over100: 2,
+            under10: 1,
+            under100: 3,
+          },
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: StreamPage } = await import("@/pages/app/stream");
+    const root = await mountRoute("/stream", "/stream", StreamPage);
+    const text = root.textContent ?? "";
+    const labels = [
+      "Events total",
+      "Active streams",
+      "Active subscriptions",
+      "Watermark lag",
+      "Ops / sec",
+    ];
+
+    let cursor = -1;
+    for (const label of labels) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    expect(text).toContain("behind 100+");
+    expect(text).toContain("Attention");
+    expect(text).toContain("Durable stream history");
+    expect(text).toContain("live subscriptions");
+  });
+
   it("renders rpc pressure-first health and risk signals", async () => {
     mocks.queryStates.rpc = queryState.fresh(
       {
