@@ -561,6 +561,37 @@ test("captures rpc overview empty state", async ({ page }, testInfo) => {
   });
 });
 
+test("captures schedule overview empty state", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockDomainOverviewApis(page, {
+    schedule: {
+      realms: [],
+      stats: {
+        ack_failures_total: 0,
+        cancel_persistence_failures_total: 0,
+        create_persistence_failures_total: 0,
+        executions_per_minute: 0,
+        notify_failures_total: 0,
+        overdue_normalizations_total: 0,
+        pending_fire_claims: 0,
+        schedules_active: 0,
+        subscriptions_active: 0,
+        upsert_persistence_failures_total: 0,
+      },
+    },
+  });
+
+  await page.goto("/schedule");
+  await expect(page.getByRole("heading", { name: "Schedule overview" })).toBeVisible();
+  await expect(page.getByText("No schedule realms are currently visible.")).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("schedule-empty-desktop.png"),
+    animations: "disabled",
+  });
+});
+
 test.describe("captures domain overview templates", () => {
   for (const overviewPage of domainOverviewPages) {
     test(`captures ${overviewPage.domain} overview on desktop`, async ({ page }, testInfo) => {

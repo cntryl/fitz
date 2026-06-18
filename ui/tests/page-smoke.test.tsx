@@ -270,8 +270,9 @@ const domainOverviews = [
     path: "/schedule",
     routePath: "/schedule",
     emptyText: "No schedule realms are currently visible.",
-    errorText: "Schedule overview unavailable",
-    loadingText: "Loading schedule overview",
+    errorTitle: "Schedule overview loading failure",
+    errorText: "Schedule overview loading failure",
+    loadingText: "Loading schedule overview snapshot...",
   },
   {
     assertText: "Stream overview",
@@ -836,6 +837,51 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("1");
     expect(text).toContain("Attention");
     expect(text).toContain("live fanout");
+  });
+
+  it("renders schedule pressure-first health and failure metrics", async () => {
+    mocks.queryStates.schedule = queryState.fresh(
+      {
+        ...scheduleOverview,
+        stats: {
+          ...scheduleOverview.stats,
+          pendingFireClaims: 7,
+          ackFailuresTotal: 2,
+          notifyFailuresTotal: 1,
+          createPersistenceFailuresTotal: 3,
+          upsertPersistenceFailuresTotal: 1,
+          cancelPersistenceFailuresTotal: 0,
+          subscriptionsActive: 9,
+          schedulesActive: 11,
+          executionsPerMinute: 8.25,
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: SchedulePage } = await import("@/pages/app/schedule");
+    const root = await mountRoute("/schedule", "/schedule", SchedulePage);
+    const text = root.textContent ?? "";
+    const labels = [
+      "Active schedules",
+      "Pending fire claims",
+      "Executions / min",
+      "Ack failures",
+      "Notify failures",
+      "Create persistence failures",
+      "Upsert persistence failures",
+    ];
+
+    let cursor = -1;
+    for (const label of labels) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    expect(text).toContain("Attention");
+    expect(text).toContain("Timing intent is durable");
+    expect(text).toContain("pending fire claim(s)");
   });
 
   it("renders rpc pressure-first health and risk signals", async () => {
