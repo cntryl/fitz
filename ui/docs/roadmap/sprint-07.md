@@ -11,27 +11,51 @@ Make the Lease overview communicate ephemeral ownership coordination clearly and
 - `ui/src/features/lease/*`
 - Shared domain components from Sprint 06.
 
-## Requirements
+## Tasks
 
-- Lead with active leases, waiter depth, oldest lease age, and ownership pressure.
-- Copy describes leases as ephemeral ownership coordination.
-- Invalid token rejects, forced releases, and acquire timeouts are visible as risk signals.
-- Realm inventory makes it obvious which lease scopes are currently visible.
-- Empty state states that no lease realms are visible in the current broker snapshot.
+1. Lease metric priority
+   Requirements:
+   - Lead with active leases, waiter depth, oldest lease age, and ownership pressure.
+   - Invalid token rejects, forced releases, and acquire timeouts are visible as risk signals.
+   - Oldest age uses a readable duration unit and does not look like a timestamp.
 
-## Deliverables
+   Acceptance Criteria:
+   - The first viewport answers: "Are there active owners or waiters?"
+   - Risk counters are easy to spot when non-zero.
+   - Primary metrics fit the shared overview rhythm from Sprint 06.
 
-- Lease metric ordering revised for operator priority.
-- Header and sidebar copy audited for semantic accuracy.
-- Empty/error/loading/refreshing states reviewed.
-- Mobile screenshot reviewed for metric readability.
+2. Lease semantic copy
+   Requirements:
+   - Header, sidebar, and state copy describe leases as ephemeral ownership coordination.
+   - Copy does not imply durable ownership continuity after disconnect or restart.
+   - Token and ownership language remains precise and operational.
 
-## Acceptance Criteria
+   Acceptance Criteria:
+   - No visible copy promises ownership recovery, replay, or durable continuity.
+   - Header and sidebar make the current coordination scope clear.
+   - Empty state reads as current broker snapshot state.
 
-- The first viewport answers: "Are there active owners or waiters?"
-- Copy does not imply durable ownership continuity after disconnect/restart.
-- Oldest lease age has a readable unit and does not look like a timestamp.
-- Sidebar adds diagnostic context instead of repeating the metric table.
+3. Lease inventory and sidebar
+   Requirements:
+   - Realm inventory makes currently visible lease scopes obvious.
+   - Sidebar adds diagnostic context instead of repeating the metric table.
+   - Drill-down affordances follow the shared domain overview pattern.
+
+   Acceptance Criteria:
+   - Users can identify which lease scopes are active or waiting.
+   - Sidebar content is useful at desktop width and does not dominate the page.
+   - Resource labels do not overflow on mobile.
+
+4. Lease states and screenshots
+   Requirements:
+   - Review loading, refreshing, empty, and error states for Lease-specific language.
+   - Review metric readability at mobile width.
+   - Update page smoke or query tests if visible priorities change.
+
+   Acceptance Criteria:
+   - Empty state states that no lease realms are visible in the current broker snapshot.
+   - Error state names Lease overview loading failure.
+   - Screenshot review covers lease loaded, lease empty, and lease mobile.
 
 ## Validation
 

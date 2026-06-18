@@ -11,29 +11,51 @@ Make active broker sessions easy to scan, filter mentally, and diagnose.
 - `ui/src/components/shared/session-table.tsx`
 - `ui/src/styles/domain.css`
 
-## Requirements
+## Tasks
 
-- Page header states active session posture and freshness.
-- Summary values identify count, route families, transports, and idle risk.
-- Session table is compact, readable, and horizontally safe.
-- Identity fields distinguish `subject`, `identity_claim`, `identity_value`, and `route_family`.
-- Empty state makes it clear that no sessions are currently connected.
-- Error state does not imply historical recovery data exists.
+1. Session posture summary
+   Requirements:
+   - The page header states active session posture and freshness.
+   - Summary values identify count, route families, transports, and idle risk.
+   - Summary copy avoids implying historical recovery or durable session continuity.
 
-## Deliverables
+   Acceptance Criteria:
+   - The first viewport shows the page title, freshness, summary, and beginning of detail.
+   - Route family and transport signals are visually distinct.
+   - Empty summary values read as current broker state, not historical absence.
 
-- Sessions summary hierarchy refined.
-- Table column order and labels reviewed for operator workflow.
-- Mobile table behavior reviewed and corrected.
-- Empty and error states polished.
+2. Session table semantics
+   Requirements:
+   - The table is compact, readable, and horizontally safe.
+   - Identity fields distinguish `subject`, `identity_claim`, `identity_value`, and `route_family`.
+   - Session ID and remote address use intentional wrapping or truncation.
 
-## Acceptance Criteria
+   Acceptance Criteria:
+   - Long session IDs and remote addresses do not blow out page width.
+   - Identity and route-family fields are not visually or textually conflated.
+   - Copy does not equate `realm` and `route family`.
 
-- Session ID and remote address do not blow out the layout.
-- Route family and identity values are visually distinct.
-- Table remains usable on mobile through wrapping, scrolling, or reduced columns.
-- First viewport shows summary plus the beginning of session detail.
-- Copy does not equate `realm` and `route family`.
+3. Empty and error states
+   Requirements:
+   - Empty state makes it clear that no sessions are currently connected.
+   - Error state explains which session data failed to load.
+   - State surfaces preserve the page frame and summary rhythm.
+
+   Acceptance Criteria:
+   - Empty state does not imply stored session history exists.
+   - Error state remains route-specific and actionable.
+   - Loading, empty, and error states do not cause layout jumps.
+
+4. Mobile table behavior
+   Requirements:
+   - Review the sessions route at `390px`.
+   - Choose wrapping, scrolling, or reduced columns intentionally for the table.
+   - Preserve visible labels for identity, route family, and remote address on mobile.
+
+   Acceptance Criteria:
+   - The page has no horizontal overflow outside the intended table behavior.
+   - Users can still identify session identity and route family on mobile.
+   - Screenshot review covers data, empty, and mobile states.
 
 ## Validation
 

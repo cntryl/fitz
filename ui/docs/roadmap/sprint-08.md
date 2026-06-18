@@ -11,27 +11,51 @@ Make the Notice overview read as live ephemeral fanout, not durable message hist
 - `ui/src/features/notice/*`
 - Shared domain components from Sprint 06.
 
-## Requirements
+## Tasks
 
-- Lead with active subscriptions, publish rate, delivery drops, and wildcard limit rejects.
-- Copy describes Notice as live fanout only.
-- Realm/resource inventory should point users toward active subscription scopes.
-- Empty state makes clear there are no currently visible Notice realms/resources.
-- Charts or comparison visuals must not imply replay or historical storage.
+1. Notice metric priority
+   Requirements:
+   - Lead with active subscriptions, publish rate, delivery drops, and wildcard limit rejects.
+   - Subscription and publish-rate signals are visibly distinct.
+   - Delivery drops and wildcard rejects are treated as risk signals when non-zero.
 
-## Deliverables
+   Acceptance Criteria:
+   - The first viewport answers: "Is live fanout healthy right now?"
+   - Drops and rejects are easy to spot without scanning secondary detail.
+   - Primary metrics fit the shared overview rhythm from Sprint 06.
 
-- Notice metric ordering and labels refined.
-- Header/sidebar copy audited for live fanout semantics.
-- Empty/error/loading/refreshing states reviewed.
-- Mobile screenshot reviewed for resource inventory and metric cards.
+2. Notice semantic copy
+   Requirements:
+   - Header, sidebar, and state copy describe Notice as live fanout only.
+   - Copy never implies durable Notice replay, storage, or message history.
+   - Charts or comparison visuals do not suggest historical persistence.
 
-## Acceptance Criteria
+   Acceptance Criteria:
+   - No visible copy uses durable-history language for Notice.
+   - Empty state describes no currently visible Notice realms/resources.
+   - Live subscription wording is clear in both header and sidebar context.
 
-- The first viewport answers: "Is live fanout healthy right now?"
-- Copy never implies durable Notice replay.
-- Subscription and publish-rate labels are visibly distinct.
-- Delivery drops and wildcard rejects are easy to spot when non-zero.
+3. Notice inventory and sidebar
+   Requirements:
+   - Realm and resource inventory points users toward active subscription scopes.
+   - Sidebar adds live fanout context rather than repeating the metric table.
+   - Resource labels and subscription scope copy remain readable on mobile.
+
+   Acceptance Criteria:
+   - Users can identify the scope of active subscriptions.
+   - Inventory rows make useful drill-down paths obvious.
+   - Sidebar content does not imply replay or stored delivery.
+
+4. Notice states and screenshots
+   Requirements:
+   - Review loading, refreshing, empty, and error states for Notice-specific language.
+   - Review mobile resource inventory and metric card density.
+   - Update page smoke or query tests if visible priorities change.
+
+   Acceptance Criteria:
+   - Empty state makes clear there are no currently visible Notice realms/resources.
+   - Error state names Notice overview loading failure.
+   - Screenshot review covers notice loaded, notice empty, and notice mobile.
 
 ## Validation
 

@@ -13,31 +13,51 @@ Make authentication screens feel like part of Fitz Admin instead of isolated car
 - `ui/src/pages/auth/logout.tsx`
 - `ui/src/styles/forms.css`
 
-## Requirements
+## Tasks
 
-- Auth layout uses `Header`, `Navbar`, `Container`, and `Flex`.
-- Login and logout cards are centered without feeling detached from the app shell.
-- Copy explains what is happening without overstating security or durability.
-- Form controls use theme field/input/button primitives where available.
-- Error and pending states are visible, compact, and not layout-shifting.
-- Logout pending and failure states are visually distinct.
+1. Auth shell alignment
+   Requirements:
+   - Auth routes use the same `Header`, `Navbar`, `Container`, and layout rhythm as the app shell.
+   - Brand, navigation, and account controls remain visually consistent with authenticated pages.
+   - Auth content is centered by layout primitives, not page-local max-width or positioning hacks.
 
-## Deliverables
+   Acceptance Criteria:
+   - `/login` and `/logout` show the same shell spacing and brand treatment as app routes.
+   - The auth card sits in a readable column without floating awkwardly in the viewport.
+   - No auth-only shell clone or duplicate container rule is introduced.
 
-- Auth page header aligned with app shell brand styling.
-- Login form spacing, labels, hints, and submit button refined.
-- Logout card refined for pending, success, and failure states.
-- Mobile layout reviewed at `390px`.
-- Dark mode screenshot reviewed.
+2. Login form composition
+   Requirements:
+   - Login fields, labels, hints, and submit action use theme form primitives where available.
+   - Pending and error states are compact, visible, and do not shift the form layout.
+   - Copy explains the action without overstating security, durability, or session recovery.
 
-## Acceptance Criteria
+   Acceptance Criteria:
+   - Inputs and submit action align to one grid at desktop and mobile widths.
+   - Pending state prevents duplicate submit while preserving user context.
+   - Error state is screen-reader reachable and visually prominent.
 
-- Login card does not exceed comfortable reading width.
-- Inputs and button align to the same grid.
-- Pending state disables duplicate submit without hiding context.
-- Error state is reachable by screen reader and visually prominent.
-- Text does not wrap awkwardly inside buttons or field labels.
-- Auth pages do not introduce page-specific shell classes when Askr layout props are enough.
+3. Logout state handling
+   Requirements:
+   - Logout pending, success, and failure states use one shared card rhythm.
+   - Failure copy explains what failed without promising recovery behavior the broker does not provide.
+   - The route keeps enough context visible for users to understand whether they are signed out.
+
+   Acceptance Criteria:
+   - Pending, success, and failure states are visually distinct.
+   - The logout card does not jump or resize dramatically between states.
+   - Failure state offers the next available user action without hiding the failure.
+
+4. Responsive and theme review
+   Requirements:
+   - Review `/login` and `/logout` at `390px` and desktop widths.
+   - Review both routes in dark mode.
+   - Update auth/page smoke coverage if visible labels or state ownership changes.
+
+   Acceptance Criteria:
+   - Button text, labels, and error text do not wrap awkwardly or overflow.
+   - Dark mode maintains sufficient contrast for form fields, card surface, and status text.
+   - Smoke tests still verify the user-visible route priorities.
 
 ## Validation
 

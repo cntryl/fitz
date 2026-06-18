@@ -14,30 +14,51 @@ Turn the dashboard into a first-stop operations overview that helps users decide
 - `ui/src/styles/dashboard.css`
 - `ui/src/styles/topology-flow.css`
 
-## Requirements
+## Tasks
 
-- First viewport communicates broker status, incident posture, and next action.
-- The topology flow explains live domain relationships without visual clutter.
-- Domain signal summaries are comparable and dense.
-- Empty broker state still looks purposeful.
-- Refreshing state preserves prior content and clearly marks freshness.
-- Error state tells the user what failed and what can still be inspected.
+1. First-viewport status hierarchy
+   Requirements:
+   - The first viewport communicates broker status, incident posture, freshness, and the next useful action.
+   - Primary status content is dense and operational, not hero or marketing layout.
+   - Empty broker state still presents a purposeful dashboard structure.
 
-## Deliverables
+   Acceptance Criteria:
+   - At `1440px`, users can see broker status, the primary flow area, and at least one drill-down prompt.
+   - At `390px`, the status hierarchy reads in logical order without horizontal scrolling.
+   - Status and severity language matches Fitz semantics.
 
-- Dashboard content hierarchy revised around status, flow, and drill-downs.
-- Topology visual density tuned for desktop and mobile.
-- Domain cards or panels normalized to one visual pattern.
-- Empty, loading, refreshing, and error states reviewed.
-- Dashboard route smoke test updated for user-visible priorities.
+2. Topology flow clarity
+   Requirements:
+   - The topology flow explains live domain relationships without looking decorative.
+   - Node, edge, and label density is tuned for desktop, tablet, and mobile.
+   - Refreshing state preserves prior topology content and marks freshness clearly.
 
-## Acceptance Criteria
+   Acceptance Criteria:
+   - Topology cards and connectors read as one diagram, not unrelated panels.
+   - Labels do not collide or clip at reviewed viewport sizes.
+   - Refreshing state keeps existing context visible while new data loads.
 
-- At `1440px`, users can see broker status, the primary flow area, and at least one drill-down prompt in the first viewport.
-- At `390px`, the page reads in a logical order without horizontal scrolling.
-- Topology cards do not look like unrelated decorations.
-- Status and severity language matches Fitz semantics.
-- The dashboard does not duplicate all metrics; it points to domain and metrics pages for detail.
+3. Domain signals and drill-downs
+   Requirements:
+   - Domain summaries use one comparable visual pattern.
+   - Each signal points to the relevant domain or metrics page instead of duplicating every metric.
+   - High-risk or abnormal signals are visually findable without overpowering neutral status.
+
+   Acceptance Criteria:
+   - Domain signal labels and values are comparable across all domains.
+   - Drill-down actions are visible in the first dashboard pass.
+   - The dashboard does not become a duplicate metrics explorer.
+
+4. Dashboard route states and coverage
+   Requirements:
+   - Loading, refreshing, empty, and error states are reviewed as dashboard-specific states.
+   - Error state tells the user what failed and what can still be inspected.
+   - Page smoke coverage is updated for the visible dashboard priorities.
+
+   Acceptance Criteria:
+   - Empty and error states do not collapse the page into a generic message.
+   - Smoke tests fail if the primary dashboard status or route title disappears.
+   - Screenshot review covers desktop, tablet, mobile, and refreshing state.
 
 ## Validation
 

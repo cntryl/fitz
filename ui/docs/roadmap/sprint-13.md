@@ -11,27 +11,51 @@ Make the KV overview communicate current authoritative state and transaction pre
 - `ui/src/features/kv/*`
 - Shared domain components from Sprint 06.
 
-## Requirements
+## Tasks
 
-- Lead with keys total, active transactions, operations/sec, commit failures, rollbacks, and invalid transaction rejects.
-- Copy describes KV as current authoritative state.
-- Active transactions are labeled as broker-local/session-scoped when applicable.
-- Realm/resource inventory should point toward current state scopes.
-- Empty state describes no visible KV realms/resources.
+1. KV metric priority
+   Requirements:
+   - Lead with keys total, active transactions, operations/sec, commit failures, rollbacks, and invalid transaction rejects.
+   - Transaction counters are visually distinct from key count.
+   - Commit failures, rollbacks, and invalid transaction rejects are findable when non-zero.
 
-## Deliverables
+   Acceptance Criteria:
+   - The first viewport answers: "Is current state active and are transactions failing?"
+   - Transaction pressure does not read as neutral inventory count.
+   - Primary metrics fit the shared overview rhythm from Sprint 06.
 
-- KV metric ordering revised for operator priority.
-- Header/sidebar copy audited for current-state semantics.
-- Empty/error/loading/refreshing states reviewed.
-- Mobile screenshot reviewed for transaction counter readability.
+2. KV semantic copy
+   Requirements:
+   - Header, sidebar, and state copy describe KV as current authoritative state.
+   - Copy does not describe KV as durable history or replay.
+   - Active transactions are labeled as broker-local/session-scoped where applicable.
 
-## Acceptance Criteria
+   Acceptance Criteria:
+   - No visible copy uses stream, replay, or event-history language for KV.
+   - Empty state describes no visible KV realms/resources.
+   - Transaction scope language is precise and not overstated.
 
-- The first viewport answers: "Is current state active and are transactions failing?"
-- Copy does not describe KV as durable history or replay.
-- Transaction counters are visibly different from key count.
-- Resource drill-down path is obvious.
+3. KV inventory and sidebar
+   Requirements:
+   - Realm and resource inventory points toward current state scopes.
+   - Sidebar adds transaction or current-state context instead of repeating the metric table.
+   - Resource drill-down path is obvious.
+
+   Acceptance Criteria:
+   - Users can identify which KV resource to inspect next.
+   - Sidebar context helps interpret transaction pressure.
+   - Long key/resource labels do not overflow on mobile.
+
+4. KV states and screenshots
+   Requirements:
+   - Review loading, refreshing, empty, and error states for KV-specific language.
+   - Review transaction counter readability at mobile width.
+   - Update page smoke or query tests if visible priorities change.
+
+   Acceptance Criteria:
+   - Empty and error states are route-specific and preserve current-state semantics.
+   - Mobile layout keeps key count and transaction signals readable.
+   - Screenshot review covers kv loaded, kv empty, and kv mobile.
 
 ## Validation
 

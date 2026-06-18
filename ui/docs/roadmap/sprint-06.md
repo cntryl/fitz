@@ -22,29 +22,62 @@ Create one coherent overview page pattern for all domain pages before tuning eac
 - `ui/src/styles/domain.css`
 - `ui/src/styles/layout.css`
 
-## Requirements
+## Tasks
 
-- All domain pages use the same high-level composition: header, primary metrics, realm/resource inventory, sidebar status.
-- Headers identify domain semantics, scope, freshness, and drill-down path.
-- Sidebar status is useful and not a decorative duplicate of the main metrics.
-- Realm/resource tables have consistent labels and empty states.
-- Loading, refreshing, empty, and error states are consistent across all seven pages.
-- The shared template supports domain-specific copy without forcing generic language.
+1. Shared overview frame
+   Requirements:
+   - All domain pages use the same high-level composition: header, primary metrics, inventory, and sidebar status.
+   - The frame is built from Askr layout primitives before app-local wrappers.
+   - Pages with and without sidebars keep the same visual rhythm.
 
-## Deliverables
+   Acceptance Criteria:
+   - Users can switch between any two domain pages without relearning the layout.
+   - No page adds a custom wrapper that duplicates `Container`, `Stack`, `Flex`, or `Section`.
+   - Desktop, tablet, and mobile layouts collapse without page overflow.
 
-- Shared domain overview layout refined once and applied to all seven pages.
-- Reusable state, table, metric, and sidebar patterns documented in code/tests.
-- Visual rhythm fixed for pages with and without sidebars.
-- Mobile collapse behavior reviewed for every domain overview.
+2. Domain header and state model
+   Requirements:
+   - Headers identify domain semantics, scope, freshness, and drill-down path.
+   - Loading, refreshing, empty, and error states are consistent across all seven overview pages.
+   - State copy stays domain-specific and avoids generic broker-empty language where scope matters.
 
-## Acceptance Criteria
+   Acceptance Criteria:
+   - The first viewport always contains page title, freshness/status, and at least one primary metric group.
+   - Empty state describes absence of visible realms/resources, not historical absence.
+   - Error state tells the user which domain overview failed.
 
-- A user can switch between any two domain pages without relearning the page structure.
-- The first viewport always contains the page title, freshness/status, and at least one primary metric group.
-- Sidebar remains useful but does not dominate the page.
-- Empty state describes absence of visible realms/resources, not absence of historical data unless the API supports that claim.
-- No page adds a custom layout wrapper that duplicates `Container`, `Stack`, `Flex`, or `Section`.
+3. Metrics and inventory tables
+   Requirements:
+   - Metric, realm, and resource tables use consistent labels and density.
+   - Inventory rows make drill-down paths obvious where a resource route exists.
+   - Long realm, area, and resource values wrap or truncate intentionally.
+
+   Acceptance Criteria:
+   - Metric tables remain comparable across domains.
+   - Resource inventory is usable at desktop and mobile widths.
+   - No table creates horizontal page overflow outside intended scroll regions.
+
+4. Sidebar behavior
+   Requirements:
+   - Sidebar status adds useful diagnostic context and does not duplicate the main metrics.
+   - Sidebar width and sticky behavior are handled once in the shared frame.
+   - Sidebar collapses cleanly below the desktop layout.
+
+   Acceptance Criteria:
+   - Sidebar remains useful but does not dominate the page.
+   - Sidebar content stacks after primary content on mobile.
+   - Pages without meaningful sidebar data still look intentional.
+
+5. Shared coverage
+   Requirements:
+   - Add or update shared tests for domain overview structure and query states.
+   - Review all seven domain overviews in desktop and mobile screenshots.
+   - Keep domain-specific metric ordering for sprints 07-13.
+
+   Acceptance Criteria:
+   - Tests fail if a domain page loses the shared frame or primary state surface.
+   - Screenshot review confirms consistent rhythm across all seven domain pages.
+   - No domain-specific copy rewrite is required to complete this shared template sprint.
 
 ## Validation
 

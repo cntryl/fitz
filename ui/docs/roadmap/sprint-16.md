@@ -31,30 +31,62 @@ Close the UI sprint series with a full visual review and regression gate across 
 - `ui/tests/e2e/shell.spec.ts`
 - `ui/tests/page-smoke.test.tsx`
 
-## Requirements
+## Tasks
 
-- Build a repeatable screenshot capture workflow for the running app.
-- Capture the route set defined in `ui/src/pages/app/_routes.tsx` and `ui/src/pages/auth/_routes.tsx`.
-- Include representative mock or fixture states when a fresh broker cannot produce loaded data.
-- Record visual findings in the sprint doc or a linked review note.
-- Fix only regression-class issues in this sprint; page redesign belongs to earlier page sprints.
+1. Screenshot capture workflow
+   Requirements:
+   - Build or verify a repeatable screenshot capture workflow for the running app.
+   - Capture the route set defined in `ui/src/pages/app/_routes.tsx` and `ui/src/pages/auth/_routes.tsx`.
+   - Include representative mock or fixture states when a fresh broker cannot produce loaded data.
 
-## Deliverables
+   Acceptance Criteria:
+   - The screenshot workflow can be rerun without manual route discovery.
+   - Captures cover app routes, auth routes, and resource detail routes.
+   - Missing fixture data is recorded as a review limitation or follow-up.
 
-- Screenshot coverage across the listed routes in desktop and mobile viewports.
-- Light and dark theme passes with documented findings.
-- Regression-class visual fixes only where needed to clear the review.
-- Open follow-up notes for any unresolved items.
+2. Responsive layout audit
+   Requirements:
+   - Review every listed route at mobile and desktop widths.
+   - Verify top navbar, mobile nav, and domain dropdown do not clip or overlap content.
+   - Verify every page has one visible page title and one `main#main-content`.
 
-## Acceptance Criteria
+   Acceptance Criteria:
+   - No route has horizontal page overflow at `390px`.
+   - No navbar or menu item clips at mobile or desktop.
+   - Page title and main landmark checks pass for every route.
 
-- No route has horizontal page overflow at `390px`.
-- No navbar/menu item clips at mobile or desktop.
-- All pages have one visible page title and one `main#main-content`.
-- Empty states look intentional and route-specific.
-- Error states explain what failed without overpromising recovery.
-- Dark mode maintains sufficient contrast for tables, cards, badges, charts, forms, and code blocks.
-- Screenshot review produces no unresolved high-severity visual findings.
+3. Light and dark theme audit
+   Requirements:
+   - Review tables, cards, badges, charts, forms, code blocks, menus, and overlays in light and dark themes.
+   - Record any contrast, surface, or z-index issues found during review.
+   - Fix only regression-class issues in this sprint.
+
+   Acceptance Criteria:
+   - Dark mode maintains sufficient contrast for dense operational surfaces.
+   - Dropdowns, overlays, and sticky chrome layer above page content correctly.
+   - No unresolved high-severity theme or z-index finding remains.
+
+4. State quality audit
+   Requirements:
+   - Review loading, refreshing, empty, error, and loaded states where supported.
+   - Empty states remain route-specific and intentional.
+   - Error states explain what failed without overpromising recovery.
+
+   Acceptance Criteria:
+   - No route collapses to a generic loading or empty message when a route-specific state is expected.
+   - Refreshing states preserve previous content where the route supports it.
+   - Error copy stays within Fitz semantics and supported behavior.
+
+5. Regression closure
+   Requirements:
+   - Record visual findings in the sprint doc or a linked review note.
+   - Fix only regression-class issues needed to clear final QA.
+   - Move unresolved redesign ideas into future work instead of expanding this sprint.
+
+   Acceptance Criteria:
+   - Screenshot review produces no unresolved high-severity visual findings.
+   - Any unresolved non-blocking findings are documented with route, viewport, theme, and state.
+   - Final validation commands pass before the sprint is moved to `completed/`.
 
 ## Validation
 
