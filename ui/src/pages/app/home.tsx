@@ -2,7 +2,6 @@ import { state } from "@askrjs/askr";
 import { timer } from "@askrjs/askr/resources";
 import { Stack } from "@askrjs/themes/layouts";
 import DomainHeader from "@/components/shared/domain-header";
-import DomainIndex from "@/components/shared/domain-index";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
@@ -13,7 +12,6 @@ import {
 } from "@/features/topology/topology-mappers";
 import type { TopologyTrendPoint } from "@/features/topology/topology-models";
 import { createMessagingTopologyQuery } from "@/features/topology/topology-query";
-import { domainLinks } from "@/shared/navigation/domains";
 import { formatRelativeTime } from "@/shared/format";
 
 export default function Home() {
@@ -100,21 +98,13 @@ export default function Home() {
         ) : null}
 
         {topology && selected ? (
-          <Stack gap="3">
-            <TopologyDashboard
-              history={trendHistory}
-              refreshState={refreshState}
-              selected={selected}
-              setSelectedId={setSelectedId}
-              topology={topology}
-            />
-
-            <DomainIndex
-              title="Domain workspaces"
-              description="Open a domain when you need a narrower view of resources and live counters."
-              links={domainLinks}
-            />
-          </Stack>
+          <TopologyDashboard
+            history={trendHistory}
+            refreshState={refreshState}
+            selected={selected}
+            setSelectedId={setSelectedId}
+            topology={topology}
+          />
         ) : null}
       </Stack>
     </DomainPageFrame>

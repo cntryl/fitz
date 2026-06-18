@@ -271,6 +271,18 @@ const systemOverview = {
   },
 };
 
+const emptyTopology = {
+  ...topologyOverview,
+  connections: {
+    ...topologyOverview.connections,
+    items: [],
+    total: 0,
+    truncated: false,
+  },
+  lanes: [],
+  sessionGroups: [],
+};
+
 const metricsOverview = {
   families: [
     {
@@ -557,16 +569,13 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Consumers and observers");
     expect(text).toContain("Top scoped resources");
     expect(text).toContain("Visible connections");
+    expect(text).toContain("Domain signals");
+    expect(text).toContain("Open Queue page");
     expect(text).toContain("Flow inspector");
     expect(text).toContain("Work backlog");
     expect(text).toContain("Live paths");
     expect(text).toContain("Durable state/history");
     expect(text).toContain("Attention");
-    expect(text).toContain("Domain workspaces");
-    expect(text).toContain("Open scope");
-
-    const scopeLink = root.querySelector('a[href="/queue/default/ops/primary"]');
-    expect(scopeLink).toBeTruthy();
   });
 
   it("keeps dashboard behavior visible while refresh is in flight", async () => {
@@ -578,8 +587,24 @@ describe("admin page smoke tests", () => {
     const text = root.textContent ?? "";
 
     expect(text).toContain("Refreshing");
+    expect(text).toContain("Domain signals");
+    expect(text).toContain("Open Queue page");
     expect(text).toContain("Work backlog");
     expect(text).toContain("Queue");
+  });
+
+  it("renders the empty dashboard state when no lanes are visible", async () => {
+    const { default: Home } = await import("@/pages/app/home");
+
+    mocks.queryStates.topology = queryState.fresh(emptyTopology, queryOptions());
+
+    const root = await mountRoute("/", "/", Home);
+    const text = root.textContent ?? "";
+
+    expect(text).toContain("Broker status");
+    expect(text).toContain("No domain lanes are visible yet");
+    expect(text).toContain("Domain workspaces");
+    expect(text).toContain("Open a domain when you need a narrower view of resources and live counters.");
   });
 
   it("renders a metrics posture summary and empty search state", async () => {
