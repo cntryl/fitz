@@ -1,5 +1,5 @@
 import { EmptyState, Spinner } from "@askrjs/themes/feedback";
-import { Badge, Card, CardContent } from "@askrjs/themes/surfaces";
+import { Badge } from "@askrjs/themes/surfaces";
 import { Stack } from "@askrjs/themes/layouts";
 import { Button } from "@askrjs/themes/controls";
 import { formatUnknownError } from "@/shared/errors/format";
@@ -26,11 +26,9 @@ function QueryStateCard({
   className?: string;
 }) {
   return (
-    <Card class={className} padding="sm" variant="default">
-      <CardContent>
-        <Stack gap="3">{children}</Stack>
-      </CardContent>
-    </Card>
+    <div class={className}>
+      <Stack gap="3">{children}</Stack>
+    </div>
   );
 }
 

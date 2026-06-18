@@ -493,7 +493,7 @@ export default function QueueResourcePage() {
             ]}
           />
 
-          <Card class="domain-table-card" variant="raised">
+          <Card variant="raised">
             <CardHeader>
               <CardTitle>Compare scopes</CardTitle>
               <CardDescription>
@@ -587,7 +587,7 @@ export default function QueueResourcePage() {
             </CardContent>
           </Card>
 
-          <Card class="domain-table-card" variant="raised">
+          <Card variant="raised">
             <CardHeader>
               <Flex justify="between" gap="3" align="start" wrap="wrap">
                 <Stack gap="1">
@@ -606,7 +606,7 @@ export default function QueueResourcePage() {
             </CardContent>
           </Card>
 
-          <Card class="domain-table-card" variant="raised">
+          <Card variant="raised">
             <CardHeader>
               <Flex justify="between" gap="3" align="start" wrap="wrap">
                 <Stack gap="1">
@@ -633,7 +633,7 @@ export default function QueueResourcePage() {
             </CardContent>
           </Card>
 
-          <Card class="domain-table-card" variant="raised">
+          <Card variant="raised">
             <CardHeader>
               <Flex justify="between" gap="3" align="start" wrap="wrap">
                 <Stack gap="1">
@@ -657,7 +657,7 @@ export default function QueueResourcePage() {
                 />
               ) : (
                 <div class="domain-table-wrap">
-                  <Table class="domain-table">
+                  <Table>
                     <TableHead>
                       <TableRow>
                         <TableHeaderCell>Kind</TableHeaderCell>

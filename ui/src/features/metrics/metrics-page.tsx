@@ -535,7 +535,7 @@ export default function MetricsPage() {
               </div>
             </section>
 
-            <Card class="metrics-family-card" padding="sm" variant="default">
+            <Card padding="sm" variant="default">
               <CardHeader>
                 <CardTitle>Metric families</CardTitle>
                 <CardDescription>
@@ -554,7 +554,7 @@ export default function MetricsPage() {
                   />
                 ) : (
                   <div class="domain-table-wrap">
-                    <Table class="domain-table">
+                    <Table>
                       <TableHead>
                         <TableRow>
                           <TableHeaderCell>Name</TableHeaderCell>

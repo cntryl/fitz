@@ -17,14 +17,14 @@ export interface DomainMetricTableProps {
 
 export default function DomainMetricTable({ description, metrics, title }: DomainMetricTableProps) {
   return (
-    <Card class="domain-metric-card" padding="sm" variant="default">
+    <Card padding="sm" variant="default">
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         {description ? <CardDescription>{description}</CardDescription> : null}
       </CardHeader>
       <CardContent>
         <div class="domain-table-wrap">
-          <Table class="domain-table">
+          <Table>
             <TableHead>
               <TableRow>
                 <TableHeaderCell>Metric</TableHeaderCell>

@@ -1,9 +1,3 @@
-.auth-shell {
-  align-items: center;
-  justify-content: center;
-  min-height: min(42rem, calc(100dvh - 6rem));
-}
-
 .auth-card {
   width: min(100%, 26rem);
 }
@@ -38,7 +32,7 @@
 .dialog-overlay {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, var(--ak-color-bg, Canvas) 30%, black);
+  background: color-mix(in srgb, var(--ak-color-bg, Canvas) 28%, CanvasText);
 }
 
 .dialog-content {
@@ -50,9 +44,9 @@
   flex-direction: column;
   gap: var(--ak-space-3, 0.75rem);
   padding: var(--ak-space-4, 1rem);
-  border: 1px solid var(--ak-color-border, currentColor);
-  border-radius: var(--ak-radius-2, 0.5rem);
+  border: 1px solid var(--fitz-border);
+  border-radius: var(--fitz-card-radius);
   background: var(--ak-color-surface, Canvas);
   transform: translate(-50%, -50%);
-  box-shadow: var(--ak-shadow-4, 0 1rem 3rem rgb(0 0 0 / 0.2));
+  box-shadow: var(--ak-shadow-4, 0 1rem 3rem color-mix(in srgb, CanvasText 20%, transparent));
 }

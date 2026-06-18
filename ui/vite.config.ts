@@ -57,6 +57,7 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    exclude: ["**/dist/**", "**/node_modules/**", "tests/e2e/**"],
     globals: true,
     coverage: {
       reporter: ["text", "json", "html"],

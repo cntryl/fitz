@@ -32,7 +32,12 @@ export function BrokerStatusStrip({
   const nextQuery = topology.diagnostics.incident_summary?.recommended_next_query ?? "No follow-up needed";
 
   return (
-    <section class="dashboard-status-strip" aria-label="Broker snapshot">
+    <Card
+      class="dashboard-status-strip"
+      variant="raised"
+      role="region"
+      aria-label="Broker snapshot"
+    >
       <div class="dashboard-status-summary">
         <div>
           <p class="domain-header-kicker">Current snapshot</p>
@@ -77,7 +82,7 @@ export function BrokerStatusStrip({
           <dd>{trendLabel(messageTrend)}</dd>
         </div>
       </dl>
-    </section>
+    </Card>
   );
 }
 
@@ -93,7 +98,7 @@ export function BehaviorMatrix({ topology }: { topology: MessagingTopologyOvervi
 
       <div class="dashboard-behavior-grid">
         {topologyBehaviorGroups(topology).map((group) => (
-          <Card key={group.title} class="dashboard-behavior-card" padding="sm" variant="default">
+          <Card key={group.title} padding="sm" variant="default">
             <CardHeader>
               <CardTitle>{group.title}</CardTitle>
               <p class="domain-muted">{group.description}</p>
@@ -133,7 +138,7 @@ export function DiagnosticsPanel({ topology }: { topology: MessagingTopologyOver
         <p class="domain-muted">No active hotspots reported.</p>
       ) : (
         <div class="domain-table-wrap">
-          <Table class="domain-table">
+          <Table>
             <TableHead>
               <TableRow>
                 <TableHeaderCell>Scope</TableHeaderCell>

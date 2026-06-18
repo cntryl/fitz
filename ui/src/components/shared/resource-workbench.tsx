@@ -94,7 +94,7 @@ export function describeResourceDetail(detail: ResourceDetail): ResourceWorkbenc
 
 function RelatedTable({ table }: { table: ResourceRelatedTable }) {
   return (
-    <Card class="resource-related-card" padding="sm" variant="default">
+    <Card padding="sm" variant="default">
       <CardHeader>
         <CardTitle>{table.title}</CardTitle>
         <CardDescription>
@@ -109,7 +109,7 @@ function RelatedTable({ table }: { table: ResourceRelatedTable }) {
           />
         ) : (
           <div class="domain-table-wrap">
-            <Table class="domain-table">
+            <Table>
               <TableHead>
                 <TableRow>
                   <For each={table.columns} by={(column) => column}>
@@ -141,7 +141,7 @@ export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
 
   return (
     <Stack gap="4" class="resource-workbench">
-      <section class="resource-workbench-hero">
+      <Card class="resource-workbench-hero" padding="sm" variant="default">
         <Stack gap="1" class="resource-workbench-summary">
           <p class="domain-header-kicker">Operational evidence</p>
           <h2>Where to inspect next</h2>
@@ -151,7 +151,7 @@ export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
           <Badge variant={summary.tone}>{summary.label}</Badge>
           <Link href={`/${detail.domain}`}>Back to {detail.domain} overview</Link>
         </Stack>
-      </section>
+      </Card>
 
       <DomainMetricTable
         title="Current values"
@@ -172,7 +172,7 @@ export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
         />
       )}
 
-      <Card class="resource-workbench-timeline" padding="sm" variant="default">
+      <Card padding="sm" variant="default">
         <CardHeader>
           <Flex justify="between" gap="3" align="start" wrap="wrap">
             <Stack gap="1">
@@ -196,7 +196,7 @@ export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
             />
           ) : (
             <div class="domain-table-wrap">
-              <Table class="domain-table">
+              <Table>
                 <TableHead>
                   <TableRow>
                     <TableHeaderCell>Kind</TableHeaderCell>
@@ -240,7 +240,7 @@ export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
       )}
 
       <section class="resource-workbench-raw">
-        <Card class="resource-workbench-raw-card" padding="sm" variant="default">
+        <Card padding="sm" variant="default">
           <CardHeader>
             <CardTitle>Raw payload</CardTitle>
             <CardDescription>Exact API response body for this resource.</CardDescription>

@@ -34,11 +34,19 @@ export default function Home() {
   });
 
   if (session.loading && !session.data) {
-    return <QueryLoadingState description="Loading admin dashboard..." />;
+    return (
+      <DomainPageFrame>
+        <QueryLoadingState description="Loading admin dashboard..." />
+      </DomainPageFrame>
+    );
   }
 
   if (session.error && !session.data) {
-    return <QueryErrorState error={session.error} onRetry={() => session.refresh()} />;
+    return (
+      <DomainPageFrame>
+        <QueryErrorState error={session.error} onRetry={() => session.refresh()} />
+      </DomainPageFrame>
+    );
   }
 
   const username = session.data?.username ?? "admin";

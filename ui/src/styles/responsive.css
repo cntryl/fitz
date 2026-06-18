@@ -50,21 +50,18 @@
     align-self: start;
   }
 
+  .domain-header h1 {
+    font-size: 1.5rem;
+  }
+
+  .domain-section-header h2 {
+    font-size: 1rem;
+  }
+
   .chart-shell-header,
   .chart-panel-header {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .page-frame-layout-with-sidebar {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "main"
-      "sidebar";
-  }
-
-  .page-frame-sidebar {
-    position: static;
   }
 
   .flow-stage {
@@ -95,4 +92,5 @@
   .resource-workbench-summary-actions {
     align-items: flex-start;
   }
+
 }

@@ -37,7 +37,7 @@ export default function DomainResourceBrowser({
     ) ?? [];
 
   return (
-    <Card class="domain-resource-browser" padding="sm" variant="default">
+    <Card padding="sm" variant="default">
       <CardHeader>
         <CardTitle>Resources</CardTitle>
         <p class="domain-muted">{loading ? "Loading" : `${rows.length} visible`}</p>
@@ -48,7 +48,7 @@ export default function DomainResourceBrowser({
           <QueryEmptyState description="No live resources are currently visible for this domain." />
         ) : (
           <div class="domain-table-wrap">
-            <Table class="domain-table">
+            <Table>
               <TableHead>
                 <TableRow>
                   <TableHeaderCell>Realm</TableHeaderCell>

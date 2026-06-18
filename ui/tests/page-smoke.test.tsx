@@ -535,6 +535,7 @@ describe("admin page smoke tests", () => {
       expect(root.textContent).toContain(page.assertText);
       expect(root.textContent?.trim().length).toBeGreaterThan(0);
       expect(root.querySelector('[data-slot="shell"]')).toBeNull();
+      expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
 
       cleanupApp(root);
       document.body.innerHTML = "";
@@ -623,7 +624,34 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("No live broker or admin sessions are currently connected");
   });
 
-  it("mounts representative loading, error, and empty states", async () => {
+  it("mounts the dashboard loading and error states", async () => {
+    const { default: Home } = await import("@/pages/app/home");
+    mocks.queryStates.currentSession = queryState.loading(queryOptions());
+
+    let root = await mountRoute("/", "/", Home);
+    expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
+    expect(root.textContent).toContain("Loading admin dashboard");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.currentSession = queryState.error(
+      new Error("Session lookup failed"),
+      undefined,
+      queryOptions(),
+    );
+
+    root = await mountRoute("/", "/", Home);
+    expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
+    expect(root.textContent).toContain("Session lookup failed");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+  });
+
+  it("mounts queue loading, error, and empty states", async () => {
+    mocks.queryStates.currentSession = queryState.fresh({ username: "admin" }, queryOptions());
+
     const { default: QueuePage } = await import("@/pages/app/queue");
 
     mocks.queryStates.queue = queryState.loading(queryOptions());

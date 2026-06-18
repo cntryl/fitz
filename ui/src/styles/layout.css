@@ -1,24 +1,21 @@
-.page-frame-layout {
-  display: grid;
-  gap: var(--ak-space-5, 1.25rem);
-}
-
-.page-frame-layout-with-sidebar {
-  grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem);
-  grid-template-areas: "main sidebar";
-  align-items: start;
-}
-
-@media (min-width: 48rem) {
-.page-frame-sidebar {
-  grid-area: sidebar;
-  position: sticky;
-  top: calc(var(--ak-space-2, 0.5rem) + var(--ak-density-control-height-md, 2.5rem));
-  align-self: start;
-}
+.domain-page-frame {
+  padding-block-start: var(--ak-space-4, 1rem);
 }
 
 .page-frame-main {
-  grid-area: main;
   min-width: 0;
+  flex: 1 1 auto;
+}
+
+.page-frame-sidebar {
+  width: min(100%, 23rem);
+  min-width: 0;
+  align-self: stretch;
+}
+
+@media (min-width: 48rem) {
+  .page-frame-sidebar {
+    position: sticky;
+    top: calc(var(--ak-layout-navbar-height, 3.5rem) + var(--ak-space-4, 1rem));
+  }
 }

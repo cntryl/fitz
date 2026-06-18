@@ -16,7 +16,7 @@ export interface DomainRealmTableProps {
 
 export default function DomainRealmTable({ title, realms, emptyMessage }: DomainRealmTableProps) {
   return (
-    <Card class="domain-realm-card" padding="sm" variant="default">
+    <Card padding="sm" variant="default">
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         <p class="domain-muted">{realms.length} realms</p>
@@ -27,7 +27,7 @@ export default function DomainRealmTable({ title, realms, emptyMessage }: Domain
           <QueryEmptyState description={emptyMessage} />
         ) : (
           <div class="domain-table-wrap">
-            <Table class="domain-table">
+            <Table>
               <TableHead>
                 <TableRow>
                   <TableHeaderCell>Realm</TableHeaderCell>

@@ -34,7 +34,7 @@ export interface DomainSidebarConfig<TData> {
 export default function DomainSidebar({ title, description, stats, footer }: DomainSidebarProps) {
   return (
     <aside class="domain-sidebar">
-      <Card class="domain-sidebar-card" padding="sm" variant="default">
+      <Card padding="sm" variant="default">
         <CardHeader>
           <CardTitle>{title}</CardTitle>
           <CardDescription>{description}</CardDescription>

@@ -45,7 +45,7 @@ export default function SessionTable({ sessions }: SessionTableProps) {
   }
 
   return (
-    <Card class="domain-table-card" padding="sm" variant="default">
+    <Card padding="sm" variant="default">
       <CardHeader>
         <CardTitle>Live sessions</CardTitle>
         <CardDescription>
@@ -55,7 +55,7 @@ export default function SessionTable({ sessions }: SessionTableProps) {
       </CardHeader>
       <CardContent>
         <div class="domain-table-wrap">
-          <Table class="domain-table">
+          <Table>
             <TableHead>
               <TableRow>
                 <TableHeaderCell>Session</TableHeaderCell>

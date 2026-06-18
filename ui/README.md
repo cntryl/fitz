@@ -8,6 +8,7 @@ From `ui/`:
 
 ```bash
 vp install
+npm run install:browsers
 vp dev
 ```
 
@@ -23,6 +24,7 @@ Expected companion services:
 ```bash
 npm run type-check
 npm run test
+npm run test:e2e
 npm run build
 ```
 
