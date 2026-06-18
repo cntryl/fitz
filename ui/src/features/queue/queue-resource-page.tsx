@@ -357,10 +357,7 @@ export default function QueueResourcePage() {
   const compareFamilyParsed = parseFamilyInput(compareFamilyValue);
 
   const compareTarget =
-    compareRealmTrimmed &&
-    compareAreaTrimmed &&
-    compareResourceTrimmed &&
-    compareFamilyParsed.valid
+    compareRealmTrimmed && compareAreaTrimmed && compareResourceTrimmed && compareFamilyParsed.valid
       ? {
           area: compareAreaTrimmed,
           family: compareFamilyParsed.value,
@@ -454,7 +451,9 @@ export default function QueueResourcePage() {
             status={headerStatus}
           />
 
-          {resourceQuery.loading ? <QueryLoadingState description="Loading queue resource..." /> : null}
+          {resourceQuery.loading ? (
+            <QueryLoadingState description="Loading queue resource..." />
+          ) : null}
 
           {resourceQueryError ? (
             <QueryErrorState error={resourceQueryError} onRetry={() => resourceQuery.refresh()} />
@@ -541,9 +540,13 @@ export default function QueueResourcePage() {
           status={headerStatus}
         />
 
-        {resourceQuery.refreshing ? <QueryRefreshingState description="Refreshing queue resource..." /> : null}
+        {resourceQuery.refreshing ? (
+          <QueryRefreshingState description="Refreshing queue resource..." />
+        ) : null}
 
-        {resourceQuery.loading ? <QueryLoadingState description="Loading queue resource..." /> : null}
+        {resourceQuery.loading ? (
+          <QueryLoadingState description="Loading queue resource..." />
+        ) : null}
 
         {resourceQueryError ? (
           <QueryErrorState error={resourceQueryError} onRetry={() => resourceQuery.refresh()} />
@@ -560,7 +563,8 @@ export default function QueueResourcePage() {
               {
                 label: "Delayed",
                 value: current.detail.messagesDelayed,
-                caption: current.detail.messagesDelayed > 0 ? "Delayed messages visible" : undefined,
+                caption:
+                  current.detail.messagesDelayed > 0 ? "Delayed messages visible" : undefined,
               },
               { label: "Inflight", value: current.detail.messagesInflight },
               {
@@ -785,9 +789,11 @@ export default function QueueResourcePage() {
                               </TableCell>
                               <TableCell>
                                 <div class="queue-timeline-context">
-                                  {timelineContext.length > 0
-                                    ? timelineContext.map((line) => <span>{line}</span>)
-                                    : <span>Context unavailable</span>}
+                                  {timelineContext.length > 0 ? (
+                                    timelineContext.map((line) => <span>{line}</span>)
+                                  ) : (
+                                    <span>Context unavailable</span>
+                                  )}
                                 </div>
                               </TableCell>
                             </TableRow>

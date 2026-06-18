@@ -55,7 +55,8 @@ function summarizeStreamHealth(stats: {
 
   if (lag.total === 0) {
     return {
-      detail: "No active stream families are visible yet; stream replay health will appear here when families are active.",
+      detail:
+        "No active stream families are visible yet; stream replay health will appear here when families are active.",
       label: "Live",
       tone: "info",
     };

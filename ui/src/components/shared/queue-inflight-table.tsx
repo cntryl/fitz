@@ -32,7 +32,10 @@ export default function QueueInflightTable({ messages }: QueueInflightTableProps
                   </span>
                 </TableCell>
                 <TableCell>
-                  <span class="domain-table-cell-truncate" title={`${message.realm} / ${message.area} / ${message.resource}`}>
+                  <span
+                    class="domain-table-cell-truncate"
+                    title={`${message.realm} / ${message.area} / ${message.resource}`}
+                  >
                     {message.realm} / {message.area} / {message.resource}
                   </span>
                 </TableCell>

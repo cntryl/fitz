@@ -185,9 +185,18 @@ export default function SchedulePage() {
                   label: "Active subscriptions",
                   value: data.stats.subscriptionsActive,
                 },
-                metricWithAttention(data.stats.createPersistenceFailuresTotal, "Create persistence failures"),
-                metricWithAttention(data.stats.upsertPersistenceFailuresTotal, "Upsert persistence failures"),
-                metricWithAttention(data.stats.cancelPersistenceFailuresTotal, "Cancel persistence failures"),
+                metricWithAttention(
+                  data.stats.createPersistenceFailuresTotal,
+                  "Create persistence failures",
+                ),
+                metricWithAttention(
+                  data.stats.upsertPersistenceFailuresTotal,
+                  "Upsert persistence failures",
+                ),
+                metricWithAttention(
+                  data.stats.cancelPersistenceFailuresTotal,
+                  "Cancel persistence failures",
+                ),
               ]}
             />
 

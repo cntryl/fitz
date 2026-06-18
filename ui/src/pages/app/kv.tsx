@@ -106,16 +106,8 @@ export default function KvPage() {
           }}
           status={{
             detail: health.detail,
-            label: overview.refreshing
-              ? "Refreshing"
-              : overview.stale
-                ? "Stale"
-                : health.label,
-            tone: overview.refreshing
-              ? "info"
-              : overview.stale
-                ? "warning"
-                : health.tone,
+            label: overview.refreshing ? "Refreshing" : overview.stale ? "Stale" : health.label,
+            tone: overview.refreshing ? "info" : overview.stale ? "warning" : health.tone,
           }}
         />
 
@@ -146,7 +138,10 @@ export default function KvPage() {
                 { label: "Ops / sec", value: data.stats.operationsPerSecond.toFixed(2) },
                 metricWithPressure(data.stats.commitsFailedTotal, "Commit failures"),
                 metricWithPressure(data.stats.rollbacksTotal, "Rollbacks"),
-                metricWithPressure(data.stats.invalidTransactionRejectsTotal, "Invalid transaction rejects"),
+                metricWithPressure(
+                  data.stats.invalidTransactionRejectsTotal,
+                  "Invalid transaction rejects",
+                ),
               ]}
             />
 

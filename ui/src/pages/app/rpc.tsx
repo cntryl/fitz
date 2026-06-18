@@ -130,11 +130,7 @@ export default function RpcPage() {
           }}
           status={{
             detail: `${health.detail} Pending work is in-memory and disappears on worker disconnect or broker restart.`,
-            label: overview.refreshing
-              ? "Refreshing"
-              : overview.stale
-                ? "Stale"
-                : health.label,
+            label: overview.refreshing ? "Refreshing" : overview.stale ? "Stale" : health.label,
             tone: overview.refreshing ? "info" : overview.stale ? "warning" : health.tone,
           }}
         />
