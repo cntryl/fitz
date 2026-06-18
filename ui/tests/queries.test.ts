@@ -733,10 +733,13 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
       invalidSequenceErrorsDroppedTotal: 18,
       invalidSequenceErrorsForwardedTotal: 17,
       invalidSequenceResponsesTotal: 16,
+      failureTotal: 6,
       operationsPerSecond: 5.5,
+      pendingRoutesActive: 12,
       requestsPending: 6,
       responsesDroppedClosedCallerTotal: 11,
       responsesMissingPendingTotal: 12,
+      requestTimeoutsTotal: 7,
       workersRegistered: 7,
     });
 

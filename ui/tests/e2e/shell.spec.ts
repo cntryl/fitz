@@ -121,8 +121,10 @@ const domainOverviewData: Record<string, DomainOverviewFixture> = {
       invalid_sequence_responses_total: 0,
       operations_per_second: 6.2,
       requests_pending: 4,
+      pending_routes_active: 1,
       responses_dropped_closed_caller_total: 0,
       responses_missing_pending_total: 0,
+      request_timeouts_total: 0,
       workers_registered: 18,
     },
   },
@@ -524,6 +526,37 @@ test("captures notice overview empty state", async ({ page }, testInfo) => {
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("notice-empty-desktop.png"),
+    animations: "disabled",
+  });
+});
+
+test("captures rpc overview empty state", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockDomainOverviewApis(page, {
+    rpc: {
+      realms: [],
+      stats: {
+        invalid_sequence_errors_dropped_total: 0,
+        invalid_sequence_errors_forwarded_total: 0,
+        invalid_sequence_responses_total: 0,
+        operations_per_second: 0,
+        pending_routes_active: 0,
+        request_timeouts_total: 0,
+        requests_pending: 0,
+        responses_dropped_closed_caller_total: 0,
+        responses_missing_pending_total: 0,
+        workers_registered: 0,
+      },
+    },
+  });
+
+  await page.goto("/rpc");
+  await expect(page.getByRole("heading", { name: "RPC overview" })).toBeVisible();
+  await expect(page.getByText("No RPC realms are currently visible.")).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("rpc-empty-desktop.png"),
     animations: "disabled",
   });
 });

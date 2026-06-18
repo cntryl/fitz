@@ -178,7 +178,9 @@ const rpcOverview = {
     invalidSequenceErrorsForwardedTotal: 0,
     invalidSequenceResponsesTotal: 0,
     operationsPerSecond: 2,
+    pendingRoutesActive: 1,
     requestsPending: 1,
+    requestTimeoutsTotal: 0,
     responsesDroppedClosedCallerTotal: 0,
     responsesMissingPendingTotal: 0,
     workersRegistered: 4,
@@ -257,8 +259,9 @@ const domainOverviews = [
     path: "/rpc",
     routePath: "/rpc",
     emptyText: "No RPC realms are currently visible.",
-    errorText: "RPC overview unavailable",
-    loadingText: "Loading RPC overview",
+    errorTitle: "RPC overview loading failure",
+    errorText: "RPC overview loading failure",
+    loadingText: "Loading RPC overview snapshot...",
   },
   {
     assertText: "Schedule overview",
@@ -319,6 +322,7 @@ const systemOverview = {
       acksRejectedWrongWorkerTotal: 0,
       backpressureRejectsTotal: 0,
       duplicateCorrelationRejectsTotal: 0,
+      pendingRoutesActive: 1,
       failureTotal: 0,
       requestTimeoutsTotal: 0,
       requestsTotal: 1,
@@ -832,6 +836,45 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("1");
     expect(text).toContain("Attention");
     expect(text).toContain("live fanout");
+  });
+
+  it("renders rpc pressure-first health and risk signals", async () => {
+    mocks.queryStates.rpc = queryState.fresh(
+      {
+        ...rpcOverview,
+        stats: {
+          ...rpcOverview.stats,
+          requestsPending: 6,
+          workersRegistered: 2,
+          pendingRoutesActive: 3,
+          requestTimeoutsTotal: 2,
+          failureTotal: 1,
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: RpcPage } = await import("@/pages/app/rpc");
+    const root = await mountRoute("/rpc", "/rpc", RpcPage);
+    const text = root.textContent ?? "";
+    const labels = [
+      "Requests pending",
+      "Workers registered",
+      "Pending routes active",
+      "Ops / sec",
+      "Request timeouts",
+      "Failure responses",
+    ];
+
+    let cursor = -1;
+    for (const label of labels) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    expect(text).toContain("Attention");
+    expect(text).toContain("Response reliability");
   });
 
   it("renders the status-first dashboard sections", async () => {
