@@ -1,6 +1,6 @@
 import { Link } from "@askrjs/askr/router";
 import { ArrowUpRightIcon } from "@askrjs/lucide";
-import { Badge, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Badge } from "@askrjs/themes/surfaces";
 import { formatNumber } from "@/shared/format";
 import { domainLinks } from "@/shared/navigation/domains";
 import { topologyDomainDescriptions } from "@/features/topology/topology-mappers";
@@ -28,37 +28,39 @@ export default function DashboardDomainSignals({
         <span>{formatNumber(topology.lanes.length)} domains</span>
       </div>
 
-      <div class="dashboard-signal-grid">
+      <ul class="dashboard-signal-list">
         {topology.lanes.map((lane) => {
           const link = domainLinksByHref.get(lane.href);
           const Icon = link?.icon;
           const counters = visibleCounters(lane);
 
           return (
-            <Link key={lane.id} href={lane.href} class={`dashboard-signal-link dashboard-signal-link-${lane.state}`}>
-              <Card class={`dashboard-signal-card dashboard-signal-card-${lane.state}`} padding="sm">
-                <CardHeader class="dashboard-signal-header">
+            <li key={lane.id}>
+              <Link
+                href={lane.href}
+                class={`dashboard-signal-link dashboard-signal-link-${lane.state}`}
+              >
+                <div class="dashboard-signal-row">
                   <div class="dashboard-signal-heading">
                     <div class="dashboard-signal-title-row">
                       {Icon ? <Icon size={16} /> : null}
-                      <CardTitle>{link?.title ?? lane.title}</CardTitle>
+                      <span class="dashboard-signal-title">{link?.title ?? lane.title}</span>
                     </div>
                     <Badge variant={badgeVariant(lane.state)}>{stateLabel(lane.state)}</Badge>
                   </div>
-                  <CardDescription>{topologyDomainDescriptions[lane.id]}</CardDescription>
-                </CardHeader>
 
-                <CardContent class="dashboard-signal-content">
+                  <p class="dashboard-signal-description">{topologyDomainDescriptions[lane.id]}</p>
+
                   <dl class="dashboard-signal-metrics">
-                    <div>
+                    <div class="dashboard-signal-metric">
                       <dt>Activity/sec</dt>
                       <dd>{formatTopologyRate(lane.activityPerSecond)}</dd>
                     </div>
-                    <div>
+                    <div class="dashboard-signal-metric">
                       <dt>Consumers</dt>
                       <dd>{formatNumber(lane.consumers)}</dd>
                     </div>
-                    <div>
+                    <div class="dashboard-signal-metric">
                       <dt>Observers</dt>
                       <dd>{formatNumber(lane.observers)}</dd>
                     </div>
@@ -76,17 +78,17 @@ export default function DashboardDomainSignals({
                       ))
                     )}
                   </div>
-                </CardContent>
 
-                <CardFooter class="dashboard-signal-footer">
-                  <span>Open {link?.title ?? lane.title} page</span>
-                  <ArrowUpRightIcon size={14} />
-                </CardFooter>
-              </Card>
-            </Link>
+                  <div class="dashboard-signal-footer">
+                    <span>Open {link?.title ?? lane.title} page</span>
+                    <ArrowUpRightIcon size={14} />
+                  </div>
+                </div>
+              </Link>
+            </li>
           );
         })}
-      </div>
+      </ul>
     </section>
   );
 }
