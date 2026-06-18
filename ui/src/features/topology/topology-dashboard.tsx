@@ -10,7 +10,7 @@ import type {
   TopologyTrendPoint,
 } from "./topology-models";
 import { MessagingFlow } from "./topology-flow";
-import { BehaviorMatrix, BrokerStatusStrip, DiagnosticsPanel } from "./topology-panels";
+import { BrokerStatusStrip, DiagnosticsPanel } from "./topology-panels";
 
 export function TopologyDashboard({
   history,
@@ -55,7 +55,6 @@ export function TopologyDashboard({
             topology={topology}
           />
           <DashboardDomainSignals topology={topology} />
-          <BehaviorMatrix topology={topology} />
           <DiagnosticsPanel topology={topology} />
         </>
       )}
