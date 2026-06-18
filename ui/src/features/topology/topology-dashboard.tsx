@@ -47,7 +47,6 @@ export function TopologyDashboard({
         </Stack>
       ) : (
         <>
-          <DashboardDomainSignals topology={topology} />
           <MessagingFlow
             history={history}
             selected={selected}
@@ -55,6 +54,7 @@ export function TopologyDashboard({
             setSelectedId={setSelectedId}
             topology={topology}
           />
+          <DashboardDomainSignals topology={topology} />
           <BehaviorMatrix topology={topology} />
           <DiagnosticsPanel topology={topology} />
         </>
