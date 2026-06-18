@@ -295,24 +295,38 @@ const metricsOverview = {
   raw: "fitz_broker_up 1",
 };
 
-const activeSessions = {
-  sessions: [
-    {
-      connectedAt: "2026-05-21T13:00:00Z",
-      idleSeconds: 12,
-      identityClaim: "tid",
+  const activeSessions = {
+    sessions: [
+      {
+        connectedAt: "2026-05-21T13:00:00Z",
+        idleSeconds: 12,
+        identityClaim: "tid",
       identityValue: "default",
       key: "session-1",
       messagesReceived: 2,
       messagesSent: 3,
-      remoteAddress: "127.0.0.1",
-      routeFamily: 1,
-      sessionId: "session-1",
-      subject: "user:1",
-      transport: "ws",
-    },
-  ],
-};
+        remoteAddress: "127.0.0.1",
+        routeFamily: 1,
+        sessionId: "session-1",
+        subject: "user:1",
+        transport: "ws",
+      },
+      {
+        connectedAt: "2026-05-21T13:01:00Z",
+        idleSeconds: 45,
+        identityClaim: "tenant",
+        identityValue: "ops",
+        key: "session-2",
+        messagesReceived: 4,
+        messagesSent: 8,
+        remoteAddress: "2001:db8::1ff:fe23:4567:890a",
+        routeFamily: 2,
+        sessionId: "session-long-id-2",
+        subject: "user:2",
+        transport: "http",
+      },
+    ],
+  };
 
 const queueResource = {
   deadLetters: [],
@@ -637,7 +651,12 @@ describe("admin page smoke tests", () => {
 
     expect(root.textContent).toContain("Session summary");
     expect(root.textContent).toContain("Healthy");
-    expect(root.textContent).toContain("Unresolved sessions");
+    expect(root.textContent).toContain("Sessions");
+    expect(root.textContent).toContain("Route families");
+    expect(root.textContent).toContain("Transports");
+    expect(root.textContent).toContain("Idle risk");
+    expect(root.textContent).toContain("session-1");
+    expect(root.textContent).toContain("2001:db8::1ff:fe23:4567:890a");
 
     cleanupApp(root);
     document.body.innerHTML = "";
@@ -647,6 +666,26 @@ describe("admin page smoke tests", () => {
 
     expect(root.textContent).toContain("No active sessions");
     expect(root.textContent).toContain("No live broker or admin sessions are currently connected");
+  });
+
+  it("renders sessions loading and error states", async () => {
+    const { default: SessionsPage } = await import("@/pages/app/sessions");
+
+    mocks.queryStates.activeSessions = queryState.loading(queryOptions());
+    let root = await mountRoute("/sessions", "/sessions", SessionsPage);
+    expect(root.textContent).toContain("Loading active sessions");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.activeSessions = queryState.error(
+      new Error("session endpoint unavailable"),
+      undefined,
+      queryOptions(),
+    );
+    root = await mountRoute("/sessions", "/sessions", SessionsPage);
+    expect(root.textContent).toContain("Unable to load active sessions");
+    expect(root.textContent).toContain("session endpoint unavailable");
   });
 
   it("mounts the dashboard loading and error states", async () => {

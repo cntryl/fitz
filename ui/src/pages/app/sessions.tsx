@@ -13,7 +13,6 @@ type SessionsTone = "info" | "success" | "warning" | "danger";
 interface SessionsPostureSummary {
   detail: string;
   label: string;
-  nextStep: string;
   tone: SessionsTone;
 }
 
@@ -33,12 +32,31 @@ function countUnresolvedSessions(sessions: ActiveSession[]) {
   ).length;
 }
 
+function countTransportKinds(sessions: ActiveSession[]) {
+  return new Set(sessions.map((session) => session.transport ?? "Unknown")).size;
+}
+
+function longestIdleSeconds(sessions: ActiveSession[]) {
+  return sessions.reduce((max, session) => Math.max(max, session.idleSeconds ?? 0), 0);
+}
+
+function describeIdleRisk(idleSeconds: number) {
+  if (idleSeconds >= 300) {
+    return "High";
+  }
+
+  if (idleSeconds >= 120) {
+    return "Moderate";
+  }
+
+  return "Low";
+}
+
 function summarizeSessions(sessions: ActiveSession[]): SessionsPostureSummary {
   if (sessions.length === 0) {
     return {
       detail: "No active sessions are visible. The broker is not holding any live connections right now.",
       label: "Idle",
-      nextStep: "Refresh if you expected clients, or inspect the broker dashboard for broader process health.",
       tone: "success",
     };
   }
@@ -46,16 +64,15 @@ function summarizeSessions(sessions: ActiveSession[]): SessionsPostureSummary {
   const identityGaps = sessions.filter((session) => !session.identityClaim || !session.identityValue).length;
   const unauthenticated = sessions.filter((session) => !session.subject).length;
   const unresolvedSessions = countUnresolvedSessions(sessions);
-  const longestIdle = sessions.reduce((max, session) => Math.max(max, session.idleSeconds ?? 0), 0);
+  const longestIdle = longestIdleSeconds(sessions);
   const routeFamilies = countResolvedRouteFamilies(sessions);
-  const transportKinds = new Set(sessions.map((session) => session.transport ?? "Unknown")).size;
+  const transportKinds = countTransportKinds(sessions);
   const summary = `${countLabel(sessions.length, "session")} across ${countLabel(routeFamilies, "route family", "route families")} and ${countLabel(transportKinds, "transport")}. Longest idle: ${formatNumber(longestIdle)}s.`;
 
   if (identityGaps > 0 || unauthenticated > 0) {
     return {
       detail: `${summary} ${countLabel(unresolvedSessions, "session")} still need identity or subject resolution.`,
       label: "Attention",
-      nextStep: "Inspect the table for Not resolved identity claims and unauthenticated subjects first.",
       tone: "danger",
     };
   }
@@ -72,7 +89,6 @@ function summarizeSessions(sessions: ActiveSession[]): SessionsPostureSummary {
   return {
     detail: `${summary} Connections look healthy and identity is resolved.`,
     label: "Healthy",
-    nextStep: "Use the table to inspect transport, remote address, and message counts if you need more detail.",
     tone: "success",
   };
 }
@@ -81,8 +97,39 @@ export default function SessionsPage() {
   const sessionsQuery = createActiveSessionsQuery();
   const data = sessionsQuery.data;
   const sessions = data?.sessions ?? [];
-  const unresolvedSessions = countUnresolvedSessions(sessions);
+  const routeFamilies = countResolvedRouteFamilies(sessions);
+  const transportKinds = countTransportKinds(sessions);
+  const longestIdle = longestIdleSeconds(sessions);
+  const idleRisk = describeIdleRisk(longestIdle);
   const posture = data ? summarizeSessions(sessions) : null;
+  const isInitialLoad = sessionsQuery.loading && !data;
+  const isInitialError = sessionsQuery.error && !data;
+
+  const headerStatus = isInitialLoad
+    ? {
+        detail: "Loading active sessions from broker telemetry.",
+        label: "Loading",
+        tone: "info",
+      }
+    : isInitialError
+      ? {
+          detail: "Could not load active sessions from this route.",
+          label: "Unavailable",
+          tone: "danger",
+        }
+      : {
+          detail: posture?.detail ?? "Live sessions reflect currently connected clients only.",
+          label: sessionsQuery.refreshing
+            ? "Refreshing"
+            : sessionsQuery.stale
+              ? "Stale"
+              : posture?.label ?? "Healthy",
+          tone: sessionsQuery.refreshing
+            ? "info"
+            : sessionsQuery.stale
+              ? "warning"
+              : posture?.tone ?? "success",
+        };
 
   return (
     <DomainPageFrame>
@@ -96,53 +143,49 @@ export default function SessionsPage() {
             onPress: () => sessionsQuery.refresh(),
           }}
           status={{
-            detail: posture?.detail ?? "Disconnect destroys session state and reconnect creates a new session.",
-            label: sessionsQuery.refreshing
-              ? "Refreshing"
-              : sessionsQuery.stale
-                ? "Stale"
-                : posture?.label ?? "Live",
-            tone: sessionsQuery.refreshing
-              ? "info"
-              : sessionsQuery.stale
-                ? "warning"
-                : posture?.tone ?? "success",
+            detail: headerStatus.detail,
+            label: headerStatus.label,
+            tone: headerStatus.tone,
           }}
         />
 
         {!data && sessionsQuery.loading ? (
-          <QueryLoadingState description="Loading active sessions..." />
+          <QueryLoadingState
+            title="Loading active sessions"
+            description="Loading active sessions from the broker..."
+          />
         ) : null}
 
         {!data && sessionsQuery.error ? (
-          <QueryErrorState error={sessionsQuery.error} onRetry={() => sessionsQuery.refresh()} />
+          <QueryErrorState
+            title="Unable to load active sessions"
+            error={sessionsQuery.error}
+            onRetry={() => sessionsQuery.refresh()}
+          />
         ) : null}
 
         {data ? (
           <Stack gap="3">
             <DomainMetricTable
               title="Session summary"
-              description="Live session count, route-family coverage, identity gaps, and the longest idle connection."
+              description="Current live sessions, route-family coverage, transport mix, and idle risk."
               metrics={[
                 { label: "Sessions", value: data.sessions.length, caption: "Current live sessions" },
                 {
                   label: "Route families",
-                  value: countResolvedRouteFamilies(data.sessions),
+                  value: routeFamilies,
                   caption: "Resolved families",
                 },
                 {
-                  label: "Unresolved sessions",
-                  value: unresolvedSessions,
-                  caption: "Identity or subject gaps",
+                  label: "Transports",
+                  value: transportKinds,
+                  caption: "Distinct transport types",
                 },
                 {
-                  label: "Longest idle",
-                  value:
-                    data.sessions.reduce(
-                      (max, session) => Math.max(max, session.idleSeconds ?? 0),
-                      0,
-                    ) || 0,
-                  caption: "Seconds",
+                  label: "Idle risk",
+                  value: idleRisk,
+                  caption:
+                    sessions.length > 0 ? `${formatNumber(longestIdle)}s max idle` : "No live sessions",
                 },
               ]}
             />

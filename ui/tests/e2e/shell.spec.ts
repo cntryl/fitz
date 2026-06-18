@@ -21,6 +21,79 @@ async function openDashboard(page: Page, theme: "light" | "dark" = "light") {
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
 }
 
+const adminFeatures = {
+  admin_auth_required: false,
+  admin_auth_mode: "open" as const,
+};
+
+type SessionsPayload = {
+  sessions: Array<{
+    connectedAt?: string;
+    idleSeconds?: number;
+    identityClaim?: string;
+    identityValue?: string;
+    key: string;
+    messagesReceived?: number;
+    messagesSent?: number;
+    remoteAddress?: string;
+    routeFamily?: number;
+    sessionId?: string;
+    subject?: string;
+    transport?: string;
+  }>;
+};
+
+const sessionsWithData: SessionsPayload = {
+  sessions: [
+    {
+      connectedAt: "2026-05-21T13:00:00Z",
+      idleSeconds: 12,
+      identityClaim: "tid",
+      identityValue: "default",
+      key: "session-1",
+      messagesReceived: 2,
+      messagesSent: 3,
+      remoteAddress: "127.0.0.1",
+      routeFamily: 1,
+      sessionId: "session-1",
+      subject: "user:1",
+      transport: "ws",
+    },
+    {
+      connectedAt: "2026-05-21T13:01:00Z",
+      idleSeconds: 45,
+      identityClaim: "tenant",
+      identityValue: "ops",
+      key: "session-2",
+      messagesReceived: 4,
+      messagesSent: 8,
+      remoteAddress: "2001:db8::1ff:fe23:4567:890a",
+      routeFamily: 2,
+      sessionId: "session-long-id-2",
+      subject: "user:2",
+      transport: "http",
+    },
+  ],
+};
+
+const sessionsEmpty: SessionsPayload = {
+  sessions: [],
+};
+
+async function mockSessionsApi(page: Page, payload: SessionsPayload) {
+  await page.route("**/api/v1/features", async (route) => {
+    await route.fulfill({
+      json: adminFeatures,
+    });
+  });
+
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: payload,
+    });
+  });
+}
+
 test("captures the desktop dashboard shell", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await openDashboard(page);
@@ -145,6 +218,51 @@ test("captures the mobile navbar panel", async ({ page }, testInfo) => {
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("mobile-nav-open.png"),
+    animations: "disabled",
+  });
+});
+
+test("captures sessions data state", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockSessionsApi(page, sessionsWithData);
+
+  await page.goto("/sessions");
+  await expect(page.getByRole("heading", { name: "Active sessions" })).toBeVisible();
+  await expect(page.getByText("Session summary")).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("sessions-desktop.png"),
+    animations: "disabled",
+  });
+});
+
+test("captures sessions empty state", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockSessionsApi(page, sessionsEmpty);
+
+  await page.goto("/sessions");
+  await expect(page.getByRole("heading", { name: "Active sessions" })).toBeVisible();
+  await expect(page.getByText("No active sessions")).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("sessions-empty-desktop.png"),
+    animations: "disabled",
+  });
+});
+
+test("captures sessions on mobile", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockSessionsApi(page, sessionsWithData);
+
+  await page.goto("/sessions");
+  await expect(page.getByRole("heading", { name: "Active sessions" })).toBeVisible();
+  await expect(page.getByText("Route family")).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("sessions-mobile.png"),
     animations: "disabled",
   });
 });
