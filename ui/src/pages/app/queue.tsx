@@ -5,7 +5,11 @@ import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
-import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
+import {
+  QueryErrorState,
+  QueryLoadingState,
+  QueryRefreshingState,
+} from "@/components/shared/query-state";
 import { createQueueOverviewQuery } from "@/features/queue/queue-query";
 import type { QueueStatsSummary } from "@/features/queue/queue-models";
 import { formatNumber } from "@/shared/format";
@@ -134,6 +138,10 @@ export default function QueuePage() {
 
         {data ? (
           <Stack gap="3">
+            {overview.refreshing ? (
+              <QueryRefreshingState description="Refreshing queue overview..." />
+            ) : null}
+
             <DomainMetricTable
               title="Queue metrics"
               description="Current ready, inflight, pending, delayed, and dead-letter pressure."
