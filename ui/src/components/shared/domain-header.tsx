@@ -53,7 +53,12 @@ export default function DomainHeader({
 
       {action ? (
         <Stack gap="2" class="domain-header-actions">
-          <Button variant="outline" aria-label={action.label} title={action.label} onPress={action.onPress}>
+          <Button
+            variant="outline"
+            aria-label={action.label}
+            title={action.label}
+            onPress={action.onPress}
+          >
             {action.icon ?? <RefreshCwIcon size={16} />}
             <span>{action.label}</span>
           </Button>

@@ -185,16 +185,15 @@ function domainAreasByRealm(_domain: string, _realm: string) {
 }
 
 function domainResourcesByArea(domain: string, realm: string, area: string) {
-  return {
-    [domain]: {
-      [realm]: {
-        [area]: [
-          { resource: "primary" },
-          { resource: "tenant-dashboard-stateful-resource" },
-        ],
+  return (
+    {
+      [domain]: {
+        [realm]: {
+          [area]: [{ resource: "primary" }, { resource: "tenant-dashboard-stateful-resource" }],
+        },
       },
-    },
-  }[domain]?.[realm]?.[area] ?? [{ resource: "primary" }];
+    }[domain]?.[realm]?.[area] ?? [{ resource: "primary" }]
+  );
 }
 
 async function mockDomainOverviewApis(
@@ -570,7 +569,9 @@ test("captures sessions empty state", async ({ page }, testInfo) => {
 
   await page.goto("/sessions");
   await expect(page.getByRole("heading", { name: "Active sessions", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "No active sessions", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "No active sessions", exact: true }),
+  ).toBeVisible();
 
   await page.screenshot({
     fullPage: true,

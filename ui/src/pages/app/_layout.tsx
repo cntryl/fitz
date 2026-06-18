@@ -11,13 +11,7 @@ import {
   DropdownPortal,
   DropdownTrigger,
 } from "@askrjs/themes/overlays";
-import {
-  NavBrand,
-  NavGroup,
-  NavLink,
-  Header,
-  Navbar,
-} from "@askrjs/themes/shells";
+import { NavBrand, NavGroup, NavLink, Header, Navbar } from "@askrjs/themes/shells";
 import { Badge } from "@askrjs/themes/surfaces";
 import { ThemeToggle } from "@askrjs/themes/theme";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
@@ -105,8 +99,8 @@ export default function Layout({ children }: { children?: unknown }) {
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                     }}
-                    >
-                      {username}
+                  >
+                    {username}
                   </Badge>
                 ) : null}
                 <ThemeToggle

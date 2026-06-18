@@ -63,7 +63,7 @@ describe("shared UI polish contracts", () => {
     ));
 
     const skipLink = root.querySelector('a[href="#main-content"]');
-    const routeSurface = root.querySelector('.route-transition-surface');
+    const routeSurface = root.querySelector(".route-transition-surface");
     const main = root.querySelector("main#main-content");
     const themeToggle = root.querySelector('button[aria-label="Toggle color theme"]');
     const signOut = Array.from(root.querySelectorAll("button")).find((button) =>
@@ -77,7 +77,9 @@ describe("shared UI polish contracts", () => {
     expect(main?.getAttribute("tabindex")).toBe("-1");
     expect(root.querySelectorAll("main")).toHaveLength(1);
     expect(root.querySelectorAll('[data-slot="container"]')).toHaveLength(2);
-    expect(root.querySelectorAll('[data-slot="container"][data-size="initial:xl"]')).toHaveLength(2);
+    expect(root.querySelectorAll('[data-slot="container"][data-size="initial:xl"]')).toHaveLength(
+      2,
+    );
     expect(themeToggle).toBeTruthy();
     expect(themeToggle?.getAttribute("data-size")).toBe("icon");
     expect(themeToggle?.getAttribute("data-variant")).toBe("ghost");
@@ -96,7 +98,7 @@ describe("shared UI polish contracts", () => {
       </AppLayout>
     ));
 
-    const dropdown = root.querySelector('.navbar-domain-menu');
+    const dropdown = root.querySelector(".navbar-domain-menu");
     const trigger = root.querySelector('[data-slot="dropdown-trigger"]');
     const contentBeforeOpen = root.querySelector('[data-slot="dropdown-content"]');
     const containers = document.querySelectorAll('[data-slot="container"]');
@@ -105,7 +107,9 @@ describe("shared UI polish contracts", () => {
     expect(trigger).toBeTruthy();
     expect(contentBeforeOpen).toBeNull();
     expect(containers.length).toBe(2);
-    expect(document.querySelectorAll('[data-slot="container"][data-size="initial:xl"]')).toHaveLength(2);
+    expect(
+      document.querySelectorAll('[data-slot="container"][data-size="initial:xl"]'),
+    ).toHaveLength(2);
 
     trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
@@ -137,7 +141,9 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
     expect(root.querySelectorAll(".page-frame-main")).toHaveLength(1);
     expect(root.querySelectorAll(".page-frame-sidebar")).toHaveLength(1);
-    expect(root.querySelectorAll('[data-slot="container"][data-size="initial:xl"]')).toHaveLength(2);
+    expect(root.querySelectorAll('[data-slot="container"][data-size="initial:xl"]')).toHaveLength(
+      2,
+    );
     expect(root.textContent).toContain("Workspace");
     expect(root.textContent).toContain("Sidebar");
   });

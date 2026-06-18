@@ -70,7 +70,9 @@ export default function Login() {
               onInput={(event: Event) => setUsername((event.target as HTMLInputElement).value)}
               placeholder="admin"
             />
-            <FieldHint id={usernameHintId}>Use the Fitz Admin username for this workspace.</FieldHint>
+            <FieldHint id={usernameHintId}>
+              Use the Fitz Admin username for this workspace.
+            </FieldHint>
           </Field>
 
           <Field>
@@ -89,7 +91,13 @@ export default function Login() {
             <FieldHint id={passwordHintId}>Use the current password for that account.</FieldHint>
           </Field>
 
-          <Button class="auth-submit" type="submit" variant="primary" aria-busy={signIn.pending} disabled={signIn.pending}>
+          <Button
+            class="auth-submit"
+            type="submit"
+            variant="primary"
+            aria-busy={signIn.pending}
+            disabled={signIn.pending}
+          >
             {signIn.pending ? "Signing in..." : "Sign in"}
           </Button>
 

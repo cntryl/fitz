@@ -83,7 +83,10 @@ export default function SessionTable({ sessions }: SessionTableProps) {
                       <TableCell>{session.identityValue ?? "Not resolved"}</TableCell>
                       <TableCell>{session.transport ?? "Unknown"}</TableCell>
                       <TableCell>
-                        <span class="session-table-cell-wrap" title={session.remoteAddress ?? "Unknown"}>
+                        <span
+                          class="session-table-cell-wrap"
+                          title={session.remoteAddress ?? "Unknown"}
+                        >
                           {session.remoteAddress ?? "Unknown"}
                         </span>
                       </TableCell>
@@ -144,7 +147,9 @@ export default function SessionTable({ sessions }: SessionTableProps) {
 
                       <div>
                         <dt>Remote address</dt>
-                        <dd class="session-table-cell-wrap">{session.remoteAddress ?? "Unknown"}</dd>
+                        <dd class="session-table-cell-wrap">
+                          {session.remoteAddress ?? "Unknown"}
+                        </dd>
                       </div>
 
                       <div>
@@ -160,7 +165,8 @@ export default function SessionTable({ sessions }: SessionTableProps) {
                       <div>
                         <dt>Messages</dt>
                         <dd>
-                          {session.messagesSent ?? 0} sent / {session.messagesReceived ?? 0} received
+                          {session.messagesSent ?? 0} sent / {session.messagesReceived ?? 0}{" "}
+                          received
                         </dd>
                       </div>
                     </dl>

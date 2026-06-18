@@ -1,6 +1,10 @@
 :root {
   color-scheme: light dark;
-  --fitz-border: color-mix(in srgb, var(--ak-color-border, var(--ak-color-text, CanvasText)) 82%, transparent);
+  --fitz-border: color-mix(
+    in srgb,
+    var(--ak-color-border, var(--ak-color-text, CanvasText)) 82%,
+    transparent
+  );
   --fitz-border-subtle: color-mix(
     in srgb,
     var(--ak-color-border, var(--ak-color-text, CanvasText)) 58%,

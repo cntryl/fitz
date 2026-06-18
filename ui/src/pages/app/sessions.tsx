@@ -22,7 +22,9 @@ function countLabel(value: number, singular: string, plural = `${singular}s`) {
 
 function countResolvedRouteFamilies(sessions: ActiveSession[]) {
   return new Set(
-    sessions.map((session) => session.routeFamily).filter((routeFamily): routeFamily is number => routeFamily != null),
+    sessions
+      .map((session) => session.routeFamily)
+      .filter((routeFamily): routeFamily is number => routeFamily != null),
   ).size;
 }
 
@@ -55,13 +57,16 @@ function describeIdleRisk(idleSeconds: number) {
 function summarizeSessions(sessions: ActiveSession[]): SessionsPostureSummary {
   if (sessions.length === 0) {
     return {
-      detail: "No active sessions are visible. The broker is not holding any live connections right now.",
+      detail:
+        "No active sessions are visible. The broker is not holding any live connections right now.",
       label: "Idle",
       tone: "success",
     };
   }
 
-  const identityGaps = sessions.filter((session) => !session.identityClaim || !session.identityValue).length;
+  const identityGaps = sessions.filter(
+    (session) => !session.identityClaim || !session.identityValue,
+  ).length;
   const unauthenticated = sessions.filter((session) => !session.subject).length;
   const unresolvedSessions = countUnresolvedSessions(sessions);
   const longestIdle = longestIdleSeconds(sessions);
@@ -104,8 +109,11 @@ export default function SessionsPage() {
   const isInitialLoad = sessionsQuery.loading && !data;
   const isInitialError = sessionsQuery.error && !data;
 
-  const headerStatus: { detail: string; label: string; tone: "info" | "success" | "warning" | "danger" } =
-    isInitialLoad
+  const headerStatus: {
+    detail: string;
+    label: string;
+    tone: "info" | "success" | "warning" | "danger";
+  } = isInitialLoad
     ? {
         detail: "Loading active sessions from broker telemetry.",
         label: "Loading",
@@ -123,12 +131,12 @@ export default function SessionsPage() {
             ? "Refreshing"
             : sessionsQuery.stale
               ? "Stale"
-              : posture?.label ?? "Healthy",
+              : (posture?.label ?? "Healthy"),
           tone: sessionsQuery.refreshing
             ? "info"
             : sessionsQuery.stale
               ? "warning"
-              : posture?.tone ?? "success",
+              : (posture?.tone ?? "success"),
         };
 
   return (
@@ -170,7 +178,11 @@ export default function SessionsPage() {
               title="Session summary"
               description="Current live sessions, route-family coverage, transport mix, and idle risk."
               metrics={[
-                { label: "Sessions", value: data.sessions.length, caption: "Current live sessions" },
+                {
+                  label: "Sessions",
+                  value: data.sessions.length,
+                  caption: "Current live sessions",
+                },
                 {
                   label: "Route families",
                   value: routeFamilies,
@@ -185,7 +197,9 @@ export default function SessionsPage() {
                   label: "Idle risk",
                   value: idleRisk,
                   caption:
-                    sessions.length > 0 ? `${formatNumber(longestIdle)}s max idle` : "No live sessions",
+                    sessions.length > 0
+                      ? `${formatNumber(longestIdle)}s max idle`
+                      : "No live sessions",
                 },
               ]}
             />

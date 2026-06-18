@@ -2,7 +2,14 @@ import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import { Flex, Stack } from "@askrjs/themes/layouts";
-import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import {
+  Badge,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@askrjs/themes/surfaces";
 import DomainMetricTable from "./domain-metric-table";
 import { QueryEmptyState } from "./query-state";
 import type { ResourceDetail, ResourceRelatedTable } from "@/features/resource/resource-models";

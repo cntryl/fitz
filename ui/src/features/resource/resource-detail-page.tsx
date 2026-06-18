@@ -95,17 +95,18 @@ export default function ResourceDetailPage() {
   const data = query.data;
   const resourceSummary = data ? describeResourceDetail(data) : null;
   const headerStatus = {
-    detail: resourceSummary?.detail ?? "Inspect the current snapshot, timeline, and related records.",
+    detail:
+      resourceSummary?.detail ?? "Inspect the current snapshot, timeline, and related records.",
     label: query.refreshing
       ? "Refreshing"
       : query.stale
         ? "Stale"
-        : resourceSummary?.label ?? (data ? "Live" : "Loading"),
+        : (resourceSummary?.label ?? (data ? "Live" : "Loading")),
     tone: query.refreshing
       ? "info"
       : query.stale
         ? "warning"
-        : resourceSummary?.tone ?? (data ? "success" : "info"),
+        : (resourceSummary?.tone ?? (data ? "success" : "info")),
   } as const;
   const sidebar = createDomainSidebar({
     data,
@@ -191,9 +192,7 @@ export default function ResourceDetailPage() {
           <QueryErrorState error={query.error} onRetry={() => query.refresh()} />
         </Show>
 
-        {data ? (
-          <ResourceWorkbench detail={data} />
-        ) : null}
+        {data ? <ResourceWorkbench detail={data} /> : null}
       </Stack>
     </DomainPageFrame>
   );

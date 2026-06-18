@@ -57,7 +57,8 @@ function describeQueueOverview(stats: QueueStatsSummary): QueuePostureSummary {
     return {
       detail: `${stateSentence} The backlog is outpacing inflight work. ${throughputSentence}`,
       label: "Pressure",
-      nextStep: "Open the busiest queue resources and watch whether ready and pending counts drain.",
+      nextStep:
+        "Open the busiest queue resources and watch whether ready and pending counts drain.",
       tone: "warning",
     };
   }
@@ -119,12 +120,12 @@ export default function QueuePage() {
               ? "Refreshing"
               : overview.stale
                 ? "Stale"
-                : posture?.label ?? "Live",
+                : (posture?.label ?? "Live"),
             tone: overview.refreshing
               ? "info"
               : overview.stale
                 ? "warning"
-                : posture?.tone ?? "success",
+                : (posture?.tone ?? "success"),
           }}
         />
 

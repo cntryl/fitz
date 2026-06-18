@@ -161,7 +161,15 @@
 }
 
 .metrics-value-cell {
-  font-family: var(--ak-font-family-mono, ui-monospace, Consolas, "SFMono-Regular", Menlo, Monaco, monospace);
+  font-family: var(
+    --ak-font-family-mono,
+    ui-monospace,
+    Consolas,
+    "SFMono-Regular",
+    Menlo,
+    Monaco,
+    monospace
+  );
   overflow: hidden;
   text-overflow: ellipsis;
 }

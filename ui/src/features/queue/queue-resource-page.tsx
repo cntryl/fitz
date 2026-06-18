@@ -13,7 +13,14 @@ import {
 } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
 import { Flex, Stack } from "@askrjs/themes/layouts";
-import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import {
+  Badge,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@askrjs/themes/surfaces";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -104,7 +111,9 @@ function parseOptionalNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function formatQueueScope(scope: Pick<QueueComparisonTarget, "area" | "realm" | "resource"> & { family?: number | null }) {
+function formatQueueScope(
+  scope: Pick<QueueComparisonTarget, "area" | "realm" | "resource"> & { family?: number | null },
+) {
   const base = `${scope.realm} / ${scope.area} / ${scope.resource}`;
   return scope.family == null ? base : `${base} / family ${scope.family}`;
 }
@@ -329,12 +338,12 @@ export default function QueueResourcePage() {
       ? "Refreshing"
       : resourceQuery.stale
         ? "Stale"
-        : stateSummary?.label ?? (data ? "Live" : "Loading"),
+        : (stateSummary?.label ?? (data ? "Live" : "Loading")),
     tone: resourceQuery.refreshing
       ? "info"
       : resourceQuery.stale
         ? "warning"
-        : stateSummary?.tone ?? (data ? "success" : "info"),
+        : (stateSummary?.tone ?? (data ? "success" : "info")),
   } as const;
 
   const sidebar = createDomainSidebar({
@@ -367,13 +376,13 @@ export default function QueueResourcePage() {
     return (
       <DomainPageFrame sidebar={sidebar}>
         <Stack gap="3">
-        <DomainHeader
-          eyebrow="Queue resource"
-          title="Queue resource inspection"
-          description={`${realm} / ${area} / ${resource}`}
-          primaryAction={{
-            label: "Refresh resource",
-            onPress: () => resourceQuery.refresh(),
+          <DomainHeader
+            eyebrow="Queue resource"
+            title="Queue resource inspection"
+            description={`${realm} / ${area} / ${resource}`}
+            primaryAction={{
+              label: "Refresh resource",
+              onPress: () => resourceQuery.refresh(),
             }}
             status={headerStatus}
           />
@@ -497,8 +506,8 @@ export default function QueueResourcePage() {
             <CardHeader>
               <CardTitle>Compare scopes</CardTitle>
               <CardDescription>
-                Enter a target realm, area, and resource to compare the current queue scope.
-                All three are required. Family is optional and narrows the comparison to one queue
+                Enter a target realm, area, and resource to compare the current queue scope. All
+                three are required. Family is optional and narrows the comparison to one queue
                 family.
               </CardDescription>
             </CardHeader>
@@ -592,7 +601,9 @@ export default function QueueResourcePage() {
               <Flex justify="between" gap="3" align="start" wrap="wrap">
                 <Stack gap="1">
                   <CardTitle>Inflight</CardTitle>
-                  <CardDescription>Messages currently owned by active queue sessions.</CardDescription>
+                  <CardDescription>
+                    Messages currently owned by active queue sessions.
+                  </CardDescription>
                 </Stack>
                 <Badge variant="info">{current.inflight.length} entries</Badge>
               </Flex>

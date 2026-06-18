@@ -85,10 +85,7 @@ function familyValue(index: Map<string, PrometheusMetricFamily>, name: string) {
   return index.get(name)?.samples.reduce((sum, sample) => sum + sample.value, 0) ?? 0;
 }
 
-function signalValue(
-  index: Map<string, PrometheusMetricFamily>,
-  names: string[],
-) {
+function signalValue(index: Map<string, PrometheusMetricFamily>, names: string[]) {
   return names.reduce((sum, name) => sum + familyValue(index, name), 0);
 }
 
@@ -98,59 +95,83 @@ function signalText(label: string, value: number) {
 
 function summarizeSnapshot(index: Map<string, PrometheusMetricFamily>): MetricsPostureSummary {
   const failureSignals = [
-    { label: "router backpressure", value: signalValue(index, [
-      "fitz_router_backpressure_total",
-      "fitz_router_high_lane_backpressure_total",
-    ]) },
-    { label: "queue drops", value: signalValue(index, [
-      "fitz_queue_notify_drops_total",
-      "fitz_queue_redeliveries_total",
-    ]) },
-    { label: "RPC failures", value: signalValue(index, [
-      "fitz_rpc_backpressure_rejects_total",
-      "fitz_rpc_request_timeouts_total",
-      "fitz_rpc_responses_dropped_closed_caller_total",
-      "fitz_rpc_responses_missing_pending_total",
-      "fitz_rpc_invalid_sequence_responses_total",
-      "fitz_rpc_invalid_sequence_errors_forwarded_total",
-      "fitz_rpc_invalid_sequence_errors_dropped_total",
-      "fitz_rpc_wrong_worker_rejects_total",
-    ]) },
-    { label: "lease failures", value: signalValue(index, [
-      "fitz_lease_acquire_timeouts_total",
-      "fitz_lease_forced_releases_total",
-      "fitz_lease_invalid_token_rejects_total",
-    ]) },
-    { label: "notice failures", value: signalValue(index, [
-      "fitz_notice_delivery_drops_total",
-      "fitz_notice_wildcard_limit_rejects_total",
-    ]) },
-    { label: "schedule failures", value: signalValue(index, [
-      "fitz_schedule_notify_failures_total",
-      "fitz_schedule_ack_failures_total",
-      "fitz_schedule_create_persistence_failures_total",
-      "fitz_schedule_upsert_persistence_failures_total",
-      "fitz_schedule_cancel_persistence_failures_total",
-      "fitz_schedule_pending_claim_cleanup_failure_total",
-    ]) },
-    { label: "stream drops", value: signalValue(index, [
-      "fitz_stream_notify_drops_total",
-      "fitz_stream_append_conflicts_total",
-    ]) },
-    { label: "KV failures", value: signalValue(index, [
-      "fitz_kv_commits_failed_total",
-      "fitz_kv_rollbacks_total",
-      "fitz_kv_invalid_transaction_rejects_total",
-    ]) },
+    {
+      label: "router backpressure",
+      value: signalValue(index, [
+        "fitz_router_backpressure_total",
+        "fitz_router_high_lane_backpressure_total",
+      ]),
+    },
+    {
+      label: "queue drops",
+      value: signalValue(index, ["fitz_queue_notify_drops_total", "fitz_queue_redeliveries_total"]),
+    },
+    {
+      label: "RPC failures",
+      value: signalValue(index, [
+        "fitz_rpc_backpressure_rejects_total",
+        "fitz_rpc_request_timeouts_total",
+        "fitz_rpc_responses_dropped_closed_caller_total",
+        "fitz_rpc_responses_missing_pending_total",
+        "fitz_rpc_invalid_sequence_responses_total",
+        "fitz_rpc_invalid_sequence_errors_forwarded_total",
+        "fitz_rpc_invalid_sequence_errors_dropped_total",
+        "fitz_rpc_wrong_worker_rejects_total",
+      ]),
+    },
+    {
+      label: "lease failures",
+      value: signalValue(index, [
+        "fitz_lease_acquire_timeouts_total",
+        "fitz_lease_forced_releases_total",
+        "fitz_lease_invalid_token_rejects_total",
+      ]),
+    },
+    {
+      label: "notice failures",
+      value: signalValue(index, [
+        "fitz_notice_delivery_drops_total",
+        "fitz_notice_wildcard_limit_rejects_total",
+      ]),
+    },
+    {
+      label: "schedule failures",
+      value: signalValue(index, [
+        "fitz_schedule_notify_failures_total",
+        "fitz_schedule_ack_failures_total",
+        "fitz_schedule_create_persistence_failures_total",
+        "fitz_schedule_upsert_persistence_failures_total",
+        "fitz_schedule_cancel_persistence_failures_total",
+        "fitz_schedule_pending_claim_cleanup_failure_total",
+      ]),
+    },
+    {
+      label: "stream drops",
+      value: signalValue(index, [
+        "fitz_stream_notify_drops_total",
+        "fitz_stream_append_conflicts_total",
+      ]),
+    },
+    {
+      label: "KV failures",
+      value: signalValue(index, [
+        "fitz_kv_commits_failed_total",
+        "fitz_kv_rollbacks_total",
+        "fitz_kv_invalid_transaction_rejects_total",
+      ]),
+    },
   ];
 
   const pressureSignals = [
-    { label: "queue backlog", value: signalValue(index, [
-      "fitz_queue_ready_gauge",
-      "fitz_queue_inflight_active",
-      "fitz_queue_messages_pending",
-      "fitz_queue_delayed_gauge",
-    ]) },
+    {
+      label: "queue backlog",
+      value: signalValue(index, [
+        "fitz_queue_ready_gauge",
+        "fitz_queue_inflight_active",
+        "fitz_queue_messages_pending",
+        "fitz_queue_delayed_gauge",
+      ]),
+    },
     { label: "RPC pending", value: familyValue(index, "fitz_rpc_requests_pending") },
     { label: "lease waiters", value: familyValue(index, "fitz_lease_waiter_depth") },
     {
@@ -202,7 +223,8 @@ function summarizeSnapshot(index: Map<string, PrometheusMetricFamily>): MetricsP
   return {
     detail: "No backlog, contention, or failure pressure detected.",
     label: "Quiet",
-    nextStep: "Use the search box to inspect a specific metric family when you need a narrower read.",
+    nextStep:
+      "Use the search box to inspect a specific metric family when you need a narrower read.",
     tone: "success",
   };
 }
@@ -498,7 +520,8 @@ export default function MetricsPage() {
   const filterValue = filter().trim().toLowerCase();
   const familyIndex = data ? buildFamilyIndex(data.families) : null;
   const families =
-    data?.families.filter((family) => familyNameMatches(family.name.toLowerCase(), filterValue)) ?? [];
+    data?.families.filter((family) => familyNameMatches(family.name.toLowerCase(), filterValue)) ??
+    [];
   const sampleRows = data ? buildRows(data.families, filterValue) : [];
   const sampleCount = data?.families.reduce((sum, family) => sum + family.samples.length, 0) ?? 0;
   const snapshotSummary = familyIndex ? summarizeSnapshot(familyIndex) : null;
@@ -508,7 +531,7 @@ export default function MetricsPage() {
   const detailSummary = data
     ? filterValue.length === 0
       ? `${formatNumber(data.families.length)} families / ${formatNumber(sampleCount)} samples in the current snapshot.`
-        : `${formatNumber(families.length)} of ${formatNumber(data.families.length)} families match “${filterValue}” with ${formatNumber(
+      : `${formatNumber(families.length)} of ${formatNumber(data.families.length)} families match “${filterValue}” with ${formatNumber(
           sampleRows.length,
         )} matching samples.`
     : "Searching metric families and samples for current counter values.";
@@ -519,16 +542,8 @@ export default function MetricsPage() {
           filterValue.length === 0
             ? `${detailSummary} ${snapshotSummary.detail}`
             : `${detailSummary} ${snapshotSummary.nextStep}`,
-        label: metrics.refreshing
-          ? "Refreshing"
-          : metrics.stale
-            ? "Stale"
-            : snapshotSummary.label,
-        tone: metrics.refreshing
-          ? "info"
-          : metrics.stale
-            ? "warning"
-            : snapshotSummary.tone,
+        label: metrics.refreshing ? "Refreshing" : metrics.stale ? "Stale" : snapshotSummary.label,
+        tone: metrics.refreshing ? "info" : metrics.stale ? "warning" : snapshotSummary.tone,
       }
     : {
         detail: "Searching metric families and samples from Prometheus response.",
@@ -551,11 +566,18 @@ export default function MetricsPage() {
         />
 
         {!data && metrics.loading ? (
-          <QueryLoadingState title="Loading metrics snapshot" description="Reading the current /metrics payload." />
+          <QueryLoadingState
+            title="Loading metrics snapshot"
+            description="Reading the current /metrics payload."
+          />
         ) : null}
 
         {!data && metrics.error ? (
-          <QueryErrorState title="Unable to load metrics snapshot" error={metrics.error} onRetry={() => metrics.refresh()} />
+          <QueryErrorState
+            title="Unable to load metrics snapshot"
+            error={metrics.error}
+            onRetry={() => metrics.refresh()}
+          />
         ) : null}
 
         <Stack gap="3">
@@ -563,7 +585,10 @@ export default function MetricsPage() {
             <div class="domain-section-header">
               <div>
                 <h2>Live state</h2>
-                <p>The summary below reflects the full snapshot, even when the sample table is filtered.</p>
+                <p>
+                  The summary below reflects the full snapshot, even when the sample table is
+                  filtered.
+                </p>
               </div>
             </div>
             <div class="chart-grid">
@@ -603,7 +628,10 @@ export default function MetricsPage() {
             <div class="domain-section-header">
               <div>
                 <h2>Search metrics</h2>
-                <p>Filter by family name, then scan sample name, labels, and value in one compact table.</p>
+                <p>
+                  Filter by family name, then scan sample name, labels, and value in one compact
+                  table.
+                </p>
               </div>
             </div>
             <div class="metrics-toolbar">
@@ -682,7 +710,10 @@ export default function MetricsPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      <For each={sampleRows} by={(row) => `${row.family}:${row.labels}:${row.value}`}>
+                      <For
+                        each={sampleRows}
+                        by={(row) => `${row.family}:${row.labels}:${row.value}`}
+                      >
                         {(row) => (
                           <TableRow>
                             <TableCell>

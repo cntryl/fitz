@@ -22,7 +22,11 @@ function summarizeRiskSignals(stats: {
   waiterDepth: number;
   oldestLeaseAgeSeconds: number;
   leasesActive: number;
-}): { detail: string; label: "Live" | "Pressure" | "Attention"; tone: "success" | "warning" | "danger" } {
+}): {
+  detail: string;
+  label: "Live" | "Pressure" | "Attention";
+  tone: "success" | "warning" | "danger";
+} {
   const riskCount =
     stats.acquireTimeoutsTotal +
     stats.forcedReleasesTotal +
@@ -35,18 +39,10 @@ function summarizeRiskSignals(stats: {
     stats.invalidTokenRejectsTotal > 0;
 
   const label: "Live" | "Pressure" | "Attention" =
-    riskCount > 6
-      ? "Attention"
-      : hasRiskSignals || stats.waiterDepth > 0
-        ? "Pressure"
-        : "Live";
+    riskCount > 6 ? "Attention" : hasRiskSignals || stats.waiterDepth > 0 ? "Pressure" : "Live";
 
   const tone: "success" | "warning" | "danger" =
-    riskCount > 6
-      ? "danger"
-      : hasRiskSignals || stats.waiterDepth > 0
-        ? "warning"
-        : "success";
+    riskCount > 6 ? "danger" : hasRiskSignals || stats.waiterDepth > 0 ? "warning" : "success";
 
   const detailBase =
     `${stats.leasesActive} active leases, ${stats.waiterDepth} waiters, ${formatDurationSeconds(
@@ -57,7 +53,9 @@ function summarizeRiskSignals(stats: {
     const riskBits = [
       stats.acquireTimeoutsTotal > 0 ? `${stats.acquireTimeoutsTotal} acquire timeout(s)` : null,
       stats.forcedReleasesTotal > 0 ? `${stats.forcedReleasesTotal} forced release(s)` : null,
-      stats.invalidTokenRejectsTotal > 0 ? `${stats.invalidTokenRejectsTotal} token reject(s)` : null,
+      stats.invalidTokenRejectsTotal > 0
+        ? `${stats.invalidTokenRejectsTotal} token reject(s)`
+        : null,
     ]
       .filter(Boolean)
       .join(", ");
@@ -96,14 +94,16 @@ export default function LeasePage() {
   const overview = createLeaseOverviewQuery();
   const inventory = createResourceInventoryQuery("lease");
   const data = overview.data;
-  const riskSignals = summarizeRiskSignals(data?.stats ?? {
-    acquireTimeoutsTotal: 0,
-    forcedReleasesTotal: 0,
-    invalidTokenRejectsTotal: 0,
-    leasesActive: 0,
-    oldestLeaseAgeSeconds: 0,
-    waiterDepth: 0,
-  });
+  const riskSignals = summarizeRiskSignals(
+    data?.stats ?? {
+      acquireTimeoutsTotal: 0,
+      forcedReleasesTotal: 0,
+      invalidTokenRejectsTotal: 0,
+      leasesActive: 0,
+      oldestLeaseAgeSeconds: 0,
+      waiterDepth: 0,
+    },
+  );
 
   const sidebar = createDomainSidebar({
     data,
@@ -153,11 +153,7 @@ export default function LeasePage() {
               : overview.stale
                 ? "Stale"
                 : riskSignals.label,
-            tone: overview.refreshing
-              ? "info"
-              : overview.stale
-                ? "warning"
-                : riskSignals.tone,
+            tone: overview.refreshing ? "info" : overview.stale ? "warning" : riskSignals.tone,
           }}
         />
 

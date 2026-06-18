@@ -29,7 +29,8 @@ export function BrokerStatusStrip({
 }) {
   const severity = incidentSeverity(topology);
   const messageTrend = topologyTrendDirection(history, "messagesPerSecond");
-  const nextQuery = topology.diagnostics.incident_summary?.recommended_next_query ?? "No follow-up needed";
+  const nextQuery =
+    topology.diagnostics.incident_summary?.recommended_next_query ?? "No follow-up needed";
 
   return (
     <Card

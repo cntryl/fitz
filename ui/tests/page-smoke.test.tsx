@@ -381,38 +381,38 @@ const metricsOverview = {
   raw: "fitz_broker_up 1\nfitz_queue_depth_current 4\nfitz_rpc_latency_histogram_sum 12.5",
 };
 
-  const activeSessions = {
-    sessions: [
-      {
-        connectedAt: "2026-05-21T13:00:00Z",
-        idleSeconds: 12,
-        identityClaim: "tid",
+const activeSessions = {
+  sessions: [
+    {
+      connectedAt: "2026-05-21T13:00:00Z",
+      idleSeconds: 12,
+      identityClaim: "tid",
       identityValue: "default",
       key: "session-1",
       messagesReceived: 2,
       messagesSent: 3,
-        remoteAddress: "127.0.0.1",
-        routeFamily: 1,
-        sessionId: "session-1",
-        subject: "user:1",
-        transport: "ws",
-      },
-      {
-        connectedAt: "2026-05-21T13:01:00Z",
-        idleSeconds: 45,
-        identityClaim: "tenant",
-        identityValue: "ops",
-        key: "session-2",
-        messagesReceived: 4,
-        messagesSent: 8,
-        remoteAddress: "2001:db8::1ff:fe23:4567:890a",
-        routeFamily: 2,
-        sessionId: "session-long-id-2",
-        subject: "user:2",
-        transport: "http",
-      },
-    ],
-  };
+      remoteAddress: "127.0.0.1",
+      routeFamily: 1,
+      sessionId: "session-1",
+      subject: "user:1",
+      transport: "ws",
+    },
+    {
+      connectedAt: "2026-05-21T13:01:00Z",
+      idleSeconds: 45,
+      identityClaim: "tenant",
+      identityValue: "ops",
+      key: "session-2",
+      messagesReceived: 4,
+      messagesSent: 8,
+      remoteAddress: "2001:db8::1ff:fe23:4567:890a",
+      routeFamily: 2,
+      sessionId: "session-long-id-2",
+      subject: "user:2",
+      transport: "http",
+    },
+  ],
+};
 
 const queueResource = {
   deadLetters: [],
@@ -839,7 +839,9 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Broker status");
     expect(text).toContain("No domain lanes are visible yet");
     expect(text).toContain("Domain workspaces");
-    expect(text).toContain("Open a domain when you need a narrower view of resources and live counters.");
+    expect(text).toContain(
+      "Open a domain when you need a narrower view of resources and live counters.",
+    );
   });
 
   it("renders a metrics posture summary and empty search state", async () => {
@@ -854,7 +856,9 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Metric samples");
     expect(root.textContent).toContain("Showing 3 of 3 samples");
 
-    const filter = root.querySelector('input[aria-label="Filter metrics"]') as HTMLInputElement | null;
+    const filter = root.querySelector(
+      'input[aria-label="Filter metrics"]',
+    ) as HTMLInputElement | null;
     expect(filter).toBeTruthy();
 
     if (filter) {
@@ -868,8 +872,8 @@ describe("admin page smoke tests", () => {
 
       expect(root.textContent).toContain("Showing 1 of 3 samples");
 
-      const clearShortcut = Array.from(root.querySelectorAll("button")).find((button) =>
-        button.textContent === "Clear filters",
+      const clearShortcut = Array.from(root.querySelectorAll("button")).find(
+        (button) => button.textContent === "Clear filters",
       ) as HTMLButtonElement | undefined;
 
       expect(clearShortcut).toBeTruthy();
@@ -890,7 +894,11 @@ describe("admin page smoke tests", () => {
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.metrics = queryState.error(new Error("metrics endpoint unavailable"), undefined, queryOptions());
+    mocks.queryStates.metrics = queryState.error(
+      new Error("metrics endpoint unavailable"),
+      undefined,
+      queryOptions(),
+    );
     root = await mountRoute("/admin/metrics", "/admin/metrics", MetricsPage);
     expect(root.textContent).toContain("Unable to load metrics snapshot");
     expect(root.textContent).toContain("metrics endpoint unavailable");
