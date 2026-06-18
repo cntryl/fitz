@@ -112,6 +112,25 @@
   font-variant-numeric: tabular-nums;
 }
 
+.domain-table-cell-truncate {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.domain-link-cell {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .metrics-table-wrap {
   overflow-x: auto;
   scrollbar-gutter: stable;
@@ -391,6 +410,10 @@
 
   .domain-table-wrap {
     overflow-x: visible;
+  }
+
+  .domain-table-cell-truncate {
+    max-width: 12rem;
   }
 
   .session-table-desktop {

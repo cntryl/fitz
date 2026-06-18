@@ -57,7 +57,11 @@ export default function SchedulePage() {
         ) : null}
 
         {!data && overview.error ? (
-          <QueryErrorState error={overview.error} onRetry={() => overview.refresh()} />
+          <QueryErrorState
+            title="Unable to load Schedule overview"
+            error={overview.error}
+            onRetry={() => overview.refresh()}
+          />
         ) : null}
 
         {data ? (

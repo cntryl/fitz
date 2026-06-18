@@ -56,7 +56,11 @@ export default function RpcPage() {
         ) : null}
 
         {!data && overview.error ? (
-          <QueryErrorState error={overview.error} onRetry={() => overview.refresh()} />
+          <QueryErrorState
+            title="Unable to load RPC overview"
+            error={overview.error}
+            onRetry={() => overview.refresh()}
+          />
         ) : null}
 
         {data ? (

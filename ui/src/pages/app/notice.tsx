@@ -54,7 +54,11 @@ export default function NoticePage() {
         ) : null}
 
         {!data && overview.error ? (
-          <QueryErrorState error={overview.error} onRetry={() => overview.refresh()} />
+          <QueryErrorState
+            title="Unable to load Notice overview"
+            error={overview.error}
+            onRetry={() => overview.refresh()}
+          />
         ) : null}
 
         {data ? (

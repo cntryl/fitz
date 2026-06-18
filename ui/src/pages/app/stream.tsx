@@ -57,7 +57,11 @@ export default function StreamPage() {
         ) : null}
 
         {!data && overview.error ? (
-          <QueryErrorState error={overview.error} onRetry={() => overview.refresh()} />
+          <QueryErrorState
+            title="Unable to load Stream overview"
+            error={overview.error}
+            onRetry={() => overview.refresh()}
+          />
         ) : null}
 
         {data ? (

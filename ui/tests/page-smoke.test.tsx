@@ -213,6 +213,79 @@ const streamOverview = {
   },
 };
 
+const domainOverviews = [
+  {
+    assertText: "KV overview",
+    queryKey: "kv",
+    module: () => import("@/pages/app/kv"),
+    path: "/kv",
+    routePath: "/kv",
+    emptyText: "No KV realms are currently visible.",
+    errorText: "KV overview unavailable",
+    loadingText: "Loading KV overview",
+  },
+  {
+    assertText: "Lease overview",
+    queryKey: "lease",
+    module: () => import("@/pages/app/lease"),
+    path: "/lease",
+    routePath: "/lease",
+    emptyText: "No lease realms are currently visible.",
+    errorText: "Lease overview unavailable",
+    loadingText: "Loading lease overview",
+  },
+  {
+    assertText: "Notice overview",
+    queryKey: "notice",
+    module: () => import("@/pages/app/notice"),
+    path: "/notice",
+    routePath: "/notice",
+    emptyText: "No notice realms are currently visible.",
+    errorText: "Notice overview unavailable",
+    loadingText: "Loading notice overview",
+  },
+  {
+    assertText: "RPC overview",
+    queryKey: "rpc",
+    module: () => import("@/pages/app/rpc"),
+    path: "/rpc",
+    routePath: "/rpc",
+    emptyText: "No RPC realms are currently visible.",
+    errorText: "RPC overview unavailable",
+    loadingText: "Loading RPC overview",
+  },
+  {
+    assertText: "Schedule overview",
+    queryKey: "schedule",
+    module: () => import("@/pages/app/schedule"),
+    path: "/schedule",
+    routePath: "/schedule",
+    emptyText: "No schedule realms are currently visible.",
+    errorText: "Schedule overview unavailable",
+    loadingText: "Loading schedule overview",
+  },
+  {
+    assertText: "Stream overview",
+    queryKey: "stream",
+    module: () => import("@/pages/app/stream"),
+    path: "/stream",
+    routePath: "/stream",
+    emptyText: "No stream realms are currently visible.",
+    errorText: "Stream overview unavailable",
+    loadingText: "Loading stream overview",
+  },
+  {
+    assertText: "Queue overview",
+    queryKey: "queue",
+    module: () => import("@/pages/app/queue"),
+    path: "/queue",
+    routePath: "/queue",
+    emptyText: "No queue realms are currently visible.",
+    errorText: "Queue overview unavailable",
+    loadingText: "Loading queue overview",
+  },
+];
+
 const systemOverview = {
   broker: {
     connections: 2,
@@ -436,6 +509,23 @@ const resourceDetail = {
   },
 };
 
+type DomainOverviewFixture = {
+  realms: Array<{ realm: string }>;
+  stats: {
+    [key: string]: number | { [key: string]: number };
+  };
+};
+
+const domainOverviewDataByKey: Record<string, DomainOverviewFixture> = {
+  kv: kvOverview,
+  lease: leaseOverview,
+  notice: noticeOverview,
+  rpc: rpcOverview,
+  schedule: scheduleOverview,
+  stream: streamOverview,
+  queue: queueOverview,
+};
+
 function resetQueries() {
   mocks.queryStates.currentSession = queryState.fresh({ username: "admin" }, queryOptions());
   mocks.queryStates.activeSessions = queryState.fresh(activeSessions, queryOptions());
@@ -580,6 +670,82 @@ describe("admin page smoke tests", () => {
     }
   }, 15000);
 
+  it("renders all domain overviews with the shared frame contract", async () => {
+    for (const page of domainOverviews) {
+      const { default: Component } = await page.module();
+
+      const root = await mountRoute(page.path, page.routePath, Component);
+      const text = root.textContent ?? "";
+
+      expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
+      expect(text).toContain(page.assertText);
+      expect(text).toContain("Refresh");
+      expect(text).toContain("Live");
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
+  });
+
+  it("renders domain overview loading states consistently", async () => {
+    for (const page of domainOverviews) {
+      mocks.queryStates[page.queryKey] = queryState.loading(queryOptions());
+
+      const { default: Component } = await page.module();
+      const root = await mountRoute(page.path, page.routePath, Component);
+
+      expect(root.textContent).toContain(page.loadingText);
+      expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
+  });
+
+  it("renders domain overview error states with page-specific framing", async () => {
+    for (const page of domainOverviews) {
+      mocks.queryStates[page.queryKey] = queryState.error(
+        new Error(page.errorText),
+        undefined,
+        queryOptions(),
+      );
+
+      const { default: Component } = await page.module();
+      const root = await mountRoute(page.path, page.routePath, Component);
+
+      expect(root.textContent).toContain("Unable to load");
+      expect(root.textContent).toContain(page.errorText);
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
+  });
+
+  it("renders domain overviews with empty realm tables", async () => {
+    for (const page of domainOverviews) {
+      const baseOverview = domainOverviewDataByKey[page.queryKey];
+      if (!baseOverview) {
+        continue;
+      }
+
+      mocks.queryStates[page.queryKey] = queryState.fresh(
+        {
+          ...baseOverview,
+          realms: [],
+        },
+        queryOptions(),
+      );
+
+      const { default: Component } = await page.module();
+      const root = await mountRoute(page.path, page.routePath, Component);
+
+      expect(root.textContent).toContain(page.emptyText);
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
+  });
+
   it("renders the status-first dashboard sections", async () => {
     const { default: Home } = await import("@/pages/app/home");
 
@@ -596,11 +762,11 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Top scoped resources");
     expect(text).toContain("Visible connections");
     expect(text).toContain("Domain signals");
-    expect(text).toContain("Open Queue page");
+    expect(text).toContain("Open page");
     expect(text).toContain("Flow inspector");
-    expect(text).toContain("Work backlog");
-    expect(text).toContain("Live paths");
-    expect(text).toContain("Durable state/history");
+    expect(text).toContain("Durable work delivery");
+    expect(text).toContain("Connected sessions");
+    expect(text).toContain("Current broker behavior");
     expect(text).toContain("Attention");
   });
 
@@ -614,8 +780,8 @@ describe("admin page smoke tests", () => {
 
     expect(text).toContain("Refreshing");
     expect(text).toContain("Domain signals");
-    expect(text).toContain("Open Queue page");
-    expect(text).toContain("Work backlog");
+    expect(text).toContain("Open page");
+    expect(text).toContain("Durable work delivery");
     expect(text).toContain("Queue");
   });
 

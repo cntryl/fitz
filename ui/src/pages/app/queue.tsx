@@ -133,7 +133,11 @@ export default function QueuePage() {
         ) : null}
 
         {!data && overview.error ? (
-          <QueryErrorState error={overview.error} onRetry={() => overview.refresh()} />
+          <QueryErrorState
+            title="Unable to load Queue overview"
+            error={overview.error}
+            onRetry={() => overview.refresh()}
+          />
         ) : null}
 
         {data ? (

@@ -60,10 +60,17 @@ export default function DomainResourceBrowser({
                 <For each={rows} by={(row) => `${row.realm}:${row.area}:${row.resource}`}>
                   {(row) => (
                     <TableRow>
-                      <TableCell>{row.realm}</TableCell>
-                      <TableCell>{row.area}</TableCell>
                       <TableCell>
-                        <Link href={resourceHref(domain, row.realm, row.area, row.resource)}>
+                        <span class="domain-table-cell-truncate">{row.realm}</span>
+                      </TableCell>
+                      <TableCell>
+                        <span class="domain-table-cell-truncate">{row.area}</span>
+                      </TableCell>
+                      <TableCell>
+                        <Link
+                          class="domain-link-cell"
+                          href={resourceHref(domain, row.realm, row.area, row.resource)}
+                        >
                           {row.resource}
                         </Link>
                       </TableCell>

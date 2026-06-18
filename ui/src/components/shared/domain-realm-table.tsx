@@ -38,8 +38,12 @@ export default function DomainRealmTable({ title, realms, emptyMessage }: Domain
                 <For each={realms} by={(realm) => realm.realm}>
                   {(realm) => (
                     <TableRow>
-                      <TableCell>{realm.realm}</TableCell>
-                      <TableCell>{realm.note ?? "Active"}</TableCell>
+                      <TableCell>
+                        <span class="domain-table-cell-truncate">{realm.realm}</span>
+                      </TableCell>
+                      <TableCell>
+                        <span class="domain-table-cell-truncate">{realm.note ?? "Active"}</span>
+                      </TableCell>
                     </TableRow>
                   )}
                 </For>

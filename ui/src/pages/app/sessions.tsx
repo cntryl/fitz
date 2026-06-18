@@ -81,7 +81,6 @@ function summarizeSessions(sessions: ActiveSession[]): SessionsPostureSummary {
     return {
       detail: `${summary} One or more sessions have been idle for 5 minutes or longer.`,
       label: "Stale",
-      nextStep: "Inspect the longest-idle sessions for transport or application-level stalls.",
       tone: "warning",
     };
   }
@@ -105,7 +104,8 @@ export default function SessionsPage() {
   const isInitialLoad = sessionsQuery.loading && !data;
   const isInitialError = sessionsQuery.error && !data;
 
-  const headerStatus = isInitialLoad
+  const headerStatus: { detail: string; label: string; tone: "info" | "success" | "warning" | "danger" } =
+    isInitialLoad
     ? {
         detail: "Loading active sessions from broker telemetry.",
         label: "Loading",
