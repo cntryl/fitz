@@ -792,6 +792,50 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("acquire timeout");
   });
 
+  it("renders kv state and transactional-pressure priority metrics", async () => {
+    mocks.queryStates.kv = queryState.fresh(
+      {
+        ...kvOverview,
+        stats: {
+          ...kvOverview.stats,
+          keysTotal: 180,
+          transactionsActive: 4,
+          operationsPerSecond: 4.25,
+          commitsFailedTotal: 2,
+          rollbacksTotal: 1,
+          invalidTransactionRejectsTotal: 3,
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: KvPage } = await import("@/pages/app/kv");
+    const root = await mountRoute("/kv", "/kv", KvPage);
+    const text = root.textContent ?? "";
+    const labels = [
+      "Keys total",
+      "Active transactions",
+      "Ops / sec",
+      "Commit failures",
+      "Rollbacks",
+      "Invalid transaction rejects",
+    ];
+
+    let cursor = -1;
+    for (const label of labels) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    expect(text).toContain("2");
+    expect(text).toContain("3");
+    expect(text).toContain("Active transactions");
+    expect(text).toContain("Attention");
+    expect(text).toContain("authoritative");
+    expect(text).toContain("broker-local");
+  });
+
   it("renders domain overviews with empty realm tables", async () => {
     for (const page of domainOverviews) {
       const baseOverview = domainOverviewDataByKey[page.queryKey];

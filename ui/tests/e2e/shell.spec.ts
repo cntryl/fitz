@@ -503,6 +503,33 @@ test("captures lease overview empty state", async ({ page }, testInfo) => {
   });
 });
 
+test("captures kv overview empty state", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockDomainOverviewApis(page, {
+    kv: {
+      realms: [],
+      stats: {
+        commits_failed_total: 0,
+        invalid_transaction_rejects_total: 0,
+        keys_total: 0,
+        operations_per_second: 0,
+        rollbacks_total: 0,
+        transactions_active: 0,
+      },
+    },
+  });
+
+  await page.goto("/kv");
+  await expect(page.getByRole("heading", { name: "KV overview" })).toBeVisible();
+  await expect(page.getByText("No KV realms are currently visible.")).toBeVisible();
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath("kv-empty-desktop.png"),
+    animations: "disabled",
+  });
+});
+
 test("captures notice overview empty state", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await mockDomainOverviewApis(page, {
