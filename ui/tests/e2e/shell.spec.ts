@@ -607,7 +607,11 @@ function resourceTimelineFixture(domain: string, scope: ResourceScope) {
   };
 }
 
-async function mockResourceDetailApis(page: Page, domain: ResourceDomain, routeScope: ResourceScope) {
+async function mockResourceDetailApis(
+  page: Page,
+  domain: ResourceDomain,
+  routeScope: ResourceScope,
+) {
   const diagnostics = makeDiagnosticSnapshot();
 
   await page.route("**/api/v1/features", async (route) => {
@@ -626,11 +630,7 @@ async function mockResourceDetailApis(page: Page, domain: ResourceDomain, routeS
     }
 
     if (domain === "stream" && segments.length === 8) {
-      if (
-        segments[3] === "realms" &&
-        segments[5] === "areas" &&
-        segments[7] === "watermarks"
-      ) {
+      if (segments[3] === "realms" && segments[5] === "areas" && segments[7] === "watermarks") {
         const realm = decodeURIComponent(segments[4] ?? "");
         const area = decodeURIComponent(segments[6] ?? "");
 
@@ -927,7 +927,10 @@ async function applyTheme(page: Page, theme: ThemeMode) {
 
 async function expectNoHorizontalOverflow(page: Page) {
   const overflow = await page.evaluate(() => {
-    const maxWidth = Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth ?? 0);
+    const maxWidth = Math.max(
+      document.documentElement.scrollWidth,
+      document.body?.scrollWidth ?? 0,
+    );
     return maxWidth <= window.innerWidth + 2;
   });
 
@@ -1062,13 +1065,15 @@ const sprint16Routes: RouteScenario[] = [
   {
     path: "/queue/default/ops/primary",
     shell: "app",
-    setup: (page) => mockQueueResourceApis(page, parseRouteResourceScope("/queue/default/ops/primary")),
+    setup: (page) =>
+      mockQueueResourceApis(page, parseRouteResourceScope("/queue/default/ops/primary")),
     title: "Queue resource inspection",
   },
   {
     path: "/kv/default/ops/primary",
     shell: "app",
-    setup: (page) => mockResourceDetailApis(page, "kv", parseRouteResourceScope("/kv/default/ops/primary")),
+    setup: (page) =>
+      mockResourceDetailApis(page, "kv", parseRouteResourceScope("/kv/default/ops/primary")),
     title: "KV resource inspection",
   },
   {
@@ -1082,13 +1087,18 @@ const sprint16Routes: RouteScenario[] = [
     path: "/notice/default/ops/primary",
     shell: "app",
     setup: (page) =>
-      mockResourceDetailApis(page, "notice", parseRouteResourceScope("/notice/default/ops/primary")),
+      mockResourceDetailApis(
+        page,
+        "notice",
+        parseRouteResourceScope("/notice/default/ops/primary"),
+      ),
     title: "Notice resource inspection",
   },
   {
     path: "/rpc/default/ops/primary",
     shell: "app",
-    setup: (page) => mockResourceDetailApis(page, "rpc", parseRouteResourceScope("/rpc/default/ops/primary")),
+    setup: (page) =>
+      mockResourceDetailApis(page, "rpc", parseRouteResourceScope("/rpc/default/ops/primary")),
     title: "RPC resource inspection",
   },
   {
@@ -1106,7 +1116,11 @@ const sprint16Routes: RouteScenario[] = [
     path: "/stream/default/ops/primary",
     shell: "app",
     setup: (page) =>
-      mockResourceDetailApis(page, "stream", parseRouteResourceScope("/stream/default/ops/primary")),
+      mockResourceDetailApis(
+        page,
+        "stream",
+        parseRouteResourceScope("/stream/default/ops/primary"),
+      ),
     title: "Stream resource inspection",
   },
   {
@@ -1141,9 +1155,7 @@ test.describe("sprint 16 route matrix", () => {
 
           await page.screenshot({
             fullPage: true,
-            path: testInfo.outputPath(
-              `${normalizeRoute(route.path)}-${viewport.key}-${theme}.png`,
-            ),
+            path: testInfo.outputPath(`${normalizeRoute(route.path)}-${viewport.key}-${theme}.png`),
             animations: "disabled",
           });
         });
