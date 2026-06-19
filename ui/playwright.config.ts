@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 const configuredBaseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:5173";
 const shouldStartDevServer = !process.env.PLAYWRIGHT_BASE_URL;
 const isCI = Boolean(process.env.CI);
+const shouldOpenBrowser = process.env.PLAYWRIGHT_OPEN_BROWSER === "true";
 const baseURL = configuredBaseURL;
 
 export default defineConfig({
@@ -27,7 +28,9 @@ export default defineConfig({
   ...(shouldStartDevServer
     ? {
         webServer: {
-          command: "npm run dev -- --host 127.0.0.1 --open false",
+          command: shouldOpenBrowser
+            ? "npm run dev -- --host 127.0.0.1"
+            : "npm run dev -- --host 127.0.0.1 --open false",
           reuseExistingServer: !isCI,
           timeout: 120_000,
           url: baseURL,

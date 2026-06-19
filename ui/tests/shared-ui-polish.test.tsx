@@ -6,6 +6,7 @@ import { ThemeProvider } from "@askrjs/themes/theme";
 import AppLayout from "@/pages/app/_layout";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
+import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
 import { QueryEmptyState, QueryErrorState } from "@/components/shared/query-state";
 import { domainLinks } from "@/shared/navigation/domains";
@@ -160,6 +161,23 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelector("[data-slot='card']")).toBeNull();
     expect(root.textContent).toContain("No resources");
     expect(root.textContent).toContain("Network failed");
+    expect(root.querySelector('[role="alert"]')).toBeTruthy();
+  });
+
+  it("renders inventory failures as explicit error states", async () => {
+    const root = await mount(() => (
+      <main>
+        <DomainResourceBrowser
+          domain="queue"
+          inventory={null}
+          loading={false}
+          error={new Error("Inventory failed")}
+        />
+      </main>
+    ));
+
+    expect(root.textContent).toContain("Unable to load resources");
+    expect(root.textContent).toContain("Inventory failed");
     expect(root.querySelector('[role="alert"]')).toBeTruthy();
   });
 

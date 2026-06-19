@@ -177,6 +177,7 @@ export default function NoticePage() {
 
             <DomainResourceBrowser
               domain="notice"
+              error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
             />

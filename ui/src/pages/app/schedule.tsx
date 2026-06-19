@@ -237,6 +237,7 @@ export default function SchedulePage() {
 
             <DomainResourceBrowser
               domain="schedule"
+              error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
             />

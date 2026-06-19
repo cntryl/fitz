@@ -177,6 +177,7 @@ export default function KvPage() {
 
             <DomainResourceBrowser
               domain="kv"
+              error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
             />

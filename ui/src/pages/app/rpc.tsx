@@ -233,6 +233,7 @@ export default function RpcPage() {
 
             <DomainResourceBrowser
               domain="rpc"
+              error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
             />

@@ -64,6 +64,6 @@ const config = {
       reporter: ["text", "json", "html"],
     },
   },
-} as unknown as UserConfig;
+} satisfies UserConfig;
 
 export default defineConfig(config);

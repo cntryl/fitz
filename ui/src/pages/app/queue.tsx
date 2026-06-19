@@ -205,6 +205,7 @@ export default function QueuePage() {
 
             <DomainResourceBrowser
               domain="queue"
+              error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
             />

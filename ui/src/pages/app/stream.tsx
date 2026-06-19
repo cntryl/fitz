@@ -215,6 +215,7 @@ export default function StreamPage() {
 
             <DomainResourceBrowser
               domain="stream"
+              error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
             />

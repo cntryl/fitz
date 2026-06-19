@@ -235,6 +235,7 @@ export default function LeasePage() {
 
             <DomainResourceBrowser
               domain="lease"
+              error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
             />

@@ -38,7 +38,7 @@ export default function Layout({ children }: { children?: unknown }) {
   const routeKey = route.path || "/";
   const currentSession = createCurrentSessionQuery();
   const username = currentSession.data?.username ?? "admin";
-  const showUserBadge = currentSession.data?.authenticated !== false;
+  const showUserBadge = currentSession.data?.authenticated === true;
 
   function onLogout() {
     navigate("/logout");

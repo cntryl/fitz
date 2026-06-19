@@ -2,12 +2,13 @@ import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
-import { QueryEmptyState } from "./query-state";
+import { QueryEmptyState, QueryErrorState } from "./query-state";
 import type { DomainId, ResourceInventory } from "@/features/resource/resource-models";
 import type { QueueInventory } from "@/features/queue/queue-models";
 
 export interface DomainResourceBrowserProps {
   domain: DomainId | "queue";
+  error?: unknown;
   inventory?: (ResourceInventory | QueueInventory) | null;
   loading?: boolean;
 }
@@ -23,6 +24,7 @@ function resourceHref(
 
 export default function DomainResourceBrowser({
   domain,
+  error,
   inventory,
   loading = false,
 }: DomainResourceBrowserProps) {
@@ -45,7 +47,9 @@ export default function DomainResourceBrowser({
       </CardHeader>
 
       <CardContent>
-        {!loading && rows.length === 0 ? (
+        {error ? (
+          <QueryErrorState title="Unable to load resources" error={error} />
+        ) : !loading && rows.length === 0 ? (
           <QueryEmptyState description="No live resources are currently visible for this domain." />
         ) : (
           <div class="domain-table-wrap">
