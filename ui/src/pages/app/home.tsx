@@ -2,7 +2,6 @@ import { state } from "@askrjs/askr";
 import { timer } from "@askrjs/askr/resources";
 import { Stack } from "@askrjs/themes/layouts";
 import DomainHeader from "@/components/shared/domain-header";
-import DomainIndex from "@/components/shared/domain-index";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
@@ -13,7 +12,7 @@ import {
 } from "@/features/topology/topology-mappers";
 import type { TopologyTrendPoint } from "@/features/topology/topology-models";
 import { createMessagingTopologyQuery } from "@/features/topology/topology-query";
-import { domainLinks } from "@/shared/navigation/domains";
+import { formatRelativeTime } from "@/shared/format";
 
 export default function Home() {
   const session = createCurrentSessionQuery();
@@ -33,11 +32,19 @@ export default function Home() {
   });
 
   if (session.loading && !session.data) {
-    return <QueryLoadingState description="Loading admin dashboard..." />;
+    return (
+      <DomainPageFrame>
+        <QueryLoadingState description="Loading admin dashboard..." />
+      </DomainPageFrame>
+    );
   }
 
   if (session.error && !session.data) {
-    return <QueryErrorState error={session.error} />;
+    return (
+      <DomainPageFrame>
+        <QueryErrorState error={session.error} onRetry={() => session.refresh()} />
+      </DomainPageFrame>
+    );
   }
 
   const username = session.data?.username ?? "admin";
@@ -46,7 +53,7 @@ export default function Home() {
     ? "Refreshing"
     : topologyQuery.stale
       ? "Stale"
-      : "Last updated";
+      : "Live";
   const trendHistory = topology
     ? appendTopologyTrendPoint(trendHistoryValue, topology)
     : trendHistoryValue;
@@ -60,34 +67,44 @@ export default function Home() {
     <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
-          title="Fitz status"
+          eyebrow="Broker workspace"
+          title="Broker status"
           description={`Welcome, ${username}. Current broker behavior, messaging flow, and attention signals.`}
-          onRefresh={() => topologyQuery.refresh()}
+          primaryAction={{
+            label: "Refresh topology",
+            onPress: () => topologyQuery.refresh(),
+          }}
+          status={{
+            detail: topology
+              ? `Snapshot ${formatRelativeTime(topology.generatedAt)}`
+              : "Loading the live broker snapshot.",
+            label: refreshState,
+            tone: topologyQuery.refreshing
+              ? "info"
+              : topologyQuery.stale
+                ? "warning"
+                : topology
+                  ? "success"
+                  : "info",
+          }}
         />
 
         {!topology && topologyQuery.loading ? (
           <QueryLoadingState description="Loading messaging topology..." />
         ) : null}
 
-        {!topology && topologyQuery.error ? <QueryErrorState error={topologyQuery.error} /> : null}
+        {!topology && topologyQuery.error ? (
+          <QueryErrorState error={topologyQuery.error} onRetry={() => topologyQuery.refresh()} />
+        ) : null}
 
         {topology && selected ? (
-          <Stack gap="3">
-            <TopologyDashboard
-              history={trendHistory}
-              isRefreshing={topologyQuery.refreshing}
-              refreshState={refreshState}
-              selected={selected}
-              setSelectedId={setSelectedId}
-              topology={topology}
-            />
-
-            <DomainIndex
-              title="Domain workspaces"
-              description="Open a domain when you need a narrower view of resources and live counters."
-              links={domainLinks}
-            />
-          </Stack>
+          <TopologyDashboard
+            history={trendHistory}
+            refreshState={refreshState}
+            selected={selected}
+            setSelectedId={setSelectedId}
+            topology={topology}
+          />
         ) : null}
       </Stack>
     </DomainPageFrame>

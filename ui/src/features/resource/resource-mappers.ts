@@ -44,18 +44,37 @@ function metric(label: string, value: unknown, caption?: string): ResourceMetric
 function mapTimelineEvent(event: ResourceTimelineEventDto): ResourceTimelineEvent {
   return {
     ageSeconds: event.age_seconds ?? null,
+    attempts: event.attempts ?? null,
+    area: event.area,
     correlationId: event.correlation_id ?? null,
     kind: event.kind,
+    messageId: event.message_id ?? null,
     observedAt: event.observed_at,
+    operation: event.operation ?? null,
+    ownerSession: event.owner_session ?? null,
+    realm: event.realm,
+    resource: event.resource,
     summary: event.summary,
+    workerSession: event.worker_session ?? null,
   };
 }
 
 export function mapResourceTimeline(dto: ResourceTimelineDto): ResourceTimeline {
   return {
+    area: dto.area,
     derived: dto.derived,
     events: dto.events.map(mapTimelineEvent),
     limit: dto.limit,
+    realm: dto.realm,
+    resource: dto.resource,
+  };
+}
+
+function mapResourceComparisonScope(dtoScope: { area: string; realm: string; resource: string }) {
+  return {
+    area: dtoScope.area,
+    realm: dtoScope.realm,
+    resource: dtoScope.resource,
   };
 }
 
@@ -69,18 +88,36 @@ export function mapResourceComparison(dto: ResourceComparisonDto): ResourceCompa
     derived: dto.derived,
     metrics,
     summary: dto.summary,
+    leftScope: mapResourceComparisonScope(dto.left.scope),
+    rightScope: mapResourceComparisonScope(dto.right.scope),
   };
 }
 
-function metricsForDetail(domain: DomainId, detail: unknown): ResourceMetric[] {
+function countRowsByTitle(related: ResourceRelatedTable[], title: string): number | null {
+  const entry = related.find((table) => table.title === title);
+
+  return entry ? entry.rows.length : null;
+}
+
+function metricsForDetail(
+  domain: DomainId,
+  detail: unknown,
+  related: ResourceRelatedTable[] = [],
+): ResourceMetric[] {
   switch (domain) {
     case "kv": {
       const dto = detail as KvResourceDetail;
       return [
-        metric("Transactions active", dto.transactions_active),
-        metric("Severity", dto.diagnostics.severity),
-        metric("Trend", dto.diagnostics.trend),
-        metric("Contention", dto.diagnostics.contention_count),
+        metric(
+          "Active transactions (broker-local/session-scoped)",
+          dto.transactions_active,
+          "Live in-memory transactions only",
+        ),
+        metric("Diagnostic severity", dto.diagnostics.severity, "Live broker diagnostics"),
+        metric("Diagnostic trend", dto.diagnostics.trend, "Pressure trend"),
+        metric("Contention", dto.diagnostics.contention_count, "Session-scoped contention"),
+        metric("Recent transitions", dto.diagnostics.recent_transition_count, "Diagnostic recency"),
+        metric("Waiters", dto.diagnostics.waiter_count, "Live demand"),
       ];
     }
     case "stream": {
@@ -89,43 +126,64 @@ function metricsForDetail(domain: DomainId, detail: unknown): ResourceMetric[] {
         metric("Offset", dto.offset, "Durable stream metadata"),
         metric("Watermark", dto.watermark, "Durable stream metadata"),
         metric("Size bytes", dto.size_bytes, "Durable stream metadata"),
-        metric("Append sessions", dto.sessions_active, "Live broker snapshot"),
+        metric("Append sessions (live)", dto.sessions_active, "Live broker snapshot"),
+        metric("Diagnostic severity", dto.diagnostics.severity, "Live broker diagnostics"),
+        metric("Diagnostic trend", dto.diagnostics.trend, "Routing pressure"),
       ];
     }
     case "lease": {
       const dto = detail as LeaseResourceDetail;
       return [
-        metric("Active leases", dto.active_leases),
-        metric("Oldest lease age", `${dto.oldest_lease_age_seconds}s`),
-        metric("Severity", dto.diagnostics.severity),
-        metric("Waiters", dto.diagnostics.waiter_count),
+        metric("Active leases (ephemeral coordination)", dto.active_leases, "Live ownership state"),
+        metric("Waiters", dto.diagnostics.waiter_count, "Coordination demand"),
+        metric(
+          "Oldest lease age",
+          `${dto.oldest_lease_age_seconds}s`,
+          "How long the oldest lease has been held",
+        ),
+        metric("Diagnostic severity", dto.diagnostics.severity, "Live broker diagnostics"),
+        metric("Diagnostic trend", dto.diagnostics.trend, "Coordination pressure"),
+        metric("Recent transitions", dto.diagnostics.recent_transition_count, "Ownership churn"),
       ];
     }
     case "schedule": {
       const dto = detail as ScheduleResourceDetail;
       return [
-        metric("Enabled", dto.enabled),
+        metric("Enabled", dto.enabled, "Durable timing intent exists when enabled"),
         metric("Executions", dto.executions_total, "Current broker counter"),
-        metric("Next run", dto.next_run),
-        metric("Cron", dto.cron),
+        metric("Next run", dto.next_run ?? "unknown", "Next timing window"),
+        metric("Cron", dto.cron ?? "unset", "Schedule policy"),
+        metric("Diagnostic severity", dto.diagnostics.severity, "Live broker diagnostics"),
+        metric("Diagnostic trend", dto.diagnostics.trend, "Live pressure signal"),
       ];
     }
     case "notice": {
       const dto = detail as NoticeResourceDetail;
       return [
-        metric("Subscriptions", dto.subscriptions_active, "Live session-scoped fanout"),
-        metric("Severity", dto.diagnostics.severity),
-        metric("Trend", dto.diagnostics.trend),
-        metric("Transitions", dto.diagnostics.recent_transition_count),
+        metric(
+          "Active subscriptions (live session fanout)",
+          dto.subscriptions_active,
+          "Session-scoped ephemeral fanout",
+        ),
+        metric("Diagnostic severity", dto.diagnostics.severity, "Live broker diagnostics"),
+        metric("Diagnostic trend", dto.diagnostics.trend, "Transient pressure"),
+        metric("Transitions", dto.diagnostics.recent_transition_count, "Recent fanout churn"),
+        metric("Waiters", dto.diagnostics.waiter_count, "Subscriber demand"),
+        metric("Contention", dto.diagnostics.contention_count, "Session pressure"),
       ];
     }
     case "rpc": {
       const dto = detail as OperationCollection;
+      const workerCount = countRowsByTitle(related, "RPC workers") ?? 0;
+      const pendingCount = countRowsByTitle(related, "RPC pending requests") ?? 0;
+
       return [
-        metric("Operations", dto.operations.length),
-        metric("Realm", dto.realm),
-        metric("Area", dto.area),
-        metric("Resource", dto.resource),
+        metric("Registered operations", dto.operations.length, "Live operation scope"),
+        metric("Active workers (live)", workerCount, "Live request/response handlers"),
+        metric("Pending requests (live)", pendingCount, "In-memory, not durable"),
+        metric("Realm", dto.realm, "Scope context"),
+        metric("Area", dto.area, "Scope context"),
+        metric("Resource", dto.resource, "Scope context"),
       ];
     }
   }
@@ -202,7 +260,7 @@ export function mapResourceDetail(input: {
 }): ResourceDetail {
   return {
     comparison: input.comparison ? mapResourceComparison(input.comparison) : undefined,
-    detailMetrics: metricsForDetail(input.domain, input.detail),
+    detailMetrics: metricsForDetail(input.domain, input.detail, input.related),
     domain: input.domain,
     raw: input.raw,
     ref: input.ref,

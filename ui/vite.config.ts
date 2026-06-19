@@ -1,5 +1,6 @@
 import { askr } from "@askrjs/vite";
 import { defineConfig } from "vite-plus";
+import type { UserConfig } from "@voidzero-dev/vite-plus-core";
 
 function fileUrlPath(path: string) {
   return decodeURIComponent(new URL(path, import.meta.url).pathname).replace(
@@ -10,7 +11,7 @@ function fileUrlPath(path: string) {
 
 const srcDir = fileUrlPath("./src");
 
-export default defineConfig({
+const config = {
   fmt: {},
   lint: {
     ignorePatterns: ["dist/**", "coverage/**", "src/adapters/generated/**"],
@@ -57,9 +58,12 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    exclude: ["**/dist/**", "**/node_modules/**", "tests/e2e/**"],
     globals: true,
     coverage: {
       reporter: ["text", "json", "html"],
     },
   },
-});
+} as UserConfig;
+
+export default defineConfig(config);

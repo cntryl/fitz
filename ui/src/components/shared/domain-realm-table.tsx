@@ -16,7 +16,7 @@ export interface DomainRealmTableProps {
 
 export default function DomainRealmTable({ title, realms, emptyMessage }: DomainRealmTableProps) {
   return (
-    <Card class="domain-realm-card" padding="sm" variant="default">
+    <Card padding="sm" variant="default">
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         <p class="domain-muted">{realms.length} realms</p>
@@ -27,7 +27,7 @@ export default function DomainRealmTable({ title, realms, emptyMessage }: Domain
           <QueryEmptyState description={emptyMessage} />
         ) : (
           <div class="domain-table-wrap">
-            <Table class="domain-table">
+            <Table>
               <TableHead>
                 <TableRow>
                   <TableHeaderCell>Realm</TableHeaderCell>
@@ -38,8 +38,12 @@ export default function DomainRealmTable({ title, realms, emptyMessage }: Domain
                 <For each={realms} by={(realm) => realm.realm}>
                   {(realm) => (
                     <TableRow>
-                      <TableCell>{realm.realm}</TableCell>
-                      <TableCell>{realm.note ?? "Active"}</TableCell>
+                      <TableCell>
+                        <span class="domain-table-cell-truncate">{realm.realm}</span>
+                      </TableCell>
+                      <TableCell>
+                        <span class="domain-table-cell-truncate">{realm.note ?? "Active"}</span>
+                      </TableCell>
                     </TableRow>
                   )}
                 </For>

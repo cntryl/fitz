@@ -2,7 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   createQueueDeadLettersQuery,
   createQueueOverviewQuery,
+  createQueueInventoryQuery,
   QUEUE_OVERVIEW_KEY,
+  QUEUE_INVENTORY_KEY,
   queueDeadLettersQueryKey,
   queueDeadLettersQueryPrefix,
 } from "@/features/queue/queue-query";
@@ -93,6 +95,10 @@ describe("Data query layer", () => {
     expect(typeof createQueueDeadLettersQuery).toBe("function");
     expect(createQueueOverviewQuery).toBeDefined();
     expect(typeof createQueueOverviewQuery).toBe("function");
+    expect(createQueueInventoryQuery).toBeDefined();
+    expect(typeof createQueueInventoryQuery).toBe("function");
+    expect(QUEUE_INVENTORY_KEY).toEqual(expect.any(String));
+    expect(QUEUE_OVERVIEW_KEY).toEqual(expect.any(String));
     expect(createQueueResourceQuery).toBeDefined();
     expect(typeof createQueueResourceQuery).toBe("function");
     expect(createQueueResourceTimelineQuery).toBeDefined();
@@ -164,6 +170,8 @@ describe("Data query layer", () => {
     expect(typeof streamService.getOverview).toBe("function");
     expect(queueService.getOverview).toBeDefined();
     expect(typeof queueService.getOverview).toBe("function");
+    expect(queueService.listInventory).toBeDefined();
+    expect(typeof queueService.listInventory).toBe("function");
     expect(queueResourceService.getResource).toBeDefined();
     expect(typeof queueResourceService.getResource).toBe("function");
     expect(resourceService.getResourceInventory).toBeDefined();
@@ -379,8 +387,8 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
         messages_delayed: 10,
         messages_pending: 11,
         messages_ready: 12,
-        oldest_message_age_seconds: 13,
         oldest_backlog_age_seconds: 14,
+        oldest_message_age_seconds: 13,
         backlog_age_buckets: {
           under_1m: 1,
           under_5m: 2,
@@ -409,6 +417,7 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
       messagesDelayed: 10,
       messagesPending: 11,
       messagesReady: 12,
+      oldestBacklogAgeSeconds: 14,
       operationsPerSecond: 13.5,
     });
 
@@ -684,16 +693,20 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
         failure_total: 6,
         publishes_per_second: 1.25,
         routes_active: 2,
+        max_route_subscribers: 5,
         requests_total: 7,
         success_total: 8,
         subscriptions_active: 9,
         unsubscribes_total: 10,
-        max_route_subscribers: 5,
         wildcard_limit_rejects_total: 10,
       }),
     ).toEqual({
       publishesPerSecond: 1.25,
+      deliveryDropsTotal: 4,
+      routesActive: 2,
+      wildcardLimitRejectsTotal: 10,
       subscriptionsActive: 9,
+      maxRouteSubscribers: 5,
     });
 
     expect(
@@ -729,10 +742,13 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
       invalidSequenceErrorsDroppedTotal: 18,
       invalidSequenceErrorsForwardedTotal: 17,
       invalidSequenceResponsesTotal: 16,
+      failureTotal: 6,
       operationsPerSecond: 5.5,
+      pendingRoutesActive: 12,
       requestsPending: 6,
       responsesDroppedClosedCallerTotal: 11,
       responsesMissingPendingTotal: 12,
+      requestTimeoutsTotal: 7,
       workersRegistered: 7,
     });
 

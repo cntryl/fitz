@@ -63,6 +63,7 @@ vi.mock("@/features/metrics/metrics-query", () => ({
 vi.mock("@/features/queue/queue-query", () => ({
   createQueueDeadLettersQuery: () => mocks.queryStates.queueDeadLetters,
   createQueueOverviewQuery: () => mocks.queryStates.queue,
+  createQueueInventoryQuery: () => mocks.queryStates.queueInventory,
 }));
 
 vi.mock("@/features/queue/queue-resource-query", () => ({
@@ -130,8 +131,24 @@ const queueOverview = {
     messagesDelayed: 1,
     messagesPending: 3,
     messagesReady: 4,
+    oldestBacklogAgeSeconds: 17,
     operationsPerSecond: 1.25,
   },
+};
+
+const queueInventory = {
+  domain: "queue",
+  realms: [
+    {
+      realm: "default",
+      areas: [
+        {
+          area: "ops",
+          resources: ["primary"],
+        },
+      ],
+    },
+  ],
 };
 
 const kvOverview = {
@@ -163,7 +180,11 @@ const noticeOverview = {
   realms: [realm],
   stats: {
     publishesPerSecond: 0.75,
+    deliveryDropsTotal: 0,
+    routesActive: 0,
+    wildcardLimitRejectsTotal: 0,
     subscriptionsActive: 7,
+    maxRouteSubscribers: 0,
   },
 };
 
@@ -174,7 +195,9 @@ const rpcOverview = {
     invalidSequenceErrorsForwardedTotal: 0,
     invalidSequenceResponsesTotal: 0,
     operationsPerSecond: 2,
+    pendingRoutesActive: 1,
     requestsPending: 1,
+    requestTimeoutsTotal: 0,
     responsesDroppedClosedCallerTotal: 0,
     responsesMissingPendingTotal: 0,
     workersRegistered: 4,
@@ -213,6 +236,83 @@ const streamOverview = {
   },
 };
 
+const domainOverviews = [
+  {
+    assertText: "KV overview",
+    queryKey: "kv",
+    module: () => import("@/pages/app/kv"),
+    path: "/kv",
+    routePath: "/kv",
+    emptyText: "No KV realms are currently visible.",
+    errorText: "KV overview unavailable",
+    loadingText: "Loading KV overview",
+  },
+  {
+    assertText: "Lease overview",
+    queryKey: "lease",
+    module: () => import("@/pages/app/lease"),
+    path: "/lease",
+    routePath: "/lease",
+    errorTitle: "Lease overview loading failure",
+    emptyText: "No lease realms are currently visible.",
+    errorText: "Lease overview loading failure",
+    loadingText: "Loading lease overview snapshot...",
+  },
+  {
+    assertText: "Notice overview",
+    queryKey: "notice",
+    module: () => import("@/pages/app/notice"),
+    path: "/notice",
+    routePath: "/notice",
+    errorTitle: "Notice overview loading failure",
+    emptyText: "No notice realms are currently visible.",
+    errorText: "Notice overview loading failure",
+    loadingText: "Loading notice overview snapshot...",
+  },
+  {
+    assertText: "RPC overview",
+    queryKey: "rpc",
+    module: () => import("@/pages/app/rpc"),
+    path: "/rpc",
+    routePath: "/rpc",
+    emptyText: "No RPC realms are currently visible.",
+    errorTitle: "RPC overview loading failure",
+    errorText: "RPC overview loading failure",
+    loadingText: "Loading RPC overview snapshot...",
+  },
+  {
+    assertText: "Schedule overview",
+    queryKey: "schedule",
+    module: () => import("@/pages/app/schedule"),
+    path: "/schedule",
+    routePath: "/schedule",
+    emptyText: "No schedule realms are currently visible.",
+    errorTitle: "Schedule overview loading failure",
+    errorText: "Schedule overview loading failure",
+    loadingText: "Loading schedule overview snapshot...",
+  },
+  {
+    assertText: "Stream overview",
+    queryKey: "stream",
+    module: () => import("@/pages/app/stream"),
+    path: "/stream",
+    routePath: "/stream",
+    emptyText: "No stream realms are currently visible.",
+    errorText: "Stream overview unavailable",
+    loadingText: "Loading stream overview",
+  },
+  {
+    assertText: "Queue overview",
+    queryKey: "queue",
+    module: () => import("@/pages/app/queue"),
+    path: "/queue",
+    routePath: "/queue",
+    emptyText: "No queue realms are currently visible.",
+    errorText: "Queue overview unavailable",
+    loadingText: "Loading queue overview",
+  },
+];
+
 const systemOverview = {
   broker: {
     connections: 2,
@@ -240,6 +340,7 @@ const systemOverview = {
       acksRejectedWrongWorkerTotal: 0,
       backpressureRejectsTotal: 0,
       duplicateCorrelationRejectsTotal: 0,
+      pendingRoutesActive: 1,
       failureTotal: 0,
       requestTimeoutsTotal: 0,
       requestsTotal: 1,
@@ -271,6 +372,18 @@ const systemOverview = {
   },
 };
 
+const emptyTopology = {
+  ...topologyOverview,
+  connections: {
+    ...topologyOverview.connections,
+    items: [],
+    total: 0,
+    truncated: false,
+  },
+  lanes: [],
+  sessionGroups: [],
+};
+
 const metricsOverview = {
   families: [
     {
@@ -279,8 +392,20 @@ const metricsOverview = {
       samples: [{ labels: {}, name: "fitz_broker_up", value: 1 }],
       type: "gauge",
     },
+    {
+      help: "Queue depth",
+      name: "fitz_queue_depth_current",
+      samples: [{ labels: { area: "primary" }, name: "fitz_queue_depth_current", value: 4 }],
+      type: "gauge",
+    },
+    {
+      help: "RPC request latency sum",
+      name: "fitz_rpc_latency_histogram_sum",
+      samples: [{ labels: { route: "all" }, name: "fitz_rpc_latency_histogram_sum", value: 12.5 }],
+      type: "gauge",
+    },
   ],
-  raw: "fitz_broker_up 1",
+  raw: "fitz_broker_up 1\nfitz_queue_depth_current 4\nfitz_rpc_latency_histogram_sum 12.5",
 };
 
 const activeSessions = {
@@ -298,6 +423,20 @@ const activeSessions = {
       sessionId: "session-1",
       subject: "user:1",
       transport: "ws",
+    },
+    {
+      connectedAt: "2026-05-21T13:01:00Z",
+      idleSeconds: 45,
+      identityClaim: "tenant",
+      identityValue: "ops",
+      key: "session-2",
+      messagesReceived: 4,
+      messagesSent: 8,
+      remoteAddress: "2001:db8::1ff:fe23:4567:890a",
+      routeFamily: 2,
+      sessionId: "session-long-id-2",
+      subject: "user:2",
+      transport: "http",
     },
   ],
 };
@@ -395,7 +534,73 @@ const resourceDetail = {
   timeline: {
     derived: false,
     events: [],
+    limit: 10,
+    area: "ops",
+    realm: "default",
+    resource: "primary",
   },
+};
+
+const genericResourceRoutes = [
+  {
+    assertText: "KV resource inspection",
+    domain: "kv",
+    path: "/kv/default/ops/primary",
+    routePath: "/kv/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/resource-detail"),
+  },
+  {
+    assertText: "Lease resource inspection",
+    domain: "lease",
+    path: "/lease/default/ops/primary",
+    routePath: "/lease/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/resource-detail"),
+  },
+  {
+    assertText: "Notice resource inspection",
+    domain: "notice",
+    path: "/notice/default/ops/primary",
+    routePath: "/notice/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/resource-detail"),
+  },
+  {
+    assertText: "RPC resource inspection",
+    domain: "rpc",
+    path: "/rpc/default/ops/primary",
+    routePath: "/rpc/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/resource-detail"),
+  },
+  {
+    assertText: "Schedule resource inspection",
+    domain: "schedule",
+    path: "/schedule/default/ops/primary",
+    routePath: "/schedule/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/resource-detail"),
+  },
+  {
+    assertText: "Stream resource inspection",
+    domain: "stream",
+    path: "/stream/default/ops/primary",
+    routePath: "/stream/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/resource-detail"),
+  },
+];
+
+type DomainOverviewFixture = {
+  realms: Array<{ realm: string }>;
+  stats: {
+    [key: string]: number | { [key: string]: number };
+  };
+};
+
+const domainOverviewDataByKey: Record<string, DomainOverviewFixture> = {
+  kv: kvOverview,
+  lease: leaseOverview,
+  notice: noticeOverview,
+  rpc: rpcOverview,
+  schedule: scheduleOverview,
+  stream: streamOverview,
+  queue: queueOverview,
 };
 
 function resetQueries() {
@@ -406,6 +611,7 @@ function resetQueries() {
   mocks.queryStates.metrics = queryState.fresh(metricsOverview, queryOptions());
   mocks.queryStates.queue = queryState.fresh(queueOverview, queryOptions());
   mocks.queryStates.queueDeadLetters = queryState.fresh([], queryOptions());
+  mocks.queryStates.queueInventory = queryState.fresh(queueInventory, queryOptions());
   mocks.queryStates.queueResource = queryState.fresh(queueResource, queryOptions());
   mocks.queryStates.queueTimeline = queryState.fresh(queueResource.timeline, queryOptions());
   mocks.queryStates.queueComparison = queryState.fresh(queueComparison, queryOptions());
@@ -455,7 +661,7 @@ describe("admin page smoke tests", () => {
   it("mounts every authenticated route with success data", async () => {
     const pages = [
       {
-        assertText: "Fitz status",
+        assertText: "Broker status",
         module: () => import("@/pages/app/home"),
         path: "/",
         routePath: "/",
@@ -469,8 +675,8 @@ describe("admin page smoke tests", () => {
       {
         assertText: "Metrics explorer",
         module: () => import("@/pages/app/metrics"),
-        path: "/metrics",
-        routePath: "/metrics",
+        path: "/admin/metrics",
+        routePath: "/admin/metrics",
       },
       {
         assertText: "Queue overview",
@@ -479,7 +685,7 @@ describe("admin page smoke tests", () => {
         routePath: "/queue",
       },
       {
-        assertText: "Resource drill-down",
+        assertText: "Queue resource inspection",
         module: () => import("@/pages/app/queue-resource"),
         path: "/queue/default/ops/primary",
         routePath: "/queue/{realm}/{area}/{resource}",
@@ -520,13 +726,19 @@ describe("admin page smoke tests", () => {
         path: "/stream",
         routePath: "/stream",
       },
-      {
-        assertText: "primary",
-        module: () => import("@/pages/app/resource-detail"),
-        path: "/kv/default/ops/primary",
-        routePath: "/kv/{realm}/{area}/{resource}",
-      },
     ];
+
+    for (const page of genericResourceRoutes) {
+      const { default: Component } = await page.module();
+      const root = await mountRoute(page.path, page.routePath, Component);
+
+      expect(root.textContent).toContain(page.assertText);
+      expect(root.textContent).toContain(`Scope: default / ops / primary`);
+      expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
 
     for (const page of pages) {
       const { default: Component } = await page.module();
@@ -535,11 +747,374 @@ describe("admin page smoke tests", () => {
       expect(root.textContent).toContain(page.assertText);
       expect(root.textContent?.trim().length).toBeGreaterThan(0);
       expect(root.querySelector('[data-slot="shell"]')).toBeNull();
+      expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
 
       cleanupApp(root);
       document.body.innerHTML = "";
     }
   }, 15000);
+
+  it("renders all domain overviews with the shared frame contract", async () => {
+    for (const page of domainOverviews) {
+      const { default: Component } = await page.module();
+
+      const root = await mountRoute(page.path, page.routePath, Component);
+      const text = root.textContent ?? "";
+
+      expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
+      expect(text).toContain(page.assertText);
+      expect(text).toContain("Refresh");
+      expect(text).toContain("Live");
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
+  });
+
+  it("covers generic detail route loading and error states", async () => {
+    for (const page of genericResourceRoutes) {
+      mocks.queryStates.resource = queryState.loading(queryOptions());
+
+      const { default: Component } = await page.module();
+      const root = await mountRoute(page.path, page.routePath, Component);
+
+      expect(root.textContent).toContain(`Loading ${page.domain.toUpperCase()} resource...`);
+      expect(root.textContent).toContain(`Scope: default / ops / primary`);
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+
+      const loadError = `${page.domain} unavailable`;
+      mocks.queryStates.resource = queryState.error(
+        new Error(loadError),
+        undefined,
+        queryOptions(),
+      );
+
+      const errorRoot = await mountRoute(page.path, page.routePath, Component);
+
+      expect(errorRoot.textContent).toContain(loadError);
+      expect(errorRoot.textContent).toContain("Unable to load");
+
+      cleanupApp(errorRoot);
+      document.body.innerHTML = "";
+    }
+
+    mocks.queryStates.resource = queryState.fresh(resourceDetail, queryOptions());
+  });
+
+  it("renders domain overview loading states consistently", async () => {
+    for (const page of domainOverviews) {
+      mocks.queryStates[page.queryKey] = queryState.loading(queryOptions());
+
+      const { default: Component } = await page.module();
+      const root = await mountRoute(page.path, page.routePath, Component);
+
+      expect(root.textContent).toContain(page.loadingText);
+      expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
+  });
+
+  it("renders domain overview error states with page-specific framing", async () => {
+    for (const page of domainOverviews) {
+      mocks.queryStates[page.queryKey] = queryState.error(
+        new Error(page.errorText),
+        undefined,
+        queryOptions(),
+      );
+
+      const { default: Component } = await page.module();
+      const root = await mountRoute(page.path, page.routePath, Component);
+
+      expect(root.textContent).toContain(page.errorTitle ?? "Unable to load");
+      expect(root.textContent).toContain(page.errorText);
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
+  });
+
+  it("renders lease risk and ownership-pressure priority metrics", async () => {
+    mocks.queryStates.lease = queryState.fresh(
+      {
+        ...leaseOverview,
+        stats: {
+          ...leaseOverview.stats,
+          acquireTimeoutsTotal: 2,
+          forcedReleasesTotal: 1,
+          invalidTokenRejectsTotal: 3,
+          waiterDepth: 4,
+          oldestLeaseAgeSeconds: 3700,
+          leasesActive: 12,
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: LeasePage } = await import("@/pages/app/lease");
+    const root = await mountRoute("/lease", "/lease", LeasePage);
+    const text = root.textContent ?? "";
+    const labels = [
+      "Active leases",
+      "Waiters",
+      "Oldest lease age",
+      "Ownership pressure",
+      "Acquire timeouts",
+      "Forced releases",
+      "Token rejects",
+    ];
+
+    let cursor = -1;
+    for (const label of labels) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    expect(text).toContain("1h");
+    expect(text).toContain("Attention");
+    expect(text).toContain("acquire timeout");
+  });
+
+  it("renders kv state and transactional-pressure priority metrics", async () => {
+    mocks.queryStates.kv = queryState.fresh(
+      {
+        ...kvOverview,
+        stats: {
+          ...kvOverview.stats,
+          keysTotal: 180,
+          transactionsActive: 4,
+          operationsPerSecond: 4.25,
+          commitsFailedTotal: 2,
+          rollbacksTotal: 1,
+          invalidTransactionRejectsTotal: 3,
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: KvPage } = await import("@/pages/app/kv");
+    const root = await mountRoute("/kv", "/kv", KvPage);
+    const text = root.textContent ?? "";
+    const labels = [
+      "Keys total",
+      "Active transactions",
+      "Ops / sec",
+      "Commit failures",
+      "Rollbacks",
+      "Invalid transaction rejects",
+    ];
+
+    let cursor = -1;
+    for (const label of labels) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    expect(text).toContain("2");
+    expect(text).toContain("3");
+    expect(text).toContain("Active transactions");
+    expect(text).toContain("Attention");
+    expect(text).toContain("authoritative");
+    expect(text).toContain("broker-local");
+  });
+
+  it("renders domain overviews with empty realm tables", async () => {
+    for (const page of domainOverviews) {
+      const baseOverview = domainOverviewDataByKey[page.queryKey];
+      if (!baseOverview) {
+        continue;
+      }
+
+      mocks.queryStates[page.queryKey] = queryState.fresh(
+        {
+          ...baseOverview,
+          realms: [],
+        },
+        queryOptions(),
+      );
+
+      const { default: Component } = await page.module();
+      const root = await mountRoute(page.path, page.routePath, Component);
+
+      expect(root.textContent).toContain(page.emptyText);
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
+  });
+
+  it("renders notice risk and fanout-priority metrics", async () => {
+    mocks.queryStates.notice = queryState.fresh(
+      {
+        ...noticeOverview,
+        stats: {
+          ...noticeOverview.stats,
+          subscriptionsActive: 14,
+          publishesPerSecond: 18.5,
+          deliveryDropsTotal: 2,
+          wildcardLimitRejectsTotal: 1,
+          routesActive: 4,
+          maxRouteSubscribers: 9,
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: NoticePage } = await import("@/pages/app/notice");
+    const root = await mountRoute("/notice", "/notice", NoticePage);
+    const text = root.textContent ?? "";
+    const labels = [
+      "Active subscriptions",
+      "Publish rate",
+      "Delivery drops",
+      "Wildcard limit rejects",
+    ];
+
+    let cursor = -1;
+    for (const label of labels) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    expect(text).toContain("2");
+    expect(text).toContain("1");
+    expect(text).toContain("Attention");
+    expect(text).toContain("live fanout");
+  });
+
+  it("renders schedule pressure-first health and failure metrics", async () => {
+    mocks.queryStates.schedule = queryState.fresh(
+      {
+        ...scheduleOverview,
+        stats: {
+          ...scheduleOverview.stats,
+          pendingFireClaims: 7,
+          ackFailuresTotal: 2,
+          notifyFailuresTotal: 1,
+          createPersistenceFailuresTotal: 3,
+          upsertPersistenceFailuresTotal: 1,
+          cancelPersistenceFailuresTotal: 0,
+          subscriptionsActive: 9,
+          schedulesActive: 11,
+          executionsPerMinute: 8.25,
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: SchedulePage } = await import("@/pages/app/schedule");
+    const root = await mountRoute("/schedule", "/schedule", SchedulePage);
+    const text = root.textContent ?? "";
+    const labels = [
+      "Active schedules",
+      "Pending fire claims",
+      "Executions / min",
+      "Ack failures",
+      "Notify failures",
+      "Create persistence failures",
+      "Upsert persistence failures",
+    ];
+
+    let cursor = -1;
+    for (const label of labels) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    expect(text).toContain("Attention");
+    expect(text).toContain("Timing intent is durable");
+    expect(text).toContain("pending fire claim(s)");
+  });
+
+  it("renders stream replay-priority metrics and readable lag buckets", async () => {
+    mocks.queryStates.stream = queryState.fresh(
+      {
+        ...streamOverview,
+        stats: {
+          ...streamOverview.stats,
+          eventsTotal: 4200,
+          streamsActive: 7,
+          subscriptionsActive: 5,
+          watermarkLagBuckets: {
+            caughtUp: 6,
+            over100: 2,
+            under10: 1,
+            under100: 3,
+          },
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: StreamPage } = await import("@/pages/app/stream");
+    const root = await mountRoute("/stream", "/stream", StreamPage);
+    const text = root.textContent ?? "";
+    const labels = [
+      "Events total",
+      "Active streams",
+      "Active subscriptions",
+      "Watermark lag",
+      "Ops / sec",
+    ];
+
+    let cursor = -1;
+    for (const label of labels) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    expect(text).toContain("behind 100+");
+    expect(text).toContain("Attention");
+    expect(text).toContain("Durable stream history");
+    expect(text).toContain("live subscriptions");
+  });
+
+  it("renders rpc pressure-first health and risk signals", async () => {
+    mocks.queryStates.rpc = queryState.fresh(
+      {
+        ...rpcOverview,
+        stats: {
+          ...rpcOverview.stats,
+          requestsPending: 6,
+          workersRegistered: 2,
+          pendingRoutesActive: 3,
+          requestTimeoutsTotal: 2,
+          failureTotal: 1,
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: RpcPage } = await import("@/pages/app/rpc");
+    const root = await mountRoute("/rpc", "/rpc", RpcPage);
+    const text = root.textContent ?? "";
+    const labels = [
+      "Requests pending",
+      "Workers registered",
+      "Pending routes active",
+      "Ops / sec",
+      "Request timeouts",
+      "Failure responses",
+    ];
+
+    let cursor = -1;
+    for (const label of labels) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    expect(text).toContain("Attention");
+    expect(text).toContain("Response reliability");
+  });
 
   it("renders the status-first dashboard sections", async () => {
     const { default: Home } = await import("@/pages/app/home");
@@ -551,20 +1126,18 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Healthy");
     expect(text).toContain("Messaging flow");
     expect(text).toContain("Connected sessions");
+    expect(text).toContain("Next: Check queue");
     expect(text).toContain("Fitz broker");
     expect(text).toContain("Consumers and observers");
     expect(text).toContain("Top scoped resources");
     expect(text).toContain("Visible connections");
+    expect(text).toContain("Domain signals");
+    expect(text).toContain("Open page");
     expect(text).toContain("Flow inspector");
-    expect(text).toContain("Work backlog");
-    expect(text).toContain("Live paths");
-    expect(text).toContain("Durable state/history");
+    expect(text).toContain("Durable work delivery");
+    expect(text).toContain("Connected sessions");
+    expect(text).toContain("Current broker behavior");
     expect(text).toContain("Attention");
-    expect(text).toContain("Domain workspaces");
-    expect(text).toContain("Open scope");
-
-    const scopeLink = root.querySelector('a[href="/queue/default/ops/primary"]');
-    expect(scopeLink).toBeTruthy();
   });
 
   it("keeps dashboard behavior visible while refresh is in flight", async () => {
@@ -575,12 +1148,161 @@ describe("admin page smoke tests", () => {
     const root = await mountRoute("/", "/", Home);
     const text = root.textContent ?? "";
 
-    expect(text).toContain("Refreshing messaging topology");
-    expect(text).toContain("Work backlog");
+    expect(text).toContain("Refreshing");
+    expect(text).toContain("Domain signals");
+    expect(text).toContain("Open page");
+    expect(text).toContain("Durable work delivery");
     expect(text).toContain("Queue");
   });
 
-  it("mounts representative loading, error, and empty states", async () => {
+  it("renders the empty dashboard state when no lanes are visible", async () => {
+    const { default: Home } = await import("@/pages/app/home");
+
+    mocks.queryStates.topology = queryState.fresh(emptyTopology, queryOptions());
+
+    const root = await mountRoute("/", "/", Home);
+    const text = root.textContent ?? "";
+
+    expect(text).toContain("Broker status");
+    expect(text).toContain("No domain lanes are visible yet");
+    expect(text).toContain("Domain workspaces");
+    expect(text).toContain(
+      "Open a domain when you need a narrower view of resources and live counters.",
+    );
+  });
+
+  it("renders a metrics posture summary and empty search state", async () => {
+    const { default: MetricsPage } = await import("@/pages/app/metrics");
+
+    const root = await mountRoute("/admin/metrics", "/admin/metrics", MetricsPage);
+
+    expect(root.textContent).toContain("Live state");
+    expect(root.textContent).toContain("Broker snapshot");
+    expect(root.textContent).toContain("Quiet");
+    expect(root.textContent).toContain("No backlog, contention, or failure pressure detected");
+    expect(root.textContent).toContain("Metric samples");
+    expect(root.textContent).toContain("Showing 3 of 3 samples");
+
+    const filter = root.querySelector(
+      'input[aria-label="Filter metrics"]',
+    ) as HTMLInputElement | null;
+    expect(filter).toBeTruthy();
+
+    if (filter) {
+      const queueShortcut = Array.from(root.querySelectorAll("button")).find((button) =>
+        button.textContent?.startsWith("Queue "),
+      ) as HTMLButtonElement | undefined;
+
+      expect(queueShortcut).toBeTruthy();
+      queueShortcut?.click();
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
+      expect(root.textContent).toContain("Showing 1 of 3 samples");
+
+      const clearShortcut = Array.from(root.querySelectorAll("button")).find(
+        (button) => button.textContent === "Clear filters",
+      ) as HTMLButtonElement | undefined;
+
+      expect(clearShortcut).toBeTruthy();
+      clearShortcut?.click();
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
+      expect(root.textContent).toContain("Showing 3 of 3 samples");
+    }
+  });
+
+  it("renders metrics loading and error states", async () => {
+    const { default: MetricsPage } = await import("@/pages/app/metrics");
+
+    mocks.queryStates.metrics = queryState.loading(queryOptions());
+    let root = await mountRoute("/admin/metrics", "/admin/metrics", MetricsPage);
+    expect(root.textContent).toContain("Loading metrics snapshot");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.metrics = queryState.error(
+      new Error("metrics endpoint unavailable"),
+      undefined,
+      queryOptions(),
+    );
+    root = await mountRoute("/admin/metrics", "/admin/metrics", MetricsPage);
+    expect(root.textContent).toContain("Unable to load metrics snapshot");
+    expect(root.textContent).toContain("metrics endpoint unavailable");
+  });
+
+  it("renders a sessions posture summary and empty state", async () => {
+    const { default: SessionsPage } = await import("@/pages/app/sessions");
+
+    let root = await mountRoute("/sessions", "/sessions", SessionsPage);
+
+    expect(root.textContent).toContain("Session summary");
+    expect(root.textContent).toContain("Healthy");
+    expect(root.textContent).toContain("Sessions");
+    expect(root.textContent).toContain("Route families");
+    expect(root.textContent).toContain("Transports");
+    expect(root.textContent).toContain("Idle risk");
+    expect(root.textContent).toContain("session-1");
+    expect(root.textContent).toContain("2001:db8::1ff:fe23:4567:890a");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.activeSessions = queryState.fresh({ sessions: [] }, queryOptions());
+    root = await mountRoute("/sessions", "/sessions", SessionsPage);
+
+    expect(root.textContent).toContain("No active sessions");
+    expect(root.textContent).toContain("No live broker or admin sessions are currently connected");
+  });
+
+  it("renders sessions loading and error states", async () => {
+    const { default: SessionsPage } = await import("@/pages/app/sessions");
+
+    mocks.queryStates.activeSessions = queryState.loading(queryOptions());
+    let root = await mountRoute("/sessions", "/sessions", SessionsPage);
+    expect(root.textContent).toContain("Loading active sessions");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.activeSessions = queryState.error(
+      new Error("session endpoint unavailable"),
+      undefined,
+      queryOptions(),
+    );
+    root = await mountRoute("/sessions", "/sessions", SessionsPage);
+    expect(root.textContent).toContain("Unable to load active sessions");
+    expect(root.textContent).toContain("session endpoint unavailable");
+  });
+
+  it("mounts the dashboard loading and error states", async () => {
+    const { default: Home } = await import("@/pages/app/home");
+    mocks.queryStates.currentSession = queryState.loading(queryOptions());
+
+    let root = await mountRoute("/", "/", Home);
+    expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
+    expect(root.textContent).toContain("Loading admin dashboard");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.currentSession = queryState.error(
+      new Error("Session lookup failed"),
+      undefined,
+      queryOptions(),
+    );
+
+    root = await mountRoute("/", "/", Home);
+    expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
+    expect(root.textContent).toContain("Session lookup failed");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+  });
+
+  it("mounts queue loading, error, and empty states", async () => {
+    mocks.queryStates.currentSession = queryState.fresh({ username: "admin" }, queryOptions());
+
     const { default: QueuePage } = await import("@/pages/app/queue");
 
     mocks.queryStates.queue = queryState.loading(queryOptions());
@@ -619,7 +1341,8 @@ describe("admin page smoke tests", () => {
 
     const root = await mountRoute("/queue", "/queue", QueuePage);
 
-    expect(root.textContent).toContain("Refreshing queue overview");
+    expect(root.textContent).toContain("Refreshing");
+    expect(root.textContent).toContain("Scope summary");
     expect(root.textContent).toContain("Queue metrics");
   });
 
@@ -631,6 +1354,10 @@ describe("admin page smoke tests", () => {
       QueueResourcePage,
     );
 
+    expect(root.textContent).toContain("Comparison summary");
+    expect(root.textContent).toContain("Current scope");
+    expect(root.textContent).toContain("Target scope");
+    expect(root.textContent).toContain("Difference");
     expect(root.textContent).toContain("Snapshots match");
 
     cleanupApp(root);
@@ -640,7 +1367,19 @@ describe("admin page smoke tests", () => {
       {
         ...resourceDetail,
         comparison: {
+          comparisonMode: "resource",
+          derived: false,
           metrics: [{ label: "Delta", value: 0 }],
+          leftScope: {
+            area: "ops",
+            realm: "default",
+            resource: "primary",
+          },
+          rightScope: {
+            area: "ops",
+            realm: "default",
+            resource: "secondary",
+          },
           summary: "No material difference",
         },
       },
@@ -654,7 +1393,9 @@ describe("admin page smoke tests", () => {
       ResourceDetailPage,
     );
 
-    expect(root.textContent).toContain("Compare: No material difference");
+    expect(root.textContent).toContain("Comparison summary");
+    expect(root.textContent).toContain("Matched");
+    expect(root.textContent).toContain("No material difference");
   });
 
   it("opens an accessible queue dead-letter confirmation dialog", async () => {
@@ -710,5 +1451,37 @@ describe("admin page smoke tests", () => {
     root = await mountRoute("/login", "/login", Login);
 
     expect(root.textContent).toContain("Bad credentials");
+  });
+
+  it("uses mutation-owned logout pending, success, and error states", async () => {
+    const { default: Logout } = await import("@/pages/auth/logout");
+
+    mocks.mutation.execute.mockImplementationOnce(() => new Promise<void>(() => {}));
+
+    let root = await mountRoute("/logout", "/logout", Logout);
+
+    expect(root.textContent).toContain("Signing out");
+    expect(root.textContent).toContain("Clearing your session.");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.mutation.execute.mockResolvedValueOnce(undefined);
+    root = await mountRoute("/logout", "/logout", Logout);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(root.textContent).toContain("Signed out");
+    expect(root.textContent).toContain("Go to sign in");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.mutation.execute.mockRejectedValueOnce(new Error("Logout failed"));
+    root = await mountRoute("/logout", "/logout", Logout);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(root.textContent).toContain("Sign out failed");
+    expect(root.textContent).toContain("Logout failed");
+    expect(root.textContent).toContain("Try again");
   });
 });

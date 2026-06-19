@@ -1,4 +1,4 @@
-import { Container, Stack } from "@askrjs/themes/layouts";
+import { Container, Flex, Stack } from "@askrjs/themes/layouts";
 
 export interface DomainPageFrameProps {
   children?: unknown;
@@ -9,17 +9,14 @@ export default function DomainPageFrame({ children, sidebar }: DomainPageFramePr
   const hasSidebar = sidebar !== undefined && sidebar !== null;
 
   return (
-    <Container class="page-frame" fluid padding="4">
-      <div
-        class={
-          hasSidebar ? "page-frame-layout page-frame-layout-with-sidebar" : "page-frame-layout"
-        }
-      >
-        {hasSidebar ? <aside class="page-frame-sidebar">{sidebar}</aside> : null}
-        <main class="page-frame-main">
+    <Container class="domain-page-frame" size="xl">
+      <Flex direction={{ initial: "column", md: "row" }} gap="4" align="start" wrap="nowrap">
+        <main id="main-content" class="page-frame-main" tabIndex={-1}>
           <Stack gap="4">{children}</Stack>
         </main>
-      </div>
+
+        {hasSidebar ? <aside class="page-frame-sidebar">{sidebar}</aside> : null}
+      </Flex>
     </Container>
   );
 }

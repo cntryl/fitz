@@ -33,6 +33,7 @@ export function mapQueueStats(dto: QueueStats): QueueStatsSummary {
     messagesDelayed: dto.messages_delayed,
     messagesPending: dto.messages_pending,
     messagesReady: dto.messages_ready,
+    oldestBacklogAgeSeconds: dto.oldest_backlog_age_seconds,
     operationsPerSecond: dto.operations_per_second,
   };
 }

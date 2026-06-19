@@ -144,7 +144,7 @@ describe("Admin UI", () => {
         "/logout",
         "/login",
         "/sessions",
-        "/metrics",
+        "/admin/metrics",
         "/queue",
         "/queue/{realm}/{area}/{resource}",
         "/kv",

@@ -18,7 +18,7 @@ export function registerAppRoutes() {
     route("/", Home);
     route("/admin", Home);
     route("/sessions", SessionsPage);
-    route("/metrics", MetricsPage);
+    route("/admin/metrics", MetricsPage);
     route("/queue", QueuePage);
     route("/queue/{realm}/{area}/{resource}", QueueResourcePage);
     route("/kv", KvPage);

@@ -4,11 +4,39 @@ import { mapQueueDeadLetter, mapQueueOverview } from "./queue-mappers";
 import type {
   DeadLetterFilters,
   DeadLetterMessage,
+  QueueInventory,
   QueueOverview,
   QueueResourceRef,
 } from "./queue-models";
 
 export type { DeadLetterFilters, DeadLetterMessage, QueueResourceRef } from "./queue-models";
+
+const INVENTORY_CONCURRENCY = 4;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  worker: (item: T) => Promise<R>,
+  concurrency: number,
+): Promise<R[]> {
+  const results = Array.from<R | undefined>({ length: items.length });
+  let nextIndex = 0;
+
+  async function runNext() {
+    const currentIndex = nextIndex++;
+    if (currentIndex >= items.length) {
+      return;
+    }
+
+    results[currentIndex] = await worker(items[currentIndex]);
+    await runNext();
+  }
+
+  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, () =>
+    runNext(),
+  );
+  await Promise.all(workers);
+  return results as R[];
+}
 
 async function getOverview(options: ServiceRequestOptions = {}): Promise<QueueOverview> {
   const [realmsResponse, statsResponse] = await Promise.all([
@@ -37,6 +65,40 @@ async function listDeadLetters(
 
   const dto = unwrapResponse(response, "Unable to load queue dead-letter messages");
   return dto.messages.map(mapQueueDeadLetter);
+}
+
+async function listInventory(options: ServiceRequestOptions = {}): Promise<QueueInventory> {
+  const realms = unwrapResponse(
+    await apiv1.listQueueRealms(options),
+    "Unable to load queue realms for inventory",
+  ).realms;
+
+  const inventoryRealms = await mapWithConcurrency(
+    realms,
+    async ({ realm }) => {
+      const areas = unwrapResponse(
+        await apiv1.listQueueAreas(realm, options),
+        `Unable to load queue areas for ${realm}`,
+      ).areas;
+
+      const inventoryAreas = await mapWithConcurrency(
+        areas,
+        async ({ area }) => ({
+          area,
+          resources: unwrapResponse(
+            await apiv1.listQueueResources(realm, area, options),
+            `Unable to load queue resources for ${realm}/${area}`,
+          ).resources.map((entry) => entry.resource),
+        }),
+        INVENTORY_CONCURRENCY,
+      );
+
+      return { areas: inventoryAreas, realm };
+    },
+    INVENTORY_CONCURRENCY,
+  );
+
+  return { domain: "queue", realms: inventoryRealms };
 }
 
 async function replayDeadLetter(
@@ -80,6 +142,7 @@ async function purgeDeadLetter(
 // Services are the app contract boundary: no Askr resources and no FetchResponse leaks.
 export const queueService = {
   getOverview,
+  listInventory,
   purgeDeadLetter,
   listDeadLetters,
   replayDeadLetter,

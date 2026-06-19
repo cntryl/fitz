@@ -2,12 +2,14 @@ import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
-import { QueryEmptyState } from "./query-state";
+import { QueryEmptyState, QueryErrorState } from "./query-state";
 import type { DomainId, ResourceInventory } from "@/features/resource/resource-models";
+import type { QueueInventory } from "@/features/queue/queue-models";
 
 export interface DomainResourceBrowserProps {
   domain: DomainId | "queue";
-  inventory?: ResourceInventory | null;
+  error?: unknown;
+  inventory?: (ResourceInventory | QueueInventory) | null;
   loading?: boolean;
 }
 
@@ -22,6 +24,7 @@ function resourceHref(
 
 export default function DomainResourceBrowser({
   domain,
+  error,
   inventory,
   loading = false,
 }: DomainResourceBrowserProps) {
@@ -37,18 +40,20 @@ export default function DomainResourceBrowser({
     ) ?? [];
 
   return (
-    <Card class="domain-resource-browser" padding="sm" variant="default">
+    <Card padding="sm" variant="default">
       <CardHeader>
         <CardTitle>Resources</CardTitle>
         <p class="domain-muted">{loading ? "Loading" : `${rows.length} visible`}</p>
       </CardHeader>
 
       <CardContent>
-        {!loading && rows.length === 0 ? (
-          <QueryEmptyState description="No warm resources are currently visible for this domain." />
+        {error ? (
+          <QueryErrorState title="Unable to load resources" error={error} />
+        ) : !loading && rows.length === 0 ? (
+          <QueryEmptyState description="No live resources are currently visible for this domain." />
         ) : (
           <div class="domain-table-wrap">
-            <Table class="domain-table">
+            <Table>
               <TableHead>
                 <TableRow>
                   <TableHeaderCell>Realm</TableHeaderCell>
@@ -60,10 +65,17 @@ export default function DomainResourceBrowser({
                 <For each={rows} by={(row) => `${row.realm}:${row.area}:${row.resource}`}>
                   {(row) => (
                     <TableRow>
-                      <TableCell>{row.realm}</TableCell>
-                      <TableCell>{row.area}</TableCell>
                       <TableCell>
-                        <Link href={resourceHref(domain, row.realm, row.area, row.resource)}>
+                        <span class="domain-table-cell-truncate">{row.realm}</span>
+                      </TableCell>
+                      <TableCell>
+                        <span class="domain-table-cell-truncate">{row.area}</span>
+                      </TableCell>
+                      <TableCell>
+                        <Link
+                          class="domain-link-cell"
+                          href={resourceHref(domain, row.realm, row.area, row.resource)}
+                        >
                           {row.resource}
                         </Link>
                       </TableCell>

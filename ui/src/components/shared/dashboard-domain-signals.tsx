@@ -1,95 +1,76 @@
-import ChartMeter from "@/components/shared/chart-meter";
-import { ChartPanel, ChartShell } from "@/components/shared/chart-frame";
-import type { SystemOverview } from "@/features/system/system-models";
+import { Link } from "@askrjs/askr/router";
+import { ArrowUpRightIcon } from "@askrjs/lucide";
+import { Badge } from "@askrjs/themes/surfaces";
 import { formatNumber } from "@/shared/format";
+import { domainLinks } from "@/shared/navigation/domains";
+import { topologyDomainDescriptions } from "@/features/topology/topology-mappers";
+import type { MessagingTopologyOverview } from "@/features/topology/topology-models";
+import { badgeVariant, formatTopologyRate, stateLabel } from "@/features/topology/topology-view";
 
-function formatRate(value: number) {
-  return value.toFixed(2);
-}
+const domainLinksByHref = new Map(domainLinks.map((link) => [link.href, link]));
 
-function currentVolumeData(overview: SystemOverview) {
-  return [
-    { description: "Ready messages", label: "Queue", value: overview.domains.queue.messagesReady },
-    { description: "Tracked keys", label: "KV", value: overview.domains.kv.keysTotal },
-    { description: "Active leases", label: "Lease", value: overview.domains.lease.leasesActive },
-    {
-      description: "Active subscriptions",
-      label: "Notice",
-      value: overview.domains.notice.subscriptionsActive,
-    },
-    { description: "Pending requests", label: "RPC", value: overview.domains.rpc.requestsPending },
-    {
-      description: "Pending claims",
-      label: "Schedule",
-      value: overview.domains.schedule.pendingFireClaims,
-    },
-    { description: "Total events", label: "Stream", value: overview.domains.stream.eventsTotal },
-  ];
-}
-
-function activityRateData(overview: SystemOverview) {
-  return [
-    { label: "Queue", value: overview.domains.queue.operationsPerSecond },
-    { label: "KV", value: overview.domains.kv.operationsPerSecond },
-    { label: "Lease", value: overview.domains.lease.operationsPerSecond },
-    { label: "Notice", value: overview.domains.notice.publishesPerSecond },
-    { label: "RPC", value: overview.domains.rpc.operationsPerSecond },
-    { label: "Schedule", value: overview.domains.schedule.executionsPerMinute / 60 },
-    { label: "Stream", value: overview.domains.stream.operationsPerSecond },
-  ];
-}
-
-function maxValue(values: { value: number }[]) {
-  return Math.max(1, ...values.map((entry) => entry.value));
-}
-
-export default function DashboardDomainSignals({ overview }: { overview: SystemOverview }) {
-  const volume = currentVolumeData(overview);
-  const activity = activityRateData(overview);
-  const volumeMax = maxValue(volume);
-  const activityMax = maxValue(activity);
-
+export default function DashboardDomainSignals({
+  topology,
+}: {
+  topology: MessagingTopologyOverview;
+}) {
   return (
-    <ChartShell
-      className="domain-chart-shell"
-      title="Domain signals"
-      description="Live broker snapshot across domains."
-    >
-      <div class="chart-grid">
-        <ChartPanel title="Current volume" description="Representative live counts by domain.">
-          <div class="chart-meter-grid">
-            {volume.map((entry) => (
-              <div key={`volume-${entry.label}`}>
-                <ChartMeter
-                  label={entry.label}
-                  value={entry.value}
-                  max={volumeMax}
-                  description={entry.description}
-                  valueFormatter={formatNumber}
-                />
-              </div>
-            ))}
-          </div>
-        </ChartPanel>
-
-        <ChartPanel
-          title="Activity rate"
-          description="Current operations per second across domains."
-        >
-          <div class="chart-meter-grid">
-            {activity.map((entry) => (
-              <div key={`activity-${entry.label}`}>
-                <ChartMeter
-                  label={entry.label}
-                  value={entry.value}
-                  max={activityMax}
-                  valueFormatter={formatRate}
-                />
-              </div>
-            ))}
-          </div>
-        </ChartPanel>
+    <section class="domain-section dashboard-signal-section" aria-label="Domain signals">
+      <div class="domain-section-header">
+        <div>
+          <h2>Domain signals</h2>
+          <p>Comparable drill-downs for each live domain.</p>
+        </div>
+        <span>{formatNumber(topology.lanes.length)} domains</span>
       </div>
-    </ChartShell>
+
+      <ul class="dashboard-signal-list">
+        {topology.lanes.map((lane) => {
+          const link = domainLinksByHref.get(lane.href);
+          const Icon = link?.icon;
+
+          return (
+            <li class={`dashboard-signal-item dashboard-signal-item-${lane.state}`} key={lane.id}>
+              <div class="dashboard-signal-row">
+                <div class="dashboard-signal-body">
+                  <div class="dashboard-signal-heading">
+                    <div class="dashboard-signal-title-row">
+                      {Icon ? <Icon size={16} /> : null}
+                      <span class="dashboard-signal-title">{link?.title ?? lane.title}</span>
+                    </div>
+                    <Badge variant={badgeVariant(lane.state)}>{stateLabel(lane.state)}</Badge>
+                  </div>
+
+                  <p class="dashboard-signal-description">{topologyDomainDescriptions[lane.id]}</p>
+
+                  <dl class="dashboard-signal-metrics">
+                    <div class="dashboard-signal-metric">
+                      <dt>Act/sec</dt>
+                      <dd>{formatTopologyRate(lane.activityPerSecond)}</dd>
+                    </div>
+                    <div class="dashboard-signal-metric">
+                      <dt>Consumers</dt>
+                      <dd>{formatNumber(lane.consumers)}</dd>
+                    </div>
+                    <div class="dashboard-signal-metric">
+                      <dt>Observers</dt>
+                      <dd>{formatNumber(lane.observers)}</dd>
+                    </div>
+                  </dl>
+                </div>
+                <Link
+                  href={lane.href}
+                  class="dashboard-signal-link"
+                  aria-label={`Open ${link?.title ?? lane.title} page`}
+                >
+                  <span>Open page</span>
+                  <ArrowUpRightIcon size={12} />
+                </Link>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

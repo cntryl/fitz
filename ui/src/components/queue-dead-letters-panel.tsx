@@ -34,9 +34,18 @@ export default function QueueDeadLettersPanel({
   return (
     <Section size="3">
       <DomainHeader
+        eyebrow="Queue detail"
         title="Dead letters"
-        description={`${resourceRef.realm} / ${resourceRef.area} / ${resourceRef.resource}`}
-        onRefresh={() => deadLetters.refresh()}
+        description={`${resourceRef.realm} / ${resourceRef.area} / ${resourceRef.resource}. Dead letters are durable work that needs explicit attention.`}
+        primaryAction={{
+          label: "Refresh dead letters",
+          onPress: () => deadLetters.refresh(),
+        }}
+        status={{
+          detail: "Dead letters are durable work that needs inspection or replay.",
+          label: deadLetters.refreshing ? "Refreshing" : deadLetters.stale ? "Stale" : "Live",
+          tone: deadLetters.refreshing ? "info" : deadLetters.stale ? "warning" : "success",
+        }}
       />
 
       {deadLetters.loading ? (

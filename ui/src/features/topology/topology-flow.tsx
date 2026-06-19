@@ -80,7 +80,13 @@ export function MessagingFlow({
       </div>
 
       <div class="flow-stage">
-        <div class="flow-map" aria-label="Messaging flow">
+        <Card
+          class="flow-map"
+          padding="sm"
+          variant="default"
+          role="group"
+          aria-label="Messaging flow"
+        >
           <div class="flow-column flow-column-edge">
             <div class="flow-column-label">Connected sessions</div>
             {topology.sessionGroups.length === 0 ? (
@@ -213,7 +219,7 @@ export function MessagingFlow({
               ) : null}
             </div>
           </div>
-        </div>
+        </Card>
 
         <TopologyInspector history={history} selected={selected} />
       </div>

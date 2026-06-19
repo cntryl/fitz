@@ -7,6 +7,9 @@
     "build": "vp build",
     "preview": "vp preview",
     "test": "vp test",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "install:browsers": "playwright install chromium",
     "type-check": "tsc --noEmit",
     "lint": "vp lint .",
     "lint:fix": "vp lint src tests --fix",
@@ -15,18 +18,20 @@
     "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts"
   },
   "dependencies": {
-    "@askrjs/askr": "0.0.44",
+    "@askrjs/askr": "0.0.45",
     "@askrjs/logos": "0.0.1",
     "@askrjs/lucide": "^0.0.3",
-    "@askrjs/themes": "^0.0.7",
+    "@askrjs/themes": "^0.0.8",
     "@askrjs/ui": "0.0.10",
     "@askrjs/vite": "0.0.4",
     "@fgrzl/fetch": "^2.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.0",
+    "@types/node": "^26.0.0",
     "jsdom": "^29.1.1",
     "typescript": "^6.0.3",
-    "vite-plus": "^0.1.24"
+    "vite-plus": "^0.2.1"
   },
   "packageManager": "npm@11.17.0"
 }

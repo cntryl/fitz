@@ -15,14 +15,21 @@
   display: grid;
   gap: var(--ak-space-3, 0.75rem);
   padding: 0;
-  border: 0;
-  background: transparent;
+  border-radius: var(--fitz-card-radius);
 }
 
 .chart-shell-header,
 .chart-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ak-space-1, 0.25rem);
+}
+
+.chart-shell-copy {
   display: grid;
   gap: var(--ak-space-1, 0.25rem);
+  min-width: 0;
 }
 
 .chart-shell-header h2,
@@ -34,7 +41,7 @@
 .chart-shell-header p,
 .chart-panel-header p {
   margin: 0;
-  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+  color: var(--fitz-text-muted);
   line-height: 1.45;
 }
 
@@ -61,8 +68,13 @@
 
 .chart-meter-value,
 .chart-meter-description {
-  color: var(--ak-color-muted-fg, color-mix(in srgb, CanvasText 64%, transparent));
+  color: var(--fitz-text-muted);
   font-size: 0.875rem;
+}
+
+.chart-meter-value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .chart-meter-description {
@@ -72,9 +84,9 @@
 
 .chart-meter-track {
   overflow: hidden;
-  height: 0.5rem;
+  height: 0.625rem;
   border-radius: 999px;
-  background: var(--ak-color-muted, color-mix(in srgb, CanvasText 8%, transparent));
+  background: color-mix(in srgb, var(--ak-color-border, CanvasText) 44%, transparent);
 }
 
 .chart-meter-fill {

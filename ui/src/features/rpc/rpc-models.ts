@@ -6,10 +6,13 @@ export interface RpcStatsSummary {
   invalidSequenceErrorsDroppedTotal: number;
   invalidSequenceErrorsForwardedTotal: number;
   invalidSequenceResponsesTotal: number;
+  failureTotal: number;
   operationsPerSecond: number;
   requestsPending: number;
+  pendingRoutesActive: number;
   responsesDroppedClosedCallerTotal: number;
   responsesMissingPendingTotal: number;
+  requestTimeoutsTotal: number;
   workersRegistered: number;
 }
 

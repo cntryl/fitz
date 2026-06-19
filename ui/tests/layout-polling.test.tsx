@@ -71,7 +71,7 @@ describe("root layout dashboard polling", () => {
     const recorder = createInvalidationRecorder();
 
     try {
-      await mountLayout("/metrics");
+      await mountLayout("/admin/metrics");
       vi.advanceTimersByTime(appConfig.dashboardPollIntervalMs);
 
       expect(recorder.calls).toEqual([]);

@@ -3746,13 +3746,14 @@ mod tests {
         let issuer = "https://idp.example/jwks-invalid";
         let jwks_url = "https://idp.example/jwks-invalid/.well-known/jwks.json";
 
-        let ingress = runtime_ingress_with_jwks_auth().with_auth_config(crate::auth::AuthConfig::jwks(
-            vec!["fitz-broker".to_string()],
-            vec![crate::auth::JwksIssuerConfig {
-                issuer: issuer.to_string(),
-                jwks_url: jwks_url.to_string(),
-            }],
-        ));
+        let ingress =
+            runtime_ingress_with_jwks_auth().with_auth_config(crate::auth::AuthConfig::jwks(
+                vec!["fitz-broker".to_string()],
+                vec![crate::auth::JwksIssuerConfig {
+                    issuer: issuer.to_string(),
+                    jwks_url: jwks_url.to_string(),
+                }],
+            ));
         let session = make_session_info(81, TransportKind::Tcp);
 
         // Create a token signed with a secret NOT in the JWKS cache

@@ -11,7 +11,7 @@ export interface DomainIndexProps {
 
 export default function DomainIndex({ title, description, links }: DomainIndexProps) {
   return (
-    <Card class="domain-index-card" padding="sm" variant="default">
+    <Card padding="sm" variant="default">
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         <CardDescription>{description}</CardDescription>

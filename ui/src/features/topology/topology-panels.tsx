@@ -1,7 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Badge, Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Alert, Badge, Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import { formatNumber, formatTimestamp } from "@/shared/format";
 import { topologyTrendDirection } from "./topology-mappers";
 import type { MessagingTopologyOverview, TopologyTrendPoint } from "./topology-models";
@@ -29,14 +29,22 @@ export function BrokerStatusStrip({
 }) {
   const severity = incidentSeverity(topology);
   const messageTrend = topologyTrendDirection(history, "messagesPerSecond");
+  const nextQuery =
+    topology.diagnostics.incident_summary?.recommended_next_query ?? "No follow-up needed";
 
   return (
-    <section class="dashboard-status-strip" aria-label="Broker status">
+    <Card
+      class="dashboard-status-strip"
+      variant="raised"
+      role="region"
+      aria-label="Broker snapshot"
+    >
       <div class="dashboard-status-summary">
         <div>
-          <p class="domain-header-kicker">Broker status</p>
+          <p class="domain-header-kicker">Current snapshot</p>
           <h2>{incidentTitle(topology)}</h2>
           <p>{incidentDescription(topology)}</p>
+          <p class="domain-muted">Next: {nextQuery}</p>
         </div>
         <Badge variant={badgeVariant(severity)}>{severity}</Badge>
       </div>
@@ -75,7 +83,7 @@ export function BrokerStatusStrip({
           <dd>{trendLabel(messageTrend)}</dd>
         </div>
       </dl>
-    </section>
+    </Card>
   );
 }
 
@@ -91,7 +99,7 @@ export function BehaviorMatrix({ topology }: { topology: MessagingTopologyOvervi
 
       <div class="dashboard-behavior-grid">
         {topologyBehaviorGroups(topology).map((group) => (
-          <Card key={group.title} class="dashboard-behavior-card" padding="sm" variant="default">
+          <Card key={group.title} padding="sm" variant="default">
             <CardHeader>
               <CardTitle>{group.title}</CardTitle>
               <p class="domain-muted">{group.description}</p>
@@ -115,23 +123,28 @@ export function BehaviorMatrix({ topology }: { topology: MessagingTopologyOvervi
 }
 
 export function DiagnosticsPanel({ topology }: { topology: MessagingTopologyOverview }) {
+  const severity = incidentSeverity(topology);
   const hotspots = topology.diagnostics.hotspots.slice(0, 6);
+  const isMeaningful = severity !== "informational" || hotspots.length > 0;
+
+  if (!isMeaningful) {
+    return null;
+  }
+
+  const alertVariant =
+    severity === "critical" || severity === "high"
+      ? "danger"
+      : severity === "medium" || severity === "low"
+        ? "warning"
+        : "success";
 
   return (
     <section class="domain-section">
-      <div class="domain-section-header">
-        <div>
-          <h2>Attention</h2>
-          <p>{incidentDescription(topology)}</p>
-        </div>
-        <span>{hotspots.length} hotspots</span>
-      </div>
+      <Alert variant={alertVariant} title="Attention" description={incidentDescription(topology)} />
 
-      {hotspots.length === 0 ? (
-        <p class="domain-muted">No active hotspots reported.</p>
-      ) : (
+      {hotspots.length > 0 ? (
         <div class="domain-table-wrap">
-          <Table class="domain-table">
+          <Table>
             <TableHead>
               <TableRow>
                 <TableHeaderCell>Scope</TableHeaderCell>
@@ -165,7 +178,7 @@ export function DiagnosticsPanel({ topology }: { topology: MessagingTopologyOver
             </TableBody>
           </Table>
         </div>
-      )}
+      ) : null}
     </section>
   );
 }

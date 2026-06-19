@@ -1,16 +1,21 @@
 import { EmptyState, Spinner } from "@askrjs/themes/feedback";
-import { Card, CardContent } from "@askrjs/themes/surfaces";
+import { Badge } from "@askrjs/themes/surfaces";
 import { Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/controls";
 import { formatUnknownError } from "@/shared/errors/format";
 
 export interface QueryStateProps {
   class?: string;
   description: string;
+  title?: string;
 }
 
 export interface QueryErrorStateProps {
   class?: string;
   error: unknown;
+  onRetry?: () => void;
+  retryLabel?: string;
+  title?: string;
 }
 
 function QueryStateCard({
@@ -21,21 +26,25 @@ function QueryStateCard({
   className?: string;
 }) {
   return (
-    <Card class={className} padding="sm" variant="default">
-      <CardContent>
-        <Stack gap="3">{children}</Stack>
-      </CardContent>
-    </Card>
+    <div class={className}>
+      <Stack gap="3">{children}</Stack>
+    </div>
   );
 }
 
 export function QueryLoadingState({
   class: className = "domain-state",
   description,
+  title = "Loading",
 }: QueryStateProps) {
   return (
     <QueryStateCard className={className}>
-      <EmptyState icon={<Spinner label="Loading" />} description={description} />
+      <EmptyState
+        aria-busy="true"
+        title={title}
+        icon={<Spinner label={title} />}
+        description={description}
+      />
     </QueryStateCard>
   );
 }
@@ -43,10 +52,24 @@ export function QueryLoadingState({
 export function QueryErrorState({
   class: className = "domain-state",
   error,
+  onRetry,
+  retryLabel = "Retry",
+  title = "Unable to load",
 }: QueryErrorStateProps) {
   return (
     <QueryStateCard className={className}>
-      <EmptyState title="Error" description={formatUnknownError(error)} />
+      <EmptyState
+        role="alert"
+        title={title}
+        description={formatUnknownError(error)}
+        actions={
+          onRetry ? (
+            <Button variant="outline" onPress={onRetry}>
+              {retryLabel}
+            </Button>
+          ) : undefined
+        }
+      />
     </QueryStateCard>
   );
 }
@@ -54,10 +77,11 @@ export function QueryErrorState({
 export function QueryEmptyState({
   class: className = "domain-state",
   description,
+  title = "Nothing to show",
 }: QueryStateProps) {
   return (
     <QueryStateCard className={className}>
-      <EmptyState description={description} />
+      <EmptyState title={title} description={description} />
     </QueryStateCard>
   );
 }
@@ -65,10 +89,12 @@ export function QueryEmptyState({
 export function QueryRefreshingState({
   class: className = "domain-state",
   description,
+  title = "Refreshing",
 }: QueryStateProps) {
   return (
-    <div class={`${className} domain-state-inline`} role="status">
-      <Spinner label="Refreshing" />
+    <div class={`${className} domain-state-inline`} role="status" aria-live="polite">
+      <Badge variant="info">{title}</Badge>
+      <Spinner label={title} />
       <p>{description}</p>
     </div>
   );
