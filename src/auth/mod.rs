@@ -665,7 +665,10 @@ mod auth_tests {
 
         assert!(matches!(config, AuthConfig::Jwks(_)));
         if let AuthConfig::Jwks(config) = config {
-            assert_eq!(config.issuers[0].jwks_url, "http://idp.example/.well-known/jwks.json");
+            assert_eq!(
+                config.issuers[0].jwks_url,
+                "http://idp.example/.well-known/jwks.json"
+            );
         }
     }
 

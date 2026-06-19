@@ -634,6 +634,21 @@ mod tests {
     }
 
     #[test]
+    fn should_skip_peas_test_for_transport_errors() {
+        // Arrange
+        let error = "prepare Peas namespace failed: error sending request for url (http://127.0.0.1:9000/fitz-peas-s3)";
+
+        // Act
+        let should_skip = should_skip_peas_test(error);
+
+        // Assert
+        assert!(
+            should_skip,
+            "expected transport request failures to be skippable"
+        );
+    }
+
+    #[test]
     fn should_reject_cloud_storage_without_bucket() {
         // Arrange
         let config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked(Box::new(
@@ -819,6 +834,9 @@ mod tests {
     fn should_skip_peas_test(error: &str) -> bool {
         let lower = error.to_ascii_lowercase();
         lower.contains("connection refused")
+            || lower.contains("error sending request")
+            || lower.contains("failed to connect")
+            || lower.contains("connection reset")
             || lower.contains("timed out")
             || lower.contains("dns")
             || lower.contains("signaturedoesnotmatch")
