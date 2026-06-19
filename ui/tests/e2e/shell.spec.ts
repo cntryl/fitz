@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { DiagnosticSnapshot } from "@/adapters";
+import { topologyOverview } from "../fixtures/topology";
 
 async function openDashboard(page: Page, theme: "light" | "dark" = "light") {
   if (theme === "dark") {
@@ -374,6 +376,781 @@ async function mockMetricsApi(page: Page, payload = metricsPayload) {
     },
   );
 }
+
+type ResourceScope = {
+  area: string;
+  realm: string;
+  resource: string;
+};
+
+type ResourceDomain = "kv" | "lease" | "notice" | "rpc" | "schedule" | "stream";
+
+type RouteChrome = "app" | "auth";
+
+type ThemeMode = "light" | "dark";
+
+type ViewportPreset = {
+  height: number;
+  isMobile: boolean;
+  key: "desktop" | "mobile";
+  width: number;
+};
+
+type RouteScenario = {
+  path: string;
+  setup: (page: Page) => Promise<void>;
+  shell: RouteChrome;
+  title: string | RegExp;
+};
+
+function exactHeadingMatcher(title: string | RegExp): string | RegExp {
+  if (title instanceof RegExp) {
+    return title;
+  }
+
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escaped}$`);
+}
+
+const viewportPresets: ViewportPreset[] = [
+  {
+    height: 1200,
+    isMobile: false,
+    key: "desktop",
+    width: 1440,
+  },
+  {
+    height: 844,
+    isMobile: true,
+    key: "mobile",
+    width: 390,
+  },
+];
+
+const themeModes: ThemeMode[] = ["light", "dark"];
+
+function normalizeRoute(path: string) {
+  if (path === "/") {
+    return "home";
+  }
+
+  return path
+    .replace(/^\//, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function makeDiagnosticSnapshot(overrides: Partial<DiagnosticSnapshot> = {}): DiagnosticSnapshot {
+  return {
+    age_seconds: overrides.age_seconds ?? 12,
+    confidence: 1,
+    confidence_justification: {
+      rationale: "Sprint 16 route fixture",
+      signals_matched: [],
+      signals_missing: [],
+      ...overrides.confidence_justification,
+    },
+    contention_count: 0,
+    current_stage: "healthy",
+    explanation_hints: ["Sprint 16 fixture route state."],
+    failure_count: 0,
+    last_changed_at: "2026-05-21T13:00:00.000Z",
+    last_failure_at: null,
+    last_success_at: "2026-05-21T13:00:00.000Z",
+    likely_bottleneck: null,
+    recent_transition_count: 0,
+    severity: "informational",
+    trend: "steady",
+    waiter_count: 0,
+    ...overrides,
+  };
+}
+
+function parseResourceScope(segments: string[]): ResourceScope | null {
+  if (segments.length < 9) {
+    return null;
+  }
+
+  if (segments[3] !== "realms" || segments[5] !== "areas" || segments[7] !== "resources") {
+    return null;
+  }
+
+  return {
+    area: decodeURIComponent(segments[6] ?? ""),
+    realm: decodeURIComponent(segments[4] ?? ""),
+    resource: decodeURIComponent(segments[8] ?? ""),
+  };
+}
+
+function parseRouteResourceScope(path: string): ResourceScope {
+  const parts = path.split("?")[0].split("/").filter(Boolean);
+  return {
+    area: decodeURIComponent(parts[2] ?? ""),
+    realm: decodeURIComponent(parts[1] ?? ""),
+    resource: decodeURIComponent(parts[3] ?? ""),
+  };
+}
+
+async function mockHomeRouteApis(page: Page) {
+  await page.route("**/api/v1/features", async (route) => {
+    await route.fulfill({
+      json: adminFeatures,
+    });
+  });
+
+  await page.route("**/api/v1/topology", async (route) => {
+    await route.fulfill({
+      json: topologyOverview,
+    });
+  });
+}
+
+function resourceDetailFixture(
+  domain: ResourceDomain,
+  scope: ResourceScope,
+  diagnostics: DiagnosticSnapshot,
+) {
+  if (domain === "kv") {
+    return {
+      area: scope.area,
+      diagnostics,
+      realm: scope.realm,
+      resource: scope.resource,
+      transactions_active: 18,
+    };
+  }
+
+  if (domain === "lease") {
+    return {
+      active_leases: 4,
+      area: scope.area,
+      diagnostics,
+      oldest_lease_age_seconds: 47,
+      realm: scope.realm,
+      resource: scope.resource,
+    };
+  }
+
+  if (domain === "notice") {
+    return {
+      area: scope.area,
+      diagnostics,
+      realm: scope.realm,
+      resource: scope.resource,
+      subscriptions_active: 9,
+    };
+  }
+
+  if (domain === "rpc") {
+    return {
+      area: scope.area,
+      diagnostics,
+      operations: [{ operation: "GetStatus" }, { operation: "SetState" }],
+      realm: scope.realm,
+      resource: scope.resource,
+    };
+  }
+
+  if (domain === "schedule") {
+    return {
+      area: scope.area,
+      cron: "*/5 * * * *",
+      diagnostics,
+      enabled: true,
+      executions_total: 42,
+      next_run: "2026-05-21T13:01:00.000Z",
+      realm: scope.realm,
+      resource: scope.resource,
+    };
+  }
+
+  return {
+    area: scope.area,
+    diagnostics,
+    offset: 1200,
+    realm: scope.realm,
+    resource: scope.resource,
+    sessions_active: 3,
+    size_bytes: 4096,
+    watermark: 1210,
+  };
+}
+
+function resourceTimelineFixture(domain: string, scope: ResourceScope) {
+  return {
+    area: scope.area,
+    derived: false,
+    domain,
+    events: [
+      {
+        age_seconds: 5,
+        area: scope.area,
+        attempts: 2,
+        correlation_id: "corr-1",
+        domain,
+        kind: "observation",
+        message_id: 100,
+        observed_at: "2026-05-21T13:00:00.000Z",
+        operation: "GetStatus",
+        owner_session: "session-1",
+        realm: scope.realm,
+        resource: scope.resource,
+        summary: "Sample route transition observed.",
+        worker_session: "worker-1",
+      },
+    ],
+    family: null,
+    limit: 12,
+    realm: scope.realm,
+    resource: scope.resource,
+  };
+}
+
+async function mockResourceDetailApis(page: Page, domain: ResourceDomain, routeScope: ResourceScope) {
+  const diagnostics = makeDiagnosticSnapshot();
+
+  await page.route("**/api/v1/features", async (route) => {
+    await route.fulfill({
+      json: adminFeatures,
+    });
+  });
+
+  await page.route("**/api/v1/*", async (route) => {
+    const parsed = new URL(route.request().url());
+    const segments = parsed.pathname.split("/").filter(Boolean);
+
+    if (segments.length < 3 || segments[2] !== domain) {
+      await route.continue();
+      return;
+    }
+
+    if (domain === "stream" && segments.length === 8) {
+      if (
+        segments[3] === "realms" &&
+        segments[5] === "areas" &&
+        segments[7] === "watermarks"
+      ) {
+        const realm = decodeURIComponent(segments[4] ?? "");
+        const area = decodeURIComponent(segments[6] ?? "");
+
+        if (realm === routeScope.realm && area === routeScope.area) {
+          await route.fulfill({
+            json: {
+              area,
+              family_watermarks: [{ family: 1, watermark: 20 }],
+              realm,
+              resource_count: 2,
+            },
+          });
+          return;
+        }
+      }
+    }
+
+    if (domain === "rpc" && segments.length === 4 && segments[3] === "pending") {
+      await route.fulfill({
+        json: {
+          requests: [
+            {
+              age_seconds: 7,
+              correlation_id: "corr-1",
+              route: "GetStatus",
+              submitted_at: "2026-05-21T13:00:00.000Z",
+              worker_session_id: "worker-1",
+            },
+          ],
+        },
+      });
+      return;
+    }
+
+    const scope = parseResourceScope(segments);
+
+    if (!scope) {
+      await route.continue();
+      return;
+    }
+
+    if (
+      scope.area !== routeScope.area ||
+      scope.realm !== routeScope.realm ||
+      scope.resource !== routeScope.resource
+    ) {
+      await route.continue();
+      return;
+    }
+
+    if (segments.length === 9) {
+      await route.fulfill({
+        json: resourceDetailFixture(domain, scope, diagnostics),
+      });
+      return;
+    }
+
+    if (segments.length === 10 && segments[9] === "events") {
+      await route.fulfill({
+        json: resourceTimelineFixture(domain, scope),
+      });
+      return;
+    }
+
+    if (segments.length === 10 && segments[9] === "transactions" && domain === "kv") {
+      await route.fulfill({
+        json: {
+          transactions: [
+            {
+              area: scope.area,
+              idle_seconds: 11,
+              mode: "write",
+              operations_count: 4,
+              realm: scope.realm,
+              resource: scope.resource,
+              started_at: "2026-05-21T13:00:00.000Z",
+              tx_id: 101,
+            },
+          ],
+        },
+      });
+      return;
+    }
+
+    if (segments.length === 10 && segments[9] === "subscriptions" && domain === "notice") {
+      await route.fulfill({
+        json: {
+          subscriptions: [
+            {
+              created_at: "2026-05-21T13:00:00.000Z",
+              notifications_received: 8,
+              pattern: "notifications/**",
+              realm: scope.realm,
+              session_id: "session-1",
+              subscription_id: 11,
+            },
+          ],
+        },
+      });
+      return;
+    }
+
+    if (segments.length === 10 && segments[9] === "operations" && domain === "rpc") {
+      await route.fulfill({
+        json: {
+          operations: [{ operation: "GetStatus" }, { operation: "SetState" }],
+        },
+      });
+      return;
+    }
+
+    if (segments.length === 12 && domain === "rpc" && segments[9] === "operations") {
+      await route.fulfill({
+        json: {
+          workers: [
+            {
+              average_latency_ms: 12,
+              realm: scope.realm,
+              registered_at: "2026-05-21T13:00:00.000Z",
+              requests_handled: 7,
+              route: decodeURIComponent(segments[10] ?? "GetStatus"),
+              session_id: "worker-1",
+            },
+          ],
+        },
+      });
+      return;
+    }
+
+    await route.continue();
+  });
+}
+
+function queueTimelineFixture(scope: ResourceScope) {
+  return {
+    area: scope.area,
+    derived: false,
+    domain: "queue",
+    events: [
+      {
+        age_seconds: 2,
+        area: scope.area,
+        attempts: 1,
+        correlation_id: "corr-queue",
+        domain: "queue",
+        kind: "transition",
+        message_id: 200,
+        observed_at: "2026-05-21T13:00:00.000Z",
+        operation: "Peek",
+        owner_session: "session-queue-1",
+        realm: scope.realm,
+        resource: scope.resource,
+        summary: "Queue worker activity sample.",
+        worker_session: "worker-queue-1",
+      },
+    ],
+    family: 1,
+    limit: 8,
+    realm: scope.realm,
+    resource: scope.resource,
+  };
+}
+
+async function mockQueueResourceApis(page: Page, routeScope: ResourceScope) {
+  const diagnostics = makeDiagnosticSnapshot();
+
+  await page.route("**/api/v1/features", async (route) => {
+    await route.fulfill({
+      json: adminFeatures,
+    });
+  });
+
+  await page.route("**/api/v1/*", async (route) => {
+    const parsed = new URL(route.request().url());
+    const segments = parsed.pathname.split("/").filter(Boolean);
+
+    if (segments.length < 9 || segments[2] !== "queue") {
+      await route.continue();
+      return;
+    }
+
+    const scope = parseResourceScope(segments);
+
+    if (!scope) {
+      await route.continue();
+      return;
+    }
+
+    if (
+      scope.area !== routeScope.area ||
+      scope.realm !== routeScope.realm ||
+      scope.resource !== routeScope.resource
+    ) {
+      await route.continue();
+      return;
+    }
+
+    if (segments.length === 9) {
+      await route.fulfill({
+        json: {
+          area: scope.area,
+          backlog_age_buckets: {
+            over_15m: 0,
+            under_1m: 2,
+            under_5m: 1,
+            under_15m: 0,
+          },
+          delay_age_buckets: {
+            over_15m: 0,
+            under_1m: 0,
+            under_5m: 0,
+            under_15m: 0,
+          },
+          diagnostics,
+          messages_dead_lettered: 0,
+          messages_delayed: 1,
+          messages_inflight: 2,
+          messages_ready: 6,
+          messages_total: 9,
+          oldest_backlog_age_seconds: 28,
+          oldest_message_age_seconds: 42,
+          realm: scope.realm,
+          resource: scope.resource,
+        },
+      });
+      return;
+    }
+
+    if (segments.length === 10 && segments[9] === "inflight") {
+      await route.fulfill({
+        json: {
+          inflight: [
+            {
+              area: scope.area,
+              attempts: 1,
+              expires_at: "2026-05-21T13:05:00.000Z",
+              family: 1,
+              inflight_token: "token-1",
+              message_id: 101,
+              realm: scope.realm,
+              resource: scope.resource,
+              session_id: "session-queue-1",
+            },
+          ],
+        },
+      });
+      return;
+    }
+
+    if (segments.length === 10 && segments[9] === "dead-letters") {
+      await route.fulfill({
+        json: {
+          messages: [
+            {
+              area: scope.area,
+              attempts: 2,
+              dead_lettered_at: "2026-05-21T12:59:00.000Z",
+              family: 1,
+              message_id: 88,
+              realm: scope.realm,
+              reason: "Transient failure",
+              resource: scope.resource,
+              session_id: "session-queue-2",
+            },
+          ],
+        },
+      });
+      return;
+    }
+
+    if (segments.length === 10 && segments[9] === "events") {
+      await route.fulfill({
+        json: queueTimelineFixture(scope),
+      });
+      return;
+    }
+
+    await route.continue();
+  });
+}
+
+async function applyTheme(page: Page, theme: ThemeMode) {
+  if (theme === "dark") {
+    await page.addInitScript(() => {
+      localStorage.setItem("fitz-admin-theme", "dark");
+    });
+    return;
+  }
+
+  await page.addInitScript(() => {
+    localStorage.removeItem("fitz-admin-theme");
+  });
+}
+
+async function expectNoHorizontalOverflow(page: Page) {
+  const overflow = await page.evaluate(() => {
+    const maxWidth = Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth ?? 0);
+    return maxWidth <= window.innerWidth + 2;
+  });
+
+  expect(overflow).toBe(true);
+}
+
+async function expectRouteChrome(page: Page, route: RouteScenario) {
+  const viewport = page.viewportSize();
+  const isMobile = (viewport?.width ?? 0) < 768;
+
+  await expect(page.locator("main#main-content")).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: exactHeadingMatcher(route.title) })).toBeVisible();
+
+  await expectNoHorizontalOverflow(page);
+
+  if (route.shell === "app") {
+    if (!isMobile) {
+      await expect(page.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
+    }
+
+    if (isMobile) {
+      const menu = page.getByRole("button", { name: "Menu" });
+      await expect(menu).toBeVisible();
+      await menu.click();
+
+      await expect(page.getByRole("link", { name: "Dashboard" })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Sessions" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Domains" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+      await expectNoHorizontalOverflow(page);
+
+      await page.keyboard.press("Escape");
+      return;
+    }
+
+    await expect(page.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
+
+    await expect(page.getByRole("link", { name: "Dashboard" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Sessions" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Metrics" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Domains" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+
+    const domainMenu = page.getByRole("button", { name: "Domains" });
+    await domainMenu.click();
+    await expect(page.locator('[data-slot="dropdown-content"]').first()).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: /Queue/ })).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+
+    await page.keyboard.press("Escape");
+    return;
+  }
+
+  if (!isMobile) {
+    await expect(page.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
+  }
+
+  if (isMobile) {
+    await expect(page.getByRole("button", { name: "Menu" })).toBeVisible();
+  }
+}
+
+const sprint16Routes: RouteScenario[] = [
+  {
+    path: "/",
+    shell: "app",
+    setup: mockHomeRouteApis,
+    title: "Broker status",
+  },
+  {
+    path: "/admin",
+    shell: "app",
+    setup: mockHomeRouteApis,
+    title: "Broker status",
+  },
+  {
+    path: "/sessions",
+    shell: "app",
+    setup: (page) => mockSessionsApi(page, sessionsWithData),
+    title: "Active sessions",
+  },
+  {
+    path: "/admin/metrics",
+    shell: "app",
+    setup: mockMetricsApi,
+    title: "Metrics explorer",
+  },
+  {
+    path: "/lease",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "Lease overview",
+  },
+  {
+    path: "/notice",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "Notice overview",
+  },
+  {
+    path: "/rpc",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "RPC overview",
+  },
+  {
+    path: "/schedule",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "Schedule overview",
+  },
+  {
+    path: "/queue",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "Queue overview",
+  },
+  {
+    path: "/stream",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "Stream overview",
+  },
+  {
+    path: "/kv",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "KV overview",
+  },
+  {
+    path: "/queue/default/ops/primary",
+    shell: "app",
+    setup: (page) => mockQueueResourceApis(page, parseRouteResourceScope("/queue/default/ops/primary")),
+    title: "Queue resource inspection",
+  },
+  {
+    path: "/kv/default/ops/primary",
+    shell: "app",
+    setup: (page) => mockResourceDetailApis(page, "kv", parseRouteResourceScope("/kv/default/ops/primary")),
+    title: "KV resource inspection",
+  },
+  {
+    path: "/lease/default/ops/primary",
+    shell: "app",
+    setup: (page) =>
+      mockResourceDetailApis(page, "lease", parseRouteResourceScope("/lease/default/ops/primary")),
+    title: "Lease resource inspection",
+  },
+  {
+    path: "/notice/default/ops/primary",
+    shell: "app",
+    setup: (page) =>
+      mockResourceDetailApis(page, "notice", parseRouteResourceScope("/notice/default/ops/primary")),
+    title: "Notice resource inspection",
+  },
+  {
+    path: "/rpc/default/ops/primary",
+    shell: "app",
+    setup: (page) => mockResourceDetailApis(page, "rpc", parseRouteResourceScope("/rpc/default/ops/primary")),
+    title: "RPC resource inspection",
+  },
+  {
+    path: "/schedule/default/ops/primary",
+    shell: "app",
+    setup: (page) =>
+      mockResourceDetailApis(
+        page,
+        "schedule",
+        parseRouteResourceScope("/schedule/default/ops/primary"),
+      ),
+    title: "Schedule resource inspection",
+  },
+  {
+    path: "/stream/default/ops/primary",
+    shell: "app",
+    setup: (page) =>
+      mockResourceDetailApis(page, "stream", parseRouteResourceScope("/stream/default/ops/primary")),
+    title: "Stream resource inspection",
+  },
+  {
+    path: "/login",
+    shell: "auth",
+    setup: (page) => mockHomeRouteApis(page),
+    title: "Sign in to Fitz Admin",
+  },
+  {
+    path: "/logout",
+    shell: "auth",
+    setup: (page) => mockHomeRouteApis(page),
+    title: /Signed out|Signing out/,
+  },
+];
+
+test.describe("sprint 16 route matrix", () => {
+  for (const route of sprint16Routes) {
+    for (const viewport of viewportPresets) {
+      for (const theme of themeModes) {
+        test(`${route.path} [${viewport.key}] [${theme}]`, async ({ page }, testInfo) => {
+          await page.setViewportSize({ width: viewport.width, height: viewport.height });
+          await applyTheme(page, theme);
+          await route.setup(page);
+          await page.goto(route.path);
+
+          await expectRouteChrome(page, route);
+
+          if (theme === "dark") {
+            await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+          }
+
+          await page.screenshot({
+            fullPage: true,
+            path: testInfo.outputPath(
+              `${normalizeRoute(route.path)}-${viewport.key}-${theme}.png`,
+            ),
+            animations: "disabled",
+          });
+        });
+      }
+    }
+  }
+});
 
 test("captures the desktop dashboard shell", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
