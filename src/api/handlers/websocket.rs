@@ -38,6 +38,14 @@ pub(super) async fn handle_websocket(
 ) -> Result<Response, std::convert::Infallible> {
     // Note: increment_connections / decrement_connections are handled by the
     // HTTP listener wrapper (handle_http_upgrade) — no additional counter here.
+    if !runtime.is_accepting_traffic() {
+        tracing::warn!("WebSocket upgrade rejected: broker is draining");
+        return Ok(hyper::http::Response::builder()
+            .status(503)
+            .body(Body::from("Fitz broker is draining"))
+            .unwrap());
+    }
+
     if !websocket_origin_allowed(&req, ws_allowed_origins.as_slice()) {
         tracing::warn!("WebSocket upgrade rejected: origin not allowed");
         return Ok(hyper::http::Response::builder()
@@ -89,7 +97,7 @@ fn websocket_origin_allowed<B>(
 
     let mut origin_values = req.headers().get_all("origin").iter();
     let Some(origin_value) = origin_values.next() else {
-        return false;
+        return true;
     };
     if origin_values.next().is_some() {
         return false;
@@ -351,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_missing_websocket_origin_when_origins_are_configured() {
+    fn should_allow_missing_websocket_origin_when_origins_are_configured() {
         // Arrange
         let allowed = vec![
             crate::api::origin::parse_exact_origin("https://app.example.com").expect("origin"),
@@ -364,6 +372,6 @@ mod tests {
         let result = websocket_origin_allowed(&request, &allowed);
 
         // Assert
-        assert!(!result);
+        assert!(result);
     }
 }

@@ -733,6 +733,39 @@ async fn should_keep_healthz_unhealthy_given_shutdown_when_runtime_was_ready() {
 
 #[tokio::test]
 #[serial]
+async fn should_keep_healthz_unhealthy_given_drain_when_runtime_was_ready() {
+    // Arrange
+    let runtime = test_runtime();
+    runtime.mark_storage_ready();
+    runtime.mark_domains_ready();
+    runtime.mark_auth_config_ready();
+    runtime.mark_startup_complete();
+    runtime.begin_drain();
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/healthz")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["status"], "not_ready");
+    assert_eq!(payload["checks"]["storage"], "ok");
+    assert_eq!(payload["checks"]["domains_initialized"], "ok");
+    assert_eq!(payload["checks"]["auth_configuration"], "ok");
+    assert_eq!(payload["checks"]["startup_complete"], "ok");
+    assert_eq!(payload["checks"]["accepting_traffic"], "draining");
+}
+
+#[tokio::test]
+#[serial]
 async fn should_report_livez_ok_given_runtime_not_ready() {
     // Arrange
     let runtime = test_runtime();
@@ -752,6 +785,64 @@ async fn should_report_livez_ok_given_runtime_not_ready() {
     let body = body::to_bytes(response.into_body()).await.unwrap();
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["status"], "ok");
+}
+
+#[tokio::test]
+#[serial]
+async fn should_begin_runtime_drain_given_authenticated_same_origin_request() {
+    // Arrange
+    let runtime = test_runtime();
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/runtime/drain")
+        .header(COOKIE, cookie)
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(runtime.is_draining());
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["lifecycle_state"], "draining");
+    assert_eq!(payload["active_sessions"], 0);
+    assert_eq!(payload["drain_grace_seconds"], 25);
+    assert_eq!(payload["close_reason"], "broker draining for redeploy");
+    assert!(payload["drain_started_epoch_ms"].as_u64().is_some());
+    assert!(payload["drain_deadline_epoch_ms"].as_u64().is_some());
+}
+
+#[tokio::test]
+#[serial]
+async fn should_reject_runtime_drain_given_cross_origin_request() {
+    // Arrange
+    let runtime = test_runtime();
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/runtime/drain")
+        .header(COOKIE, cookie)
+        .header("host", "localhost")
+        .header("origin", "http://evil.example")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(!runtime.is_draining());
 }
 
 #[tokio::test]

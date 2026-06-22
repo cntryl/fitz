@@ -28,11 +28,11 @@ See [operations/observability.md](observability.md) for instrumentation details.
 
 ## Planned Maintenance
 
-1. Drain or reject new sessions.
-2. Complete in-flight write-sensitive operations and allow the broker to finish its SIGTERM handoff so Midge can release the single-writer lease cleanly.
-3. Snapshot or backup durability-sensitive state.
-4. Apply update using [operations/migration-guide.md](migration-guide.md).
-5. Run smoke checks and restore normal traffic.
+1. For ECS rolling deploys, configure the ALB target group health check to `/healthz`, set target deregistration delay near `FITZ_DRAIN_GRACE_SECONDS` (for example 30 seconds), and set ECS task `stopTimeout` higher than the Fitz drain grace (for example 45 seconds).
+2. Let ECS send `SIGTERM`, or explicitly call `POST /api/v1/runtime/drain` from an authenticated same-origin admin client before stopping the task.
+3. Confirm `/healthz` and `/readyz` return `503` with `accepting_traffic: "draining"` while `/livez` remains `200`.
+4. Allow Fitz to reject new TCP/WebSocket sessions, wait the configured drain grace, close active ephemeral sessions, and release the storage writer cleanly.
+5. Apply update using [operations/migration-guide.md](migration-guide.md), run smoke checks, and restore normal traffic.
 
 ## Emergency Rollback
 

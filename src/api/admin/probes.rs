@@ -51,10 +51,7 @@ fn readiness_status(runtime: &Runtime) -> ReadyStatus {
     let auth_ready = runtime.is_auth_config_ready();
     let domains_ready = runtime.are_domains_ready();
     let startup_complete = runtime.is_startup_complete();
-    let accepting_traffic = !runtime.is_shutting_down();
-
-    let ready =
-        storage_ready && auth_ready && domains_ready && startup_complete && accepting_traffic;
+    let ready = runtime.is_ready_for_traffic();
 
     ReadyStatus {
         status: if ready { "ready" } else { "not_ready" },
@@ -66,7 +63,7 @@ fn readiness_status(runtime: &Runtime) -> ReadyStatus {
             domains_initialized: if domains_ready { "ok" } else { "not_ready" },
             auth_configuration: if auth_ready { "ok" } else { "not_ready" },
             startup_complete: if startup_complete { "ok" } else { "not_ready" },
-            accepting_traffic: if accepting_traffic { "ok" } else { "not_ready" },
+            accepting_traffic: runtime.traffic_status(),
         },
     }
 }

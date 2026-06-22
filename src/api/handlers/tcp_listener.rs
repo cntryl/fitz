@@ -48,6 +48,15 @@ pub fn spawn_tcp_listener_with_bound_socket(
                 accept_result = tcp_listener.accept() => {
                     match accept_result {
                         Ok((stream, peer_addr)) => {
+                            if !runtime.is_accepting_traffic() {
+                                tracing::warn!(
+                                    peer = %peer_addr,
+                                    lifecycle = runtime.lifecycle_state().as_str(),
+                                    "TCP connection rejected: broker is not accepting traffic"
+                                );
+                                continue;
+                            }
+
                             record_connection_opened();
 
                             info!("TCP connection from {}", peer_addr);

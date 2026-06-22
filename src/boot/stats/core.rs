@@ -1,10 +1,20 @@
-use super::Runtime;
+use super::{
+    BrokerLifecycleState, Runtime, DEFAULT_DRAIN_CLOSE_REASON, DEFAULT_DRAIN_GRACE_SECONDS,
+    LIFECYCLE_DRAINING, LIFECYCLE_RUNNING, LIFECYCLE_SHUTTING_DOWN,
+};
 use crate::boot::domains::DomainHandles;
 use crate::runtime::Router;
 use crate::session::manager::RuntimeIngress;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
+
+fn current_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
 
 impl Runtime {
     /// Create a new runtime statistics tracker.
@@ -24,7 +34,15 @@ impl Runtime {
             domains_ready: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             auth_config_ready: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             startup_complete: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            shutdown_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            lifecycle_state: Arc::new(std::sync::atomic::AtomicU8::new(LIFECYCLE_RUNNING)),
+            drain_grace_seconds: Arc::new(std::sync::atomic::AtomicU64::new(
+                DEFAULT_DRAIN_GRACE_SECONDS,
+            )),
+            drain_started_epoch_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            drain_deadline_epoch_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            drain_close_reason: Arc::new(parking_lot::RwLock::new(
+                DEFAULT_DRAIN_CLOSE_REASON.to_string(),
+            )),
             connection_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             session_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             messages_received: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -79,6 +97,12 @@ impl Runtime {
         self.assume_external_tls.load(Ordering::SeqCst)
     }
 
+    pub fn configure_drain(&self, grace_seconds: u64, close_reason: String) {
+        self.drain_grace_seconds
+            .store(grace_seconds, Ordering::SeqCst);
+        *self.drain_close_reason.write() = close_reason;
+    }
+
     pub fn mark_storage_ready(&self) {
         self.storage_ready.store(1, Ordering::SeqCst);
     }
@@ -111,12 +135,45 @@ impl Runtime {
         self.startup_complete.load(Ordering::SeqCst) == 1
     }
 
+    pub fn lifecycle_state(&self) -> BrokerLifecycleState {
+        BrokerLifecycleState::from_u8(self.lifecycle_state.load(Ordering::SeqCst))
+    }
+
+    pub fn begin_drain(&self) {
+        let previous = self
+            .lifecycle_state
+            .compare_exchange(
+                LIFECYCLE_RUNNING,
+                LIFECYCLE_DRAINING,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .unwrap_or_else(|state| state);
+
+        if previous == LIFECYCLE_RUNNING {
+            let started = current_epoch_ms();
+            let grace_ms = self.drain_grace_seconds() * 1_000;
+            self.drain_started_epoch_ms.store(started, Ordering::SeqCst);
+            self.drain_deadline_epoch_ms
+                .store(started.saturating_add(grace_ms), Ordering::SeqCst);
+        }
+    }
+
     pub fn begin_shutdown(&self) {
-        self.shutdown_started.store(true, Ordering::SeqCst);
+        self.lifecycle_state
+            .store(LIFECYCLE_SHUTTING_DOWN, Ordering::SeqCst);
+    }
+
+    pub fn is_draining(&self) -> bool {
+        self.lifecycle_state() == BrokerLifecycleState::Draining
     }
 
     pub fn is_shutting_down(&self) -> bool {
-        self.shutdown_started.load(Ordering::SeqCst)
+        self.lifecycle_state() == BrokerLifecycleState::ShuttingDown
+    }
+
+    pub fn is_accepting_traffic(&self) -> bool {
+        self.lifecycle_state() == BrokerLifecycleState::Running
     }
 
     pub fn is_ready_for_traffic(&self) -> bool {
@@ -124,7 +181,49 @@ impl Runtime {
             && self.are_domains_ready()
             && self.is_auth_config_ready()
             && self.is_startup_complete()
-            && !self.is_shutting_down()
+            && self.is_accepting_traffic()
+    }
+
+    pub fn traffic_status(&self) -> &'static str {
+        match self.lifecycle_state() {
+            BrokerLifecycleState::Running => "ok",
+            BrokerLifecycleState::Draining => "draining",
+            BrokerLifecycleState::ShuttingDown => "not_ready",
+        }
+    }
+
+    pub fn drain_grace_seconds(&self) -> u64 {
+        self.drain_grace_seconds.load(Ordering::SeqCst)
+    }
+
+    pub fn drain_grace(&self) -> Duration {
+        Duration::from_secs(self.drain_grace_seconds())
+    }
+
+    pub fn drain_close_reason(&self) -> String {
+        self.drain_close_reason.read().clone()
+    }
+
+    pub fn drain_started_epoch_ms(&self) -> Option<u64> {
+        let value = self.drain_started_epoch_ms.load(Ordering::SeqCst);
+        (value != 0).then_some(value)
+    }
+
+    pub fn drain_deadline_epoch_ms(&self) -> Option<u64> {
+        let value = self.drain_deadline_epoch_ms.load(Ordering::SeqCst);
+        (value != 0).then_some(value)
+    }
+
+    pub fn remaining_drain_grace(&self) -> Duration {
+        let Some(deadline) = self.drain_deadline_epoch_ms() else {
+            return self.drain_grace();
+        };
+        let now = current_epoch_ms();
+        if deadline <= now {
+            Duration::ZERO
+        } else {
+            Duration::from_millis(deadline - now)
+        }
     }
 
     pub fn startup_duration(&self) -> Duration {
@@ -393,5 +492,47 @@ mod tests {
         // Assert
         assert!(runtime.is_shutting_down());
         assert!(!runtime.is_ready_for_traffic());
+    }
+
+    #[test]
+    fn should_stop_accepting_traffic_when_drain_begins() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let runtime = Runtime::new(router);
+        runtime.mark_storage_ready();
+        runtime.mark_domains_ready();
+        runtime.mark_auth_config_ready();
+        runtime.mark_startup_complete();
+
+        // Act
+        runtime.begin_drain();
+
+        // Assert
+        assert!(runtime.is_draining());
+        assert!(!runtime.is_shutting_down());
+        assert!(!runtime.is_accepting_traffic());
+        assert!(!runtime.is_ready_for_traffic());
+        assert_eq!(runtime.traffic_status(), "draining");
+        assert_eq!(runtime.lifecycle_state().as_str(), "draining");
+        assert!(runtime.drain_started_epoch_ms().is_some());
+        assert!(runtime.drain_deadline_epoch_ms().is_some());
+    }
+
+    #[test]
+    fn should_keep_original_drain_deadline_given_duplicate_drain_request() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let runtime = Runtime::new(router);
+        runtime.configure_drain(5, "first drain".to_string());
+        runtime.begin_drain();
+        let first_deadline = runtime.drain_deadline_epoch_ms();
+
+        // Act
+        runtime.configure_drain(10, "second drain".to_string());
+        runtime.begin_drain();
+
+        // Assert
+        assert_eq!(runtime.drain_deadline_epoch_ms(), first_deadline);
+        assert_eq!(runtime.drain_close_reason(), "second drain");
     }
 }

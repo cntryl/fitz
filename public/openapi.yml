@@ -18,6 +18,7 @@ servers:
 
 tags:
   - name: Auth
+  - name: Runtime
   - name: Metrics
   - name: Sessions
   - name: KV
@@ -93,6 +94,28 @@ paths:
       responses:
         "204":
           description: Session cleared and cookie removed
+
+  /api/v1/runtime/drain:
+    post:
+      tags: [Runtime]
+      summary: Begin planned broker drain
+      description: Marks this broker as draining so readiness probes fail, new TCP/WebSocket sessions are rejected, and a later SIGTERM can close existing ephemeral sessions after the configured drain grace period.
+      operationId: beginRuntimeDrain
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Drain state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeDrainResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /api/v1/sessions:
     get:
@@ -2418,6 +2441,34 @@ components:
         authenticated:
           type: boolean
         username:
+          type: string
+
+    RuntimeDrainResponse:
+      type: object
+      required:
+        [
+          lifecycle_state,
+          active_sessions,
+          drain_grace_seconds,
+          close_reason,
+        ]
+      properties:
+        lifecycle_state:
+          type: string
+          enum: [running, draining, shutting_down]
+        active_sessions:
+          type: integer
+          format: int64
+        drain_grace_seconds:
+          type: integer
+          format: int64
+        drain_started_epoch_ms:
+          type: [integer, "null"]
+          format: int64
+        drain_deadline_epoch_ms:
+          type: [integer, "null"]
+          format: int64
+        close_reason:
           type: string
 
     DiagnosticTrend:

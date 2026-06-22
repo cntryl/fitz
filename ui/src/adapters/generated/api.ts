@@ -785,6 +785,17 @@ export function createAdapter(client: FetchClient): {
     operationId?: string;
   }) => Promise<FetchResponse<RpcStats>>;
   /**
+   * Begin planned broker drain
+   *
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RuntimeDrainResponse>
+   */
+  beginRuntimeDrain: (options?: {
+    signal?: AbortSignal;
+    timeout?: number;
+    operationId?: string;
+  }) => Promise<FetchResponse<RuntimeDrainResponse>>;
+  /**
    * List schedule realms
    *
    * @param options - Request options (signal, timeout, operationId)
@@ -1853,6 +1864,14 @@ export function createAdapter(client: FetchClient): {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getRpcStats" };
       return client.get(`/api/v1/rpc/stats`, undefined, finalOptions);
     },
+    beginRuntimeDrain: (options?: {
+      signal?: AbortSignal;
+      timeout?: number;
+      operationId?: string;
+    }): Promise<FetchResponse<RuntimeDrainResponse>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "beginRuntimeDrain" };
+      return client.post(`/api/v1/runtime/drain`, undefined, undefined, finalOptions);
+    },
     listScheduleRealms: (options?: {
       signal?: AbortSignal;
       timeout?: number;
@@ -2781,6 +2800,16 @@ export interface RpcWorker {
 /** RpcWorkersList schema */
 export interface RpcWorkersList {
   workers: Array<RpcWorker>;
+}
+
+/** RuntimeDrainResponse schema */
+export interface RuntimeDrainResponse {
+  active_sessions: number;
+  close_reason: string;
+  drain_deadline_epoch_ms?: number | null;
+  drain_grace_seconds: number;
+  drain_started_epoch_ms?: number | null;
+  lifecycle_state: "running" | "draining" | "shutting_down";
 }
 
 /** ScheduleLatencyBuckets schema */

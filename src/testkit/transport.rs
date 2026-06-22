@@ -240,6 +240,9 @@ impl TestServer {
             assume_external_tls: false,
             ws_allowed_origins,
             ws_allowed_origins_error: None,
+            drain_grace_seconds: 1,
+            drain_close_reason: "test server draining".to_string(),
+            drain_config_error: None,
         };
 
         // Step 1: Initialize storage
@@ -1101,7 +1104,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_reject_websocket_upgrade_given_missing_origin_when_origins_configured() {
+    async fn should_allow_websocket_upgrade_given_missing_origin_when_origins_configured() {
         // Arrange
         let server = TestServer::start_with_ws_allowed_origins(&["https://app.example.com"])
             .await
@@ -1114,8 +1117,7 @@ mod tests {
             .expect("read websocket status");
 
         // Assert
-        assert_eq!(status, 403);
-        assert_eq!(server.runtime.session_count(), 0);
+        assert_eq!(status, 101);
     }
 
     #[tokio::test]
@@ -1152,5 +1154,40 @@ mod tests {
 
         // Assert
         assert_eq!(status, 101);
+    }
+
+    #[tokio::test]
+    async fn should_reject_websocket_upgrade_when_broker_is_draining() {
+        // Arrange
+        let server = TestServer::start_with_ws_allowed_origins(&["https://app.example.com"])
+            .await
+            .expect("start test server");
+        server.runtime.begin_drain();
+
+        // Act
+        let status = server
+            .websocket_upgrade_status(Some("https://app.example.com"))
+            .await
+            .expect("read websocket status");
+
+        // Assert
+        assert_eq!(status, 503);
+        assert_eq!(server.runtime.session_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn should_reject_tcp_session_when_broker_is_draining() {
+        // Arrange
+        let server = TestServer::start().await.expect("start test server");
+        server.runtime.begin_drain();
+
+        // Act
+        let _stream = TcpStream::connect(server.tcp_addr)
+            .await
+            .expect("connect tcp socket");
+        tokio::task::yield_now().await;
+
+        // Assert
+        assert_eq!(server.runtime.session_count(), 0);
     }
 }

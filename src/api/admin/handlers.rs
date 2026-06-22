@@ -21,6 +21,16 @@ struct AdminFeaturesResponse {
     admin_auth_mode: &'static str,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct RuntimeDrainResponse {
+    lifecycle_state: &'static str,
+    active_sessions: usize,
+    drain_grace_seconds: u64,
+    drain_started_epoch_ms: Option<u64>,
+    drain_deadline_epoch_ms: Option<u64>,
+    close_reason: String,
+}
+
 pub async fn handle_request<B>(
     req: hyper::Request<B>,
     runtime: Arc<Runtime>,
@@ -57,6 +67,16 @@ where
         (Method::GET, "/api/v1/session") => handle_current_session(req, runtime).await,
         (Method::DELETE, "/api/v1/session") => handle_logout(&req, runtime).await,
         (Method::GET, "/api/v1/features") => handle_features(runtime).await,
+
+        (Method::POST, "/api/v1/runtime/drain") => {
+            if let Err(response) = require_admin(&req, &runtime) {
+                return Ok(*response);
+            }
+            if let Err(response) = require_same_origin(&req, &runtime) {
+                return Ok(*response);
+            }
+            handle_runtime_drain(runtime).await
+        }
 
         (Method::GET, "/metrics") => {
             if let Err(response) = require_admin(&req, &runtime) {
@@ -562,6 +582,18 @@ async fn handle_features(runtime: Arc<Runtime>) -> Result<Response, Infallible> 
     super::json_response(AdminFeaturesResponse {
         admin_auth_required: admin_auth.login_required(),
         admin_auth_mode: admin_auth.auth_mode(),
+    })
+}
+
+async fn handle_runtime_drain(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
+    runtime.begin_drain();
+    super::json_response(RuntimeDrainResponse {
+        lifecycle_state: runtime.lifecycle_state().as_str(),
+        active_sessions: runtime.session_count(),
+        drain_grace_seconds: runtime.drain_grace_seconds(),
+        drain_started_epoch_ms: runtime.drain_started_epoch_ms(),
+        drain_deadline_epoch_ms: runtime.drain_deadline_epoch_ms(),
+        close_reason: runtime.drain_close_reason(),
     })
 }
 

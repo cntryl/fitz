@@ -4,13 +4,45 @@ use crate::boot::domains::DomainHandles;
 use crate::runtime::Router;
 use crate::session::manager::RuntimeIngress;
 use parking_lot::RwLock;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize};
 use std::sync::Arc;
 use std::time::Instant;
 
 mod admin_queries;
 mod core;
 mod domain_stats;
+
+const LIFECYCLE_RUNNING: u8 = 0;
+const LIFECYCLE_DRAINING: u8 = 1;
+const LIFECYCLE_SHUTTING_DOWN: u8 = 2;
+
+const DEFAULT_DRAIN_GRACE_SECONDS: u64 = 25;
+const DEFAULT_DRAIN_CLOSE_REASON: &str = "broker draining for redeploy";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrokerLifecycleState {
+    Running,
+    Draining,
+    ShuttingDown,
+}
+
+impl BrokerLifecycleState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Draining => "draining",
+            Self::ShuttingDown => "shutting_down",
+        }
+    }
+
+    pub(crate) fn from_u8(value: u8) -> Self {
+        match value {
+            LIFECYCLE_DRAINING => Self::Draining,
+            LIFECYCLE_SHUTTING_DOWN => Self::ShuttingDown,
+            _ => Self::Running,
+        }
+    }
+}
 
 /// Runtime statistics and state accessor
 ///
@@ -37,8 +69,20 @@ pub struct Runtime {
     /// Startup complete flag
     pub(crate) startup_complete: Arc<AtomicU64>,
 
-    /// Shutdown started flag
-    pub(crate) shutdown_started: Arc<AtomicBool>,
+    /// Runtime lifecycle state.
+    pub(crate) lifecycle_state: Arc<AtomicU8>,
+
+    /// Drain grace period in seconds.
+    pub(crate) drain_grace_seconds: Arc<AtomicU64>,
+
+    /// Epoch millis when the current drain started; 0 means no drain has started.
+    pub(crate) drain_started_epoch_ms: Arc<AtomicU64>,
+
+    /// Epoch millis when the current drain grace expires; 0 means no drain has started.
+    pub(crate) drain_deadline_epoch_ms: Arc<AtomicU64>,
+
+    /// Human-readable server close reason used for planned drain shutdown.
+    pub(crate) drain_close_reason: Arc<RwLock<String>>,
 
     /// Active connection count
     pub(crate) connection_count: Arc<AtomicUsize>,

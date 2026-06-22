@@ -18,7 +18,7 @@ pub mod storage;
 
 pub use resource_limits::enforce_startup_resource_limits;
 pub use runtime::{BootConfig, BootResult};
-pub use stats::Runtime;
+pub use stats::{BrokerLifecycleState, Runtime};
 
 enum ShutdownSignal {
     CtrlC,
@@ -150,7 +150,29 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     // Step 5: Wait for shutdown signal
     let signal = wait_for_shutdown_signal().await?;
     tracing::info!(signal = signal.as_str(), "Shutting down Fitz broker");
+
+    let session_close_reason = match signal {
+        ShutdownSignal::Sigterm => {
+            runtime.begin_drain();
+            let remaining = runtime.remaining_drain_grace();
+            tracing::info!(
+                drain_grace_ms = remaining.as_millis(),
+                "Fitz broker draining before shutdown"
+            );
+            if !remaining.is_zero() {
+                tokio::time::sleep(remaining).await;
+            }
+            runtime.drain_close_reason()
+        }
+        ShutdownSignal::CtrlC => "broker shutdown".to_string(),
+    };
+
     runtime.begin_shutdown();
+    ingress
+        .close_all_sessions(crate::session::CloseReason::ServerClose(
+            session_close_reason,
+        ))
+        .await;
 
     if let Some(tcp_shutdown) = tcp_shutdown {
         let _ = tcp_shutdown.send(());
@@ -172,11 +194,6 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     if let Some(domains) = &domains {
         domains.stop();
     }
-    ingress
-        .close_all_sessions(crate::session::CloseReason::ServerClose(
-            "broker shutdown".to_string(),
-        ))
-        .await;
     router.clear();
     runtime.detach_ingress();
     drop(domains);

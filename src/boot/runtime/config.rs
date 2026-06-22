@@ -9,6 +9,10 @@ const DEFAULT_PEAS_ACCESS_KEY: &str = "admin";
 const DEFAULT_PEAS_SECRET_KEY: &str = "easy-peasy";
 const DEFAULT_PEAS_BUCKET: &str = "fitz";
 const ENV_STORAGE_MEMTABLE_BYTES: &str = "FITZ_STORAGE_MEMTABLE_BYTES";
+const ENV_DRAIN_GRACE_SECONDS: &str = "FITZ_DRAIN_GRACE_SECONDS";
+const ENV_DRAIN_CLOSE_REASON: &str = "FITZ_DRAIN_CLOSE_REASON";
+const DEFAULT_DRAIN_GRACE_SECONDS: u64 = 25;
+const DEFAULT_DRAIN_CLOSE_REASON: &str = "broker draining for redeploy";
 const DEFAULT_LOCAL_WS_ALLOWED_ORIGIN_VALUES: [&str; 4] = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -407,6 +411,26 @@ fn env_bool(key: &str, default: bool) -> Result<bool, String> {
     }
 }
 
+fn drain_grace_seconds_from_env() -> (u64, Option<String>) {
+    let Some(value) = env_non_empty(ENV_DRAIN_GRACE_SECONDS) else {
+        return (DEFAULT_DRAIN_GRACE_SECONDS, None);
+    };
+
+    match value.parse::<u64>() {
+        Ok(0) => (
+            0,
+            Some(format!("{ENV_DRAIN_GRACE_SECONDS} must be greater than 0")),
+        ),
+        Ok(seconds) => (seconds, None),
+        Err(_) => (
+            0,
+            Some(format!(
+                "{ENV_DRAIN_GRACE_SECONDS} must be an unsigned integer second count"
+            )),
+        ),
+    }
+}
+
 /// Boot configuration for the Fitz broker.
 #[derive(Debug, Clone)]
 pub struct BootConfig {
@@ -447,6 +471,11 @@ pub struct BootConfig {
     /// Browser origins allowed to open the WebSocket data-plane endpoint.
     pub ws_allowed_origins: Vec<crate::api::origin::ExactOrigin>,
     pub(crate) ws_allowed_origins_error: Option<String>,
+    /// Grace period used after planned drain starts before active sessions are closed.
+    pub drain_grace_seconds: u64,
+    /// Server close reason used when a planned drain closes sessions.
+    pub drain_close_reason: String,
+    pub(crate) drain_config_error: Option<String>,
 }
 
 impl BootConfig {
@@ -504,6 +533,9 @@ impl Default for BootConfig {
             .unwrap_or(false);
         let (ws_allowed_origins, ws_allowed_origins_error) =
             parse_ws_allowed_origins_from_env().unwrap_or_else(default_local_ws_allowed_origins);
+        let (drain_grace_seconds, drain_config_error) = drain_grace_seconds_from_env();
+        let drain_close_reason = env_non_empty(ENV_DRAIN_CLOSE_REASON)
+            .unwrap_or_else(|| DEFAULT_DRAIN_CLOSE_REASON.to_string());
         let route_families = std::env::var("FITZ_ROUTE_FAMILIES")
             .unwrap_or_else(|_| "1".to_string())
             .split(',')
@@ -530,6 +562,9 @@ impl Default for BootConfig {
             assume_external_tls,
             ws_allowed_origins,
             ws_allowed_origins_error,
+            drain_grace_seconds,
+            drain_close_reason,
+            drain_config_error,
         }
     }
 }
@@ -589,6 +624,17 @@ impl BootConfig {
         self
     }
 
+    pub fn with_drain_grace_seconds(mut self, seconds: u64) -> Self {
+        self.drain_grace_seconds = seconds;
+        self.drain_config_error = None;
+        self
+    }
+
+    pub fn with_drain_close_reason(mut self, reason: impl Into<String>) -> Self {
+        self.drain_close_reason = reason.into();
+        self
+    }
+
     pub fn with_storage_mode(mut self, mode: StorageMode) -> Self {
         self.storage_mode = mode;
         self
@@ -636,6 +682,15 @@ impl BootConfig {
     }
 
     pub fn validate(&self) -> BootResult<()> {
+        if let Some(error) = &self.drain_config_error {
+            return Err(error.clone().into());
+        }
+        if self.drain_grace_seconds == 0 {
+            return Err(format!("{ENV_DRAIN_GRACE_SECONDS} must be greater than 0").into());
+        }
+        if self.drain_close_reason.trim().is_empty() {
+            return Err(format!("{ENV_DRAIN_CLOSE_REASON} must not be empty").into());
+        }
         if let CloudDurabilityMode::Invalid { reason } = &self.cloud_durability {
             return Err(reason.clone().into());
         }
@@ -846,6 +901,8 @@ mod tests {
             "FITZ_ADMIN_PASSWORD_HASH",
             "FITZ_ADMIN_COOKIE_SECURE",
             "FITZ_ADMIN_PUBLIC_ORIGIN",
+            ENV_DRAIN_GRACE_SECONDS,
+            ENV_DRAIN_CLOSE_REASON,
         ];
         let previous = keys
             .iter()
@@ -904,6 +961,8 @@ mod tests {
             "FITZ_ADMIN_AUTH_MODE",
             "FITZ_ADMIN_USERNAME",
             "FITZ_ADMIN_PASSWORD_HASH",
+            ENV_DRAIN_GRACE_SECONDS,
+            ENV_DRAIN_CLOSE_REASON,
         ];
         let previous = keys
             .iter()
@@ -956,6 +1015,8 @@ mod tests {
         assert_eq!(config.max_connections, 10_000);
         assert_eq!(config.cloud_durability, CloudDurabilityMode::Background);
         assert_eq!(config.storage_memtable, StorageMemtableConfig::Auto);
+        assert_eq!(config.drain_grace_seconds, DEFAULT_DRAIN_GRACE_SECONDS);
+        assert_eq!(config.drain_close_reason, DEFAULT_DRAIN_CLOSE_REASON);
         assert!(!config.assume_external_tls);
         assert_eq!(config.route_families, vec![1]);
         assert_eq!(
@@ -1012,6 +1073,54 @@ mod tests {
         assert!(!config.tcp_enabled);
         assert_eq!(config.http_port, 5090);
         assert_eq!(config.bind_addr, "127.0.0.1");
+    }
+
+    #[test]
+    #[serial]
+    fn should_read_drain_config_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                (ENV_DRAIN_GRACE_SECONDS, "45"),
+                (ENV_DRAIN_CLOSE_REASON, "planned deploy"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::default();
+
+                // Assert
+                assert_eq!(config.drain_grace_seconds, 45);
+                assert_eq!(config.drain_close_reason, "planned deploy");
+                assert!(config.validate().is_ok());
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_invalid_drain_grace_from_environment() {
+        with_auth_env(
+            &[
+                ("FITZ_AUTH_REQUIRED", "false"),
+                (ENV_DRAIN_GRACE_SECONDS, "nope"),
+            ],
+            || {
+                // Arrange
+                let config = BootConfig::default();
+
+                // Act
+                let result = config.validate();
+
+                // Assert
+                assert!(result.is_err());
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ENV_DRAIN_GRACE_SECONDS));
+            },
+        );
     }
 
     fn auth_ready_config() -> BootConfig {

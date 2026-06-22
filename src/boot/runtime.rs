@@ -59,6 +59,10 @@ pub fn init(
     runtime.attach_ingress(ingress.clone());
     runtime.attach_auth_config(config.auth_config.clone());
     runtime.set_assume_external_tls(config.assume_external_tls);
+    runtime.configure_drain(
+        config.drain_grace_seconds,
+        config.drain_close_reason.clone(),
+    );
 
     info!("Runtime initialized");
 

@@ -26,6 +26,11 @@ This guide explains how to instrument each layer of Fitz with comprehensive obse
 - `/healthz` mirrors readiness and should drive external traffic admission on platforms that only support one HTTP health check.
 - `/startupz` reports whether Fitz has completed startup and is safe to begin liveness checks.
 
+During planned redeploy drain, `/livez` remains `200`, while `/readyz` and
+`/healthz` return `503` with `accepting_traffic: "draining"`. This lets an ALB
+or orchestrator stop new traffic before Fitz closes existing ephemeral sessions
+after `FITZ_DRAIN_GRACE_SECONDS`.
+
 ---
 
 ## Layer-by-Layer Instrumentation

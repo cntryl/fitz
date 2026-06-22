@@ -13,6 +13,8 @@ This page is the central reference for environment variables supported by Fitz r
 | FITZ_BIND_ADDR | IP or hostname | 0.0.0.0 | Bind address for listeners. |
 | FITZ_ASSUME_EXTERNAL_TLS | true or false | false | Enables TLS-dependent browser response behavior such as HSTS when TLS is terminated outside Fitz. Local development can leave this unset. |
 | FITZ_WS_ALLOWED_ORIGINS | Comma-separated exact browser origins, e.g. https://app.example.com | Local loopback origins for ports 3000 and 4090 | Browser WebSocket Origin allowlist. Values are HTTP origins, not wss URLs, and must not include a path, query, fragment, or trailing slash. Public browser deployments should set this to their exact SPA origins. |
+| FITZ_DRAIN_GRACE_SECONDS | Positive integer seconds | 25 | Planned redeploy drain grace. During drain, `/healthz` and `/readyz` fail and new TCP/WebSocket sessions are rejected before active sessions are closed on shutdown. Set below the ECS task `stopTimeout`. |
+| FITZ_DRAIN_CLOSE_REASON | Non-empty string | broker draining for redeploy | Server close reason recorded when planned drain shutdown closes active sessions. |
 | FITZ_ROUTE_FAMILIES | Comma-separated u32 list, contiguous from 1 (example: 1,2,3) | 1 | Provisioned route-family allowlist accepted after identity resolution. |
 | FITZ_ROUTE_FAMILY_MAP | Comma-separated identity=family mappings | Empty | Maps verified identity claim values to provisioned route-family numbers. Required when auth is enabled. |
 | FITZ_ROUTE_FAMILY_CLAIM | JWT claim key | tid | Default identity claim key used for route-family resolution. |
