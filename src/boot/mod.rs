@@ -38,12 +38,13 @@ impl ShutdownSignal {
 ///
 /// # Steps
 /// 0. Initialize observability (tracing, metrics, OTEL)
-/// 1. Open storage
-/// 2. Create runtime (router, ingress, scheduler)
-/// 3. Register domain actors
-/// 4. Spawn transport listeners (TCP, HTTP/WS)
-/// 5. Wait for Ctrl+C
-/// 6. Graceful shutdown
+/// 1. Create runtime (router, ingress, scheduler)
+/// 2. Start HTTP for target health; WebSocket upgrades remain gated
+/// 3. Open storage and acquire the active Midge writer lease
+/// 4. Register domain actors
+/// 5. Start TCP listener
+/// 6. Wait for shutdown signal
+/// 7. Graceful shutdown
 pub async fn boot(config: BootConfig) -> BootResult<()> {
     resource_limits::enforce_startup_resource_limits()?;
 
@@ -53,51 +54,14 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     tracing::info!("Starting Fitz broker");
     config.validate()?;
 
-    // Step 1: Open storage
-    let store = storage::init(&config).await?;
-    tracing::info!("Storage initialized");
-
-    // Step 2: Create runtime infrastructure
-    let (router, ingress, ingress_config, runtime) = runtime::init(&config, &store)?;
+    // Step 1: Create runtime infrastructure before opening storage so HTTP
+    // target health can participate in ECS handoff while Midge waits for the
+    // single-writer lease.
+    let (router, ingress, ingress_config, runtime) = runtime::init(&config)?;
     tracing::info!("Runtime initialized");
 
     runtime.mark_auth_config_ready();
 
-    // Mark storage ready
-    runtime.mark_storage_ready();
-
-    // Step 3: Register domain actors
-    let server_write_options = config.server_write_options();
-    let domains = domains::setup(
-        &router,
-        &store,
-        &runtime.admin_read_model(),
-        server_write_options,
-        config.request_sync_write_options(),
-        None,
-        config.stream_storage_layout,
-    )?;
-    runtime.attach_domains(std::sync::Arc::new(domains));
-    tracing::info!("Domain actors registered");
-
-    // Mark domains ready
-    runtime.mark_domains_ready();
-
-    // Step 4: Start transport listeners
-    let tcp_listener = if config.tcp_enabled {
-        Some(
-            crate::api::handlers::spawn_tcp_listener(
-                &config,
-                ingress.clone(),
-                ingress_config.clone(),
-                runtime.clone(),
-            )
-            .await?,
-        )
-    } else {
-        tracing::info!("TCP listener disabled");
-        None
-    };
     let ws_listener = crate::api::handlers::spawn_http_listener(
         &config,
         ingress.clone(),
@@ -105,6 +69,79 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         runtime.clone(),
     )
     .await?;
+    let crate::api::handlers::ListenerHandle {
+        ready: ws_ready,
+        shutdown: ws_shutdown,
+        join: ws_join,
+    } = ws_listener;
+
+    ws_ready.await.map_err(|e| {
+        Box::new(std::io::Error::other(format!(
+            "WebSocket listener failed to start: {}",
+            e
+        ))) as Box<dyn std::error::Error>
+    })?;
+
+    // Step 2: Open storage after HTTP target health is reachable.
+    let store = match storage::init(&config).await {
+        Ok(store) => store,
+        Err(error) => {
+            let _ = ws_shutdown.send(());
+            wait_for_listener("HTTP", ws_join).await?;
+            return Err(error);
+        }
+    };
+    tracing::info!("Storage initialized");
+
+    runtime.mark_storage_ready();
+
+    // Step 3: Register domain actors
+    let server_write_options = config.server_write_options();
+    let domains = match domains::setup(
+        &router,
+        &store,
+        &runtime.admin_read_model(),
+        server_write_options,
+        config.request_sync_write_options(),
+        None,
+        config.stream_storage_layout,
+    ) {
+        Ok(domains) => domains,
+        Err(error) => {
+            let _ = ws_shutdown.send(());
+            wait_for_listener("HTTP", ws_join).await?;
+            return Err(error);
+        }
+    };
+    runtime.attach_domains(std::sync::Arc::new(domains));
+    tracing::info!("Domain actors registered");
+
+    // Mark domains ready
+    runtime.mark_domains_ready();
+
+    // Step 4: Start TCP listener only after domain actors exist. WebSocket
+    // has been listening since target health came online, but its upgrade path
+    // stays closed until startup is complete.
+    let tcp_listener = if config.tcp_enabled {
+        match crate::api::handlers::spawn_tcp_listener(
+            &config,
+            ingress.clone(),
+            ingress_config.clone(),
+            runtime.clone(),
+        )
+        .await
+        {
+            Ok(listener) => Some(listener),
+            Err(error) => {
+                let _ = ws_shutdown.send(());
+                wait_for_listener("HTTP", ws_join).await?;
+                return Err(error);
+            }
+        }
+    } else {
+        tracing::info!("TCP listener disabled");
+        None
+    };
 
     let (tcp_shutdown, tcp_join) = if let Some(tcp_listener) = tcp_listener {
         let crate::api::handlers::ListenerHandle {
@@ -122,19 +159,6 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     } else {
         (None, None)
     };
-    let crate::api::handlers::ListenerHandle {
-        ready: ws_ready,
-        shutdown: ws_shutdown,
-        join: ws_join,
-    } = ws_listener;
-
-    // Wait for listeners to be ready before accepting traffic.
-    ws_ready.await.map_err(|e| {
-        Box::new(std::io::Error::other(format!(
-            "WebSocket listener failed to start: {}",
-            e
-        ))) as Box<dyn std::error::Error>
-    })?;
 
     // Mark startup complete
     runtime.mark_startup_complete();
@@ -179,12 +203,6 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     }
     let _ = ws_shutdown.send(());
 
-    let wait_for_listener = async |name, join: tokio::task::JoinHandle<()>| {
-        tokio::time::timeout(std::time::Duration::from_secs(6), join)
-            .await
-            .map_err(|_| format!("{} listener shutdown timed out", name))?
-            .map_err(|error| format!("{} listener join failed: {}", name, error))
-    };
     if let Some(tcp_join) = tcp_join {
         wait_for_listener("TCP", tcp_join).await?;
     }
@@ -212,6 +230,16 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         .map_err(|error| format!("Midge shutdown failed: {}", error))?;
 
     Ok(())
+}
+
+async fn wait_for_listener(
+    name: &'static str,
+    join: tokio::task::JoinHandle<()>,
+) -> Result<(), String> {
+    tokio::time::timeout(std::time::Duration::from_secs(6), join)
+        .await
+        .map_err(|_| format!("{} listener shutdown timed out", name))?
+        .map_err(|error| format!("{} listener join failed: {}", name, error))
 }
 
 async fn wait_for_shutdown_signal() -> BootResult<ShutdownSignal> {

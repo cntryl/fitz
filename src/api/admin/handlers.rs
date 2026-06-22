@@ -58,6 +58,7 @@ where
 
     match (method, path.as_str()) {
         (Method::GET, "/livez") => probes::handle_liveness().await,
+        (Method::GET, "/targetz") => probes::handle_targetz(runtime).await,
         (Method::GET, "/healthz") => probes::handle_healthz(runtime).await,
         (Method::GET, "/readyz") => probes::handle_readiness(runtime).await,
         (Method::GET, "/startupz") => probes::handle_startup(runtime).await,
@@ -96,11 +97,17 @@ where
             if let Err(response) = require_admin(&req, &runtime) {
                 return Ok(*response);
             }
+            if let Err(response) = require_data_plane_ready(&runtime) {
+                return Ok(*response);
+            }
             stats::handle_global_stats(runtime).await
         }
 
         (Method::GET, "/api/v1/topology") => {
             if let Err(response) = require_admin(&req, &runtime) {
+                return Ok(*response);
+            }
+            if let Err(response) = require_data_plane_ready(&runtime) {
                 return Ok(*response);
             }
             topology::handle_topology(runtime).await
@@ -110,11 +117,17 @@ where
             if let Err(response) = require_admin(&req, &runtime) {
                 return Ok(*response);
             }
+            if let Err(response) = require_data_plane_ready(&runtime) {
+                return Ok(*response);
+            }
             stats::handle_global_troubleshooting(runtime).await
         }
 
         (Method::GET, path) if path.starts_with("/api/v1/") => {
             if let Err(response) = require_admin(&req, &runtime) {
+                return Ok(*response);
+            }
+            if let Err(response) = require_data_plane_ready(&runtime) {
                 return Ok(*response);
             }
             handle_hierarchical_get(req.uri(), runtime).await
@@ -127,6 +140,9 @@ where
             if let Err(response) = require_same_origin(&req, &runtime) {
                 return Ok(*response);
             }
+            if let Err(response) = require_data_plane_ready(&runtime) {
+                return Ok(*response);
+            }
             handle_hierarchical_post(&req, runtime).await
         }
 
@@ -135,6 +151,9 @@ where
                 return Ok(*response);
             }
             if let Err(response) = require_same_origin(&req, &runtime) {
+                return Ok(*response);
+            }
+            if let Err(response) = require_data_plane_ready(&runtime) {
                 return Ok(*response);
             }
             handle_hierarchical_delete(&req, runtime).await
@@ -583,6 +602,15 @@ async fn handle_features(runtime: Arc<Runtime>) -> Result<Response, Infallible> 
         admin_auth_required: admin_auth.login_required(),
         admin_auth_mode: admin_auth.auth_mode(),
     })
+}
+
+fn require_data_plane_ready(runtime: &Arc<Runtime>) -> Result<(), Box<Response>> {
+    if runtime.is_ready_for_traffic() {
+        return Ok(());
+    }
+
+    let response = super::error_response(StatusCode::SERVICE_UNAVAILABLE, "data plane not ready");
+    Err(Box::new(response))
 }
 
 async fn handle_runtime_drain(runtime: Arc<Runtime>) -> Result<Response, Infallible> {

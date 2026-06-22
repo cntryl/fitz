@@ -145,7 +145,8 @@ This setting does not change Fitz domain semantics. Notice, RPC, and Lease remai
 3. Use a stable `FITZ_STORAGE_PREFIX` per environment, such as `dev`, `staging`, or `prod`.
 4. Start Peas locally with `compose.cloud.yml`; only `FITZ_PEAS_PROVIDER=peas-s3|peas-azure|peas-gcs` is supported there.
 5. Move to production by using explicit runtime env for `FITZ_STORAGE_PROVIDER`, namespace, endpoint/region, and provider credentials.
-6. Configure `/livez`, `/healthz`, `/readyz`, `/startupz`, and `/metrics` monitoring before customer traffic.
-7. For ECS/ALB rollouts, use `/healthz` as the target-group health check, set `FITZ_DRAIN_GRACE_SECONDS` below the task `stopTimeout`, and keep the target deregistration delay close to the Fitz drain grace so old tasks stop receiving new WebSocket traffic before shutdown.
+6. Configure `/livez`, `/targetz`, `/healthz`, `/readyz`, `/startupz`, and `/metrics` monitoring before customer traffic.
+7. For ECS/ALB rollouts, use `/targetz` as the target-group health check, set `FITZ_DRAIN_GRACE_SECONDS` below the task `stopTimeout`, and keep the target deregistration delay close to the Fitz drain grace so old tasks stop receiving new WebSocket traffic before shutdown.
+8. For Kubernetes rolling rollouts with one active Fitz Pod, use `/livez` for liveness/startup probes and `/targetz` for the readiness probe that controls Service endpoints. Keep `/readyz` or `/healthz` for strict data-plane readiness checks.
 
 Details for endpoints are in [admin/admin-api.md](../admin/admin-api.md) and [operations/observability.md](observability.md).

@@ -51,6 +51,18 @@ fn test_runtime() -> Arc<Runtime> {
     fitz::boot::observability::metrics().clear();
     configure_admin_auth();
     let router = Arc::new(Router::new());
+    let runtime = Runtime::new(router);
+    runtime.mark_storage_ready();
+    runtime.mark_domains_ready();
+    runtime.mark_auth_config_ready();
+    runtime.mark_startup_complete();
+    Arc::new(runtime)
+}
+
+fn test_runtime_not_ready() -> Arc<Runtime> {
+    fitz::boot::observability::metrics().clear();
+    configure_admin_auth();
+    let router = Arc::new(Router::new());
     Arc::new(Runtime::new(router))
 }
 
@@ -61,9 +73,7 @@ fn test_runtime_from_boot_config(assume_external_tls: bool) -> Arc<Runtime> {
         .with_auth_config(fitz::auth::AuthConfig::Disabled)
         .with_bind_addr("127.0.0.1".to_string())
         .with_assume_external_tls(assume_external_tls);
-    let store = fitz::testkit::create_test_engine_with_cfs(vec![1]);
-    let (_, _, _, runtime) =
-        fitz::boot::runtime::init(&config, &store).expect("initialize runtime");
+    let (_, _, _, runtime) = fitz::boot::runtime::init(&config).expect("initialize runtime");
     Arc::new(runtime)
 }
 
@@ -115,6 +125,13 @@ fn assert_prometheus_counter(metrics: &str, name: &str, value: u64) {
     );
 }
 
+fn mark_runtime_ready(runtime: &Runtime) {
+    runtime.mark_storage_ready();
+    runtime.mark_domains_ready();
+    runtime.mark_auth_config_ready();
+    runtime.mark_startup_complete();
+}
+
 fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::Engine>) {
     configure_admin_auth();
     let router = Arc::new(Router::new());
@@ -157,6 +174,7 @@ fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::Engine>) {
     });
 
     runtime.attach_domains(domains);
+    mark_runtime_ready(runtime.as_ref());
     (runtime, store)
 }
 
@@ -210,6 +228,7 @@ fn schedule_runtime_with_domains() -> (
     });
 
     runtime.attach_domains(domains);
+    mark_runtime_ready(runtime.as_ref());
     (runtime, store, schedule)
 }
 
@@ -674,7 +693,7 @@ fn assert_clear_admin_cookie(response: &fitz::api::http::Response) {
 #[serial]
 async fn should_keep_healthz_unhealthy_until_readiness_checks_pass() {
     // Arrange
-    let runtime = test_runtime();
+    let runtime = test_runtime_not_ready();
     let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/healthz")
@@ -766,9 +785,88 @@ async fn should_keep_healthz_unhealthy_given_drain_when_runtime_was_ready() {
 
 #[tokio::test]
 #[serial]
-async fn should_report_livez_ok_given_runtime_not_ready() {
+async fn should_report_targetz_ready_before_data_plane_readiness() {
+    // Arrange
+    let runtime = test_runtime_not_ready();
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/targetz")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["status"], "ready");
+    assert_eq!(payload["checks"]["http_listener"], "ok");
+    assert_eq!(payload["checks"]["accepting_target_traffic"], "ok");
+    assert_eq!(payload["checks"]["data_plane_ready"], "not_ready");
+    assert_eq!(payload["checks"]["storage_writer_lease"], "not_ready");
+}
+
+#[tokio::test]
+#[serial]
+async fn should_keep_targetz_unhealthy_given_drain() {
     // Arrange
     let runtime = test_runtime();
+    runtime.begin_drain();
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/targetz")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["status"], "not_ready");
+    assert_eq!(payload["checks"]["http_listener"], "ok");
+    assert_eq!(payload["checks"]["accepting_target_traffic"], "draining");
+    assert_eq!(payload["checks"]["data_plane_ready"], "not_ready");
+}
+
+#[tokio::test]
+#[serial]
+async fn should_reject_domain_admin_api_before_data_plane_readiness() {
+    // Arrange
+    let runtime = test_runtime_not_ready();
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/stats")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["error"], "data plane not ready");
+}
+
+#[tokio::test]
+#[serial]
+async fn should_report_livez_ok_given_runtime_not_ready() {
+    // Arrange
+    let runtime = test_runtime_not_ready();
     let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/livez")

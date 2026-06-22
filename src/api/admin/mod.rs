@@ -18,7 +18,7 @@ pub(crate) use stats::{build_global_stats, build_global_troubleshooting};
 
 pub use handlers::handle_request;
 pub use list::*;
-pub use probes::{HealthStatus, ReadyStatus, StartupStatus};
+pub use probes::{HealthStatus, ReadyStatus, StartupStatus, TargetStatus};
 
 use crate::api::http::{Body, Response};
 use hyper::header::HeaderValue;

@@ -249,8 +249,7 @@ impl TestServer {
         let store = crate::boot::storage::init(&boot_config).await?;
 
         // Step 2: Initialize runtime
-        let (router, ingress, ingress_config, runtime) =
-            crate::boot::runtime::init(&boot_config, &store)?;
+        let (router, ingress, ingress_config, runtime) = crate::boot::runtime::init(&boot_config)?;
 
         runtime.mark_auth_config_ready();
 
@@ -979,6 +978,36 @@ pub fn generate_invalid_signature_jwt(realm: &str) -> String {
 mod tests {
     use super::*;
 
+    async fn websocket_upgrade_status_for_addr(
+        addr: SocketAddr,
+    ) -> Result<u16, Box<dyn std::error::Error>> {
+        let mut stream = TcpStream::connect(addr).await?;
+        stream.set_nodelay(true)?;
+        let request = format!(
+            "GET / HTTP/1.1\r\n\
+             Host: {}\r\n\
+             Upgrade: websocket\r\n\
+             Connection: Upgrade\r\n\
+             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+             Sec-WebSocket-Version: 13\r\n\
+             \r\n",
+            addr
+        );
+        stream.write_all(request.as_bytes()).await?;
+        let mut response = [0_u8; 1024];
+        let bytes_read = stream.read(&mut response).await?;
+        let status_line = std::str::from_utf8(&response[..bytes_read])?
+            .lines()
+            .next()
+            .ok_or_else(|| std::io::Error::other("missing HTTP status line"))?;
+        let status = status_line
+            .split_whitespace()
+            .nth(1)
+            .ok_or_else(|| std::io::Error::other("missing HTTP status code"))?
+            .parse::<u16>()?;
+        Ok(status)
+    }
+
     #[test]
     fn should_encode_tlv_frame() {
         // Arrange
@@ -1154,6 +1183,76 @@ mod tests {
 
         // Assert
         assert_eq!(status, 101);
+    }
+
+    #[tokio::test]
+    async fn should_reject_websocket_upgrade_before_data_plane_readiness() {
+        // Arrange
+        let ws_socket = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind websocket listener");
+        let ws_addr = ws_socket.local_addr().expect("websocket listener addr");
+        let boot_config = crate::boot::BootConfig::with_memory_storage()
+            .with_auth_config(crate::auth::AuthConfig::Disabled)
+            .with_bind_addr("127.0.0.1".to_string())
+            .with_http_port(ws_addr.port());
+        let (_, ingress, ingress_config, runtime) =
+            crate::boot::runtime::init(&boot_config).expect("initialize runtime");
+        runtime.mark_auth_config_ready();
+        let handle = crate::api::handlers::spawn_http_listener_with_bound_socket(
+            ws_socket,
+            ingress,
+            ingress_config,
+            runtime,
+            boot_config.ws_allowed_origins.clone(),
+        )
+        .expect("spawn websocket listener");
+        handle.ready.await.expect("websocket listener ready");
+
+        // Act
+        let status = websocket_upgrade_status_for_addr(ws_addr)
+            .await
+            .expect("read websocket status");
+
+        // Assert
+        assert_eq!(status, 503);
+        let _ = handle.shutdown.send(());
+        handle.join.await.expect("websocket listener shutdown");
+    }
+
+    #[tokio::test]
+    async fn should_reject_tcp_session_before_data_plane_readiness() {
+        // Arrange
+        let tcp_socket = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind tcp listener");
+        let tcp_addr = tcp_socket.local_addr().expect("tcp listener addr");
+        let boot_config = crate::boot::BootConfig::with_memory_storage()
+            .with_auth_config(crate::auth::AuthConfig::Disabled)
+            .with_bind_addr("127.0.0.1".to_string())
+            .with_tcp_port(tcp_addr.port());
+        let (_, ingress, ingress_config, runtime) =
+            crate::boot::runtime::init(&boot_config).expect("initialize runtime");
+        runtime.mark_auth_config_ready();
+        let handle = crate::api::handlers::spawn_tcp_listener_with_bound_socket(
+            tcp_socket,
+            ingress,
+            ingress_config,
+            runtime.clone(),
+        )
+        .expect("spawn tcp listener");
+        handle.ready.await.expect("tcp listener ready");
+
+        // Act
+        let _stream = TcpStream::connect(tcp_addr)
+            .await
+            .expect("connect tcp socket");
+        tokio::task::yield_now().await;
+
+        // Assert
+        assert_eq!(runtime.session_count(), 0);
+        let _ = handle.shutdown.send(());
+        handle.join.await.expect("tcp listener shutdown");
     }
 
     #[tokio::test]

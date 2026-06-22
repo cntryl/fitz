@@ -22,12 +22,14 @@ This guide explains how to instrument each layer of Fitz with comprehensive obse
 
 **Health Endpoints:**
 - `/livez` reports process liveness only and should drive restart policies.
+- `/targetz` reports HTTP target eligibility for orchestrator handoff and does not require the Midge writer lease.
 - `/readyz` reports native readiness for platforms that support a dedicated readiness probe.
 - `/healthz` mirrors readiness and should drive external traffic admission on platforms that only support one HTTP health check.
 - `/startupz` reports whether Fitz has completed startup and is safe to begin liveness checks.
 
-During planned redeploy drain, `/livez` remains `200`, while `/readyz` and
-`/healthz` return `503` with `accepting_traffic: "draining"`. This lets an ALB
+During planned redeploy drain, `/livez` remains `200`, while `/targetz`,
+`/readyz`, and `/healthz` return `503` with `accepting_target_traffic` or
+`accepting_traffic` set to `"draining"`. This lets an ALB, Kubernetes Service,
 or orchestrator stop new traffic before Fitz closes existing ephemeral sessions
 after `FITZ_DRAIN_GRACE_SECONDS`.
 

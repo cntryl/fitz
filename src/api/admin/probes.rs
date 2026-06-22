@@ -19,6 +19,12 @@ pub struct ReadyStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TargetStatus {
+    pub status: &'static str,
+    pub checks: TargetCheckResults,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckResults {
     pub storage: &'static str,
     pub storage_writer_lease: &'static str,
@@ -26,6 +32,14 @@ pub struct CheckResults {
     pub auth_configuration: &'static str,
     pub startup_complete: &'static str,
     pub accepting_traffic: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TargetCheckResults {
+    pub http_listener: &'static str,
+    pub accepting_target_traffic: &'static str,
+    pub data_plane_ready: &'static str,
+    pub storage_writer_lease: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +82,22 @@ fn readiness_status(runtime: &Runtime) -> ReadyStatus {
     }
 }
 
+fn target_status(runtime: &Runtime) -> TargetStatus {
+    let target_ready = runtime.is_accepting_traffic();
+    let data_plane_ready = runtime.is_ready_for_traffic();
+    let storage_ready = runtime.is_storage_ready();
+
+    TargetStatus {
+        status: if target_ready { "ready" } else { "not_ready" },
+        checks: TargetCheckResults {
+            http_listener: "ok",
+            accepting_target_traffic: runtime.traffic_status(),
+            data_plane_ready: if data_plane_ready { "ok" } else { "not_ready" },
+            storage_writer_lease: if storage_ready { "ok" } else { "not_ready" },
+        },
+    }
+}
+
 /// Deployment-safe health probe.
 ///
 /// This mirrors readiness so load balancers do not route traffic until the
@@ -90,6 +120,25 @@ pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response, Infalli
 
     Ok(hyper::http::Response::builder()
         .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(serde_json::to_string(&response).unwrap()))
+        .unwrap())
+}
+
+/// Orchestrator target probe - is this HTTP target alive and eligible for handoff?
+///
+/// This intentionally does not require the Midge writer lease. Data-plane
+/// readiness remains owned by `/healthz` and `/readyz`.
+pub async fn handle_targetz(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
+    let response = target_status(runtime.as_ref());
+    let status = if response.status == "ready" {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    Ok(hyper::http::Response::builder()
+        .status(status)
         .header("Content-Type", "application/json")
         .body(Body::from(serde_json::to_string(&response).unwrap()))
         .unwrap())

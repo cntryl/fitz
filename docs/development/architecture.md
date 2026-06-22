@@ -620,19 +620,32 @@ Brokers SHOULD NOT expose session IDs to clients in standard responses. Session 
 **File:** `src/boot/mod.rs`
 ```rust
 pub async fn boot(config: BootConfig) -> Result<()> {
-    // 1. Initialize logging
-    tracing_subscriber::fmt::init();
+    // 1. Initialize observability and validate configuration
+    observability::init_observability()?;
+    config.validate()?;
+
+    // 2. Initialize runtime before storage so HTTP target health can answer
+    let (router, ingress, ingress_config, runtime) = runtime::init(&config)?;
+
+    // 3. Start HTTP early for /targetz; WebSocket upgrades stay gated
+    let http = handlers::spawn_http_listener(
+        &config,
+        ingress.clone(),
+        ingress_config.clone(),
+        runtime.clone(),
+    ).await?;
     
-    // 2. Initialize storage
+    // 4. Open storage and acquire the active Midge writer lease
     let store = storage::init(&config).await?;
+    runtime.mark_storage_ready();
     
-    // 3. Initialize runtime
-    let (router, ingress, ingress_config, scheduler) = runtime::init(&store)?;
+    // 5. Register domains
+    let domains = domains::setup(&router, &store)?;
+    runtime.attach_domains(domains);
+    runtime.mark_domains_ready();
     
-    // 4. Register domains
-    domains::setup(&router)?;
-    
-    // 5. Spawn transport listeners
+    // 6. Start TCP after domains exist; both TCP and WebSocket require
+    //    runtime.is_ready_for_traffic() before accepting work.
     if config.tcp_enabled {
         tokio::spawn(handlers::spawn_tcp_listener(
             &config,
@@ -641,19 +654,21 @@ pub async fn boot(config: BootConfig) -> Result<()> {
         ));
     }
     
-    tokio::spawn(handlers::spawn_http_listener(
-        &config,
-        ingress.clone(),
-        ingress_config.clone(),
-    ));
+    // 7. Mark startup complete so /readyz and /healthz can pass
+    runtime.mark_startup_complete();
     
-    // 6. Wait for shutdown
+    // 8. Wait for shutdown
     tokio::signal::ctrl_c().await?;
     tracing::info!("Fitz broker shutting down...");
     
     Ok(())
 }
 ```
+
+`/targetz` is intentionally reachable after the HTTP listener starts and before
+Midge storage is ready. It is only an orchestrator handoff signal. `/healthz`,
+`/readyz`, WebSocket upgrades, and TCP sessions still require strict data-plane
+readiness, including active Midge writer-lease ownership.
 ### Configuration
 **Type:** `BootConfig`
 ```rust

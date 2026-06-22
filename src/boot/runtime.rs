@@ -29,10 +29,7 @@ type RuntimeComponents = (
 /// - RuntimeIngress for session management
 /// - IngressConfig for transport configuration
 /// - Runtime stats tracker for observability
-pub fn init(
-    config: &BootConfig,
-    _store: &Arc<cntryl_midge::Engine>,
-) -> BootResult<RuntimeComponents> {
+pub fn init(config: &BootConfig) -> BootResult<RuntimeComponents> {
     info!("Initializing runtime infrastructure");
     config.validate()?;
 

@@ -38,11 +38,18 @@ pub(super) async fn handle_websocket(
 ) -> Result<Response, std::convert::Infallible> {
     // Note: increment_connections / decrement_connections are handled by the
     // HTTP listener wrapper (handle_http_upgrade) — no additional counter here.
-    if !runtime.is_accepting_traffic() {
-        tracing::warn!("WebSocket upgrade rejected: broker is draining");
+    if !runtime.is_ready_for_traffic() {
+        tracing::warn!(
+            lifecycle = runtime.lifecycle_state().as_str(),
+            storage_ready = runtime.is_storage_ready(),
+            domains_ready = runtime.are_domains_ready(),
+            startup_complete = runtime.is_startup_complete(),
+            "WebSocket upgrade rejected: broker data plane is not ready"
+        );
         return Ok(hyper::http::Response::builder()
             .status(503)
-            .body(Body::from("Fitz broker is draining"))
+            .header("Retry-After", "1")
+            .body(Body::from("Fitz broker data plane is not ready"))
             .unwrap());
     }
 

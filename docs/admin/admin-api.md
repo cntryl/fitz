@@ -6,12 +6,12 @@
   - `/` - Single Page Application (SPA) static files
   - `/api/v1/*` - Admin REST API endpoints
   - `/metrics` - Prometheus metrics endpoint
-  - `/livez`, `/healthz`, `/readyz`, `/startupz` - Kubernetes and load balancer probes
+  - `/livez`, `/targetz`, `/healthz`, `/readyz`, `/startupz` - Kubernetes and load balancer probes
   - `/ws` - WebSocket upgrade for data plane
 **Data Plane**: WebSocket upgrade on `/ws`, TCP on same port (protocol detection)  
 **Authentication**:  
   - `/` - No authentication (SPA public access)
-  - `/livez`, `/healthz`, `/readyz`, `/startupz` - No authentication (for load balancer health checks)  
+  - `/livez`, `/targetz`, `/healthz`, `/readyz`, `/startupz` - No authentication (for load balancer health checks)
   - `/metrics` - **Requires authentication** (JWT or API key)  
   - `/api/v1/*` - **Requires authentication** (JWT or API key with admin permissions)
 ## Design Principles
@@ -27,6 +27,7 @@
 /assets/*                  → SPA static assets (JS, CSS, images)
 /ws                        → WebSocket upgrade (data plane)
 /livez                     → Kubernetes liveness probe
+/targetz                   → Orchestrator target health gate for handoff
 /healthz                   → Deployment-safe health gate (mirrors readiness)
 /readyz                    → Kubernetes readiness probe
 /startupz                  → Kubernetes startup probe
@@ -41,7 +42,7 @@
 ```
 **Authentication Rules**:
 - SPA (`/`, `/assets/*`) - Public access
-- Health probes (`/livez`, `/healthz`, `/readyz`, `/startupz`) - Public access (for K8s/load balancers)
+- Health probes (`/livez`, `/targetz`, `/healthz`, `/readyz`, `/startupz`) - Public access (for K8s/load balancers)
 - Metrics (`/metrics`) - Requires JWT Bearer token
 - Admin API (`/api/v1/*`) - Requires JWT Bearer token with admin scope
 ## Global Endpoints
@@ -64,12 +65,45 @@ GET /livez
 - Runtime is responsive
 - No critical failures (panics, deadlocks)
 - Does NOT check downstream dependencies
-#### Health Gate
+#### Orchestrator Target Health Gate
+```
+GET /targetz
+```
+**Authentication**: None (public endpoint for ECS/ALB target groups and Kubernetes probes)
+**Purpose**: Orchestrator target health gate for single-writer handoff. This endpoint proves the HTTP listener is running and the process is not draining, but it intentionally does not require the Midge writer lease. Use this for ECS target group health checks or Kubernetes readiness probes when running one active Fitz instance with rolling replacement.
+**Do not use this as**:
+- A data-plane readiness signal. WebSocket upgrades and TCP sessions still require `/healthz`/`/readyz` readiness.
+- A storage health signal. `storage_writer_lease` may be `not_ready` while `/targetz` returns `200`.
+**Response**:
+- `200 OK` - HTTP target may participate in ECS handoff
+- `503 Service Unavailable` - Target is draining or shutting down
+```json
+{
+  "status": "ready",
+  "checks": {
+    "http_listener": "ok",
+    "accepting_target_traffic": "ok",
+    "data_plane_ready": "not_ready",
+    "storage_writer_lease": "not_ready"
+  }
+}
+```
+**ECS use**:
+- Configure the ALB target group health check path to `/targetz`.
+- Keep `/healthz` and `/readyz` for strict data-plane readiness and operator checks.
+- Use ECS rolling deployment settings that allow overlap, for example `minimumHealthyPercent=100` and `maximumPercent=200`, so the replacement target can become ALB-healthy before the old task releases the writer lease.
+**Kubernetes use**:
+- Configure `startupProbe` and `livenessProbe` to `/livez`.
+- Configure `readinessProbe` to `/targetz` for rolling active/passive handoff, and keep `/readyz` or `/healthz` for strict data-plane checks outside the Service readiness gate.
+- Use a rolling update with `maxSurge: 1` and `maxUnavailable: 0` for a single-replica Deployment when the new Pod must become Service-ready before Kubernetes terminates the old writer Pod.
+- Set `terminationGracePeriodSeconds` longer than `FITZ_DRAIN_GRACE_SECONDS`.
+Relevant docs: [ECS rolling deployments](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/deployment-type-ecs.html), [ECS service health and deployment parameters](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service_definition_parameters.html), [ALB target group deregistration delay](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-target-group-attributes.html), [Kubernetes probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/), [Kubernetes rolling updates](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/), and [Kubernetes Pod termination](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/).
+#### Data-Plane Health Gate
 ```
 GET /healthz
 ```
 **Authentication**: None (public endpoint for load balancers)
-**Purpose**: Safe traffic gate for orchestrators and load balancers that only support one HTTP health endpoint. This intentionally mirrors readiness so traffic does not arrive before the broker has acquired the active single-writer storage lease or after shutdown starts.
+**Purpose**: Strict data-plane health gate. This intentionally mirrors readiness so traffic does not arrive before the broker has acquired the active single-writer storage lease or after shutdown starts.
 **Use this when**:
 - Your platform can check only one unauthenticated HTTP endpoint before routing traffic
 - You need a single-writer-safe cutover signal for startup, lease handoff, and shutdown
@@ -130,8 +164,10 @@ GET /readyz
 - Ready to process requests
 #### Probe Selection
 - Use `/livez` to decide when Fitz should be restarted.
+- Use `/targetz` for ECS/ALB target health when a replacement task must become target-healthy before it can acquire the writer lease.
+- Use `/targetz` as the Kubernetes `readinessProbe` only for active/passive rolling handoff where the app must reject WS/TCP until strict data-plane readiness.
 - Use `/readyz` when your orchestrator supports a distinct readiness probe.
-- Use `/healthz` when your platform has only one health endpoint and that endpoint controls traffic admission.
+- Use `/healthz` for strict data-plane traffic admission when your platform can tolerate stopping the old writer before the new target is healthy.
 - Use `/startupz` to suppress premature liveness checks during long startup windows.
 #### Startup Probe
 ```
@@ -664,6 +700,7 @@ POST /admin/sessions/{session_id}/close
 ### ✅ Implemented Endpoints
 **Health Probes (No Auth)**:
 - `GET /livez` - Liveness probe
+- `GET /targetz` - Orchestrator target health gate
 - `GET /healthz` - Deployment-safe health gate
 - `GET /readyz` - Readiness probe
 - `GET /startupz` - Startup probe
@@ -760,7 +797,7 @@ pub enum AdminCommand {
 ```
 ### Safety Considerations
 1. **Authentication**: 
-   - `/livez`, `/healthz`, `/readyz`, `/startupz`, `/health` - No auth (for kubelet/load balancers)
+   - `/livez`, `/targetz`, `/healthz`, `/readyz`, `/startupz`, `/health` - No auth (for kubelet/load balancers)
    - `/metrics` - Requires JWT or API key (prevents information disclosure)
    - `/admin/*` - Requires JWT or API key with `admin:read` permission
 2. **Authorization**: 
@@ -921,6 +958,7 @@ impl DomainStats for KvActor {
 1. **Admin API on same port** as data plane (e.g., 8080) for cloud platform compatibility
 2. **Path-based routing**:
    - `/livez` - Kubernetes liveness probe (no auth)
+   - `/targetz` - Orchestrator target health gate (no auth)
    - `/healthz` - Deployment-safe health gate (no auth)
    - `/readyz` - Kubernetes readiness probe (no auth)
    - `/startupz` - Kubernetes startup probe (no auth)
@@ -946,7 +984,12 @@ kind: Deployment
 metadata:
   name: fitz
 spec:
-  replicas: 3
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: fitz
@@ -962,10 +1005,11 @@ spec:
         - containerPort: 8080
           name: http
         
-        # Startup probe - gives app time to initialize
+        # Startup probe - confirms the HTTP process is alive without waiting
+        # for the single-writer lease.
         startupProbe:
           httpGet:
-            path: /startupz
+            path: /livez
             port: 8080
           initialDelaySeconds: 0
           periodSeconds: 2
@@ -982,10 +1026,11 @@ spec:
           timeoutSeconds: 2
           failureThreshold: 3
         
-        # Readiness probe - remove from service if not ready
+        # Readiness probe - controls Service endpoints for rolling handoff.
+        # Use /readyz separately when checking strict data-plane readiness.
         readinessProbe:
           httpGet:
-            path: /readyz
+            path: /targetz
             port: 8080
           initialDelaySeconds: 5
           periodSeconds: 5
@@ -1031,6 +1076,7 @@ pub async fn handle_request(
     match (method, path) {
         // Kubernetes probes (no auth)
         (&Method::GET, "/livez") => handle_liveness().await,
+        (&Method::GET, "/targetz") => handle_targetz(runtime).await,
         (&Method::GET, "/healthz") => handle_healthz(runtime).await,
         (&Method::GET, "/readyz") => handle_readiness(runtime).await,
         (&Method::GET, "/startupz") => handle_startup(runtime).await,
@@ -1090,7 +1136,7 @@ fn admin_router() -> Router {
 ### Protocol Detection
 On port 8080:
 1. **HTTP GET/POST** → Check path:
-   - `/livez`, `/healthz`, `/readyz`, `/startupz`, `/health` → Health probes (no auth)
+   - `/livez`, `/targetz`, `/healthz`, `/readyz`, `/startupz`, `/health` → Health probes (no auth)
    - `/metrics` → Metrics (check JWT/API key)
    - `/admin/*` → Admin API (check JWT/API key + admin permission)
    - `/ws` with Upgrade header → WebSocket handler
@@ -1099,16 +1145,17 @@ On port 8080:
 Start with these essential endpoints:
 ### Phase 1: Health & Observability
 1. `GET /livez` - Kubernetes liveness probe
-2. `GET /healthz` - Deployment-safe health gate
-3. `GET /readyz` - Kubernetes readiness probe  
-4. `GET /startupz` - Kubernetes startup probe
-5. `GET /health` - Legacy health check
-6. `GET /metrics` - Prometheus metrics (with auth)
-7. `GET /admin/stats` - Human-readable overview
+2. `GET /targetz` - Orchestrator target health gate
+3. `GET /healthz` - Deployment-safe health gate
+4. `GET /readyz` - Kubernetes readiness probe
+5. `GET /startupz` - Kubernetes startup probe
+6. `GET /health` - Legacy health check
+7. `GET /metrics` - Prometheus metrics (with auth)
+8. `GET /admin/stats` - Human-readable overview
 ### Phase 2: Domain Visibility
-8. `GET /admin/kv/stats` - KV visibility
-9. `GET /admin/notice/subscriptions` - Notice visibility
-10. `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}` - Queue warm-state visibility
-10. `GET /admin/sessions` - Active connections
+9. `GET /admin/kv/stats` - KV visibility
+10. `GET /admin/notice/subscriptions` - Notice visibility
+11. `GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}` - Queue warm-state visibility
+12. `GET /admin/sessions` - Active connections
 ### Phase 3: Admin Commands
-11. Domain-specific commands (rollback, cancel, release) with `X-Confirm: true`
+13. Domain-specific commands (rollback, cancel, release) with `X-Confirm: true`

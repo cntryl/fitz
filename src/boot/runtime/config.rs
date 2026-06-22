@@ -992,6 +992,10 @@ mod tests {
         result
     }
 
+    fn with_clean_config_env<T>(test: impl FnOnce() -> T) -> T {
+        with_storage_env(&[], || with_auth_env(&[], test))
+    }
+
     fn cloud_config(config: &BootConfig) -> &CloudStorageConfig {
         match &config.storage_mode {
             StorageMode::CloudBacked(cloud) => cloud.as_ref(),
@@ -1757,45 +1761,54 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn should_accept_contiguous_route_family_allowlist() {
-        // Arrange
-        let config = BootConfig::new()
-            .with_auth_config(crate::auth::AuthConfig::Disabled)
-            .with_route_families(vec![1, 2, 3]);
+        with_clean_config_env(|| {
+            // Arrange
+            let config = BootConfig::new()
+                .with_auth_config(crate::auth::AuthConfig::Disabled)
+                .with_route_families(vec![1, 2, 3]);
 
-        // Act
-        let result = config.validate();
+            // Act
+            let result = config.validate();
 
-        // Assert
-        assert!(result.is_ok());
+            // Assert
+            assert!(result.is_ok());
+        });
     }
 
     #[test]
+    #[serial]
     fn should_reject_empty_route_family_allowlist() {
-        // Arrange
-        let config = BootConfig::new()
-            .with_auth_config(crate::auth::AuthConfig::Disabled)
-            .with_route_families(Vec::new());
+        with_clean_config_env(|| {
+            // Arrange
+            let config = BootConfig::new()
+                .with_auth_config(crate::auth::AuthConfig::Disabled)
+                .with_route_families(Vec::new());
 
-        // Act
-        let result = config.validate();
+            // Act
+            let result = config.validate();
 
-        // Assert
-        assert!(result.is_err());
+            // Assert
+            assert!(result.is_err());
+        });
     }
 
     #[test]
+    #[serial]
     fn should_reject_gapped_route_family_allowlist() {
-        // Arrange
-        let config = BootConfig::new()
-            .with_auth_config(crate::auth::AuthConfig::Disabled)
-            .with_route_families(vec![1, 3]);
+        with_clean_config_env(|| {
+            // Arrange
+            let config = BootConfig::new()
+                .with_auth_config(crate::auth::AuthConfig::Disabled)
+                .with_route_families(vec![1, 3]);
 
-        // Act
-        let result = config.validate();
+            // Act
+            let result = config.validate();
 
-        // Assert
-        assert!(result.is_err());
+            // Assert
+            assert!(result.is_err());
+        });
     }
 
     #[test]

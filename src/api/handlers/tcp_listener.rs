@@ -48,11 +48,14 @@ pub fn spawn_tcp_listener_with_bound_socket(
                 accept_result = tcp_listener.accept() => {
                     match accept_result {
                         Ok((stream, peer_addr)) => {
-                            if !runtime.is_accepting_traffic() {
+                            if !runtime.is_ready_for_traffic() {
                                 tracing::warn!(
                                     peer = %peer_addr,
                                     lifecycle = runtime.lifecycle_state().as_str(),
-                                    "TCP connection rejected: broker is not accepting traffic"
+                                    storage_ready = runtime.is_storage_ready(),
+                                    domains_ready = runtime.are_domains_ready(),
+                                    startup_complete = runtime.is_startup_complete(),
+                                    "TCP connection rejected: broker data plane is not ready"
                                 );
                                 continue;
                             }
