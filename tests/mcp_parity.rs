@@ -32,7 +32,12 @@ fn configure_admin_auth() {
 
 fn test_runtime() -> Arc<Runtime> {
     configure_admin_auth();
-    Arc::new(Runtime::new(Arc::new(Router::new())))
+    let runtime = Runtime::new(Arc::new(Router::new()));
+    runtime.mark_storage_ready();
+    runtime.mark_domains_ready();
+    runtime.mark_auth_config_ready();
+    runtime.mark_startup_complete();
+    Arc::new(runtime)
 }
 
 fn authenticated_cookie(runtime: &Arc<Runtime>) -> String {
