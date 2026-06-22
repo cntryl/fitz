@@ -761,36 +761,36 @@ impl StreamStore {
     }
 
     fn build_compact_area_page_prefix(realm: &str, area: &str) -> Vec<u8> {
-        let mut prefix = crate::utils::storage_key::domain_prefix(
+        let mut encoder = crate::utils::storage_key::domain_marker_encoder(
             realm,
             crate::utils::storage_key::DomainKeyspace::Stream,
+            KeyPrefix::CompactAreaPage as u8,
+            area.len() + 1,
         );
-        prefix.push(KeyPrefix::CompactAreaPage as u8);
-        prefix.extend_from_slice(area.as_bytes());
-        prefix.push(0);
-        prefix
+        crate::utils::storage_key::encode_bytes_segment_into(&mut encoder, area.as_bytes());
+        encoder.into_vec()
     }
 
     fn build_compact_resource_page_prefix(realm: &str, area: &str, resource: &str) -> Vec<u8> {
-        let mut prefix = crate::utils::storage_key::domain_prefix(
+        let mut encoder = crate::utils::storage_key::domain_marker_encoder(
             realm,
             crate::utils::storage_key::DomainKeyspace::Stream,
+            KeyPrefix::CompactResourcePage as u8,
+            area.len() + resource.len() + 2,
         );
-        prefix.push(KeyPrefix::CompactResourcePage as u8);
-        prefix.extend_from_slice(area.as_bytes());
-        prefix.push(0);
-        prefix.extend_from_slice(resource.as_bytes());
-        prefix.push(0);
-        prefix
+        crate::utils::storage_key::encode_bytes_segment_into(&mut encoder, area.as_bytes());
+        crate::utils::storage_key::encode_bytes_segment_into(&mut encoder, resource.as_bytes());
+        encoder.into_vec()
     }
 
     fn build_compressed_compact_realm_page_prefix(realm: &str) -> Vec<u8> {
-        let mut prefix = crate::utils::storage_key::domain_prefix(
+        crate::utils::storage_key::domain_marker_encoder(
             realm,
             crate::utils::storage_key::DomainKeyspace::Stream,
-        );
-        prefix.push(KeyPrefix::CompressedCompactRealmPage as u8);
-        prefix
+            KeyPrefix::CompressedCompactRealmPage as u8,
+            0,
+        )
+        .into_vec()
     }
 
     fn page_start_offset(offset: u64) -> u64 {
@@ -3147,6 +3147,23 @@ mod tests {
         assert!(errors
             .into_iter()
             .all(|(actual, expected)| actual == expected));
+    }
+
+    #[test]
+    fn should_encode_compact_resource_scan_prefix_with_typed_segments() {
+        // Arrange
+        let expected = {
+            let mut bytes = b"test\0st\0".to_vec();
+            bytes.push(KeyPrefix::CompactResourcePage as u8);
+            bytes.extend_from_slice(b"events\0orders\0");
+            bytes
+        };
+
+        // Act
+        let prefix = StreamStore::build_compact_resource_page_prefix("test", "events", "orders");
+
+        // Assert
+        assert_eq!(prefix, expected);
     }
 
     #[test]

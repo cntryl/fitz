@@ -13,7 +13,6 @@ use fitz::domains::queue::{
     Clock, QueueActor,
 };
 use fitz::runtime::routing::RouteFamily;
-use fitz::utils::storage_key::{self, DomainKeyspace};
 use uuid::Uuid;
 
 const TEST_SESSION_ID: u64 = 1;
@@ -566,32 +565,21 @@ fn should_dlq_message_after_max_attempts() {
         _ => panic!("Expected empty queue after retained DLQ transition"),
     }
 
-    let cf_id = queue_key.family.id();
-    let header_key = storage_key::prefixed_key(
-        &queue_key.realm,
-        DomainKeyspace::Queue,
-        format!(
-            "{}:{}:hdr:{}",
-            queue_key.area,
-            queue_key.resource,
-            msg_id.as_u64()
-        )
-        .as_bytes(),
-    );
-    let body_key = storage_key::prefixed_key(
-        &queue_key.realm,
-        DomainKeyspace::Queue,
-        format!(
-            "{}:{}:body:{}",
-            queue_key.area,
-            queue_key.resource,
-            msg_id.as_u64()
-        )
-        .as_bytes(),
-    );
-    let txn = store
-        .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
-        .expect("begin tx");
-    assert!(txn.get(&header_key).expect("read header").is_some());
-    assert!(txn.get(&body_key).expect("read body").is_some());
+    let dead_letters = recovered.admin_dead_letters();
+    assert_eq!(dead_letters.len(), 1);
+    assert_eq!(dead_letters[0].message_id, msg_id.as_u64());
+
+    let replayed = recovered
+        .replay_dead_letter(msg_id)
+        .expect("replay retained dead letter after restart");
+    assert!(replayed);
+
+    match recovered.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
+        QueueResponse::Received { messages } => {
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].id, msg_id);
+            assert_eq!(messages[0].body, Bytes::from("task"));
+        }
+        _ => panic!("Expected replayed DLQ message to become receivable"),
+    }
 }

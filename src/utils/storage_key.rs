@@ -29,19 +29,19 @@ pub fn domain_prefix(realm: &str, domain: DomainKeyspace) -> Vec<u8> {
     let domain_code = domain.code();
     let mut encoder = Encoder::with_capacity(realm.len() + domain_code.len() + 2);
     encoder.encode_string_into(realm);
-    encoder.push_byte(LexKey::SEPARATOR);
-    encoder.encode_composite_into_buf(&[domain_code.as_slice()]);
-    encoder.push_byte(LexKey::SEPARATOR);
-    encoder.freeze().to_vec()
+    encoder.push_separator();
+    encoder.encode_bytes_into(domain_code.as_slice());
+    encoder.push_separator();
+    encoder.into_vec()
 }
 
 pub fn realm_domain_prefix(realm: &str, domain: &str) -> Vec<u8> {
     let mut encoder = Encoder::with_capacity(realm.len() + domain.len() + 2);
     encoder.encode_string_into(realm);
-    encoder.push_byte(LexKey::SEPARATOR);
+    encoder.push_separator();
     encoder.encode_string_into(domain);
-    encoder.push_byte(LexKey::SEPARATOR);
-    encoder.freeze().to_vec()
+    encoder.push_separator();
+    encoder.into_vec()
 }
 
 pub fn prefix_range_end(prefix: &[u8]) -> Vec<u8> {
@@ -57,8 +57,24 @@ pub fn domain_range(realm: &str, domain: DomainKeyspace) -> (Vec<u8>, Vec<u8>) {
 pub fn realm_prefix(realm: &str) -> Vec<u8> {
     let mut encoder = Encoder::with_capacity(realm.len() + 1);
     encoder.encode_string_into(realm);
-    encoder.push_byte(LexKey::SEPARATOR);
-    encoder.freeze().to_vec()
+    encoder.push_separator();
+    encoder.into_vec()
+}
+
+pub fn domain_marker_encoder(
+    realm: &str,
+    domain: DomainKeyspace,
+    marker: u8,
+    extra_capacity: usize,
+) -> Encoder {
+    let domain_code = domain.code();
+    let mut encoder = Encoder::with_capacity(realm.len() + domain_code.len() + extra_capacity + 3);
+    encoder.encode_string_into(realm);
+    encoder.push_separator();
+    encoder.encode_bytes_into(domain_code.as_slice());
+    encoder.push_separator();
+    encoder.push_byte(marker);
+    encoder
 }
 
 pub fn realm_range(realm: &str) -> (Vec<u8>, Vec<u8>) {
@@ -72,9 +88,19 @@ pub fn push_segment(buffer: &mut Vec<u8>, segment: &str) {
     buffer.push(LexKey::SEPARATOR);
 }
 
+pub fn encode_segment_into(encoder: &mut Encoder, segment: &str) {
+    encoder.encode_string_into(segment);
+    encoder.push_separator();
+}
+
 pub fn push_bytes_segment(buffer: &mut Vec<u8>, segment: &[u8]) {
     buffer.extend_from_slice(segment);
     buffer.push(LexKey::SEPARATOR);
+}
+
+pub fn encode_bytes_segment_into(encoder: &mut Encoder, segment: &[u8]) {
+    encoder.encode_bytes_into(segment);
+    encoder.push_separator();
 }
 
 pub fn prefixed_key(realm: &str, domain: DomainKeyspace, suffix: &[u8]) -> Vec<u8> {
@@ -82,6 +108,13 @@ pub fn prefixed_key(realm: &str, domain: DomainKeyspace, suffix: &[u8]) -> Vec<u
     key.reserve(suffix.len());
     key.extend_from_slice(suffix);
     key
+}
+
+pub fn split_domain_key(key: &[u8], domain: DomainKeyspace) -> Option<(&str, &[u8])> {
+    let realm_end = key.iter().position(|byte| *byte == LexKey::SEPARATOR)?;
+    let realm = std::str::from_utf8(&key[..realm_end]).ok()?;
+    let suffix = strip_domain_prefix(key, domain)?;
+    Some((realm, suffix))
 }
 
 pub fn strip_realm_domain_prefix<'a>(key: &'a [u8], domain: &str) -> Option<&'a [u8]> {
@@ -183,6 +216,59 @@ mod tests {
 
         // Assert
         assert_eq!(key, b"acme\0qu\0hdr\0jobs\0".to_vec());
+    }
+
+    #[test]
+    fn should_encode_domain_marker_prefix() {
+        // Arrange
+        let mut encoder = domain_marker_encoder("acme", DomainKeyspace::Schedule, 0x03, 16);
+
+        // Act
+        encode_segment_into(&mut encoder, "jobs");
+        encoder.encode_u64_into(42);
+        let key = encoder.into_vec();
+
+        // Assert
+        assert_eq!(key, b"acme\0sc\0\x03jobs\0\0\0\0\0\0\0\0*".to_vec());
+    }
+
+    #[test]
+    fn should_split_domain_key_with_realm() {
+        // Arrange
+        let key = prefixed_key("acme", DomainKeyspace::Queue, b"jobs\0email\0\x04payload");
+
+        // Act
+        let split = split_domain_key(&key, DomainKeyspace::Queue);
+
+        // Assert
+        assert_eq!(
+            split,
+            Some(("acme", b"jobs\0email\0\x04payload".as_slice()))
+        );
+    }
+
+    #[test]
+    fn should_append_separator_after_string_segment() {
+        // Arrange
+        let mut buffer = Vec::new();
+
+        // Act
+        push_segment(&mut buffer, "users");
+
+        // Assert
+        assert_eq!(buffer, b"users\0".to_vec());
+    }
+
+    #[test]
+    fn should_append_separator_after_bytes_segment() {
+        // Arrange
+        let mut buffer = Vec::new();
+
+        // Act
+        push_bytes_segment(&mut buffer, b"\x01jobs");
+
+        // Assert
+        assert_eq!(buffer, b"\x01jobs\0".to_vec());
     }
 
     #[test]

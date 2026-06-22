@@ -61,7 +61,7 @@ smallvec = "1.15"
 tempfile = "3"
 lz4_flex = "0.13.1"
 cntryl-midge = { git = "https://github.com/cntryl/midge", features = ["testkit"] }
-cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "260e5e64060e36aa0d8897658468484443eee095" }
+cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "9e75be255d73261b88dfd1d273a55fb9eb177e40" }
 
 [build-dependencies]
 walkdir = "2"

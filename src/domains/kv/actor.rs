@@ -41,6 +41,8 @@ use crate::utils::storage_key::{self, DomainKeyspace};
 
 use super::protocol::{KvError, KvMessage, KvPair, KvResponse, ScanQuery, TxMode};
 
+const KV_KEY_SCOPE_MARKER: u8 = 0x01;
+
 /// Active KV transaction state.
 ///
 /// This state is broker-local and in-memory only. Dropping the owning actor,
@@ -543,11 +545,15 @@ impl KvActor {
     }
 
     fn realm_resource_prefix(realm: &str, area: &str, resource: &str) -> Vec<u8> {
-        let mut prefix = storage_key::domain_prefix(realm, DomainKeyspace::Kv);
-        prefix.reserve(area.len() + resource.len() + 2);
-        storage_key::push_segment(&mut prefix, area);
-        storage_key::push_segment(&mut prefix, resource);
-        prefix
+        let mut encoder = storage_key::domain_marker_encoder(
+            realm,
+            DomainKeyspace::Kv,
+            KV_KEY_SCOPE_MARKER,
+            area.len() + resource.len() + 2,
+        );
+        storage_key::encode_bytes_segment_into(&mut encoder, area.as_bytes());
+        storage_key::encode_bytes_segment_into(&mut encoder, resource.as_bytes());
+        encoder.into_vec()
     }
 
     /// Resolve column family from RouteFamily and resource
@@ -972,6 +978,23 @@ mod tests {
             }
             _ => panic!("Expected ScanResult"),
         }
+    }
+
+    #[test]
+    fn should_encode_kv_scope_prefix_with_typed_segments() {
+        // Arrange
+        let expected = {
+            let mut bytes = b"acme\0kv\0".to_vec();
+            bytes.push(KV_KEY_SCOPE_MARKER);
+            bytes.extend_from_slice(b"users\0profiles\0");
+            bytes
+        };
+
+        // Act
+        let prefix = KvActor::realm_resource_prefix("acme", "users", "profiles");
+
+        // Assert
+        assert_eq!(prefix, expected);
     }
 
     #[test]

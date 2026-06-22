@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use lexkey::{Encoder, LexKey};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -13,10 +14,10 @@ const DEFINITION_VALUE_VERSION_V3: u8 = 3;
 const BODY_VALUE_VERSION_V1: u8 = 1;
 const PENDING_FIRE_VALUE_VERSION_V1: u8 = 1;
 const PENDING_FIRE_VALUE_VERSION_V2: u8 = 2;
-const DEFINITION_PREFIX: &[u8] = b"sched:def:";
-const BODY_PREFIX: &[u8] = b"sched:body:";
-const DUE_PREFIX: &[u8] = b"sched:due:";
-const PENDING_FIRE_PREFIX: &[u8] = b"sched:pending:";
+const DEFINITION_PREFIX: &[u8] = &[0x01];
+const BODY_PREFIX: &[u8] = &[0x02];
+const DUE_PREFIX: &[u8] = &[0x03];
+const PENDING_FIRE_PREFIX: &[u8] = &[0x04];
 const DUE_INDEX_VALUE: &[u8] = &[1];
 const LEGACY_PREFIX: &[u8] = b"sched:m";
 const LEGACY_INDEX_PREFIX: &[u8] = b"sched:idx:";
@@ -125,12 +126,48 @@ impl ScheduleStore {
         }
     }
 
-    fn schedule_storage_prefix_from_realm(realm: &str) -> Vec<u8> {
-        storage_key::domain_prefix(realm, DomainKeyspace::Schedule)
-    }
-
     fn schedule_key_suffix(key: &[u8]) -> &[u8] {
         storage_key::strip_domain_prefix(key, DomainKeyspace::Schedule).unwrap_or(key)
+    }
+
+    fn encode_route_identity_into(
+        encoder: &mut Encoder,
+        area: &str,
+        resource: &str,
+        operation: &str,
+    ) {
+        storage_key::encode_segment_into(encoder, area);
+        storage_key::encode_segment_into(encoder, resource);
+        encoder.encode_string_into(operation);
+    }
+
+    fn decode_route_identity_from_suffix(realm: &str, suffix: &[u8]) -> Result<String, String> {
+        let mut parts = suffix.splitn(3, |byte| *byte == LexKey::SEPARATOR);
+        let area = parts
+            .next()
+            .filter(|segment| !segment.is_empty())
+            .ok_or_else(|| "Invalid schedule route identity".to_string())?;
+        let resource = parts
+            .next()
+            .filter(|segment| !segment.is_empty())
+            .ok_or_else(|| "Invalid schedule route identity".to_string())?;
+        let operation = parts
+            .next()
+            .filter(|segment| !segment.is_empty())
+            .ok_or_else(|| "Invalid schedule route identity".to_string())?;
+
+        if operation.contains(&LexKey::SEPARATOR) {
+            return Err("Invalid schedule route identity".to_string());
+        }
+
+        let area = std::str::from_utf8(area)
+            .map_err(|e| format!("Invalid schedule area encoding: {}", e))?;
+        let resource = std::str::from_utf8(resource)
+            .map_err(|e| format!("Invalid schedule resource encoding: {}", e))?;
+        let operation = std::str::from_utf8(operation)
+            .map_err(|e| format!("Invalid schedule operation encoding: {}", e))?;
+
+        Ok(format!("schedule://{realm}/{area}/{resource}/{operation}"))
     }
 
     fn encode_prefixed_route_key_from_realm(
@@ -138,11 +175,21 @@ impl ScheduleStore {
         route: &str,
         suffix_prefix: &[u8],
     ) -> Vec<u8> {
-        let mut key = Self::schedule_storage_prefix_from_realm(realm);
-        key.reserve(suffix_prefix.len() + route.len());
-        key.extend_from_slice(suffix_prefix);
-        key.extend_from_slice(route.as_bytes());
-        key
+        let parsed = parse_concrete_schedule_route(route)
+            .expect("schedule storage key requires a concrete route");
+        let mut key = storage_key::domain_marker_encoder(
+            realm,
+            DomainKeyspace::Schedule,
+            suffix_prefix[0],
+            parsed.area.len() + parsed.resource.len() + parsed.operation.len() + 2,
+        );
+        Self::encode_route_identity_into(
+            &mut key,
+            &parsed.area,
+            &parsed.resource,
+            &parsed.operation,
+        );
+        key.into_vec()
     }
 
     fn encode_prefixed_route_key(route: &str, suffix_prefix: &[u8]) -> Vec<u8> {
@@ -157,18 +204,23 @@ impl ScheduleStore {
         route: &str,
         suffix_prefix: &[u8],
     ) -> Vec<u8> {
-        let minute_epoch = timestamp_ms / 60_000;
-        let ms_offset = timestamp_ms % 60_000;
-
-        let mut key = Self::schedule_storage_prefix_from_realm(realm);
-        key.reserve(suffix_prefix.len() + 18 + route.len());
-        key.extend_from_slice(suffix_prefix);
-        key.extend_from_slice(minute_epoch.to_be_bytes().as_slice());
-        key.push(b'/');
-        key.extend_from_slice(ms_offset.to_be_bytes().as_slice());
-        key.push(b':');
-        key.extend_from_slice(route.as_bytes());
-        key
+        let parsed = parse_concrete_schedule_route(route)
+            .expect("schedule storage key requires a concrete route");
+        let mut key = storage_key::domain_marker_encoder(
+            realm,
+            DomainKeyspace::Schedule,
+            suffix_prefix[0],
+            9 + parsed.area.len() + parsed.resource.len() + parsed.operation.len() + 2,
+        );
+        key.encode_bytes_into(&timestamp_ms.to_be_bytes());
+        key.push_separator();
+        Self::encode_route_identity_into(
+            &mut key,
+            &parsed.area,
+            &parsed.resource,
+            &parsed.operation,
+        );
+        key.into_vec()
     }
 
     fn encode_prefixed_timed_route_key(
@@ -219,32 +271,62 @@ impl ScheduleStore {
     }
 
     fn decode_definition_key(key: &[u8]) -> Result<String, String> {
-        let suffix = Self::schedule_key_suffix(key);
+        let Some((realm, suffix)) = storage_key::split_domain_key(key, DomainKeyspace::Schedule)
+        else {
+            return Err("Invalid schedule definition key prefix".to_string());
+        };
         if !suffix.starts_with(DEFINITION_PREFIX) {
             return Err("Invalid schedule definition key prefix".to_string());
         }
 
-        String::from_utf8(suffix[DEFINITION_PREFIX.len()..].to_vec())
-            .map_err(|e| format!("Invalid schedule route encoding: {}", e))
+        Self::decode_route_identity_from_suffix(realm, &suffix[DEFINITION_PREFIX.len()..])
     }
 
     fn decode_body_key(key: &[u8]) -> Result<String, String> {
-        let suffix = Self::schedule_key_suffix(key);
+        let Some((realm, suffix)) = storage_key::split_domain_key(key, DomainKeyspace::Schedule)
+        else {
+            return Err("Invalid schedule body key prefix".to_string());
+        };
         if !suffix.starts_with(BODY_PREFIX) {
             return Err("Invalid schedule body key prefix".to_string());
         }
 
-        String::from_utf8(suffix[BODY_PREFIX.len()..].to_vec())
-            .map_err(|e| format!("Invalid schedule route encoding: {}", e))
+        Self::decode_route_identity_from_suffix(realm, &suffix[BODY_PREFIX.len()..])
     }
 
     fn decode_due_key_with_prefix(key: &[u8], prefix: &[u8]) -> Result<(u64, String), String> {
-        let suffix = Self::schedule_key_suffix(key);
+        if prefix == LEGACY_PREFIX {
+            let suffix = Self::schedule_key_suffix(key);
+            if !suffix.starts_with(prefix) {
+                return Err("Invalid schedule due key prefix".to_string());
+            }
+
+            return Self::decode_legacy_timed_suffix(&suffix[prefix.len()..]);
+        }
+
+        let Some((realm, suffix)) = storage_key::split_domain_key(key, DomainKeyspace::Schedule)
+        else {
+            return Err("Invalid schedule due key prefix".to_string());
+        };
         if !suffix.starts_with(prefix) {
             return Err("Invalid schedule due key prefix".to_string());
         }
 
         let remaining = &suffix[prefix.len()..];
+        if remaining.len() < 9 {
+            return Err("Schedule due key too short".to_string());
+        }
+        if remaining[8] != LexKey::SEPARATOR {
+            return Err("Missing time/route separator".to_string());
+        }
+
+        let fire_ms = u64::from_be_bytes(remaining[0..8].try_into().unwrap());
+        let route = Self::decode_route_identity_from_suffix(realm, &remaining[9..])?;
+
+        Ok((fire_ms, route))
+    }
+
+    fn decode_legacy_timed_suffix(remaining: &[u8]) -> Result<(u64, String), String> {
         if remaining.len() < 18 {
             return Err("Schedule due key too short".to_string());
         }
@@ -1118,6 +1200,39 @@ mod tests {
         ScheduleStore::scan_schedule_rows(&txn, prefix)
             .expect("scan prefix")
             .len()
+    }
+
+    #[test]
+    fn should_encode_schedule_definition_key_with_typed_segments() {
+        // Arrange
+        let mut expected = storage_key::domain_marker_encoder(
+            "acme",
+            DomainKeyspace::Schedule,
+            DEFINITION_PREFIX[0],
+            13,
+        );
+        storage_key::encode_segment_into(&mut expected, "jobs");
+        storage_key::encode_segment_into(&mut expected, "backup");
+        expected.encode_string_into("run");
+
+        // Act
+        let key = ScheduleStore::encode_definition_key("schedule://acme/jobs/backup/run");
+
+        // Assert
+        assert_eq!(key, expected.into_vec());
+    }
+
+    #[test]
+    fn should_order_schedule_due_keys_by_fire_time_before_route_segments() {
+        // Arrange
+        let first = ScheduleStore::encode_due_key(1_700_000_000_001, "schedule://acme/jobs/a/run");
+        let second = ScheduleStore::encode_due_key(1_700_000_000_010, "schedule://acme/jobs/a/run");
+
+        // Act
+        let ordered = first < second;
+
+        // Assert
+        assert!(ordered);
     }
 
     fn encode_inline_definition_value_v2(

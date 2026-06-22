@@ -51,6 +51,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use fxhash::FxBuildHasher;
+use lexkey::LexKey;
 
 use crate::api::admin::QueueAgeBuckets;
 use crate::observability as obs;
@@ -83,6 +84,16 @@ type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 const CACHED_RESPONSE_VERSION: u8 = 1;
 const CACHED_RESPONSE_ACKED: u8 = 0;
 const CACHED_RESPONSE_NOT_FOUND: u8 = 1;
+const QUEUE_KEY_FAMILY_META: u8 = 0x01;
+const QUEUE_KEY_FAMILY_INDEX_META: u8 = 0x02;
+const QUEUE_KEY_FAMILY_HEADER: u8 = 0x03;
+const QUEUE_KEY_FAMILY_BODY: u8 = 0x04;
+const QUEUE_KEY_FAMILY_LEGACY_MESSAGE: u8 = 0x05;
+const QUEUE_KEY_FAMILY_READY_INDEX: u8 = 0x10;
+const QUEUE_KEY_FAMILY_DELAYED_INDEX: u8 = 0x11;
+const QUEUE_KEY_FAMILY_INFLIGHT_INDEX: u8 = 0x12;
+const QUEUE_KEY_FAMILY_DLQ_INDEX: u8 = 0x13;
+const QUEUE_KEY_FAMILY_ACK_DEDUP: u8 = 0x14;
 
 fn encode_cached_response(response: &QueueResponse) -> Option<Vec<u8>> {
     match response {
@@ -597,7 +608,6 @@ impl QueueActor {
     const INDEX_VERSION_V2: u8 = 2;
     const INDEX_META_VALID_MARKER: u8 = 1;
     const INDEX_META_NEXT_DELAY_NONE: u64 = u64::MAX;
-    const PADDED_U64_WIDTH: usize = 20;
     const RECORD_CACHE_LIMIT: usize = 16 * 1024;
     const RECORD_CACHE_FIFO_SLACK_MULTIPLIER: usize = 2;
     const BODY_CACHE_LIMIT: usize = 1024;
@@ -810,56 +820,56 @@ impl QueueActor {
                 continue;
             };
 
-            if suffix.ends_with(b":meta") && !suffix.ends_with(b":idx:meta") {
-                let Some(meta) = Self::decode_meta(&value) else {
-                    return Err(format!(
-                        "queue validation failed: family={} key_category=meta error=invalid encoding",
-                        family
-                    ));
-                };
-                if meta.next_id == 0 {
-                    return Err(format!(
-                        "queue validation failed: family={} key_category=meta error=next_id is zero",
-                        family
-                    ));
-                }
+            let Some((queue_prefix, family_marker, suffix_tail)) =
+                Self::split_authoritative_key(suffix)
+            else {
                 continue;
-            }
+            };
 
-            if let Some((queue_prefix, id_bytes)) = Self::split_authoritative_key(suffix, b":hdr:")
-            {
-                Self::validate_authoritative_message_id(family, "header", id_bytes)?;
-                let is_split = Self::is_versioned_header(&value) || value.len() == 12;
-                if Self::decode_record_header(&value).is_err()
-                    && Self::decode_legacy_record(value.clone()).is_err()
-                {
-                    return Err(format!(
-                        "queue validation failed: family={} key_category=header error=invalid encoding",
-                        family
-                    ));
+            match family_marker {
+                QUEUE_KEY_FAMILY_META => {
+                    let Some(meta) = Self::decode_meta(&value) else {
+                        return Err(format!(
+                            "queue validation failed: family={} key_category=meta error=invalid encoding",
+                            family
+                        ));
+                    };
+                    if meta.next_id == 0 {
+                        return Err(format!(
+                            "queue validation failed: family={} key_category=meta error=next_id is zero",
+                            family
+                        ));
+                    }
                 }
-                if is_split {
-                    required_bodies.insert(Self::body_suffix(queue_prefix, id_bytes));
+                QUEUE_KEY_FAMILY_HEADER => {
+                    Self::validate_authoritative_message_id(family, "header", suffix_tail)?;
+                    let is_split = Self::is_versioned_header(&value) || value.len() == 12;
+                    if Self::decode_record_header(&value).is_err()
+                        && Self::decode_legacy_record(value.clone()).is_err()
+                    {
+                        return Err(format!(
+                            "queue validation failed: family={} key_category=header error=invalid encoding",
+                            family
+                        ));
+                    }
+                    if is_split {
+                        required_bodies.insert(Self::body_suffix(queue_prefix, suffix_tail));
+                    }
                 }
-                continue;
-            }
-
-            if let Some((_queue_prefix, id_bytes)) = Self::split_authoritative_key(suffix, b":msg:")
-            {
-                Self::validate_authoritative_message_id(family, "legacy_message", id_bytes)?;
-                Self::decode_legacy_record(value).map_err(|error| {
-                    format!(
-                        "queue validation failed: family={} key_category=legacy_message error={}",
-                        family, error
-                    )
-                })?;
-                continue;
-            }
-
-            if let Some((queue_prefix, id_bytes)) = Self::split_authoritative_key(suffix, b":body:")
-            {
-                Self::validate_authoritative_message_id(family, "body", id_bytes)?;
-                body_rows.insert(Self::body_suffix(queue_prefix, id_bytes));
+                QUEUE_KEY_FAMILY_LEGACY_MESSAGE => {
+                    Self::validate_authoritative_message_id(family, "legacy_message", suffix_tail)?;
+                    Self::decode_legacy_record(value).map_err(|error| {
+                        format!(
+                            "queue validation failed: family={} key_category=legacy_message error={}",
+                            family, error
+                        )
+                    })?;
+                }
+                QUEUE_KEY_FAMILY_BODY => {
+                    Self::validate_authoritative_message_id(family, "body", suffix_tail)?;
+                    body_rows.insert(Self::body_suffix(queue_prefix, suffix_tail));
+                }
+                _ => {}
             }
         }
 
@@ -881,16 +891,20 @@ impl QueueActor {
         Ok(())
     }
 
-    fn split_authoritative_key<'a>(
-        suffix: &'a [u8],
-        marker: &[u8],
-    ) -> Option<(&'a [u8], &'a [u8])> {
-        let marker_start = suffix
-            .windows(marker.len())
-            .rposition(|window| window == marker)?;
+    fn split_authoritative_key(suffix: &[u8]) -> Option<(&[u8], u8, &[u8])> {
+        let area_end = suffix.iter().position(|byte| *byte == LexKey::SEPARATOR)?;
+        let resource_start = area_end + 1;
+        let resource_len = suffix[resource_start..]
+            .iter()
+            .position(|byte| *byte == LexKey::SEPARATOR)?;
+        let resource_end = resource_start + resource_len;
+        let family_index = resource_end + 1;
+        let family_marker = *suffix.get(family_index)?;
+
         Some((
-            &suffix[..marker_start],
-            &suffix[marker_start + marker.len()..],
+            &suffix[..resource_end + 1],
+            family_marker,
+            &suffix[(family_index + 1)..],
         ))
     }
 
@@ -899,16 +913,13 @@ impl QueueActor {
         category: &str,
         bytes: &[u8],
     ) -> Result<(), String> {
-        if bytes.is_empty() || bytes.iter().any(|byte| !byte.is_ascii_digit()) {
+        if bytes.len() != 8 {
             return Err(format!(
                 "queue validation failed: family={} key_category={} error=invalid message id",
                 family, category
             ));
         }
-        let id = std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(0);
+        let id = u64::from_be_bytes(bytes.try_into().unwrap());
         if id == 0 {
             return Err(format!(
                 "queue validation failed: family={} key_category={} error=invalid message id",
@@ -919,9 +930,9 @@ impl QueueActor {
     }
 
     fn body_suffix(queue_prefix: &[u8], id_bytes: &[u8]) -> Vec<u8> {
-        let mut suffix = Vec::with_capacity(queue_prefix.len() + 6 + id_bytes.len());
+        let mut suffix = Vec::with_capacity(queue_prefix.len() + 1 + id_bytes.len());
         suffix.extend_from_slice(queue_prefix);
-        suffix.extend_from_slice(b":body:");
+        suffix.push(QUEUE_KEY_FAMILY_BODY);
         suffix.extend_from_slice(id_bytes);
         suffix
     }
@@ -949,122 +960,82 @@ impl QueueActor {
         u64::from_be_bytes(token)
     }
 
-    fn prefixed_queue_key(queue_key: &QueueKey, suffix: String) -> Vec<u8> {
-        storage_key::prefixed_key(&queue_key.realm, DomainKeyspace::Queue, suffix.as_bytes())
+    fn queue_scope_suffix(queue_key: &QueueKey, family_marker: u8) -> Vec<u8> {
+        let mut suffix = Vec::with_capacity(queue_key.area.len() + queue_key.resource.len() + 3);
+        storage_key::push_segment(&mut suffix, &queue_key.area);
+        storage_key::push_segment(&mut suffix, &queue_key.resource);
+        suffix.push(family_marker);
+        suffix
+    }
+
+    fn prefixed_queue_key(queue_key: &QueueKey, family_marker: u8) -> Vec<u8> {
+        let suffix = Self::queue_scope_suffix(queue_key, family_marker);
+        storage_key::prefixed_key(&queue_key.realm, DomainKeyspace::Queue, &suffix)
     }
 
     /// Midge key for queue metadata
     fn meta_key(queue_key: &QueueKey) -> Vec<u8> {
-        Self::prefixed_queue_key(
-            queue_key,
-            format!("{}:{}:meta", queue_key.area, queue_key.resource),
-        )
+        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_META)
     }
 
     fn index_meta_key(queue_key: &QueueKey) -> Vec<u8> {
-        Self::prefixed_queue_key(
-            queue_key,
-            format!("{}:{}:idx:meta", queue_key.area, queue_key.resource),
-        )
+        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_INDEX_META)
     }
 
     /// Midge key for legacy combined message record
     #[cfg(test)]
     fn legacy_message_key(queue_key: &QueueKey, id: MessageId) -> Vec<u8> {
-        let mut key = Self::legacy_message_key_prefix(queue_key);
-        key.extend_from_slice(id.as_u64().to_string().as_bytes());
-        key
+        Self::cached_id_key(&Self::legacy_message_key_prefix(queue_key), id)
     }
 
     /// Midge key for persisted message header
     #[cfg(test)]
     fn header_key(queue_key: &QueueKey, id: MessageId) -> Vec<u8> {
-        let mut key = Self::header_key_prefix(queue_key);
-        key.extend_from_slice(id.as_u64().to_string().as_bytes());
-        key
+        Self::cached_id_key(&Self::header_key_prefix(queue_key), id)
     }
 
     /// Midge key for persisted message body
     #[cfg(test)]
     fn body_key(queue_key: &QueueKey, id: MessageId) -> Vec<u8> {
-        let mut key = Self::body_key_prefix(queue_key);
-        key.extend_from_slice(id.as_u64().to_string().as_bytes());
-        key
+        Self::cached_id_key(&Self::body_key_prefix(queue_key), id)
     }
 
     fn header_key_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        Self::prefixed_queue_key(
-            queue_key,
-            format!("{}:{}:hdr:", queue_key.area, queue_key.resource),
-        )
+        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_HEADER)
     }
 
     fn body_key_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        Self::prefixed_queue_key(
-            queue_key,
-            format!("{}:{}:body:", queue_key.area, queue_key.resource),
-        )
+        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_BODY)
     }
 
     fn ready_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        Self::prefixed_queue_key(
-            queue_key,
-            format!("{}:{}:idx:ready:", queue_key.area, queue_key.resource),
-        )
+        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_READY_INDEX)
     }
 
     fn delayed_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        Self::prefixed_queue_key(
-            queue_key,
-            format!("{}:{}:idx:delay:", queue_key.area, queue_key.resource),
-        )
+        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_DELAYED_INDEX)
     }
 
     fn inflight_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        Self::prefixed_queue_key(
-            queue_key,
-            format!("{}:{}:idx:inflight:", queue_key.area, queue_key.resource),
-        )
+        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_INFLIGHT_INDEX)
     }
 
     fn dlq_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        Self::prefixed_queue_key(
-            queue_key,
-            format!("{}:{}:idx:dlq:", queue_key.area, queue_key.resource),
-        )
+        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_DLQ_INDEX)
     }
 
     fn ack_dedup_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        Self::prefixed_queue_key(
-            queue_key,
-            format!("{}:{}:ack:", queue_key.area, queue_key.resource),
-        )
+        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_ACK_DEDUP)
     }
 
     fn legacy_message_key_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        Self::prefixed_queue_key(
-            queue_key,
-            format!("{}:{}:msg:", queue_key.area, queue_key.resource),
-        )
+        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_LEGACY_MESSAGE)
     }
 
     fn cached_id_key(prefix: &[u8], id: MessageId) -> Vec<u8> {
-        let mut digits = [0_u8; 20];
-        let mut value = id.as_u64();
-        let mut start = digits.len();
-
-        loop {
-            start -= 1;
-            digits[start] = b'0' + (value % 10) as u8;
-            value /= 10;
-            if value == 0 {
-                break;
-            }
-        }
-
-        let mut key = Vec::with_capacity(prefix.len() + digits.len() - start);
+        let mut key = Vec::with_capacity(prefix.len() + 8);
         key.extend_from_slice(prefix);
-        key.extend_from_slice(&digits[start..]);
+        key.extend_from_slice(&id.as_u64().to_be_bytes());
         key
     }
 
@@ -1085,11 +1056,10 @@ impl QueueActor {
 
     #[allow(dead_code)]
     fn ready_entry_index_key_with_prefix(prefix: &[u8], ready_seq: u64, id: MessageId) -> Vec<u8> {
-        let mut key = Vec::with_capacity(prefix.len() + (Self::PADDED_U64_WIDTH * 2) + 1);
+        let mut key = Vec::with_capacity(prefix.len() + 16);
         key.extend_from_slice(prefix);
-        Self::append_padded_u64(&mut key, ready_seq);
-        key.push(b':');
-        Self::append_padded_u64(&mut key, id.as_u64());
+        key.extend_from_slice(&ready_seq.to_be_bytes());
+        key.extend_from_slice(&id.as_u64().to_be_bytes());
         key
     }
 
@@ -1101,47 +1071,12 @@ impl QueueActor {
     #[allow(dead_code)]
     fn parse_ready_entry_index_key(key: &[u8], prefix: &[u8]) -> Option<(u64, MessageId)> {
         let rest = key.strip_prefix(prefix)?;
-        if rest.len() != (Self::PADDED_U64_WIDTH * 2) + 1 {
+        if rest.len() != 16 {
             return None;
         }
-        if rest[Self::PADDED_U64_WIDTH] != b':' {
-            return None;
-        }
-        let ready_seq = Self::parse_padded_u64(&rest[..Self::PADDED_U64_WIDTH])?;
-        let id = Self::parse_padded_u64(&rest[(Self::PADDED_U64_WIDTH + 1)..])?;
+        let ready_seq = u64::from_be_bytes(rest[0..8].try_into().ok()?);
+        let id = u64::from_be_bytes(rest[8..16].try_into().ok()?);
         Some((ready_seq, MessageId::new(id)))
-    }
-
-    fn append_padded_u64(buf: &mut Vec<u8>, value: u64) {
-        let mut digits = [b'0'; Self::PADDED_U64_WIDTH];
-        let mut cursor = Self::PADDED_U64_WIDTH;
-        let mut remaining = value;
-
-        loop {
-            cursor -= 1;
-            digits[cursor] = b'0' + (remaining % 10) as u8;
-            remaining /= 10;
-            if remaining == 0 {
-                break;
-            }
-        }
-
-        buf.extend_from_slice(&digits);
-    }
-
-    fn parse_padded_u64(bytes: &[u8]) -> Option<u64> {
-        if bytes.len() != Self::PADDED_U64_WIDTH {
-            return None;
-        }
-
-        let mut value = 0_u64;
-        for &byte in bytes {
-            if !byte.is_ascii_digit() {
-                return None;
-            }
-            value = value.checked_mul(10)?.checked_add((byte - b'0') as u64)?;
-        }
-        Some(value)
     }
 
     #[allow(dead_code)]
@@ -1555,14 +1490,10 @@ impl QueueActor {
     }
 
     fn ready_range_key_with_prefix(prefix: &[u8], shard: usize, start: u64) -> Vec<u8> {
-        let tens = (shard / 10) as u8;
-        let ones = (shard % 10) as u8;
-        let mut key = Vec::with_capacity(prefix.len() + 3 + Self::PADDED_U64_WIDTH);
+        let mut key = Vec::with_capacity(prefix.len() + 9);
         key.extend_from_slice(prefix);
-        key.push(b'0' + tens);
-        key.push(b'0' + ones);
-        key.push(b':');
-        Self::append_padded_u64(&mut key, start);
+        key.push(shard as u8);
+        key.extend_from_slice(&start.to_be_bytes());
         key
     }
 
@@ -1572,19 +1503,16 @@ impl QueueActor {
 
     fn parse_ready_range_key(key: &[u8], prefix: &[u8]) -> Option<(usize, u64)> {
         let rest = key.strip_prefix(prefix)?;
-        if rest.len() != 3 + Self::PADDED_U64_WIDTH {
-            return None;
-        }
-        if !rest[0].is_ascii_digit() || !rest[1].is_ascii_digit() || rest[2] != b':' {
+        if rest.len() != 9 {
             return None;
         }
 
-        let shard = ((rest[0] - b'0') as usize) * 10 + (rest[1] - b'0') as usize;
+        let shard = rest[0] as usize;
         if shard >= Self::READY_SHARDS {
             return None;
         }
 
-        let start = Self::parse_padded_u64(&rest[3..])?;
+        let start = u64::from_be_bytes(rest[1..9].try_into().ok()?);
         Some((shard, start))
     }
 
@@ -1602,11 +1530,10 @@ impl QueueActor {
     }
 
     fn delayed_index_key_with_prefix(prefix: &[u8], visible_at_ms: u64, id: MessageId) -> Vec<u8> {
-        let mut key = Vec::with_capacity(prefix.len() + (Self::PADDED_U64_WIDTH * 2) + 1);
+        let mut key = Vec::with_capacity(prefix.len() + 16);
         key.extend_from_slice(prefix);
-        Self::append_padded_u64(&mut key, visible_at_ms);
-        key.push(b':');
-        Self::append_padded_u64(&mut key, id.as_u64());
+        key.extend_from_slice(&visible_at_ms.to_be_bytes());
+        key.extend_from_slice(&id.as_u64().to_be_bytes());
         key
     }
 
@@ -1621,31 +1548,23 @@ impl QueueActor {
         enqueue_seq: u64,
         id: MessageId,
     ) -> Vec<u8> {
-        let mut key =
-            Vec::with_capacity(self.delayed_index_prefix.len() + (Self::PADDED_U64_WIDTH * 3) + 2);
+        let mut key = Vec::with_capacity(self.delayed_index_prefix.len() + 24);
         key.extend_from_slice(&self.delayed_index_prefix);
-        Self::append_padded_u64(&mut key, visible_at_ms);
-        key.push(b':');
-        Self::append_padded_u64(&mut key, enqueue_seq);
-        key.push(b':');
-        Self::append_padded_u64(&mut key, id.as_u64());
+        key.extend_from_slice(&visible_at_ms.to_be_bytes());
+        key.extend_from_slice(&enqueue_seq.to_be_bytes());
+        key.extend_from_slice(&id.as_u64().to_be_bytes());
         key
     }
 
     #[allow(dead_code)]
     fn parse_delayed_entry_index_key(key: &[u8], prefix: &[u8]) -> Option<(u64, u64, MessageId)> {
         let rest = key.strip_prefix(prefix)?;
-        if rest.len() != (Self::PADDED_U64_WIDTH * 3) + 2 {
+        if rest.len() != 24 {
             return None;
         }
-        if rest[Self::PADDED_U64_WIDTH] != b':' || rest[(Self::PADDED_U64_WIDTH * 2) + 1] != b':' {
-            return None;
-        }
-        let visible_at_ms = Self::parse_padded_u64(&rest[..Self::PADDED_U64_WIDTH])?;
-        let enqueue_seq = Self::parse_padded_u64(
-            &rest[(Self::PADDED_U64_WIDTH + 1)..((Self::PADDED_U64_WIDTH * 2) + 1)],
-        )?;
-        let id = Self::parse_padded_u64(&rest[((Self::PADDED_U64_WIDTH * 2) + 2)..])?;
+        let visible_at_ms = u64::from_be_bytes(rest[0..8].try_into().ok()?);
+        let enqueue_seq = u64::from_be_bytes(rest[8..16].try_into().ok()?);
+        let id = u64::from_be_bytes(rest[16..24].try_into().ok()?);
         Some((visible_at_ms, enqueue_seq, MessageId::new(id)))
     }
 
@@ -1656,82 +1575,63 @@ impl QueueActor {
         inflight_epoch: u64,
         id: MessageId,
     ) -> Vec<u8> {
-        let mut key =
-            Vec::with_capacity(self.inflight_index_prefix.len() + (Self::PADDED_U64_WIDTH * 3) + 2);
+        let mut key = Vec::with_capacity(self.inflight_index_prefix.len() + 24);
         key.extend_from_slice(&self.inflight_index_prefix);
-        Self::append_padded_u64(&mut key, expires_at_ms);
-        key.push(b':');
-        Self::append_padded_u64(&mut key, inflight_epoch);
-        key.push(b':');
-        Self::append_padded_u64(&mut key, id.as_u64());
+        key.extend_from_slice(&expires_at_ms.to_be_bytes());
+        key.extend_from_slice(&inflight_epoch.to_be_bytes());
+        key.extend_from_slice(&id.as_u64().to_be_bytes());
         key
     }
 
     #[allow(dead_code)]
     fn dlq_index_key(&self, dead_lettered_at_ms: u64, id: MessageId) -> Vec<u8> {
-        let mut key =
-            Vec::with_capacity(self.dlq_index_prefix.len() + (Self::PADDED_U64_WIDTH * 2) + 1);
+        let mut key = Vec::with_capacity(self.dlq_index_prefix.len() + 16);
         key.extend_from_slice(&self.dlq_index_prefix);
-        Self::append_padded_u64(&mut key, dead_lettered_at_ms);
-        key.push(b':');
-        Self::append_padded_u64(&mut key, id.as_u64());
+        key.extend_from_slice(&dead_lettered_at_ms.to_be_bytes());
+        key.extend_from_slice(&id.as_u64().to_be_bytes());
         key
     }
 
     #[allow(dead_code)]
     fn ack_dedup_key(&self, id: MessageId, token: u64) -> Vec<u8> {
-        let mut key =
-            Vec::with_capacity(self.ack_dedup_prefix.len() + (Self::PADDED_U64_WIDTH * 2) + 1);
+        let mut key = Vec::with_capacity(self.ack_dedup_prefix.len() + 16);
         key.extend_from_slice(&self.ack_dedup_prefix);
-        Self::append_padded_u64(&mut key, id.as_u64());
-        key.push(b':');
-        Self::append_padded_u64(&mut key, token);
+        key.extend_from_slice(&id.as_u64().to_be_bytes());
+        key.extend_from_slice(&token.to_be_bytes());
         key
     }
 
     fn parse_delayed_index_key(key: &[u8], prefix: &[u8]) -> Option<(u64, MessageId)> {
         let rest = key.strip_prefix(prefix)?;
-        if rest.len() != (Self::PADDED_U64_WIDTH * 2) + 1 {
-            return None;
-        }
-        if rest[Self::PADDED_U64_WIDTH] != b':' {
+        if rest.len() != 16 {
             return None;
         }
 
-        let visible_at_ms = Self::parse_padded_u64(&rest[..Self::PADDED_U64_WIDTH])?;
-        let id = Self::parse_padded_u64(&rest[(Self::PADDED_U64_WIDTH + 1)..])?;
+        let visible_at_ms = u64::from_be_bytes(rest[0..8].try_into().ok()?);
+        let id = u64::from_be_bytes(rest[8..16].try_into().ok()?);
         Some((visible_at_ms, MessageId::new(id)))
     }
 
     fn parse_dlq_index_key(key: &[u8], prefix: &[u8]) -> Option<(u64, MessageId)> {
         let rest = key.strip_prefix(prefix)?;
-        if rest.len() != (Self::PADDED_U64_WIDTH * 2) + 1 {
-            return None;
-        }
-        if rest[Self::PADDED_U64_WIDTH] != b':' {
+        if rest.len() != 16 {
             return None;
         }
 
-        let dead_lettered_at_ms = Self::parse_padded_u64(&rest[..Self::PADDED_U64_WIDTH])?;
-        let id = Self::parse_padded_u64(&rest[(Self::PADDED_U64_WIDTH + 1)..])?;
+        let dead_lettered_at_ms = u64::from_be_bytes(rest[0..8].try_into().ok()?);
+        let id = u64::from_be_bytes(rest[8..16].try_into().ok()?);
         Some((dead_lettered_at_ms, MessageId::new(id)))
     }
 
     #[inline]
     fn parse_message_id_from_key(key: &[u8], prefix: &[u8]) -> Option<MessageId> {
-        if !key.starts_with(prefix) || key.len() <= prefix.len() {
+        if !key.starts_with(prefix) || key.len() != prefix.len() + 8 {
             return None;
         }
 
-        let mut value = 0_u64;
-        for &byte in &key[prefix.len()..] {
-            if !byte.is_ascii_digit() {
-                return None;
-            }
-            value = value.checked_mul(10)?.checked_add((byte - b'0') as u64)?;
-        }
-
-        Some(MessageId::new(value))
+        Some(MessageId::new(u64::from_be_bytes(
+            key[prefix.len()..].try_into().ok()?,
+        )))
     }
 
     /// Serialize QueueRecord header to bytes.
@@ -3083,14 +2983,33 @@ pub mod tests {
             .expect("commit queue validation row");
     }
 
+    fn authoritative_queue_validation_suffix(family_marker: u8, id: Option<u64>) -> Vec<u8> {
+        let mut suffix = Vec::new();
+        storage_key::push_segment(&mut suffix, "jobs");
+        storage_key::push_segment(&mut suffix, "email");
+        suffix.push(family_marker);
+        if let Some(id) = id {
+            suffix.extend_from_slice(&id.to_be_bytes());
+        }
+        suffix
+    }
+
     #[test]
     fn should_reject_malformed_authoritative_queue_rows_during_preflight() {
         // Arrange
         let cases = [
-            (b"jobs:email:meta".as_slice(), b"broken".to_vec(), "meta"),
-            (b"jobs:email:hdr:1".as_slice(), b"broken".to_vec(), "header"),
             (
-                b"jobs:email:msg:1".as_slice(),
+                authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_META, None),
+                b"broken".to_vec(),
+                "meta",
+            ),
+            (
+                authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_HEADER, Some(1)),
+                b"broken".to_vec(),
+                "header",
+            ),
+            (
+                authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_LEGACY_MESSAGE, Some(1)),
                 b"broken".to_vec(),
                 "legacy_message",
             ),
@@ -3101,7 +3020,7 @@ pub mod tests {
             .into_iter()
             .map(|(suffix, value, category)| {
                 let store = create_test_engine_with_cfs(vec![1]);
-                put_queue_validation_row(store.as_ref(), suffix, value);
+                put_queue_validation_row(store.as_ref(), &suffix, value);
                 (
                     QueueActor::validate_persisted_state_for_existing_families(store.as_ref())
                         .expect_err("malformed queue row should fail preflight"),
@@ -3122,7 +3041,7 @@ pub mod tests {
         let store = create_test_engine_with_cfs(vec![1]);
         put_queue_validation_row(
             store.as_ref(),
-            b"jobs:email:hdr:1",
+            &authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_HEADER, Some(1)),
             QueueActor::encode_record_header(&QueueRecord::ready(
                 Bytes::from_static(b"payload"),
                 1,
@@ -3144,7 +3063,11 @@ pub mod tests {
     fn should_reject_orphan_queue_body_during_preflight() {
         // Arrange
         let store = create_test_engine_with_cfs(vec![1]);
-        put_queue_validation_row(store.as_ref(), b"jobs:email:body:1", b"payload".to_vec());
+        put_queue_validation_row(
+            store.as_ref(),
+            &authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_BODY, Some(1)),
+            b"payload".to_vec(),
+        );
 
         // Act
         let result = QueueActor::validate_persisted_state_for_existing_families(store.as_ref());
@@ -3153,6 +3076,19 @@ pub mod tests {
         assert!(result
             .expect_err("orphan queue body should fail preflight")
             .contains("orphan body row"));
+    }
+
+    #[test]
+    fn should_order_queue_ready_range_keys_by_typed_numeric_suffix() {
+        // Arrange
+        let prefix = vec![QUEUE_KEY_FAMILY_READY_INDEX];
+
+        // Act
+        let key1 = QueueActor::ready_range_key_with_prefix(&prefix, 1, 2);
+        let key2 = QueueActor::ready_range_key_with_prefix(&prefix, 1, 10);
+
+        // Assert
+        assert!(key1 < key2);
     }
 
     #[test]
