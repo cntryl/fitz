@@ -2,6 +2,7 @@ import DomainHeader from "@/components/shared/domain-header";
 import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
+import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
 import { Stack } from "@askrjs/themes/layouts";
 import {
@@ -11,6 +12,7 @@ import {
 } from "@/components/shared/query-state";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import ScheduleTimePlanner from "@/features/schedule/schedule-time-planner";
 import { createScheduleOverviewQuery } from "@/features/schedule/schedule-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 
@@ -168,6 +170,24 @@ export default function SchedulePage() {
             {overview.refreshing ? (
               <QueryRefreshingState description="Refreshing schedule overview..." />
             ) : null}
+
+            <DomainWorkflowPanel
+              archetype="Schedule Time Planner"
+              workflows={[
+                "Timeline review",
+                "Execution review",
+                "Failure investigation",
+                "Configuration review",
+              ]}
+              questions={["What should happen?", "What happened?", "What will happen next?"]}
+              diagnostics={["Persistence failures", "Overdue normalization", "Timing internals"]}
+            />
+
+            <ScheduleTimePlanner
+              error={inventory.error}
+              inventory={inventory.data}
+              loading={inventory.loading}
+            />
 
             <DomainMetricTable
               title="Schedule metrics"

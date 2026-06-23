@@ -1,5 +1,5 @@
 import { For } from "@askrjs/askr/control";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import type { ActiveSession } from "@/features/session/session-models";
 import { formatTimestamp } from "@/shared/format";
@@ -38,6 +38,98 @@ export default function SessionTable({ sessions }: SessionTableProps) {
     );
   }
 
+  const columns: readonly VirtualTableColumn<ActiveSession>[] = [
+    {
+      id: "session",
+      header: "Session ID",
+      width: "15%",
+      cellComponent: ({ row }) => (
+        <span class="session-table-cell-truncate" title={row.sessionId ?? row.key}>
+          {row.sessionId ?? row.key}
+        </span>
+      ),
+    },
+    {
+      id: "route-family",
+      header: "Route family",
+      width: "8%",
+      cellComponent: ({ row }) => <span>{row.routeFamily ?? "Unknown"}</span>,
+    },
+    {
+      id: "subject",
+      header: "Subject",
+      width: "11%",
+      cellComponent: ({ row }) => (
+        <span class="session-table-cell-truncate" title={row.subject || "Unauthenticated"}>
+          {row.subject || "Unauthenticated"}
+        </span>
+      ),
+    },
+    {
+      id: "identity-claim",
+      header: "Identity claim",
+      width: "10%",
+      cellComponent: ({ row }) => (
+        <span class="session-table-cell-truncate" title={row.identityClaim ?? "Not resolved"}>
+          {row.identityClaim ?? "Not resolved"}
+        </span>
+      ),
+    },
+    {
+      id: "identity-value",
+      header: "Identity value",
+      width: "11%",
+      cellComponent: ({ row }) => (
+        <span class="session-table-cell-truncate" title={row.identityValue ?? "Not resolved"}>
+          {row.identityValue ?? "Not resolved"}
+        </span>
+      ),
+    },
+    {
+      id: "transport",
+      header: "Transport",
+      width: "7%",
+      cellComponent: ({ row }) => <span>{row.transport ?? "Unknown"}</span>,
+    },
+    {
+      id: "remote",
+      header: "Remote address",
+      width: "12%",
+      cellComponent: ({ row }) => (
+        <span class="session-table-cell-truncate" title={row.remoteAddress ?? "Unknown"}>
+          {row.remoteAddress ?? "Unknown"}
+        </span>
+      ),
+    },
+    {
+      id: "connected",
+      header: "Connected at",
+      width: "10%",
+      cellComponent: ({ row }) => (
+        <span class="session-table-cell-truncate" title={formatTimestamp(row.connectedAt)}>
+          {formatTimestamp(row.connectedAt)}
+        </span>
+      ),
+    },
+    {
+      id: "idle",
+      header: "Idle",
+      width: "6%",
+      cellComponent: ({ row }) => <span>{formatDuration(row.idleSeconds)}</span>,
+    },
+    {
+      id: "messages",
+      header: "Messages",
+      width: "10%",
+      cellComponent: ({ row }) => (
+        <span>
+          {row.messagesSent ?? 0} sent / {row.messagesReceived ?? 0} received
+        </span>
+      ),
+    },
+  ];
+  const tableHeight = Math.min(520, Math.max(176, 44 + sessions.length * 48));
+
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
@@ -50,56 +142,17 @@ export default function SessionTable({ sessions }: SessionTableProps) {
       <CardContent>
         <div class="domain-table-wrap">
           <div class="session-table-desktop">
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableHeaderCell>Session ID</TableHeaderCell>
-                  <TableHeaderCell>Route family</TableHeaderCell>
-                  <TableHeaderCell>Subject</TableHeaderCell>
-                  <TableHeaderCell>Identity claim</TableHeaderCell>
-                  <TableHeaderCell>Identity value</TableHeaderCell>
-                  <TableHeaderCell>Transport</TableHeaderCell>
-                  <TableHeaderCell>Remote address</TableHeaderCell>
-                  <TableHeaderCell>Connected at</TableHeaderCell>
-                  <TableHeaderCell>Idle</TableHeaderCell>
-                  <TableHeaderCell>Messages</TableHeaderCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                <For each={sessions} by={(session) => session.key}>
-                  {(session) => (
-                    <TableRow>
-                      <TableCell>
-                        <span
-                          class="session-table-cell-truncate"
-                          title={session.sessionId ?? session.key}
-                        >
-                          {session.sessionId ?? session.key}
-                        </span>
-                      </TableCell>
-                      <TableCell>{session.routeFamily ?? "Unknown"}</TableCell>
-                      <TableCell>{session.subject || "Unauthenticated"}</TableCell>
-                      <TableCell>{session.identityClaim ?? "Not resolved"}</TableCell>
-                      <TableCell>{session.identityValue ?? "Not resolved"}</TableCell>
-                      <TableCell>{session.transport ?? "Unknown"}</TableCell>
-                      <TableCell>
-                        <span
-                          class="session-table-cell-wrap"
-                          title={session.remoteAddress ?? "Unknown"}
-                        >
-                          {session.remoteAddress ?? "Unknown"}
-                        </span>
-                      </TableCell>
-                      <TableCell>{formatTimestamp(session.connectedAt)}</TableCell>
-                      <TableCell>{formatDuration(session.idleSeconds)}</TableCell>
-                      <TableCell>
-                        {session.messagesSent ?? 0} sent / {session.messagesReceived ?? 0} received
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </For>
-              </TableBody>
-            </Table>
+            <VirtualTable<ActiveSession>
+              aria-label="Live sessions"
+              class="session-virtual-table"
+              columns={columns}
+              getKey={(session) => session.key}
+              headerHeight={44}
+              overscan={10}
+              rowHeight={48}
+              rows={sessions}
+              style={{ height: `${tableHeight}px` }}
+            />
           </div>
 
           <div class="session-table-mobile">

@@ -4444,6 +4444,7 @@ mod tests {
         // Arrange
         let workers = [
             RpcWorker {
+                route_family: 1,
                 session_id: "9001".to_string(),
                 realm: "prod".to_string(),
                 route: "rpc://prod/api/users/get".to_string(),
@@ -4452,6 +4453,7 @@ mod tests {
                 average_latency_ms: 4.5,
             },
             RpcWorker {
+                route_family: 1,
                 session_id: "9002".to_string(),
                 realm: "prod".to_string(),
                 route: "rpc://prod/api/users/get".to_string(),
@@ -4460,6 +4462,7 @@ mod tests {
                 average_latency_ms: 22.0,
             },
             RpcWorker {
+                route_family: 1,
                 session_id: "9003".to_string(),
                 realm: "prod".to_string(),
                 route: "rpc://prod/api/users/get".to_string(),
@@ -4468,6 +4471,7 @@ mod tests {
                 average_latency_ms: 63.0,
             },
             RpcWorker {
+                route_family: 1,
                 session_id: "9004".to_string(),
                 realm: "prod".to_string(),
                 route: "rpc://prod/api/users/get".to_string(),
@@ -4580,6 +4584,7 @@ mod tests {
         // Arrange
         let now = Utc::now();
         let leases = vec![LeaseInfo {
+            route_family: 1,
             realm: "prod".to_string(),
             area: "locks".to_string(),
             resource: "cache".to_string(),
@@ -4633,6 +4638,7 @@ mod tests {
         let now = Utc::now();
         let subscriptions = vec![
             NoticeSubscription {
+                route_family: 1,
                 subscription_id: 1,
                 session_id: "sub-1".to_string(),
                 realm: "prod".to_string(),
@@ -4641,6 +4647,7 @@ mod tests {
                 notifications_received: 3,
             },
             NoticeSubscription {
+                route_family: 1,
                 subscription_id: 2,
                 session_id: "sub-2".to_string(),
                 realm: "prod".to_string(),
@@ -4649,6 +4656,7 @@ mod tests {
                 notifications_received: 1,
             },
             NoticeSubscription {
+                route_family: 1,
                 subscription_id: 3,
                 session_id: "sub-3".to_string(),
                 realm: "prod".to_string(),
@@ -4659,12 +4667,14 @@ mod tests {
         ];
         let routes = vec![
             NoticeRouteInfo {
+                route_family: 1,
                 route: "notice://prod/events/orders/created".to_string(),
                 subscribers: 2,
                 publishes_total: 0,
                 publishes_per_minute: 0.0,
             },
             NoticeRouteInfo {
+                route_family: 1,
                 route: "notice://prod/events/orders/updated".to_string(),
                 subscribers: 1,
                 publishes_total: 0,
@@ -4693,6 +4703,7 @@ mod tests {
         // Arrange
         let now = Utc::now();
         let schedules = vec![ScheduleInfo {
+            route_family: 1,
             realm: "prod".to_string(),
             area: "jobs".to_string(),
             resource: "billing".to_string(),
@@ -4741,6 +4752,7 @@ mod tests {
         // Arrange
         let now = Utc::now();
         let schedules = vec![ScheduleInfo {
+            route_family: 1,
             realm: "prod".to_string(),
             area: "jobs".to_string(),
             resource: "billing".to_string(),
@@ -4794,6 +4806,7 @@ mod tests {
         // Arrange
         let now = Utc::now();
         let schedules = vec![ScheduleInfo {
+            route_family: 1,
             realm: "prod".to_string(),
             area: "jobs".to_string(),
             resource: "billing".to_string(),

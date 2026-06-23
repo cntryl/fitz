@@ -21,6 +21,7 @@ tags:
   - name: Runtime
   - name: Metrics
   - name: Sessions
+  - name: Search
   - name: KV
   - name: Queue
   - name: Stream
@@ -94,6 +95,20 @@ paths:
       responses:
         "204":
           description: Session cleared and cookie removed
+
+  /api/v1/features:
+    get:
+      tags: [Auth]
+      summary: Get admin UI feature flags and unauthenticated bootstrap metadata
+      operationId: getAdminFeatures
+      security: []
+      responses:
+        "200":
+          description: Admin UI features
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminFeaturesResponse"
 
   /api/v1/runtime/drain:
     post:
@@ -190,6 +205,76 @@ paths:
               schema:
                 $ref: "#/components/schemas/GlobalTroubleshootingDiagnostics"
         "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/search:
+    get:
+      tags: [Search]
+      summary: Search admin-visible broker state
+      description: Returns read-only, domain-aware search results built from existing admin snapshots. Results may mix durable committed state and live broker-local state; each result kind follows the durability semantics of its source endpoint.
+      operationId: searchAdminState
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: route_family
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: domain
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [sessions, kv, stream, queue, schedule, lease, notice, rpc]
+        - name: realm
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: area
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: resource
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: operation
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 50
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
           $ref: "#/components/responses/Unauthorized"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
@@ -456,6 +541,127 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/KvResourceDetail"
+  /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/value:
+    get:
+      tags: [KV]
+      summary: Get committed KV value
+      operationId: getKvCommittedValue
+      description: Admin-only exact-key read of durable committed KV state for one explicit Route Family, realm, area, and resource. This does not expose uncommitted session transactions or historical versions.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: route_family
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: key
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: key_encoding
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [utf8, base64]
+            default: utf8
+      responses:
+        "200":
+          description: Committed KV value lookup result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KvCommittedValueResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/prefix:
+    get:
+      tags: [KV]
+      summary: Scan committed KV prefix
+      operationId: scanKvCommittedPrefix
+      description: Admin-only prefix scan of durable committed KV state for one explicit Route Family, realm, area, and resource. Results are current committed key/value pairs, not a replay log or version history.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: route_family
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: prefix
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: key_encoding
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [utf8, base64]
+            default: utf8
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 50
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Committed KV prefix scan result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KvPrefixScanResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/transactions:
     get:
       tags: [KV]
@@ -913,6 +1119,126 @@ paths:
               schema:
                 $ref: "#/components/schemas/StreamResourceDetail"
 
+  /api/v1/stream/search:
+    get:
+      tags: [Stream]
+      summary: Search committed stream records
+      operationId: searchStreamRecords
+      description: Route-family scoped read-only search over committed stream records. A discriminator or q value is treated as an exact stream discriminator filter; this does not re-deliver events.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RouteFamilyQuery"
+        - name: realm
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: area
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: resource
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: from_offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 0
+        - name: discriminator
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 50
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Stream record search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamRecordsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}/records:
+    get:
+      tags: [Stream]
+      summary: Read committed stream records
+      operationId: readStreamResourceRecords
+      description: Route-family scoped read-only range over committed stream records for replay preview/export. This endpoint does not re-publish or re-enqueue events.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+        - $ref: "#/components/parameters/RouteFamilyQuery"
+        - name: from_offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 0
+        - name: discriminator
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 50
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Stream records
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamRecordsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /api/v1/stream/realms/{realm}/watermarks:
     get:
       tags: [Stream]
@@ -1096,6 +1422,66 @@ paths:
               schema:
                 $ref: "#/components/schemas/LeaseResourceDetail"
 
+  /api/v1/lease/search:
+    get:
+      tags: [Lease]
+      summary: Search live lease ownership and waiters
+      operationId: searchLeaseOwnership
+      description: Route-family scoped broker-local search over current lease owners and waiting acquires. Results are ephemeral and reset on disconnect cleanup or broker restart.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RouteFamilyQuery"
+        - name: realm
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: area
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: resource
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: owner
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [owned, waiting, contention]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 50
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Lease ownership search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaseSearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /api/v1/schedule/realms:
     get:
       tags: [Schedule]
@@ -1227,6 +1613,92 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScheduleResourceDetail"
 
+  /api/v1/schedule/missed:
+    get:
+      tags: [Schedule]
+      summary: Search pending schedule handoffs
+      operationId: searchScheduleMissedHandoffs
+      description: Route-family scoped view of persisted pending fire claims that have been claimed for live handoff but not yet acknowledged. This is schedule handoff evidence, not downstream execution success history.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RouteFamilyQuery"
+        - name: realm
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: area
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: resource
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 50
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Pending schedule handoffs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleMissedObservationList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/schedule/realms/{realm}/areas/{area}/resources/{resource}/executions:
+    get:
+      tags: [Schedule]
+      summary: List schedule execution observations
+      operationId: listScheduleExecutionObservations
+      description: Route-family scoped observations from persisted schedule definitions and acknowledged live handoffs. This is not a downstream job execution log.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+        - $ref: "#/components/parameters/RouteFamilyQuery"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 50
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Schedule execution observations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleExecutionObservationList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /api/v1/notice/realms:
     get:
       tags: [Notice]
@@ -1240,6 +1712,60 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RealmCollection"
+
+  /api/v1/notice/deliveries:
+    get:
+      tags: [Notice]
+      summary: Search live notice delivery evidence
+      operationId: searchNoticeDeliveries
+      description: Route-family scoped broker-local view of active subscriptions, delivered notification counters, and publish counters. Notice remains ephemeral fanout with no replayable delivery history.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RouteFamilyQuery"
+        - name: realm
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: area
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: resource
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 50
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Notice delivery observations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoticeDeliveryObservationList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /api/v1/notice/realms/{realm}:
     get:
       tags: [Notice]
@@ -1612,6 +2138,69 @@ paths:
                 $ref: "#/components/schemas/RpcWorkersList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/rpc/calls:
+    get:
+      tags: [RPC]
+      summary: Search live RPC call evidence
+      operationId: searchRpcCalls
+      description: Route-family scoped broker-local view of pending requests and live worker registrations. RPC remains live request/response state, not a durable call history.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/RouteFamilyQuery"
+        - name: realm
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: area
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: resource
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: operation
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: correlation_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 50
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: RPC call observations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RpcCallObservationList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
   /api/v1/rpc/pending:
@@ -2398,6 +2987,13 @@ components:
       schema:
         type: integer
         format: int64
+    RouteFamilyQuery:
+      name: route_family
+      in: query
+      required: true
+      schema:
+        type: integer
+        format: int64
     AgainstRealmQuery:
       name: against_realm
       in: query
@@ -2436,12 +3032,120 @@ components:
 
     SessionResponse:
       type: object
-      required: [authenticated, username]
+      required:
+        [
+          authenticated,
+          username,
+          route_families,
+          route_families_wildcard,
+        ]
       properties:
         authenticated:
           type: boolean
         username:
           type: string
+        route_families:
+          type: array
+          items:
+            type: string
+          description: Explicit admin Route Families from the admin session claim. Empty when wildcard access is granted.
+        route_families_wildcard:
+          type: boolean
+          description: True when the admin session has wildcard Route Family access.
+
+    AdminFeaturesResponse:
+      type: object
+      required:
+        [
+          admin_auth_required,
+          admin_auth_mode,
+          route_families,
+          route_families_wildcard,
+        ]
+      properties:
+        admin_auth_required:
+          type: boolean
+        admin_auth_mode:
+          type: string
+          enum: [protected, open]
+        route_families:
+          type: array
+          items:
+            type: string
+          description: Public bootstrap Route Family grants. Empty in protected mode; use the authenticated session endpoint for admin grants after login.
+        route_families_wildcard:
+          type: boolean
+          description: True only when public bootstrap runs with wildcard Route Family access, such as open admin mode.
+
+    AdminSearchResponse:
+      type: object
+      required: [query, limit, total, truncated, results]
+      properties:
+        query:
+          type: string
+        route_family:
+          type: [string, "null"]
+        domain:
+          type: [string, "null"]
+        limit:
+          type: integer
+          format: int64
+        total:
+          type: integer
+          format: int64
+        truncated:
+          type: boolean
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminSearchResult"
+
+    AdminSearchResult:
+      type: object
+      required:
+        [
+          id,
+          domain,
+          kind,
+          title,
+          summary,
+          href,
+          matched_fields,
+          metadata,
+        ]
+      properties:
+        id:
+          type: string
+        domain:
+          type: string
+        kind:
+          type: string
+        route_family:
+          type: [string, "null"]
+        realm:
+          type: [string, "null"]
+        area:
+          type: [string, "null"]
+        resource:
+          type: [string, "null"]
+        operation:
+          type: [string, "null"]
+        title:
+          type: string
+        summary:
+          type: string
+        health:
+          type: [string, "null"]
+        href:
+          type: string
+        matched_fields:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
 
     RuntimeDrainResponse:
       type: object
@@ -3785,6 +4489,404 @@ components:
         diagnostics:
           $ref: "#/components/schemas/DiagnosticSnapshot"
 
+    KvByteValue:
+      type: object
+      description: Byte payload rendered as base64 plus UTF-8 when the bytes are valid text.
+      required: [base64, utf8, len_bytes]
+      properties:
+        base64:
+          type: string
+        utf8:
+          type: [string, "null"]
+        len_bytes:
+          type: integer
+
+    KvCommittedValueResponse:
+      type: object
+      description: Exact-key read of durable committed KV state for one explicit Route Family and resource scope.
+      required: [route_family, realm, area, resource, key, found, value]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        key:
+          $ref: "#/components/schemas/KvByteValue"
+        found:
+          type: boolean
+        value:
+          anyOf:
+            - $ref: "#/components/schemas/KvByteValue"
+            - type: "null"
+
+    KvCommittedPair:
+      type: object
+      required: [key, value]
+      properties:
+        key:
+          $ref: "#/components/schemas/KvByteValue"
+        value:
+          $ref: "#/components/schemas/KvByteValue"
+
+    KvPrefixScanResponse:
+      type: object
+      description: Prefix scan of durable committed KV state for one explicit Route Family and resource scope.
+      required: [route_family, realm, area, resource, prefix, limit, has_more, items]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        prefix:
+          $ref: "#/components/schemas/KvByteValue"
+        limit:
+          type: integer
+        has_more:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/KvCommittedPair"
+
+    StreamAdminRecord:
+      type: object
+      description: One committed stream record rendered for admin replay preview/export.
+      required:
+        [
+          route_family,
+          realm,
+          area,
+          resource,
+          resource_offset,
+          area_offset,
+          realm_offset,
+          created_at_ms,
+          body,
+          metadata,
+        ]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        resource_offset:
+          type: integer
+          format: int64
+        area_offset:
+          type: [integer, "null"]
+          format: int64
+        realm_offset:
+          type: [integer, "null"]
+          format: int64
+        created_at_ms:
+          type: integer
+          format: int64
+        body:
+          $ref: "#/components/schemas/KvByteValue"
+        metadata:
+          anyOf:
+            - $ref: "#/components/schemas/KvByteValue"
+            - type: "null"
+
+    StreamRecordsResponse:
+      type: object
+      description: Route-family scoped read-only committed stream record results.
+      required: [route_family, realm, area, resource, from_offset, limit, has_more, records]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        realm:
+          type: [string, "null"]
+        area:
+          type: [string, "null"]
+        resource:
+          type: [string, "null"]
+        from_offset:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        has_more:
+          type: boolean
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/StreamAdminRecord"
+
+    ScheduleExecutionObservation:
+      type: object
+      description: Schedule-owned observation from persisted timing intent and acknowledged live handoffs. This is not a downstream execution log.
+      required:
+        [
+          route_family,
+          realm,
+          area,
+          resource,
+          operation,
+          status,
+          cron,
+          next_run,
+          last_run,
+          executions_total,
+        ]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        operation: { type: string }
+        status: { type: string }
+        cron: { type: string }
+        next_run: { type: string }
+        last_run:
+          type: [string, "null"]
+        executions_total:
+          type: integer
+          format: int64
+
+    ScheduleExecutionObservationList:
+      type: object
+      required: [route_family, realm, area, resource, limit, observations]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        limit: { type: integer }
+        observations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScheduleExecutionObservation"
+
+    ScheduleMissedObservation:
+      type: object
+      description: Persisted pending schedule handoff claim that has not yet been acknowledged.
+      required:
+        [
+          route_family,
+          realm,
+          area,
+          resource,
+          operation,
+          fire_ms,
+          fire_at,
+          claimed_at,
+          age_seconds,
+          status,
+        ]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        operation: { type: string }
+        fire_ms:
+          type: integer
+          format: int64
+        fire_at: { type: string }
+        claimed_at: { type: string }
+        age_seconds:
+          type: integer
+          format: int64
+        status: { type: string }
+
+    ScheduleMissedObservationList:
+      type: object
+      required: [route_family, limit, observations]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        limit: { type: integer }
+        observations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScheduleMissedObservation"
+
+    LeaseSearchItem:
+      type: object
+      description: Broker-local live lease owner or waiter row.
+      required:
+        [
+          route_family,
+          realm,
+          area,
+          resource,
+          state,
+          owner_id,
+          owner_session_id,
+          queued_token,
+          expires_at,
+          acquired_at,
+          renewals,
+          pending_waiters,
+        ]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        state: { type: string }
+        owner_id:
+          type: [string, "null"]
+        owner_session_id:
+          type: [string, "null"]
+        queued_token:
+          type: [integer, "null"]
+          format: int64
+        expires_at:
+          type: [string, "null"]
+        acquired_at:
+          type: [string, "null"]
+        renewals:
+          type: [integer, "null"]
+        pending_waiters:
+          type: integer
+
+    LeaseSearchResponse:
+      type: object
+      required: [route_family, limit, items]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        limit: { type: integer }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeaseSearchItem"
+
+    NoticeDeliveryObservation:
+      type: object
+      description: Broker-local Notice subscription and delivery-counter evidence. This is not durable delivery history.
+      required:
+        [
+          route_family,
+          realm,
+          area,
+          resource,
+          route,
+          session_id,
+          subscription_id,
+          status,
+          notifications_received,
+          publishes_total,
+          publishes_per_minute,
+        ]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        realm: { type: string }
+        area:
+          type: [string, "null"]
+        resource:
+          type: [string, "null"]
+        route: { type: string }
+        session_id:
+          type: [string, "null"]
+        subscription_id:
+          type: [integer, "null"]
+          format: int64
+        status: { type: string }
+        notifications_received:
+          type: integer
+          format: int64
+        publishes_total:
+          type: integer
+          format: int64
+        publishes_per_minute:
+          type: number
+
+    NoticeDeliveryObservationList:
+      type: object
+      required: [route_family, limit, observations]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        limit: { type: integer }
+        observations:
+          type: array
+          items:
+            $ref: "#/components/schemas/NoticeDeliveryObservation"
+
+    RpcCallObservation:
+      type: object
+      description: Broker-local RPC pending-call or worker-registration evidence. This is not durable call history.
+      required:
+        [
+          route_family,
+          realm,
+          area,
+          resource,
+          operation,
+          route,
+          correlation_id,
+          state,
+          submitted_at,
+          registered_at,
+          age_seconds,
+          worker_session_id,
+          requests_handled,
+          average_latency_ms,
+        ]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        operation:
+          type: [string, "null"]
+        route: { type: string }
+        correlation_id:
+          type: [string, "null"]
+        state: { type: string }
+        submitted_at:
+          type: [string, "null"]
+        registered_at:
+          type: [string, "null"]
+        age_seconds:
+          type: [integer, "null"]
+          format: int64
+        worker_session_id:
+          type: [string, "null"]
+        requests_handled:
+          type: [integer, "null"]
+          format: int64
+        average_latency_ms:
+          type: [number, "null"]
+
+    RpcCallObservationList:
+      type: object
+      required: [route_family, limit, observations]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        limit: { type: integer }
+        observations:
+          type: array
+          items:
+            $ref: "#/components/schemas/RpcCallObservation"
+
     QueueResourceDetail:
       type: object
       description: Point-in-time Queue resource detail for the current broker process. Counts describe only the queue actor state currently warm in memory and do not represent a durable inventory of every committed queue in storage.
@@ -4094,7 +5196,12 @@ components:
     NoticeSubscription:
       type: object
       description: Live in-memory Notice subscription state for the current broker process. Subscriptions are session-scoped and are removed on disconnect or broker restart.
+      required: [route_family, subscription_id, session_id, realm, pattern, created_at, notifications_received]
       properties:
+        route_family:
+          type: integer
+          format: int64
+          description: Route Family where this live subscription is registered.
         subscription_id:
           type: integer
           description: Broker-local identifier for the currently active in-memory subscription.
@@ -4125,7 +5232,12 @@ components:
     RpcWorker:
       type: object
       description: Live in-memory RPC worker registration for the current broker process. Workers must re-register after disconnect or broker restart.
+      required: [route_family, session_id, realm, route, registered_at, requests_handled, average_latency_ms]
       properties:
+        route_family:
+          type: integer
+          format: int64
+          description: Route Family where this live worker is registered.
         session_id:
           type: string
           description: Broker-local worker session identifier for the active registration.
@@ -4156,7 +5268,12 @@ components:
     RpcPendingRequest:
       type: object
       description: Live in-memory pending RPC request tracked by the current broker process only. Pending requests disappear on timeout, cleanup, or broker restart.
+      required: [route_family, correlation_id, route, submitted_at, age_seconds, worker_session_id]
       properties:
+        route_family:
+          type: integer
+          format: int64
+          description: Route Family where this pending request is tracked.
         correlation_id:
           type: string
           description: Correlation identifier for the live in-memory request.
@@ -4228,6 +5345,12 @@ components:
             $ref: "#/components/schemas/Error"
     BadRequest:
       description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Authenticated session is not allowed to access the requested scope
       content:
         application/json:
           schema:

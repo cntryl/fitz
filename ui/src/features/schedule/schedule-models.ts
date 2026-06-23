@@ -19,3 +19,19 @@ export interface ScheduleOverview {
   realms: ScheduleRealmSummary[];
   stats: ScheduleStatsSummary;
 }
+
+export interface ScheduleExecutionObservationRequest {
+  area: string;
+  limit?: number;
+  realm: string;
+  resource: string;
+  routeFamily: number;
+}
+
+export interface ScheduleMissedObservationRequest {
+  area?: string;
+  limit?: number;
+  realm?: string;
+  resource?: string;
+  routeFamily: number;
+}

@@ -44,6 +44,19 @@ pub fn build_kv_put(tx_id: u64, route: &str, key: &[u8], value: &[u8]) -> Vec<u8
     builder.build()
 }
 
+/// Build KV COMMIT frame (msg_type 101)
+pub fn build_kv_commit(tx_id: u64, route: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    // [u64 BE tx_id][u32 BE route_len][route]
+    payload.extend_from_slice(&tx_id.to_be_bytes());
+    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(route.as_bytes());
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(101, &payload);
+    builder.build()
+}
+
 /// Build KV ROLLBACK frame (msg_type 102)
 pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
     let mut payload = Vec::new();

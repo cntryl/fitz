@@ -2,12 +2,8 @@ import { For } from "@askrjs/askr/control";
 import { state } from "@askrjs/askr";
 import {
   Input,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
+  VirtualTable,
+  type VirtualTableColumn,
 } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
 import { Stack } from "@askrjs/themes/layouts";
@@ -527,6 +523,45 @@ export default function MetricsPage() {
   const snapshotSummary = familyIndex ? summarizeSnapshot(familyIndex) : null;
   const summaryCards = familyIndex ? familyCardMetrics(familyIndex) : emptySummaryCards;
   const shortcutCards = data ? buildSummaryShortcuts(data.families) : [];
+  const sampleColumns: readonly VirtualTableColumn<MetricsSampleRow>[] = [
+    {
+      id: "metric",
+      header: "Metric",
+      width: "34%",
+      cellComponent: ({ row }) => (
+        <span class="metrics-family-cell" title={row.family}>
+          {row.family}
+        </span>
+      ),
+    },
+    {
+      id: "type",
+      header: "Type",
+      width: "12%",
+      cellComponent: ({ row }) => <span>{row.type}</span>,
+    },
+    {
+      id: "labels",
+      header: "Labels",
+      width: "38%",
+      cellComponent: ({ row }) => (
+        <code class="metrics-labels-cell" title={row.labels}>
+          {row.labels}
+        </code>
+      ),
+    },
+    {
+      id: "value",
+      header: "Value",
+      width: "16%",
+      cellComponent: ({ row }) => (
+        <code class="metrics-value-cell" title={String(row.value)}>
+          {row.value}
+        </code>
+      ),
+    },
+  ];
+  const sampleTableHeight = Math.min(560, Math.max(176, 44 + sampleRows.length * 48));
 
   const detailSummary = data
     ? filterValue.length === 0
@@ -699,43 +734,17 @@ export default function MetricsPage() {
                   }
                 />
               ) : (
-                <div class="metrics-table-wrap">
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableHeaderCell class="metrics-family-header">Metric</TableHeaderCell>
-                        <TableHeaderCell class="metrics-type-header">Type</TableHeaderCell>
-                        <TableHeaderCell class="metrics-labels-header">Labels</TableHeaderCell>
-                        <TableHeaderCell class="metrics-value-header">Value</TableHeaderCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      <For
-                        each={sampleRows}
-                        by={(row) => `${row.family}:${row.labels}:${row.value}`}
-                      >
-                        {(row) => (
-                          <TableRow>
-                            <TableCell>
-                              <span class="metrics-family-cell" title={row.family}>
-                                {row.family}
-                              </span>
-                            </TableCell>
-                            <TableCell>{row.type}</TableCell>
-                            <TableCell>
-                              <code class="metrics-labels-cell" title={row.labels}>
-                                {row.labels}
-                              </code>
-                            </TableCell>
-                            <TableCell>
-                              <code class="metrics-value-cell">{row.value}</code>
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </For>
-                    </TableBody>
-                  </Table>
-                </div>
+                <VirtualTable<MetricsSampleRow>
+                  aria-label="Metric samples"
+                  class="metrics-sample-virtual-table"
+                  columns={sampleColumns}
+                  getKey={(row) => `${row.family}:${row.labels}:${row.value}`}
+                  headerHeight={44}
+                  overscan={12}
+                  rowHeight={48}
+                  rows={sampleRows}
+                  style={{ height: `${sampleTableHeight}px` }}
+                />
               )}
             </CardContent>
           </Card>

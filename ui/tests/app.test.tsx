@@ -12,6 +12,7 @@ import ResourceWorkbench from "@/components/shared/resource-workbench";
 import SessionTable from "@/components/shared/session-table";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
 import Home from "@/pages/app/home";
+import DiagnosticsPage from "@/pages/app/diagnostics";
 import MetricsPage from "@/pages/app/metrics";
 import QueuePage from "@/pages/app/queue";
 import QueueResourcePage from "@/pages/app/queue-resource";
@@ -84,6 +85,8 @@ describe("Admin UI", () => {
     expect(typeof SessionsPage).toBe("function");
     expect(StreamPage).toBeDefined();
     expect(typeof StreamPage).toBe("function");
+    expect(DiagnosticsPage).toBeDefined();
+    expect(typeof DiagnosticsPage).toBe("function");
     expect(MetricsPage).toBeDefined();
     expect(typeof MetricsPage).toBe("function");
   });
@@ -144,6 +147,8 @@ describe("Admin UI", () => {
         "/logout",
         "/login",
         "/sessions",
+        "/diagnostics",
+        "/settings",
         "/admin/metrics",
         "/queue",
         "/queue/{realm}/{area}/{resource}",

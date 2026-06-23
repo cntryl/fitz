@@ -13,6 +13,8 @@ async function fetchCurrentSession({ signal }: { signal: AbortSignal }) {
   return (
     (await sessionService.getCurrentSession({ signal })) ?? {
       authenticated: false,
+      routeFamilies: [],
+      routeFamiliesWildcard: true,
       username: "admin",
     }
   );

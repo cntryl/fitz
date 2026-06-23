@@ -6,11 +6,18 @@ use crate::api::admin::troubleshooting::{
 };
 use crate::api::http::Response;
 use crate::boot::Runtime;
-use crate::runtime::routing::{route_quad, route_triplet};
+use crate::domains::stream::sink::AdminStreamReadRequest;
+use crate::runtime::routing::{route_quad, route_triplet, RouteFamily};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::convert::Infallible;
 use std::sync::Arc;
+
+const DEFAULT_KV_SCAN_LIMIT: usize = 50;
+const MAX_KV_SCAN_LIMIT: usize = 100;
+const DEFAULT_ADMIN_RECORD_LIMIT: usize = 50;
+const MAX_ADMIN_RECORD_LIMIT: usize = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealmCollection {
@@ -528,6 +535,233 @@ pub struct KvTransactionsList {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KvByteValue {
+    pub base64: String,
+    pub utf8: Option<String>,
+    pub len_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KvCommittedValueResponse {
+    pub route_family: u64,
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub key: KvByteValue,
+    pub found: bool,
+    pub value: Option<KvByteValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KvCommittedPair {
+    pub key: KvByteValue,
+    pub value: KvByteValue,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KvPrefixScanResponse {
+    pub route_family: u64,
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub prefix: KvByteValue,
+    pub limit: usize,
+    pub has_more: bool,
+    pub items: Vec<KvCommittedPair>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamRecordsResponse {
+    pub route_family: u64,
+    pub realm: Option<String>,
+    pub area: Option<String>,
+    pub resource: Option<String>,
+    pub from_offset: u64,
+    pub limit: usize,
+    pub has_more: bool,
+    pub records: Vec<StreamAdminRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamAdminRecord {
+    pub route_family: u64,
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub resource_offset: u64,
+    pub area_offset: Option<u64>,
+    pub realm_offset: Option<u64>,
+    pub created_at_ms: u64,
+    pub body: KvByteValue,
+    pub metadata: Option<KvByteValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleExecutionObservationList {
+    pub route_family: u64,
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub limit: usize,
+    pub observations: Vec<ScheduleExecutionObservation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleExecutionObservation {
+    pub route_family: u64,
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub operation: String,
+    pub status: String,
+    pub cron: String,
+    pub next_run: String,
+    pub last_run: Option<String>,
+    pub executions_total: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleMissedObservationList {
+    pub route_family: u64,
+    pub limit: usize,
+    pub observations: Vec<ScheduleMissedObservation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleMissedObservation {
+    pub route_family: u64,
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub operation: String,
+    pub fire_ms: u64,
+    pub fire_at: String,
+    pub claimed_at: String,
+    pub age_seconds: u64,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaseSearchResponse {
+    pub route_family: u64,
+    pub limit: usize,
+    pub items: Vec<LeaseSearchItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaseSearchItem {
+    pub route_family: u64,
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub state: String,
+    pub owner_id: Option<String>,
+    pub owner_session_id: Option<String>,
+    pub queued_token: Option<u64>,
+    pub expires_at: Option<String>,
+    pub acquired_at: Option<String>,
+    pub renewals: Option<usize>,
+    pub pending_waiters: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaseWaiterInfo {
+    pub route_family: u64,
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub owner_id: String,
+    pub session_id: String,
+    pub queued_token: u64,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoticeDeliveryObservationList {
+    pub route_family: u64,
+    pub limit: usize,
+    pub observations: Vec<NoticeDeliveryObservation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoticeDeliveryObservation {
+    pub route_family: u64,
+    pub realm: String,
+    pub area: Option<String>,
+    pub resource: Option<String>,
+    pub route: String,
+    pub session_id: Option<String>,
+    pub subscription_id: Option<u64>,
+    pub status: String,
+    pub notifications_received: u64,
+    pub publishes_total: u64,
+    pub publishes_per_minute: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpcCallObservationList {
+    pub route_family: u64,
+    pub limit: usize,
+    pub observations: Vec<RpcCallObservation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpcCallObservation {
+    pub route_family: u64,
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub operation: Option<String>,
+    pub route: String,
+    pub correlation_id: Option<String>,
+    pub state: String,
+    pub submitted_at: Option<String>,
+    pub registered_at: Option<String>,
+    pub age_seconds: Option<u64>,
+    pub worker_session_id: Option<String>,
+    pub requests_handled: Option<u64>,
+    pub average_latency_ms: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulePendingClaimInfo {
+    pub route_family: u64,
+    pub route: String,
+    pub fire_ms: u64,
+    pub claimed_at_ms: u64,
+}
+
+pub(crate) struct StreamSearchRequest {
+    pub family: u64,
+    pub realm: Option<String>,
+    pub area: Option<String>,
+    pub resource: Option<String>,
+    pub from_offset: u64,
+    pub limit: usize,
+    pub discriminator: Option<String>,
+}
+
+pub(crate) struct LeaseSearchRequest {
+    pub family: u64,
+    pub realm: Option<String>,
+    pub area: Option<String>,
+    pub resource: Option<String>,
+    pub owner: Option<String>,
+    pub state: Option<String>,
+    pub limit: usize,
+}
+
+pub(crate) struct RpcCallObservationRequest {
+    pub family: u64,
+    pub realm: Option<String>,
+    pub area: Option<String>,
+    pub resource: Option<String>,
+    pub operation: Option<String>,
+    pub query: Option<String>,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// Session-scoped active KV transaction snapshot for the current broker process.
 ///
 /// These entries reflect live in-memory transaction state only. `tx_id` is a
@@ -558,6 +792,7 @@ pub struct StreamsList {
 /// sessions and resets on disconnect cleanup or broker restart.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamInfo {
+    pub route_family: u64,
     pub realm: String,
     pub area: String,
     pub resource: String,
@@ -741,6 +976,7 @@ pub struct NoticeRoutesList {
 /// replayable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoticeSubscription {
+    pub route_family: u64,
     pub subscription_id: u64,
     pub session_id: String,
     pub realm: String,
@@ -755,6 +991,7 @@ pub struct NoticeSubscription {
 /// lifetime and do not represent durable history or replay state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoticeRouteInfo {
+    pub route_family: u64,
     pub route: String,
     pub subscribers: usize,
     pub publishes_total: u64,
@@ -888,6 +1125,7 @@ pub struct RpcWorkersList {
 /// Registrations disappear on disconnect or broker restart.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcWorker {
+    pub route_family: u64,
     pub session_id: String,
     pub realm: String,
     pub route: String,
@@ -940,6 +1178,7 @@ pub struct RpcPendingList {
 /// Pending requests disappear on timeout, cleanup, or broker restart.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcPendingRequest {
+    pub route_family: u64,
     pub correlation_id: String,
     pub route: String,
     pub submitted_at: String,
@@ -961,6 +1200,7 @@ pub struct LeasesList {
 /// process-local and resets when the broker process restarts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeaseInfo {
+    pub route_family: u64,
     pub realm: String,
     pub area: String,
     pub resource: String,
@@ -984,6 +1224,7 @@ pub struct SchedulesList {
 /// when a claimed pending occurrence leaves durable pending state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleInfo {
+    pub route_family: u64,
     pub realm: String,
     pub area: String,
     pub resource: String,
@@ -1015,6 +1256,17 @@ pub struct SessionInfo {
     pub remote_addr: String,
 }
 
+pub(crate) struct StreamInfoSnapshot<'a> {
+    pub route_family: u64,
+    pub realm: &'a str,
+    pub area: &'a str,
+    pub resource: &'a str,
+    pub offset: u64,
+    pub watermark: u64,
+    pub size_bytes: u64,
+    pub sessions_active: usize,
+}
+
 impl KvTransaction {
     pub(crate) fn snapshot(
         tx_id: u64,
@@ -1038,29 +1290,23 @@ impl KvTransaction {
 }
 
 impl StreamInfo {
-    pub(crate) fn snapshot(
-        realm: &str,
-        area: &str,
-        resource: &str,
-        offset: u64,
-        watermark: u64,
-        size_bytes: u64,
-        sessions_active: usize,
-    ) -> Self {
+    pub(crate) fn snapshot(snapshot: StreamInfoSnapshot<'_>) -> Self {
         Self {
-            realm: realm.to_string(),
-            area: area.to_string(),
-            resource: resource.to_string(),
-            offset,
-            watermark,
-            size_bytes,
-            sessions_active,
+            route_family: snapshot.route_family,
+            realm: snapshot.realm.to_string(),
+            area: snapshot.area.to_string(),
+            resource: snapshot.resource.to_string(),
+            offset: snapshot.offset,
+            watermark: snapshot.watermark,
+            size_bytes: snapshot.size_bytes,
+            sessions_active: snapshot.sessions_active,
         }
     }
 }
 
 impl NoticeSubscription {
     pub(crate) fn snapshot(
+        route_family: u64,
         subscription_id: u64,
         session_id: u64,
         realm: &str,
@@ -1068,6 +1314,7 @@ impl NoticeSubscription {
         created_at: &str,
     ) -> Self {
         Self {
+            route_family,
             subscription_id,
             session_id: session_id.to_string(),
             realm: realm.to_string(),
@@ -1079,8 +1326,9 @@ impl NoticeSubscription {
 }
 
 impl NoticeRouteInfo {
-    pub(crate) fn snapshot(route: String, subscribers: usize) -> Self {
+    pub(crate) fn snapshot(route_family: u64, route: String, subscribers: usize) -> Self {
         Self {
+            route_family,
             route,
             subscribers,
             publishes_total: 0,
@@ -1182,6 +1430,7 @@ impl QueueDeadLetter {
 impl RpcWorker {
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(crate) fn snapshot(
+        route_family: u64,
         session_id: u64,
         realm: &str,
         route: &str,
@@ -1190,6 +1439,7 @@ impl RpcWorker {
         average_latency_ms: f64,
     ) -> Self {
         Self {
+            route_family,
             session_id: session_id.to_string(),
             realm: realm.to_string(),
             route: route.to_string(),
@@ -1203,6 +1453,7 @@ impl RpcWorker {
 impl RpcPendingRequest {
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(crate) fn snapshot(
+        route_family: u64,
         correlation_id: String,
         route: &str,
         submitted_at: &str,
@@ -1210,6 +1461,7 @@ impl RpcPendingRequest {
         worker_session_id: Option<String>,
     ) -> Self {
         Self {
+            route_family,
             correlation_id,
             route: route.to_string(),
             submitted_at: submitted_at.to_string(),
@@ -1222,6 +1474,7 @@ impl RpcPendingRequest {
 impl LeaseInfo {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn snapshot(
+        route_family: u64,
         realm: &str,
         area: &str,
         resource: &str,
@@ -1232,6 +1485,7 @@ impl LeaseInfo {
         fencing_token: u64,
     ) -> Self {
         Self {
+            route_family,
             realm: realm.to_string(),
             area: area.to_string(),
             resource: resource.to_string(),
@@ -1246,6 +1500,7 @@ impl LeaseInfo {
 
 impl ScheduleInfo {
     pub(crate) fn enabled_snapshot(
+        route_family: u64,
         realm: String,
         area: String,
         resource: String,
@@ -1254,6 +1509,7 @@ impl ScheduleInfo {
         next_run: &str,
     ) -> Self {
         Self {
+            route_family,
             realm,
             area,
             resource,
@@ -1385,15 +1641,13 @@ fn collect_distinct_entries<T>(
 }
 
 pub fn parse_query_params(uri: &hyper::Uri) -> HashMap<String, String> {
-    let mut params = HashMap::new();
-    if let Some(query) = uri.query() {
-        for pair in query.split('&') {
-            if let Some((key, value)) = pair.split_once('=') {
-                params.insert(key.replace("%20", " "), value.replace("%20", " "));
-            }
-        }
-    }
-    params
+    uri.query()
+        .map(|query| {
+            url::form_urlencoded::parse(query.as_bytes())
+                .into_owned()
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub fn parse_optional_u64_query_param(uri: &hyper::Uri, key: &str) -> Result<Option<u64>, String> {
@@ -1425,6 +1679,59 @@ pub fn parse_limit_query_param(
             }
         }
         None => Ok(default.min(max)),
+    }
+}
+
+pub fn parse_kv_query_bytes(uri: &hyper::Uri, key: &str) -> Result<Vec<u8>, String> {
+    let params = parse_query_params(uri);
+    let value = params
+        .get(key)
+        .ok_or_else(|| format!("Missing {} query parameter", key))?;
+    let encoding = params
+        .get("key_encoding")
+        .map(String::as_str)
+        .unwrap_or("utf8");
+
+    match encoding {
+        "utf8" => Ok(value.as_bytes().to_vec()),
+        "base64" => base64::engine::general_purpose::STANDARD
+            .decode(value)
+            .map_err(|_| format!("Invalid base64 {} query parameter", key)),
+        _ => Err("Invalid key_encoding query parameter".to_string()),
+    }
+}
+
+pub fn parse_kv_scan_limit(uri: &hyper::Uri) -> Result<usize, String> {
+    parse_limit_query_param(uri, DEFAULT_KV_SCAN_LIMIT, MAX_KV_SCAN_LIMIT)
+}
+
+pub fn parse_admin_record_limit(uri: &hyper::Uri) -> Result<usize, String> {
+    parse_limit_query_param(uri, DEFAULT_ADMIN_RECORD_LIMIT, MAX_ADMIN_RECORD_LIMIT)
+}
+
+pub fn parse_optional_string_query_param(uri: &hyper::Uri, key: &str) -> Option<String> {
+    parse_query_params(uri)
+        .get(key)
+        .cloned()
+        .filter(|value| !value.is_empty())
+}
+
+fn kv_storage_error_response(error: &str) -> Response {
+    let status = if error.to_ascii_lowercase().contains("routefamily")
+        || error.to_ascii_lowercase().contains("route family")
+    {
+        hyper::StatusCode::BAD_REQUEST
+    } else {
+        hyper::StatusCode::SERVICE_UNAVAILABLE
+    };
+    crate::api::admin::error_response(status, error)
+}
+
+fn kv_byte_value(bytes: &[u8]) -> KvByteValue {
+    KvByteValue {
+        base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        utf8: std::str::from_utf8(bytes).ok().map(ToString::to_string),
+        len_bytes: bytes.len(),
     }
 }
 
@@ -1534,6 +1841,635 @@ pub async fn kv_transactions_for_resource(
         .filter(|tx| path.matches(&tx.realm, &tx.area, &tx.resource))
         .collect();
     crate::api::admin::json_response(KvTransactionsList { transactions })
+}
+
+pub async fn kv_committed_value_for_resource(
+    runtime: Arc<Runtime>,
+    path: &ResourcePath<'_>,
+    family: u64,
+    key: Vec<u8>,
+) -> Result<Response, Infallible> {
+    match runtime.kv_get_committed_value(
+        crate::runtime::routing::RouteFamily::new(family),
+        path.realm,
+        path.area,
+        path.resource,
+        &key,
+    ) {
+        Ok(value) => crate::api::admin::json_response(KvCommittedValueResponse {
+            route_family: family,
+            realm: path.realm.to_string(),
+            area: path.area.to_string(),
+            resource: path.resource.to_string(),
+            key: kv_byte_value(&key),
+            found: value.is_some(),
+            value: value.as_deref().map(kv_byte_value),
+        }),
+        Err(error) => Ok(kv_storage_error_response(&error)),
+    }
+}
+
+pub async fn kv_prefix_scan_for_resource(
+    runtime: Arc<Runtime>,
+    path: &ResourcePath<'_>,
+    family: u64,
+    prefix: Vec<u8>,
+    limit: usize,
+) -> Result<Response, Infallible> {
+    match runtime.kv_scan_committed_prefix(
+        crate::runtime::routing::RouteFamily::new(family),
+        path.realm,
+        path.area,
+        path.resource,
+        &prefix,
+        limit,
+    ) {
+        Ok((items, has_more)) => crate::api::admin::json_response(KvPrefixScanResponse {
+            route_family: family,
+            realm: path.realm.to_string(),
+            area: path.area.to_string(),
+            resource: path.resource.to_string(),
+            prefix: kv_byte_value(&prefix),
+            limit,
+            has_more,
+            items: items
+                .into_iter()
+                .map(|(key, value)| KvCommittedPair {
+                    key: kv_byte_value(&key),
+                    value: kv_byte_value(&value),
+                })
+                .collect(),
+        }),
+        Err(error) => Ok(kv_storage_error_response(&error)),
+    }
+}
+
+fn timestamp_ms_to_rfc3339(timestamp_ms: u64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_ms as i64)
+        .map(|timestamp| timestamp.to_rfc3339())
+        .unwrap_or_default()
+}
+
+fn stream_read_item_to_admin_record(
+    route_family: u64,
+    path: &ResourcePath<'_>,
+    item: crate::domains::stream::protocol::StreamReadItem,
+) -> Option<StreamAdminRecord> {
+    match item {
+        crate::domains::stream::protocol::StreamReadItem::Event(record) => {
+            Some(StreamAdminRecord {
+                route_family,
+                realm: path.realm.to_string(),
+                area: path.area.to_string(),
+                resource: path.resource.to_string(),
+                resource_offset: record.resource_offset,
+                area_offset: record.area_offset,
+                realm_offset: record.realm_offset,
+                created_at_ms: record.created_at,
+                body: kv_byte_value(record.body.as_ref()),
+                metadata: record.metadata.as_deref().map(kv_byte_value),
+            })
+        }
+        crate::domains::stream::protocol::StreamReadItem::Filtered { .. }
+        | crate::domains::stream::protocol::StreamReadItem::FilteredRange { .. } => None,
+    }
+}
+
+pub async fn stream_records_for_resource(
+    runtime: Arc<Runtime>,
+    path: &ResourcePath<'_>,
+    family: u64,
+    from_offset: u64,
+    limit: usize,
+    discriminator: Option<String>,
+) -> Result<Response, Infallible> {
+    match runtime.stream_read_resource_records(AdminStreamReadRequest {
+        family: RouteFamily::new(family),
+        realm: path.realm,
+        area: path.area,
+        resource: path.resource,
+        from_offset,
+        limit: limit as u64,
+        discriminator,
+    }) {
+        Ok((items, cursor)) => {
+            let records = items
+                .into_iter()
+                .filter_map(|item| stream_read_item_to_admin_record(family, path, item))
+                .collect();
+            crate::api::admin::json_response(StreamRecordsResponse {
+                route_family: family,
+                realm: Some(path.realm.to_string()),
+                area: Some(path.area.to_string()),
+                resource: Some(path.resource.to_string()),
+                from_offset,
+                limit,
+                has_more: cursor.has_more,
+                records,
+            })
+        }
+        Err(error) => Ok(crate::api::admin::error_response(
+            hyper::StatusCode::SERVICE_UNAVAILABLE,
+            &error,
+        )),
+    }
+}
+
+pub(crate) async fn stream_search(
+    runtime: Arc<Runtime>,
+    request: StreamSearchRequest,
+) -> Result<Response, Infallible> {
+    let mut remaining = request.limit;
+    let mut has_more = false;
+    let mut records = Vec::new();
+    let streams = runtime
+        .stream_list_streams(request.realm.as_deref())
+        .into_iter()
+        .filter(|item| item.route_family == request.family)
+        .filter(|item| {
+            request
+                .area
+                .as_ref()
+                .map(|value| item.area == *value)
+                .unwrap_or(true)
+        })
+        .filter(|item| {
+            request
+                .resource
+                .as_ref()
+                .map(|value| item.resource == *value)
+                .unwrap_or(true)
+        })
+        .collect::<Vec<_>>();
+
+    for stream in streams {
+        if remaining == 0 {
+            has_more = true;
+            break;
+        }
+        let path = ResourcePath {
+            realm: &stream.realm,
+            area: &stream.area,
+            resource: &stream.resource,
+        };
+        let response = runtime.stream_read_resource_records(AdminStreamReadRequest {
+            family: RouteFamily::new(request.family),
+            realm: &stream.realm,
+            area: &stream.area,
+            resource: &stream.resource,
+            from_offset: request.from_offset,
+            limit: remaining as u64,
+            discriminator: request.discriminator.clone(),
+        });
+        let (items, cursor) = match response {
+            Ok(value) => value,
+            Err(error) => {
+                return Ok(crate::api::admin::error_response(
+                    hyper::StatusCode::SERVICE_UNAVAILABLE,
+                    &error,
+                ));
+            }
+        };
+        has_more = has_more || cursor.has_more;
+        for item in items {
+            if let Some(record) = stream_read_item_to_admin_record(request.family, &path, item) {
+                records.push(record);
+                remaining = remaining.saturating_sub(1);
+                if remaining == 0 {
+                    break;
+                }
+            }
+        }
+    }
+
+    crate::api::admin::json_response(StreamRecordsResponse {
+        route_family: request.family,
+        realm: request.realm,
+        area: request.area,
+        resource: request.resource,
+        from_offset: request.from_offset,
+        limit: request.limit,
+        has_more,
+        records,
+    })
+}
+
+pub async fn schedule_executions_for_resource(
+    runtime: Arc<Runtime>,
+    path: &ResourcePath<'_>,
+    family: u64,
+    limit: usize,
+) -> Result<Response, Infallible> {
+    let observations = runtime
+        .schedule_list_schedules(Some(path.realm))
+        .into_iter()
+        .filter(|schedule| {
+            schedule.route_family == family
+                && path.matches(&schedule.realm, &schedule.area, &schedule.resource)
+        })
+        .take(limit)
+        .map(|schedule| ScheduleExecutionObservation {
+            route_family: schedule.route_family,
+            realm: schedule.realm,
+            area: schedule.area,
+            resource: schedule.resource,
+            operation: schedule.operation,
+            status: if schedule.last_run.is_some() {
+                "acknowledged_handoff".to_string()
+            } else {
+                "scheduled".to_string()
+            },
+            cron: schedule.cron,
+            next_run: schedule.next_run,
+            last_run: schedule.last_run,
+            executions_total: schedule.executions_total,
+        })
+        .collect();
+
+    crate::api::admin::json_response(ScheduleExecutionObservationList {
+        route_family: family,
+        realm: path.realm.to_string(),
+        area: path.area.to_string(),
+        resource: path.resource.to_string(),
+        limit,
+        observations,
+    })
+}
+
+pub async fn schedule_missed_observations(
+    runtime: Arc<Runtime>,
+    family: u64,
+    realm: Option<String>,
+    area: Option<String>,
+    resource: Option<String>,
+    limit: usize,
+) -> Result<Response, Infallible> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let observations = runtime
+        .schedule_list_pending_claims(RouteFamily::new(family))
+        .into_iter()
+        .filter_map(|claim| {
+            let route = route_quad(&claim.route)?;
+            if realm
+                .as_ref()
+                .map(|value| route.realm == value)
+                .unwrap_or(true)
+                && area
+                    .as_ref()
+                    .map(|value| route.area == value)
+                    .unwrap_or(true)
+                && resource
+                    .as_ref()
+                    .map(|value| route.resource == value)
+                    .unwrap_or(true)
+            {
+                Some(ScheduleMissedObservation {
+                    route_family: family,
+                    realm: route.realm.to_string(),
+                    area: route.area.to_string(),
+                    resource: route.resource.to_string(),
+                    operation: route.operation.to_string(),
+                    fire_ms: claim.fire_ms,
+                    fire_at: timestamp_ms_to_rfc3339(claim.fire_ms),
+                    claimed_at: timestamp_ms_to_rfc3339(claim.claimed_at_ms),
+                    age_seconds: now_ms.saturating_sub(claim.claimed_at_ms) / 1_000,
+                    status: "pending_handoff_ack".to_string(),
+                })
+            } else {
+                None
+            }
+        })
+        .take(limit)
+        .collect();
+
+    crate::api::admin::json_response(ScheduleMissedObservationList {
+        route_family: family,
+        limit,
+        observations,
+    })
+}
+
+pub(crate) async fn lease_search(
+    runtime: Arc<Runtime>,
+    request: LeaseSearchRequest,
+) -> Result<Response, Infallible> {
+    let leases = runtime.lease_list_leases(request.realm.as_deref());
+    let waiters = runtime.lease_list_waiters();
+    let waiter_counts = waiters.iter().fold(HashMap::new(), |mut counts, waiter| {
+        *counts
+            .entry((
+                waiter.route_family,
+                waiter.realm.clone(),
+                waiter.area.clone(),
+                waiter.resource.clone(),
+            ))
+            .or_insert(0usize) += 1;
+        counts
+    });
+    let include_owned = request
+        .state
+        .as_deref()
+        .map(|value| value == "owned" || value == "contention")
+        .unwrap_or(true);
+    let include_waiting = request
+        .state
+        .as_deref()
+        .map(|value| value == "waiting" || value == "contention")
+        .unwrap_or(true);
+    let owner_matches = |value: &str| {
+        request
+            .owner
+            .as_ref()
+            .map(|needle| value.contains(needle))
+            .unwrap_or(true)
+    };
+    let scope_matches =
+        |item_family: u64, item_realm: &str, item_area: &str, item_resource: &str| {
+            item_family == request.family
+                && request
+                    .realm
+                    .as_ref()
+                    .map(|value| item_realm == value)
+                    .unwrap_or(true)
+                && request
+                    .area
+                    .as_ref()
+                    .map(|value| item_area == value)
+                    .unwrap_or(true)
+                && request
+                    .resource
+                    .as_ref()
+                    .map(|value| item_resource == value)
+                    .unwrap_or(true)
+        };
+
+    let mut items = Vec::new();
+    if include_owned {
+        for lease in leases {
+            if items.len() >= request.limit {
+                break;
+            }
+            if !scope_matches(
+                lease.route_family,
+                &lease.realm,
+                &lease.area,
+                &lease.resource,
+            ) || !owner_matches(&lease.owner_session_id)
+            {
+                continue;
+            }
+            let pending_waiters = waiter_counts
+                .get(&(
+                    lease.route_family,
+                    lease.realm.clone(),
+                    lease.area.clone(),
+                    lease.resource.clone(),
+                ))
+                .copied()
+                .unwrap_or(0);
+            if request.state.as_deref() == Some("contention") && pending_waiters == 0 {
+                continue;
+            }
+            items.push(LeaseSearchItem {
+                route_family: lease.route_family,
+                realm: lease.realm,
+                area: lease.area,
+                resource: lease.resource,
+                state: if pending_waiters > 0 {
+                    "owned_with_waiters".to_string()
+                } else {
+                    "owned".to_string()
+                },
+                owner_id: Some(lease.owner_session_id.clone()),
+                owner_session_id: Some(lease.owner_session_id),
+                queued_token: Some(lease.fencing_token),
+                expires_at: Some(lease.expires_at),
+                acquired_at: Some(lease.acquired_at),
+                renewals: Some(lease.renewals),
+                pending_waiters,
+            });
+        }
+    }
+    if include_waiting {
+        for waiter in waiters {
+            if items.len() >= request.limit {
+                break;
+            }
+            if !scope_matches(
+                waiter.route_family,
+                &waiter.realm,
+                &waiter.area,
+                &waiter.resource,
+            ) || !(owner_matches(&waiter.owner_id) || owner_matches(&waiter.session_id))
+            {
+                continue;
+            }
+            items.push(LeaseSearchItem {
+                route_family: waiter.route_family,
+                realm: waiter.realm,
+                area: waiter.area,
+                resource: waiter.resource,
+                state: "waiting".to_string(),
+                owner_id: Some(waiter.owner_id),
+                owner_session_id: Some(waiter.session_id),
+                queued_token: Some(waiter.queued_token),
+                expires_at: Some(waiter.expires_at),
+                acquired_at: None,
+                renewals: None,
+                pending_waiters: 0,
+            });
+        }
+    }
+
+    crate::api::admin::json_response(LeaseSearchResponse {
+        route_family: request.family,
+        limit: request.limit,
+        items,
+    })
+}
+
+pub async fn notice_delivery_observations(
+    runtime: Arc<Runtime>,
+    family: u64,
+    realm: Option<String>,
+    area: Option<String>,
+    resource: Option<String>,
+    query: Option<String>,
+    limit: usize,
+) -> Result<Response, Infallible> {
+    let routes = runtime.notice_list_routes(realm.as_deref());
+    let route_stats: HashMap<_, _> = routes
+        .into_iter()
+        .filter(|route| route.route_family == family)
+        .map(|route| ((route.route_family, route.route.clone()), route))
+        .collect();
+    let observations = runtime
+        .notice_list_subscriptions(realm.as_deref(), None)
+        .into_iter()
+        .filter(|subscription| subscription.route_family == family)
+        .filter_map(|subscription| {
+            let parsed = parse_flexible_route(&subscription.pattern);
+            if area
+                .as_ref()
+                .map(|value| parsed.as_ref().map(|parts| &parts.area) == Some(value))
+                .unwrap_or(true)
+                && resource
+                    .as_ref()
+                    .map(|value| parsed.as_ref().map(|parts| &parts.resource) == Some(value))
+                    .unwrap_or(true)
+                && query
+                    .as_ref()
+                    .map(|needle| {
+                        subscription.pattern.contains(needle)
+                            || subscription.session_id.contains(needle)
+                            || subscription.subscription_id.to_string().contains(needle)
+                    })
+                    .unwrap_or(true)
+            {
+                let stats = route_stats.get(&(family, subscription.pattern.clone()));
+                Some(NoticeDeliveryObservation {
+                    route_family: family,
+                    realm: subscription.realm,
+                    area: parsed.as_ref().map(|parts| parts.area.clone()),
+                    resource: parsed.as_ref().map(|parts| parts.resource.clone()),
+                    route: subscription.pattern,
+                    session_id: Some(subscription.session_id),
+                    subscription_id: Some(subscription.subscription_id),
+                    status: "active_subscription".to_string(),
+                    notifications_received: subscription.notifications_received,
+                    publishes_total: stats.map(|item| item.publishes_total).unwrap_or(0),
+                    publishes_per_minute: stats
+                        .map(|item| item.publishes_per_minute)
+                        .unwrap_or(0.0),
+                })
+            } else {
+                None
+            }
+        })
+        .take(limit)
+        .collect();
+
+    crate::api::admin::json_response(NoticeDeliveryObservationList {
+        route_family: family,
+        limit,
+        observations,
+    })
+}
+
+pub(crate) async fn rpc_call_observations(
+    runtime: Arc<Runtime>,
+    request: RpcCallObservationRequest,
+) -> Result<Response, Infallible> {
+    let scope_matches = |route: &str| {
+        let Some(parsed) = parse_rpc_operation(route) else {
+            return false;
+        };
+        request
+            .realm
+            .as_ref()
+            .map(|value| parsed.realm == *value)
+            .unwrap_or(true)
+            && request
+                .area
+                .as_ref()
+                .map(|value| parsed.area == *value)
+                .unwrap_or(true)
+            && request
+                .resource
+                .as_ref()
+                .map(|value| parsed.resource == *value)
+                .unwrap_or(true)
+            && request
+                .operation
+                .as_ref()
+                .map(|value| parsed.operation == *value)
+                .unwrap_or(true)
+    };
+
+    let mut observations = Vec::new();
+    for pending in runtime.rpc_list_pending(request.realm.as_deref()) {
+        if observations.len() >= request.limit {
+            break;
+        }
+        if pending.route_family != request.family
+            || !scope_matches(&pending.route)
+            || !request
+                .query
+                .as_ref()
+                .map(|needle| {
+                    pending.correlation_id.contains(needle)
+                        || pending.route.contains(needle)
+                        || pending
+                            .worker_session_id
+                            .as_ref()
+                            .map(|session| session.contains(needle))
+                            .unwrap_or(false)
+                })
+                .unwrap_or(true)
+        {
+            continue;
+        }
+        if let Some(parsed) = parse_rpc_operation(&pending.route) {
+            observations.push(RpcCallObservation {
+                route_family: request.family,
+                realm: parsed.realm,
+                area: parsed.area,
+                resource: parsed.resource,
+                operation: Some(parsed.operation),
+                route: pending.route,
+                correlation_id: Some(pending.correlation_id),
+                state: "pending".to_string(),
+                submitted_at: Some(pending.submitted_at),
+                registered_at: None,
+                age_seconds: Some(pending.age_seconds),
+                worker_session_id: pending.worker_session_id,
+                requests_handled: None,
+                average_latency_ms: None,
+            });
+        }
+    }
+    for worker in runtime.rpc_list_workers(request.realm.as_deref()) {
+        if observations.len() >= request.limit {
+            break;
+        }
+        if worker.route_family != request.family
+            || !scope_matches(&worker.route)
+            || !request
+                .query
+                .as_ref()
+                .map(|needle| worker.route.contains(needle) || worker.session_id.contains(needle))
+                .unwrap_or(true)
+        {
+            continue;
+        }
+        if let Some(parsed) = parse_rpc_operation(&worker.route) {
+            observations.push(RpcCallObservation {
+                route_family: request.family,
+                realm: parsed.realm,
+                area: parsed.area,
+                resource: parsed.resource,
+                operation: Some(parsed.operation),
+                route: worker.route,
+                correlation_id: None,
+                state: "worker_registered".to_string(),
+                submitted_at: None,
+                registered_at: Some(worker.registered_at),
+                age_seconds: None,
+                worker_session_id: Some(worker.session_id),
+                requests_handled: Some(worker.requests_handled),
+                average_latency_ms: Some(worker.average_latency_ms),
+            });
+        }
+    }
+
+    crate::api::admin::json_response(RpcCallObservationList {
+        route_family: request.family,
+        limit: request.limit,
+        observations,
+    })
 }
 
 pub async fn queue_inflight_for_resource(
@@ -2544,6 +3480,7 @@ mod tests {
         };
         let schedules = vec![
             ScheduleInfo {
+                route_family: 1,
                 realm: "acme".to_string(),
                 area: "billing".to_string(),
                 resource: "invoices".to_string(),
@@ -2555,6 +3492,7 @@ mod tests {
                 enabled: false,
             },
             ScheduleInfo {
+                route_family: 1,
                 realm: "acme".to_string(),
                 area: "billing".to_string(),
                 resource: "invoices".to_string(),

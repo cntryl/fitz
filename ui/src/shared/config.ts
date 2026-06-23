@@ -54,6 +54,7 @@ export const appConfig = {
   dashboardPollIntervalMs: parseDashboardPollIntervalMs(
     import.meta.env.VITE_FITZ_DASHBOARD_POLL_INTERVAL_MS,
   ),
+  environmentLabel: import.meta.env.VITE_FITZ_ENVIRONMENT_LABEL ?? "Local",
   logLevel: parseLogLevel(import.meta.env.VITE_FITZ_LOG_LEVEL),
   requestTimeoutMs: parseTimeoutMs(import.meta.env.VITE_FITZ_REQUEST_TIMEOUT_MS),
 } as const;

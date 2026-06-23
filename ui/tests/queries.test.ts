@@ -1124,6 +1124,7 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
           invalidSequenceErrorsForwardedTotal: 18,
           invalidSequenceResponsesTotal: 17,
           operationsPerSecond: 19.5,
+          pendingRoutesActive: 23,
           failureTotal: 10,
           requestsPending: 20,
           requestTimeoutsTotal: 11,

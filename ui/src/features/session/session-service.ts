@@ -1,45 +1,26 @@
 import { apiv1 } from "@/adapters";
-import { appConfig } from "@/shared/config";
-import {
-  AppApiError,
-  ensureResponseOk,
-  unwrapResponse,
-  type ServiceRequestOptions,
-} from "@/shared/errors/api";
+import type { AdminFeaturesResponse } from "@/adapters/generated/types";
+import { AppApiError, ensureResponseOk, unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { mapActiveSessionsOverview, mapLoginPayload, mapSessionResponse } from "./session-mappers";
 import type { ActiveSessionsOverview, LoginPayload, SessionState } from "./session-models";
 
 export type { LoginPayload, SessionState } from "./session-models";
 
-interface AdminFeatures {
-  admin_auth_required: boolean;
-  admin_auth_mode: "protected" | "open";
+function openAdminSession(features: AdminFeaturesResponse): SessionState {
+  return {
+    authenticated: true,
+    routeFamilies: features.route_families,
+    routeFamiliesWildcard: features.route_families_wildcard,
+    username: "admin",
+  };
 }
 
-const OPEN_ADMIN_SESSION: SessionState = {
-  authenticated: true,
-  username: "admin",
-};
+async function getAdminFeatures(
+  options: ServiceRequestOptions = {},
+): Promise<AdminFeaturesResponse> {
+  const response = await apiv1.getAdminFeatures(options);
 
-function featuresUrl() {
-  const baseUrl = appConfig.apiBaseUrl.replace(/\/$/, "");
-  return `${baseUrl}/api/v1/features`;
-}
-
-async function getAdminFeatures(options: ServiceRequestOptions = {}): Promise<AdminFeatures> {
-  const response = await fetch(featuresUrl(), {
-    credentials: "same-origin",
-    headers: {
-      Accept: "application/json",
-    },
-    signal: options.signal,
-  });
-
-  if (!response.ok) {
-    throw new AppApiError("Unable to load admin features", response.status, "unknown");
-  }
-
-  return (await response.json()) as AdminFeatures;
+  return unwrapResponse(response, "Unable to load admin features");
 }
 
 async function getCurrentSession(
@@ -48,7 +29,7 @@ async function getCurrentSession(
   const features = await getAdminFeatures(options);
 
   if (!features.admin_auth_required) {
-    return OPEN_ADMIN_SESSION;
+    return openAdminSession(features);
   }
 
   const response = await apiv1.getAdminSession(options);

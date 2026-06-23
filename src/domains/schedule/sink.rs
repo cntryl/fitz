@@ -589,6 +589,17 @@ impl ScheduleDomainSink {
             .sum()
     }
 
+    pub fn admin_pending_claims(
+        &self,
+        route_family: crate::runtime::routing::RouteFamily,
+    ) -> Vec<crate::api::admin::SchedulePendingClaimInfo> {
+        let actors = self.actors.lock();
+        actors
+            .get(&route_family)
+            .map(|actor| actor.admin_pending_claims())
+            .unwrap_or_default()
+    }
+
     pub fn oldest_pending_claim_age_seconds(&self) -> u64 {
         let now_ms = now_epoch_ms();
         let actors = self.actors.lock();

@@ -1,6 +1,6 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import { Alert, Badge, Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import { formatNumber, formatTimestamp } from "@/shared/format";
 import { topologyTrendDirection } from "./topology-mappers";
@@ -98,25 +98,29 @@ export function BehaviorMatrix({ topology }: { topology: MessagingTopologyOvervi
       </div>
 
       <div class="dashboard-behavior-grid">
-        {topologyBehaviorGroups(topology).map((group) => (
-          <Card key={group.title} padding="sm" variant="default">
-            <CardHeader>
-              <CardTitle>{group.title}</CardTitle>
-              <p class="domain-muted">{group.description}</p>
-            </CardHeader>
-            <CardContent>
-              <div class="dashboard-behavior-list">
-                {group.rows.map((row) => (
-                  <Link key={row.lane.id} href={row.lane.href} class="dashboard-behavior-row">
-                    <span>{row.lane.title}</span>
-                    <strong>{row.primary}</strong>
-                    <small>{row.secondary}</small>
-                  </Link>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+        <For each={topologyBehaviorGroups(topology)} by={(group) => group.title}>
+          {(group) => (
+            <Card padding="sm" variant="default">
+              <CardHeader>
+                <CardTitle>{group.title}</CardTitle>
+                <p class="domain-muted">{group.description}</p>
+              </CardHeader>
+              <CardContent>
+                <div class="dashboard-behavior-list">
+                  <For each={group.rows} by={(row) => row.lane.id}>
+                    {(row) => (
+                      <Link href={row.lane.href} class="dashboard-behavior-row">
+                        <span>{row.lane.title}</span>
+                        <strong>{row.primary}</strong>
+                        <small>{row.secondary}</small>
+                      </Link>
+                    )}
+                  </For>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </For>
       </div>
     </section>
   );
@@ -126,6 +130,44 @@ export function DiagnosticsPanel({ topology }: { topology: MessagingTopologyOver
   const severity = incidentSeverity(topology);
   const hotspots = topology.diagnostics.hotspots.slice(0, 6);
   const isMeaningful = severity !== "informational" || hotspots.length > 0;
+  const hotspotColumns: readonly VirtualTableColumn<(typeof hotspots)[number]>[] = [
+    {
+      id: "scope",
+      header: "Scope",
+      width: "32%",
+      cellComponent: ({ row }) => (
+        <span class="domain-table-cell-truncate" title={scopeText(row) || "Broker"}>
+          {scopeText(row) || "Broker"}
+        </span>
+      ),
+    },
+    {
+      id: "severity",
+      header: "Severity",
+      width: "18%",
+      cellComponent: ({ row }) => <span>{row.severity}</span>,
+    },
+    {
+      id: "stage",
+      header: "Stage",
+      width: "26%",
+      cellComponent: ({ row }) => (
+        <span class="domain-table-cell-truncate" title={row.current_stage}>
+          {row.current_stage}
+        </span>
+      ),
+    },
+    {
+      id: "action",
+      header: "Next step",
+      width: "24%",
+      cellComponent: ({ row }) => {
+        const href = hotspotHref(row);
+
+        return href ? <Link href={href}>Open scope</Link> : <span>Review diagnostics</span>;
+      },
+    },
+  ];
 
   if (!isMeaningful) {
     return null;
@@ -143,41 +185,19 @@ export function DiagnosticsPanel({ topology }: { topology: MessagingTopologyOver
       <Alert variant={alertVariant} title="Attention" description={incidentDescription(topology)} />
 
       {hotspots.length > 0 ? (
-        <div class="domain-table-wrap">
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableHeaderCell>Scope</TableHeaderCell>
-                <TableHeaderCell>Severity</TableHeaderCell>
-                <TableHeaderCell>Stage</TableHeaderCell>
-                <TableHeaderCell>Next step</TableHeaderCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              <For
-                each={hotspots}
-                by={(hotspot) =>
-                  `${hotspot.domain ?? "unknown"}:${hotspot.realm ?? "any"}:${hotspot.area ?? "any"}:${hotspot.resource ?? "any"}`
-                }
-              >
-                {(hotspot) => {
-                  const href = hotspotHref(hotspot);
-
-                  return (
-                    <TableRow>
-                      <TableCell>{scopeText(hotspot) || "Broker"}</TableCell>
-                      <TableCell>{hotspot.severity}</TableCell>
-                      <TableCell>{hotspot.current_stage}</TableCell>
-                      <TableCell>
-                        {href ? <Link href={href}>Open scope</Link> : "Review diagnostics"}
-                      </TableCell>
-                    </TableRow>
-                  );
-                }}
-              </For>
-            </TableBody>
-          </Table>
-        </div>
+        <VirtualTable<(typeof hotspots)[number]>
+          aria-label="Dashboard diagnostic hotspots"
+          class="dashboard-hotspot-virtual-table"
+          columns={hotspotColumns}
+          getKey={(hotspot) =>
+            `${hotspot.domain ?? "unknown"}:${hotspot.realm ?? "any"}:${hotspot.area ?? "any"}:${hotspot.resource ?? "any"}`
+          }
+          headerHeight={44}
+          overscan={4}
+          rowHeight={48}
+          rows={hotspots}
+          style={{ height: `${Math.min(360, Math.max(144, 44 + hotspots.length * 48))}px` }}
+        />
       ) : null}
     </section>
   );

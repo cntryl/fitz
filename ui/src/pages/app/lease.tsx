@@ -3,6 +3,7 @@ import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
+import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
 import {
   QueryErrorState,
@@ -12,6 +13,7 @@ import {
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { formatDurationSeconds } from "@/shared/format";
+import LeaseOwnershipConsole from "@/features/lease/lease-ownership-console";
 import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 
@@ -174,6 +176,24 @@ export default function LeasePage() {
             {overview.refreshing ? (
               <QueryRefreshingState description="Refreshing lease overview..." />
             ) : null}
+
+            <DomainWorkflowPanel
+              archetype="Lease Ownership Console"
+              workflows={[
+                "Inspect ownership",
+                "Review history",
+                "Investigate contention",
+                "Investigate conflicts",
+              ]}
+              questions={["Who owns this?", "Who wants it?", "Why is it blocked?"]}
+              diagnostics={["Waiter depth", "Invalid tokens", "Broker-local lease internals"]}
+            />
+
+            <LeaseOwnershipConsole
+              error={inventory.error}
+              inventory={inventory.data}
+              loading={inventory.loading}
+            />
 
             <DomainMetricTable
               title="Lease metrics"

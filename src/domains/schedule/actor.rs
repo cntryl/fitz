@@ -290,6 +290,7 @@ impl ScheduleActor {
                 parse_concrete_schedule_route(&schedule.route)
                     .ok()
                     .map(|route| crate::api::admin::ScheduleInfo {
+                        route_family: self.family.as_u64(),
                         realm: route.realm,
                         area: route.area,
                         resource: route.resource,
@@ -885,6 +886,20 @@ impl ScheduleActor {
                 claimed_at_ms: claim.claimed_at_ms,
                 fire_ms: *fire_ms,
             })
+            .collect()
+    }
+
+    pub(crate) fn admin_pending_claims(&self) -> Vec<crate::api::admin::SchedulePendingClaimInfo> {
+        self.pending_claimed_occurrences
+            .iter()
+            .map(
+                |((fire_ms, route), claim)| crate::api::admin::SchedulePendingClaimInfo {
+                    route_family: self.family.as_u64(),
+                    route: route.clone(),
+                    fire_ms: *fire_ms,
+                    claimed_at_ms: claim.claimed_at_ms,
+                },
+            )
             .collect()
     }
 

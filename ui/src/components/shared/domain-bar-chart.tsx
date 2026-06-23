@@ -1,5 +1,4 @@
-import ChartMeter from "@/components/shared/chart-meter";
-import { ChartPanel, ChartShell } from "@/components/shared/chart-frame";
+import { BarChart, ChartPanel, ChartShell } from "@askrjs/charts/components";
 
 type ChartValueFormatter = (value: number) => string;
 
@@ -60,23 +59,19 @@ export default function DomainBarChart({
       className="domain-chart-shell"
       title={title}
       description={description}
-      scope={scope}
     >
-      <ChartPanel title={label}>
-        <div class="chart-meter-grid">
-          {normalized.map((entry) => (
-            <div key={entry.label}>
-              <ChartMeter
-                label={entry.label}
-                value={entry.value}
-                max={max}
-                description={entry.description}
-                unitLabel={entry.unitLabel}
-                valueFormatter={valueFormatter}
-              />
-            </div>
-          ))}
-        </div>
+      <ChartPanel title={label} description={scope}>
+        <BarChart
+          label={label}
+          data={normalized.map((entry) => ({
+            description: entry.description ?? entry.unitLabel,
+            label: entry.label,
+            value: entry.value,
+          }))}
+          max={max}
+          summary={description}
+          valueFormatter={valueFormatter}
+        />
       </ChartPanel>
     </ChartShell>
   );

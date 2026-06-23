@@ -3,6 +3,7 @@ import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import { Stack } from "@askrjs/themes/layouts";
 import {
   QueryErrorState,
@@ -11,6 +12,7 @@ import {
 } from "@/components/shared/query-state";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import KvStateExplorer from "@/features/kv/kv-state-explorer";
 import { createKvOverviewQuery } from "@/features/kv/kv-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 
@@ -128,6 +130,19 @@ export default function KvPage() {
             {overview.refreshing ? (
               <QueryRefreshingState description="Refreshing KV overview..." />
             ) : null}
+
+            <DomainWorkflowPanel
+              archetype="KV State Explorer"
+              workflows={["Lookup", "Search", "Inspect", "Debug"]}
+              questions={["What is stored?", "What changed?", "Why does this value exist?"]}
+              diagnostics={["Transaction pressure", "Storage internals", "Advanced metrics"]}
+            />
+
+            <KvStateExplorer
+              error={inventory.error}
+              inventory={inventory.data}
+              loading={inventory.loading}
+            />
 
             <DomainMetricTable
               title="KV metrics"

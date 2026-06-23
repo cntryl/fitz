@@ -1257,6 +1257,7 @@ impl RpcDomainSink {
                     .filter_map(|worker| {
                         route_quad(route.as_str()).map(|parts| {
                             crate::api::admin::RpcWorker::snapshot(
+                                worker.addr.family().as_u64(),
                                 worker.session_id,
                                 parts.realm,
                                 route.as_str(),
@@ -1274,6 +1275,7 @@ impl RpcDomainSink {
             .iter()
             .map(|(correlation_id, queued)| {
                 crate::api::admin::RpcPendingRequest::snapshot(
+                    queued.caller_inbox_addr.family().as_u64(),
                     correlation_id.to_string(),
                     queued.request.route.as_str(),
                     &queued.submitted_at,
@@ -1288,6 +1290,7 @@ impl RpcDomainSink {
                     .iter()
                     .map(|(correlation_id, pending)| {
                         crate::api::admin::RpcPendingRequest::snapshot(
+                            pending.worker_addr.family().as_u64(),
                             correlation_id.to_string(),
                             pending.route.as_str(),
                             &pending.submitted_at,

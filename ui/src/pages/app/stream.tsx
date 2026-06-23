@@ -3,6 +3,7 @@ import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import { Stack } from "@askrjs/themes/layouts";
 import {
   QueryErrorState,
@@ -11,6 +12,7 @@ import {
 } from "@/components/shared/query-state";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import StreamHistoryExplorer from "@/features/stream/stream-history-explorer";
 import { createStreamOverviewQuery } from "@/features/stream/stream-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatNumber } from "@/shared/format";
@@ -161,6 +163,19 @@ export default function StreamPage() {
             {overview.refreshing ? (
               <QueryRefreshingState description="Refreshing stream overview..." />
             ) : null}
+
+            <DomainWorkflowPanel
+              archetype="Stream History Explorer"
+              workflows={["Explore", "Trace", "Replay"]}
+              questions={["What happened?", "Who consumed it?", "Can I replay it?"]}
+              diagnostics={["Watermarks", "Replay lag", "Storage internals"]}
+            />
+
+            <StreamHistoryExplorer
+              error={inventory.error}
+              inventory={inventory.data}
+              loading={inventory.loading}
+            />
 
             <DomainMetricTable
               title="Stream metrics"

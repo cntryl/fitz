@@ -166,6 +166,7 @@ impl LeaseDomainSink {
             .unwrap_or_else(Utc::now)
             .to_rfc3339();
         crate::api::admin::LeaseInfo::snapshot(
+            key.family.as_u64(),
             &key.realm,
             &key.area,
             &key.resource,
@@ -188,8 +189,12 @@ impl LeaseDomainSink {
     }
 
     fn remove_admin_lease(&self, key: &crate::domains::lease::protocol::LeaseKey) {
-        self.admin_read_model
-            .remove_lease(&key.realm, &key.area, &key.resource);
+        self.admin_read_model.remove_lease(
+            key.family.as_u64(),
+            &key.realm,
+            &key.area,
+            &key.resource,
+        );
         self.refresh_metrics_gauges();
     }
 
@@ -220,6 +225,35 @@ impl LeaseDomainSink {
             .values()
             .map(VecDeque::len)
             .sum()
+    }
+
+    pub fn admin_waiters(&self) -> Vec<crate::api::admin::LeaseWaiterInfo> {
+        let now = Instant::now();
+        let mut waiters = Vec::new();
+
+        for (key, queue) in self.pending_acquires.lock().iter() {
+            for waiter in queue {
+                let expires_at = Utc::now()
+                    .checked_add_signed(chrono::TimeDelta::seconds(
+                        waiter.expires_at.saturating_duration_since(now).as_secs() as i64,
+                    ))
+                    .unwrap_or_else(Utc::now)
+                    .to_rfc3339();
+
+                waiters.push(crate::api::admin::LeaseWaiterInfo {
+                    route_family: key.family.as_u64(),
+                    realm: key.realm.clone(),
+                    area: key.area.clone(),
+                    resource: key.resource.clone(),
+                    owner_id: waiter.owner_id.clone(),
+                    session_id: waiter.session_id.to_string(),
+                    queued_token: waiter.queued_token,
+                    expires_at,
+                });
+            }
+        }
+
+        waiters
     }
 
     fn lease_response_is_failure(

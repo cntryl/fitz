@@ -1,5 +1,7 @@
 export interface SessionState {
   authenticated: boolean;
+  routeFamilies: string[];
+  routeFamiliesWildcard: boolean;
   username: string;
 }
 

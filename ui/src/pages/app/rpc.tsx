@@ -2,7 +2,7 @@ import { Stack } from "@askrjs/themes/layouts";
 import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
-import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
+import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
 import {
   QueryErrorState,
@@ -11,6 +11,7 @@ import {
 } from "@/components/shared/query-state";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import CommunicationFlowWorkspace from "@/features/communication/communication-flow-workspace";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 
@@ -153,6 +154,13 @@ export default function RpcPage() {
               <QueryRefreshingState description="Refreshing RPC overview..." />
             ) : null}
 
+            <DomainWorkflowPanel
+              archetype="RPC Communication Flow"
+              workflows={["View flow", "Inspect participants", "Trace failures", "Review performance"]}
+              questions={["Who talks to whom?", "What is failing?", "Where is communication breaking down?"]}
+              diagnostics={["Pending calls", "Worker registrations", "Timeout and sequence internals"]}
+            />
+
             <DomainMetricTable
               title="RPC metrics"
               description="Live request/response health, worker capacity, and request risk signals."
@@ -231,11 +239,12 @@ export default function RpcPage() {
               emptyMessage="No RPC realms are currently visible."
             />
 
-            <DomainResourceBrowser
+            <CommunicationFlowWorkspace
               domain="rpc"
               error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
+              stats={data.stats}
             />
           </Stack>
         ) : null}

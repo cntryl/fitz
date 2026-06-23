@@ -54,6 +54,10 @@ fn init_test_runtime_jwks_cache() {
     });
 }
 
+fn default_test_route_family_mappings() -> Vec<(String, u32)> {
+    vec![("test-realm".to_string(), 1), ("acme".to_string(), 1)]
+}
+
 /// Test server that starts Fitz on random available ports (TCP + WebSocket)
 pub struct TestServer {
     pub tcp_addr: SocketAddr,
@@ -75,6 +79,8 @@ impl TestServer {
             crate::boot::runtime::StorageMode::Memory,
             crate::domains::stream::StreamStorageLayout::default(),
             Vec::new(),
+            vec![1],
+            default_test_route_family_mappings(),
         )
         .await
     }
@@ -88,6 +94,8 @@ impl TestServer {
             crate::boot::runtime::StorageMode::Memory,
             crate::domains::stream::StreamStorageLayout::default(),
             Vec::new(),
+            vec![1],
+            default_test_route_family_mappings(),
         )
         .await
     }
@@ -100,6 +108,31 @@ impl TestServer {
             crate::boot::runtime::StorageMode::Memory,
             crate::domains::stream::StreamStorageLayout::default(),
             Vec::new(),
+            vec![1],
+            default_test_route_family_mappings(),
+        )
+        .await
+    }
+
+    pub async fn start_with_auth_route_families<I, S>(
+        route_families: Vec<u32>,
+        route_family_mappings: I,
+    ) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        I: IntoIterator<Item = (S, u32)>,
+        S: Into<String>,
+    {
+        Self::start_with_options(
+            true,
+            None,
+            crate::boot::runtime::StorageMode::Memory,
+            crate::domains::stream::StreamStorageLayout::default(),
+            Vec::new(),
+            route_families,
+            route_family_mappings
+                .into_iter()
+                .map(|(identity, family)| (identity.into(), family))
+                .collect(),
         )
         .await
     }
@@ -122,6 +155,8 @@ impl TestServer {
             crate::boot::runtime::StorageMode::Memory,
             crate::domains::stream::StreamStorageLayout::default(),
             origins,
+            vec![1],
+            default_test_route_family_mappings(),
         )
         .await
     }
@@ -135,6 +170,8 @@ impl TestServer {
             crate::boot::runtime::StorageMode::Memory,
             stream_storage_layout,
             Vec::new(),
+            vec![1],
+            default_test_route_family_mappings(),
         )
         .await
     }
@@ -150,6 +187,8 @@ impl TestServer {
             },
             crate::domains::stream::StreamStorageLayout::default(),
             Vec::new(),
+            vec![1],
+            default_test_route_family_mappings(),
         )
         .await
     }
@@ -166,6 +205,8 @@ impl TestServer {
             },
             stream_storage_layout,
             Vec::new(),
+            vec![1],
+            default_test_route_family_mappings(),
         )
         .await
     }
@@ -176,6 +217,8 @@ impl TestServer {
         storage_mode: crate::boot::runtime::StorageMode,
         stream_storage_layout: crate::domains::stream::StreamStorageLayout,
         ws_allowed_origins: Vec<crate::api::origin::ExactOrigin>,
+        route_families: Vec<u32>,
+        route_family_mappings: Vec<(String, u32)>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let permit = test_server_semaphore()
             .clone()
@@ -226,12 +269,12 @@ impl TestServer {
             route_family_resolver: if auth_required {
                 crate::auth::RouteFamilyResolverConfig::from_mappings(
                     crate::auth::DEFAULT_ROUTE_FAMILY_CLAIM,
-                    [("test-realm", 1), ("acme", 1)],
+                    route_family_mappings,
                 )
             } else {
                 crate::auth::RouteFamilyResolverConfig::default()
             },
-            route_families: vec![1],
+            route_families,
             max_connections: 1000,
             max_frame_size: 16_777_216, // 16 MB (test config allows larger frames than production 1 MB default)
             channel_capacity: 10_000,
@@ -585,6 +628,12 @@ impl TestClient {
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         self.send_frame(frame).await?;
         self.recv_frame(timeout_ms).await
+    }
+
+    /// Gracefully close the TCP client connection.
+    pub async fn close(mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.stream.shutdown().await?;
+        Ok(())
     }
 }
 

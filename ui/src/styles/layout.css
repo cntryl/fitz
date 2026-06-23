@@ -8,13 +8,15 @@
 }
 
 .page-frame-sidebar {
-  width: min(100%, 23rem);
+  width: 100%;
   min-width: 0;
   align-self: stretch;
 }
 
 @media (min-width: 48rem) {
   .page-frame-sidebar {
+    flex: 0 0 min(23rem, 32%);
+    width: min(23rem, 32%);
     position: sticky;
     top: calc(var(--ak-layout-navbar-height, 3.5rem) + var(--ak-space-4, 1rem));
   }

@@ -5,12 +5,14 @@ import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
+import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import {
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
 } from "@/components/shared/query-state";
+import QueueWorkDispatcher from "@/features/queue/queue-work-dispatcher";
 import { createQueueInventoryQuery, createQueueOverviewQuery } from "@/features/queue/queue-query";
 import type { QueueStatsSummary } from "@/features/queue/queue-models";
 import { formatDurationSeconds, formatNumber } from "@/shared/format";
@@ -164,6 +166,25 @@ export default function QueuePage() {
             {overview.refreshing ? (
               <QueryRefreshingState description="Refreshing queue overview..." />
             ) : null}
+
+            <DomainWorkflowPanel
+              archetype="Queue Work Dispatcher"
+              workflows={[
+                "Inspect messages",
+                "Inspect workers",
+                "Handle failures",
+                "Manage retries",
+                "Manage DLQ",
+              ]}
+              questions={["What work is waiting?", "What work is stuck?", "What work failed?"]}
+              diagnostics={["Backlog pressure", "Inflight ownership", "Dead-letter internals"]}
+            />
+
+            <QueueWorkDispatcher
+              error={inventory.error}
+              inventory={inventory.data}
+              loading={inventory.loading}
+            />
 
             <DomainMetricTable
               title="Queue metrics"

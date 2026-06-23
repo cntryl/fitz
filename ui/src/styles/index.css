@@ -1,4 +1,5 @@
 @import "@askrjs/themes/default";
+@import "@askrjs/charts/default";
 @import "./base.css";
 @import "./shell.css";
 @import "./layout.css";

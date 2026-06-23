@@ -16,3 +16,15 @@ export interface LeaseOverview {
   realms: LeaseRealmSummary[];
   stats: LeaseStatsSummary;
 }
+
+export type LeaseSearchState = "owned" | "waiting" | "contention";
+
+export interface LeaseSearchRequest {
+  area?: string;
+  limit?: number;
+  owner?: string;
+  realm?: string;
+  resource?: string;
+  routeFamily: number;
+  state?: LeaseSearchState;
+}

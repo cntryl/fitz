@@ -1,4 +1,6 @@
-export type DomainId = "kv" | "stream" | "lease" | "schedule" | "notice" | "rpc";
+import type { GenericResourceDomainSegment } from "@/shared/navigation/domains";
+
+export type DomainId = GenericResourceDomainSegment;
 
 export interface ResourceRef {
   area: string;

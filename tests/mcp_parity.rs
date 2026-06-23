@@ -55,6 +55,7 @@ fn authenticated_context() -> McpExecutionContext {
     McpExecutionContext::authenticated(
         AdminPrincipal {
             username: "admin".to_string(),
+            route_family_access: fitz::api::admin::auth::AdminRouteFamilyAccess::wildcard(),
         },
         default_anonymous_permissions(),
     )

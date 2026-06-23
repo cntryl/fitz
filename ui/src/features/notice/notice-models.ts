@@ -15,3 +15,12 @@ export interface NoticeOverview {
   realms: NoticeRealmSummary[];
   stats: NoticeStatsSummary;
 }
+
+export interface NoticeDeliverySearchRequest {
+  area?: string;
+  limit?: number;
+  query?: string;
+  realm?: string;
+  resource?: string;
+  routeFamily: number;
+}

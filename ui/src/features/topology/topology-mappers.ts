@@ -18,6 +18,7 @@ import {
   type TopologyTrendPoint,
   type TrendDirection,
 } from "./topology-models";
+import { domainHref, domainResourceHref } from "@/shared/navigation/domains";
 
 const LANE_ORDER: TopologyDomain[] = [
   "queue",
@@ -45,16 +46,6 @@ export const topologyDomainDescriptions: Record<TopologyDomain, string> = {
   rpc: "Live request/response",
   schedule: "Durable timing intent",
   stream: "Durable history and replay",
-};
-
-const domainHref: Record<TopologyDomain, string> = {
-  kv: "/kv",
-  lease: "/lease",
-  notice: "/notice",
-  queue: "/queue",
-  rpc: "/rpc",
-  schedule: "/schedule",
-  stream: "/stream",
 };
 
 const stateRank: Record<TopologyState, number> = {
@@ -145,15 +136,15 @@ function domainForConnection(connection: TopologyConnectionDto): TopologyDomain 
 }
 
 export function topologyScopeHref(domain: TopologyDomain, scope: TopologyScope): string {
-  const base = domainHref[domain];
-
   if (!scope.realm || !scope.area || !scope.resource) {
-    return base;
+    return domainHref(domain);
   }
 
-  return `${base}/${encodeURIComponent(scope.realm)}/${encodeURIComponent(
-    scope.area,
-  )}/${encodeURIComponent(scope.resource)}`;
+  return domainResourceHref(domain, {
+    area: scope.area,
+    realm: scope.realm,
+    resource: scope.resource,
+  });
 }
 
 function mapResource(
@@ -181,7 +172,7 @@ function mapLane(lane: TopologyLaneDto): TopologyLane {
     consumers: lane.consumers,
     counters: lane.counters.map(mapCounter),
     diagnostics: lane.diagnostics,
-    href: domainHref[domain],
+    href: domainHref(domain),
     id: domain,
     observers: lane.observers,
     resources: lane.top_scoped_resources.map((resource) => mapResource(domain, resource)),

@@ -1,7 +1,7 @@
 import DomainHeader from "@/components/shared/domain-header";
 import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
-import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
+import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
 import { Stack } from "@askrjs/themes/layouts";
 import {
@@ -11,6 +11,7 @@ import {
 } from "@/components/shared/query-state";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import CommunicationFlowWorkspace from "@/features/communication/communication-flow-workspace";
 import { createNoticeOverviewQuery } from "@/features/notice/notice-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 
@@ -126,6 +127,13 @@ export default function NoticePage() {
               <QueryRefreshingState description="Refreshing notice overview..." />
             ) : null}
 
+            <DomainWorkflowPanel
+              archetype="Notice Communication Flow"
+              workflows={["View flow", "Inspect participants", "Trace failures", "Review performance"]}
+              questions={["Who talks to whom?", "What is failing?", "Where is communication breaking down?"]}
+              diagnostics={["Fanout pressure", "Delivery drops", "Subscription internals"]}
+            />
+
             <DomainMetricTable
               title="Notice metrics"
               description="Live fanout health, publish, and subscription risk signals."
@@ -175,11 +183,12 @@ export default function NoticePage() {
               emptyMessage="No notice realms are currently visible."
             />
 
-            <DomainResourceBrowser
+            <CommunicationFlowWorkspace
               domain="notice"
               error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
+              stats={data.stats}
             />
           </Stack>
         ) : null}
