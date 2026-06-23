@@ -461,7 +461,7 @@ dependencies = [
 [[package]]
 name = "cntryl-midge"
 version = "0.1.0"
-source = "git+https://github.com/cntryl/midge#de4e2abb4ecba9d3d7485f6d228c166f8b098755"
+source = "git+https://github.com/cntryl/midge#d37195f4c4f32034b8293ec9ac4cfc9dc58e65db"
 dependencies = [
  "anyhow",
  "arc-swap",
