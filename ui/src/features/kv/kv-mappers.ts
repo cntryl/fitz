@@ -55,9 +55,7 @@ export function mapKvCommittedPair(dto: KvCommittedPairDto): KvCommittedPair {
   };
 }
 
-export function mapKvCommittedValue(
-  dto: KvCommittedValueResponse,
-): KvCommittedValueResult {
+export function mapKvCommittedValue(dto: KvCommittedValueResponse): KvCommittedValueResult {
   return {
     area: dto.area,
     found: dto.found,

@@ -1,5 +1,4 @@
 import DomainHeader from "@/components/shared/domain-header";
-import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
@@ -67,7 +66,7 @@ export default function NoticePage() {
       routesActive: 0,
     },
   );
-  const sidebar = createDomainSidebar({
+  const snapshot = createDomainSidebar({
     data,
     title: "Notice fanout snapshot",
     description: "Live subscription scope and fanout pressure diagnostics.",
@@ -92,7 +91,7 @@ export default function NoticePage() {
   });
 
   return (
-    <DomainPageFrame sidebar={sidebar}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Live awareness"
@@ -108,6 +107,8 @@ export default function NoticePage() {
             tone: overview.refreshing ? "info" : overview.stale ? "warning" : health.tone,
           }}
         />
+
+        {snapshot}
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading notice overview snapshot..." />
@@ -127,11 +128,12 @@ export default function NoticePage() {
               <QueryRefreshingState description="Refreshing notice overview..." />
             ) : null}
 
-            <DomainWorkflowPanel
-              archetype="Notice Communication Flow"
-              workflows={["View flow", "Inspect participants", "Trace failures", "Review performance"]}
-              questions={["Who talks to whom?", "What is failing?", "Where is communication breaking down?"]}
-              diagnostics={["Fanout pressure", "Delivery drops", "Subscription internals"]}
+            <CommunicationFlowWorkspace
+              domain="notice"
+              error={inventory.error}
+              inventory={inventory.data}
+              loading={inventory.loading}
+              stats={data.stats}
             />
 
             <DomainMetricTable
@@ -148,47 +150,26 @@ export default function NoticePage() {
               ]}
             />
 
-            <DomainBarChart
-              title="Notice signal"
-              description="Current publish rate and fanout footprint."
-              label="Notice state snapshot"
-              scope="Live notice snapshot"
-              data={[
-                {
-                  label: "Publish rate",
-                  unitLabel: "ops/sec",
-                  value: data.stats.publishesPerSecond,
-                },
-                {
-                  label: "Active subscriptions",
-                  unitLabel: "subscriptions",
-                  value: data.stats.subscriptionsActive,
-                },
-                {
-                  label: "Delivery drops",
-                  unitLabel: "drops",
-                  value: data.stats.deliveryDropsTotal,
-                },
-                {
-                  label: "Wildcard rejects",
-                  unitLabel: "rejects",
-                  value: data.stats.wildcardLimitRejectsTotal,
-                },
-              ]}
-            />
-
             <DomainRealmTable
               title="Notice realms"
               realms={data.realms}
               emptyMessage="No notice realms are currently visible."
             />
 
-            <CommunicationFlowWorkspace
-              domain="notice"
-              error={inventory.error}
-              inventory={inventory.data}
-              loading={inventory.loading}
-              stats={data.stats}
+            <DomainWorkflowPanel
+              archetype="Notice Communication Flow"
+              workflows={[
+                "View flow",
+                "Inspect participants",
+                "Trace failures",
+                "Review performance",
+              ]}
+              questions={[
+                "Who talks to whom?",
+                "What is failing?",
+                "Where is communication breaking down?",
+              ]}
+              diagnostics={["Fanout pressure", "Delivery drops", "Subscription internals"]}
             />
           </Stack>
         ) : null}

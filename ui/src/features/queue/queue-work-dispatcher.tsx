@@ -43,7 +43,8 @@ const dispatcherModes: Array<{
   value: QueueDispatcherMode;
 }> = [
   {
-    description: "Use existing queue resource detail, inflight, dead-letter, event, and compare APIs.",
+    description:
+      "Use existing queue resource detail, inflight, dead-letter, event, and compare APIs.",
     label: "Resources",
     value: "resource",
   },
@@ -69,25 +70,19 @@ const queueColumns: readonly VirtualTableColumn<QueueResourceRow>[] = [
     id: "realm",
     header: "Realm",
     width: "21%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.realm}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
   },
   {
     id: "area",
     header: "Area",
     width: "21%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.area}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
   },
   {
     id: "resource",
     header: "Queue",
     width: "34%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.resource}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.resource}</span>,
   },
   {
     id: "action",
@@ -273,8 +268,7 @@ export default function QueueWorkDispatcher({
   const searchMode = isSearchMode(modeValue);
   const canRunSearch = searchMode && !searchLoadingValue;
   const canOpenExactResource = filteredRows.some(
-    (row) =>
-      row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
+    (row) => row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
   );
   const badgeLabel = "Existing API";
   const badgeVariant = searchMode ? "success" : "outline";
@@ -319,8 +313,8 @@ export default function QueueWorkDispatcher({
           <Stack gap="1">
             <CardTitle>Work dispatcher</CardTitle>
             <CardDescription>
-              Locate queue resources, then inspect messages, inflight ownership, failures,
-              retries, and DLQ decisions through the resource-level Queue APIs.
+              Locate queue resources, then inspect messages, inflight ownership, failures, retries,
+              and DLQ decisions through the resource-level Queue APIs.
             </CardDescription>
           </Stack>
           <Badge variant={badgeVariant}>{badgeLabel}</Badge>
@@ -374,9 +368,7 @@ export default function QueueWorkDispatcher({
                 <Input
                   id="queue-dispatcher-resource"
                   value={resourceValue}
-                  onInput={(event: Event) =>
-                    setResource((event.target as HTMLInputElement).value)
-                  }
+                  onInput={(event: Event) => setResource((event.target as HTMLInputElement).value)}
                   placeholder="settlement-queue"
                 />
               </div>
@@ -394,7 +386,13 @@ export default function QueueWorkDispatcher({
               </div>
             </div>
             {searchMode ? (
-              <Flex class="queue-query-actions" justify="between" align="center" gap="3" wrap="wrap">
+              <Flex
+                class="queue-query-actions"
+                justify="between"
+                align="center"
+                gap="3"
+                wrap="wrap"
+              >
                 <p class="domain-muted">
                   Searching {operatorContext.selectedRouteFamily.label} through the admin search
                   index for queue resources, inflight work, and dead letters.
@@ -434,8 +432,8 @@ export default function QueueWorkDispatcher({
               <CardHeader>
                 <CardTitle>DLQ actions live on the resource page</CardTitle>
                 <CardDescription>
-                  Select a queue resource to inspect dead-letter rows and use the existing replay
-                  or purge confirmation flows.
+                  Select a queue resource to inspect dead-letter rows and use the existing replay or
+                  purge confirmation flows.
                 </CardDescription>
               </CardHeader>
             </Card>

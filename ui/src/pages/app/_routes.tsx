@@ -1,24 +1,25 @@
-import { group, route, type RouteHandler } from "@askrjs/askr/router";
+import { group, lazy, route, type RouteHandler } from "@askrjs/askr/router";
 import Layout from "./_layout";
-import DiagnosticsPage from "./diagnostics";
-import Home from "./home";
-import KvPage from "./kv";
-import LeasePage from "./lease";
-import MetricsPage from "./metrics";
-import NoticePage from "./notice";
-import QueuePage from "./queue";
-import QueueResourcePage from "./queue-resource";
-import ResourceDetailPage from "./resource-detail";
-import RpcPage from "./rpc";
-import SchedulePage from "./schedule";
-import SessionsPage from "./sessions";
-import SettingsPage from "./settings";
-import StreamPage from "./stream";
 import {
   domainLinks,
   domainResourceRoutePath,
   type DomainSegment,
 } from "@/shared/navigation/domains";
+
+const DiagnosticsPage = lazy(() => import("./diagnostics"));
+const Home = lazy(() => import("./home"));
+const KvPage = lazy(() => import("./kv"));
+const LeasePage = lazy(() => import("./lease"));
+const MetricsPage = lazy(() => import("./metrics"));
+const NoticePage = lazy(() => import("./notice"));
+const QueuePage = lazy(() => import("./queue"));
+const QueueResourcePage = lazy(() => import("./queue-resource"));
+const ResourceDetailPage = lazy(() => import("./resource-detail"));
+const RpcPage = lazy(() => import("./rpc"));
+const SchedulePage = lazy(() => import("./schedule"));
+const SessionsPage = lazy(() => import("./sessions"));
+const SettingsPage = lazy(() => import("./settings"));
+const StreamPage = lazy(() => import("./stream"));
 
 const domainPageBySegment: Record<DomainSegment, RouteHandler> = {
   kv: KvPage,

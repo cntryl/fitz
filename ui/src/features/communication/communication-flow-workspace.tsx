@@ -516,8 +516,7 @@ export default function CommunicationFlowWorkspace({
   const trimmedQuery = trimToUndefined(queryValue);
   const canRunSearch = searchMode && routeFamilyReady && !searchLoadingValue;
   const canOpenExactResource = filteredRows.some(
-    (row) =>
-      row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
+    (row) => row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
   );
   const badgeLabel = searchMode
     ? routeFamilyReady
@@ -530,25 +529,19 @@ export default function CommunicationFlowWorkspace({
       id: "realm",
       header: "Realm",
       width: "21%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate">{row.realm}</span>
-      ),
+      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
     },
     {
       id: "area",
       header: "Area",
       width: "21%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate">{row.area}</span>
-      ),
+      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
     },
     {
       id: "resource",
       header: domain === "notice" ? "Notice route" : "RPC route",
       width: "34%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate">{row.resource}</span>
-      ),
+      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.resource}</span>,
     },
     {
       id: "action",
@@ -684,9 +677,7 @@ export default function CommunicationFlowWorkspace({
                 <Input
                   id={`${domain}-flow-resource`}
                   value={resourceValue}
-                  onInput={(event: Event) =>
-                    setResource((event.target as HTMLInputElement).value)
-                  }
+                  onInput={(event: Event) => setResource((event.target as HTMLInputElement).value)}
                   placeholder={domain === "notice" ? "invoice-events" : "settlement-api"}
                 />
               </div>
@@ -702,7 +693,13 @@ export default function CommunicationFlowWorkspace({
               </div>
             </div>
             {searchMode ? (
-              <Flex class="communication-query-actions" justify="between" align="center" gap="3" wrap="wrap">
+              <Flex
+                class="communication-query-actions"
+                justify="between"
+                align="center"
+                gap="3"
+                wrap="wrap"
+              >
                 <p class="domain-muted">
                   Querying {operatorContext.selectedRouteFamily.label}. Communication observation
                   reads require a concrete numeric Route Family.

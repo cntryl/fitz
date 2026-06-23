@@ -1,6 +1,11 @@
 import { apiv1 } from "@/adapters";
 import type { AdminFeaturesResponse } from "@/adapters/generated/types";
-import { AppApiError, ensureResponseOk, unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
+import {
+  AppApiError,
+  ensureResponseOk,
+  unwrapResponse,
+  type ServiceRequestOptions,
+} from "@/shared/errors/api";
 import { mapActiveSessionsOverview, mapLoginPayload, mapSessionResponse } from "./session-mappers";
 import type { ActiveSessionsOverview, LoginPayload, SessionState } from "./session-models";
 

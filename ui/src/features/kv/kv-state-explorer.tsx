@@ -108,25 +108,19 @@ const resourceColumns: readonly VirtualTableColumn<KvResourceRow>[] = [
     id: "realm",
     header: "Realm",
     width: "24%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.realm}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
   },
   {
     id: "area",
     header: "Area",
     width: "24%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.area}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
   },
   {
     id: "resource",
     header: "Resource",
     width: "34%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.resource}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.resource}</span>,
   },
   {
     id: "action",
@@ -318,19 +312,14 @@ export default function KvStateExplorer({
   const canOpenExactResource =
     !committedMode &&
     filteredRows.some(
-      (row) =>
-        row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
+      (row) => row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
     );
   const queryBadgeLabel = committedMode
     ? routeFamilyReady
       ? "Committed API"
       : "Select Route Family"
     : "Inventory API";
-  const queryBadgeVariant = committedMode
-    ? routeFamilyReady
-      ? "success"
-      : "warning"
-    : "outline";
+  const queryBadgeVariant = committedMode ? (routeFamilyReady ? "success" : "warning") : "outline";
 
   async function runCommittedQuery() {
     if (!canRunStateQuery || routeFamily === null) {
@@ -351,20 +340,12 @@ export default function KvStateExplorer({
     try {
       if (modeValue === "key") {
         setLookupResult({
-          data: await kvService.getCommittedValue(
-            scope,
-            trimmedKeyQuery,
-            keyEncodingValue,
-          ),
+          data: await kvService.getCommittedValue(scope, trimmedKeyQuery, keyEncodingValue),
           mode: "key",
         });
       } else if (modeValue === "prefix") {
         setLookupResult({
-          data: await kvService.scanCommittedPrefix(
-            scope,
-            trimmedKeyQuery,
-            keyEncodingValue,
-          ),
+          data: await kvService.scanCommittedPrefix(scope, trimmedKeyQuery, keyEncodingValue),
           mode: "prefix",
         });
       }
@@ -442,9 +423,7 @@ export default function KvStateExplorer({
                 <Input
                   id="kv-query-resource"
                   value={resourceValue}
-                  onInput={(event: Event) =>
-                    setResource((event.target as HTMLInputElement).value)
-                  }
+                  onInput={(event: Event) => setResource((event.target as HTMLInputElement).value)}
                   placeholder="ledger"
                 />
               </div>
@@ -470,9 +449,7 @@ export default function KvStateExplorer({
                     {(encodingOption) => (
                       <Button
                         type="button"
-                        variant={
-                          keyEncodingValue === encodingOption.value ? "primary" : "outline"
-                        }
+                        variant={keyEncodingValue === encodingOption.value ? "primary" : "outline"}
                         disabled={!committedMode}
                         onPress={() => {
                           setKeyEncoding(encodingOption.value);

@@ -277,10 +277,12 @@ const archetypeConfig: Record<ResourceDetail["domain"], ResourceArchetypeConfig>
   notice: {
     actionLabel: "Communication Flow",
     actionTitle: "Flow graph",
-    diagnosticsDescription: "Live fanout pressure, participants, failures, and raw broker evidence.",
+    diagnosticsDescription:
+      "Live fanout pressure, participants, failures, and raw broker evidence.",
     evidenceTitle: "Participants",
     failureTitle: "Delivery failures",
-    primaryDescription: "Live Notice route, subscription, and delivery signals for connected participants.",
+    primaryDescription:
+      "Live Notice route, subscription, and delivery signals for connected participants.",
     primaryTitle: "Notice flow",
     timelineTitle: "Delivery trace",
     title: "Notice Communication Flow",
@@ -288,10 +290,12 @@ const archetypeConfig: Record<ResourceDetail["domain"], ResourceArchetypeConfig>
   rpc: {
     actionLabel: "Communication Flow",
     actionTitle: "Flow graph",
-    diagnosticsDescription: "Live request/response participants, failures, and pending-call evidence.",
+    diagnosticsDescription:
+      "Live request/response participants, failures, and pending-call evidence.",
     evidenceTitle: "Participants",
     failureTitle: "Call failures",
-    primaryDescription: "Live RPC operations, workers, and pending request signals for this resource.",
+    primaryDescription:
+      "Live RPC operations, workers, and pending request signals for this resource.",
     primaryTitle: "RPC flow",
     timelineTitle: "Call trace",
     title: "RPC Communication Flow",
@@ -302,7 +306,8 @@ const archetypeConfig: Record<ResourceDetail["domain"], ResourceArchetypeConfig>
     diagnosticsDescription: "Durable timing intent, execution pressure, and handoff diagnostics.",
     evidenceTitle: "Executions",
     failureTitle: "Missed or failed execution",
-    primaryDescription: "Future timing intent and recent execution evidence for this schedule resource.",
+    primaryDescription:
+      "Future timing intent and recent execution evidence for this schedule resource.",
     primaryTitle: "Execution plan",
     timelineTitle: "Execution timeline",
     title: "Schedule Time Planner",
@@ -310,7 +315,8 @@ const archetypeConfig: Record<ResourceDetail["domain"], ResourceArchetypeConfig>
   stream: {
     actionLabel: "History Explorer",
     actionTitle: "Event explorer",
-    diagnosticsDescription: "Durable stream indicators, consumers, replay context, and raw payload.",
+    diagnosticsDescription:
+      "Durable stream indicators, consumers, replay context, and raw payload.",
     evidenceTitle: "Consumers",
     failureTitle: "Replay risks",
     primaryDescription: "Durable history indicators and recent stream events for this scope.",
@@ -323,31 +329,17 @@ const archetypeConfig: Record<ResourceDetail["domain"], ResourceArchetypeConfig>
 function failureLikeMetric(metric: { label: string }) {
   const label = metric.label.toLowerCase();
 
-  return [
-    "fail",
-    "reject",
-    "timeout",
-    "drop",
-    "dead",
-    "conflict",
-    "invalid",
-    "rollback",
-  ].some((word) => label.includes(word));
+  return ["fail", "reject", "timeout", "drop", "dead", "conflict", "invalid", "rollback"].some(
+    (word) => label.includes(word),
+  );
 }
 
 function failureLikeEvent(event: { kind: string; summary: string }) {
   const text = `${event.kind} ${event.summary}`.toLowerCase();
 
-  return [
-    "fail",
-    "reject",
-    "timeout",
-    "drop",
-    "dead",
-    "conflict",
-    "invalid",
-    "blocked",
-  ].some((word) => text.includes(word));
+  return ["fail", "reject", "timeout", "drop", "dead", "conflict", "invalid", "blocked"].some(
+    (word) => text.includes(word),
+  );
 }
 
 function hierarchyMetrics(detail: ResourceDetail) {
@@ -359,13 +351,7 @@ function hierarchyMetrics(detail: ResourceDetail) {
   ];
 }
 
-function ResourceTimelinePanel({
-  detail,
-  title,
-}: {
-  detail: ResourceDetail;
-  title: string;
-}) {
+function ResourceTimelinePanel({ detail, title }: { detail: ResourceDetail; title: string }) {
   const timelineData = detail.timeline.events.slice(0, 8).map((event) => ({
     description: event.summary,
     label: formatTimelineKind(event.kind),
@@ -406,13 +392,7 @@ function ResourceTimelinePanel({
   );
 }
 
-function FailurePanel({
-  detail,
-  title,
-}: {
-  detail: ResourceDetail;
-  title: string;
-}) {
+function FailurePanel({ detail, title }: { detail: ResourceDetail; title: string }) {
   const failureMetrics = detail.detailMetrics.filter(failureLikeMetric);
   const failureEvents = detail.timeline.events.filter(failureLikeEvent).slice(0, 5);
 
@@ -420,7 +400,9 @@ function FailurePanel({
     <Card padding="sm" variant="default">
       <CardHeader>
         <CardTitle>{title}</CardTitle>
-        <CardDescription>Failures, rejects, drops, conflicts, and other attention signals.</CardDescription>
+        <CardDescription>
+          Failures, rejects, drops, conflicts, and other attention signals.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {failureMetrics.length > 0 || failureEvents.length > 0 ? (
@@ -552,7 +534,9 @@ function ArchetypeOperationsPanel({ detail }: { detail: ResourceDetail }) {
       <Card padding="sm" variant="default">
         <CardHeader>
           <CardTitle>State lookup</CardTitle>
-          <CardDescription>Key lookup and prefix search require a dedicated KV admin contract.</CardDescription>
+          <CardDescription>
+            Key lookup and prefix search require a dedicated KV admin contract.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <Button variant="outline" disabled>

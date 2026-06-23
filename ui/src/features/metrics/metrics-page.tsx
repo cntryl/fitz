@@ -1,10 +1,6 @@
 import { For } from "@askrjs/askr/control";
 import { state } from "@askrjs/askr";
-import {
-  Input,
-  VirtualTable,
-  type VirtualTableColumn,
-} from "@askrjs/ui";
+import { Input, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
 import { Stack } from "@askrjs/themes/layouts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";

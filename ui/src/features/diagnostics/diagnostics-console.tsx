@@ -342,17 +342,13 @@ export default function DiagnosticsConsole({
       id: "signal",
       header: "Signal",
       width: "22%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate">{row.signal}</span>
-      ),
+      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.signal}</span>,
     },
     {
       id: "value",
       header: "Value",
       width: "18%",
-      cellComponent: ({ row }) => (
-        <span class="diagnostics-value-cell">{row.value}</span>
-      ),
+      cellComponent: ({ row }) => <span class="diagnostics-value-cell">{row.value}</span>,
     },
     {
       id: "detail",
@@ -368,9 +364,7 @@ export default function DiagnosticsConsole({
       id: "action",
       header: "Action",
       width: "22%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate">{row.action}</span>
-      ),
+      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.action}</span>,
     },
   ];
   const domainColumns: readonly VirtualTableColumn<DomainInternalRow>[] = [
@@ -542,8 +536,8 @@ export default function DiagnosticsConsole({
             <Stack gap="1">
               <CardTitle>Diagnostics console</CardTitle>
               <CardDescription>
-                Infrastructure internals for {operatorLabel}: topology pressure, suggested
-                follow-up queries, metrics families, and exposed diagnostics.
+                Infrastructure internals for {operatorLabel}: topology pressure, suggested follow-up
+                queries, metrics families, and exposed diagnostics.
               </CardDescription>
             </Stack>
             <Badge variant={badgeVariantForTone(incidentTone)}>{incident.severity}</Badge>
@@ -646,12 +640,13 @@ export default function DiagnosticsConsole({
         <CardHeader>
           <CardTitle>Hotspots</CardTitle>
           <CardDescription>
-            Broker-generated diagnostic hotspots from the current topology or global stats
-            snapshot.
+            Broker-generated diagnostic hotspots from the current topology or global stats snapshot.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {topologyLoading ? <QueryLoadingState description="Loading topology hotspots..." /> : null}
+          {topologyLoading ? (
+            <QueryLoadingState description="Loading topology hotspots..." />
+          ) : null}
           {topologyError ? (
             <QueryErrorState title="Unable to load topology diagnostics" error={topologyError} />
           ) : null}

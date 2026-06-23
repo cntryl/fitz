@@ -65,7 +65,10 @@ function routeCrumbs(path: string, params: Record<string, string | undefined>) {
       crumbs.push({ href: domainScopeHref(first, { realm }), label: realm });
     }
     if (area) {
-      crumbs.push({ href: domainScopeHref(first, { area, realm: realm ?? undefined }), label: area });
+      crumbs.push({
+        href: domainScopeHref(first, { area, realm: realm ?? undefined }),
+        label: area,
+      });
     }
     if (resource) {
       crumbs.push({

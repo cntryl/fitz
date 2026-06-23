@@ -35,9 +35,7 @@ function titleCase(value: string) {
 }
 
 function hierarchyText(result: AdminSearchResult) {
-  return [result.realm, result.area, result.resource, result.operation]
-    .filter(Boolean)
-    .join(" / ");
+  return [result.realm, result.area, result.resource, result.operation].filter(Boolean).join(" / ");
 }
 
 const searchColumns: readonly VirtualTableColumn<AdminSearchResult>[] = [
@@ -48,7 +46,9 @@ const searchColumns: readonly VirtualTableColumn<AdminSearchResult>[] = [
     cellComponent: ({ row }) => (
       <Stack gap="1">
         <strong class="domain-table-cell-truncate">{row.title}</strong>
-        <span class="domain-muted">{titleCase(row.domain)} · {titleCase(row.kind)}</span>
+        <span class="domain-muted">
+          {titleCase(row.domain)} · {titleCase(row.kind)}
+        </span>
       </Stack>
     ),
   },
@@ -57,16 +57,16 @@ const searchColumns: readonly VirtualTableColumn<AdminSearchResult>[] = [
     header: "Hierarchy",
     width: "27%",
     cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{hierarchyText(row) || row.routeFamily || "Broker"}</span>
+      <span class="domain-table-cell-truncate">
+        {hierarchyText(row) || row.routeFamily || "Broker"}
+      </span>
     ),
   },
   {
     id: "summary",
     header: "Summary",
     width: "28%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.summary}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.summary}</span>,
   },
   {
     id: "health",

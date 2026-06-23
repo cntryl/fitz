@@ -69,25 +69,19 @@ const leaseColumns: readonly VirtualTableColumn<LeaseResourceRow>[] = [
     id: "realm",
     header: "Realm",
     width: "22%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.realm}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
   },
   {
     id: "area",
     header: "Area",
     width: "22%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.area}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
   },
   {
     id: "resource",
     header: "Lease",
     width: "34%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.resource}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.resource}</span>,
   },
   {
     id: "action",
@@ -107,10 +101,7 @@ const leaseSearchColumns: readonly VirtualTableColumn<LeaseSearchItem>[] = [
     header: "Scope",
     width: "28%",
     cellComponent: ({ row }) => (
-      <span
-        class="domain-table-cell-truncate"
-        title={`${row.realm}/${row.area}/${row.resource}`}
-      >
+      <span class="domain-table-cell-truncate" title={`${row.realm}/${row.area}/${row.resource}`}>
         {row.realm}/{row.area}/{row.resource}
       </span>
     ),
@@ -128,7 +119,10 @@ const leaseSearchColumns: readonly VirtualTableColumn<LeaseSearchItem>[] = [
     header: "Owner/session",
     width: "24%",
     cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={row.owner_session_id ?? row.owner_id ?? "None"}>
+      <span
+        class="domain-table-cell-truncate"
+        title={row.owner_session_id ?? row.owner_id ?? "None"}
+      >
         {row.owner_session_id ?? row.owner_id ?? "None"}
       </span>
     ),
@@ -289,8 +283,7 @@ export default function LeaseOwnershipConsole({
   const trimmedOwner = trimToUndefined(ownerQueryValue);
   const canRunSearch = searchMode && routeFamilyReady && !searchLoadingValue;
   const canOpenExactResource = filteredRows.some(
-    (row) =>
-      row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
+    (row) => row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
   );
   const badgeLabel = searchMode
     ? routeFamilyReady
@@ -394,9 +387,7 @@ export default function LeaseOwnershipConsole({
                 <Input
                   id="lease-console-resource"
                   value={resourceValue}
-                  onInput={(event: Event) =>
-                    setResource((event.target as HTMLInputElement).value)
-                  }
+                  onInput={(event: Event) => setResource((event.target as HTMLInputElement).value)}
                   placeholder="settlement-lock"
                 />
               </div>
@@ -414,7 +405,13 @@ export default function LeaseOwnershipConsole({
               </div>
             </div>
             {searchMode ? (
-              <Flex class="lease-query-actions" justify="between" align="center" gap="3" wrap="wrap">
+              <Flex
+                class="lease-query-actions"
+                justify="between"
+                align="center"
+                gap="3"
+                wrap="wrap"
+              >
                 <p class="domain-muted">
                   Querying {operatorContext.selectedRouteFamily.label}. Lease ownership reads
                   require a concrete numeric Route Family.

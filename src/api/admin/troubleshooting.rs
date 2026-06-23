@@ -1459,19 +1459,13 @@ fn analyze_stream(
             .map(|stream| stream.offset.saturating_sub(stream.watermark))
             .max()
             .unwrap_or(0);
-        let label = if backlog > 0 || latency_pressure || workers > 0 {
+        let label = if backlog > 0 || workers > 0 {
             DiagnosisLabel::Throughput
         } else {
             DiagnosisLabel::Healthy
         };
         let trend = if backlog > 0 {
             DiagnosticTrend::Stalled
-        } else if latency_pressure {
-            if latency_tail_ratio >= 0.5 {
-                DiagnosticTrend::Stalled
-            } else {
-                DiagnosticTrend::Steady
-            }
         } else if workers > 0 {
             DiagnosticTrend::Steady
         } else {
@@ -1479,12 +1473,6 @@ fn analyze_stream(
         };
         let severity = if backlog > 0 {
             DiagnosticSeverity::Medium
-        } else if latency_pressure {
-            if latency_tail_ratio >= 0.5 {
-                DiagnosticSeverity::High
-            } else {
-                DiagnosticSeverity::Medium
-            }
         } else if workers > 0 {
             DiagnosticSeverity::Low
         } else {
@@ -1509,8 +1497,6 @@ fn analyze_stream(
             severity,
             if backlog > 0 {
                 Some("append lag".to_string())
-            } else if latency_pressure {
-                Some("stream latency".to_string())
             } else if workers > 0 {
                 Some("append throughput".to_string())
             } else {
@@ -1527,28 +1513,30 @@ fn analyze_stream(
             hints,
         );
 
-        hotspots.push(ScoredHotspot {
-            score: backlog as f64 * 2.0 + workers as f64 * 0.5 + latency_tail_ratio * 20.0,
-            hotspot: DiagnosticHotspot {
-                domain: "stream".to_string(),
-                realm: Some(realm),
-                area: Some(area),
-                resource: Some(resource),
-                operation: None,
-                family: None,
-                backlog: Some(backlog),
-                inflight: Some(workers),
-                ready: None,
-                delayed: None,
-                dead_letters: None,
-                workers: Some(workers),
-                subscriptions: None,
-                owner_session: None,
-                worker_session: None,
-                snapshot,
-            },
-            last_changed_at: None,
-        });
+        if !matches!(snapshot.severity, DiagnosticSeverity::Informational) {
+            hotspots.push(ScoredHotspot {
+                score: backlog as f64 * 2.0 + workers as f64 * 0.5,
+                hotspot: DiagnosticHotspot {
+                    domain: "stream".to_string(),
+                    realm: Some(realm),
+                    area: Some(area),
+                    resource: Some(resource),
+                    operation: None,
+                    family: None,
+                    backlog: Some(backlog),
+                    inflight: Some(workers),
+                    ready: None,
+                    delayed: None,
+                    dead_letters: None,
+                    workers: Some(workers),
+                    subscriptions: None,
+                    owner_session: None,
+                    worker_session: None,
+                    snapshot,
+                },
+                last_changed_at: None,
+            });
+        }
     }
 
     if hotspots.is_empty() {
@@ -4423,6 +4411,38 @@ mod tests {
             .explanation_hints
             .iter()
             .any(|hint| hint.contains("queue complete rejection")));
+    }
+
+    #[test]
+    fn should_not_classify_stream_latency_as_pressure_when_watermarks_are_caught_up() {
+        // Arrange
+        let streams = vec![StreamInfo {
+            route_family: 1,
+            realm: "prod".to_string(),
+            area: "events".to_string(),
+            resource: "orders".to_string(),
+            offset: 1223,
+            watermark: 1223,
+            size_bytes: 8192,
+            sessions_active: 0,
+        }];
+        let latency_buckets = StreamLatencyBuckets {
+            under_100ms: 1650,
+            under_500ms: 810,
+            ..StreamLatencyBuckets::default()
+        };
+
+        // Act
+        let analysis = analyze_stream(&streams, latency_buckets, Utc::now());
+
+        // Assert
+        assert!(analysis.hotspots.is_empty());
+        assert!(analysis.diagnostics.snapshot.is_healthy());
+        assert_eq!(
+            analysis.diagnostics.snapshot.severity,
+            DiagnosticSeverity::Informational
+        );
+        assert_eq!(analysis.diagnostics.snapshot.likely_bottleneck, None);
     }
 
     #[test]

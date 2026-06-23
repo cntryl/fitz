@@ -55,11 +55,7 @@ export default function DomainBarChart({
   const max = Math.max(1, ...normalized.map((entry) => entry.value));
 
   return (
-    <ChartShell
-      className="domain-chart-shell"
-      title={title}
-      description={description}
-    >
+    <ChartShell className="domain-chart-shell" title={title} description={description}>
       <ChartPanel title={label} description={scope}>
         <BarChart
           label={label}

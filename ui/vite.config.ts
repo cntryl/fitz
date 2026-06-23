@@ -1,4 +1,5 @@
 import { askr } from "@askrjs/vite";
+import autoprefixer from "autoprefixer";
 import { defineConfig } from "vite-plus";
 import type { UserConfig } from "@voidzero-dev/vite-plus-core";
 
@@ -21,6 +22,12 @@ const config = {
     },
   },
   plugins: [askr()],
+  css: {
+    transformer: "postcss",
+    postcss: {
+      plugins: [autoprefixer()],
+    },
+  },
   base: "/",
   define: {
     "process.env": {},

@@ -2,11 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import type { DiagnosticSnapshot, GlobalStats, MessagingTopology } from "@/adapters";
 import { dashboardDiagnostics, topologyDtoLane, topologyOverview } from "../fixtures/topology";
 
-async function openDashboard(
-  page: Page,
-  theme: "light" | "dark" = "light",
-  setupApis = true,
-) {
+async function openDashboard(page: Page, theme: "light" | "dark" = "light", setupApis = true) {
   if (theme === "dark") {
     await page.addInitScript(() => {
       localStorage.setItem("fitz-admin-theme", "dark");
@@ -21,18 +17,23 @@ async function openDashboard(
 
   await expect(page.locator("main#main-content")).toHaveCount(1);
   const primaryNav = page.getByRole("navigation", { name: "Primary navigation" });
+  const contextNav = page.getByRole("navigation", { name: "Operator context" });
   const viewport = page.viewportSize();
+
+  await expect(contextNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
+  await expect(contextNav.getByRole("button", { name: "Route Family selector" })).toBeVisible();
+  await expect(contextNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
+  await expect(contextNav.getByRole("button", { name: "User menu" })).toBeVisible();
+
   if ((viewport?.width ?? 0) < 768) {
-    await expect(primaryNav.getByRole("button", { name: "Menu" })).toBeVisible();
+    await expect(primaryNav.getByRole("button", { name: /Menu|Navigation/ })).toBeVisible();
     return;
   }
-  await expect(primaryNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
+
   await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
   await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
   await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
   await expect(primaryNav.getByRole("link", { name: "Settings" })).toBeVisible();
-  await expect(primaryNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
-  await expect(primaryNav.getByRole("button", { name: "User menu" })).toBeVisible();
 }
 
 type DomainOverviewFixture = {
@@ -89,7 +90,7 @@ const topologyApiPayload: MessagingTopology = {
     truncated: false,
   },
   diagnostics: dashboardDiagnostics,
-  generated_at: "2026-05-21T13:10:00.000Z",
+  generated_at: "2026-06-23T18:30:00.000Z",
   lanes: [
     topologyDtoLane("queue", "blocked", 4),
     topologyDtoLane("rpc", "flowing", 4),
@@ -1211,6 +1212,7 @@ async function expectRouteChrome(page: Page, route: RouteScenario) {
   const viewport = page.viewportSize();
   const isMobile = (viewport?.width ?? 0) < 768;
   const primaryNav = page.getByRole("navigation", { name: "Primary navigation" });
+  const contextNav = page.getByRole("navigation", { name: "Operator context" });
 
   await expect(page.locator("main#main-content")).toHaveCount(1);
   await expect(page.getByRole("heading", { name: exactHeadingMatcher(route.title) })).toBeVisible();
@@ -1218,12 +1220,13 @@ async function expectRouteChrome(page: Page, route: RouteScenario) {
   await expectNoHorizontalOverflow(page);
 
   if (route.shell === "app") {
-    if (!isMobile) {
-      await expect(primaryNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
-    }
+    await expect(contextNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
+    await expect(contextNav.getByRole("button", { name: "Route Family selector" })).toBeVisible();
+    await expect(contextNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
+    await expect(contextNav.getByRole("button", { name: "User menu" })).toBeVisible();
 
     if (isMobile) {
-      const menu = primaryNav.getByRole("button", { name: "Menu" });
+      const menu = primaryNav.getByRole("button", { name: /Menu|Navigation/ });
       await expect(menu).toBeVisible();
       await menu.click();
 
@@ -1231,15 +1234,11 @@ async function expectRouteChrome(page: Page, route: RouteScenario) {
       await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
       await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
       await expect(primaryNav.getByRole("link", { name: "Settings" })).toBeVisible();
-      await expect(primaryNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
-      await expect(primaryNav.getByRole("button", { name: "User menu" })).toBeVisible();
       await expectNoHorizontalOverflow(page);
 
       await page.keyboard.press("Escape");
       return;
     }
-
-    await expect(primaryNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
 
     await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
     await expect(primaryNav.getByRole("link", { name: "Stream" })).toBeVisible();
@@ -1247,7 +1246,6 @@ async function expectRouteChrome(page: Page, route: RouteScenario) {
     await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
     await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
     await expect(primaryNav.getByRole("link", { name: "Settings" })).toBeVisible();
-    await expect(primaryNav.getByRole("button", { name: "User menu" })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     return;
   }
@@ -1258,7 +1256,7 @@ async function expectRouteChrome(page: Page, route: RouteScenario) {
   }
 
   if (isMobile) {
-    await expect(primaryNav.getByRole("button", { name: "Menu" })).toBeVisible();
+    await expect(primaryNav.getByRole("button", { name: /Menu|Navigation/ })).toBeVisible();
   }
 }
 
@@ -1267,13 +1265,13 @@ const sprint16Routes: RouteScenario[] = [
     path: "/",
     shell: "app",
     setup: mockHomeRouteApis,
-    title: "Broker status",
+    title: "Fitz status",
   },
   {
     path: "/admin",
     shell: "app",
     setup: mockHomeRouteApis,
-    title: "Broker status",
+    title: "Fitz status",
   },
   {
     path: "/sessions",
@@ -1447,8 +1445,9 @@ test("captures the desktop dashboard shell", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await openDashboard(page);
 
-  await expect(page.getByRole("heading", { name: "Broker status" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Domain signals" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Fitz status" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Issues" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Domain health" })).toBeVisible();
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("dashboard-desktop.png"),
@@ -1460,8 +1459,9 @@ test("captures the tablet dashboard shell", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1024, height: 1200 });
   await openDashboard(page);
 
-  await expect(page.getByRole("heading", { name: "Broker status" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Domain signals" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Fitz status" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Issues" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Domain health" })).toBeVisible();
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("dashboard-tablet.png"),
@@ -1474,7 +1474,7 @@ test("captures the desktop dashboard shell in dark mode", async ({ page }, testI
   await openDashboard(page, "dark");
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page.getByRole("heading", { name: "Broker status" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Fitz status" })).toBeVisible();
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("dashboard-dark.png"),
@@ -1504,9 +1504,9 @@ test("captures the dashboard refreshing state", async ({ page }, testInfo) => {
   });
 
   await openDashboard(page, "light", false);
-  await expect(page.getByRole("heading", { name: "Domain signals" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Issues" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Refresh topology" }).click();
+  await page.getByRole("button", { name: "Refresh overview" }).click();
   await expect(page.locator('[data-slot="badge"]').filter({ hasText: "Refreshing" })).toBeVisible();
 
   await page.screenshot({
@@ -1543,17 +1543,19 @@ test("captures desktop domain navigation", async ({ page }, testInfo) => {
   await expect(page.locator("main#main-content")).toHaveCount(1);
 });
 
-test("captures a sidebar domain page", async ({ page }, testInfo) => {
+test("captures a domain page with lead snapshot", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await mockDomainOverviewApis(page);
   await page.goto("/queue");
 
   await expect(page.locator("main#main-content")).toHaveCount(1);
-  await expect(page.locator(".page-frame-sidebar")).toBeVisible();
+  await expect(page.locator(".page-frame-sidebar")).toHaveCount(0);
+  await expect(page.locator(".domain-sidebar")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Scope summary" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Queue overview" })).toBeVisible();
   await page.screenshot({
     fullPage: true,
-    path: testInfo.outputPath("queue-sidebar.png"),
+    path: testInfo.outputPath("queue-lead-snapshot.png"),
     animations: "disabled",
   });
 });
@@ -1762,13 +1764,11 @@ test("captures the mobile navbar panel", async ({ page }, testInfo) => {
   await openDashboard(page);
   const primaryNav = page.getByRole("navigation", { name: "Primary navigation" });
 
-  await primaryNav.getByRole("button", { name: "Menu" }).click();
+  await primaryNav.getByRole("button", { name: /Menu|Navigation/ }).click();
   await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
   await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
   await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
   await expect(primaryNav.getByRole("link", { name: "Settings" })).toBeVisible();
-  await expect(primaryNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
-  await expect(primaryNav.getByRole("button", { name: "User menu" })).toBeVisible();
 
   await page.screenshot({
     fullPage: true,

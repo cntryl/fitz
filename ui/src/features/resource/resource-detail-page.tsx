@@ -18,10 +18,7 @@ import {
   type DomainId,
   type ResourceRef,
 } from "@/features/resource/resource-query";
-import {
-  domainResourceHref,
-  isGenericResourceDomainSegment,
-} from "@/shared/navigation/domains";
+import { domainResourceHref, isGenericResourceDomainSegment } from "@/shared/navigation/domains";
 
 type DomainPresentation = {
   description: string;

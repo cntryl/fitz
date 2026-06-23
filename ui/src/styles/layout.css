@@ -1,5 +1,5 @@
 .domain-page-frame {
-  padding-block-start: var(--ak-space-4, 1rem);
+  padding-block-start: var(--fitz-page-padding-block);
 }
 
 .page-frame-main {
@@ -15,9 +15,9 @@
 
 @media (min-width: 48rem) {
   .page-frame-sidebar {
-    flex: 0 0 min(23rem, 32%);
-    width: min(23rem, 32%);
+    flex: 0 0 min(21rem, 31%);
+    width: min(21rem, 31%);
     position: sticky;
-    top: calc(var(--ak-layout-navbar-height, 3.5rem) + var(--ak-space-4, 1rem));
+    top: calc(var(--ak-layout-navbar-height, 3.5rem) + var(--fitz-page-padding-block));
   }
 }

@@ -2956,7 +2956,7 @@ async fn should_return_stream_domain_stats_given_recorded_operations() {
 
 #[tokio::test]
 #[serial]
-async fn should_classify_stream_latency_pressure_given_recorded_latency_tail() {
+async fn should_report_stream_latency_buckets_without_pressure_given_caught_up_watermarks() {
     // Arrange
     let runtime = test_runtime();
     seed_stream_latency_pressure_data(&runtime);
@@ -2999,12 +2999,67 @@ async fn should_classify_stream_latency_pressure_given_recorded_latency_tail() {
         payload["request_latency_buckets"]["under_500ms"],
         stream_latency_before[5] + 40
     );
-    assert_eq!(payload["diagnostics"]["current_stage"], "throughput");
+    assert_eq!(payload["diagnostics"]["current_stage"], "healthy");
     assert_eq!(
         payload["diagnostics"]["likely_bottleneck"],
-        "stream latency"
+        serde_json::Value::Null
     );
-    assert_eq!(payload["diagnostics"]["severity"], "high");
+    assert_eq!(payload["diagnostics"]["severity"], "informational");
+    assert!(!payload["diagnostics"]["explanation_hints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hint| hint
+            .as_str()
+            .unwrap_or("")
+            .contains("stream request latency tail")));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_classify_stream_latency_pressure_given_recorded_latency_tail_and_lag() {
+    // Arrange
+    let runtime = test_runtime();
+    let read_model = runtime.admin_read_model();
+    read_model.replace_streams(vec![StreamInfo {
+        route_family: 1,
+        realm: "prod".to_string(),
+        area: "logs".to_string(),
+        resource: "application".to_string(),
+        offset: 5,
+        watermark: 1,
+        size_bytes: 1024,
+        sessions_active: 0,
+    }]);
+    let metrics = fitz::boot::observability::metrics();
+    for _ in 0..10 {
+        metrics.histogram_observe_ms("fitz_stream_latency_ms", 1);
+    }
+    for _ in 0..40 {
+        metrics.histogram_observe_ms("fitz_stream_latency_ms", 250);
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/stream/stats")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["diagnostics"]["current_stage"], "throughput");
+    assert_eq!(payload["diagnostics"]["likely_bottleneck"], "append lag");
+    assert_eq!(payload["diagnostics"]["severity"], "medium");
     assert!(payload["diagnostics"]["explanation_hints"]
         .as_array()
         .unwrap()

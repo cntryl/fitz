@@ -1,12 +1,6 @@
 import { Link } from "@askrjs/askr/router";
 import { Stack } from "@askrjs/themes/layouts";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@askrjs/themes/surfaces";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -46,7 +40,9 @@ export default function SettingsPage() {
         <Card padding="sm" variant="default">
           <CardHeader>
             <CardTitle>Admin tools</CardTitle>
-            <CardDescription>Secondary operator surfaces retained outside primary domain navigation.</CardDescription>
+            <CardDescription>
+              Secondary operator surfaces retained outside primary domain navigation.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div class="diagnostics-link-grid">

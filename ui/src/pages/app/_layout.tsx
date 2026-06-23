@@ -18,10 +18,9 @@ import {
   DropdownPortal,
   DropdownTrigger,
 } from "@askrjs/themes/overlays";
-import { NavBrand, NavGroup, NavLink, Header, Navbar } from "@askrjs/themes/shells";
+import { Header, NavBrand, NavGroup, NavLink, Navbar, Sidebar } from "@askrjs/themes/shells";
 import { Badge } from "@askrjs/themes/surfaces";
 import { ThemeToggle } from "@askrjs/themes/theme";
-import OperatorSearch from "@/components/shared/operator-search";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createMessagingTopologyQuery } from "@/features/topology/topology-query";
 import { appConfig } from "@/shared/config";
@@ -60,17 +59,17 @@ export default function Layout({ children }: { children?: unknown }) {
           Skip to main content
         </a>
 
-        <Header>
-          <Container size="xl">
-            <Navbar breakpoint="md" aria-label="Primary navigation">
-              <NavBrand>
+        <Header position="sticky" class="operator-shell-header">
+          <Container size="xl" class="operator-shell-container">
+            <Navbar class="operator-topbar" aria-label="Operator context">
+              <NavBrand class="operator-shell-brand">
                 <Link href="/" aria-label="Fitz admin home">
                   <ShieldIcon size={18} />
                   <span>Fitz Admin</span>
                 </Link>
               </NavBrand>
 
-              <NavGroup aria-label="Operator context" role="group">
+              <NavGroup class="operator-shell-context" aria-label="Route Family" role="group">
                 <Dropdown>
                   <div class="route-family-selector">
                     <DropdownTrigger aria-label="Route Family selector">
@@ -101,37 +100,7 @@ export default function Layout({ children }: { children?: unknown }) {
                 <Badge variant="outline">{appConfig.environmentLabel}</Badge>
               </NavGroup>
 
-              <NavGroup aria-label="Workspace" role="group">
-                <For each={overviewLinks} by={(link) => link.href}>
-                  {(link) => (
-                    <NavLink href={link.href} match={link.href === "/" ? "exact" : "prefix"}>
-                      <link.icon size={16} />
-                      {link.title}
-                    </NavLink>
-                  )}
-                </For>
-
-                <For each={domainLinks} by={(link) => link.href}>
-                  {(link) => (
-                    <NavLink href={link.href} match="prefix">
-                      <link.icon size={16} />
-                      {link.title}
-                    </NavLink>
-                  )}
-                </For>
-
-                <For each={utilityLinks} by={(link) => link.href}>
-                  {(link) => (
-                    <NavLink href={link.href} match="prefix">
-                      <link.icon size={16} />
-                      {link.title}
-                    </NavLink>
-                  )}
-                </For>
-              </NavGroup>
-
-              <NavGroup align="end" aria-label="Account" role="group">
-                <OperatorSearch />
+              <NavGroup class="operator-shell-actions" aria-label="Account" role="group">
                 <ThemeToggle
                   aria-label="Toggle color theme"
                   variant="ghost"
@@ -165,17 +134,63 @@ export default function Layout({ children }: { children?: unknown }) {
                 </Dropdown>
               </NavGroup>
             </Navbar>
-            <div class="mobile-context-strip" aria-label="Current operator context">
-              <span>Route Family</span>
-              <strong>{operator.selectedRouteFamily.label}</strong>
-              <Badge variant="outline">{appConfig.environmentLabel}</Badge>
-            </div>
           </Container>
         </Header>
 
-        <div key={routeKey} class="route-transition-surface">
-          {children}
-        </div>
+        <Container size="xl" class="operator-shell-workspace">
+          <div class="operator-shell-layout">
+            <Sidebar
+              breakpoint="lg"
+              class="operator-sidebar"
+              collapseLabel="Navigation"
+              aria-label="Primary navigation"
+            >
+              <NavBrand class="operator-sidebar-brand">
+                <Link href="/" aria-label="Fitz admin home">
+                  <ShieldIcon size={18} />
+                  <span>Fitz Admin</span>
+                </Link>
+              </NavBrand>
+
+              <NavGroup label="Workspace">
+                <For each={overviewLinks} by={(link) => link.href}>
+                  {(link) => (
+                    <NavLink href={link.href} match={link.href === "/" ? "exact" : "prefix"}>
+                      <link.icon size={16} />
+                      {link.title}
+                    </NavLink>
+                  )}
+                </For>
+              </NavGroup>
+
+              <NavGroup label="Domains">
+                <For each={domainLinks} by={(link) => link.href}>
+                  {(link) => (
+                    <NavLink href={link.href} match="prefix">
+                      <link.icon size={16} />
+                      {link.title}
+                    </NavLink>
+                  )}
+                </For>
+              </NavGroup>
+
+              <NavGroup label="Operate">
+                <For each={utilityLinks} by={(link) => link.href}>
+                  {(link) => (
+                    <NavLink href={link.href} match="prefix">
+                      <link.icon size={16} />
+                      {link.title}
+                    </NavLink>
+                  )}
+                </For>
+              </NavGroup>
+            </Sidebar>
+
+            <Container key={routeKey} size="xl" class="route-transition-surface">
+              {children}
+            </Container>
+          </div>
+        </Container>
       </div>
     </OperatorContext.Scope>
   );

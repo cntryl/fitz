@@ -40,17 +40,13 @@ export default function DomainResourceBrowser({
       id: "realm",
       header: "Realm",
       width: "28%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate">{row.realm}</span>
-      ),
+      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
     },
     {
       id: "area",
       header: "Area",
       width: "28%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate">{row.area}</span>
-      ),
+      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
     },
     {
       id: "resource",

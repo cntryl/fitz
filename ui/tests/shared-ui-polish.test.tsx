@@ -79,7 +79,6 @@ describe("shared UI polish contracts", () => {
     const main = root.querySelector("main#main-content");
     const themeToggle = root.querySelector('button[aria-label="Toggle color theme"]');
     const routeFamilySelector = root.querySelector('button[aria-label="Route Family selector"]');
-    const globalSearch = root.querySelector('form[role="search"]');
     const userMenu = root.querySelector('button[aria-label="User menu"]');
 
     expect(root.textContent).toContain("Fitz");
@@ -88,11 +87,13 @@ describe("shared UI polish contracts", () => {
     expect(root.textContent).toContain("Local");
     expect(skipLink?.textContent).toContain("Skip to main content");
     expect(routeSurface?.tagName).toBe("DIV");
+    expect(routeSurface?.getAttribute("data-slot")).toBe("container");
+    expect(routeSurface?.parentElement?.classList.contains("operator-shell-layout")).toBe(true);
     expect(main?.getAttribute("tabindex")).toBe("-1");
     expect(root.querySelectorAll("main")).toHaveLength(1);
-    expect(root.querySelectorAll('[data-slot="container"]')).toHaveLength(2);
+    expect(root.querySelectorAll('[data-slot="container"]')).toHaveLength(4);
     expect(root.querySelectorAll('[data-slot="container"][data-size="initial:xl"]')).toHaveLength(
-      2,
+      4,
     );
     expect(themeToggle).toBeTruthy();
     expect(themeToggle?.getAttribute("data-size")).toBe("icon");
@@ -101,7 +102,7 @@ describe("shared UI polish contracts", () => {
     expect(themeToggle?.textContent).not.toContain("☀");
     expect(themeToggle?.textContent).not.toContain("☾");
     expect(routeFamilySelector).toBeTruthy();
-    expect(globalSearch).toBeTruthy();
+    expect(root.querySelector('form[role="search"]')).toBeNull();
     expect(userMenu?.querySelector('[data-slot="icon"]')).toBeTruthy();
 
     userMenu?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -110,7 +111,7 @@ describe("shared UI polish contracts", () => {
     expect(document.body.textContent).toContain("Sign out");
   });
 
-  it("exposes individual domain pages from the app navbar", async () => {
+  it("exposes individual domain pages from the app sidebar", async () => {
     const root = await mount(() => (
       <AppLayout>
         <DomainPageFrame>
@@ -125,10 +126,10 @@ describe("shared UI polish contracts", () => {
 
     expect(routeFamilySelector).toBeTruthy();
     expect(contentBeforeOpen).toBeNull();
-    expect(containers.length).toBe(2);
+    expect(containers.length).toBe(4);
     expect(
       document.querySelectorAll('[data-slot="container"][data-size="initial:xl"]'),
-    ).toHaveLength(2);
+    ).toHaveLength(4);
 
     for (const link of domainLinks) {
       const item = root.querySelector(`a[href="${link.href}"]`);
@@ -151,7 +152,7 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelectorAll(".page-frame-main")).toHaveLength(1);
     expect(root.querySelectorAll(".page-frame-sidebar")).toHaveLength(1);
     expect(root.querySelectorAll('[data-slot="container"][data-size="initial:xl"]')).toHaveLength(
-      2,
+      4,
     );
     expect(root.textContent).toContain("Workspace");
     expect(root.textContent).toContain("Sidebar");

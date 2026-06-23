@@ -1,7 +1,8 @@
-import { group, route } from "@askrjs/askr/router";
+import { group, lazy, route } from "@askrjs/askr/router";
 import Layout from "./_layout";
-import Login from "./login";
-import Logout from "./logout";
+
+const Login = lazy(() => import("./login"));
+const Logout = lazy(() => import("./logout"));
 
 export function registerAuthRoutes() {
   group({ layout: Layout }, () => {

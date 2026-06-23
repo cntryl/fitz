@@ -64,25 +64,19 @@ const streamColumns: readonly VirtualTableColumn<StreamResourceRow>[] = [
     id: "realm",
     header: "Realm",
     width: "22%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.realm}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
   },
   {
     id: "area",
     header: "Area",
     width: "22%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.area}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
   },
   {
     id: "resource",
     header: "Stream",
     width: "34%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.resource}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.resource}</span>,
   },
   {
     id: "history",
@@ -102,10 +96,7 @@ const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
     header: "Scope",
     width: "28%",
     cellComponent: ({ row }) => (
-      <span
-        class="domain-table-cell-truncate"
-        title={`${row.realm}/${row.area}/${row.resource}`}
-      >
+      <span class="domain-table-cell-truncate" title={`${row.realm}/${row.area}/${row.resource}`}>
         {row.realm}/{row.area}/{row.resource}
       </span>
     ),
@@ -143,7 +134,10 @@ const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
     header: "Metadata",
     width: "14%",
     cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={row.metadata ? describeBytes(row.metadata) : "None"}>
+      <span
+        class="domain-table-cell-truncate"
+        title={row.metadata ? describeBytes(row.metadata) : "None"}
+      >
         {row.metadata ? displayBytes(row.metadata) : "None"}
       </span>
     ),
@@ -309,8 +303,7 @@ export default function StreamHistoryExplorer({
   const canOpenExactResource =
     !recordMode &&
     filteredRows.some(
-      (row) =>
-        row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
+      (row) => row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
     );
   const badgeLabel = recordMode
     ? routeFamilyReady
@@ -428,9 +421,7 @@ export default function StreamHistoryExplorer({
                 <Input
                   id="stream-history-resource"
                   value={resourceValue}
-                  onInput={(event: Event) =>
-                    setResource((event.target as HTMLInputElement).value)
-                  }
+                  onInput={(event: Event) => setResource((event.target as HTMLInputElement).value)}
                   placeholder="ledger-events"
                 />
               </div>
@@ -448,7 +439,13 @@ export default function StreamHistoryExplorer({
               </div>
             </div>
             {recordMode ? (
-              <Flex class="stream-query-actions" justify="between" align="center" gap="3" wrap="wrap">
+              <Flex
+                class="stream-query-actions"
+                justify="between"
+                align="center"
+                gap="3"
+                wrap="wrap"
+              >
                 <p class="domain-muted">
                   Querying {operatorContext.selectedRouteFamily.label}. Stream reads require a
                   concrete numeric Route Family.

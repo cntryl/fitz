@@ -1,5 +1,4 @@
 import DomainHeader from "@/components/shared/domain-header";
-import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
@@ -115,7 +114,7 @@ export default function SchedulePage() {
           upsertPersistenceFailuresTotal: 0,
         },
   );
-  const sidebar = createDomainSidebar({
+  const snapshot = createDomainSidebar({
     data,
     title: "Schedule snapshot",
     description: "Durable timing intent with live handoff context.",
@@ -136,7 +135,7 @@ export default function SchedulePage() {
   });
 
   return (
-    <DomainPageFrame sidebar={sidebar}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Timing intent"
@@ -152,6 +151,8 @@ export default function SchedulePage() {
             tone: overview.refreshing ? "info" : overview.stale ? "warning" : health.tone,
           }}
         />
+
+        {snapshot}
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading schedule overview snapshot..." />
@@ -170,18 +171,6 @@ export default function SchedulePage() {
             {overview.refreshing ? (
               <QueryRefreshingState description="Refreshing schedule overview..." />
             ) : null}
-
-            <DomainWorkflowPanel
-              archetype="Schedule Time Planner"
-              workflows={[
-                "Timeline review",
-                "Execution review",
-                "Failure investigation",
-                "Configuration review",
-              ]}
-              questions={["What should happen?", "What happened?", "What will happen next?"]}
-              diagnostics={["Persistence failures", "Overdue normalization", "Timing internals"]}
-            />
 
             <ScheduleTimePlanner
               error={inventory.error}
@@ -220,35 +209,6 @@ export default function SchedulePage() {
               ]}
             />
 
-            <DomainBarChart
-              title="Schedule signal"
-              description="Active schedules, pending handoffs, subscriptions, and execution rate."
-              label="Schedule state snapshot"
-              scope="Live schedule snapshot"
-              data={[
-                {
-                  label: "Active schedules",
-                  unitLabel: "schedules",
-                  value: data.stats.schedulesActive,
-                },
-                {
-                  label: "Pending fire claims",
-                  unitLabel: "claims",
-                  value: data.stats.pendingFireClaims,
-                },
-                {
-                  label: "Active subscriptions",
-                  unitLabel: "subscriptions",
-                  value: data.stats.subscriptionsActive,
-                },
-                {
-                  label: "Executions / min",
-                  unitLabel: "ops/min",
-                  value: data.stats.executionsPerMinute,
-                },
-              ]}
-            />
-
             <DomainRealmTable
               title="Schedule realms"
               realms={data.realms}
@@ -260,6 +220,18 @@ export default function SchedulePage() {
               error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
+            />
+
+            <DomainWorkflowPanel
+              archetype="Schedule Time Planner"
+              workflows={[
+                "Timeline review",
+                "Execution review",
+                "Failure investigation",
+                "Configuration review",
+              ]}
+              questions={["What should happen?", "What happened?", "What will happen next?"]}
+              diagnostics={["Persistence failures", "Overdue normalization", "Timing internals"]}
             />
           </Stack>
         ) : null}

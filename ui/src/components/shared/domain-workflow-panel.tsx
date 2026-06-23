@@ -1,14 +1,6 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { CheckCircle2Icon, HelpCircleIcon, WrenchIcon } from "@askrjs/lucide";
-import { Flex, Stack } from "@askrjs/themes/layouts";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@askrjs/themes/surfaces";
 
 export interface DomainWorkflowPanelProps {
   archetype: string;
@@ -17,27 +9,19 @@ export interface DomainWorkflowPanelProps {
   workflows: string[];
 }
 
-function WorkflowList({
-  icon,
-  items,
-  title,
-}: {
-  icon: unknown;
-  items: string[];
-  title: string;
-}) {
+function WorkflowList({ icon, items, title }: { icon: unknown; items: string[]; title: string }) {
   return (
-    <Stack gap="2" class="workflow-list">
-      <Flex align="center" gap="2">
+    <section class="workflow-list">
+      <div class="workflow-list-heading">
         {icon}
         <h3>{title}</h3>
-      </Flex>
+      </div>
       <ul>
         <For each={items} by={(item) => item}>
           {(item) => <li>{item}</li>}
         </For>
       </ul>
-    </Stack>
+    </section>
   );
 }
 
@@ -48,33 +32,34 @@ export default function DomainWorkflowPanel({
   workflows,
 }: DomainWorkflowPanelProps) {
   return (
-    <Card padding="sm" variant="default">
-      <CardHeader>
-        <CardTitle>{archetype}</CardTitle>
-        <CardDescription>Operator workflow, health questions, and diagnostics boundaries.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div class="workflow-panel-grid">
-          <WorkflowList
-            title="Workflows"
-            icon={<CheckCircle2Icon aria-hidden="true" size={16} />}
-            items={workflows}
-          />
-          <WorkflowList
-            title="Questions"
-            icon={<HelpCircleIcon aria-hidden="true" size={16} />}
-            items={questions}
-          />
-          <WorkflowList
-            title="Diagnostics"
-            icon={<WrenchIcon aria-hidden="true" size={16} />}
-            items={diagnostics}
-          />
+    <section class="domain-workflow-panel" aria-label={`${archetype} operator guide`}>
+      <div class="domain-workflow-header">
+        <div>
+          <p class="domain-header-kicker">Operator guide</p>
+          <h2>{archetype}</h2>
+          <p>Operator paths, health questions, and escalation boundaries.</p>
         </div>
         <Link class="text-link" href="/diagnostics">
-          Open diagnostics
+          Diagnostics
         </Link>
-      </CardContent>
-    </Card>
+      </div>
+      <div class="workflow-panel-grid">
+        <WorkflowList
+          title="Workflows"
+          icon={<CheckCircle2Icon aria-hidden="true" size={16} />}
+          items={workflows}
+        />
+        <WorkflowList
+          title="Questions"
+          icon={<HelpCircleIcon aria-hidden="true" size={16} />}
+          items={questions}
+        />
+        <WorkflowList
+          title="Diagnostics"
+          icon={<WrenchIcon aria-hidden="true" size={16} />}
+          items={diagnostics}
+        />
+      </div>
+    </section>
   );
 }

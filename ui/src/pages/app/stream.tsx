@@ -1,5 +1,4 @@
 import DomainHeader from "@/components/shared/domain-header";
-import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
@@ -106,7 +105,7 @@ export default function StreamPage() {
     },
   );
   const lagBuckets = data ? summarizeWatermarkLag(data.stats.watermarkLagBuckets) : null;
-  const sidebar = createDomainSidebar({
+  const snapshot = createDomainSidebar({
     data,
     title: "Stream snapshot",
     description: "Durable history and replay posture with live reader coverage.",
@@ -129,7 +128,7 @@ export default function StreamPage() {
   });
 
   return (
-    <DomainPageFrame sidebar={sidebar}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Durable replay"
@@ -145,6 +144,8 @@ export default function StreamPage() {
             tone: overview.refreshing ? "info" : overview.stale ? "warning" : health.tone,
           }}
         />
+
+        {snapshot}
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading stream overview..." />
@@ -163,13 +164,6 @@ export default function StreamPage() {
             {overview.refreshing ? (
               <QueryRefreshingState description="Refreshing stream overview..." />
             ) : null}
-
-            <DomainWorkflowPanel
-              archetype="Stream History Explorer"
-              workflows={["Explore", "Trace", "Replay"]}
-              questions={["What happened?", "Who consumed it?", "Can I replay it?"]}
-              diagnostics={["Watermarks", "Replay lag", "Storage internals"]}
-            />
 
             <StreamHistoryExplorer
               error={inventory.error}
@@ -196,32 +190,6 @@ export default function StreamPage() {
               ]}
             />
 
-            <DomainBarChart
-              title="Stream signal"
-              description="Replay coverage, stream footprint, and lag posture."
-              label="Stream state snapshot"
-              scope="Live stream snapshot"
-              data={[
-                { label: "Active streams", unitLabel: "streams", value: data.stats.streamsActive },
-                {
-                  label: "Active subscriptions",
-                  unitLabel: "subscriptions",
-                  value: data.stats.subscriptionsActive,
-                },
-                { label: "Events", unitLabel: "events", value: data.stats.eventsTotal },
-                {
-                  label: "Watermark lag families",
-                  unitLabel: "families",
-                  value: lagBuckets?.behind ?? 0,
-                },
-                {
-                  label: "Ops / sec",
-                  unitLabel: "ops/sec",
-                  value: data.stats.operationsPerSecond,
-                },
-              ]}
-            />
-
             <DomainRealmTable
               title="Stream realms"
               realms={data.realms}
@@ -233,6 +201,13 @@ export default function StreamPage() {
               error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
+            />
+
+            <DomainWorkflowPanel
+              archetype="Stream History Explorer"
+              workflows={["Explore", "Trace", "Replay"]}
+              questions={["What happened?", "Who consumed it?", "Can I replay it?"]}
+              diagnostics={["Watermarks", "Replay lag", "Storage internals"]}
             />
           </Stack>
         ) : null}

@@ -38,7 +38,9 @@ async function searchRecords(
 }
 
 async function readResourceRecords(
-  request: Required<Pick<StreamRecordSearchRequest, "area" | "realm" | "resource" | "routeFamily">> &
+  request: Required<
+    Pick<StreamRecordSearchRequest, "area" | "realm" | "resource" | "routeFamily">
+  > &
     Pick<StreamRecordSearchRequest, "discriminator" | "fromOffset" | "limit">,
   options: ServiceRequestOptions = {},
 ): Promise<StreamRecordsResponse> {

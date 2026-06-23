@@ -74,25 +74,19 @@ const scheduleColumns: readonly VirtualTableColumn<ScheduleResourceRow>[] = [
     id: "realm",
     header: "Realm",
     width: "22%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.realm}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
   },
   {
     id: "area",
     header: "Area",
     width: "22%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.area}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
   },
   {
     id: "resource",
     header: "Schedule",
     width: "34%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.resource}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.resource}</span>,
   },
   {
     id: "action",
@@ -111,9 +105,7 @@ const executionColumns: readonly VirtualTableColumn<ScheduleExecutionObservation
     id: "operation",
     header: "Operation",
     width: "22%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.operation}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.operation}</span>,
   },
   {
     id: "status",
@@ -167,9 +159,7 @@ const missedColumns: readonly VirtualTableColumn<ScheduleMissedObservation>[] = 
     id: "operation",
     header: "Operation",
     width: "20%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">{row.operation}</span>
-    ),
+    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.operation}</span>,
   },
   {
     id: "fire",
@@ -339,8 +329,9 @@ export default function ScheduleTimePlanner({
   const [plannerQuery, setPlannerQuery] = state("");
   const [observationLoading, setObservationLoading] = state(false);
   const [observationError, setObservationError] = state<unknown>(null);
-  const [executionResult, setExecutionResult] =
-    state<ScheduleExecutionObservationList | null>(null);
+  const [executionResult, setExecutionResult] = state<ScheduleExecutionObservationList | null>(
+    null,
+  );
   const [missedResult, setMissedResult] = state<ScheduleMissedObservationList | null>(null);
   const modeValue = mode();
   const realmValue = realm();
@@ -369,19 +360,14 @@ export default function ScheduleTimePlanner({
     !observationLoadingValue &&
     (modeValue !== "execution" || Boolean(trimmedRealm && trimmedArea && trimmedResource));
   const canOpenExactResource = filteredRows.some(
-    (row) =>
-      row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
+    (row) => row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
   );
   const badgeLabel = observationMode
     ? routeFamilyReady
       ? "Existing API"
       : "Select Route Family"
     : "Existing API";
-  const badgeVariant = observationMode
-    ? routeFamilyReady
-      ? "success"
-      : "warning"
-    : "outline";
+  const badgeVariant = observationMode ? (routeFamilyReady ? "success" : "warning") : "outline";
 
   async function runObservationQuery() {
     if (!canRunObservationQuery || routeFamily === null) {
@@ -490,9 +476,7 @@ export default function ScheduleTimePlanner({
                 <Input
                   id="schedule-planner-resource"
                   value={resourceValue}
-                  onInput={(event: Event) =>
-                    setResource((event.target as HTMLInputElement).value)
-                  }
+                  onInput={(event: Event) => setResource((event.target as HTMLInputElement).value)}
                   placeholder="settlement-run"
                 />
               </div>
@@ -510,7 +494,13 @@ export default function ScheduleTimePlanner({
               </div>
             </div>
             {observationMode ? (
-              <Flex class="schedule-query-actions" justify="between" align="center" gap="3" wrap="wrap">
+              <Flex
+                class="schedule-query-actions"
+                justify="between"
+                align="center"
+                gap="3"
+                wrap="wrap"
+              >
                 <p class="domain-muted">
                   Querying {operatorContext.selectedRouteFamily.label}. Schedule observation reads
                   require a concrete numeric Route Family.

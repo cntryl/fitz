@@ -46,7 +46,9 @@ export default function DiagnosticsPage() {
   const operator = useOperatorContext();
   const searchQuery = route.query.get("q");
   const searchRouteFamily =
-    route.query.get("route_family") ?? route.query.get("routeFamily") ?? operator.selectedRouteFamilyId;
+    route.query.get("route_family") ??
+    route.query.get("routeFamily") ??
+    operator.selectedRouteFamilyId;
   const data = system.data;
 
   return (
@@ -64,7 +66,13 @@ export default function DiagnosticsPage() {
             detail: data
               ? `Snapshot ${formatRelativeTime(data.fetchedAt)} for ${operator.selectedRouteFamily.label}.`
               : `Loading diagnostics for ${operator.selectedRouteFamily.label}.`,
-            label: system.refreshing ? "Refreshing" : system.stale ? "Stale" : data ? "Live" : "Loading",
+            label: system.refreshing
+              ? "Refreshing"
+              : system.stale
+                ? "Stale"
+                : data
+                  ? "Live"
+                  : "Loading",
             tone: system.refreshing ? "info" : system.stale ? "warning" : data ? "success" : "info",
           }}
         />
