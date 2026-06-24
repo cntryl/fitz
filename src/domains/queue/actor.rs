@@ -2318,7 +2318,7 @@ impl QueueActor {
 
         // Check if already expired
         if inflight.expires_at <= now {
-            self.inflight.remove(&id);
+            self.handle_inflight_expired(id);
             return QueueResponse::InflightExpired;
         }
 
@@ -2444,8 +2444,7 @@ impl QueueActor {
 
         // Check if already expired
         if inflight.expires_at <= now {
-            // Remove stale inflight entry
-            self.inflight.remove(&id);
+            self.handle_inflight_expired(id);
             Self::increment_counter(obs::METRIC_QUEUE_COMPLETE_REJECTED);
             let response = QueueResponse::InflightExpired;
             return response;
@@ -4359,6 +4358,91 @@ pub mod tests {
 
         let complete_response = actor.handle_ack_for_session(TEST_SESSION_ID, msg_id, token);
         assert_eq!(complete_response, QueueResponse::NotFound);
+    }
+
+    #[test]
+    fn should_return_message_to_ready_when_extend_observes_expired_inflight() {
+        // Arrange
+        let clock = MockClock::new();
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-expired-extend-redelivery");
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        actor.handle_send(Bytes::from("test message"), None);
+        let reserved = match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
+            QueueResponse::Received { messages } => messages[0].clone(),
+            _ => panic!("Expected Received response"),
+        };
+        clock.advance(Duration::from_secs(31));
+
+        // Act
+        let response =
+            actor.handle_extend_for_session(TEST_SESSION_ID, reserved.id, reserved.token, 60);
+
+        // Assert
+        assert_eq!(response, QueueResponse::InflightExpired);
+        assert_eq!(actor.inflight.len(), 0);
+        assert_eq!(actor.ready_len(), 1);
+        let redelivered = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+        match redelivered {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].id, reserved.id);
+                assert_eq!(messages[0].attempts, 2);
+            }
+            _ => panic!("Expected redelivered message"),
+        }
+    }
+
+    #[test]
+    fn should_return_message_to_ready_when_complete_observes_expired_inflight() {
+        // Arrange
+        let clock = MockClock::new();
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-expired-complete-redelivery");
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            Box::new(clock.clone()),
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        actor.handle_send(Bytes::from("test message"), None);
+        let reserved = match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
+            QueueResponse::Received { messages } => messages[0].clone(),
+            _ => panic!("Expected Received response"),
+        };
+        clock.advance(Duration::from_secs(31));
+
+        // Act
+        let response = actor.handle_ack_for_session(TEST_SESSION_ID, reserved.id, reserved.token);
+
+        // Assert
+        assert_eq!(response, QueueResponse::InflightExpired);
+        assert_eq!(actor.inflight.len(), 0);
+        assert_eq!(actor.ready_len(), 1);
+        let redelivered = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+        match redelivered {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].id, reserved.id);
+                assert_eq!(messages[0].attempts, 2);
+            }
+            _ => panic!("Expected redelivered message"),
+        }
     }
 
     #[test]

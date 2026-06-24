@@ -244,7 +244,7 @@ impl KvActor {
     fn handle_get(
         &mut self,
         tx_id: u64,
-        _route_family: RouteFamily,
+        route_family: RouteFamily,
         resource: String,
         key: Bytes,
     ) -> KvResponse {
@@ -253,15 +253,8 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        // Per CLIENT_SPEC: resource is implicit from transaction context.
-        // If resource is provided, validate it matches; if empty, use bound_resource.
-        if !resource.is_empty() && resource != active.bound_resource {
-            return KvResponse::Error {
-                error: KvError::TxScopeViolation {
-                    expected: active.bound_resource.clone(),
-                    actual: resource,
-                },
-            };
+        if let Err(response) = Self::validate_operation_scope(active, route_family, &resource) {
+            return response;
         }
 
         let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
@@ -285,7 +278,7 @@ impl KvActor {
     fn handle_put(
         &mut self,
         tx_id: u64,
-        _route_family: RouteFamily,
+        route_family: RouteFamily,
         resource: String,
         key: Bytes,
         value: Bytes,
@@ -295,15 +288,8 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        // Per CLIENT_SPEC: resource is implicit from transaction context.
-        // If resource is provided, validate it matches; if empty, use bound_resource.
-        if !resource.is_empty() && resource != active.bound_resource {
-            return KvResponse::Error {
-                error: KvError::TxScopeViolation {
-                    expected: active.bound_resource.clone(),
-                    actual: resource,
-                },
-            };
+        if let Err(response) = Self::validate_operation_scope(active, route_family, &resource) {
+            return response;
         }
 
         let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
@@ -323,7 +309,7 @@ impl KvActor {
     fn handle_insert(
         &mut self,
         tx_id: u64,
-        _route_family: RouteFamily,
+        route_family: RouteFamily,
         resource: String,
         key: Bytes,
         value: Bytes,
@@ -333,15 +319,8 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        // Per CLIENT_SPEC: resource is implicit from transaction context.
-        // If resource is provided, validate it matches; if empty, use bound_resource.
-        if !resource.is_empty() && resource != active.bound_resource {
-            return KvResponse::Error {
-                error: KvError::TxScopeViolation {
-                    expected: active.bound_resource.clone(),
-                    actual: resource,
-                },
-            };
+        if let Err(response) = Self::validate_operation_scope(active, route_family, &resource) {
+            return response;
         }
 
         // Check if key exists first
@@ -376,7 +355,7 @@ impl KvActor {
     fn handle_delete(
         &mut self,
         tx_id: u64,
-        _route_family: RouteFamily,
+        route_family: RouteFamily,
         resource: String,
         key: Bytes,
     ) -> KvResponse {
@@ -385,15 +364,8 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        // Per CLIENT_SPEC: resource is implicit from transaction context.
-        // If resource is provided, validate it matches; if empty, use bound_resource.
-        if !resource.is_empty() && resource != active.bound_resource {
-            return KvResponse::Error {
-                error: KvError::TxScopeViolation {
-                    expected: active.bound_resource.clone(),
-                    actual: resource,
-                },
-            };
+        if let Err(response) = Self::validate_operation_scope(active, route_family, &resource) {
+            return response;
         }
 
         let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
@@ -413,7 +385,7 @@ impl KvActor {
     fn handle_delete_range(
         &mut self,
         tx_id: u64,
-        _route_family: RouteFamily,
+        route_family: RouteFamily,
         resource: String,
         start: Bytes,
         end: Bytes,
@@ -423,15 +395,8 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        // Per CLIENT_SPEC: resource is implicit from transaction context.
-        // If resource is provided, validate it matches; if empty, use bound_resource.
-        if !resource.is_empty() && resource != active.bound_resource {
-            return KvResponse::Error {
-                error: KvError::TxScopeViolation {
-                    expected: active.bound_resource.clone(),
-                    actual: resource,
-                },
-            };
+        if let Err(response) = Self::validate_operation_scope(active, route_family, &resource) {
+            return response;
         }
 
         // Validate range
@@ -459,7 +424,7 @@ impl KvActor {
     fn handle_scan(
         &mut self,
         tx_id: u64,
-        _route_family: RouteFamily,
+        route_family: RouteFamily,
         resource: String,
         query: ScanQuery,
     ) -> KvResponse {
@@ -468,15 +433,8 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        // Per CLIENT_SPEC: resource is implicit from transaction context.
-        // If resource is provided, validate it matches; if empty, use bound_resource.
-        if !resource.is_empty() && resource != active.bound_resource {
-            return KvResponse::Error {
-                error: KvError::TxScopeViolation {
-                    expected: active.bound_resource.clone(),
-                    actual: resource,
-                },
-            };
+        if let Err(response) = Self::validate_operation_scope(active, route_family, &resource) {
+            return response;
         }
 
         let prefix = active.scoped_prefix.clone();
@@ -542,6 +500,36 @@ impl KvActor {
 
     pub fn mutation_count_for_tx(&self, tx_id: u64) -> Option<u64> {
         self.transactions.get(&tx_id).map(|tx| tx.mutation_count)
+    }
+
+    fn validate_operation_scope(
+        active: &ActiveKvTx,
+        route_family: RouteFamily,
+        resource: &str,
+    ) -> Result<(), KvResponse> {
+        let column_family =
+            Self::resolve_column_family(route_family, resource).map_err(|_| KvResponse::Error {
+                error: KvError::InvalidRouteFamily,
+            })?;
+
+        if column_family != active.column_family {
+            return Err(KvResponse::Error {
+                error: KvError::InvalidRouteFamily,
+            });
+        }
+
+        // Per CLIENT_SPEC: resource is implicit from transaction context.
+        // If resource is provided, validate it matches; if empty, use bound_resource.
+        if !resource.is_empty() && resource != active.bound_resource {
+            return Err(KvResponse::Error {
+                error: KvError::TxScopeViolation {
+                    expected: active.bound_resource.clone(),
+                    actual: resource.to_string(),
+                },
+            });
+        }
+
+        Ok(())
     }
 
     pub(crate) fn realm_resource_prefix(realm: &str, area: &str, resource: &str) -> Vec<u8> {
@@ -684,6 +672,41 @@ mod tests {
             response,
             KvResponse::Error {
                 error: KvError::TxScopeViolation { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn should_reject_operation_with_route_family_mismatching_transaction() {
+        // Arrange
+        let mut actor = test_actor();
+        let begin_response = actor.handle(KvMessage::Begin {
+            route_family: RouteFamily::new(1),
+            realm: "test".to_string(),
+            area: "kv".to_string(),
+            resource: "table1".to_string(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        });
+        let tx_id = match begin_response {
+            KvResponse::BeginOk { tx_id } => tx_id,
+            _ => panic!("Expected BeginOk"),
+        };
+
+        // Act
+        let response = actor.handle(KvMessage::Put {
+            tx_id,
+            route_family: RouteFamily::new(2),
+            resource: "table1".to_string(),
+            key: Bytes::from("key"),
+            value: Bytes::from("value"),
+        });
+
+        // Assert
+        assert!(matches!(
+            response,
+            KvResponse::Error {
+                error: KvError::InvalidRouteFamily
             }
         ));
     }

@@ -36,6 +36,7 @@ pub struct EventPayload {
 
 /// Active append session buffered until commit.
 struct AppendSession {
+    family: u64,
     realm: String,
     area: String,
     resource: String,
@@ -51,6 +52,8 @@ type SequenceGuard = Arc<Mutex<()>>;
 type RealmSequenceStateKey = (u64, String);
 type RealmSequenceStateHandle = Arc<Mutex<RealmSequenceState>>;
 type ResourceMetaStateHandle = Arc<Mutex<ResourceMetaState>>;
+
+const ERR_SESSION_ROUTE_FAMILY_MISMATCH: &str = "ERR_SESSION_ROUTE_FAMILY_MISMATCH";
 
 #[derive(Default)]
 struct RealmSequenceState {
@@ -1896,6 +1899,7 @@ impl StreamStore {
         let initial_capacity = self.limits.max_batch_events.min(128);
 
         let session = AppendSession {
+            family,
             realm: realm.to_string(),
             area: area.to_string(),
             resource: resource.to_string(),
@@ -1905,14 +1909,13 @@ impl StreamStore {
             ingest_metadata,
         };
 
-        let _ = family;
         self.sessions.lock().insert(session_id, session);
         Ok(session_id)
     }
 
     pub fn append_to_session(
         &self,
-        _family: u64,
+        family: u64,
         session_id: &SessionId,
         event: EventPayload,
     ) -> Result<(), String> {
@@ -1920,6 +1923,10 @@ impl StreamStore {
         let session = sessions
             .get_mut(session_id)
             .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?;
+
+        if session.family != family {
+            return Err(ERR_SESSION_ROUTE_FAMILY_MISMATCH.to_string());
+        }
 
         if session.event_count + 1 > self.limits.max_batch_events {
             return Err(format!(
@@ -1960,8 +1967,6 @@ impl StreamStore {
         first_realm_offset: u64,
         mode: StreamWriteMode,
     ) -> Result<CommitResponse, String> {
-        self.ensure_layout_activation_for_family(family)?;
-
         self.commit_session_promotion_frontier(
             family,
             session_id,
@@ -1988,13 +1993,24 @@ impl StreamStore {
                 .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?
         };
 
+        if session.family != family {
+            self.sessions.lock().insert(*session_id, session);
+            return Err(ERR_SESSION_ROUTE_FAMILY_MISMATCH.to_string());
+        }
+
         if session.event_count == 0 {
             self.sessions.lock().insert(*session_id, session);
             return Err("ERR_EMPTY_BATCH".to_string());
         }
 
+        if let Err(error) = self.ensure_layout_activation_for_family(family) {
+            self.sessions.lock().insert(*session_id, session);
+            return Err(error);
+        }
+
         let batch_size = session.event_count;
         let AppendSession {
+            family: session_family,
             realm,
             area,
             resource,
@@ -2011,6 +2027,7 @@ impl StreamStore {
                     self.sessions.lock().insert(
                         *session_id,
                         AppendSession {
+                            family: session_family,
                             realm,
                             area,
                             resource,
@@ -2044,6 +2061,7 @@ impl StreamStore {
                 self.sessions.lock().insert(
                     *session_id,
                     AppendSession {
+                        family: session_family,
                         realm,
                         area,
                         resource,
@@ -2170,6 +2188,18 @@ impl StreamStore {
         filter: Option<&StreamFilterSet>,
     ) -> Result<(Vec<StreamReadItem>, super::protocol::ReadCursor), String> {
         self.ensure_layout_activation_for_family(params.family)?;
+
+        if params.limit == 0 {
+            return Ok((
+                Vec::new(),
+                super::protocol::ReadCursor {
+                    last_resource_offset: params.from_offset,
+                    last_area_offset: None,
+                    last_realm_offset: None,
+                    has_more: false,
+                },
+            ));
+        }
 
         self.read_resource_promotion_frontier(params, filter)
     }
@@ -2312,6 +2342,18 @@ impl StreamStore {
     ) -> Result<(Vec<StreamReadItem>, super::protocol::ReadCursor), String> {
         self.ensure_layout_activation_for_family(params.family)?;
 
+        if params.limit == 0 {
+            return Ok((
+                Vec::new(),
+                super::protocol::ReadCursor {
+                    last_resource_offset: 0,
+                    last_area_offset: Some(params.from_offset),
+                    last_realm_offset: None,
+                    has_more: false,
+                },
+            ));
+        }
+
         self.read_area_promotion_frontier(params, filter)
     }
 
@@ -2439,6 +2481,18 @@ impl StreamStore {
         filter: Option<&StreamFilterSet>,
     ) -> Result<(Vec<StreamReadItem>, super::protocol::ReadCursor), String> {
         self.ensure_layout_activation_for_family(family)?;
+
+        if limit == 0 {
+            return Ok((
+                Vec::new(),
+                super::protocol::ReadCursor {
+                    last_resource_offset: 0,
+                    last_area_offset: None,
+                    last_realm_offset: Some(from_offset),
+                    has_more: false,
+                },
+            ));
+        }
 
         self.read_realm_promotion_frontier(family, realm, from_offset, limit, max_bytes, filter)
     }
@@ -2898,6 +2952,117 @@ mod tests {
 
     fn event_records(items: Vec<StreamReadItem>) -> Vec<StreamRecord> {
         items.into_iter().filter_map(event_record).collect()
+    }
+
+    #[test]
+    fn should_reject_append_given_stream_session_route_family_mismatch() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1, 2]));
+        let session_id = store
+            .begin_session(1, "test", "events", "orders", None)
+            .expect("begin stream session");
+
+        // Act
+        let result = store.append_to_session(
+            2,
+            &session_id,
+            EventPayload {
+                body: Bytes::from_static(b"wrong-family"),
+                metadata: None,
+                discriminator: None,
+            },
+        );
+
+        // Assert
+        assert_eq!(
+            result.expect_err("family mismatch append should fail"),
+            "ERR_SESSION_ROUTE_FAMILY_MISMATCH"
+        );
+        assert_eq!(store.session_event_count(&session_id), Some(0));
+    }
+
+    #[test]
+    fn should_preserve_session_given_commit_route_family_mismatch() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1, 2]));
+        let session_id = store
+            .begin_session(1, "test", "events", "orders", None)
+            .expect("begin stream session");
+        store
+            .append_to_session(
+                1,
+                &session_id,
+                EventPayload {
+                    body: Bytes::from_static(b"right-family"),
+                    metadata: None,
+                    discriminator: None,
+                },
+            )
+            .expect("append in original family");
+
+        // Act
+        let result = store.commit_session(2, &session_id, 0, 0, 0, StreamWriteMode::Buffered);
+
+        // Assert
+        assert_eq!(
+            result.expect_err("family mismatch commit should fail"),
+            "ERR_SESSION_ROUTE_FAMILY_MISMATCH"
+        );
+        assert_eq!(store.session_event_count(&session_id), Some(1));
+        assert_eq!(read_layout_marker(store.db.as_ref(), 2), None);
+        let commit = store
+            .commit_session(1, &session_id, 0, 0, 0, StreamWriteMode::Buffered)
+            .expect("commit preserved session in original family");
+        assert_eq!(commit.first_resource_offset, 0);
+    }
+
+    #[test]
+    fn should_return_empty_direct_store_reads_given_zero_limit_with_committed_data() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let events = single_event(b"first");
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("commit stream record");
+
+        // Act
+        let (resource_items, resource_cursor) = store
+            .read_resource(&ReadResourceParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                from_offset: 0,
+                limit: 0,
+                max_bytes: None,
+            })
+            .expect("read resource with zero limit");
+        let (area_items, area_cursor) = store
+            .read_area(1, "test", "events", 0, 0, None)
+            .expect("read area with zero limit");
+        let (realm_items, realm_cursor) = store
+            .read_realm(1, "test", 0, 0, None)
+            .expect("read realm with zero limit");
+
+        // Assert
+        assert!(resource_items.is_empty());
+        assert!(!resource_cursor.has_more);
+        assert_eq!(resource_cursor.last_resource_offset, 0);
+        assert!(area_items.is_empty());
+        assert!(!area_cursor.has_more);
+        assert_eq!(area_cursor.last_area_offset, Some(0));
+        assert!(realm_items.is_empty());
+        assert!(!realm_cursor.has_more);
+        assert_eq!(realm_cursor.last_realm_offset, Some(0));
     }
 
     #[test]

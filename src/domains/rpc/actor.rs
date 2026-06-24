@@ -242,6 +242,10 @@ impl RpcRouteActor {
 
     /// Handle worker registration
     fn handle_register_worker(&mut self, worker_addr: RouteAddress, ctx: &mut Context<Self>) {
+        if self.worker_slot_for_addr(&worker_addr).is_some() {
+            return;
+        }
+
         let worker_slot = self.allocate_worker_slot(worker_addr);
 
         // Add to ready queue (new workers are available)
@@ -705,6 +709,25 @@ mod tests {
         // Assert — worker took one pending request (max_concurrent=1)
         assert_eq!(actor.pending_count(), 1);
         assert_eq!(actor.active_leases(), 1);
+    }
+
+    #[test]
+    fn should_ignore_duplicate_worker_registration_given_same_worker_address() {
+        // Arrange
+        let mut actor = RpcRouteActor::new(RouteFamily::new(1));
+        let (mut ctx, _router) = make_ctx();
+        let worker_addr = make_worker_addr(1);
+
+        // Act
+        actor.handle_register_worker(worker_addr.clone(), &mut ctx);
+        actor.handle_register_worker(worker_addr, &mut ctx);
+        actor.handle_request(make_request(1), &mut ctx);
+        actor.handle_request(make_request(1), &mut ctx);
+
+        // Assert
+        assert_eq!(actor.worker_count(), 1);
+        assert_eq!(actor.active_leases(), 1);
+        assert_eq!(actor.pending_count(), 1);
     }
 
     #[test]

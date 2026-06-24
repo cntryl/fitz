@@ -121,8 +121,8 @@ pub struct LeaseActor {
     /// Maximum pending acquirers per lease (default 100)
     max_queue_depth: usize,
 
-    /// Pending availability notification (for debouncing)
-    pending_publish: Option<crate::runtime::DomainPublishEvent>,
+    /// Pending availability notifications (for debouncing)
+    pending_publish: Vec<crate::runtime::DomainPublishEvent>,
 
     /// Timer ID for debounced availability notifications
     notify_timer: Option<TimerId>,
@@ -145,7 +145,7 @@ impl LeaseActor {
             clock,
             max_wait_seconds: 30,
             max_queue_depth: 100,
-            pending_publish: None,
+            pending_publish: Vec::new(),
             notify_timer: None,
         }
     }
@@ -166,7 +166,7 @@ impl LeaseActor {
             clock,
             max_wait_seconds,
             max_queue_depth,
-            pending_publish: None,
+            pending_publish: Vec::new(),
             notify_timer: None,
         }
     }
@@ -214,7 +214,7 @@ impl LeaseActor {
                     return None;
                 }
                 match LeaseKey::from_route(family_id, &route) {
-                    Some(key) => self.handle_extend(key, owner_id, fencing_token, ttl_secs),
+                    Some(key) => self.handle_extend(key, owner_id, fencing_token, ttl_secs, ctx),
                     None => LeaseResponse::NotFound,
                 }
             }
@@ -460,6 +460,7 @@ impl LeaseActor {
         owner_id: String,
         fencing_token: u64,
         ttl_secs: u64,
+        ctx: &mut Context<LeaseActor>,
     ) -> LeaseResponse {
         let now = self.clock.now_instant();
         let ttl = Duration::from_secs(ttl_secs);
@@ -488,7 +489,12 @@ impl LeaseActor {
 
         match decision {
             ExtendDecision::NotHeld => LeaseResponse::NotHeld,
-            ExtendDecision::Expired => LeaseResponse::Expired,
+            ExtendDecision::Expired => {
+                self.leases.remove(&key);
+                self.schedule_availability_notification(ctx, key.to_route());
+                self.grant_next_waiter(&key, ctx);
+                LeaseResponse::Expired
+            }
             ExtendDecision::Fenced(current_token) => LeaseResponse::Fenced { current_token },
             ExtendDecision::Extend => {
                 let new_token = self.next_fencing_token();
@@ -577,20 +583,21 @@ impl LeaseActor {
         ctx: &mut Context<LeaseActor>,
         route: crate::runtime::routing::Route,
     ) {
-        if self.notify_timer.is_some() {
-            // Already scheduled - timer will handle transmission
-            return;
+        // Publish on the specific lease route (clients subscribe to the lease route itself)
+        let event =
+            crate::runtime::DomainPublishEvent::new(self.family, route, bytes::Bytes::new());
+        if !self
+            .pending_publish
+            .iter()
+            .any(|pending| pending.route == event.route)
+        {
+            self.pending_publish.push(event);
         }
 
-        // Publish on the specific lease route (clients subscribe to the lease route itself)
-        self.pending_publish = Some(crate::runtime::DomainPublishEvent::new(
-            self.family,
-            route,
-            bytes::Bytes::new(),
-        ));
-
         // Schedule timer for 25ms debounce
-        self.notify_timer = Some(ctx.timer_manager().schedule_once(Duration::from_millis(25)));
+        if self.notify_timer.is_none() {
+            self.notify_timer = Some(ctx.timer_manager().schedule_once(Duration::from_millis(25)));
+        }
     }
 
     /// Remove an expired lease and promote queued waiters before new acquires.
@@ -641,7 +648,8 @@ impl Actor for LeaseActor {
         // Check if this is the availability notification timer
         if Some(timer_id) == self.notify_timer {
             self.notify_timer = None;
-            if let Some(event) = self.pending_publish.take() {
+            let events = std::mem::take(&mut self.pending_publish);
+            for event in events {
                 ctx.publish_event(event).ok();
             }
             return;
@@ -726,6 +734,7 @@ impl LeaseActor {
 mod tests {
     use super::*;
     use crate::runtime::routing::RouteFamily;
+    use crate::runtime::{DeliveryError, Envelope, MailboxSink};
     use parking_lot::Mutex;
     use std::sync::Arc;
 
@@ -754,6 +763,23 @@ mod tests {
 
         fn now_epoch_ms(&self) -> u64 {
             0
+        }
+    }
+
+    struct CapturedPublishSink {
+        events: Arc<Mutex<Vec<crate::runtime::DomainPublishEvent>>>,
+    }
+
+    impl MailboxSink for CapturedPublishSink {
+        fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+            if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
+                self.events.lock().push(event.clone());
+            }
+            Ok(())
+        }
+
+        fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+            self.deliver(envelope)
         }
     }
 
@@ -903,6 +929,57 @@ mod tests {
     }
 
     #[test]
+    fn should_publish_each_expired_lease_route_given_batched_tick() {
+        // Arrange
+        let clock = MockClock::new();
+        let clock_ref = Arc::new(clock);
+        let mut actor = LeaseActor::with_clock(
+            RouteFamily::new(1),
+            Box::new(MockClock {
+                now: clock_ref.now.clone(),
+            }),
+        );
+        let router = Arc::new(crate::runtime::router::Router::new());
+        let captured_events = Arc::new(Mutex::new(Vec::new()));
+        router.register_domain_pattern(
+            "lease",
+            Arc::new(CapturedPublishSink {
+                events: captured_events.clone(),
+            }),
+        );
+        let address = crate::runtime::routing::RouteAddress::new(
+            RouteFamily::new(1),
+            crate::runtime::routing::Route::new("lease://actor"),
+        );
+        let mut ctx = Context::new(address, router);
+        let key_a = test_key("acme", "locks", "resource-a");
+        let key_b = test_key("acme", "locks", "resource-b");
+        actor.handle_acquire(key_a.clone(), "owner-a".to_string(), 5, 0, None, &mut ctx);
+        actor.handle_acquire(key_b.clone(), "owner-b".to_string(), 5, 0, None, &mut ctx);
+        clock_ref.advance(Duration::from_secs(10));
+
+        // Act
+        actor.handle_message(LeaseMessage::Tick, &mut ctx);
+        let timer_id = actor.notify_timer.expect("notification timer");
+        actor.on_timer(timer_id, &mut ctx);
+
+        // Assert
+        let mut routes = captured_events
+            .lock()
+            .iter()
+            .map(|event| event.route.as_str().to_string())
+            .collect::<Vec<_>>();
+        routes.sort();
+        assert_eq!(
+            routes,
+            vec![
+                "lease://acme/locks/resource-a".to_string(),
+                "lease://acme/locks/resource-b".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn should_issue_monotonic_fencing_tokens() {
         // Arrange
         let clock = MockClock::new();
@@ -947,6 +1024,7 @@ mod tests {
     fn should_renew_lease_with_valid_token() {
         // Arrange
         let mut actor = LeaseActor::new(RouteFamily::new(1));
+        let mut ctx = crate::testkit::lease::create_test_lease_context(None);
         let response = test_acquire(
             &mut actor,
             test_key("acme", "locks", "test1"),
@@ -964,6 +1042,7 @@ mod tests {
             "owner1".to_string(),
             token,
             60,
+            &mut ctx,
         );
 
         // Assert
@@ -979,6 +1058,7 @@ mod tests {
     fn should_reject_renew_with_wrong_token() {
         // Arrange
         let mut actor = LeaseActor::new(RouteFamily::new(1));
+        let mut ctx = crate::testkit::lease::create_test_lease_context(None);
         test_acquire(
             &mut actor,
             test_key("acme", "locks", "test1"),
@@ -992,6 +1072,7 @@ mod tests {
             "owner1".to_string(),
             999,
             60,
+            &mut ctx,
         );
 
         // Assert
@@ -1006,6 +1087,7 @@ mod tests {
         // Arrange
         let clock = MockClock::new();
         let clock_ref = Arc::new(clock);
+        let mut ctx = crate::testkit::lease::create_test_lease_context(None);
         let mut actor = LeaseActor::with_clock(
             RouteFamily::new(1),
             Box::new(MockClock {
@@ -1033,6 +1115,7 @@ mod tests {
             "owner1".to_string(),
             token,
             60,
+            &mut ctx,
         );
 
         // Assert
@@ -1416,6 +1499,60 @@ mod tests {
                 assert_eq!(pending_waiters, 0);
             }
             _ => panic!("Expected Status after promotion"),
+        }
+    }
+
+    #[test]
+    fn should_promote_waiter_when_extend_observes_expired_holder() {
+        // Arrange
+        let clock = MockClock::new();
+        let clock_ref = Arc::new(clock);
+        let mut actor = LeaseActor::with_clock(
+            RouteFamily::new(1),
+            Box::new(MockClock {
+                now: clock_ref.now.clone(),
+            }),
+        );
+        let mut ctx = crate::testkit::lease::create_test_lease_context(None);
+        let key = test_key("race", "locks", "extend-expired");
+
+        let acquired =
+            actor.handle_acquire(key.clone(), "owner1".to_string(), 5, 0, None, &mut ctx);
+        let holder_token = match acquired {
+            LeaseResponse::Acquired { fencing_token } => fencing_token,
+            _ => panic!("expected holder acquire"),
+        };
+        let queued =
+            actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 10, None, &mut ctx);
+        let waiter_token = match queued {
+            LeaseResponse::Queued { fencing_token } => fencing_token,
+            _ => panic!("expected queued waiter"),
+        };
+        clock_ref.advance(Duration::from_secs(10));
+
+        // Act
+        let response = actor.handle_extend(
+            key.clone(),
+            "owner1".to_string(),
+            holder_token,
+            30,
+            &mut ctx,
+        );
+
+        // Assert
+        assert_eq!(response, LeaseResponse::Expired);
+        match actor.handle_query(key) {
+            LeaseResponse::Status {
+                owner_id,
+                fencing_token,
+                pending_waiters,
+                ..
+            } => {
+                assert_eq!(owner_id, "owner2");
+                assert_eq!(fencing_token, waiter_token);
+                assert_eq!(pending_waiters, 0);
+            }
+            _ => panic!("expected waiter to own lease after expired extend"),
         }
     }
 

@@ -309,6 +309,12 @@ impl RpcRouteState {
     }
 
     fn register_worker(&mut self, worker: RpcWorker) {
+        if self.workers.iter().any(|existing| {
+            existing.addr == worker.addr && existing.session_id == worker.session_id
+        }) {
+            return;
+        }
+
         let index = self.workers.len();
         self.workers.push(worker);
         if self.workers[index].is_available() {
@@ -2454,6 +2460,22 @@ mod tests {
         // Assert
         assert_eq!(worker_count, 1);
         assert_eq!(state.route_count(), 1);
+    }
+
+    #[test]
+    fn should_ignore_duplicate_worker_registration_given_same_session_and_route() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let route = Route::new("rpc://bench/system/resource/operation");
+        let mut route_state = RpcRouteState::new();
+        let worker = test_rpc_worker(family, &route, 10);
+
+        // Act
+        route_state.register_worker(worker.clone());
+        route_state.register_worker(worker);
+
+        // Assert
+        assert_eq!(route_state.worker_count(), 1);
     }
 
     #[test]

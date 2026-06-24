@@ -879,38 +879,50 @@ impl LeaseDomainSink {
 
         let now = Instant::now();
         let ttl = Duration::from_secs(ttl_secs);
-        let mut leases = self.leases.lock();
         let mut updated_state = None;
+        let mut expired_state = None;
 
-        let response = match leases.get_mut(&key) {
-            None => LeaseResponse::NotHeld,
-            Some(state) => {
-                if state.expiry <= now {
+        let response = {
+            let mut leases = self.leases.lock();
+
+            match leases.get(&key).cloned() {
+                None => LeaseResponse::NotHeld,
+                Some(state) if state.expiry <= now => {
+                    leases.remove(&key);
+                    expired_state = Some(state);
                     LeaseResponse::Expired
-                } else if state.owner_id != owner_id {
-                    LeaseResponse::NotHeld
-                } else if state.fencing_token != fencing_token {
+                }
+                Some(state) if state.owner_id != owner_id => LeaseResponse::NotHeld,
+                Some(state) if state.fencing_token != fencing_token => {
                     self.counter_inc("fitz_lease_invalid_token_rejects_total");
                     LeaseResponse::Fenced {
                         current_token: state.fencing_token,
                     }
-                } else {
+                }
+                Some(_) => {
                     let new_token = self.next_fencing_token();
-                    state.expiry = now + ttl;
-                    state.fencing_token = new_token;
-                    state.renewals = state.renewals.saturating_add(1);
-                    self.counter_inc("fitz_lease_ownership_churn_total");
-                    updated_state = Some(state.clone());
+                    if let Some(state) = leases.get_mut(&key) {
+                        state.expiry = now + ttl;
+                        state.fencing_token = new_token;
+                        state.renewals = state.renewals.saturating_add(1);
+                        updated_state = Some(state.clone());
+                    }
                     LeaseResponse::Extended {
                         fencing_token: new_token,
                     }
                 }
             }
         };
-        drop(leases);
 
         if let Some(state) = updated_state.as_ref() {
+            self.counter_inc("fitz_lease_ownership_churn_total");
             self.upsert_admin_lease(&key, state);
+        }
+        if let Some(state) = expired_state {
+            self.untrack_session_lease(state.owner_session_id, &key);
+            self.remove_admin_lease(&key);
+            self.notify_lease_change(&key);
+            self.grant_next_waiter_if_available(&key, now);
         }
 
         response
@@ -1211,6 +1223,7 @@ impl MailboxSink for LeaseDomainSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domains::lease::protocol::{LeaseKey, LeaseResponse};
     use crate::protocol::frame::ChannelId;
     use crate::protocol::frame_context::FrameContext;
     use crate::protocol::payload_codec::PayloadEncoder;
@@ -1258,6 +1271,10 @@ mod tests {
 
     fn drain_mailbox(mailbox: &Mailbox) {
         while mailbox.receiver().try_recv().is_ok() {}
+    }
+
+    fn lease_key(family: RouteFamily, route: &str) -> LeaseKey {
+        LeaseKey::from_route(family, &Route::new(route)).expect("valid lease route")
     }
 
     #[test]
@@ -1396,6 +1413,81 @@ mod tests {
         assert_eq!(leases.len(), 1);
         assert_eq!(leases[0].resource, "resource-b");
         assert_eq!(leases[0].owner_session_id, "session:8");
+    }
+
+    #[test]
+    fn should_promote_waiter_given_extend_observes_expired_lease() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let session_id = 7;
+        let waiter_session_id = 8;
+        let lease_route = "lease://acme/locks/extend-expired";
+        let key = lease_key(family, lease_route);
+        let lease_address = RouteAddress::new(family, Route::new(lease_route));
+        let holder_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let waiter_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+        let router = Arc::new(Router::new());
+        let waiter_mailbox = Arc::new(Mailbox::new(8));
+        router.register(waiter_address.clone(), waiter_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = LeaseDomainSink::new(router, admin_read_model.clone());
+
+        let holder_response = sink.handle_acquire(LeaseAcquireRequest {
+            key: key.clone(),
+            owner_session_id: session_id,
+            owner_id: "owner1".to_string(),
+            ttl_secs: 30,
+            wait_seconds: 0,
+            reply_source: lease_address.clone(),
+            reply_destination: Some(holder_address),
+            channel_id: ChannelId::Sub,
+            route_family: family,
+        });
+        let holder_token = match holder_response {
+            LeaseResponse::Acquired { fencing_token } => fencing_token,
+            _ => panic!("expected holder acquire"),
+        };
+        let waiter_response = sink.handle_acquire(LeaseAcquireRequest {
+            key: key.clone(),
+            owner_session_id: waiter_session_id,
+            owner_id: "owner2".to_string(),
+            ttl_secs: 30,
+            wait_seconds: 30,
+            reply_source: lease_address,
+            reply_destination: Some(waiter_address),
+            channel_id: ChannelId::Sub,
+            route_family: family,
+        });
+        let waiter_token = match waiter_response {
+            LeaseResponse::Queued { fencing_token } => fencing_token,
+            _ => panic!("expected queued waiter"),
+        };
+        sink.leases.lock().get_mut(&key).expect("lease").expiry = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .expect("past instant");
+
+        // Act
+        let response = sink.handle_extend(key.clone(), "owner1".to_string(), holder_token, 30);
+        let leases = admin_read_model.leases(None);
+        let waiter_delivery = waiter_mailbox
+            .receiver()
+            .try_recv()
+            .expect("waiter acquired response");
+
+        // Assert
+        assert_eq!(response, LeaseResponse::Expired);
+        assert_eq!(sink.lease_count(), 1);
+        assert_eq!(sink.pending_waiter_count(&key), 0);
+        assert_eq!(leases.len(), 1);
+        assert_eq!(leases[0].owner_session_id, "owner2");
+        assert_eq!(leases[0].fencing_token, waiter_token);
+        assert!(!sink.session_leases.lock().contains_key(&session_id));
+        assert!(sink
+            .session_leases
+            .lock()
+            .get(&waiter_session_id)
+            .is_some_and(|leases| leases.contains(&key)));
+        assert!(waiter_delivery.payload::<FrameContext>().is_some());
     }
 
     #[test]
