@@ -1,4 +1,4 @@
-import { currentRoute, Link } from "@askrjs/askr/router";
+import { Link } from "@askrjs/askr/router";
 import { MoonIcon, ShieldIcon, SunIcon } from "@askrjs/lucide";
 import { Badge } from "@askrjs/themes/surfaces";
 import { Container, Flex } from "@askrjs/themes/layouts";
@@ -7,8 +7,6 @@ import { ThemeToggle } from "@askrjs/themes/theme";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 
 export default function Layout({ children }: { children?: unknown }) {
-  const route = currentRoute();
-  const routeKey = route.path || "/";
   const currentSession = createCurrentSessionQuery();
   const accountLabel = currentSession.data?.authenticated ? currentSession.data.username : "Guest";
 
@@ -57,7 +55,7 @@ export default function Layout({ children }: { children?: unknown }) {
           justify="center"
           style={{ minHeight: "calc(100dvh - var(--ak-layout-navbar-height, 60px))" }}
         >
-          <main id="main-content" key={routeKey} class="route-transition-surface">
+          <main id="main-content" class="route-transition-surface">
             {children}
           </main>
         </Flex>

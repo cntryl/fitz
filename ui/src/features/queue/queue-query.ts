@@ -1,7 +1,9 @@
 import { createQuery, queryScope } from "@askrjs/askr/data";
 import { queueService } from "./queue-service";
+import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
 import type {
   DeadLetterFilters,
+  DeadLetterMessage,
   QueueInventory,
   QueueOverview,
   QueueResourceRef,
@@ -10,6 +12,7 @@ import type {
 export type { DeadLetterFilters, DeadLetterMessage, QueueResourceRef } from "./queue-models";
 
 const queueQueries = queryScope("queue");
+const queueDeadLetterFetches = new Map<string, QueryFetch<DeadLetterMessage[]>>();
 
 export const QUEUE_OVERVIEW_KEY = queueQueries.key("overview");
 export const QUEUE_INVENTORY_KEY = queueQueries.key("inventory");
@@ -39,14 +42,14 @@ export function queueDeadLettersQueryPrefix(resourceRef: QueueResourceRef) {
 export function createQueueOverviewQuery() {
   return createQuery<QueueOverview>({
     key: QUEUE_OVERVIEW_KEY,
-    fetch: ({ signal }) => queueService.getOverview({ signal }),
+    fetch: queueService.getOverview,
   });
 }
 
 export function createQueueInventoryQuery() {
   return createQuery<QueueInventory>({
     key: QUEUE_INVENTORY_KEY,
-    fetch: ({ signal }) => queueService.listInventory({ signal }),
+    fetch: queueService.listInventory,
   });
 }
 
@@ -54,8 +57,12 @@ export function createQueueDeadLettersQuery(
   resourceRef: QueueResourceRef,
   filters: DeadLetterFilters = {},
 ) {
+  const key = queueDeadLettersQueryKey(resourceRef, filters);
+
   return createQuery({
-    key: queueDeadLettersQueryKey(resourceRef, filters),
-    fetch: ({ signal }) => queueService.listDeadLetters(resourceRef, filters, { signal }),
+    key,
+    fetch: stableQueryFetch(queueDeadLetterFetches, key, () => ({ signal }) =>
+      queueService.listDeadLetters(resourceRef, filters, { signal }),
+    ),
   });
 }

@@ -9,6 +9,6 @@ const SCHEDULE_OVERVIEW_KEY = scheduleQueries.key("overview");
 export function createScheduleOverviewQuery() {
   return createQuery<ScheduleOverview>({
     key: SCHEDULE_OVERVIEW_KEY,
-    fetch: ({ signal }) => scheduleService.getOverview({ signal }),
+    fetch: scheduleService.getOverview,
   });
 }

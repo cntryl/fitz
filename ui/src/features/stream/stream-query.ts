@@ -9,6 +9,6 @@ const STREAM_OVERVIEW_KEY = streamQueries.key("overview");
 export function createStreamOverviewQuery() {
   return createQuery<StreamOverview>({
     key: STREAM_OVERVIEW_KEY,
-    fetch: ({ signal }) => streamService.getOverview({ signal }),
+    fetch: streamService.getOverview,
   });
 }

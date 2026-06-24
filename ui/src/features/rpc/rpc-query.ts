@@ -9,6 +9,6 @@ const RPC_OVERVIEW_KEY = rpcQueries.key("overview");
 export function createRpcOverviewQuery() {
   return createQuery<RpcOverview>({
     key: RPC_OVERVIEW_KEY,
-    fetch: ({ signal }) => rpcService.getOverview({ signal }),
+    fetch: rpcService.getOverview,
   });
 }

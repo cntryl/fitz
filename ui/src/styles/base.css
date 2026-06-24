@@ -175,15 +175,4 @@ a {
 
 .route-transition-surface {
   min-width: 0;
-  animation: route-enter 140ms var(--ak-ease-standard, ease) both;
-}
-
-@keyframes route-enter {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
 }

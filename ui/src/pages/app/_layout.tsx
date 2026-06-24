@@ -1,6 +1,6 @@
 import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
-import { currentRoute, Link, navigate } from "@askrjs/askr/router";
+import { Link, navigate } from "@askrjs/askr/router";
 import {
   ChevronDownIcon,
   LogOutIcon,
@@ -31,11 +31,13 @@ import {
   readInitialRouteFamily,
 } from "@/shared/operator-context";
 
+const overviewLinks = shellLinks.filter((link) => link.href === "/");
+const utilityLinks = shellLinks.filter((link) => link.href !== "/");
+const sidebarDomainLinks = [...domainLinks].sort((first, second) =>
+  first.title.localeCompare(second.title),
+);
+
 export default function Layout({ children }: { children?: unknown }) {
-  const route = currentRoute();
-  const routeKey = route.path || "/";
-  const overviewLinks = shellLinks.filter((link) => link.href === "/");
-  const utilityLinks = shellLinks.filter((link) => link.href !== "/");
   const currentSession = createCurrentSessionQuery();
   const topology = createMessagingTopologyQuery();
   const [selectedRouteFamilyId, setSelectedRouteFamilyId] = state(readInitialRouteFamily());
@@ -79,16 +81,10 @@ export default function Layout({ children }: { children?: unknown }) {
                     </DropdownTrigger>
                     <DropdownPortal>
                       <DropdownContent align="start" sideOffset={8}>
-                        <DropdownLabel>Route Family context</DropdownLabel>
                         <For each={operator.routeFamilies} by={(family) => family.id}>
                           {(family) => (
                             <DropdownItem onSelect={() => operator.setRouteFamily(family.id)}>
-                              <span class="navbar-domain-menu-copy">
-                                <span class="navbar-domain-menu-title">{family.label}</span>
-                                <span class="navbar-domain-menu-description">
-                                  {family.description}
-                                </span>
-                              </span>
+                              {family.label}
                             </DropdownItem>
                           )}
                         </For>
@@ -164,7 +160,7 @@ export default function Layout({ children }: { children?: unknown }) {
               </NavGroup>
 
               <NavGroup label="Domains">
-                <For each={domainLinks} by={(link) => link.href}>
+                <For each={sidebarDomainLinks} by={(link) => link.href}>
                   {(link) => (
                     <NavLink href={link.href} match="prefix">
                       <link.icon size={16} />
@@ -186,7 +182,7 @@ export default function Layout({ children }: { children?: unknown }) {
               </NavGroup>
             </Sidebar>
 
-            <Container key={routeKey} size="xl" class="route-transition-surface">
+            <Container size="xl" class="route-transition-surface">
               {children}
             </Container>
           </div>

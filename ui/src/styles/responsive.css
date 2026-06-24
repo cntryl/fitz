@@ -1,9 +1,3 @@
-@media (prefers-reduced-motion: reduce) {
-  .route-transition-surface {
-    animation: none;
-  }
-}
-
 @media (max-width: 48rem) {
   :where(.navbar-panel, [data-slot="navbar-panel"]) {
     gap: var(--fitz-control-gap);

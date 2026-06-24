@@ -1,8 +1,11 @@
 import { createQuery, queryScope } from "@askrjs/askr/data";
 import { resourceService } from "./resource-service";
 import type { DomainId, ResourceDetail, ResourceInventory, ResourceRef } from "./resource-models";
+import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
 
 const resourceQueries = queryScope("resource");
+const resourceInventoryFetches = new Map<string, QueryFetch<ResourceInventory>>();
+const resourceDetailFetches = new Map<string, QueryFetch<ResourceDetail>>();
 
 function resourceKey(domain: DomainId, ref: ResourceRef, against: ResourceRef | null) {
   return resourceQueries.key(
@@ -19,9 +22,13 @@ function resourceKey(domain: DomainId, ref: ResourceRef, against: ResourceRef | 
 }
 
 export function createResourceInventoryQuery(domain: DomainId) {
+  const key = resourceQueries.key("inventory", domain);
+
   return createQuery<ResourceInventory>({
-    key: resourceQueries.key("inventory", domain),
-    fetch: ({ signal }) => resourceService.getResourceInventory(domain, { signal }),
+    key,
+    fetch: stableQueryFetch(resourceInventoryFetches, key, () => ({ signal }) =>
+      resourceService.getResourceInventory(domain, { signal }),
+    ),
   });
 }
 
@@ -30,9 +37,13 @@ export function createResourceQuery(
   ref: ResourceRef,
   against: ResourceRef | null,
 ) {
+  const key = resourceKey(domain, ref, against);
+
   return createQuery<ResourceDetail>({
-    key: resourceKey(domain, ref, against),
-    fetch: ({ signal }) => resourceService.getResource(domain, ref, against, { signal }),
+    key,
+    fetch: stableQueryFetch(resourceDetailFetches, key, () => ({ signal }) =>
+      resourceService.getResource(domain, ref, against, { signal }),
+    ),
   });
 }
 

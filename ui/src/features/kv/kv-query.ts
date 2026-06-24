@@ -9,6 +9,6 @@ const KV_OVERVIEW_KEY = kvQueries.key("overview");
 export function createKvOverviewQuery() {
   return createQuery<KvOverview>({
     key: KV_OVERVIEW_KEY,
-    fetch: ({ signal }) => kvService.getOverview({ signal }),
+    fetch: kvService.getOverview,
   });
 }

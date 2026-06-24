@@ -9,6 +9,6 @@ const NOTICE_OVERVIEW_KEY = noticeQueries.key("overview");
 export function createNoticeOverviewQuery() {
   return createQuery<NoticeOverview>({
     key: NOTICE_OVERVIEW_KEY,
-    fetch: ({ signal }) => noticeService.getOverview({ signal }),
+    fetch: noticeService.getOverview,
   });
 }

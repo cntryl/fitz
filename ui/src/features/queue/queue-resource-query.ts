@@ -1,5 +1,6 @@
 import { createQuery, queryScope } from "@askrjs/askr/data";
 import { queueResourceService } from "./queue-resource-service";
+import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
 import type {
   QueueResourceComparison,
   QueueResourceComparisonSide,
@@ -11,6 +12,9 @@ import type {
 export type { QueueResourceRef } from "./queue-resource-models";
 
 const queueResourceQueries = queryScope("queue");
+const queueResourceFetches = new Map<string, QueryFetch<QueueResourceOverview>>();
+const queueResourceTimelineFetches = new Map<string, QueryFetch<QueueResourceTimeline>>();
+const queueResourceComparisonFetches = new Map<string, QueryFetch<QueueResourceComparison>>();
 
 export function queueResourceQueryKey(resourceRef: QueueResourceRef) {
   return queueResourceQueries.key(
@@ -49,16 +53,24 @@ export function queueResourceComparisonQueryKey(
 }
 
 export function createQueueResourceQuery(resourceRef: QueueResourceRef) {
+  const key = queueResourceQueryKey(resourceRef);
+
   return createQuery<QueueResourceOverview>({
-    key: queueResourceQueryKey(resourceRef),
-    fetch: ({ signal }) => queueResourceService.getResource(resourceRef, { signal }),
+    key,
+    fetch: stableQueryFetch(queueResourceFetches, key, () => ({ signal }) =>
+      queueResourceService.getResource(resourceRef, { signal }),
+    ),
   });
 }
 
 export function createQueueResourceTimelineQuery(resourceRef: QueueResourceRef) {
+  const key = queueResourceTimelineQueryKey(resourceRef);
+
   return createQuery<QueueResourceTimeline>({
-    key: queueResourceTimelineQueryKey(resourceRef),
-    fetch: ({ signal }) => queueResourceService.getTimeline(resourceRef, { signal }),
+    key,
+    fetch: stableQueryFetch(queueResourceTimelineFetches, key, () => ({ signal }) =>
+      queueResourceService.getTimeline(resourceRef, { signal }),
+    ),
   });
 }
 
@@ -66,9 +78,11 @@ export function createQueueResourceComparisonQuery(
   resourceRef: QueueResourceRef,
   againstResourceRef: QueueResourceComparisonSide["scope"],
 ) {
+  const key = queueResourceComparisonQueryKey(resourceRef, againstResourceRef);
+
   return createQuery<QueueResourceComparison>({
-    key: queueResourceComparisonQueryKey(resourceRef, againstResourceRef),
-    fetch: ({ signal }) =>
+    key,
+    fetch: stableQueryFetch(queueResourceComparisonFetches, key, () => ({ signal }) =>
       queueResourceService.compareResource(
         resourceRef,
         {
@@ -79,5 +93,6 @@ export function createQueueResourceComparisonQuery(
         },
         { signal },
       ),
+    ),
   });
 }

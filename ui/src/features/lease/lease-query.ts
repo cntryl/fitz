@@ -9,6 +9,6 @@ const LEASE_OVERVIEW_KEY = leaseQueries.key("overview");
 export function createLeaseOverviewQuery() {
   return createQuery<LeaseOverview>({
     key: LEASE_OVERVIEW_KEY,
-    fetch: ({ signal }) => leaseService.getOverview({ signal }),
+    fetch: leaseService.getOverview,
   });
 }
