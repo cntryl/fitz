@@ -80,6 +80,8 @@ Schedule provides durable timing intent for future work. It persists schedule de
 ### Stream
 
 - event sourcing
+- aggregate event streams with client-managed expected revisions
+- general append-only history feeds
 - audit logs
 - rebuild read models
 - analytics ingestion
@@ -229,6 +231,7 @@ Stream guarantees:
 
 - ordered append within a resource
 - durable committed history according to the selected write mode
+- exact resource replay suitable for rebuilding client-owned aggregate state or projections
 - replay from client-supplied offsets
 - wildcard area and realm reads gated by committed watermarks
 - monotonic committed offsets and watermarks
@@ -238,6 +241,8 @@ Stream does NOT guarantee:
 
 - queue-style reservation or acknowledgement
 - broker-managed consumer positions
+- command idempotency or duplicate suppression
+- server-owned event schemas
 - replay through live subscriptions or durable subscription recovery
 - durable live subscription recovery
 - recovery of abandoned append sessions

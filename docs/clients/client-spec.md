@@ -2466,6 +2466,16 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 
 **Purpose:** Durable append-only records with optimistic concurrency at BEGIN and commit-time sequencing for resource, area, and realm order. Clients MAY attach an optional immutable discriminator to each append for server-side filtered replay, and replay responses MAY include synthetic delivery markers for skipped committed offsets.
 
+#### Workflow Profiles
+
+Stream supports two client workflow profiles through the same wire operations.
+
+**Event-sourced aggregate streams:** Clients MAY model one stream resource as one aggregate history, using `resource_offset` as the aggregate revision. A command that produces multiple domain events should `BEGIN`, `APPEND` each event with consecutive `expected_offset` values, and `COMMIT` the batch atomically. A stale `expected_offset` is a concurrency conflict: clients should `READ` the exact resource, optionally inspect `LAST` or `GET_METADATA`, rebuild their aggregate state, and retry with the current next offset. Event metadata remains opaque client data; the optional discriminator is a replay sidecar for server-side filtering, not a server-owned event schema.
+
+**General append/replay streams:** Clients MAY use resources as durable logs or feeds and replay exact resource, area wildcard, or realm wildcard histories from client-owned offsets. `READ` returns cursor data for the response, but Fitz does not own consumer checkpoints. Clients that need projection progress, catch-up state, or subscription recovery must persist that state themselves. Live `SUBSCRIBE` delivers notifications only for active subscriptions and is not a replay cursor.
+
+Stream is not a queue, a broker-managed consumer group system, an exactly-once command processor, or a duplicate-suppression layer. Clients that need idempotency should include their own command/event identifiers in body or metadata and enforce that policy in their application state.
+
 #### Message Types
 
 | Type | Name         | Direction                  |

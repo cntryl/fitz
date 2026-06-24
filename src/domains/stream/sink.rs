@@ -596,20 +596,35 @@ impl StreamDomainSink {
         max_bytes: Option<usize>,
         filter: Option<&crate::domains::stream::protocol::StreamFilterSet>,
     ) -> Result<Vec<u8>, String> {
+        let parts =
+            route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
+
         if limit == 0 {
-            return Ok(Self::encode_stream_read_data(
-                &[],
-                &crate::domains::stream::protocol::ReadCursor {
+            let cursor = if parts.area == "*" && parts.resource == "*" {
+                crate::domains::stream::protocol::ReadCursor {
+                    last_resource_offset: 0,
+                    last_area_offset: None,
+                    last_realm_offset: Some(from_offset),
+                    has_more: false,
+                }
+            } else if parts.resource == "*" {
+                crate::domains::stream::protocol::ReadCursor {
+                    last_resource_offset: 0,
+                    last_area_offset: Some(from_offset),
+                    last_realm_offset: None,
+                    has_more: false,
+                }
+            } else {
+                crate::domains::stream::protocol::ReadCursor {
                     last_resource_offset: from_offset,
                     last_area_offset: None,
                     last_realm_offset: None,
                     has_more: false,
-                },
-            ));
+                }
+            };
+            return Ok(Self::encode_stream_read_data(&[], &cursor));
         }
 
-        let parts =
-            route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
         let read_response = if parts.area == "*" && parts.resource == "*" {
             let (items, cursor) = self.stream_store.read_realm_with_filter(
                 family_id.as_u64(),
@@ -1219,8 +1234,9 @@ mod tests {
     use super::*;
     use crate::benchkit::{
         build_stream_append, build_stream_append_with_metadata, build_stream_begin,
-        build_stream_commit, build_stream_read, count_stream_read_records_from_payload,
-        extract_single_tlv_field, register_session_queue_sink, route_frame, FrameQueueSink,
+        build_stream_commit, build_stream_read, build_stream_read_with_limit,
+        build_stream_subscribe, count_stream_read_records_from_payload, extract_single_tlv_field,
+        register_session_queue_sink, route_frame, FrameQueueSink,
     };
     use crate::protocol::frame::ChannelId;
     use bytes::Bytes;
@@ -1396,6 +1412,21 @@ mod tests {
         }
     }
 
+    fn decode_stream_success_data(payload: &[u8]) -> Bytes {
+        let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(payload);
+        let status = decoder.get_u8().expect("stream status");
+        assert_eq!(status, 0, "expected stream success response");
+        decoder
+            .get_optional_u64()
+            .expect("stream response session id");
+        let data = decoder.get_bytes().expect("stream response data");
+        assert!(
+            decoder.is_complete(),
+            "expected complete stream success response"
+        );
+        data
+    }
+
     fn decode_stream_metadata_payload(data: &[u8]) -> DecodedStreamMetadataPayload {
         let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(data);
         let first_resource_offset = decoder
@@ -1455,6 +1486,19 @@ mod tests {
         let commit_frame = build_stream_commit(session_id, 1);
         let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
         let _ = request(context, route, commit_msg_type, commit_payload);
+    }
+
+    fn stream_read_response(
+        context: &TestContext,
+        route: &str,
+        from_offset: u64,
+        limit: u64,
+    ) -> DecodedStreamReadPayload {
+        let frame = build_stream_read_with_limit(route, from_offset, limit);
+        let (msg_type, payload) = extract_single_tlv_field(&frame);
+        let response = request(context, route, msg_type, payload);
+        let data = decode_stream_success_data(response.as_ref());
+        decode_stream_read_payload(&data)
     }
 
     #[test]
@@ -1578,6 +1622,40 @@ mod tests {
     }
 
     #[test]
+    fn should_return_area_cursor_given_zero_limit_area_wildcard_read() {
+        // Arrange
+        let context = setup_test_context();
+        seed_committed_stream_route(&context, "stream://bench/events/orders", 1, b"orders");
+
+        // Act
+        let read_payload = stream_read_response(&context, "stream://bench/events/*", 0, 0);
+
+        // Assert
+        assert!(read_payload.records.is_empty());
+        assert_eq!(read_payload.last_resource_offset, 0);
+        assert_eq!(read_payload.last_area_offset, Some(0));
+        assert_eq!(read_payload.last_realm_offset, None);
+        assert!(!read_payload.has_more);
+    }
+
+    #[test]
+    fn should_return_realm_cursor_given_zero_limit_realm_wildcard_read() {
+        // Arrange
+        let context = setup_test_context();
+        seed_committed_stream_route(&context, "stream://bench/events/orders", 1, b"orders");
+
+        // Act
+        let read_payload = stream_read_response(&context, "stream://bench/*/*", 0, 0);
+
+        // Assert
+        assert!(read_payload.records.is_empty());
+        assert_eq!(read_payload.last_resource_offset, 0);
+        assert_eq!(read_payload.last_area_offset, None);
+        assert_eq!(read_payload.last_realm_offset, Some(0));
+        assert!(!read_payload.has_more);
+    }
+
+    #[test]
     fn should_keep_sink_alive_given_malformed_filter_payload_on_stream_read() {
         // Arrange
         let context = setup_test_context();
@@ -1614,6 +1692,110 @@ mod tests {
             "unexpected malformed filter error: {malformed_error}"
         );
         assert_eq!(valid_read_count, 1);
+    }
+
+    #[test]
+    fn should_preserve_append_session_without_notify_given_commit_failure() {
+        // Arrange
+        let context = setup_test_context();
+        let route = "stream://bench/events/orders";
+        let (subscriber_source, subscriber_inbox) =
+            register_session_queue_sink(&context.router, context.family, 2);
+        let subscribe_frame = build_stream_subscribe(route);
+        let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
+        let _subscribe_response = request_from_session(
+            &context,
+            &subscriber_source,
+            &subscriber_inbox,
+            2,
+            route,
+            subscribe_msg_type,
+            subscribe_payload,
+        );
+        subscriber_inbox.clear();
+
+        let session_id = begin_stream(&context, route);
+        let append_frame = build_stream_append(session_id, 0, b"retryable");
+        let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+        let _append_response = request(&context, route, append_msg_type, append_payload);
+        StreamStore::fail_next_promotion_frontier_commit_for_tests();
+
+        // Act
+        let failed_commit_frame = build_stream_commit(session_id, 1);
+        let (failed_commit_type, failed_commit_payload) =
+            extract_single_tlv_field(&failed_commit_frame);
+        let failed_commit_response =
+            request(&context, route, failed_commit_type, failed_commit_payload);
+        let failed_commit_error = decode_stream_error_message(failed_commit_response.as_ref())
+            .expect("decode failed stream commit error");
+        let append_sessions_after_failure = context.sink.append_session_count();
+        let notifications_after_failure = subscriber_inbox.count();
+        let read_after_failure = stream_read_response(&context, route, 0, 10);
+
+        let retry_commit_frame = build_stream_commit(session_id, 1);
+        let (retry_commit_type, retry_commit_payload) =
+            extract_single_tlv_field(&retry_commit_frame);
+        let retry_commit_response =
+            request(&context, route, retry_commit_type, retry_commit_payload);
+        let read_after_retry = stream_read_response(&context, route, 0, 10);
+        context.sink.sync_admin_snapshot();
+        let stream = context
+            .sink
+            .admin_read_model
+            .streams(None)
+            .into_iter()
+            .find(|item| {
+                item.realm == "bench" && item.area == "events" && item.resource == "orders"
+            })
+            .expect("committed stream after retry");
+
+        // Assert
+        assert_eq!(failed_commit_error, "Injected stream commit failure");
+        assert_eq!(append_sessions_after_failure, 1);
+        assert_eq!(notifications_after_failure, 0);
+        assert_eq!(context.sink.append_session_count(), 0);
+        assert_eq!(subscriber_inbox.count(), 1);
+        assert!(decode_stream_error_message(retry_commit_response.as_ref()).is_err());
+        assert!(read_after_failure.records.is_empty());
+        assert_eq!(read_after_retry.records.len(), 1);
+        assert_eq!(
+            read_after_retry.records[0].body,
+            Bytes::from_static(b"retryable")
+        );
+        assert_eq!(stream.offset, 0);
+        assert_eq!(stream.sessions_active, 0);
+        assert_eq!(context.sink.admin_read_model.stream_events_total(), 1);
+    }
+
+    #[test]
+    fn should_drop_uncommitted_append_session_given_session_cleanup() {
+        // Arrange
+        let context = setup_test_context();
+        let route = "stream://bench/events/pending";
+        let session_id = begin_stream(&context, route);
+        let append_frame = build_stream_append(session_id, 0, b"staged");
+        let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+        let _append_response = request(&context, route, append_msg_type, append_payload);
+        let destination = RouteAddress::new(context.family, Route::new(route));
+
+        // Act
+        context
+            .sink
+            .deliver(Envelope::new(
+                destination,
+                crate::runtime::SessionCleanup {
+                    session_id: TEST_CLIENT_SESSION_ID,
+                },
+            ))
+            .expect("deliver session cleanup");
+        let read_after_cleanup = stream_read_response(&context, route, 0, 10);
+        context.sink.sync_admin_snapshot();
+
+        // Assert
+        assert_eq!(context.sink.append_session_count(), 0);
+        assert!(read_after_cleanup.records.is_empty());
+        assert!(context.sink.admin_read_model.streams(None).is_empty());
+        assert_eq!(context.sink.admin_read_model.stream_events_total(), 0);
     }
 
     #[test]

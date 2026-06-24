@@ -343,12 +343,8 @@ fn make_stream_actor(
     .expect("create stream actor")
 }
 
-async fn commit_stream_record_with_offset<C>(
-    client: &mut C,
-    route: &str,
-    expected_offset: u64,
-    body: &[u8],
-) where
+async fn begin_stream_session<C>(client: &mut C, route: &str) -> u64
+where
     C: StreamConnector,
 {
     let begin_response = client
@@ -357,18 +353,33 @@ async fn commit_stream_record_with_offset<C>(
         .expect("begin stream");
     let (_msg_type, status, data) = parse_stream_response(&begin_response);
     assert_eq!(status, 0, "Expected success for stream begin");
-    let session_id = parse_stream_session_id(&data).expect("stream session id");
+    parse_stream_session_id(&data).expect("stream session id")
+}
 
+async fn append_stream_record_with_metadata<C>(
+    client: &mut C,
+    session_id: u64,
+    expected_offset: u64,
+    body: &[u8],
+    metadata: Option<&[u8]>,
+) where
+    C: StreamConnector,
+{
     let append_response = client
         .send_and_receive(
-            &build_stream_append(session_id, expected_offset, body),
+            &build_stream_append_with_metadata(session_id, expected_offset, body, metadata),
             2000,
         )
         .await
         .expect("append stream");
     let (_msg_type, status, _data) = parse_stream_response(&append_response);
     assert_eq!(status, 0, "Expected success for stream append");
+}
 
+async fn commit_stream_session<C>(client: &mut C, session_id: u64)
+where
+    C: StreamConnector,
+{
     let commit_response = client
         .send_and_receive(&build_stream_commit(session_id), 2000)
         .await
@@ -377,11 +388,322 @@ async fn commit_stream_record_with_offset<C>(
     assert_eq!(status, 0, "Expected success for stream commit");
 }
 
+async fn rollback_stream_session<C>(client: &mut C, session_id: u64)
+where
+    C: StreamConnector,
+{
+    let rollback_response = client
+        .send_and_receive(&build_stream_rollback(session_id), 2000)
+        .await
+        .expect("rollback stream");
+    let (_msg_type, status, _data) = parse_stream_response(&rollback_response);
+    assert_eq!(status, 0, "Expected success for stream rollback");
+}
+
+async fn commit_stream_record_with_offset<C>(
+    client: &mut C,
+    route: &str,
+    expected_offset: u64,
+    body: &[u8],
+) where
+    C: StreamConnector,
+{
+    let session_id = begin_stream_session(client, route).await;
+    append_stream_record_with_metadata(client, session_id, expected_offset, body, None).await;
+    commit_stream_session(client, session_id).await;
+}
+
 async fn commit_stream_record<C>(client: &mut C, route: &str, body: &[u8])
 where
     C: StreamConnector,
 {
     commit_stream_record_with_offset(client, route, 0, body).await;
+}
+
+async fn should_support_event_sourced_aggregate_command_and_rebuild<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://event-sourced/orders/order-123";
+    let opened = br#"{"type":"OrderOpened","orderId":"order-123"}"#;
+    let line_added = br#"{"type":"LineAdded","sku":"sku-1","qty":2}"#;
+    let confirmed = br#"{"type":"OrderConfirmed"}"#;
+
+    // Act
+    let command_session_id = begin_stream_session(&mut client, route).await;
+    append_stream_record_with_metadata(
+        &mut client,
+        command_session_id,
+        0,
+        opened,
+        Some(b"type=OrderOpened;command=cmd-001"),
+    )
+    .await;
+    append_stream_record_with_metadata(
+        &mut client,
+        command_session_id,
+        1,
+        line_added,
+        Some(b"type=LineAdded;command=cmd-001"),
+    )
+    .await;
+    commit_stream_session(&mut client, command_session_id).await;
+
+    let confirm_session_id = begin_stream_session(&mut client, route).await;
+    append_stream_record_with_metadata(
+        &mut client,
+        confirm_session_id,
+        2,
+        confirmed,
+        Some(b"type=OrderConfirmed;command=cmd-002"),
+    )
+    .await;
+    commit_stream_session(&mut client, confirm_session_id).await;
+
+    let read_response = client
+        .send_and_receive(&build_stream_read(route, 0), 2000)
+        .await
+        .expect("rebuild aggregate from stream");
+    let last_response = client
+        .send_and_receive(&build_stream_last(route), 2000)
+        .await
+        .expect("read current aggregate revision");
+    let metadata_response = client
+        .send_and_receive(&build_stream_get_metadata(route), 2000)
+        .await
+        .expect("read aggregate stream metadata");
+
+    // Assert
+    let read = parse_stream_read_response(&read_response);
+    let resource_offsets: Vec<u64> = read
+        .records
+        .iter()
+        .map(|record| record.resource_offset)
+        .collect();
+    let area_offsets: Vec<Option<u64>> = read
+        .records
+        .iter()
+        .map(|record| record.area_offset)
+        .collect();
+    let realm_offsets: Vec<Option<u64>> = read
+        .records
+        .iter()
+        .map(|record| record.realm_offset)
+        .collect();
+    let bodies: Vec<Vec<u8>> = read
+        .records
+        .iter()
+        .map(|record| record.body.clone())
+        .collect();
+    let metadata: Vec<Option<Vec<u8>>> = read
+        .records
+        .iter()
+        .map(|record| record.metadata.clone())
+        .collect();
+    assert_eq!(resource_offsets, vec![0, 1, 2]);
+    assert_eq!(area_offsets, vec![Some(0), Some(1), Some(2)]);
+    assert_eq!(realm_offsets, vec![Some(0), Some(1), Some(2)]);
+    assert_eq!(
+        bodies,
+        vec![opened.to_vec(), line_added.to_vec(), confirmed.to_vec()]
+    );
+    assert_eq!(
+        metadata,
+        vec![
+            Some(b"type=OrderOpened;command=cmd-001".to_vec()),
+            Some(b"type=LineAdded;command=cmd-001".to_vec()),
+            Some(b"type=OrderConfirmed;command=cmd-002".to_vec()),
+        ]
+    );
+
+    let last = parse_stream_last_response(&last_response).expect("current aggregate event");
+    assert_eq!(last.resource_offset, 2);
+    assert_eq!(last.body, confirmed.to_vec());
+
+    let metadata = parse_stream_metadata_response(&metadata_response);
+    assert_eq!(metadata.first_resource_offset, Some(0));
+    assert_eq!(metadata.last_resource_offset, Some(2));
+    assert_eq!(metadata.resource_count, 3);
+}
+
+async fn should_leave_event_sourced_history_unchanged_given_stale_revision<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let route = "stream://event-sourced/orders/order-456";
+    let opened = br#"{"type":"OrderOpened","orderId":"order-456"}"#;
+    let renamed = br#"{"type":"OrderRenamed","name":"priority"}"#;
+    commit_stream_record(&mut client, route, opened).await;
+
+    // Act
+    let stale_session_id = begin_stream_session(&mut client, route).await;
+    let stale_append_response = client
+        .send_and_receive(&build_stream_append(stale_session_id, 0, renamed), 2000)
+        .await
+        .expect("append stale aggregate revision");
+    let stale_error = parse_stream_error_message(&stale_append_response);
+
+    let read_after_conflict_response = client
+        .send_and_receive(&build_stream_read(route, 0), 2000)
+        .await
+        .expect("read aggregate after conflict");
+    let last_after_conflict_response = client
+        .send_and_receive(&build_stream_last(route), 2000)
+        .await
+        .expect("read aggregate tail after conflict");
+    let metadata_after_conflict_response = client
+        .send_and_receive(&build_stream_get_metadata(route), 2000)
+        .await
+        .expect("read aggregate metadata after conflict");
+    rollback_stream_session(&mut client, stale_session_id).await;
+
+    let retry_session_id = begin_stream_session(&mut client, route).await;
+    append_stream_record_with_metadata(
+        &mut client,
+        retry_session_id,
+        1,
+        renamed,
+        Some(b"type=OrderRenamed;command=cmd-002"),
+    )
+    .await;
+    commit_stream_session(&mut client, retry_session_id).await;
+
+    let final_read_response = client
+        .send_and_receive(&build_stream_read(route, 0), 2000)
+        .await
+        .expect("read aggregate after retry");
+
+    // Assert
+    assert!(stale_error.contains("concurrency conflict"));
+    let read_after_conflict = parse_stream_read_response(&read_after_conflict_response);
+    assert_eq!(read_after_conflict.records.len(), 1);
+    assert_eq!(read_after_conflict.records[0].resource_offset, 0);
+    assert_eq!(read_after_conflict.records[0].body, opened.to_vec());
+
+    let last_after_conflict =
+        parse_stream_last_response(&last_after_conflict_response).expect("aggregate tail");
+    assert_eq!(last_after_conflict.resource_offset, 0);
+    assert_eq!(last_after_conflict.body, opened.to_vec());
+
+    let metadata_after_conflict = parse_stream_metadata_response(&metadata_after_conflict_response);
+    assert_eq!(metadata_after_conflict.first_resource_offset, Some(0));
+    assert_eq!(metadata_after_conflict.last_resource_offset, Some(0));
+    assert_eq!(metadata_after_conflict.resource_count, 1);
+
+    let final_read = parse_stream_read_response(&final_read_response);
+    let final_bodies: Vec<Vec<u8>> = final_read
+        .records
+        .iter()
+        .map(|record| record.body.clone())
+        .collect();
+    let final_offsets: Vec<u64> = final_read
+        .records
+        .iter()
+        .map(|record| record.resource_offset)
+        .collect();
+    assert_eq!(final_offsets, vec![0, 1]);
+    assert_eq!(final_bodies, vec![opened.to_vec(), renamed.to_vec()]);
+}
+
+async fn should_support_general_stream_replay_across_resource_area_and_realm<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let sensor_a = "stream://general/telemetry/sensor-a";
+    let sensor_b = "stream://general/telemetry/sensor-b";
+    let ledger = "stream://general/audit/ledger";
+
+    // Act
+    commit_stream_record(&mut client, sensor_a, b"sensor-a:0").await;
+    commit_stream_record(&mut client, sensor_b, b"sensor-b:0").await;
+    commit_stream_record(&mut client, ledger, b"ledger:0").await;
+    commit_stream_record_with_offset(&mut client, sensor_a, 1, b"sensor-a:1").await;
+
+    let exact_response = client
+        .send_and_receive(&build_stream_read_with_options(sensor_a, 0, 10, None), 2000)
+        .await
+        .expect("read exact stream resource");
+    let area_response = client
+        .send_and_receive(
+            &build_stream_read_with_options("stream://general/telemetry/*", 0, 10, None),
+            2000,
+        )
+        .await
+        .expect("read area stream");
+    let realm_response = client
+        .send_and_receive(
+            &build_stream_read_with_options("stream://general/*/*", 0, 10, None),
+            2000,
+        )
+        .await
+        .expect("read realm stream");
+
+    // Assert
+    let exact = parse_stream_read_response(&exact_response);
+    let exact_offsets: Vec<u64> = exact
+        .records
+        .iter()
+        .map(|record| record.resource_offset)
+        .collect();
+    let exact_bodies: Vec<Vec<u8>> = exact
+        .records
+        .iter()
+        .map(|record| record.body.clone())
+        .collect();
+    assert_eq!(exact_offsets, vec![0, 1]);
+    assert_eq!(
+        exact_bodies,
+        vec![b"sensor-a:0".to_vec(), b"sensor-a:1".to_vec()]
+    );
+
+    let area = parse_stream_read_response(&area_response);
+    let area_bodies: Vec<Vec<u8>> = area
+        .records
+        .iter()
+        .map(|record| record.body.clone())
+        .collect();
+    let area_offsets: Vec<Option<u64>> = area
+        .records
+        .iter()
+        .map(|record| record.area_offset)
+        .collect();
+    assert_eq!(
+        area_bodies,
+        vec![
+            b"sensor-a:0".to_vec(),
+            b"sensor-b:0".to_vec(),
+            b"sensor-a:1".to_vec(),
+        ]
+    );
+    assert_eq!(area_offsets, vec![Some(0), Some(1), Some(2)]);
+
+    let realm = parse_stream_read_response(&realm_response);
+    let realm_bodies: Vec<Vec<u8>> = realm
+        .records
+        .iter()
+        .map(|record| record.body.clone())
+        .collect();
+    let realm_offsets: Vec<Option<u64>> = realm
+        .records
+        .iter()
+        .map(|record| record.realm_offset)
+        .collect();
+    assert_eq!(
+        realm_bodies,
+        vec![
+            b"sensor-a:0".to_vec(),
+            b"sensor-b:0".to_vec(),
+            b"ledger:0".to_vec(),
+            b"sensor-a:1".to_vec(),
+        ]
+    );
+    assert_eq!(realm_offsets, vec![Some(0), Some(1), Some(2), Some(3)]);
 }
 
 // Generic test helper for appending to stream
@@ -1795,6 +2117,48 @@ async fn should_drop_uncommitted_stream_batch_on_restart() {
 }
 
 #[tokio::test]
+async fn should_rebuild_event_sourced_aggregate_after_restart() {
+    // Arrange
+    let tempdir = TempDir::new().expect("tempdir");
+    let db_path = tempdir.path().join("fitz-stream-event-sourced");
+    let db_path = db_path.to_string_lossy().to_string();
+    let engine = open_local_stream_engine(db_path.clone())
+        .await
+        .expect("open local stream engine");
+    let store = Arc::new(StreamStore::new(engine.clone()));
+    let mut actor = make_stream_actor(store.clone(), "event-sourced", "orders", "order-restart");
+    actor.begin_append_session(10, 100, None).unwrap();
+    append_for_owner(&mut actor, 10, 100, 0, Bytes::from_static(b"opened"));
+    append_for_owner(&mut actor, 10, 100, 1, Bytes::from_static(b"line-added"));
+    commit_for_owner(&mut actor, 10, 100);
+    drop(actor);
+    drop(store);
+    drop(engine);
+    wait_for_stream_storage_release().await;
+
+    // Act
+    let engine = open_local_stream_engine(db_path)
+        .await
+        .expect("reopen local stream engine");
+    let store = Arc::new(StreamStore::new(engine));
+    let actor = make_stream_actor(store, "event-sourced", "orders", "order-restart");
+    let records = actor
+        .read(0, 10, None)
+        .expect("read restarted aggregate stream")
+        .items;
+    let records = event_records(&records);
+
+    // Assert
+    let resource_offsets: Vec<u64> = records
+        .iter()
+        .map(|record| record.resource_offset)
+        .collect();
+    let bodies: Vec<Vec<u8>> = records.iter().map(|record| record.body.to_vec()).collect();
+    assert_eq!(resource_offsets, vec![0, 1]);
+    assert_eq!(bodies, vec![b"opened".to_vec(), b"line-added".to_vec()]);
+}
+
+#[tokio::test]
 async fn should_start_local_stream_boot_given_promotion_frontier_layout() {
     // Arrange
     let tempdir = TempDir::new().expect("tempdir");
@@ -1859,6 +2223,9 @@ define_transport_tests!(
     WsStreamConnector;
     should_append_data_to_stream_tcp / should_append_data_to_stream_ws => should_append_data_to_stream,
     should_read_appended_data_tcp / should_read_appended_data_ws => should_read_appended_data,
+    should_support_event_sourced_aggregate_command_and_rebuild_tcp / should_support_event_sourced_aggregate_command_and_rebuild_ws => should_support_event_sourced_aggregate_command_and_rebuild,
+    should_leave_event_sourced_history_unchanged_given_stale_revision_tcp / should_leave_event_sourced_history_unchanged_given_stale_revision_ws => should_leave_event_sourced_history_unchanged_given_stale_revision,
+    should_support_general_stream_replay_across_resource_area_and_realm_tcp / should_support_general_stream_replay_across_resource_area_and_realm_ws => should_support_general_stream_replay_across_resource_area_and_realm,
     should_preserve_append_order_tcp / should_preserve_append_order_ws => should_preserve_append_order,
     should_handle_read_past_end_tcp / should_handle_read_past_end_ws => should_handle_read_past_end,
     should_maintain_fifo_order_with_multiple_appends_tcp / should_maintain_fifo_order_with_multiple_appends_ws => should_maintain_fifo_order_with_multiple_appends,
