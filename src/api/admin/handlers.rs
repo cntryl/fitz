@@ -12,6 +12,7 @@ use std::sync::Arc;
 use super::list;
 use super::metrics;
 use super::probes;
+use super::search;
 use super::stats;
 use super::topology;
 
@@ -19,6 +20,8 @@ use super::topology;
 struct AdminFeaturesResponse {
     admin_auth_required: bool,
     admin_auth_mode: &'static str,
+    route_families: Vec<String>,
+    route_families_wildcard: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -123,14 +126,26 @@ where
             stats::handle_global_troubleshooting(runtime).await
         }
 
-        (Method::GET, path) if path.starts_with("/api/v1/") => {
-            if let Err(response) = require_admin(&req, &runtime) {
-                return Ok(*response);
-            }
+        (Method::GET, "/api/v1/search") => {
+            let principal = match require_admin(&req, &runtime) {
+                Ok(principal) => principal,
+                Err(response) => return Ok(*response),
+            };
             if let Err(response) = require_data_plane_ready(&runtime) {
                 return Ok(*response);
             }
-            handle_hierarchical_get(req.uri(), runtime).await
+            search::handle_search(req.uri(), runtime, &principal).await
+        }
+
+        (Method::GET, path) if path.starts_with("/api/v1/") => {
+            let principal = match require_admin(&req, &runtime) {
+                Ok(principal) => principal,
+                Err(response) => return Ok(*response),
+            };
+            if let Err(response) = require_data_plane_ready(&runtime) {
+                return Ok(*response);
+            }
+            handle_hierarchical_get(req.uri(), runtime, &principal).await
         }
 
         (Method::POST, path) if path.starts_with("/api/v1/") => {
@@ -167,6 +182,7 @@ where
 async fn handle_hierarchical_get(
     uri: &hyper::Uri,
     runtime: Arc<Runtime>,
+    principal: &AdminPrincipal,
 ) -> Result<Response, Infallible> {
     let path = uri.path();
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
@@ -179,6 +195,134 @@ async fn handle_hierarchical_get(
 
     match tail {
         ["stats"] => stats::handle_domain_stats(runtime, scheme).await,
+        ["search"] if scheme == "stream" => {
+            let family = match require_allowed_route_family(uri, principal) {
+                Ok(family) => family,
+                Err(response) => return Ok(*response),
+            };
+            let limit = match list::parse_admin_record_limit(uri) {
+                Ok(limit) => limit,
+                Err(message) => {
+                    return Ok(super::error_response(StatusCode::BAD_REQUEST, &message));
+                }
+            };
+            let from_offset = match parse_optional_u64_param(uri, "from_offset") {
+                Ok(offset) => offset.unwrap_or(0),
+                Err(response) => return Ok(*response),
+            };
+            let realm = list::parse_optional_string_query_param(uri, "realm");
+            let area = list::parse_optional_string_query_param(uri, "area");
+            let resource = list::parse_optional_string_query_param(uri, "resource");
+            let discriminator = list::parse_optional_string_query_param(uri, "discriminator")
+                .or_else(|| list::parse_optional_string_query_param(uri, "q"));
+            list::stream_search(
+                runtime,
+                list::StreamSearchRequest {
+                    family,
+                    realm,
+                    area,
+                    resource,
+                    from_offset,
+                    limit,
+                    discriminator,
+                },
+            )
+            .await
+        }
+        ["missed"] if scheme == "schedule" => {
+            let family = match require_allowed_route_family(uri, principal) {
+                Ok(family) => family,
+                Err(response) => return Ok(*response),
+            };
+            let limit = match list::parse_admin_record_limit(uri) {
+                Ok(limit) => limit,
+                Err(message) => {
+                    return Ok(super::error_response(StatusCode::BAD_REQUEST, &message));
+                }
+            };
+            list::schedule_missed_observations(
+                runtime,
+                family,
+                list::parse_optional_string_query_param(uri, "realm"),
+                list::parse_optional_string_query_param(uri, "area"),
+                list::parse_optional_string_query_param(uri, "resource"),
+                limit,
+            )
+            .await
+        }
+        ["search"] if scheme == "lease" => {
+            let family = match require_allowed_route_family(uri, principal) {
+                Ok(family) => family,
+                Err(response) => return Ok(*response),
+            };
+            let limit = match list::parse_admin_record_limit(uri) {
+                Ok(limit) => limit,
+                Err(message) => {
+                    return Ok(super::error_response(StatusCode::BAD_REQUEST, &message));
+                }
+            };
+            list::lease_search(
+                runtime,
+                list::LeaseSearchRequest {
+                    family,
+                    realm: list::parse_optional_string_query_param(uri, "realm"),
+                    area: list::parse_optional_string_query_param(uri, "area"),
+                    resource: list::parse_optional_string_query_param(uri, "resource"),
+                    owner: list::parse_optional_string_query_param(uri, "owner"),
+                    state: list::parse_optional_string_query_param(uri, "state"),
+                    limit,
+                },
+            )
+            .await
+        }
+        ["deliveries"] if scheme == "notice" => {
+            let family = match require_allowed_route_family(uri, principal) {
+                Ok(family) => family,
+                Err(response) => return Ok(*response),
+            };
+            let limit = match list::parse_admin_record_limit(uri) {
+                Ok(limit) => limit,
+                Err(message) => {
+                    return Ok(super::error_response(StatusCode::BAD_REQUEST, &message));
+                }
+            };
+            list::notice_delivery_observations(
+                runtime,
+                family,
+                list::parse_optional_string_query_param(uri, "realm"),
+                list::parse_optional_string_query_param(uri, "area"),
+                list::parse_optional_string_query_param(uri, "resource"),
+                list::parse_optional_string_query_param(uri, "q"),
+                limit,
+            )
+            .await
+        }
+        ["calls"] if scheme == "rpc" => {
+            let family = match require_allowed_route_family(uri, principal) {
+                Ok(family) => family,
+                Err(response) => return Ok(*response),
+            };
+            let limit = match list::parse_admin_record_limit(uri) {
+                Ok(limit) => limit,
+                Err(message) => {
+                    return Ok(super::error_response(StatusCode::BAD_REQUEST, &message));
+                }
+            };
+            list::rpc_call_observations(
+                runtime,
+                list::RpcCallObservationRequest {
+                    family,
+                    realm: list::parse_optional_string_query_param(uri, "realm"),
+                    area: list::parse_optional_string_query_param(uri, "area"),
+                    resource: list::parse_optional_string_query_param(uri, "resource"),
+                    operation: list::parse_optional_string_query_param(uri, "operation"),
+                    query: list::parse_optional_string_query_param(uri, "q")
+                        .or_else(|| list::parse_optional_string_query_param(uri, "correlation_id")),
+                    limit,
+                },
+            )
+            .await
+        }
         ["realms"] => handle_realms_collection(scheme, runtime),
         ["realms", realm, "watermarks"] if scheme == "stream" => {
             super::json_response(list::stream_realm_watermark_detail(runtime.as_ref(), realm))
@@ -241,6 +385,63 @@ async fn handle_hierarchical_get(
                 "rpc" => list::rpc_events_for_resource(runtime, &path, limit).await,
                 _ => Ok(super::not_found()),
             }
+        }
+        ["realms", realm, "areas", area, "resources", resource, "records"]
+            if scheme == "stream" =>
+        {
+            let family = match require_allowed_route_family(uri, principal) {
+                Ok(family) => family,
+                Err(response) => return Ok(*response),
+            };
+            let limit = match list::parse_admin_record_limit(uri) {
+                Ok(limit) => limit,
+                Err(message) => {
+                    return Ok(super::error_response(StatusCode::BAD_REQUEST, &message));
+                }
+            };
+            let from_offset = match parse_optional_u64_param(uri, "from_offset") {
+                Ok(offset) => offset.unwrap_or(0),
+                Err(response) => return Ok(*response),
+            };
+            list::stream_records_for_resource(
+                runtime,
+                &list::ResourcePath {
+                    realm,
+                    area,
+                    resource,
+                },
+                family,
+                from_offset,
+                limit,
+                list::parse_optional_string_query_param(uri, "discriminator")
+                    .or_else(|| list::parse_optional_string_query_param(uri, "q")),
+            )
+            .await
+        }
+        ["realms", realm, "areas", area, "resources", resource, "executions"]
+            if scheme == "schedule" =>
+        {
+            let family = match require_allowed_route_family(uri, principal) {
+                Ok(family) => family,
+                Err(response) => return Ok(*response),
+            };
+            let limit = match list::parse_admin_record_limit(uri) {
+                Ok(limit) => limit,
+                Err(message) => {
+                    return Ok(super::error_response(StatusCode::BAD_REQUEST, &message));
+                }
+            };
+            list::schedule_executions_for_resource(
+                runtime,
+                &list::ResourcePath {
+                    realm,
+                    area,
+                    resource,
+                },
+                family,
+                limit,
+            )
+            .await
         }
         ["realms", realm, "areas", area, "resources", resource, "compare"] => {
             let family = if scheme == "queue" {
@@ -312,6 +513,59 @@ async fn handle_hierarchical_get(
                     area,
                     resource,
                 },
+            )
+            .await
+        }
+        ["realms", realm, "areas", area, "resources", resource, "value"] if scheme == "kv" => {
+            let family = match require_allowed_route_family(uri, principal) {
+                Ok(family) => family,
+                Err(response) => return Ok(*response),
+            };
+            let key = match list::parse_kv_query_bytes(uri, "key") {
+                Ok(key) => key,
+                Err(message) => {
+                    return Ok(super::error_response(StatusCode::BAD_REQUEST, &message));
+                }
+            };
+            list::kv_committed_value_for_resource(
+                runtime,
+                &list::ResourcePath {
+                    realm,
+                    area,
+                    resource,
+                },
+                family,
+                key,
+            )
+            .await
+        }
+        ["realms", realm, "areas", area, "resources", resource, "prefix"] if scheme == "kv" => {
+            let family = match require_allowed_route_family(uri, principal) {
+                Ok(family) => family,
+                Err(response) => return Ok(*response),
+            };
+            let prefix = match list::parse_kv_query_bytes(uri, "prefix") {
+                Ok(prefix) => prefix,
+                Err(message) => {
+                    return Ok(super::error_response(StatusCode::BAD_REQUEST, &message));
+                }
+            };
+            let limit = match list::parse_kv_scan_limit(uri) {
+                Ok(limit) => limit,
+                Err(message) => {
+                    return Ok(super::error_response(StatusCode::BAD_REQUEST, &message));
+                }
+            };
+            list::kv_prefix_scan_for_resource(
+                runtime,
+                &list::ResourcePath {
+                    realm,
+                    area,
+                    resource,
+                },
+                family,
+                prefix,
+                limit,
             )
             .await
         }
@@ -580,6 +834,8 @@ async fn handle_current_session<B>(
     super::json_response(SessionResponse {
         authenticated: true,
         username: principal.username,
+        route_families: principal.route_family_access.route_families(),
+        route_families_wildcard: principal.route_family_access.is_wildcard(),
     })
 }
 
@@ -598,9 +854,22 @@ async fn handle_logout<B>(
 
 async fn handle_features(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
     let admin_auth = runtime.admin_auth();
+    let route_family_access = if admin_auth.login_required() {
+        None
+    } else {
+        Some(admin_auth.configured_route_family_access())
+    };
     super::json_response(AdminFeaturesResponse {
         admin_auth_required: admin_auth.login_required(),
         admin_auth_mode: admin_auth.auth_mode(),
+        route_families: route_family_access
+            .as_ref()
+            .map(|access| access.route_families())
+            .unwrap_or_default(),
+        route_families_wildcard: route_family_access
+            .as_ref()
+            .map(|access| access.is_wildcard())
+            .unwrap_or(false),
     })
 }
 
@@ -656,6 +925,30 @@ fn parse_optional_queue_family(uri: &hyper::Uri) -> Result<Option<u64>, Box<Resp
 fn parse_optional_u64_param(uri: &hyper::Uri, key: &str) -> Result<Option<u64>, Box<Response>> {
     list::parse_optional_u64_query_param(uri, key)
         .map_err(|message| Box::new(super::error_response(StatusCode::BAD_REQUEST, &message)))
+}
+
+fn require_allowed_route_family(
+    uri: &hyper::Uri,
+    principal: &AdminPrincipal,
+) -> Result<u64, Box<Response>> {
+    let family = match parse_optional_u64_param(uri, "route_family")? {
+        Some(family) => family,
+        None => {
+            return Err(Box::new(super::error_response(
+                StatusCode::BAD_REQUEST,
+                "Missing route_family query parameter",
+            )));
+        }
+    };
+
+    if !principal.route_family_access.allows(&family.to_string()) {
+        return Err(Box::new(super::error_response(
+            StatusCode::FORBIDDEN,
+            "Route family is not allowed for this admin session",
+        )));
+    }
+
+    Ok(family)
 }
 
 fn parse_required_string_query_param(uri: &hyper::Uri, key: &str) -> Result<String, Box<Response>> {

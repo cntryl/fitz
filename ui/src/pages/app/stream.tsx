@@ -1,8 +1,8 @@
 import DomainHeader from "@/components/shared/domain-header";
-import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import { Stack } from "@askrjs/themes/layouts";
 import {
   QueryErrorState,
@@ -11,6 +11,7 @@ import {
 } from "@/components/shared/query-state";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import StreamHistoryExplorer from "@/features/stream/stream-history-explorer";
 import { createStreamOverviewQuery } from "@/features/stream/stream-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatNumber } from "@/shared/format";
@@ -104,7 +105,7 @@ export default function StreamPage() {
     },
   );
   const lagBuckets = data ? summarizeWatermarkLag(data.stats.watermarkLagBuckets) : null;
-  const sidebar = createDomainSidebar({
+  const snapshot = createDomainSidebar({
     data,
     title: "Stream snapshot",
     description: "Durable history and replay posture with live reader coverage.",
@@ -127,7 +128,7 @@ export default function StreamPage() {
   });
 
   return (
-    <DomainPageFrame sidebar={sidebar}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Durable replay"
@@ -143,6 +144,8 @@ export default function StreamPage() {
             tone: overview.refreshing ? "info" : overview.stale ? "warning" : health.tone,
           }}
         />
+
+        {snapshot}
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading stream overview..." />
@@ -161,6 +164,12 @@ export default function StreamPage() {
             {overview.refreshing ? (
               <QueryRefreshingState description="Refreshing stream overview..." />
             ) : null}
+
+            <StreamHistoryExplorer
+              error={inventory.error}
+              inventory={inventory.data}
+              loading={inventory.loading}
+            />
 
             <DomainMetricTable
               title="Stream metrics"
@@ -181,32 +190,6 @@ export default function StreamPage() {
               ]}
             />
 
-            <DomainBarChart
-              title="Stream signal"
-              description="Replay coverage, stream footprint, and lag posture."
-              label="Stream state snapshot"
-              scope="Live stream snapshot"
-              data={[
-                { label: "Active streams", unitLabel: "streams", value: data.stats.streamsActive },
-                {
-                  label: "Active subscriptions",
-                  unitLabel: "subscriptions",
-                  value: data.stats.subscriptionsActive,
-                },
-                { label: "Events", unitLabel: "events", value: data.stats.eventsTotal },
-                {
-                  label: "Watermark lag families",
-                  unitLabel: "families",
-                  value: lagBuckets?.behind ?? 0,
-                },
-                {
-                  label: "Ops / sec",
-                  unitLabel: "ops/sec",
-                  value: data.stats.operationsPerSecond,
-                },
-              ]}
-            />
-
             <DomainRealmTable
               title="Stream realms"
               realms={data.realms}
@@ -218,6 +201,13 @@ export default function StreamPage() {
               error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
+            />
+
+            <DomainWorkflowPanel
+              archetype="Stream History Explorer"
+              workflows={["Explore", "Trace", "Replay"]}
+              questions={["What happened?", "Who consumed it?", "Can I replay it?"]}
+              diagnostics={["Watermarks", "Replay lag", "Storage internals"]}
             />
           </Stack>
         ) : null}

@@ -1459,19 +1459,13 @@ fn analyze_stream(
             .map(|stream| stream.offset.saturating_sub(stream.watermark))
             .max()
             .unwrap_or(0);
-        let label = if backlog > 0 || latency_pressure || workers > 0 {
+        let label = if backlog > 0 || workers > 0 {
             DiagnosisLabel::Throughput
         } else {
             DiagnosisLabel::Healthy
         };
         let trend = if backlog > 0 {
             DiagnosticTrend::Stalled
-        } else if latency_pressure {
-            if latency_tail_ratio >= 0.5 {
-                DiagnosticTrend::Stalled
-            } else {
-                DiagnosticTrend::Steady
-            }
         } else if workers > 0 {
             DiagnosticTrend::Steady
         } else {
@@ -1479,12 +1473,6 @@ fn analyze_stream(
         };
         let severity = if backlog > 0 {
             DiagnosticSeverity::Medium
-        } else if latency_pressure {
-            if latency_tail_ratio >= 0.5 {
-                DiagnosticSeverity::High
-            } else {
-                DiagnosticSeverity::Medium
-            }
         } else if workers > 0 {
             DiagnosticSeverity::Low
         } else {
@@ -1509,8 +1497,6 @@ fn analyze_stream(
             severity,
             if backlog > 0 {
                 Some("append lag".to_string())
-            } else if latency_pressure {
-                Some("stream latency".to_string())
             } else if workers > 0 {
                 Some("append throughput".to_string())
             } else {
@@ -1527,28 +1513,30 @@ fn analyze_stream(
             hints,
         );
 
-        hotspots.push(ScoredHotspot {
-            score: backlog as f64 * 2.0 + workers as f64 * 0.5 + latency_tail_ratio * 20.0,
-            hotspot: DiagnosticHotspot {
-                domain: "stream".to_string(),
-                realm: Some(realm),
-                area: Some(area),
-                resource: Some(resource),
-                operation: None,
-                family: None,
-                backlog: Some(backlog),
-                inflight: Some(workers),
-                ready: None,
-                delayed: None,
-                dead_letters: None,
-                workers: Some(workers),
-                subscriptions: None,
-                owner_session: None,
-                worker_session: None,
-                snapshot,
-            },
-            last_changed_at: None,
-        });
+        if !matches!(snapshot.severity, DiagnosticSeverity::Informational) {
+            hotspots.push(ScoredHotspot {
+                score: backlog as f64 * 2.0 + workers as f64 * 0.5,
+                hotspot: DiagnosticHotspot {
+                    domain: "stream".to_string(),
+                    realm: Some(realm),
+                    area: Some(area),
+                    resource: Some(resource),
+                    operation: None,
+                    family: None,
+                    backlog: Some(backlog),
+                    inflight: Some(workers),
+                    ready: None,
+                    delayed: None,
+                    dead_letters: None,
+                    workers: Some(workers),
+                    subscriptions: None,
+                    owner_session: None,
+                    worker_session: None,
+                    snapshot,
+                },
+                last_changed_at: None,
+            });
+        }
     }
 
     if hotspots.is_empty() {
@@ -4426,6 +4414,38 @@ mod tests {
     }
 
     #[test]
+    fn should_not_classify_stream_latency_as_pressure_when_watermarks_are_caught_up() {
+        // Arrange
+        let streams = vec![StreamInfo {
+            route_family: 1,
+            realm: "prod".to_string(),
+            area: "events".to_string(),
+            resource: "orders".to_string(),
+            offset: 1223,
+            watermark: 1223,
+            size_bytes: 8192,
+            sessions_active: 0,
+        }];
+        let latency_buckets = StreamLatencyBuckets {
+            under_100ms: 1650,
+            under_500ms: 810,
+            ..StreamLatencyBuckets::default()
+        };
+
+        // Act
+        let analysis = analyze_stream(&streams, latency_buckets, Utc::now());
+
+        // Assert
+        assert!(analysis.hotspots.is_empty());
+        assert!(analysis.diagnostics.snapshot.is_healthy());
+        assert_eq!(
+            analysis.diagnostics.snapshot.severity,
+            DiagnosticSeverity::Informational
+        );
+        assert_eq!(analysis.diagnostics.snapshot.likely_bottleneck, None);
+    }
+
+    #[test]
     fn should_classify_rpc_worker_starvation() {
         // Arrange
         let snapshot = rpc_operation_diagnostics(0, 3, None);
@@ -4444,6 +4464,7 @@ mod tests {
         // Arrange
         let workers = [
             RpcWorker {
+                route_family: 1,
                 session_id: "9001".to_string(),
                 realm: "prod".to_string(),
                 route: "rpc://prod/api/users/get".to_string(),
@@ -4452,6 +4473,7 @@ mod tests {
                 average_latency_ms: 4.5,
             },
             RpcWorker {
+                route_family: 1,
                 session_id: "9002".to_string(),
                 realm: "prod".to_string(),
                 route: "rpc://prod/api/users/get".to_string(),
@@ -4460,6 +4482,7 @@ mod tests {
                 average_latency_ms: 22.0,
             },
             RpcWorker {
+                route_family: 1,
                 session_id: "9003".to_string(),
                 realm: "prod".to_string(),
                 route: "rpc://prod/api/users/get".to_string(),
@@ -4468,6 +4491,7 @@ mod tests {
                 average_latency_ms: 63.0,
             },
             RpcWorker {
+                route_family: 1,
                 session_id: "9004".to_string(),
                 realm: "prod".to_string(),
                 route: "rpc://prod/api/users/get".to_string(),
@@ -4580,6 +4604,7 @@ mod tests {
         // Arrange
         let now = Utc::now();
         let leases = vec![LeaseInfo {
+            route_family: 1,
             realm: "prod".to_string(),
             area: "locks".to_string(),
             resource: "cache".to_string(),
@@ -4633,6 +4658,7 @@ mod tests {
         let now = Utc::now();
         let subscriptions = vec![
             NoticeSubscription {
+                route_family: 1,
                 subscription_id: 1,
                 session_id: "sub-1".to_string(),
                 realm: "prod".to_string(),
@@ -4641,6 +4667,7 @@ mod tests {
                 notifications_received: 3,
             },
             NoticeSubscription {
+                route_family: 1,
                 subscription_id: 2,
                 session_id: "sub-2".to_string(),
                 realm: "prod".to_string(),
@@ -4649,6 +4676,7 @@ mod tests {
                 notifications_received: 1,
             },
             NoticeSubscription {
+                route_family: 1,
                 subscription_id: 3,
                 session_id: "sub-3".to_string(),
                 realm: "prod".to_string(),
@@ -4659,12 +4687,14 @@ mod tests {
         ];
         let routes = vec![
             NoticeRouteInfo {
+                route_family: 1,
                 route: "notice://prod/events/orders/created".to_string(),
                 subscribers: 2,
                 publishes_total: 0,
                 publishes_per_minute: 0.0,
             },
             NoticeRouteInfo {
+                route_family: 1,
                 route: "notice://prod/events/orders/updated".to_string(),
                 subscribers: 1,
                 publishes_total: 0,
@@ -4693,6 +4723,7 @@ mod tests {
         // Arrange
         let now = Utc::now();
         let schedules = vec![ScheduleInfo {
+            route_family: 1,
             realm: "prod".to_string(),
             area: "jobs".to_string(),
             resource: "billing".to_string(),
@@ -4741,6 +4772,7 @@ mod tests {
         // Arrange
         let now = Utc::now();
         let schedules = vec![ScheduleInfo {
+            route_family: 1,
             realm: "prod".to_string(),
             area: "jobs".to_string(),
             resource: "billing".to_string(),
@@ -4794,6 +4826,7 @@ mod tests {
         // Arrange
         let now = Utc::now();
         let schedules = vec![ScheduleInfo {
+            route_family: 1,
             realm: "prod".to_string(),
             area: "jobs".to_string(),
             resource: "billing".to_string(),

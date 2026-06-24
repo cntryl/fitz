@@ -1,35 +1,152 @@
-import { state } from "@askrjs/askr";
-import { timer } from "@askrjs/askr/resources";
+import { For } from "@askrjs/askr/control";
+import { Link } from "@askrjs/askr/router";
+import { ArrowUpRightIcon, CheckCircle2Icon, CircleAlertIcon } from "@askrjs/lucide";
 import { Stack } from "@askrjs/themes/layouts";
+import { Alert, Badge } from "@askrjs/themes/surfaces";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
-import { createCurrentSessionQuery } from "@/features/session/session-query";
-import { TopologyDashboard } from "@/features/topology/topology-dashboard";
 import {
-  appendTopologyTrendPoint,
-  resolveTopologySelection,
-} from "@/features/topology/topology-mappers";
-import type { TopologyTrendPoint } from "@/features/topology/topology-models";
+  buildOverviewStatus,
+  type OverviewStatus,
+  type OverviewTone,
+} from "@/features/overview/overview-status";
+import { createCurrentSessionQuery } from "@/features/session/session-query";
+import { createSystemOverviewQuery } from "@/features/system/system-query";
 import { createMessagingTopologyQuery } from "@/features/topology/topology-query";
 import { formatRelativeTime } from "@/shared/format";
+import { formatUnknownError } from "@/shared/errors/format";
+
+function toneVariant(tone: OverviewTone) {
+  if (tone === "danger") return "danger";
+  if (tone === "warning") return "warning";
+  if (tone === "success") return "success";
+  return "info";
+}
+
+function OverviewStatusBand({ overview }: { overview: OverviewStatus }) {
+  const Icon = overview.overall.tone === "success" ? CheckCircle2Icon : CircleAlertIcon;
+
+  return (
+    <section class={`overview-status-band overview-status-band-${overview.overall.tone}`}>
+      <div class="overview-status-icon">
+        <Icon size={22} />
+      </div>
+      <div class="overview-status-copy">
+        <p class="domain-header-kicker">Current status</p>
+        <h2>{overview.overall.title}</h2>
+        <p>{overview.overall.description}</p>
+      </div>
+      <Badge variant={toneVariant(overview.overall.tone)}>{overview.overall.label}</Badge>
+    </section>
+  );
+}
+
+function OverviewIssues({ overview }: { overview: OverviewStatus }) {
+  return (
+    <section class="domain-section overview-issues-section" aria-label="Actionable issues">
+      <div class="domain-section-header">
+        <div>
+          <h2>Issues</h2>
+          <p>Actionable signals only. Benign counters and informational diagnostics stay out.</p>
+        </div>
+        <span>{overview.issues.length} active</span>
+      </div>
+
+      {overview.issues.length === 0 ? (
+        <div class="overview-empty-state">
+          <CheckCircle2Icon size={18} />
+          <div>
+            <strong>No active issues</strong>
+            <p>Open a domain below when you need to inspect normal activity or resource detail.</p>
+          </div>
+        </div>
+      ) : (
+        <ol class="overview-issue-list">
+          <For each={overview.issues} by={(issue) => issue.id}>
+            {(issue) => (
+              <li class={`overview-issue-item overview-issue-item-${issue.tone}`}>
+                <div class="overview-issue-main">
+                  <div class="overview-issue-heading">
+                    <strong>{issue.title}</strong>
+                    <Badge variant={toneVariant(issue.tone)}>{issue.severity}</Badge>
+                  </div>
+                  <p>{issue.description}</p>
+                  <span>{issue.scope}</span>
+                </div>
+                <Link href={issue.href} class="overview-action-link">
+                  <span>{issue.action}</span>
+                  <ArrowUpRightIcon size={13} />
+                </Link>
+              </li>
+            )}
+          </For>
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function DomainHealth({ overview }: { overview: OverviewStatus }) {
+  return (
+    <section class="domain-section" aria-label="Domain health">
+      <div class="domain-section-header">
+        <div>
+          <h2>Domain health</h2>
+          <p>Compact state by Fitz domain, with the next useful drill-down.</p>
+        </div>
+      </div>
+
+      <ul class="overview-domain-grid">
+        <For each={overview.domains} by={(domain) => domain.href}>
+          {(domain) => (
+            <li class={`overview-domain-card overview-domain-card-${domain.tone}`}>
+              <div class="overview-domain-heading">
+                <strong>{domain.title}</strong>
+                <Badge variant={toneVariant(domain.tone)}>{domain.state}</Badge>
+              </div>
+              <p>{domain.signal}</p>
+              <Link href={domain.href} class="overview-action-link">
+                <span>Open</span>
+                <ArrowUpRightIcon size={13} />
+              </Link>
+            </li>
+          )}
+        </For>
+      </ul>
+    </section>
+  );
+}
+
+function BrokerVitals({ overview }: { overview: OverviewStatus }) {
+  return (
+    <section class="domain-section" aria-label="Broker vitals">
+      <div class="domain-section-header">
+        <div>
+          <h2>Broker vitals</h2>
+          <p>The few broker-wide numbers that help frame the issue list.</p>
+        </div>
+      </div>
+
+      <dl class="overview-vitals-grid">
+        <For each={overview.vitals} by={(vital) => vital.label}>
+          {(vital) => (
+            <div>
+              <dt>{vital.label}</dt>
+              <dd>{vital.value}</dd>
+              {vital.caption ? <small>{vital.caption}</small> : null}
+            </div>
+          )}
+        </For>
+      </dl>
+    </section>
+  );
+}
 
 export default function Home() {
   const session = createCurrentSessionQuery();
   const topologyQuery = createMessagingTopologyQuery();
-  const [selectedIdState, setSelectedId] = state<string | null>(null);
-  const [trendHistoryState, setTrendHistory] = state<TopologyTrendPoint[]>([]);
-  const selectedIdValue = selectedIdState();
-  const trendHistoryValue = trendHistoryState();
-
-  timer(1_000, () => {
-    const current = topologyQuery.data;
-    if (!current) {
-      return;
-    }
-
-    setTrendHistory((currentHistory) => appendTopologyTrendPoint(currentHistory, current));
-  });
+  const systemQuery = createSystemOverviewQuery();
 
   if (session.loading && !session.data) {
     return (
@@ -47,64 +164,83 @@ export default function Home() {
     );
   }
 
-  const username = session.data?.username ?? "admin";
   const topology = topologyQuery.data;
-  const refreshState = topologyQuery.refreshing
-    ? "Refreshing"
-    : topologyQuery.stale
-      ? "Stale"
-      : "Live";
-  const trendHistory = topology
-    ? appendTopologyTrendPoint(trendHistoryValue, topology)
-    : trendHistoryValue;
-
-  const selectedId = topology
-    ? (selectedIdValue ?? resolveTopologySelection(topology, null).id)
-    : "broker";
-  const selected = topology ? resolveTopologySelection(topology, selectedId) : null;
+  const system = systemQuery.data;
+  const overview = buildOverviewStatus({ system, topology });
+  const refreshState =
+    topologyQuery.refreshing || systemQuery.refreshing
+      ? "Refreshing"
+      : topologyQuery.stale || systemQuery.stale
+        ? "Stale"
+        : "Live";
+  const operationalLoading = !topology && !system && (topologyQuery.loading || systemQuery.loading);
+  const operationalFailure = !topology && !system && topologyQuery.error && systemQuery.error;
 
   return (
     <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
-          eyebrow="Broker workspace"
-          title="Broker status"
-          description={`Welcome, ${username}. Current broker behavior, messaging flow, and attention signals.`}
+          eyebrow="Operator overview"
+          title="Fitz status"
+          description="Actionable health across the selected Route Family."
           primaryAction={{
-            label: "Refresh topology",
-            onPress: () => topologyQuery.refresh(),
+            label: "Refresh overview",
+            onPress: () => {
+              void topologyQuery.refresh();
+              void systemQuery.refresh();
+            },
           }}
           status={{
-            detail: topology
-              ? `Snapshot ${formatRelativeTime(topology.generatedAt)}`
-              : "Loading the live broker snapshot.",
+            detail: overview.generatedAt
+              ? `Updated ${formatRelativeTime(overview.generatedAt)}`
+              : "Loading broker status signals.",
             label: refreshState,
-            tone: topologyQuery.refreshing
-              ? "info"
-              : topologyQuery.stale
-                ? "warning"
-                : topology
-                  ? "success"
-                  : "info",
+            tone:
+              topologyQuery.refreshing || systemQuery.refreshing
+                ? "info"
+                : topologyQuery.stale || systemQuery.stale
+                  ? "warning"
+                  : overview.overall.tone,
           }}
         />
 
-        {!topology && topologyQuery.loading ? (
-          <QueryLoadingState description="Loading messaging topology..." />
+        {operationalLoading ? (
+          <QueryLoadingState description="Loading overview status signals..." />
         ) : null}
 
-        {!topology && topologyQuery.error ? (
-          <QueryErrorState error={topologyQuery.error} onRetry={() => topologyQuery.refresh()} />
-        ) : null}
-
-        {topology && selected ? (
-          <TopologyDashboard
-            history={trendHistory}
-            refreshState={refreshState}
-            selected={selected}
-            setSelectedId={setSelectedId}
-            topology={topology}
+        {operationalFailure ? (
+          <QueryErrorState
+            title="Unable to load overview"
+            error={topologyQuery.error ?? systemQuery.error}
+            onRetry={() => {
+              void topologyQuery.refresh();
+              void systemQuery.refresh();
+            }}
           />
+        ) : null}
+
+        {!operationalLoading && !operationalFailure ? (
+          <>
+            {topologyQuery.error && !topology ? (
+              <Alert
+                variant="warning"
+                title="Topology signals unavailable"
+                description={formatUnknownError(topologyQuery.error)}
+              />
+            ) : null}
+            {systemQuery.error && !system ? (
+              <Alert
+                variant="warning"
+                title="System counters unavailable"
+                description={formatUnknownError(systemQuery.error)}
+              />
+            ) : null}
+
+            <OverviewStatusBand overview={overview} />
+            <OverviewIssues overview={overview} />
+            <DomainHealth overview={overview} />
+            <BrokerVitals overview={overview} />
+          </>
         ) : null}
       </Stack>
     </DomainPageFrame>

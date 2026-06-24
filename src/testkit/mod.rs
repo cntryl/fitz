@@ -8,6 +8,7 @@ pub mod body;
 pub mod lease;
 pub mod midge;
 pub mod notice;
+pub mod operator_seed;
 pub mod queue;
 pub mod rpc;
 pub mod stream;
@@ -21,6 +22,7 @@ pub use body::to_bytes;
 pub use lease::create_test_lease_context;
 pub use midge::create_test_engine_with_cfs;
 pub use notice::{addr, make_router, route, session_id, TestSink};
+pub use operator_seed::{seed_operator_console, OperatorSeedFamily, OperatorSeedReport};
 pub use queue::create_test_queue_actor;
 pub use rpc::{
     create_test_inbox, create_test_inbox_context, create_test_rpc_actor_with_timeout,

@@ -16,6 +16,7 @@ const ADMIN_SESSION_COOKIE: &str = "fitz_admin_session";
 const DEFAULT_SESSION_TTL_SECS: i64 = 28_800;
 const DEFAULT_OPEN_ADMIN_USERNAME: &str = "admin";
 const ADMIN_PUBLIC_ORIGIN_ENV: &str = "FITZ_ADMIN_PUBLIC_ORIGIN";
+const ADMIN_ROUTE_FAMILIES_ENV: &str = "FITZ_ADMIN_ROUTE_FAMILIES";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdminAuthMode {
@@ -37,12 +38,15 @@ struct AdminAuthSettings {
     session_ttl_secs: i64,
     cookie_secure: bool,
     public_origin: Option<String>,
+    route_family_access: AdminRouteFamilyAccess,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AdminSessionClaims {
     sub: String,
     role: String,
+    #[serde(rename = "routeFamilies", default = "default_route_family_access")]
+    route_families: AdminRouteFamilyAccess,
     iat: i64,
     exp: i64,
 }
@@ -57,11 +61,49 @@ pub struct LoginRequest {
 pub struct SessionResponse {
     pub authenticated: bool,
     pub username: String,
+    pub route_families: Vec<String>,
+    pub route_families_wildcard: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct AdminPrincipal {
     pub username: String,
+    pub route_family_access: AdminRouteFamilyAccess,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AdminRouteFamilyAccess {
+    Wildcard(String),
+    Explicit(Vec<String>),
+}
+
+impl AdminRouteFamilyAccess {
+    pub fn wildcard() -> Self {
+        Self::Wildcard("*".to_string())
+    }
+
+    pub fn from_env() -> Self {
+        parse_admin_route_family_access(env_non_empty(ADMIN_ROUTE_FAMILIES_ENV).as_deref())
+    }
+
+    pub fn allows(&self, route_family: &str) -> bool {
+        match self {
+            Self::Wildcard(value) => value == "*",
+            Self::Explicit(values) => values.iter().any(|value| value == route_family),
+        }
+    }
+
+    pub fn route_families(&self) -> Vec<String> {
+        match self {
+            Self::Wildcard(_) => Vec::new(),
+            Self::Explicit(values) => values.clone(),
+        }
+    }
+
+    pub fn is_wildcard(&self) -> bool {
+        matches!(self, Self::Wildcard(value) if value == "*")
+    }
 }
 
 impl AdminAuth {
@@ -90,6 +132,7 @@ impl AdminAuth {
                 let public_origin = std::env::var(ADMIN_PUBLIC_ORIGIN_ENV)
                     .ok()
                     .filter(|value| !value.trim().is_empty());
+                let route_family_access = AdminRouteFamilyAccess::from_env();
 
                 tracing::info!(session_ttl_secs, cookie_secure, "Admin auth configured");
 
@@ -100,6 +143,7 @@ impl AdminAuth {
                     session_ttl_secs,
                     cookie_secure,
                     public_origin,
+                    route_family_access,
                 })
             }
             _ if matches!(mode, AdminAuthMode::Protected) => {
@@ -159,6 +203,7 @@ impl AdminAuth {
 
         Ok(AdminPrincipal {
             username: settings.username.clone(),
+            route_family_access: settings.route_family_access.clone(),
         })
     }
 
@@ -173,6 +218,7 @@ impl AdminAuth {
         let claims = AdminSessionClaims {
             sub: principal.username.clone(),
             role: "admin".to_string(),
+            route_families: principal.route_family_access.clone(),
             iat: issued_at.timestamp(),
             exp: expires_at.timestamp(),
         };
@@ -209,6 +255,7 @@ impl AdminAuth {
             return Ok(AdminPrincipal {
                 username: std::env::var("FITZ_ADMIN_OPEN_USERNAME")
                     .unwrap_or_else(|_| DEFAULT_OPEN_ADMIN_USERNAME.to_string()),
+                route_family_access: AdminRouteFamilyAccess::wildcard(),
             });
         }
 
@@ -233,7 +280,20 @@ impl AdminAuth {
 
         Ok(AdminPrincipal {
             username: claims.sub,
+            route_family_access: claims.route_families,
         })
+    }
+
+    pub fn configured_route_family_access(&self) -> AdminRouteFamilyAccess {
+        if matches!(self.mode, AdminAuthMode::Open) {
+            return AdminRouteFamilyAccess::wildcard();
+        }
+
+        self.settings
+            .as_ref()
+            .as_ref()
+            .map(|settings| settings.route_family_access.clone())
+            .unwrap_or_else(AdminRouteFamilyAccess::wildcard)
     }
 
     pub fn validate_same_origin<B>(&self, req: &hyper::Request<B>) -> Result<(), AuthFailure> {
@@ -307,6 +367,40 @@ fn env_non_empty(key: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn default_route_family_access() -> AdminRouteFamilyAccess {
+    AdminRouteFamilyAccess::wildcard()
+}
+
+fn parse_admin_route_family_access(raw: Option<&str>) -> AdminRouteFamilyAccess {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return AdminRouteFamilyAccess::wildcard();
+    };
+
+    if raw == "*" {
+        return AdminRouteFamilyAccess::wildcard();
+    }
+
+    let mut route_families = Vec::new();
+    for route_family in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|route_family| !route_family.is_empty())
+    {
+        if !route_families
+            .iter()
+            .any(|existing| existing == route_family)
+        {
+            route_families.push(route_family.to_string());
+        }
+    }
+
+    if route_families.is_empty() {
+        AdminRouteFamilyAccess::wildcard()
+    } else {
+        AdminRouteFamilyAccess::Explicit(route_families)
+    }
 }
 
 fn request_header<'a, B>(req: &'a hyper::Request<B>, name: &str) -> Option<&'a str> {
@@ -463,6 +557,7 @@ mod tests {
             "FITZ_ADMIN_OPEN_USERNAME",
             "FITZ_ADMIN_COOKIE_SECURE",
             "FITZ_ADMIN_PUBLIC_ORIGIN",
+            "FITZ_ADMIN_ROUTE_FAMILIES",
         ] {
             std::env::remove_var(key);
         }
@@ -552,6 +647,38 @@ mod tests {
 
         // Assert
         assert_eq!(extracted.username, "admin");
+        assert!(extracted.route_family_access.is_wildcard());
+    }
+
+    #[test]
+    #[serial]
+    fn should_extract_explicit_route_families_from_admin_cookie() {
+        // Arrange
+        reset_admin_env();
+        std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+        std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+        std::env::set_var("FITZ_ADMIN_ROUTE_FAMILIES", "1,partner");
+
+        let auth = AdminAuth::from_env();
+        let principal = auth.authenticate_credentials("admin", "pwd123").unwrap();
+        let cookie = auth.issue_session_cookie(&principal).unwrap();
+        let cookie_value = cookie.split(';').next().unwrap().to_string();
+
+        let req = hyper::http::Request::builder()
+            .header(COOKIE, cookie_value)
+            .body(Body::default())
+            .unwrap();
+
+        // Act
+        let extracted = auth.principal_from_request(&req).unwrap();
+
+        // Assert
+        assert_eq!(
+            extracted.route_family_access.route_families(),
+            vec!["1".to_string(), "partner".to_string()]
+        );
+        assert!(extracted.route_family_access.allows("1"));
+        assert!(!extracted.route_family_access.allows("2"));
     }
 
     #[test]
@@ -575,6 +702,7 @@ mod tests {
         assert_eq!(auth.auth_mode(), "open");
         assert!(!auth.login_required());
         assert_eq!(principal.username, "admin");
+        assert!(principal.route_family_access.is_wildcard());
     }
 
     #[test]

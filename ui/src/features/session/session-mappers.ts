@@ -10,6 +10,8 @@ import type {
 export function mapSessionResponse(dto: SessionResponse): SessionState {
   return {
     authenticated: dto.authenticated,
+    routeFamilies: dto.route_families,
+    routeFamiliesWildcard: dto.route_families_wildcard,
     username: dto.username,
   };
 }

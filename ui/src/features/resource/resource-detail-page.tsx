@@ -18,6 +18,7 @@ import {
   type DomainId,
   type ResourceRef,
 } from "@/features/resource/resource-query";
+import { domainResourceHref, isGenericResourceDomainSegment } from "@/shared/navigation/domains";
 
 type DomainPresentation = {
   description: string;
@@ -66,26 +67,11 @@ function trimmedOrNull(value: string) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function parseDomain(value: string): DomainId {
-  if (
-    value === "kv" ||
-    value === "stream" ||
-    value === "lease" ||
-    value === "schedule" ||
-    value === "notice" ||
-    value === "rpc"
-  ) {
-    return value;
-  }
-
-  return "kv";
-}
-
 function currentDomain() {
   if (typeof window !== "undefined") {
     const route = currentRoute();
     const path = route.path.split("/").filter(Boolean)[0];
-    return parseDomain(path);
+    return isGenericResourceDomainSegment(path) ? path : "kv";
   }
 
   return "kv";
@@ -228,9 +214,7 @@ export default function ResourceDetailPage() {
                 setCompareRealm("");
                 setCompareArea("");
                 setCompareResource("");
-                navigate(
-                  `/${domain}/${route.params.realm}/${route.params.area}/${route.params.resource}`,
-                );
+                navigate(domainResourceHref(domain, ref));
               }}
             >
               Clear comparison
@@ -295,6 +279,6 @@ export default function ResourceDetailPage() {
       nextQuery.set("againstResource", compareResourceTrimmed);
     }
 
-    navigate(`/${domain}/${ref.realm}/${ref.area}/${ref.resource}?${nextQuery.toString()}`);
+    navigate(`${domainResourceHref(domain, ref)}?${nextQuery.toString()}`);
   }
 }

@@ -1,16 +1,17 @@
 import { Stack } from "@askrjs/themes/layouts";
-import QueueStateChart from "@/components/shared/queue-state-chart";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
+import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import {
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
 } from "@/components/shared/query-state";
+import QueueWorkDispatcher from "@/features/queue/queue-work-dispatcher";
 import { createQueueInventoryQuery, createQueueOverviewQuery } from "@/features/queue/queue-query";
 import type { QueueStatsSummary } from "@/features/queue/queue-models";
 import { formatDurationSeconds, formatNumber } from "@/shared/format";
@@ -98,7 +99,7 @@ export default function QueuePage() {
   const data = overview.data;
   const posture = data ? describeQueueOverview(data.stats) : null;
 
-  const sidebar = createDomainSidebar({
+  const snapshot = createDomainSidebar({
     data,
     title: "Scope summary",
     description: "Backlog pressure and live queue activity.",
@@ -122,7 +123,7 @@ export default function QueuePage() {
   });
 
   return (
-    <DomainPageFrame sidebar={sidebar}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Durable work"
@@ -147,6 +148,8 @@ export default function QueuePage() {
           }}
         />
 
+        {snapshot}
+
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading queue overview..." />
         ) : null}
@@ -164,6 +167,12 @@ export default function QueuePage() {
             {overview.refreshing ? (
               <QueryRefreshingState description="Refreshing queue overview..." />
             ) : null}
+
+            <QueueWorkDispatcher
+              error={inventory.error}
+              inventory={inventory.data}
+              loading={inventory.loading}
+            />
 
             <DomainMetricTable
               title="Queue metrics"
@@ -195,8 +204,6 @@ export default function QueuePage() {
               ]}
             />
 
-            <QueueStateChart stats={data.stats} />
-
             <DomainRealmTable
               title="Queue realms"
               realms={data.realms}
@@ -208,6 +215,19 @@ export default function QueuePage() {
               error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
+            />
+
+            <DomainWorkflowPanel
+              archetype="Queue Work Dispatcher"
+              workflows={[
+                "Inspect messages",
+                "Inspect workers",
+                "Handle failures",
+                "Manage retries",
+                "Manage DLQ",
+              ]}
+              questions={["What work is waiting?", "What work is stuck?", "What work failed?"]}
+              diagnostics={["Backlog pressure", "Inflight ownership", "Dead-letter internals"]}
             />
           </Stack>
         ) : null}

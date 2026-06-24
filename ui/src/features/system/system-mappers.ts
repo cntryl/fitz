@@ -86,6 +86,7 @@ export function mapSystemOverview(stats: GlobalStats, metricsValue: unknown): Sy
           stats.domains.rpc.invalid_sequence_errors_forwarded_total,
         invalidSequenceResponsesTotal: stats.domains.rpc.invalid_sequence_responses_total,
         operationsPerSecond: stats.domains.rpc.operations_per_second,
+        pendingRoutesActive: stats.domains.rpc.pending_routes_active,
         requestTimeoutsTotal: stats.domains.rpc.request_timeouts_total,
         requestsPending: stats.domains.rpc.requests_pending,
         requestsTotal: stats.domains.rpc.requests_total,

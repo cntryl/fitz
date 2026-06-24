@@ -33,7 +33,7 @@ export interface DomainSidebarConfig<TData> {
 
 export default function DomainSidebar({ title, description, stats, footer }: DomainSidebarProps) {
   return (
-    <aside class="domain-sidebar">
+    <section class="domain-sidebar" aria-label={title}>
       <Card padding="sm" variant="default">
         <CardHeader>
           <CardTitle>{title}</CardTitle>
@@ -60,7 +60,7 @@ export default function DomainSidebar({ title, description, stats, footer }: Dom
           </CardFooter>
         ) : null}
       </Card>
-    </aside>
+    </section>
   );
 }
 

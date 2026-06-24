@@ -21,3 +21,13 @@ export interface StreamOverview {
   realms: StreamRealmSummary[];
   stats: StreamStatsSummary;
 }
+
+export interface StreamRecordSearchRequest {
+  area?: string;
+  discriminator?: string;
+  fromOffset?: number;
+  limit?: number;
+  realm?: string;
+  resource?: string;
+  routeFamily: number;
+}

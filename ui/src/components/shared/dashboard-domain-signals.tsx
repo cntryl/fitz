@@ -1,3 +1,4 @@
+import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { ArrowUpRightIcon } from "@askrjs/lucide";
 import { Badge } from "@askrjs/themes/surfaces";
@@ -25,51 +26,55 @@ export default function DashboardDomainSignals({
       </div>
 
       <ul class="dashboard-signal-list">
-        {topology.lanes.map((lane) => {
-          const link = domainLinksByHref.get(lane.href);
-          const Icon = link?.icon;
+        <For each={topology.lanes} by={(lane) => lane.id}>
+          {(lane) => {
+            const link = domainLinksByHref.get(lane.href);
+            const Icon = link?.icon;
 
-          return (
-            <li class={`dashboard-signal-item dashboard-signal-item-${lane.state}`} key={lane.id}>
-              <div class="dashboard-signal-row">
-                <div class="dashboard-signal-body">
-                  <div class="dashboard-signal-heading">
-                    <div class="dashboard-signal-title-row">
-                      {Icon ? <Icon size={16} /> : null}
-                      <span class="dashboard-signal-title">{link?.title ?? lane.title}</span>
+            return (
+              <li class={`dashboard-signal-item dashboard-signal-item-${lane.state}`}>
+                <div class="dashboard-signal-row">
+                  <div class="dashboard-signal-body">
+                    <div class="dashboard-signal-heading">
+                      <div class="dashboard-signal-title-row">
+                        {Icon ? <Icon size={16} /> : null}
+                        <span class="dashboard-signal-title">{link?.title ?? lane.title}</span>
+                      </div>
+                      <Badge variant={badgeVariant(lane.state)}>{stateLabel(lane.state)}</Badge>
                     </div>
-                    <Badge variant={badgeVariant(lane.state)}>{stateLabel(lane.state)}</Badge>
+
+                    <p class="dashboard-signal-description">
+                      {topologyDomainDescriptions[lane.id]}
+                    </p>
+
+                    <dl class="dashboard-signal-metrics">
+                      <div class="dashboard-signal-metric">
+                        <dt>Act/sec</dt>
+                        <dd>{formatTopologyRate(lane.activityPerSecond)}</dd>
+                      </div>
+                      <div class="dashboard-signal-metric">
+                        <dt>Consumers</dt>
+                        <dd>{formatNumber(lane.consumers)}</dd>
+                      </div>
+                      <div class="dashboard-signal-metric">
+                        <dt>Observers</dt>
+                        <dd>{formatNumber(lane.observers)}</dd>
+                      </div>
+                    </dl>
                   </div>
-
-                  <p class="dashboard-signal-description">{topologyDomainDescriptions[lane.id]}</p>
-
-                  <dl class="dashboard-signal-metrics">
-                    <div class="dashboard-signal-metric">
-                      <dt>Act/sec</dt>
-                      <dd>{formatTopologyRate(lane.activityPerSecond)}</dd>
-                    </div>
-                    <div class="dashboard-signal-metric">
-                      <dt>Consumers</dt>
-                      <dd>{formatNumber(lane.consumers)}</dd>
-                    </div>
-                    <div class="dashboard-signal-metric">
-                      <dt>Observers</dt>
-                      <dd>{formatNumber(lane.observers)}</dd>
-                    </div>
-                  </dl>
+                  <Link
+                    href={lane.href}
+                    class="dashboard-signal-link"
+                    aria-label={`Open ${link?.title ?? lane.title} page`}
+                  >
+                    <span>Open page</span>
+                    <ArrowUpRightIcon size={12} />
+                  </Link>
                 </div>
-                <Link
-                  href={lane.href}
-                  class="dashboard-signal-link"
-                  aria-label={`Open ${link?.title ?? lane.title} page`}
-                >
-                  <span>Open page</span>
-                  <ArrowUpRightIcon size={12} />
-                </Link>
-              </div>
-            </li>
-          );
-        })}
+              </li>
+            );
+          }}
+        </For>
       </ul>
     </section>
   );

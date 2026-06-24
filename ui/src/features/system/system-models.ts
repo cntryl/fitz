@@ -56,6 +56,7 @@ export interface SystemDomainStatsSummary {
     invalidSequenceErrorsForwardedTotal: number;
     invalidSequenceResponsesTotal: number;
     operationsPerSecond: number;
+    pendingRoutesActive: number;
     requestTimeoutsTotal: number;
     requestsPending: number;
     requestsTotal: number;

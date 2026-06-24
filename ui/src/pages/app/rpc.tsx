@@ -1,8 +1,7 @@
 import { Stack } from "@askrjs/themes/layouts";
-import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
-import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
+import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
 import {
   QueryErrorState,
@@ -11,6 +10,7 @@ import {
 } from "@/components/shared/query-state";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import CommunicationFlowWorkspace from "@/features/communication/communication-flow-workspace";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 
@@ -89,7 +89,7 @@ export default function RpcPage() {
           workersRegistered: 0,
         },
   );
-  const sidebar = createDomainSidebar({
+  const snapshot = createDomainSidebar({
     data,
     title: "RPC demand snapshot",
     description: "Worker availability and pending request pressure.",
@@ -118,7 +118,7 @@ export default function RpcPage() {
   });
 
   return (
-    <DomainPageFrame sidebar={sidebar}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Live request/response"
@@ -134,6 +134,8 @@ export default function RpcPage() {
             tone: overview.refreshing ? "info" : overview.stale ? "warning" : health.tone,
           }}
         />
+
+        {snapshot}
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading RPC overview snapshot..." />
@@ -152,6 +154,14 @@ export default function RpcPage() {
             {overview.refreshing ? (
               <QueryRefreshingState description="Refreshing RPC overview..." />
             ) : null}
+
+            <CommunicationFlowWorkspace
+              domain="rpc"
+              error={inventory.error}
+              inventory={inventory.data}
+              loading={inventory.loading}
+              stats={data.stats}
+            />
 
             <DomainMetricTable
               title="RPC metrics"
@@ -186,56 +196,30 @@ export default function RpcPage() {
               ]}
             />
 
-            <DomainBarChart
-              title="RPC signal"
-              description="Worker capacity, pending request pressure, and current throughput."
-              label="RPC state snapshot"
-              scope="Live RPC snapshot"
-              data={[
-                {
-                  label: "Workers",
-                  unitLabel: "workers",
-                  value: data.stats.workersRegistered,
-                },
-                {
-                  label: "Pending requests",
-                  unitLabel: "requests",
-                  value: data.stats.requestsPending,
-                },
-                {
-                  label: "Pending routes",
-                  unitLabel: "routes",
-                  value: data.stats.pendingRoutesActive,
-                },
-                {
-                  label: "Request timeouts",
-                  unitLabel: "timeouts",
-                  value: data.stats.requestTimeoutsTotal,
-                },
-                {
-                  label: "Failure pressure",
-                  unitLabel: "failures",
-                  value: data.stats.failureTotal,
-                },
-                {
-                  label: "Ops / sec",
-                  unitLabel: "ops/sec",
-                  value: data.stats.operationsPerSecond,
-                },
-              ]}
-            />
-
             <DomainRealmTable
               title="RPC realms"
               realms={data.realms}
               emptyMessage="No RPC realms are currently visible."
             />
 
-            <DomainResourceBrowser
-              domain="rpc"
-              error={inventory.error}
-              inventory={inventory.data}
-              loading={inventory.loading}
+            <DomainWorkflowPanel
+              archetype="RPC Communication Flow"
+              workflows={[
+                "View flow",
+                "Inspect participants",
+                "Trace failures",
+                "Review performance",
+              ]}
+              questions={[
+                "Who talks to whom?",
+                "What is failing?",
+                "Where is communication breaking down?",
+              ]}
+              diagnostics={[
+                "Pending calls",
+                "Worker registrations",
+                "Timeout and sequence internals",
+              ]}
             />
           </Stack>
         ) : null}

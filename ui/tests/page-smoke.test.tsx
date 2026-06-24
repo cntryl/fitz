@@ -3,7 +3,12 @@ import { cleanupApp, createSPA } from "@askrjs/askr/boot";
 import type { Query } from "@askrjs/askr/data";
 import type { RouteHandler } from "@askrjs/askr/router";
 import { queryState } from "@askrjs/askr/testing";
-import { dashboardDiagnostics as diagnostics, topologyOverview } from "./fixtures/topology";
+import {
+  dashboardDiagnostics as diagnostics,
+  healthyGlobalDiagnostics,
+  topologyAppLane,
+  topologyOverview,
+} from "./fixtures/topology";
 
 type MutationState = {
   abort: ReturnType<typeof vi.fn>;
@@ -191,6 +196,7 @@ const noticeOverview = {
 const rpcOverview = {
   realms: [realm],
   stats: {
+    failureTotal: 0,
     invalidSequenceErrorsDroppedTotal: 0,
     invalidSequenceErrorsForwardedTotal: 0,
     invalidSequenceResponsesTotal: 0,
@@ -661,7 +667,7 @@ describe("admin page smoke tests", () => {
   it("mounts every authenticated route with success data", async () => {
     const pages = [
       {
-        assertText: "Broker status",
+        assertText: "Fitz status",
         module: () => import("@/pages/app/home"),
         path: "/",
         routePath: "/",
@@ -677,6 +683,12 @@ describe("admin page smoke tests", () => {
         module: () => import("@/pages/app/metrics"),
         path: "/admin/metrics",
         routePath: "/admin/metrics",
+      },
+      {
+        assertText: "Diagnostics",
+        module: () => import("@/pages/app/diagnostics"),
+        path: "/diagnostics",
+        routePath: "/diagnostics",
       },
       {
         assertText: "Queue overview",
@@ -764,7 +776,8 @@ describe("admin page smoke tests", () => {
       expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
       expect(text).toContain(page.assertText);
       expect(text).toContain("Refresh");
-      expect(text).toContain("Live");
+      expect(text).toMatch(/Live|Healthy|Quiet|Pressure|Attention/);
+      expect(text).toContain("Operator guide");
 
       cleanupApp(root);
       document.body.innerHTML = "";
@@ -877,6 +890,10 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("1h");
     expect(text).toContain("Attention");
     expect(text).toContain("acquire timeout");
+    expect(text).toContain("Ownership console");
+    expect(text).toContain("Existing API");
+    expect(text).toContain("1 matching lease");
+    expect(text).toContain("Open lease");
   });
 
   it("renders kv state and transactional-pressure priority metrics", async () => {
@@ -921,6 +938,10 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Attention");
     expect(text).toContain("authoritative");
     expect(text).toContain("broker-local");
+    expect(text).toContain("Query workspace");
+    expect(text).toContain("Inventory API");
+    expect(text).toContain("1 matching resource");
+    expect(text).toContain("primary");
   });
 
   it("renders domain overviews with empty realm tables", async () => {
@@ -986,6 +1007,11 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("1");
     expect(text).toContain("Attention");
     expect(text).toContain("live fanout");
+    expect(text).toContain("Communication flow");
+    expect(text).toContain("Existing API");
+    expect(text).toContain("Failure signals");
+    expect(text).toContain("1 matching notice route");
+    expect(text).toContain("Open subscriptions");
   });
 
   it("renders schedule pressure-first health and failure metrics", async () => {
@@ -1031,6 +1057,10 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Attention");
     expect(text).toContain("Timing intent is durable");
     expect(text).toContain("pending fire claim(s)");
+    expect(text).toContain("Time planner");
+    expect(text).toContain("Existing API");
+    expect(text).toContain("1 matching schedule");
+    expect(text).toContain("Open plan");
   });
 
   it("renders stream replay-priority metrics and readable lag buckets", async () => {
@@ -1075,6 +1105,10 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Attention");
     expect(text).toContain("Durable stream history");
     expect(text).toContain("live subscriptions");
+    expect(text).toContain("History workspace");
+    expect(text).toContain("Existing API");
+    expect(text).toContain("1 matching stream");
+    expect(text).toContain("Open events");
   });
 
   it("renders rpc pressure-first health and risk signals", async () => {
@@ -1114,6 +1148,11 @@ describe("admin page smoke tests", () => {
 
     expect(text).toContain("Attention");
     expect(text).toContain("Response reliability");
+    expect(text).toContain("Communication flow");
+    expect(text).toContain("Existing API");
+    expect(text).toContain("Failure signals");
+    expect(text).toContain("1 matching RPC route");
+    expect(text).toContain("Open operations");
   });
 
   it("renders the status-first dashboard sections", async () => {
@@ -1122,22 +1161,75 @@ describe("admin page smoke tests", () => {
     const root = await mountRoute("/", "/", Home);
     const text = root.textContent ?? "";
 
-    expect(text).toContain("Broker status");
-    expect(text).toContain("Healthy");
-    expect(text).toContain("Messaging flow");
-    expect(text).toContain("Connected sessions");
-    expect(text).toContain("Next: Check queue");
-    expect(text).toContain("Fitz broker");
-    expect(text).toContain("Consumers and observers");
-    expect(text).toContain("Top scoped resources");
-    expect(text).toContain("Visible connections");
-    expect(text).toContain("Domain signals");
-    expect(text).toContain("Open page");
-    expect(text).toContain("Flow inspector");
-    expect(text).toContain("Durable work delivery");
-    expect(text).toContain("Connected sessions");
-    expect(text).toContain("Current broker behavior");
-    expect(text).toContain("Attention");
+    expect(text).toContain("Fitz status");
+    expect(text).toContain("Current status");
+    expect(text).toContain("Issues");
+    expect(text).toContain("Actionable signals only");
+    expect(text).toContain("Queue blocked");
+    expect(text).toContain("Schedule pending claims");
+    expect(text).toContain("Open Queue");
+    expect(text).toContain("Domain health");
+    expect(text).toContain("Broker vitals");
+    expect(text).toContain("Router pressure");
+    expect(text).not.toContain("Messaging flow");
+    expect(text).not.toContain("Flow inspector");
+  });
+
+  it("renders diagnostics as the infrastructure-internals console", async () => {
+    const diagnosticsWithSuggestion = {
+      ...diagnostics,
+      incident_summary: {
+        ...diagnostics.incident_summary,
+        confidence: 0.82,
+        explanation: "Queue backlog is increasing while RPC workers are saturated.",
+        recommended_next_query: "Inspect queues",
+        severity: "medium",
+        status: "degraded",
+        suggested_next_queries: [
+          {
+            endpoint: "/api/v1/queue/stats",
+            priority: 1,
+            rationale: "Queue backlog is the top broker-visible pressure signal.",
+            remediation: "Open Queue and inspect ready, inflight, and DLQ pressure.",
+            title: "Inspect queue pressure",
+          },
+        ],
+        title: "Queue pressure",
+      },
+    };
+
+    mocks.queryStates.system = queryState.fresh(
+      {
+        ...systemOverview,
+        diagnostics: diagnosticsWithSuggestion,
+      },
+      queryOptions(),
+    );
+    mocks.queryStates.topology = queryState.fresh(
+      {
+        ...topologyOverview,
+        diagnostics: diagnosticsWithSuggestion,
+      },
+      queryOptions(),
+    );
+
+    const { default: DiagnosticsPage } = await import("@/pages/app/diagnostics");
+    const root = await mountRoute("/diagnostics", "/diagnostics", DiagnosticsPage);
+    const text = root.textContent ?? "";
+
+    expect(text).toContain("Diagnostics console");
+    expect(text).toContain("Infrastructure signals");
+    expect(text).toContain("Domain internals");
+    expect(text).toContain("Advanced operational views");
+    expect(text).toContain("Prometheus metrics");
+    expect(text).toContain("Storage health");
+    expect(text).toContain("Not exposed");
+    expect(text).toContain("Hotspots");
+    expect(text).toContain("Suggested queries");
+    expect(text).toContain("Inspect queue pressure");
+    expect(text).toContain("/api/v1/queue/stats");
+    expect(text).toContain("Metric families");
+    expect(text).toContain("fitz_rpc_latency_histogram");
   });
 
   it("keeps dashboard behavior visible while refresh is in flight", async () => {
@@ -1149,13 +1241,13 @@ describe("admin page smoke tests", () => {
     const text = root.textContent ?? "";
 
     expect(text).toContain("Refreshing");
-    expect(text).toContain("Domain signals");
-    expect(text).toContain("Open page");
-    expect(text).toContain("Durable work delivery");
+    expect(text).toContain("Issues");
+    expect(text).toContain("Domain health");
+    expect(text).toContain("Broker vitals");
     expect(text).toContain("Queue");
   });
 
-  it("renders the empty dashboard state when no lanes are visible", async () => {
+  it("renders compact domain entry points when no lanes are visible", async () => {
     const { default: Home } = await import("@/pages/app/home");
 
     mocks.queryStates.topology = queryState.fresh(emptyTopology, queryOptions());
@@ -1163,12 +1255,65 @@ describe("admin page smoke tests", () => {
     const root = await mountRoute("/", "/", Home);
     const text = root.textContent ?? "";
 
-    expect(text).toContain("Broker status");
-    expect(text).toContain("No domain lanes are visible yet");
-    expect(text).toContain("Domain workspaces");
-    expect(text).toContain(
-      "Open a domain when you need a narrower view of resources and live counters.",
-    );
+    expect(text).toContain("Fitz status");
+    expect(text).toContain("Domain health");
+    expect(text).toContain("Broker vitals");
+    expect(text).toContain("Stream");
+    expect(text).toContain("Queue");
+    expect(text).not.toContain("No domain lanes are visible yet");
+    expect(text).not.toContain("Domain workspaces");
+  });
+
+  it("does not promote benign KV rollback and caught-up Stream signals to issues", async () => {
+    const { default: Home } = await import("@/pages/app/home");
+    const healthySystem = {
+      ...systemOverview,
+      diagnostics: healthyGlobalDiagnostics,
+      domains: {
+        ...systemOverview.domains,
+        kv: {
+          ...systemOverview.domains.kv,
+          commitsFailedTotal: 0,
+          invalidTransactionRejectsTotal: 0,
+          rollbacksTotal: 4,
+        },
+        schedule: {
+          ...systemOverview.domains.schedule,
+          pendingFireClaims: 0,
+        },
+        stream: {
+          ...systemOverview.domains.stream,
+          appendConflictsTotal: 0,
+          failureTotal: 0,
+          notifyDropsTotal: 0,
+        },
+      },
+    };
+    const benignTopology = {
+      ...topologyOverview,
+      diagnostics: healthyGlobalDiagnostics,
+      lanes: [
+        topologyAppLane("kv", "KV", "pressure", [
+          { key: "rollbacks", label: "Rollbacks", value: 4 },
+        ]),
+        topologyAppLane("stream", "Stream", "pressure", [
+          { key: "events", label: "Events", value: 1224 },
+        ]),
+      ],
+    };
+
+    mocks.queryStates.system = queryState.fresh(healthySystem, queryOptions());
+    mocks.queryStates.topology = queryState.fresh(benignTopology, queryOptions());
+
+    const root = await mountRoute("/", "/", Home);
+    const text = root.textContent ?? "";
+
+    expect(text).toContain("No active issues");
+    expect(text).toContain("Rollbacks 4");
+    expect(text).toContain("Events 1,224");
+    expect(text).not.toContain("KV write pressure");
+    expect(text).not.toContain("Stream pressure");
+    expect(text).not.toContain("stream latency");
   });
 
   it("renders a metrics posture summary and empty search state", async () => {
@@ -1343,6 +1488,10 @@ describe("admin page smoke tests", () => {
 
     expect(root.textContent).toContain("Refreshing");
     expect(root.textContent).toContain("Scope summary");
+    expect(root.textContent).toContain("Work dispatcher");
+    expect(root.textContent).toContain("Existing API");
+    expect(root.textContent).toContain("1 matching queue");
+    expect(root.textContent).toContain("Open work");
     expect(root.textContent).toContain("Queue metrics");
   });
 

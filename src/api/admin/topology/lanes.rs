@@ -740,9 +740,7 @@ pub(super) fn kv_lane(
     transactions: &[KvTransaction],
     connections: &mut TopologyConnectionBuilder,
 ) -> TopologyLane {
-    let pressure = stats.commits_failed_total
-        + stats.rollbacks_total
-        + stats.invalid_transaction_rejects_total;
+    let pressure = stats.commits_failed_total + stats.invalid_transaction_rejects_total;
     let activity =
         stats.operations_per_second > 0.0 || stats.transactions_active > 0 || stats.keys_total > 0;
     let state = topology_state(&stats.diagnostics, pressure > 0, activity);
@@ -892,4 +890,39 @@ fn top_kv_resources(transactions: &[KvTransaction]) -> Vec<TopologyScopedResourc
         .collect::<Vec<_>>();
 
     top_resources(resources)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_not_mark_kv_topology_pressure_given_only_rollbacks() {
+        // Arrange
+        let stats = stats::KvStats {
+            transactions_active: 0,
+            keys_total: 0,
+            commits_failed_total: 0,
+            rollbacks_total: 4,
+            invalid_transaction_rejects_total: 0,
+            operations_per_second: 0.0,
+            diagnostics: crate::api::admin::troubleshooting::DomainDiagnostics {
+                snapshot: crate::api::admin::troubleshooting::kv_resource_diagnostics(0),
+            },
+        };
+        let mut connections = TopologyConnectionBuilder::new(8);
+
+        // Act
+        let lane = kv_lane(&stats, &[], &mut connections);
+
+        // Assert
+        assert!(matches!(lane.state, TopologyState::Quiet));
+        assert_eq!(
+            lane.counters
+                .iter()
+                .find(|counter| counter.key == "rollbacks")
+                .map(|counter| counter.value),
+            Some(4.0)
+        );
+    }
 }

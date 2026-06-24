@@ -16,6 +16,7 @@ use fitz::boot::domains::{
     ScheduleDomainSink, StreamDomainSink,
 };
 use fitz::boot::{BootConfig, Runtime};
+use fitz::domains::kv::{KvActor, KvMessage, KvResponse, TxMode};
 use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
 use fitz::domains::schedule::store::{ScheduleFireClaim, ScheduleInsert, ScheduleStore};
 use fitz::domains::stream::protocol::StreamWriteMode;
@@ -86,6 +87,12 @@ impl EnvGuard {
     fn unset(key: &'static str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::remove_var(key);
+        Self { key, previous }
+    }
+
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
         Self { key, previous }
     }
 }
@@ -286,6 +293,7 @@ fn seed_snapshot_data(runtime: &Arc<Runtime>) {
     }]);
     read_model.replace_notice_subscriptions(vec![
         NoticeSubscription {
+            route_family: 1,
             subscription_id: 7,
             session_id: "123".to_string(),
             realm: "prod".to_string(),
@@ -294,6 +302,7 @@ fn seed_snapshot_data(runtime: &Arc<Runtime>) {
             notifications_received: 5,
         },
         NoticeSubscription {
+            route_family: 1,
             subscription_id: 8,
             session_id: "124".to_string(),
             realm: "prod".to_string(),
@@ -302,6 +311,7 @@ fn seed_snapshot_data(runtime: &Arc<Runtime>) {
             notifications_received: 2,
         },
         NoticeSubscription {
+            route_family: 1,
             subscription_id: 9,
             session_id: "125".to_string(),
             realm: "prod".to_string(),
@@ -312,12 +322,14 @@ fn seed_snapshot_data(runtime: &Arc<Runtime>) {
     ]);
     read_model.replace_notice_routes(vec![
         NoticeRouteInfo {
+            route_family: 1,
             route: "notice://prod/events/orders/created".to_string(),
             subscribers: 2,
             publishes_total: 0,
             publishes_per_minute: 0.0,
         },
         NoticeRouteInfo {
+            route_family: 1,
             route: "notice://prod/events/orders/updated".to_string(),
             subscribers: 1,
             publishes_total: 0,
@@ -325,6 +337,7 @@ fn seed_snapshot_data(runtime: &Arc<Runtime>) {
         },
     ]);
     read_model.replace_rpc_workers(vec![RpcWorker {
+        route_family: 1,
         session_id: "9001".to_string(),
         realm: "prod".to_string(),
         route: "rpc://prod/api/users/get".to_string(),
@@ -333,6 +346,7 @@ fn seed_snapshot_data(runtime: &Arc<Runtime>) {
         average_latency_ms: 4.5,
     }]);
     read_model.replace_rpc_pending(vec![RpcPendingRequest {
+        route_family: 1,
         correlation_id: "corr-abc-123".to_string(),
         route: "rpc://prod/api/users/get".to_string(),
         submitted_at: "2026-03-14T12:00:07Z".to_string(),
@@ -616,9 +630,51 @@ fn seed_stream_watermark_lag_data(runtime: &Arc<Runtime>) {
     ]);
 }
 
+fn seed_committed_kv_values(
+    store: Arc<cntryl_midge::Engine>,
+    family: u64,
+    realm: &str,
+    area: &str,
+    resource: &str,
+    entries: &[(&[u8], &[u8])],
+) {
+    let route_family = RouteFamily::new(family);
+    let mut actor = KvActor::new(store);
+    let tx_id = match actor.handle(KvMessage::Begin {
+        route_family,
+        realm: realm.to_string(),
+        area: area.to_string(),
+        resource: resource.to_string(),
+        mode: TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    }) {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        other => panic!("Expected BeginOk response, found {other:?}"),
+    };
+
+    for (key, value) in entries {
+        match actor.handle(KvMessage::Put {
+            tx_id,
+            route_family,
+            resource: resource.to_string(),
+            key: Bytes::copy_from_slice(key),
+            value: Bytes::copy_from_slice(value),
+        }) {
+            KvResponse::PutOk => {}
+            other => panic!("Expected PutOk response, found {other:?}"),
+        }
+    }
+
+    match actor.handle(KvMessage::Commit { tx_id }) {
+        KvResponse::CommitOk => {}
+        other => panic!("Expected CommitOk response, found {other:?}"),
+    }
+}
+
 fn seed_stream_latency_pressure_data(runtime: &Arc<Runtime>) {
     let read_model = runtime.admin_read_model();
     read_model.replace_streams(vec![StreamInfo {
+        route_family: 1,
         realm: "prod".to_string(),
         area: "logs".to_string(),
         resource: "application".to_string(),
@@ -1159,6 +1215,58 @@ async fn should_add_security_headers_to_admin_json_response() {
 
 #[tokio::test]
 #[serial]
+async fn should_not_expose_route_family_grants_from_protected_features() {
+    // Arrange
+    let _mode_guard = EnvGuard::unset("FITZ_ADMIN_AUTH_MODE");
+    let _family_guard = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "internal,partner");
+    let runtime = test_runtime();
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/features")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Assert
+    assert_eq!(payload["admin_auth_required"], true);
+    assert!(payload["route_families"].as_array().unwrap().is_empty());
+    assert_eq!(payload["route_families_wildcard"], false);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_report_wildcard_route_family_access_from_open_features() {
+    // Arrange
+    let _mode_guard = EnvGuard::set("FITZ_ADMIN_AUTH_MODE", "open");
+    let _family_guard = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "internal,partner");
+    let runtime = test_runtime();
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/features")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Assert
+    assert_eq!(payload["admin_auth_required"], false);
+    assert!(payload["route_families"].as_array().unwrap().is_empty());
+    assert_eq!(payload["route_families_wildcard"], true);
+}
+
+#[tokio::test]
+#[serial]
 async fn should_add_security_headers_to_admin_error_response() {
     // Arrange
     let runtime = test_runtime();
@@ -1407,6 +1515,109 @@ async fn should_return_kv_transactions_under_resource() {
 
 #[tokio::test]
 #[serial]
+async fn should_return_committed_kv_value_given_authorized_route_family() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    seed_committed_kv_values(store, 1, "prod", "app", "users", &[(b"user:1", b"alice")]);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/kv/realms/prod/areas/app/resources/users/value?route_family=1&key=user%3A1")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["route_family"], 1);
+    assert_eq!(payload["realm"], "prod");
+    assert_eq!(payload["area"], "app");
+    assert_eq!(payload["resource"], "users");
+    assert_eq!(payload["key"]["utf8"], "user:1");
+    assert_eq!(payload["found"], true);
+    assert_eq!(payload["value"]["utf8"], "alice");
+}
+
+#[tokio::test]
+#[serial]
+async fn should_scan_committed_kv_prefix_given_authorized_route_family() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    seed_committed_kv_values(
+        store,
+        1,
+        "prod",
+        "app",
+        "users",
+        &[
+            (b"user:1", b"alice"),
+            (b"user:2", b"bob"),
+            (b"order:1", b"ignored"),
+        ],
+    );
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/kv/realms/prod/areas/app/resources/users/prefix?route_family=1&prefix=user%3A&limit=1")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let items = payload["items"].as_array().unwrap();
+    assert_eq!(payload["route_family"], 1);
+    assert_eq!(payload["prefix"]["utf8"], "user:");
+    assert_eq!(payload["limit"], 1);
+    assert_eq!(payload["has_more"], true);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["key"]["utf8"], "user:1");
+    assert_eq!(items[0]["value"]["utf8"], "alice");
+}
+
+#[tokio::test]
+#[serial]
+async fn should_reject_committed_kv_read_given_unauthorized_route_family() {
+    // Arrange
+    let _family_guard = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "1");
+    let (runtime, store) = queue_runtime_with_domains();
+    seed_committed_kv_values(store, 1, "prod", "app", "users", &[(b"user:1", b"alice")]);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/kv/realms/prod/areas/app/resources/users/value?route_family=2&key=user%3A1")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+#[serial]
 async fn should_return_queue_inflight_under_resource() {
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;
@@ -1474,6 +1685,7 @@ async fn should_return_lease_detail_with_age_and_diagnostics() {
     let runtime = test_runtime();
     let read_model = runtime.admin_read_model();
     read_model.replace_leases(vec![LeaseInfo {
+        route_family: 1,
         realm: "prod".to_string(),
         area: "locks".to_string(),
         resource: "cache".to_string(),
@@ -2368,6 +2580,7 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     let runtime = test_runtime();
     let read_model = runtime.admin_read_model();
     read_model.replace_rpc_workers(vec![RpcWorker {
+        route_family: 1,
         session_id: "9001".to_string(),
         realm: "prod".to_string(),
         route: "rpc://prod/api/users/get".to_string(),
@@ -2377,6 +2590,7 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     }]);
     read_model.replace_rpc_pending(vec![
         RpcPendingRequest {
+            route_family: 1,
             correlation_id: "corr-abc-123".to_string(),
             route: "rpc://prod/api/users/get".to_string(),
             submitted_at: "2026-03-14T12:00:07Z".to_string(),
@@ -2384,6 +2598,7 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
             worker_session_id: Some("9001".to_string()),
         },
         RpcPendingRequest {
+            route_family: 1,
             correlation_id: "corr-xyz-789".to_string(),
             route: "rpc://prod/api/orders/create".to_string(),
             submitted_at: "2026-03-14T12:00:13Z".to_string(),
@@ -2392,6 +2607,7 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
         },
     ]);
     read_model.replace_leases(vec![LeaseInfo {
+        route_family: 1,
         realm: "prod".to_string(),
         area: "locks".to_string(),
         resource: "cache".to_string(),
@@ -2740,7 +2956,7 @@ async fn should_return_stream_domain_stats_given_recorded_operations() {
 
 #[tokio::test]
 #[serial]
-async fn should_classify_stream_latency_pressure_given_recorded_latency_tail() {
+async fn should_report_stream_latency_buckets_without_pressure_given_caught_up_watermarks() {
     // Arrange
     let runtime = test_runtime();
     seed_stream_latency_pressure_data(&runtime);
@@ -2783,12 +2999,67 @@ async fn should_classify_stream_latency_pressure_given_recorded_latency_tail() {
         payload["request_latency_buckets"]["under_500ms"],
         stream_latency_before[5] + 40
     );
-    assert_eq!(payload["diagnostics"]["current_stage"], "throughput");
+    assert_eq!(payload["diagnostics"]["current_stage"], "healthy");
     assert_eq!(
         payload["diagnostics"]["likely_bottleneck"],
-        "stream latency"
+        serde_json::Value::Null
     );
-    assert_eq!(payload["diagnostics"]["severity"], "high");
+    assert_eq!(payload["diagnostics"]["severity"], "informational");
+    assert!(!payload["diagnostics"]["explanation_hints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hint| hint
+            .as_str()
+            .unwrap_or("")
+            .contains("stream request latency tail")));
+}
+
+#[tokio::test]
+#[serial]
+async fn should_classify_stream_latency_pressure_given_recorded_latency_tail_and_lag() {
+    // Arrange
+    let runtime = test_runtime();
+    let read_model = runtime.admin_read_model();
+    read_model.replace_streams(vec![StreamInfo {
+        route_family: 1,
+        realm: "prod".to_string(),
+        area: "logs".to_string(),
+        resource: "application".to_string(),
+        offset: 5,
+        watermark: 1,
+        size_bytes: 1024,
+        sessions_active: 0,
+    }]);
+    let metrics = fitz::boot::observability::metrics();
+    for _ in 0..10 {
+        metrics.histogram_observe_ms("fitz_stream_latency_ms", 1);
+    }
+    for _ in 0..40 {
+        metrics.histogram_observe_ms("fitz_stream_latency_ms", 250);
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/stream/stats")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["diagnostics"]["current_stage"], "throughput");
+    assert_eq!(payload["diagnostics"]["likely_bottleneck"], "append lag");
+    assert_eq!(payload["diagnostics"]["severity"], "medium");
     assert!(payload["diagnostics"]["explanation_hints"]
         .as_array()
         .unwrap()
@@ -3311,6 +3582,7 @@ async fn should_return_messaging_topology_given_live_admin_snapshots() {
         attempts: 2,
     }]);
     read_model.replace_notice_subscriptions(vec![NoticeSubscription {
+        route_family: 1,
         subscription_id: 7,
         session_id: "12".to_string(),
         realm: "prod".to_string(),
@@ -3319,6 +3591,7 @@ async fn should_return_messaging_topology_given_live_admin_snapshots() {
         notifications_received: 5,
     }]);
     read_model.replace_rpc_workers(vec![RpcWorker {
+        route_family: 1,
         session_id: "22".to_string(),
         realm: "prod".to_string(),
         route: "rpc://prod/api/users/get".to_string(),
@@ -3327,6 +3600,7 @@ async fn should_return_messaging_topology_given_live_admin_snapshots() {
         average_latency_ms: 4.5,
     }]);
     read_model.replace_rpc_pending(vec![RpcPendingRequest {
+        route_family: 1,
         correlation_id: "corr-get".to_string(),
         route: "rpc://prod/api/users/get".to_string(),
         submitted_at: "2026-03-14T12:00:07Z".to_string(),
@@ -3334,6 +3608,7 @@ async fn should_return_messaging_topology_given_live_admin_snapshots() {
         worker_session_id: Some("22".to_string()),
     }]);
     read_model.replace_leases(vec![LeaseInfo {
+        route_family: 1,
         realm: "prod".to_string(),
         area: "locks".to_string(),
         resource: "leader".to_string(),
@@ -3344,6 +3619,7 @@ async fn should_return_messaging_topology_given_live_admin_snapshots() {
         fencing_token: 8,
     }]);
     read_model.replace_streams(vec![StreamInfo {
+        route_family: 1,
         realm: "prod".to_string(),
         area: "events".to_string(),
         resource: "orders".to_string(),
@@ -3353,6 +3629,7 @@ async fn should_return_messaging_topology_given_live_admin_snapshots() {
         sessions_active: 1,
     }]);
     read_model.replace_schedules(vec![ScheduleInfo {
+        route_family: 1,
         realm: "prod".to_string(),
         area: "jobs".to_string(),
         resource: "sweeper".to_string(),
@@ -3452,6 +3729,7 @@ async fn should_truncate_topology_connections_given_large_snapshot() {
     read_model.replace_notice_subscriptions(
         (0..260)
             .map(|index| NoticeSubscription {
+                route_family: 1,
                 subscription_id: index,
                 session_id: format!("session-{index}"),
                 realm: "prod".to_string(),
@@ -3683,6 +3961,7 @@ async fn should_return_exact_rpc_operation_detail_counts() {
     let runtime = test_runtime();
     let read_model = runtime.admin_read_model();
     read_model.replace_rpc_workers(vec![RpcWorker {
+        route_family: 1,
         session_id: "9001".to_string(),
         realm: "prod".to_string(),
         route: "rpc://prod/api/users/get".to_string(),
@@ -3692,6 +3971,7 @@ async fn should_return_exact_rpc_operation_detail_counts() {
     }]);
     read_model.replace_rpc_pending(vec![
         RpcPendingRequest {
+            route_family: 1,
             correlation_id: "corr-get".to_string(),
             route: "rpc://prod/api/users/get".to_string(),
             submitted_at: "2026-03-14T12:00:07Z".to_string(),
@@ -3699,6 +3979,7 @@ async fn should_return_exact_rpc_operation_detail_counts() {
             worker_session_id: Some("9001".to_string()),
         },
         RpcPendingRequest {
+            route_family: 1,
             correlation_id: "corr-get-details".to_string(),
             route: "rpc://prod/api/users/get-details".to_string(),
             submitted_at: "2026-03-14T12:00:08Z".to_string(),

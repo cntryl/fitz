@@ -2,14 +2,17 @@ import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
 import { currentRoute, Link, navigate } from "@askrjs/askr/router";
 import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
   Input,
   Label,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
+  VirtualTable,
+  type VirtualTableColumn,
 } from "@askrjs/ui";
 import { Button } from "@askrjs/themes/controls";
 import { Flex, Stack } from "@askrjs/themes/layouts";
@@ -47,6 +50,7 @@ import type {
   QueueResourceRef,
   QueueResourceTimelineEvent,
 } from "@/features/queue/queue-resource-models";
+import { domainResourceHref } from "@/shared/navigation/domains";
 
 interface QueueComparisonTarget {
   area: string;
@@ -395,6 +399,66 @@ export default function QueueResourcePage() {
   const confirmationKind = confirmKind();
   const actionPending = actionKind() !== null;
   const stateSummary = data ? describeQueueState(data.detail, compareTarget) : null;
+  const timelineColumns: readonly VirtualTableColumn<QueueResourceTimelineEvent>[] = [
+    {
+      id: "kind",
+      header: "Kind",
+      width: "14%",
+      cellComponent: ({ row }) => (
+        <span class="domain-table-cell-truncate" title={formatTimelineKind(row.kind)}>
+          {formatTimelineKind(row.kind)}
+        </span>
+      ),
+    },
+    {
+      id: "summary",
+      header: "Summary",
+      width: "30%",
+      cellComponent: ({ row }) => (
+        <span class="domain-table-cell-truncate" title={row.summary}>
+          {row.summary}
+        </span>
+      ),
+    },
+    {
+      id: "observed",
+      header: "Observed",
+      width: "18%",
+      cellComponent: ({ row }) => (
+        <span class="domain-table-cell-truncate" title={row.observedAt}>
+          {row.observedAt}
+        </span>
+      ),
+    },
+    {
+      id: "age",
+      header: "Age",
+      width: "12%",
+      cellComponent: ({ row }) => (
+        <span>{row.ageSeconds == null ? "Unknown" : humanizeSeconds(row.ageSeconds)}</span>
+      ),
+    },
+    {
+      id: "context",
+      header: "Context",
+      width: "26%",
+      cellComponent: ({ row }) => {
+        const timelineContext = formatTimelineContext(row);
+
+        return (
+          <div class="queue-timeline-context">
+            {timelineContext.length > 0 ? (
+              <For each={timelineContext.slice(0, 2)} by={(line) => line}>
+                {(line) => <span title={line}>{line}</span>}
+              </For>
+            ) : (
+              <span>Context unavailable</span>
+            )}
+          </div>
+        );
+      },
+    },
+  ];
 
   const headerStatus = {
     detail: stateSummary?.detail ?? "Inspecting queue state and comparison tools.",
@@ -523,7 +587,7 @@ export default function QueueResourcePage() {
       nextQuery.set("againstFamily", String(compareFamilyParsed.value));
     }
 
-    navigate(`/queue/${realm}/${area}/${resource}?${nextQuery.toString()}`);
+    navigate(`${domainResourceHref("queue", resourceRef)}?${nextQuery.toString()}`);
   }
 
   return (
@@ -658,7 +722,7 @@ export default function QueueResourcePage() {
                         setCompareAreaInput("");
                         setCompareResourceInput("");
                         setCompareFamilyInput("");
-                        navigate(`/queue/${realm}/${area}/${resource}`);
+                        navigate(domainResourceHref("queue", resourceRef));
                       }}
                     >
                       Clear comparison
@@ -757,108 +821,77 @@ export default function QueueResourcePage() {
                   description="No recent transitions are visible for this resource. Use current metrics for context."
                 />
               ) : (
-                <div class="domain-table-wrap">
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableHeaderCell>Kind</TableHeaderCell>
-                        <TableHeaderCell>Summary</TableHeaderCell>
-                        <TableHeaderCell>Observed</TableHeaderCell>
-                        <TableHeaderCell>Age</TableHeaderCell>
-                        <TableHeaderCell>Context</TableHeaderCell>
-                      </TableRow>
-                    </TableHead>
-
-                    <TableBody>
-                      <For
-                        each={current.timeline.events}
-                        by={(event) => `${event.observedAt}:${event.summary}`}
-                      >
-                        {(event) => {
-                          const timelineContext = formatTimelineContext(event);
-
-                          return (
-                            <TableRow>
-                              <TableCell>{formatTimelineKind(event.kind)}</TableCell>
-                              <TableCell>{event.summary}</TableCell>
-                              <TableCell>{event.observedAt}</TableCell>
-                              <TableCell>
-                                {event.ageSeconds == null
-                                  ? "Unknown"
-                                  : humanizeSeconds(event.ageSeconds)}
-                              </TableCell>
-                              <TableCell>
-                                <div class="queue-timeline-context">
-                                  {timelineContext.length > 0 ? (
-                                    timelineContext.map((line) => <span>{line}</span>)
-                                  ) : (
-                                    <span>Context unavailable</span>
-                                  )}
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        }}
-                      </For>
-                    </TableBody>
-                  </Table>
-                </div>
+                <VirtualTable<QueueResourceTimelineEvent>
+                  aria-label="Queue resource timeline"
+                  class="queue-resource-virtual-table"
+                  columns={timelineColumns}
+                  getKey={(event) => `${event.observedAt}:${event.summary}`}
+                  headerHeight={44}
+                  overscan={8}
+                  rowHeight={56}
+                  rows={current.timeline.events}
+                  style={{
+                    height: `${Math.min(456, Math.max(156, 44 + current.timeline.events.length * 56))}px`,
+                  }}
+                />
               )}
             </CardContent>
           </Card>
         </Stack>
 
-        {confirmationMessage ? (
-          <div
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="queue-dead-letter-dialog-title"
-            aria-describedby="queue-dead-letter-dialog-description"
-            class="dialog dialog-alert"
-          >
-            <h2 id="queue-dead-letter-dialog-title">
-              {confirmationKind === "replay"
-                ? "Replay dead-letter message?"
-                : "Purge dead-letter message?"}
-            </h2>
+        <Dialog
+          open={confirmationMessage != null}
+          modal
+          onOpenChange={(open) => {
+            if (!open && !actionPending) {
+              setConfirmKind(null);
+              setConfirmMessage(null);
+            }
+          }}
+        >
+          <DialogPortal>
+            <DialogOverlay class="dialog-overlay" />
+            {confirmationMessage ? (
+              <DialogContent class="dialog-content" role="alertdialog">
+                <DialogTitle>
+                  {confirmationKind === "replay"
+                    ? "Replay dead-letter message?"
+                    : "Purge dead-letter message?"}
+                </DialogTitle>
 
-            <p id="queue-dead-letter-dialog-description">
-              {confirmationKind === "replay"
-                ? `Replay message ${confirmationMessage.messageId} in ${scopeLabel}.`
-                : `Purge message ${confirmationMessage.messageId} from ${scopeLabel}. This is permanent.`}
-            </p>
+                <DialogDescription>
+                  {confirmationKind === "replay"
+                    ? `Replay message ${confirmationMessage.messageId} in ${scopeLabel}.`
+                    : `Purge message ${confirmationMessage.messageId} from ${scopeLabel}. This is permanent.`}
+                </DialogDescription>
 
-            <Flex gap="2" align="end">
-              <Button
-                variant="secondary"
-                type="button"
-                onPress={() => {
-                  setConfirmKind(null);
-                  setConfirmMessage(null);
-                }}
-                disabled={actionPending}
-              >
-                Cancel
-              </Button>
+                <Flex gap="2" justify="end" wrap="wrap">
+                  <DialogClose asChild>
+                    <Button variant="secondary" type="button" disabled={actionPending}>
+                      Cancel
+                    </Button>
+                  </DialogClose>
 
-              <Button
-                variant={confirmationKind === "purge" ? "destructive" : undefined}
-                type="button"
-                onPress={() => runDeadLetterAction(confirmationKind!, confirmationMessage)}
-                disabled={actionPending}
-                aria-busy={actionPending}
-              >
-                {actionPending
-                  ? confirmationKind === "replay"
-                    ? "Replaying..."
-                    : "Purging..."
-                  : confirmationKind === "replay"
-                    ? "Replay message"
-                    : "Purge message"}
-              </Button>
-            </Flex>
-          </div>
-        ) : null}
+                  <Button
+                    variant={confirmationKind === "purge" ? "destructive" : undefined}
+                    type="button"
+                    onPress={() => runDeadLetterAction(confirmationKind!, confirmationMessage)}
+                    disabled={actionPending}
+                    aria-busy={actionPending}
+                  >
+                    {actionPending
+                      ? confirmationKind === "replay"
+                        ? "Replaying..."
+                        : "Purging..."
+                      : confirmationKind === "replay"
+                        ? "Replay message"
+                        : "Purge message"}
+                  </Button>
+                </Flex>
+              </DialogContent>
+            ) : null}
+          </DialogPortal>
+        </Dialog>
       </Stack>
     </DomainPageFrame>
   );

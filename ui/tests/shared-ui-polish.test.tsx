@@ -20,6 +20,17 @@ vi.mock("@/features/session/session-query", () => ({
   }),
 }));
 
+vi.mock("@/features/topology/topology-query", () => ({
+  createMessagingTopologyQuery: () => ({
+    data: null,
+    error: null,
+    loading: false,
+    refresh: vi.fn(),
+    refreshing: false,
+    stale: false,
+  }),
+}));
+
 async function mount(handler: RouteHandler, path = "/") {
   cleanupApp("app");
   document.body.innerHTML = '<div id="app"></div>';
@@ -67,19 +78,22 @@ describe("shared UI polish contracts", () => {
     const routeSurface = root.querySelector(".route-transition-surface");
     const main = root.querySelector("main#main-content");
     const themeToggle = root.querySelector('button[aria-label="Toggle color theme"]');
-    const signOut = Array.from(root.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("Sign out"),
-    );
+    const routeFamilySelector = root.querySelector('button[aria-label="Route Family selector"]');
+    const userMenu = root.querySelector('button[aria-label="User menu"]');
 
     expect(root.textContent).toContain("Fitz");
     expect(root.textContent).toContain("Admin");
+    expect(root.textContent).toContain("Route Family");
+    expect(root.textContent).toContain("Local");
     expect(skipLink?.textContent).toContain("Skip to main content");
     expect(routeSurface?.tagName).toBe("DIV");
+    expect(routeSurface?.getAttribute("data-slot")).toBe("container");
+    expect(routeSurface?.parentElement?.classList.contains("operator-shell-layout")).toBe(true);
     expect(main?.getAttribute("tabindex")).toBe("-1");
     expect(root.querySelectorAll("main")).toHaveLength(1);
-    expect(root.querySelectorAll('[data-slot="container"]')).toHaveLength(2);
+    expect(root.querySelectorAll('[data-slot="container"]')).toHaveLength(4);
     expect(root.querySelectorAll('[data-slot="container"][data-size="initial:xl"]')).toHaveLength(
-      2,
+      4,
     );
     expect(themeToggle).toBeTruthy();
     expect(themeToggle?.getAttribute("data-size")).toBe("icon");
@@ -87,10 +101,17 @@ describe("shared UI polish contracts", () => {
     expect(themeToggle?.querySelector('[data-slot="icon"]')).toBeTruthy();
     expect(themeToggle?.textContent).not.toContain("☀");
     expect(themeToggle?.textContent).not.toContain("☾");
-    expect(signOut?.querySelector('[data-slot="icon"]')).toBeTruthy();
+    expect(routeFamilySelector).toBeTruthy();
+    expect(root.querySelector('form[role="search"]')).toBeNull();
+    expect(userMenu?.querySelector('[data-slot="icon"]')).toBeTruthy();
+
+    userMenu?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
+    expect(document.body.textContent).toContain("Sign out");
   });
 
-  it("exposes individual domain pages from the app navbar", async () => {
+  it("exposes individual domain pages from the app sidebar", async () => {
     const root = await mount(() => (
       <AppLayout>
         <DomainPageFrame>
@@ -99,33 +120,21 @@ describe("shared UI polish contracts", () => {
       </AppLayout>
     ));
 
-    const dropdown = root.querySelector(".navbar-domain-menu");
-    const trigger = root.querySelector('[data-slot="dropdown-trigger"]');
+    const routeFamilySelector = root.querySelector('button[aria-label="Route Family selector"]');
     const contentBeforeOpen = root.querySelector('[data-slot="dropdown-content"]');
     const containers = document.querySelectorAll('[data-slot="container"]');
 
-    expect(dropdown).toBeTruthy();
-    expect(trigger).toBeTruthy();
+    expect(routeFamilySelector).toBeTruthy();
     expect(contentBeforeOpen).toBeNull();
-    expect(containers.length).toBe(2);
+    expect(containers.length).toBe(4);
     expect(
       document.querySelectorAll('[data-slot="container"][data-size="initial:xl"]'),
-    ).toHaveLength(2);
-
-    trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
-
-    const content = document.querySelector('[data-slot="dropdown-content"]');
-
-    expect(content).toBeTruthy();
+    ).toHaveLength(4);
 
     for (const link of domainLinks) {
-      const item =
-        document.querySelector(`a[href="${link.href}"][data-slot="dropdown-item"]`) ??
-        root.querySelector(`a[href="${link.href}"]`);
+      const item = root.querySelector(`a[href="${link.href}"]`);
 
       expect(item?.textContent).toContain(link.title);
-      expect(item?.textContent).toContain(link.description);
       expect(item?.querySelector('[data-slot="icon"]')).toBeTruthy();
     }
   });
@@ -143,7 +152,7 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelectorAll(".page-frame-main")).toHaveLength(1);
     expect(root.querySelectorAll(".page-frame-sidebar")).toHaveLength(1);
     expect(root.querySelectorAll('[data-slot="container"][data-size="initial:xl"]')).toHaveLength(
-      2,
+      4,
     );
     expect(root.textContent).toContain("Workspace");
     expect(root.textContent).toContain("Sidebar");
@@ -181,7 +190,7 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelector('[role="alert"]')).toBeTruthy();
   });
 
-  it("uses AskR table and card styling without app-local table chrome", async () => {
+  it("uses AskR table, virtual table, and card styling without app-local table chrome", async () => {
     const root = await mount(() => (
       <main>
         <DomainMetricTable
@@ -216,11 +225,13 @@ describe("shared UI polish contracts", () => {
     ));
 
     const tables = root.querySelectorAll('[data-slot="table"]');
+    const virtualTables = root.querySelectorAll('[data-slot="virtual-table"]');
     const cards = root.querySelectorAll('[data-slot="card"]');
 
-    expect(tables).toHaveLength(2);
+    expect(tables).toHaveLength(1);
+    expect(virtualTables).toHaveLength(1);
     expect(cards).toHaveLength(2);
-    expect(root.querySelectorAll(".domain-table-wrap")).toHaveLength(2);
+    expect(root.querySelectorAll(".domain-table-wrap")).toHaveLength(1);
     expect(root.querySelector(".domain-table")).toBeNull();
     expect(root.querySelector(".domain-metric-card")).toBeNull();
     expect(root.textContent).toContain("Current values");

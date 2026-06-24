@@ -1,6 +1,9 @@
 import { For } from "@askrjs/askr/control";
+import { Timeline } from "@askrjs/charts/components";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
+import { Button } from "@askrjs/themes/controls";
 import { Flex, Stack } from "@askrjs/themes/layouts";
 import {
   Badge,
@@ -94,28 +97,6 @@ function formatTimelineKind(kind: string) {
     default:
       return "Observation";
   }
-}
-
-function formatTimelineContext(event: {
-  attempts?: number | null;
-  area: string;
-  correlationId?: string | null;
-  messageId?: number | null;
-  operation?: string | null;
-  ownerSession?: string | null;
-  realm: string;
-  resource: string;
-  workerSession?: string | null;
-}): string[] {
-  return [
-    `Scope: ${event.realm} / ${event.area} / ${event.resource}`,
-    event.operation ? `Operation: ${event.operation}` : null,
-    event.messageId != null ? `Message: ${event.messageId}` : null,
-    event.attempts != null ? `Attempts: ${event.attempts}` : null,
-    event.ownerSession ? `Owner session: ${event.ownerSession}` : null,
-    event.workerSession ? `Worker session: ${event.workerSession}` : null,
-    event.correlationId ? `Correlation: ${event.correlationId}` : null,
-  ].filter((line): line is string => line != null);
 }
 
 function describeResourceState(detail: ResourceDetail): ResourceWorkbenchState {
@@ -215,6 +196,20 @@ function ComparisonDetails({
 }
 
 function RelatedTable({ table }: { table: ResourceRelatedTable }) {
+  const columns: readonly VirtualTableColumn<Record<string, string | number>>[] = table.columns.map(
+    (column) => ({
+      id: column,
+      header: column,
+      width: `${100 / Math.max(table.columns.length, 1)}%`,
+      cellComponent: ({ row }) => (
+        <span class="resource-table-cell-truncate" title={String(row[column] ?? "n/a")}>
+          {row[column] ?? "n/a"}
+        </span>
+      ),
+    }),
+  );
+  const tableHeight = Math.min(432, Math.max(144, 44 + table.rows.length * 48));
+
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
@@ -224,32 +219,17 @@ function RelatedTable({ table }: { table: ResourceRelatedTable }) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div class="domain-table-wrap">
-          <Table>
-            <TableHead>
-              <TableRow>
-                <For each={table.columns} by={(column) => column}>
-                  {(column) => <TableHeaderCell>{column}</TableHeaderCell>}
-                </For>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              <For each={table.rows} by={(_row, index) => index}>
-                {(row) => (
-                  <TableRow>
-                    <For each={table.columns} by={(column) => column}>
-                      {(column) => (
-                        <TableCell>
-                          <span class="resource-table-cell-truncate">{row[column] ?? "n/a"}</span>
-                        </TableCell>
-                      )}
-                    </For>
-                  </TableRow>
-                )}
-              </For>
-            </TableBody>
-          </Table>
-        </div>
+        <VirtualTable<Record<string, string | number>>
+          aria-label={table.title}
+          class="resource-related-virtual-table"
+          columns={columns}
+          getKey={(_row, index) => index}
+          headerHeight={44}
+          overscan={8}
+          rowHeight={48}
+          rows={table.rows}
+          style={{ height: `${tableHeight}px` }}
+        />
       </CardContent>
     </Card>
   );
@@ -259,17 +239,327 @@ export function describeResourceDetail(detail: ResourceDetail): ResourceWorkbenc
   return describeResourceState(detail);
 }
 
-export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
-  const summary = describeResourceDetail(detail);
-  const timelineScope = scopeLine(detail.timeline);
-  const hasMeaningfulRelated = detail.related.filter((table) => table.rows.length > 0).length > 0;
+type ResourceArchetypeConfig = {
+  actionLabel: string;
+  actionTitle: string;
+  diagnosticsDescription: string;
+  evidenceTitle: string;
+  failureTitle: string;
+  primaryDescription: string;
+  primaryTitle: string;
+  timelineTitle: string;
+  title: string;
+};
+
+const archetypeConfig: Record<ResourceDetail["domain"], ResourceArchetypeConfig> = {
+  kv: {
+    actionLabel: "State Explorer",
+    actionTitle: "Query workspace",
+    diagnosticsDescription: "Transaction pressure, current values, and raw resource payload.",
+    evidenceTitle: "Results and details",
+    failureTitle: "State anomalies",
+    primaryDescription: "Resource-level current authoritative state from the existing admin API.",
+    primaryTitle: "State query",
+    timelineTitle: "State timeline",
+    title: "KV State Explorer",
+  },
+  lease: {
+    actionLabel: "Ownership Console",
+    actionTitle: "Ownership",
+    diagnosticsDescription: "Broker-local lease health and contention evidence.",
+    evidenceTitle: "Contention",
+    failureTitle: "Ownership conflicts",
+    primaryDescription: "Ephemeral owner, waiter, and lease coordination signals for this scope.",
+    primaryTitle: "Current ownership",
+    timelineTitle: "Ownership history",
+    title: "Lease Ownership Console",
+  },
+  notice: {
+    actionLabel: "Communication Flow",
+    actionTitle: "Flow graph",
+    diagnosticsDescription:
+      "Live fanout pressure, participants, failures, and raw broker evidence.",
+    evidenceTitle: "Participants",
+    failureTitle: "Delivery failures",
+    primaryDescription:
+      "Live Notice route, subscription, and delivery signals for connected participants.",
+    primaryTitle: "Notice flow",
+    timelineTitle: "Delivery trace",
+    title: "Notice Communication Flow",
+  },
+  rpc: {
+    actionLabel: "Communication Flow",
+    actionTitle: "Flow graph",
+    diagnosticsDescription:
+      "Live request/response participants, failures, and pending-call evidence.",
+    evidenceTitle: "Participants",
+    failureTitle: "Call failures",
+    primaryDescription:
+      "Live RPC operations, workers, and pending request signals for this resource.",
+    primaryTitle: "RPC flow",
+    timelineTitle: "Call trace",
+    title: "RPC Communication Flow",
+  },
+  schedule: {
+    actionLabel: "Time Planner",
+    actionTitle: "Timeline",
+    diagnosticsDescription: "Durable timing intent, execution pressure, and handoff diagnostics.",
+    evidenceTitle: "Executions",
+    failureTitle: "Missed or failed execution",
+    primaryDescription:
+      "Future timing intent and recent execution evidence for this schedule resource.",
+    primaryTitle: "Execution plan",
+    timelineTitle: "Execution timeline",
+    title: "Schedule Time Planner",
+  },
+  stream: {
+    actionLabel: "History Explorer",
+    actionTitle: "Event explorer",
+    diagnosticsDescription:
+      "Durable stream indicators, consumers, replay context, and raw payload.",
+    evidenceTitle: "Consumers",
+    failureTitle: "Replay risks",
+    primaryDescription: "Durable history indicators and recent stream events for this scope.",
+    primaryTitle: "Event history",
+    timelineTitle: "Event timeline",
+    title: "Stream History Explorer",
+  },
+};
+
+function failureLikeMetric(metric: { label: string }) {
+  const label = metric.label.toLowerCase();
+
+  return ["fail", "reject", "timeout", "drop", "dead", "conflict", "invalid", "rollback"].some(
+    (word) => label.includes(word),
+  );
+}
+
+function failureLikeEvent(event: { kind: string; summary: string }) {
+  const text = `${event.kind} ${event.summary}`.toLowerCase();
+
+  return ["fail", "reject", "timeout", "drop", "dead", "conflict", "invalid", "blocked"].some(
+    (word) => text.includes(word),
+  );
+}
+
+function hierarchyMetrics(detail: ResourceDetail) {
+  return [
+    { label: "Realm", value: detail.ref.realm },
+    { label: "Area", value: detail.ref.area },
+    { label: "Resource", value: detail.ref.resource },
+    ...detail.detailMetrics.slice(0, 5),
+  ];
+}
+
+function ResourceTimelinePanel({ detail, title }: { detail: ResourceDetail; title: string }) {
+  const timelineData = detail.timeline.events.slice(0, 8).map((event) => ({
+    description: event.summary,
+    label: formatTimelineKind(event.kind),
+    value: humanizeAge(event.ageSeconds),
+  }));
 
   return (
-    <Stack gap="4" class="resource-workbench">
+    <Card padding="sm" variant="default">
+      <CardHeader>
+        <Flex justify="between" gap="3" align="start" wrap="wrap">
+          <Stack gap="1">
+            <CardTitle>{title}</CardTitle>
+            <CardDescription>
+              {detail.timeline.derived ? "Derived evidence" : "Live evidence"} for{" "}
+              {scopeLine(detail.ref)}.
+            </CardDescription>
+          </Stack>
+          <Badge variant={detail.timeline.derived ? "info" : "success"}>
+            {detail.timeline.derived ? "Derived" : "Live"}
+          </Badge>
+        </Flex>
+      </CardHeader>
+      <CardContent>
+        {timelineData.length > 0 ? (
+          <Timeline
+            label={title}
+            data={timelineData}
+            summary={`${timelineData.length} recent timeline event(s).`}
+          />
+        ) : (
+          <QueryEmptyState
+            title="No timeline events"
+            description="No recent events are visible for this resource."
+          />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function FailurePanel({ detail, title }: { detail: ResourceDetail; title: string }) {
+  const failureMetrics = detail.detailMetrics.filter(failureLikeMetric);
+  const failureEvents = detail.timeline.events.filter(failureLikeEvent).slice(0, 5);
+
+  return (
+    <Card padding="sm" variant="default">
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        <CardDescription>
+          Failures, rejects, drops, conflicts, and other attention signals.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {failureMetrics.length > 0 || failureEvents.length > 0 ? (
+          <Stack gap="3">
+            {failureMetrics.length > 0 ? (
+              <DomainMetricTable title="Failure metrics" metrics={failureMetrics} />
+            ) : null}
+            {failureEvents.length > 0 ? (
+              <div class="domain-table-wrap">
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableHeaderCell>Kind</TableHeaderCell>
+                      <TableHeaderCell>Summary</TableHeaderCell>
+                      <TableHeaderCell>Observed</TableHeaderCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    <For
+                      each={failureEvents}
+                      by={(event) => `${event.observedAt}:${event.summary}`}
+                    >
+                      {(event) => (
+                        <TableRow>
+                          <TableCell>{formatTimelineKind(event.kind)}</TableCell>
+                          <TableCell>{event.summary}</TableCell>
+                          <TableCell>{event.observedAt}</TableCell>
+                        </TableRow>
+                      )}
+                    </For>
+                  </TableBody>
+                </Table>
+              </div>
+            ) : null}
+          </Stack>
+        ) : (
+          <QueryEmptyState
+            title="No failure signals"
+            description="No failure, reject, drop, conflict, or timeout signals are visible in the current admin data."
+          />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ArchetypeActionPanel({
+  config,
+  detail,
+}: {
+  config: ResourceArchetypeConfig;
+  detail: ResourceDetail;
+}) {
+  return (
+    <Card padding="sm" variant="default">
+      <CardHeader>
+        <CardTitle>{config.actionTitle}</CardTitle>
+        <CardDescription>{config.primaryDescription}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <DomainMetricTable
+          title={config.primaryTitle}
+          description={`Scope: ${scopeLine(detail.ref)}.`}
+          metrics={hierarchyMetrics(detail)}
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
+function ArchetypeEvidencePanel({
+  config,
+  detail,
+}: {
+  config: ResourceArchetypeConfig;
+  detail: ResourceDetail;
+}) {
+  const related = detail.related.filter((table) => table.rows.length > 0);
+
+  return (
+    <Stack gap="3">
+      <Card padding="sm" variant="default">
+        <CardHeader>
+          <CardTitle>{config.evidenceTitle}</CardTitle>
+          <CardDescription>{config.diagnosticsDescription}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DomainMetricTable title="Current values" metrics={detail.detailMetrics} />
+        </CardContent>
+      </Card>
+
+      {detail.comparison ? (
+        <ComparisonDetails comparison={detail.comparison} scope={scopeLine(detail.ref)} />
+      ) : null}
+
+      {related.length > 0 ? (
+        <For each={related} by={(table) => table.title}>
+          {(table) => <RelatedTable table={table} />}
+        </For>
+      ) : (
+        <QueryEmptyState
+          title="No related records"
+          description="No related records are visible for this scope."
+        />
+      )}
+    </Stack>
+  );
+}
+
+function ArchetypeOperationsPanel({ detail }: { detail: ResourceDetail }) {
+  if (detail.domain === "stream") {
+    return (
+      <Card padding="sm" variant="default">
+        <CardHeader>
+          <CardTitle>Replay controls</CardTitle>
+          <CardDescription>Replay remains tied to explicit Stream API support.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" disabled>
+            Replay event range
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (detail.domain === "kv") {
+    return (
+      <Card padding="sm" variant="default">
+        <CardHeader>
+          <CardTitle>State lookup</CardTitle>
+          <CardDescription>
+            Key lookup and prefix search require a dedicated KV admin contract.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" disabled>
+            Query keys
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return null;
+}
+
+export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
+  const summary = describeResourceDetail(detail);
+  const config = archetypeConfig[detail.domain];
+
+  return (
+    <Stack gap="4" class="resource-workbench archetype-workbench">
       <Card class="resource-workbench-hero" padding="sm" variant="default">
         <Stack gap="1" class="resource-workbench-summary">
-          <p class="domain-header-kicker">Operational evidence</p>
-          <h2>{detail.timeline.derived ? "Derived signal available" : "Live signal available"}</h2>
+          <p class="domain-header-kicker">{config.actionLabel}</p>
+          <h2>{config.title}</h2>
           <p class="domain-muted">{summary.nextStep}</p>
         </Stack>
         <Stack gap="2" class="resource-workbench-summary-actions">
@@ -278,121 +568,16 @@ export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
         </Stack>
       </Card>
 
-      <DomainMetricTable
-        title="Current values"
-        description={`Primary metrics for ${scopeLine(detail.ref)}.`}
-        metrics={detail.detailMetrics}
-      />
-
-      <div class="resource-comparison-metadata">
-        {detail.comparison ? (
-          <ComparisonDetails comparison={detail.comparison} scope={scopeLine(detail.ref)} />
-        ) : null}
-        {!detail.comparison ? (
-          <QueryEmptyState
-            title="Add a comparison"
-            description="Enter realm, area, and resource in the sidebar to compare this scope against another scope."
-          />
-        ) : null}
-      </div>
-
-      <Card padding="sm" variant="default">
-        <CardHeader>
-          <Flex justify="between" gap="3" align="start" wrap="wrap">
-            <Stack gap="1">
-              <CardTitle>Timeline</CardTitle>
-              <CardDescription>
-                {detail.timeline.derived
-                  ? "Derived timeline built from surrounding evidence."
-                  : "Live events observed for this scope."}
-                <span class="resource-muted-meta">
-                  {" "}
-                  Limit {detail.timeline.limit} rows. Scope: {timelineScope}.
-                </span>
-              </CardDescription>
-            </Stack>
-            <Badge variant={detail.timeline.derived ? "info" : "success"}>
-              {detail.timeline.derived ? "Derived" : "Live"}
-            </Badge>
-          </Flex>
-        </CardHeader>
-
-        <CardContent>
-          {detail.timeline.events.length === 0 ? (
-            <QueryEmptyState
-              title={detail.timeline.derived ? "Derived timeline" : "Live timeline"}
-              description="No recent events are visible for this resource. Use the current metrics or raw payload for exact values."
-            />
-          ) : (
-            <div class="domain-table-wrap">
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableHeaderCell class="resource-timeline-kind">Kind</TableHeaderCell>
-                    <TableHeaderCell>Summary</TableHeaderCell>
-                    <TableHeaderCell>Context</TableHeaderCell>
-                    <TableHeaderCell>Observed</TableHeaderCell>
-                    <TableHeaderCell>Age</TableHeaderCell>
-                  </TableRow>
-                </TableHead>
-
-                <TableBody>
-                  <For
-                    each={detail.timeline.events}
-                    by={(event) => `${event.observedAt}:${event.summary}`}
-                  >
-                    {(event) => {
-                      const timelineContext = formatTimelineContext(event);
-
-                      return (
-                        <TableRow>
-                          <TableCell>
-                            <span class="resource-timeline-kind">
-                              {formatTimelineKind(event.kind)}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <span class="resource-timeline-summary">{event.summary}</span>
-                          </TableCell>
-                          <TableCell>
-                            <div class="resource-timeline-context">
-                              {timelineContext.length > 0 ? (
-                                timelineContext.map((line) => <span>{line}</span>)
-                              ) : (
-                                <span>No context</span>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>{event.observedAt}</TableCell>
-                          <TableCell>{humanizeAge(event.ageSeconds)}</TableCell>
-                        </TableRow>
-                      );
-                    }}
-                  </For>
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {hasMeaningfulRelated ? (
-        <Stack gap="3">
-          <For each={detail.related} by={(table) => table.title}>
-            {(table) => (table.rows.length > 0 ? <RelatedTable table={table} /> : null)}
-          </For>
-        </Stack>
-      ) : (
-        <QueryEmptyState
-          title="No related records"
-          description="No related records are visible for this scope."
-        />
-      )}
+      <ArchetypeActionPanel config={config} detail={detail} />
+      <ResourceTimelinePanel detail={detail} title={config.timelineTitle} />
+      <ArchetypeEvidencePanel config={config} detail={detail} />
+      <FailurePanel detail={detail} title={config.failureTitle} />
+      <ArchetypeOperationsPanel detail={detail} />
 
       <section class="resource-workbench-raw">
         <Card padding="sm" variant="default">
           <CardHeader>
-            <CardTitle>Raw payload</CardTitle>
+            <CardTitle>Diagnostics payload</CardTitle>
             <CardDescription>Exact API response body for this resource.</CardDescription>
           </CardHeader>
           <CardContent>

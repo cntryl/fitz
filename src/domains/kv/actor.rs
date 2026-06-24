@@ -544,7 +544,7 @@ impl KvActor {
         self.transactions.get(&tx_id).map(|tx| tx.mutation_count)
     }
 
-    fn realm_resource_prefix(realm: &str, area: &str, resource: &str) -> Vec<u8> {
+    pub(crate) fn realm_resource_prefix(realm: &str, area: &str, resource: &str) -> Vec<u8> {
         let mut encoder = storage_key::domain_marker_encoder(
             realm,
             DomainKeyspace::Kv,
@@ -564,7 +564,7 @@ impl KvActor {
     /// # Errors
     ///
     /// Returns an error if RouteFamily is 0 (would map to default CF).
-    fn resolve_column_family(
+    pub(crate) fn resolve_column_family(
         route_family: RouteFamily,
         _resource: &str,
     ) -> Result<ColumnFamilyId, String> {
@@ -576,18 +576,18 @@ impl KvActor {
         Ok(route_family.id())
     }
 
-    fn encode_scoped_key(prefix: &[u8], user_key: &[u8]) -> Vec<u8> {
+    pub(crate) fn encode_scoped_key(prefix: &[u8], user_key: &[u8]) -> Vec<u8> {
         let mut out = Vec::with_capacity(prefix.len() + user_key.len());
         out.extend_from_slice(prefix);
         out.extend_from_slice(user_key);
         out
     }
 
-    fn strip_scoped_prefix(prefix: &[u8], scoped_key: &[u8]) -> Option<Vec<u8>> {
+    pub(crate) fn strip_scoped_prefix(prefix: &[u8], scoped_key: &[u8]) -> Option<Vec<u8>> {
         scoped_key.strip_prefix(prefix).map(|rest| rest.to_vec())
     }
 
-    fn prefix_range_end(prefix: &[u8]) -> Vec<u8> {
+    pub(crate) fn prefix_range_end(prefix: &[u8]) -> Vec<u8> {
         storage_key::prefix_range_end(prefix)
     }
 

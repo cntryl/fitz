@@ -1,26 +1,39 @@
 import { expect, test, type Page } from "@playwright/test";
-import type { DiagnosticSnapshot } from "@/adapters";
-import { topologyOverview } from "../fixtures/topology";
+import type { DiagnosticSnapshot, GlobalStats, MessagingTopology } from "@/adapters";
+import { dashboardDiagnostics, topologyDtoLane, topologyOverview } from "../fixtures/topology";
 
-async function openDashboard(page: Page, theme: "light" | "dark" = "light") {
+async function openDashboard(page: Page, theme: "light" | "dark" = "light", setupApis = true) {
   if (theme === "dark") {
     await page.addInitScript(() => {
       localStorage.setItem("fitz-admin-theme", "dark");
     });
   }
 
+  if (setupApis) {
+    await mockHomeRouteApis(page);
+  }
+
   await page.goto("/admin");
 
   await expect(page.locator("main#main-content")).toHaveCount(1);
+  const primaryNav = page.getByRole("navigation", { name: "Primary navigation" });
+  const contextNav = page.getByRole("navigation", { name: "Operator context" });
   const viewport = page.viewportSize();
+
+  await expect(contextNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
+  await expect(contextNav.getByRole("button", { name: "Route Family selector" })).toBeVisible();
+  await expect(contextNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
+  await expect(contextNav.getByRole("button", { name: "User menu" })).toBeVisible();
+
   if ((viewport?.width ?? 0) < 768) {
-    await expect(page.getByRole("button", { name: "Menu" })).toBeVisible();
+    await expect(primaryNav.getByRole("button", { name: /Menu|Navigation/ })).toBeVisible();
     return;
   }
-  await expect(page.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Domains" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+
+  await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Settings" })).toBeVisible();
 }
 
 type DomainOverviewFixture = {
@@ -33,6 +46,71 @@ type DomainOverviewFixture = {
 const adminFeatures = {
   admin_auth_required: false,
   admin_auth_mode: "open" as const,
+};
+
+async function mockAdminFeatures(page: Page) {
+  await page.route("**/api/v1/features", async (route) => {
+    await route.fulfill({
+      json: adminFeatures,
+    });
+  });
+}
+
+const topologyApiPayload: MessagingTopology = {
+  broker: {
+    connections: topologyOverview.broker.connections,
+    messages_per_second: topologyOverview.broker.messagesPerSecond,
+    realms: topologyOverview.broker.realms,
+    router_backpressure_total: topologyOverview.broker.routerBackpressureTotal,
+    router_high_lane_backpressure_total: topologyOverview.broker.routerHighLaneBackpressureTotal,
+    sessions: topologyOverview.broker.sessions,
+    uptime_seconds: topologyOverview.broker.uptimeSeconds,
+  },
+  connections: {
+    items: [
+      {
+        id: "queue-inflight:1:42",
+        kind: "queue_inflight_consumer",
+        label: "ops / primary inflight",
+        metrics: [{ key: "attempts", label: "Attempts", value: 2 }],
+        scope: {
+          area: "ops",
+          realm: "default",
+          resource: "primary",
+          route_family: 1,
+          session_id: "session-1",
+        },
+        source: "domain:queue",
+        state: "flowing",
+        target: "session:session-1",
+      },
+    ],
+    limit: 250,
+    total: 1,
+    truncated: false,
+  },
+  diagnostics: dashboardDiagnostics,
+  generated_at: "2026-06-23T18:30:00.000Z",
+  lanes: [
+    topologyDtoLane("queue", "blocked", 4),
+    topologyDtoLane("rpc", "flowing", 4),
+    topologyDtoLane("notice", "flowing", 7),
+    topologyDtoLane("schedule", "pressure", 5),
+    topologyDtoLane("stream", "flowing", 9),
+    topologyDtoLane("lease", "flowing", 3),
+    topologyDtoLane("kv", "flowing", 12),
+  ],
+  session_groups: [
+    {
+      max_idle_seconds: 12,
+      messages_received: 2,
+      messages_sent: 3,
+      representative_sessions: [],
+      route_family: 1,
+      sessions: 1,
+      transports: ["ws"],
+    },
+  ],
 };
 
 const domainOverviewPages = [
@@ -118,6 +196,7 @@ const domainOverviewData: Record<string, DomainOverviewFixture> = {
   rpc: {
     realms: [{ realm: "default" }],
     stats: {
+      failure_total: 0,
       invalid_sequence_errors_dropped_total: 0,
       invalid_sequence_errors_forwarded_total: 0,
       invalid_sequence_responses_total: 0,
@@ -208,13 +287,9 @@ async function mockDomainOverviewApis(
   page: Page,
   overrides: Partial<Record<string, DomainOverviewOverride>> = {},
 ) {
-  await page.route("**/api/v1/features", async (route) => {
-    await route.fulfill({
-      json: adminFeatures,
-    });
-  });
+  await mockAdminFeatures(page);
 
-  await page.route("**/api/v1/*", async (route) => {
+  await page.route("**/api/v1/**", async (route) => {
     const parsed = new URL(route.request().url());
     const segments = parsed.pathname.split("/").filter(Boolean);
     if (segments.length < 3) {
@@ -223,6 +298,13 @@ async function mockDomainOverviewApis(
     }
 
     const domain = segments[2] ?? "";
+    if (domain === "features") {
+      await route.fulfill({
+        json: adminFeatures,
+      });
+      return;
+    }
+
     const baseFixture = domainOverviewData[domain as keyof typeof domainOverviewData];
     const override = overrides[domain];
     const domainFixture = baseFixture
@@ -257,7 +339,7 @@ async function mockDomainOverviewApis(
     }
 
     if (segments.length === 6 && detail === "areas") {
-      const realm = decodeURIComponent(segments[3] ?? "");
+      const realm = decodeURIComponent(segments[4] ?? "");
       const areas = domainAreasByRealm(domain, realm).map((entry) => ({ area: entry }));
       await route.fulfill({
         json: { areas },
@@ -266,8 +348,8 @@ async function mockDomainOverviewApis(
     }
 
     if (segments.length === 8 && detail === "resources") {
-      const realm = decodeURIComponent(segments[3] ?? "");
-      const area = decodeURIComponent(segments[5] ?? "");
+      const realm = decodeURIComponent(segments[4] ?? "");
+      const area = decodeURIComponent(segments[6] ?? "");
       await route.fulfill({
         json: {
           resources: domainResourcesByArea(domain, realm, area),
@@ -343,11 +425,7 @@ fitz_rpc_requests_total{realm="default"} 19
 `;
 
 async function mockSessionsApi(page: Page, payload: SessionsPayload) {
-  await page.route("**/api/v1/features", async (route) => {
-    await route.fulfill({
-      json: adminFeatures,
-    });
-  });
+  await mockAdminFeatures(page);
 
   await page.route("**/api/v1/sessions", async (route) => {
     await route.fulfill({
@@ -357,11 +435,7 @@ async function mockSessionsApi(page: Page, payload: SessionsPayload) {
 }
 
 async function mockMetricsApi(page: Page, payload = metricsPayload) {
-  await page.route("**/api/v1/features", async (route) => {
-    await route.fulfill({
-      json: adminFeatures,
-    });
-  });
+  await mockAdminFeatures(page);
 
   await page.route(
     (url) => {
@@ -392,7 +466,7 @@ type ThemeMode = "light" | "dark";
 type ViewportPreset = {
   height: number;
   isMobile: boolean;
-  key: "desktop" | "mobile";
+  key: "desktop" | "mobile" | "tablet";
   width: number;
 };
 
@@ -418,6 +492,12 @@ const viewportPresets: ViewportPreset[] = [
     isMobile: false,
     key: "desktop",
     width: 1440,
+  },
+  {
+    height: 1200,
+    isMobile: false,
+    key: "tablet",
+    width: 1024,
   },
   {
     height: 844,
@@ -467,6 +547,153 @@ function makeDiagnosticSnapshot(overrides: Partial<DiagnosticSnapshot> = {}): Di
   };
 }
 
+const emptyQueueAgeBuckets = {
+  over_15m: 0,
+  under_15m: 0,
+  under_1m: 0,
+  under_5m: 0,
+};
+
+const emptyLatencyBuckets = {
+  over_5s: 0,
+  under_100ms: 0,
+  under_10ms: 0,
+  under_1ms: 0,
+  under_1s: 0,
+  under_500ms: 0,
+  under_50ms: 0,
+  under_5ms: 0,
+  under_5s: 0,
+};
+
+function makeGlobalStatsPayload(): GlobalStats {
+  const diagnostics = makeDiagnosticSnapshot();
+
+  return {
+    broker: {
+      connections: topologyOverview.broker.connections,
+      messages_per_second: topologyOverview.broker.messagesPerSecond,
+      realms: topologyOverview.broker.realms,
+      router_backpressure_total: topologyOverview.broker.routerBackpressureTotal,
+      router_high_lane_backpressure_total: topologyOverview.broker.routerHighLaneBackpressureTotal,
+      sessions: topologyOverview.broker.sessions,
+      uptime_seconds: topologyOverview.broker.uptimeSeconds,
+    },
+    diagnostics: dashboardDiagnostics,
+    domains: {
+      kv: {
+        ...domainOverviewData.kv.stats,
+        diagnostics,
+      },
+      lease: {
+        ...domainOverviewData.lease.stats,
+        diagnostics,
+        failure_total: 0,
+        ownership_churn_total: 0,
+        requests_total: 18,
+        success_total: 17,
+      },
+      notice: {
+        ...domainOverviewData.notice.stats,
+        diagnostics,
+        failure_total: 0,
+        requests_total: 9,
+        success_total: 9,
+        unsubscribes_total: 0,
+      },
+      queue: {
+        ...domainOverviewData.queue.stats,
+        backlog_age_buckets: emptyQueueAgeBuckets,
+        complete_rejected_total: 0,
+        completes_total: 4,
+        dead_letter_transitions_total: 0,
+        delay_age_buckets: emptyQueueAgeBuckets,
+        diagnostics,
+        enqueues_total: 18,
+        extends_total: 0,
+        failure_total: 0,
+        notify_drops_total: 0,
+        oldest_backlog_age_seconds: 28,
+        oldest_message_age_seconds: 42,
+        redeliveries_total: 0,
+        releases_total: 1,
+        requests_total: 22,
+        reserves_total: 7,
+        success_total: 21,
+      },
+      rpc: {
+        ...domainOverviewData.rpc.stats,
+        acks_rejected_wrong_worker_total: 0,
+        backpressure_rejects_total: 0,
+        diagnostics,
+        duplicate_correlation_rejects_total: 0,
+        oldest_pending_request_age_seconds: 7,
+        requests_total: 19,
+        slowest_worker_average_latency_ms: 12,
+        success_total: 19,
+        worker_latency_buckets: {
+          over_100ms: 0,
+          under_100ms: 0,
+          under_25ms: 2,
+          under_5ms: 4,
+        },
+        wrong_worker_rejects_total: 0,
+      },
+      schedule: {
+        ...domainOverviewData.schedule.stats,
+        diagnostics,
+        oldest_pending_claim_age_seconds: 12,
+        pending_ack_retries: 0,
+        pending_claim_cleanup_failures_total: 0,
+        pending_claims_expired_total: 0,
+        request_latency_buckets: emptyLatencyBuckets,
+      },
+      stream: {
+        ...domainOverviewData.stream.stats,
+        append_conflicts_total: 0,
+        append_sessions_active: 1,
+        append_sessions_ended_total: 0,
+        append_sessions_started_total: 1,
+        diagnostics,
+        failure_total: 0,
+        notify_drops_total: 0,
+        request_latency_buckets: emptyLatencyBuckets,
+        requests_total: 12,
+        success_total: 12,
+      },
+    },
+  } as GlobalStats;
+}
+
+async function mockDiagnosticsApis(page: Page) {
+  await mockAdminFeatures(page);
+
+  await page.route("**/api/v1/stats", async (route) => {
+    await route.fulfill({
+      json: makeGlobalStatsPayload(),
+    });
+  });
+
+  await page.route("**/api/v1/topology", async (route) => {
+    await route.fulfill({
+      json: topologyApiPayload,
+    });
+  });
+
+  await page.route(
+    (url) => {
+      const parsedUrl = new URL(url);
+      return parsedUrl.pathname === "/metrics";
+    },
+    async (route) => {
+      await route.fulfill({
+        body: metricsPayload,
+        contentType: "text/plain; charset=utf-8",
+      });
+    },
+  );
+}
+
 function parseResourceScope(segments: string[]): ResourceScope | null {
   if (segments.length < 9) {
     return null;
@@ -493,15 +720,11 @@ function parseRouteResourceScope(path: string): ResourceScope {
 }
 
 async function mockHomeRouteApis(page: Page) {
-  await page.route("**/api/v1/features", async (route) => {
-    await route.fulfill({
-      json: adminFeatures,
-    });
-  });
+  await mockAdminFeatures(page);
 
   await page.route("**/api/v1/topology", async (route) => {
     await route.fulfill({
-      json: topologyOverview,
+      json: topologyApiPayload,
     });
   });
 }
@@ -614,15 +837,18 @@ async function mockResourceDetailApis(
 ) {
   const diagnostics = makeDiagnosticSnapshot();
 
-  await page.route("**/api/v1/features", async (route) => {
-    await route.fulfill({
-      json: adminFeatures,
-    });
-  });
+  await mockAdminFeatures(page);
 
-  await page.route("**/api/v1/*", async (route) => {
+  await page.route("**/api/v1/**", async (route) => {
     const parsed = new URL(route.request().url());
     const segments = parsed.pathname.split("/").filter(Boolean);
+
+    if (segments[2] === "features") {
+      await route.fulfill({
+        json: adminFeatures,
+      });
+      return;
+    }
 
     if (segments.length < 3 || segments[2] !== domain) {
       await route.continue();
@@ -797,15 +1023,18 @@ function queueTimelineFixture(scope: ResourceScope) {
 async function mockQueueResourceApis(page: Page, routeScope: ResourceScope) {
   const diagnostics = makeDiagnosticSnapshot();
 
-  await page.route("**/api/v1/features", async (route) => {
-    await route.fulfill({
-      json: adminFeatures,
-    });
-  });
+  await mockAdminFeatures(page);
 
-  await page.route("**/api/v1/*", async (route) => {
+  await page.route("**/api/v1/**", async (route) => {
     const parsed = new URL(route.request().url());
     const segments = parsed.pathname.split("/").filter(Boolean);
+
+    if (segments[2] === "features") {
+      await route.fulfill({
+        json: adminFeatures,
+      });
+      return;
+    }
 
     if (segments.length < 9 || segments[2] !== "queue") {
       await route.continue();
@@ -926,20 +1155,64 @@ async function applyTheme(page: Page, theme: ThemeMode) {
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
-  const overflow = await page.evaluate(() => {
-    const maxWidth = Math.max(
-      document.documentElement.scrollWidth,
-      document.body?.scrollWidth ?? 0,
+  const visibleOverflow = await page.evaluate(() => {
+    const viewportRight = window.innerWidth + 2;
+    const viewportLeft = -2;
+    const isClippedByScrollableAncestor = (element: HTMLElement) => {
+      let parent = element.parentElement;
+
+      while (parent && parent !== document.body) {
+        const style = window.getComputedStyle(parent);
+        const clipsInlineOverflow = ["auto", "clip", "hidden", "scroll"].includes(style.overflowX);
+
+        if (clipsInlineOverflow) {
+          const rect = parent.getBoundingClientRect();
+          if (rect.left >= viewportLeft && rect.right <= viewportRight) {
+            return true;
+          }
+        }
+
+        parent = parent.parentElement;
+      }
+
+      return false;
+    };
+    const offenders = Array.from(document.body.querySelectorAll<HTMLElement>("*")).filter(
+      (element) => {
+        // askrjs/askr-charts#2 tracks sr-only chart tables inflating document width.
+        if (element.closest(".ak-chart-sr-only")) {
+          return false;
+        }
+
+        const style = window.getComputedStyle(element);
+        if (style.display === "none" || style.visibility === "hidden") {
+          return false;
+        }
+
+        const rect = element.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) {
+          return false;
+        }
+
+        if (isClippedByScrollableAncestor(element)) {
+          return false;
+        }
+
+        return rect.right > viewportRight || rect.left < viewportLeft;
+      },
     );
-    return maxWidth <= window.innerWidth + 2;
+
+    return offenders.length === 0;
   });
 
-  expect(overflow).toBe(true);
+  expect(visibleOverflow).toBe(true);
 }
 
 async function expectRouteChrome(page: Page, route: RouteScenario) {
   const viewport = page.viewportSize();
   const isMobile = (viewport?.width ?? 0) < 768;
+  const primaryNav = page.getByRole("navigation", { name: "Primary navigation" });
+  const contextNav = page.getByRole("navigation", { name: "Operator context" });
 
   await expect(page.locator("main#main-content")).toHaveCount(1);
   await expect(page.getByRole("heading", { name: exactHeadingMatcher(route.title) })).toBeVisible();
@@ -947,51 +1220,43 @@ async function expectRouteChrome(page: Page, route: RouteScenario) {
   await expectNoHorizontalOverflow(page);
 
   if (route.shell === "app") {
-    if (!isMobile) {
-      await expect(page.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
-    }
+    await expect(contextNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
+    await expect(contextNav.getByRole("button", { name: "Route Family selector" })).toBeVisible();
+    await expect(contextNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
+    await expect(contextNav.getByRole("button", { name: "User menu" })).toBeVisible();
 
     if (isMobile) {
-      const menu = page.getByRole("button", { name: "Menu" });
+      const menu = primaryNav.getByRole("button", { name: /Menu|Navigation/ });
       await expect(menu).toBeVisible();
       await menu.click();
 
-      await expect(page.getByRole("link", { name: "Dashboard" })).toBeVisible();
-      await expect(page.getByRole("link", { name: "Sessions" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Domains" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+      await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
+      await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
+      await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
+      await expect(primaryNav.getByRole("link", { name: "Settings" })).toBeVisible();
       await expectNoHorizontalOverflow(page);
 
       await page.keyboard.press("Escape");
       return;
     }
 
-    await expect(page.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
-
-    await expect(page.getByRole("link", { name: "Dashboard" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Sessions" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Metrics" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Domains" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
-
-    const domainMenu = page.getByRole("button", { name: "Domains" });
-    await domainMenu.click();
-    await expect(page.locator('[data-slot="dropdown-content"]').first()).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: /Queue/ })).toBeVisible();
+    await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
+    await expect(primaryNav.getByRole("link", { name: "Stream" })).toBeVisible();
+    await expect(primaryNav.getByRole("link", { name: "KV" })).toBeVisible();
+    await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
+    await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
+    await expect(primaryNav.getByRole("link", { name: "Settings" })).toBeVisible();
     await expectNoHorizontalOverflow(page);
-
-    await page.keyboard.press("Escape");
     return;
   }
 
   if (!isMobile) {
-    await expect(page.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
+    await expect(primaryNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
+    await expect(primaryNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
   }
 
   if (isMobile) {
-    await expect(page.getByRole("button", { name: "Menu" })).toBeVisible();
+    await expect(primaryNav.getByRole("button", { name: /Menu|Navigation/ })).toBeVisible();
   }
 }
 
@@ -1000,13 +1265,13 @@ const sprint16Routes: RouteScenario[] = [
     path: "/",
     shell: "app",
     setup: mockHomeRouteApis,
-    title: "Broker status",
+    title: "Fitz status",
   },
   {
     path: "/admin",
     shell: "app",
     setup: mockHomeRouteApis,
-    title: "Broker status",
+    title: "Fitz status",
   },
   {
     path: "/sessions",
@@ -1019,6 +1284,18 @@ const sprint16Routes: RouteScenario[] = [
     shell: "app",
     setup: mockMetricsApi,
     title: "Metrics explorer",
+  },
+  {
+    path: "/diagnostics",
+    shell: "app",
+    setup: mockDiagnosticsApis,
+    title: "Diagnostics",
+  },
+  {
+    path: "/settings",
+    shell: "app",
+    setup: mockHomeRouteApis,
+    title: "Settings",
   },
   {
     path: "/lease",
@@ -1168,8 +1445,9 @@ test("captures the desktop dashboard shell", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await openDashboard(page);
 
-  await expect(page.getByRole("heading", { name: "Broker status" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Domain signals" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Fitz status" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Issues" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Domain health" })).toBeVisible();
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("dashboard-desktop.png"),
@@ -1181,8 +1459,9 @@ test("captures the tablet dashboard shell", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1024, height: 1200 });
   await openDashboard(page);
 
-  await expect(page.getByRole("heading", { name: "Broker status" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Domain signals" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Fitz status" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Issues" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Domain health" })).toBeVisible();
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("dashboard-tablet.png"),
@@ -1195,7 +1474,7 @@ test("captures the desktop dashboard shell in dark mode", async ({ page }, testI
   await openDashboard(page, "dark");
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page.getByRole("heading", { name: "Broker status" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Fitz status" })).toBeVisible();
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("dashboard-dark.png"),
@@ -1209,6 +1488,7 @@ test("captures the dashboard refreshing state", async ({ page }, testInfo) => {
   let releaseRefresh: (() => void) | undefined;
   let topologyRequests = 0;
 
+  await mockAdminFeatures(page);
   await page.route("**/api/v1/topology", async (route) => {
     topologyRequests += 1;
 
@@ -1218,13 +1498,15 @@ test("captures the dashboard refreshing state", async ({ page }, testInfo) => {
       });
     }
 
-    await route.continue();
+    await route.fulfill({
+      json: topologyApiPayload,
+    });
   });
 
-  await openDashboard(page);
-  await expect(page.getByRole("heading", { name: "Domain signals" })).toBeVisible();
+  await openDashboard(page, "light", false);
+  await expect(page.getByRole("heading", { name: "Issues" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Refresh topology" }).click();
+  await page.getByRole("button", { name: "Refresh overview" }).click();
   await expect(page.locator('[data-slot="badge"]').filter({ hasText: "Refreshing" })).toBeVisible();
 
   await page.screenshot({
@@ -1237,40 +1519,43 @@ test("captures the dashboard refreshing state", async ({ page }, testInfo) => {
   await page.waitForTimeout(100);
 });
 
-test("captures the desktop domain dropdown and closes on navigation", async ({
-  page,
-}, testInfo) => {
+test("captures desktop domain navigation", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await openDashboard(page);
+  const primaryNav = page.getByRole("navigation", { name: "Primary navigation" });
 
-  await page.getByRole("button", { name: "Domains" }).click();
-  const dropdown = page.locator('[data-slot="dropdown-content"]');
-
-  await expect(dropdown).toBeVisible();
-  await expect(page.getByText("Domain pages")).toBeVisible();
-  await expect(page.getByRole("link", { name: /Queue/ }).first()).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Stream" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "KV" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Schedule" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Lease" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Notice" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "RPC" })).toBeVisible();
   await page.screenshot({
     fullPage: true,
-    path: testInfo.outputPath("domains-dropdown-open.png"),
+    path: testInfo.outputPath("domains-navigation-desktop.png"),
     animations: "disabled",
   });
 
-  await dropdown.locator('a[href="/queue"]').click();
+  await mockDomainOverviewApis(page);
+  await primaryNav.getByRole("link", { name: "Queue" }).click();
   await expect(page).toHaveURL(/\/queue$/);
   await expect(page.locator("main#main-content")).toHaveCount(1);
-  await expect(dropdown).toBeHidden();
 });
 
-test("captures a sidebar domain page", async ({ page }, testInfo) => {
+test("captures a domain page with lead snapshot", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockDomainOverviewApis(page);
   await page.goto("/queue");
 
   await expect(page.locator("main#main-content")).toHaveCount(1);
-  await expect(page.locator(".page-frame-sidebar")).toBeVisible();
+  await expect(page.locator(".page-frame-sidebar")).toHaveCount(0);
+  await expect(page.locator(".domain-sidebar")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Scope summary" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Queue overview" })).toBeVisible();
   await page.screenshot({
     fullPage: true,
-    path: testInfo.outputPath("queue-sidebar.png"),
+    path: testInfo.outputPath("queue-lead-snapshot.png"),
     animations: "disabled",
   });
 });
@@ -1383,6 +1668,7 @@ test("captures rpc overview empty state", async ({ page }, testInfo) => {
     rpc: {
       realms: [],
       stats: {
+        failure_total: 0,
         invalid_sequence_errors_dropped_total: 0,
         invalid_sequence_errors_forwarded_total: 0,
         invalid_sequence_responses_total: 0,
@@ -1476,12 +1762,13 @@ test.describe("captures domain overview templates", () => {
 test("captures the mobile navbar panel", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openDashboard(page);
+  const primaryNav = page.getByRole("navigation", { name: "Primary navigation" });
 
-  await page.getByRole("button", { name: "Menu" }).click();
-  await expect(page.getByRole("link", { name: "Dashboard" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Domains" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await primaryNav.getByRole("button", { name: /Menu|Navigation/ }).click();
+  await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Settings" })).toBeVisible();
 
   await page.screenshot({
     fullPage: true,
@@ -1527,7 +1814,7 @@ test("captures sessions on mobile", async ({ page }, testInfo) => {
   await mockSessionsApi(page, sessionsWithData);
 
   await page.goto("/sessions");
-  await expect(page.getByRole("heading", { name: "Active sessions" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Active sessions", exact: true })).toBeVisible();
   await expect(page.locator("ul.session-mobile-list li").first()).toBeVisible();
 
   await page.screenshot({

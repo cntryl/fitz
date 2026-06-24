@@ -10,11 +10,15 @@
 use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
+use bytes::Bytes;
 use chrono::Utc;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+
+pub type AdminKvCommittedPair = (Vec<u8>, Vec<u8>);
+pub type AdminKvPrefixScanResult = (Vec<AdminKvCommittedPair>, bool);
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct KvResourceLockKey {
@@ -107,6 +111,71 @@ impl KvDomainSink {
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+    }
+
+    pub fn admin_get_committed_value(
+        &self,
+        route_family: crate::runtime::routing::RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, String> {
+        let column_family =
+            crate::domains::kv::KvActor::resolve_column_family(route_family, resource)?;
+        let tx = self
+            .store
+            .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|error| error.to_string())?;
+        let prefix = crate::domains::kv::KvActor::realm_resource_prefix(realm, area, resource);
+        let scoped_key = crate::domains::kv::KvActor::encode_scoped_key(&prefix, key);
+        tx.get(&scoped_key)
+            .map(|value| value.map(|value| value.to_vec()))
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn admin_scan_committed_prefix(
+        &self,
+        route_family: crate::runtime::routing::RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        key_prefix: &[u8],
+        limit: usize,
+    ) -> Result<AdminKvPrefixScanResult, String> {
+        let column_family =
+            crate::domains::kv::KvActor::resolve_column_family(route_family, resource)?;
+        let tx = self
+            .store
+            .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
+            .map_err(|error| error.to_string())?;
+        let resource_prefix =
+            crate::domains::kv::KvActor::realm_resource_prefix(realm, area, resource);
+        let scoped_prefix =
+            crate::domains::kv::KvActor::encode_scoped_key(&resource_prefix, key_prefix);
+        let query_limit = limit.saturating_add(1);
+        let midge_query = cntryl_midge::Query::new()
+            .prefix(Bytes::from(scoped_prefix.clone()))
+            .start_key(Bytes::from(scoped_prefix.clone()))
+            .end_key(Bytes::from(crate::domains::kv::KvActor::prefix_range_end(
+                &scoped_prefix,
+            )))
+            .limit(query_limit);
+        let mut iterator = tx.scan(&midge_query).map_err(|error| error.to_string())?;
+        let mut rows = Vec::new();
+
+        while let Some((scoped_key, value)) = iterator.next() {
+            let Some(user_key) =
+                crate::domains::kv::KvActor::strip_scoped_prefix(&resource_prefix, &scoped_key)
+            else {
+                continue;
+            };
+            rows.push((user_key, value.to_vec()));
+        }
+
+        let has_more = rows.len() > limit;
+        rows.truncate(limit);
+        Ok((rows, has_more))
     }
 
     fn sync_admin_snapshot(&self) {

@@ -1,5 +1,4 @@
-import { For } from "@askrjs/askr/control";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import type { QueueInflightMessage } from "@/features/queue/queue-resource-models";
 import { formatTimestamp } from "@/shared/format";
 
@@ -8,55 +7,87 @@ export interface QueueInflightTableProps {
 }
 
 export default function QueueInflightTable({ messages }: QueueInflightTableProps) {
+  const columns: readonly VirtualTableColumn<QueueInflightMessage>[] = [
+    {
+      id: "message",
+      header: "Message",
+      width: "12%",
+      cellComponent: ({ row }) => (
+        <span class="domain-table-cell-truncate" title={String(row.messageId)}>
+          {row.messageId}
+        </span>
+      ),
+    },
+    {
+      id: "context",
+      header: "Context",
+      width: "24%",
+      cellComponent: ({ row }) => {
+        const context = `${row.realm} / ${row.area} / ${row.resource}`;
+
+        return (
+          <span class="domain-table-cell-truncate" title={context}>
+            {context}
+          </span>
+        );
+      },
+    },
+    {
+      id: "token",
+      header: "Owner token",
+      width: "18%",
+      cellComponent: ({ row }) => (
+        <span class="domain-table-cell-truncate" title={row.inflightToken}>
+          {row.inflightToken}
+        </span>
+      ),
+    },
+    {
+      id: "session",
+      header: "Session",
+      width: "16%",
+      cellComponent: ({ row }) => (
+        <span class="domain-table-cell-truncate" title={row.sessionId}>
+          {row.sessionId}
+        </span>
+      ),
+    },
+    {
+      id: "family",
+      header: "Family",
+      width: "8%",
+      cellComponent: ({ row }) => <span>{row.family}</span>,
+    },
+    {
+      id: "attempts",
+      header: "Attempts",
+      width: "8%",
+      cellComponent: ({ row }) => <span>{row.attempts}</span>,
+    },
+    {
+      id: "expires",
+      header: "Expires",
+      width: "14%",
+      cellComponent: ({ row }) => (
+        <span class="domain-table-cell-truncate" title={formatTimestamp(row.expiresAt)}>
+          {formatTimestamp(row.expiresAt)}
+        </span>
+      ),
+    },
+  ];
+  const tableHeight = Math.min(420, Math.max(144, 44 + messages.length * 48));
+
   return (
-    <div class="domain-table-wrap">
-      <Table>
-        <TableHead>
-          <TableRow>
-            <TableHeaderCell>Message</TableHeaderCell>
-            <TableHeaderCell>Context</TableHeaderCell>
-            <TableHeaderCell>Owner token</TableHeaderCell>
-            <TableHeaderCell>Session</TableHeaderCell>
-            <TableHeaderCell>Family</TableHeaderCell>
-            <TableHeaderCell>Attempts</TableHeaderCell>
-            <TableHeaderCell>Expires</TableHeaderCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          <For each={messages} by={(message) => message.messageId}>
-            {(message) => (
-              <TableRow>
-                <TableCell>
-                  <span class="domain-table-cell-truncate" title={String(message.messageId)}>
-                    {message.messageId}
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <span
-                    class="domain-table-cell-truncate"
-                    title={`${message.realm} / ${message.area} / ${message.resource}`}
-                  >
-                    {message.realm} / {message.area} / {message.resource}
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <span class="domain-table-cell-truncate" title={message.inflightToken}>
-                    {message.inflightToken}
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <span class="domain-table-cell-truncate" title={message.sessionId}>
-                    {message.sessionId}
-                  </span>
-                </TableCell>
-                <TableCell>{message.family}</TableCell>
-                <TableCell>{message.attempts}</TableCell>
-                <TableCell>{formatTimestamp(message.expiresAt)}</TableCell>
-              </TableRow>
-            )}
-          </For>
-        </TableBody>
-      </Table>
-    </div>
+    <VirtualTable<QueueInflightMessage>
+      aria-label="Inflight queue messages"
+      class="queue-resource-virtual-table"
+      columns={columns}
+      getKey={(message) => message.messageId}
+      headerHeight={44}
+      overscan={8}
+      rowHeight={48}
+      rows={messages}
+      style={{ height: `${tableHeight}px` }}
+    />
   );
 }

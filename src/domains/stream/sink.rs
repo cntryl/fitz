@@ -35,6 +35,16 @@ impl RoutedSubscription for StreamSubscription {
     }
 }
 
+pub struct AdminStreamReadRequest<'a> {
+    pub family: RouteFamily,
+    pub realm: &'a str,
+    pub area: &'a str,
+    pub resource: &'a str,
+    pub from_offset: u64,
+    pub limit: u64,
+    pub discriminator: Option<String>,
+}
+
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
 struct StreamActorKey {
     family_id: u64,
@@ -262,6 +272,38 @@ impl StreamDomainSink {
         }
     }
 
+    pub fn admin_read_resource_records(
+        &self,
+        request: AdminStreamReadRequest<'_>,
+    ) -> Result<
+        (
+            Vec<StreamReadItem>,
+            crate::domains::stream::protocol::ReadCursor,
+        ),
+        String,
+    > {
+        let filter =
+            request
+                .discriminator
+                .map(|value| crate::domains::stream::protocol::StreamFilterSet {
+                    clauses: vec![
+                        crate::domains::stream::protocol::StreamFilterClause::Equals(value),
+                    ],
+                });
+        let params = crate::domains::stream::store::ReadResourceParams {
+            family: request.family.as_u64(),
+            realm: request.realm,
+            area: request.area,
+            resource: request.resource,
+            from_offset: request.from_offset,
+            limit: request.limit,
+            max_bytes: None,
+        };
+
+        self.stream_store
+            .read_resource_with_filter(&params, filter.as_ref())
+    }
+
     fn sync_admin_snapshot(&self) {
         let mut streams: BTreeMap<(u64, String, String, String), crate::api::admin::StreamInfo> =
             BTreeMap::new();
@@ -287,13 +329,16 @@ impl StreamDomainSink {
                         streams.insert(
                             (family_id, realm.clone(), area.clone(), resource.clone()),
                             crate::api::admin::StreamInfo::snapshot(
-                                &realm,
-                                &area,
-                                &resource,
-                                last_offset,
-                                last_offset,
-                                committed_size_bytes,
-                                0,
+                                crate::api::admin::StreamInfoSnapshot {
+                                    route_family: family_id,
+                                    realm: &realm,
+                                    area: &area,
+                                    resource: &resource,
+                                    offset: last_offset,
+                                    watermark: last_offset,
+                                    size_bytes: committed_size_bytes,
+                                    sessions_active: 0,
+                                },
                             ),
                         );
 
@@ -392,15 +437,16 @@ impl StreamDomainSink {
 
             streams.insert(
                 stream_key,
-                crate::api::admin::StreamInfo::snapshot(
-                    &key.realm,
-                    &key.area,
-                    &key.resource,
-                    visible_offset,
-                    visible_offset,
-                    committed_size_bytes,
+                crate::api::admin::StreamInfo::snapshot(crate::api::admin::StreamInfoSnapshot {
+                    route_family: key.family_id,
+                    realm: &key.realm,
+                    area: &key.area,
+                    resource: &key.resource,
+                    offset: visible_offset,
+                    watermark: visible_offset,
+                    size_bytes: committed_size_bytes,
                     sessions_active,
-                ),
+                }),
             );
         }
 

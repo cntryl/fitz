@@ -722,6 +722,7 @@ mod tests {
         McpExecutionContext::authenticated(
             AdminPrincipal {
                 username: "admin".to_string(),
+                route_family_access: crate::api::admin::auth::AdminRouteFamilyAccess::wildcard(),
             },
             permissions,
         )

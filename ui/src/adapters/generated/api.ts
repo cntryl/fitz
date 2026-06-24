@@ -24,6 +24,17 @@ import { buildQueryParams } from "@fgrzl/fetch";
  */
 export function createAdapter(client: FetchClient): {
   /**
+   * Get admin UI feature flags and unauthenticated bootstrap metadata
+   *
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AdminFeaturesResponse>
+   */
+  getAdminFeatures: (options?: {
+    signal?: AbortSignal;
+    timeout?: number;
+    operationId?: string;
+  }) => Promise<FetchResponse<AdminFeaturesResponse>>;
+  /**
    * List KV realms
    *
    * @param options - Request options (signal, timeout, operationId)
@@ -132,6 +143,28 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<ResourceTimeline>>;
   /**
+   * Scan committed KV prefix
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<KvPrefixScanResponse>
+   */
+  scanKvCommittedPrefix: (
+    realm: string,
+    area: string,
+    resource: string,
+    query: {
+      route_family: number;
+      prefix: string;
+      key_encoding?: "utf8" | "base64";
+      limit?: number;
+    },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<KvPrefixScanResponse>>;
+  /**
    * List KV transactions for a resource
    *
    * @param realm - realm parameter
@@ -146,6 +179,23 @@ export function createAdapter(client: FetchClient): {
     resource: string,
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<KvTransactionsList>>;
+  /**
+   * Get committed KV value
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<KvCommittedValueResponse>
+   */
+  getKvCommittedValue: (
+    realm: string,
+    area: string,
+    resource: string,
+    query: { route_family: number; key: string; key_encoding?: "utf8" | "base64" },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<KvCommittedValueResponse>>;
   /**
    * Get KV domain statistics
    *
@@ -266,6 +316,25 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<ResourceTimeline>>;
   /**
+   * Search live lease ownership and waiters
+   *
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<LeaseSearchResponse>
+   */
+  searchLeaseOwnership: (
+    query: {
+      route_family: number;
+      realm?: string;
+      area?: string;
+      resource?: string;
+      owner?: string;
+      state?: "owned" | "waiting" | "contention";
+      limit?: number;
+    },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<LeaseSearchResponse>>;
+  /**
    * Get Lease domain statistics
    *
    * @param options - Request options (signal, timeout, operationId)
@@ -276,6 +345,24 @@ export function createAdapter(client: FetchClient): {
     timeout?: number;
     operationId?: string;
   }) => Promise<FetchResponse<LeaseStats>>;
+  /**
+   * Search live notice delivery evidence
+   *
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<NoticeDeliveryObservationList>
+   */
+  searchNoticeDeliveries: (
+    query: {
+      route_family: number;
+      realm?: string;
+      area?: string;
+      resource?: string;
+      q?: string;
+      limit?: number;
+    },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<NoticeDeliveryObservationList>>;
   /**
    * List notice realms
    *
@@ -606,6 +693,26 @@ export function createAdapter(client: FetchClient): {
     operationId?: string;
   }) => Promise<FetchResponse<QueueStats>>;
   /**
+   * Search live RPC call evidence
+   *
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<RpcCallObservationList>
+   */
+  searchRpcCalls: (
+    query: {
+      route_family: number;
+      realm?: string;
+      area?: string;
+      resource?: string;
+      operation?: string;
+      q?: string;
+      correlation_id?: string;
+      limit?: number;
+    },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<RpcCallObservationList>>;
+  /**
    * List pending RPC requests
    *
    * @param query - Query parameters
@@ -796,6 +903,23 @@ export function createAdapter(client: FetchClient): {
     operationId?: string;
   }) => Promise<FetchResponse<RuntimeDrainResponse>>;
   /**
+   * Search pending schedule handoffs
+   *
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ScheduleMissedObservationList>
+   */
+  searchScheduleMissedHandoffs: (
+    query: {
+      route_family: number;
+      realm?: string;
+      area?: string;
+      resource?: string;
+      limit?: number;
+    },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ScheduleMissedObservationList>>;
+  /**
    * List schedule realms
    *
    * @param options - Request options (signal, timeout, operationId)
@@ -904,6 +1028,23 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<ResourceTimeline>>;
   /**
+   * List schedule execution observations
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<ScheduleExecutionObservationList>
+   */
+  listScheduleExecutionObservations: (
+    realm: string,
+    area: string,
+    resource: string,
+    query: { route_family: number; limit?: number },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<ScheduleExecutionObservationList>>;
+  /**
    * Get Schedule domain statistics
    *
    * @param options - Request options (signal, timeout, operationId)
@@ -914,6 +1055,26 @@ export function createAdapter(client: FetchClient): {
     timeout?: number;
     operationId?: string;
   }) => Promise<FetchResponse<ScheduleStats>>;
+  /**
+   * Search admin-visible broker state
+   *
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<AdminSearchResponse>
+   */
+  searchAdminState: (
+    query?: {
+      q?: string;
+      route_family?: string;
+      domain?: "sessions" | "kv" | "stream" | "queue" | "schedule" | "lease" | "notice" | "rpc";
+      realm?: string;
+      area?: string;
+      resource?: string;
+      operation?: string;
+      limit?: number;
+    },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<AdminSearchResponse>>;
   /**
    * Create admin session
    *
@@ -1078,6 +1239,29 @@ export function createAdapter(client: FetchClient): {
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<ResourceTimeline>>;
   /**
+   * Read committed stream records
+   *
+   * @param realm - realm parameter
+   * @param area - area parameter
+   * @param resource - resource parameter
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<StreamRecordsResponse>
+   */
+  readStreamResourceRecords: (
+    realm: string,
+    area: string,
+    resource: string,
+    query: {
+      route_family: number;
+      from_offset?: number;
+      discriminator?: string;
+      q?: string;
+      limit?: number;
+    },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<StreamRecordsResponse>>;
+  /**
    * Get stream area watermarks
    *
    * @param realm - realm parameter
@@ -1101,6 +1285,26 @@ export function createAdapter(client: FetchClient): {
     realm: string,
     options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
   ) => Promise<FetchResponse<StreamRealmWatermarkDetail>>;
+  /**
+   * Search committed stream records
+   *
+   * @param query - Query parameters
+   * @param options - Request options (signal, timeout, operationId)
+   * @returns Promise resolving to FetchResponse<StreamRecordsResponse>
+   */
+  searchStreamRecords: (
+    query: {
+      route_family: number;
+      realm?: string;
+      area?: string;
+      resource?: string;
+      from_offset?: number;
+      discriminator?: string;
+      q?: string;
+      limit?: number;
+    },
+    options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+  ) => Promise<FetchResponse<StreamRecordsResponse>>;
   /**
    * Get Stream domain statistics
    *
@@ -1147,6 +1351,14 @@ export function createAdapter(client: FetchClient): {
   }) => Promise<FetchResponse<string>>;
 } {
   return {
+    getAdminFeatures: (options?: {
+      signal?: AbortSignal;
+      timeout?: number;
+      operationId?: string;
+    }): Promise<FetchResponse<AdminFeaturesResponse>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "getAdminFeatures" };
+      return client.get(`/api/v1/features`, undefined, finalOptions);
+    },
     listKvRealms: (options?: {
       signal?: AbortSignal;
       timeout?: number;
@@ -1248,6 +1460,28 @@ export function createAdapter(client: FetchClient): {
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
+    scanKvCommittedPrefix: (
+      realm: string,
+      area: string,
+      resource: string,
+      query: {
+        route_family: number;
+        prefix: string;
+        key_encoding?: "utf8" | "base64";
+        limit?: number;
+      },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<KvPrefixScanResponse>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "scanKvCommittedPrefix",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/prefix` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
     listKvTransactions: (
       realm: string,
       area: string,
@@ -1263,6 +1497,23 @@ export function createAdapter(client: FetchClient): {
         undefined,
         finalOptions,
       );
+    },
+    getKvCommittedValue: (
+      realm: string,
+      area: string,
+      resource: string,
+      query: { route_family: number; key: string; key_encoding?: "utf8" | "base64" },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<KvCommittedValueResponse>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "getKvCommittedValue",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/kv/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/value` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
     },
     getKvStats: (options?: {
       signal?: AbortSignal;
@@ -1376,6 +1627,26 @@ export function createAdapter(client: FetchClient): {
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
+    searchLeaseOwnership: (
+      query: {
+        route_family: number;
+        realm?: string;
+        area?: string;
+        resource?: string;
+        owner?: string;
+        state?: "owned" | "waiting" | "contention";
+        limit?: number;
+      },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<LeaseSearchResponse>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "searchLeaseOwnership",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url = `/api/v1/lease/search` + (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
     getLeaseStats: (options?: {
       signal?: AbortSignal;
       timeout?: number;
@@ -1383,6 +1654,25 @@ export function createAdapter(client: FetchClient): {
     }): Promise<FetchResponse<LeaseStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getLeaseStats" };
       return client.get(`/api/v1/lease/stats`, undefined, finalOptions);
+    },
+    searchNoticeDeliveries: (
+      query: {
+        route_family: number;
+        realm?: string;
+        area?: string;
+        resource?: string;
+        q?: string;
+        limit?: number;
+      },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<NoticeDeliveryObservationList>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "searchNoticeDeliveries",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url = `/api/v1/notice/deliveries` + (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
     },
     listNoticeRealms: (options?: {
       signal?: AbortSignal;
@@ -1699,6 +1989,24 @@ export function createAdapter(client: FetchClient): {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getQueueStats" };
       return client.get(`/api/v1/queue/stats`, undefined, finalOptions);
     },
+    searchRpcCalls: (
+      query: {
+        route_family: number;
+        realm?: string;
+        area?: string;
+        resource?: string;
+        operation?: string;
+        q?: string;
+        correlation_id?: string;
+        limit?: number;
+      },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<RpcCallObservationList>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "searchRpcCalls" };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url = `/api/v1/rpc/calls` + (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
     listRpcPendingRequests: (
       query?: { realm?: string },
       options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
@@ -1872,6 +2180,24 @@ export function createAdapter(client: FetchClient): {
       const finalOptions = { ...options, operationId: options?.operationId ?? "beginRuntimeDrain" };
       return client.post(`/api/v1/runtime/drain`, undefined, undefined, finalOptions);
     },
+    searchScheduleMissedHandoffs: (
+      query: {
+        route_family: number;
+        realm?: string;
+        area?: string;
+        resource?: string;
+        limit?: number;
+      },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ScheduleMissedObservationList>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "searchScheduleMissedHandoffs",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url = `/api/v1/schedule/missed` + (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
     listScheduleRealms: (options?: {
       signal?: AbortSignal;
       timeout?: number;
@@ -1982,6 +2308,23 @@ export function createAdapter(client: FetchClient): {
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
+    listScheduleExecutionObservations: (
+      realm: string,
+      area: string,
+      resource: string,
+      query: { route_family: number; limit?: number },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<ScheduleExecutionObservationList>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "listScheduleExecutionObservations",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/schedule/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/executions` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
     getScheduleStats: (options?: {
       signal?: AbortSignal;
       timeout?: number;
@@ -1989,6 +2332,24 @@ export function createAdapter(client: FetchClient): {
     }): Promise<FetchResponse<ScheduleStats>> => {
       const finalOptions = { ...options, operationId: options?.operationId ?? "getScheduleStats" };
       return client.get(`/api/v1/schedule/stats`, undefined, finalOptions);
+    },
+    searchAdminState: (
+      query?: {
+        q?: string;
+        route_family?: string;
+        domain?: "sessions" | "kv" | "stream" | "queue" | "schedule" | "lease" | "notice" | "rpc";
+        realm?: string;
+        area?: string;
+        resource?: string;
+        operation?: string;
+        limit?: number;
+      },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<AdminSearchResponse>> => {
+      const finalOptions = { ...options, operationId: options?.operationId ?? "searchAdminState" };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url = `/api/v1/search` + (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
     },
     createAdminSession: (
       body: LoginRequest,
@@ -2142,6 +2503,29 @@ export function createAdapter(client: FetchClient): {
         (queryString ? "?" + queryString : "");
       return client.get(url, undefined, finalOptions);
     },
+    readStreamResourceRecords: (
+      realm: string,
+      area: string,
+      resource: string,
+      query: {
+        route_family: number;
+        from_offset?: number;
+        discriminator?: string;
+        q?: string;
+        limit?: number;
+      },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<StreamRecordsResponse>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "readStreamResourceRecords",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url =
+        `/api/v1/stream/realms/${encodeURIComponent(String(realm))}/areas/${encodeURIComponent(String(area))}/resources/${encodeURIComponent(String(resource))}/records` +
+        (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
+    },
     getStreamAreaWatermarks: (
       realm: string,
       area: string,
@@ -2170,6 +2554,27 @@ export function createAdapter(client: FetchClient): {
         undefined,
         finalOptions,
       );
+    },
+    searchStreamRecords: (
+      query: {
+        route_family: number;
+        realm?: string;
+        area?: string;
+        resource?: string;
+        from_offset?: number;
+        discriminator?: string;
+        q?: string;
+        limit?: number;
+      },
+      options?: { signal?: AbortSignal; timeout?: number; operationId?: string },
+    ): Promise<FetchResponse<StreamRecordsResponse>> => {
+      const finalOptions = {
+        ...options,
+        operationId: options?.operationId ?? "searchStreamRecords",
+      };
+      const queryString = query ? buildQueryParams(query) : "";
+      const url = `/api/v1/stream/search` + (queryString ? "?" + queryString : "");
+      return client.get(url, undefined, finalOptions);
     },
     getStreamStats: (options?: {
       signal?: AbortSignal;
@@ -2210,6 +2615,45 @@ export function createAdapter(client: FetchClient): {
       return client.get(`/metrics`, undefined, finalOptions);
     },
   };
+}
+
+/** AdminFeaturesResponse schema */
+export interface AdminFeaturesResponse {
+  admin_auth_mode: "protected" | "open";
+  admin_auth_required: boolean;
+  /** Public bootstrap Route Family grants. Empty in protected mode; use the authenticated session endpoint for admin grants after login. */
+  route_families: Array<string>;
+  /** True only when public bootstrap runs with wildcard Route Family access, such as open admin mode. */
+  route_families_wildcard: boolean;
+}
+
+/** AdminSearchResponse schema */
+export interface AdminSearchResponse {
+  domain?: string | null;
+  limit: number;
+  query: string;
+  results: Array<AdminSearchResult>;
+  route_family?: string | null;
+  total: number;
+  truncated: boolean;
+}
+
+/** AdminSearchResult schema */
+export interface AdminSearchResult {
+  area?: string | null;
+  domain: string;
+  health?: string | null;
+  href: string;
+  id: string;
+  kind: string;
+  matched_fields: Array<string>;
+  metadata: Record<string, string>;
+  operation?: string | null;
+  realm?: string | null;
+  resource?: string | null;
+  route_family?: string | null;
+  summary: string;
+  title: string;
 }
 
 /** AreaCollection schema */
@@ -2339,6 +2783,42 @@ export interface IncidentSummary {
   title: string;
 }
 
+/** Byte payload rendered as base64 plus UTF-8 when the bytes are valid text. */
+export interface KvByteValue {
+  base64: string;
+  len_bytes: number;
+  utf8: string | null;
+}
+
+/** KvCommittedPair schema */
+export interface KvCommittedPair {
+  key: KvByteValue;
+  value: KvByteValue;
+}
+
+/** Exact-key read of durable committed KV state for one explicit Route Family and resource scope. */
+export interface KvCommittedValueResponse {
+  area: string;
+  found: boolean;
+  key: KvByteValue;
+  realm: string;
+  resource: string;
+  route_family: number;
+  value: KvByteValue | null;
+}
+
+/** Prefix scan of durable committed KV state for one explicit Route Family and resource scope. */
+export interface KvPrefixScanResponse {
+  area: string;
+  has_more: boolean;
+  items: Array<KvCommittedPair>;
+  limit: number;
+  prefix: KvByteValue;
+  realm: string;
+  resource: string;
+  route_family: number;
+}
+
 /** Durable KV committed data exists separately from this admin view. This resource detail describes only the current broker process's live in-memory transaction activity for the resource. `transactions_active` counts active session-scoped transactions and resets after disconnect cleanup or broker restart. */
 export interface KvResourceDetail {
   area: string;
@@ -2387,6 +2867,29 @@ export interface LeaseResourceDetail {
   resource: string;
 }
 
+/** Broker-local live lease owner or waiter row. */
+export interface LeaseSearchItem {
+  acquired_at: string | null;
+  area: string;
+  expires_at: string | null;
+  owner_id: string | null;
+  owner_session_id: string | null;
+  pending_waiters: number;
+  queued_token: number | null;
+  realm: string;
+  renewals: number | null;
+  resource: string;
+  route_family: number;
+  state: string;
+}
+
+/** LeaseSearchResponse schema */
+export interface LeaseSearchResponse {
+  items: Array<LeaseSearchItem>;
+  limit: number;
+  route_family: number;
+}
+
 /** LeaseStats schema */
 export interface LeaseStats {
   acquire_timeouts_total: number;
@@ -2421,6 +2924,28 @@ export interface MessagingTopology {
   session_groups: Array<TopologySessionGroup>;
 }
 
+/** Broker-local Notice subscription and delivery-counter evidence. This is not durable delivery history. */
+export interface NoticeDeliveryObservation {
+  area: string | null;
+  notifications_received: number;
+  publishes_per_minute: number;
+  publishes_total: number;
+  realm: string;
+  resource: string | null;
+  route: string;
+  route_family: number;
+  session_id: string | null;
+  status: string;
+  subscription_id: number | null;
+}
+
+/** NoticeDeliveryObservationList schema */
+export interface NoticeDeliveryObservationList {
+  limit: number;
+  observations: Array<NoticeDeliveryObservation>;
+  route_family: number;
+}
+
 /** Live in-memory Notice detail for the current broker process. `subscriptions_active` is session-scoped fanout state only and disappears on disconnect cleanup or broker restart. */
 export interface NoticeResourceDetail {
   area: string;
@@ -2451,17 +2976,19 @@ export interface NoticeStats {
 /** Live in-memory Notice subscription state for the current broker process. Subscriptions are session-scoped and are removed on disconnect or broker restart. */
 export interface NoticeSubscription {
   /** Timestamp when this live in-memory subscription was created. Resets after reconnect or broker restart. */
-  created_at?: string;
+  created_at: string;
   /** Live counter of notifications delivered to this current in-memory subscription. Not durable and resets after reconnect or broker restart. */
-  notifications_received?: number;
+  notifications_received: number;
   /** Exact route or wildcard pattern tracked in memory for the active session. */
-  pattern?: string;
+  pattern: string;
   /** Realm extracted from the current subscription pattern. */
-  realm?: string;
+  realm: string;
+  /** Route Family where this live subscription is registered. */
+  route_family: number;
   /** Owning live session identifier. The subscription disappears when this session disconnects. */
-  session_id?: string;
+  session_id: string;
   /** Broker-local identifier for the currently active in-memory subscription. */
-  subscription_id?: number;
+  subscription_id: number;
 }
 
 /** NoticeSubscriptionsList schema */
@@ -2708,6 +3235,31 @@ export type ResourceTimelineKind =
   | "state_flip"
   | "registration";
 
+/** Broker-local RPC pending-call or worker-registration evidence. This is not durable call history. */
+export interface RpcCallObservation {
+  age_seconds: number | null;
+  area: string;
+  average_latency_ms: number | null;
+  correlation_id: string | null;
+  operation: string | null;
+  realm: string;
+  registered_at: string | null;
+  requests_handled: number | null;
+  resource: string;
+  route: string;
+  route_family: number;
+  state: string;
+  submitted_at: string | null;
+  worker_session_id: string | null;
+}
+
+/** RpcCallObservationList schema */
+export interface RpcCallObservationList {
+  limit: number;
+  observations: Array<RpcCallObservation>;
+  route_family: number;
+}
+
 /** RpcLatencyBuckets schema */
 export interface RpcLatencyBuckets {
   /** Count of live RPC workers with an average latency of 100 milliseconds or more. */
@@ -2744,15 +3296,17 @@ export interface RpcPendingList {
 /** Live in-memory pending RPC request tracked by the current broker process only. Pending requests disappear on timeout, cleanup, or broker restart. */
 export interface RpcPendingRequest {
   /** Approximate wall-clock age of the current in-memory pending request. */
-  age_seconds?: number;
+  age_seconds: number;
   /** Correlation identifier for the live in-memory request. */
-  correlation_id?: string;
+  correlation_id: string;
   /** Exact RPC operation route for the currently pending request. */
-  route?: string;
+  route: string;
+  /** Route Family where this pending request is tracked. */
+  route_family: number;
   /** Timestamp when the current broker process accepted and tracked the request in memory. */
-  submitted_at?: string;
+  submitted_at: string;
   /** Broker-local worker session currently assigned to the pending request when one is known. */
-  worker_session_id?: string | null;
+  worker_session_id: string | null;
 }
 
 /** RpcStats schema */
@@ -2784,17 +3338,19 @@ export interface RpcStats {
 /** Live in-memory RPC worker registration for the current broker process. Workers must re-register after disconnect or broker restart. */
 export interface RpcWorker {
   /** Average end-to-end latency for terminal RPC requests completed by this live worker registration in the current broker process. */
-  average_latency_ms?: number;
+  average_latency_ms: number;
   /** Realm extracted from the registered RPC route. */
-  realm?: string;
+  realm: string;
   /** Timestamp when this live worker registration was created. Resets after disconnect or broker restart. */
-  registered_at?: string;
+  registered_at: string;
   /** Number of terminal RPC requests completed by this live worker registration in the current broker process. */
-  requests_handled?: number;
+  requests_handled: number;
   /** Exact RPC operation route currently handled by this live worker registration. */
-  route?: string;
+  route: string;
+  /** Route Family where this live worker is registered. */
+  route_family: number;
   /** Broker-local worker session identifier for the active registration. */
-  session_id?: string;
+  session_id: string;
 }
 
 /** RpcWorkersList schema */
@@ -2810,6 +3366,30 @@ export interface RuntimeDrainResponse {
   drain_grace_seconds: number;
   drain_started_epoch_ms?: number | null;
   lifecycle_state: "running" | "draining" | "shutting_down";
+}
+
+/** Schedule-owned observation from persisted timing intent and acknowledged live handoffs. This is not a downstream execution log. */
+export interface ScheduleExecutionObservation {
+  area: string;
+  cron: string;
+  executions_total: number;
+  last_run: string | null;
+  next_run: string;
+  operation: string;
+  realm: string;
+  resource: string;
+  route_family: number;
+  status: string;
+}
+
+/** ScheduleExecutionObservationList schema */
+export interface ScheduleExecutionObservationList {
+  area: string;
+  limit: number;
+  observations: Array<ScheduleExecutionObservation>;
+  realm: string;
+  resource: string;
+  route_family: number;
 }
 
 /** ScheduleLatencyBuckets schema */
@@ -2832,6 +3412,27 @@ export interface ScheduleLatencyBuckets {
   under_5ms: number;
   /** Count of schedule requests observed between 1s and 5s. */
   under_5s: number;
+}
+
+/** Persisted pending schedule handoff claim that has not yet been acknowledged. */
+export interface ScheduleMissedObservation {
+  age_seconds: number;
+  area: string;
+  claimed_at: string;
+  fire_at: string;
+  fire_ms: number;
+  operation: string;
+  realm: string;
+  resource: string;
+  route_family: number;
+  status: string;
+}
+
+/** ScheduleMissedObservationList schema */
+export interface ScheduleMissedObservationList {
+  limit: number;
+  observations: Array<ScheduleMissedObservation>;
+  route_family: number;
 }
 
 /** Durable, boot-loaded schedule definition detail for the current broker. This describes persisted timing intent, not durable subscriber delivery or durable execution history. `executions_total` remains a non-authoritative placeholder until durable execution history exists. */
@@ -2897,12 +3498,30 @@ export interface SessionInfo {
 /** SessionResponse schema */
 export interface SessionResponse {
   authenticated: boolean;
+  /** Explicit admin Route Families from the admin session claim. Empty when wildcard access is granted. */
+  route_families: Array<string>;
+  /** True when the admin session has wildcard Route Family access. */
+  route_families_wildcard: boolean;
   username: string;
 }
 
 /** SessionsList schema */
 export interface SessionsList {
   sessions: Array<SessionInfo>;
+}
+
+/** One committed stream record rendered for admin replay preview/export. */
+export interface StreamAdminRecord {
+  area: string;
+  area_offset: number | null;
+  body: KvByteValue;
+  created_at_ms: number;
+  metadata: KvByteValue | null;
+  realm: string;
+  realm_offset: number | null;
+  resource: string;
+  resource_offset: number;
+  route_family: number;
 }
 
 /** StreamAreaWatermark schema */
@@ -2965,6 +3584,18 @@ export interface StreamRealmWatermarkDetail {
   family_watermarks: Array<StreamRealmWatermark>;
   realm: string;
   resource_count: number;
+}
+
+/** Route-family scoped read-only committed stream record results. */
+export interface StreamRecordsResponse {
+  area: string | null;
+  from_offset: number;
+  has_more: boolean;
+  limit: number;
+  realm: string | null;
+  records: Array<StreamAdminRecord>;
+  resource: string | null;
+  route_family: number;
 }
 
 /** Durable committed stream metadata for one resource plus the current broker process's live append-session count. `offset`, `watermark`, and `size_bytes` survive restart; `sessions_active` is ephemeral and resets on disconnect cleanup or broker restart. */

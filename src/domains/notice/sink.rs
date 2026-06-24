@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 /// Per-session wildcard cap used to keep the in-memory matcher bounded.
 const MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION: usize = 128;
 type NoticeDeliveryTargets = SmallVec<[NoticeDeliveryTarget; 8]>;
+type NoticeRouteStatsKey = (u64, String);
 
 #[derive(Clone)]
 struct NoticeDeliveryTarget {
@@ -110,7 +111,7 @@ fn notice_route_realm(route: &str) -> Option<&str> {
 /// restart and is never durably recovered or replayed.
 pub struct NoticeDomainSink {
     families: Mutex<HashMap<u64, RoutedSubscriptionSet<NoticeSubscription>>>,
-    route_stats: Mutex<HashMap<String, NoticeRouteStats>>,
+    route_stats: Mutex<HashMap<NoticeRouteStatsKey, NoticeRouteStats>>,
     next_sub_id: AtomicU64,
     router: Arc<Router>,
     admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
@@ -156,19 +157,20 @@ impl NoticeDomainSink {
         let now = Instant::now();
         let created_at = Utc::now().to_rfc3339();
         let mut subscriptions = Vec::new();
-        let mut routes: HashMap<String, usize> = HashMap::new();
-        for state in families.values() {
+        let mut routes: HashMap<NoticeRouteStatsKey, usize> = HashMap::new();
+        for (route_family, state) in families.iter() {
             for subscription in state.values() {
                 let pattern = subscription.pattern.route().to_string();
                 if let Some(realm) = notice_route_realm(&pattern) {
                     subscriptions.push(crate::api::admin::NoticeSubscription::snapshot(
+                        *route_family,
                         subscription.subscription_id,
                         subscription.session_id,
                         realm,
                         pattern.clone(),
                         &created_at,
                     ));
-                    *routes.entry(pattern).or_insert(0) += 1;
+                    *routes.entry((*route_family, pattern)).or_insert(0) += 1;
                 }
             }
         }
@@ -186,13 +188,16 @@ impl NoticeDomainSink {
         self.admin_read_model.replace_notice_routes(
             routes
                 .into_iter()
-                .map(|(route, subscribers)| {
+                .map(|((route_family, route), subscribers)| {
                     let (publishes_total, publishes_per_minute) = route_stats
-                        .get_mut(route.as_str())
+                        .get_mut(&(route_family, route.clone()))
                         .map(|stats| (stats.publishes_total(), stats.publishes_per_minute(now)))
                         .unwrap_or((0, 0.0));
-                    let mut entry =
-                        crate::api::admin::NoticeRouteInfo::snapshot(route, subscribers);
+                    let mut entry = crate::api::admin::NoticeRouteInfo::snapshot(
+                        route_family,
+                        route,
+                        subscribers,
+                    );
                     entry.publishes_total = publishes_total;
                     entry.publishes_per_minute = publishes_per_minute;
                     entry
@@ -244,21 +249,27 @@ impl NoticeDomainSink {
         }
     }
 
-    fn record_route_publishes(&self, routes: &[String]) {
+    fn record_route_publishes(
+        &self,
+        route_family: crate::runtime::routing::RouteFamily,
+        routes: &[String],
+    ) {
         if routes.is_empty() {
             return;
         }
 
         let now = Instant::now();
         let mut route_stats = self.route_stats.lock();
+        let family = route_family.as_u64();
 
         for route in routes {
-            if let Some(stats) = route_stats.get_mut(route.as_str()) {
+            let key = (family, route.clone());
+            if let Some(stats) = route_stats.get_mut(&key) {
                 stats.record_publish(now);
             } else {
                 let mut stats = NoticeRouteStats::new();
                 stats.record_publish(now);
-                route_stats.insert(route.clone(), stats);
+                route_stats.insert(key, stats);
             }
         }
     }
@@ -327,7 +338,7 @@ impl NoticeDomainSink {
             return;
         }
 
-        self.record_route_publishes(&matching_routes);
+        self.record_route_publishes(family_id, &matching_routes);
 
         let shared_suffix =
             crate::protocol::notice_codec::encode_notify_shared_suffix(route, payload);

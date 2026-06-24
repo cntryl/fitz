@@ -1,8 +1,8 @@
 import { Stack } from "@askrjs/themes/layouts";
-import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
+import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
 import {
   QueryErrorState,
@@ -12,6 +12,7 @@ import {
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { formatDurationSeconds } from "@/shared/format";
+import LeaseOwnershipConsole from "@/features/lease/lease-ownership-console";
 import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 
@@ -105,7 +106,7 @@ export default function LeasePage() {
     },
   );
 
-  const sidebar = createDomainSidebar({
+  const snapshot = createDomainSidebar({
     data,
     title: "Lease coordination snapshot",
     description: "Ephemeral ownership health and pressure diagnostics.",
@@ -136,7 +137,7 @@ export default function LeasePage() {
   });
 
   return (
-    <DomainPageFrame sidebar={sidebar}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Ownership coordination"
@@ -157,6 +158,8 @@ export default function LeasePage() {
           }}
         />
 
+        {snapshot}
+
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading lease overview snapshot..." />
         ) : null}
@@ -174,6 +177,12 @@ export default function LeasePage() {
             {overview.refreshing ? (
               <QueryRefreshingState description="Refreshing lease overview..." />
             ) : null}
+
+            <LeaseOwnershipConsole
+              error={inventory.error}
+              inventory={inventory.data}
+              loading={inventory.loading}
+            />
 
             <DomainMetricTable
               title="Lease metrics"
@@ -203,30 +212,6 @@ export default function LeasePage() {
               ]}
             />
 
-            <DomainBarChart
-              title="Lease signal"
-              description="Current lease ownership and waiter pressure."
-              label="Lease state snapshot"
-              scope="Live lease snapshot"
-              data={[
-                {
-                  label: "Active leases",
-                  unitLabel: "leases",
-                  value: data.stats.leasesActive,
-                },
-                { label: "Waiters", unitLabel: "waiters", value: data.stats.waiterDepth },
-                {
-                  label: "Ownership pressure",
-                  unitLabel: "pressure",
-                  value:
-                    data.stats.waiterDepth +
-                    data.stats.acquireTimeoutsTotal +
-                    data.stats.forcedReleasesTotal +
-                    data.stats.invalidTokenRejectsTotal,
-                },
-              ]}
-            />
-
             <DomainRealmTable
               title="Lease realms"
               realms={data.realms}
@@ -238,6 +223,18 @@ export default function LeasePage() {
               error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
+            />
+
+            <DomainWorkflowPanel
+              archetype="Lease Ownership Console"
+              workflows={[
+                "Inspect ownership",
+                "Review history",
+                "Investigate contention",
+                "Investigate conflicts",
+              ]}
+              questions={["Who owns this?", "Who wants it?", "Why is it blocked?"]}
+              diagnostics={["Waiter depth", "Invalid tokens", "Broker-local lease internals"]}
             />
           </Stack>
         ) : null}

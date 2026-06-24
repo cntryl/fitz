@@ -9,18 +9,20 @@ use parking_lot::RwLock;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-type ScheduleIdentity = (String, String, String, String);
-type LeaseIdentity = (String, String, String);
+type ScheduleIdentity = (u64, String, String, String, String);
+type LeaseIdentity = (u64, String, String, String);
 type StreamRealmIdentity = String;
 type StreamAreaIdentity = (String, String);
 
 fn schedule_identity_key(
+    route_family: u64,
     realm: &str,
     area: &str,
     resource: &str,
     operation: &str,
 ) -> ScheduleIdentity {
     (
+        route_family,
         realm.to_string(),
         area.to_string(),
         resource.to_string(),
@@ -28,16 +30,27 @@ fn schedule_identity_key(
     )
 }
 
-fn lease_identity_key(realm: &str, area: &str, resource: &str) -> LeaseIdentity {
-    (realm.to_string(), area.to_string(), resource.to_string())
+fn lease_identity_key(route_family: u64, realm: &str, area: &str, resource: &str) -> LeaseIdentity {
+    (
+        route_family,
+        realm.to_string(),
+        area.to_string(),
+        resource.to_string(),
+    )
 }
 
 fn schedule_identity_for(info: &ScheduleInfo) -> ScheduleIdentity {
-    schedule_identity_key(&info.realm, &info.area, &info.resource, &info.operation)
+    schedule_identity_key(
+        info.route_family,
+        &info.realm,
+        &info.area,
+        &info.resource,
+        &info.operation,
+    )
 }
 
 fn lease_identity_for(info: &LeaseInfo) -> LeaseIdentity {
-    lease_identity_key(&info.realm, &info.area, &info.resource)
+    lease_identity_key(info.route_family, &info.realm, &info.area, &info.resource)
 }
 
 fn snapshot_session_info(session: &RuntimeSessionInfo, connected_at: String) -> SessionInfo {
@@ -270,10 +283,10 @@ impl AdminReadModel {
             .insert(lease_identity_for(&lease), lease);
     }
 
-    pub fn remove_lease(&self, realm: &str, area: &str, resource: &str) {
+    pub fn remove_lease(&self, route_family: u64, realm: &str, area: &str, resource: &str) {
         self.leases
             .write()
-            .remove(&lease_identity_key(realm, area, resource));
+            .remove(&lease_identity_key(route_family, realm, area, resource));
     }
 
     pub fn leases(&self, realm: Option<&str>) -> Vec<LeaseInfo> {
@@ -281,6 +294,15 @@ impl AdminReadModel {
         leases
             .values()
             .filter(|item| matches_realm(realm, &item.realm))
+            .cloned()
+            .collect()
+    }
+
+    pub fn leases_for_route_family(&self, route_family: u64) -> Vec<LeaseInfo> {
+        let leases = self.leases.read();
+        leases
+            .values()
+            .filter(|item| item.route_family == route_family)
             .cloned()
             .collect()
     }
@@ -309,6 +331,7 @@ impl AdminReadModel {
 
     pub fn upsert_schedule_fields(
         &self,
+        route_family: u64,
         realm: String,
         area: String,
         resource: String,
@@ -317,14 +340,31 @@ impl AdminReadModel {
     ) {
         let next_run = Utc::now().to_rfc3339();
         self.upsert_schedule(ScheduleInfo::enabled_snapshot(
-            realm, area, resource, operation, cron, &next_run,
+            route_family,
+            realm,
+            area,
+            resource,
+            operation,
+            cron,
+            &next_run,
         ));
     }
 
-    pub fn remove_schedule(&self, realm: &str, area: &str, resource: &str, operation: &str) {
-        self.schedules
-            .write()
-            .remove(&schedule_identity_key(realm, area, resource, operation));
+    pub fn remove_schedule(
+        &self,
+        route_family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        operation: &str,
+    ) {
+        self.schedules.write().remove(&schedule_identity_key(
+            route_family,
+            realm,
+            area,
+            resource,
+            operation,
+        ));
     }
 
     pub fn schedules(&self, realm: Option<&str>) -> Vec<ScheduleInfo> {
@@ -332,6 +372,15 @@ impl AdminReadModel {
         schedules
             .values()
             .filter(|item| matches_realm(realm, &item.realm))
+            .cloned()
+            .collect()
+    }
+
+    pub fn schedules_for_route_family(&self, route_family: u64) -> Vec<ScheduleInfo> {
+        let schedules = self.schedules.read();
+        schedules
+            .values()
+            .filter(|item| item.route_family == route_family)
             .cloned()
             .collect()
     }
@@ -379,6 +428,7 @@ mod tests {
 
         // Act
         read_model.upsert_schedule_fields(
+            1,
             "acme".to_string(),
             "billing".to_string(),
             "invoices".to_string(),
@@ -405,6 +455,7 @@ mod tests {
         // Arrange
         let read_model = AdminReadModel::default();
         read_model.upsert_schedule_fields(
+            1,
             "acme".to_string(),
             "billing".to_string(),
             "invoices".to_string(),
@@ -415,6 +466,7 @@ mod tests {
 
         // Act
         read_model.upsert_schedule_fields(
+            1,
             "acme".to_string(),
             "billing".to_string(),
             "invoices".to_string(),
@@ -433,6 +485,7 @@ mod tests {
         // Arrange
         let read_model = AdminReadModel::default();
         read_model.upsert_schedule(ScheduleInfo {
+            route_family: 1,
             realm: "acme".to_string(),
             area: "billing".to_string(),
             resource: "invoices".to_string(),
@@ -446,6 +499,7 @@ mod tests {
 
         // Act
         read_model.upsert_schedule_fields(
+            1,
             "acme".to_string(),
             "billing".to_string(),
             "invoices".to_string(),
@@ -467,8 +521,8 @@ mod tests {
         // Arrange
         let read_model = AdminReadModel::default();
         read_model.replace_notice_routes(vec![
-            NoticeRouteInfo::snapshot("notice://acme/app/orders".to_string(), 1),
-            NoticeRouteInfo::snapshot("notice://globex/app/orders".to_string(), 2),
+            NoticeRouteInfo::snapshot(1, "notice://acme/app/orders".to_string(), 1),
+            NoticeRouteInfo::snapshot(1, "notice://globex/app/orders".to_string(), 2),
         ]);
 
         // Act
@@ -486,12 +540,14 @@ mod tests {
         read_model.replace_notice_subscriptions(vec![
             NoticeSubscription::snapshot(
                 1,
+                1,
                 10,
                 "acme",
                 "notice://acme/app/orders".to_string(),
                 "2026-03-31T00:00:00Z",
             ),
             NoticeSubscription::snapshot(
+                1,
                 2,
                 11,
                 "acme",
@@ -515,6 +571,7 @@ mod tests {
 
         // Act
         read_model.upsert_lease(LeaseInfo::snapshot(
+            1,
             "acme",
             "locks",
             "billing",
@@ -537,6 +594,7 @@ mod tests {
         // Arrange
         let read_model = AdminReadModel::default();
         read_model.upsert_lease(LeaseInfo::snapshot(
+            1,
             "acme",
             "locks",
             "billing",
@@ -548,7 +606,7 @@ mod tests {
         ));
 
         // Act
-        read_model.remove_lease("acme", "locks", "billing");
+        read_model.remove_lease(1, "acme", "locks", "billing");
         let leases = read_model.leases(Some("acme"));
 
         // Assert
@@ -560,6 +618,7 @@ mod tests {
         // Arrange
         let read_model = AdminReadModel::default();
         read_model.upsert_lease(LeaseInfo::snapshot(
+            1,
             "acme",
             "locks",
             "billing",
@@ -572,6 +631,7 @@ mod tests {
 
         // Act
         read_model.upsert_lease(LeaseInfo::snapshot(
+            1,
             "acme",
             "locks",
             "billing",

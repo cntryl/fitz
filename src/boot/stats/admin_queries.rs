@@ -1,5 +1,6 @@
 use super::Runtime;
 use crate::domains::queue::{MessageId, QueueKey};
+use crate::domains::stream::sink::AdminStreamReadRequest;
 use crate::runtime::routing::RouteFamily;
 use chrono::{DateTime, Utc};
 
@@ -46,9 +47,64 @@ impl Runtime {
         self.admin_read_model.kv_transactions(realm)
     }
 
+    pub fn kv_get_committed_value(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, String> {
+        let domains = self
+            .domains
+            .read()
+            .clone()
+            .ok_or_else(|| "KV domain is not initialized".to_string())?;
+        domains
+            .kv
+            .admin_get_committed_value(family, realm, area, resource, key)
+    }
+
+    pub fn kv_scan_committed_prefix(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        key_prefix: &[u8],
+        limit: usize,
+    ) -> Result<crate::domains::kv::sink::AdminKvPrefixScanResult, String> {
+        let domains = self
+            .domains
+            .read()
+            .clone()
+            .ok_or_else(|| "KV domain is not initialized".to_string())?;
+        domains
+            .kv
+            .admin_scan_committed_prefix(family, realm, area, resource, key_prefix, limit)
+    }
+
     pub fn stream_list_streams(&self, realm: Option<&str>) -> Vec<crate::api::admin::StreamInfo> {
         self.refresh_stream_admin_snapshot();
         self.admin_read_model.streams(realm)
+    }
+
+    pub fn stream_read_resource_records(
+        &self,
+        request: AdminStreamReadRequest<'_>,
+    ) -> Result<
+        (
+            Vec<crate::domains::stream::protocol::StreamReadItem>,
+            crate::domains::stream::protocol::ReadCursor,
+        ),
+        String,
+    > {
+        let domains = self
+            .domains
+            .read()
+            .clone()
+            .ok_or_else(|| "Stream domain is not initialized".to_string())?;
+        domains.stream.admin_read_resource_records(request)
     }
 
     pub(crate) fn stream_list_realm_watermark_details(
@@ -209,12 +265,31 @@ impl Runtime {
         self.admin_read_model.leases(realm)
     }
 
+    pub fn lease_list_waiters(&self) -> Vec<crate::api::admin::LeaseWaiterInfo> {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.lease.admin_waiters())
+            .unwrap_or_default()
+    }
+
     pub fn schedule_list_schedules(
         &self,
         realm: Option<&str>,
     ) -> Vec<crate::api::admin::ScheduleInfo> {
         self.refresh_schedule_admin_snapshot();
         self.admin_read_model.schedules(realm)
+    }
+
+    pub fn schedule_list_pending_claims(
+        &self,
+        family: RouteFamily,
+    ) -> Vec<crate::api::admin::SchedulePendingClaimInfo> {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.schedule.admin_pending_claims(family))
+            .unwrap_or_default()
     }
 
     pub fn list_sessions(&self) -> Vec<crate::api::admin::SessionInfo> {

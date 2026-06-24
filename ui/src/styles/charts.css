@@ -1,7 +1,7 @@
 .chart-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
-  gap: var(--ak-space-3, 0.75rem);
+  gap: var(--fitz-section-gap);
 }
 
 .domain-chart-shell,
@@ -13,7 +13,7 @@
 .chart-shell,
 .chart-panel {
   display: grid;
-  gap: var(--ak-space-3, 0.75rem);
+  gap: var(--fitz-section-gap);
   padding: 0;
   border-radius: var(--fitz-card-radius);
 }
@@ -35,30 +35,32 @@
 .chart-shell-header h2,
 .chart-panel-header h3 {
   margin: 0;
-  line-height: 1.2;
+  font-size: var(--fitz-section-title-size);
+  line-height: var(--fitz-title-line-height);
 }
 
 .chart-shell-header p,
 .chart-panel-header p {
   margin: 0;
   color: var(--fitz-text-muted);
-  line-height: 1.45;
+  font-size: var(--fitz-body-size);
+  line-height: var(--fitz-body-line-height);
 }
 
 .chart-meter-grid {
   display: grid;
-  gap: var(--ak-space-3, 0.75rem);
+  gap: var(--fitz-section-gap);
 }
 
 .chart-meter {
   display: grid;
-  gap: var(--ak-space-2, 0.5rem);
+  gap: var(--fitz-control-gap);
 }
 
 .chart-meter-header {
   display: flex;
   justify-content: space-between;
-  gap: var(--ak-space-3, 0.75rem);
+  gap: var(--fitz-section-gap);
   align-items: baseline;
 }
 
@@ -69,7 +71,7 @@
 .chart-meter-value,
 .chart-meter-description {
   color: var(--fitz-text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fitz-body-size);
 }
 
 .chart-meter-value {

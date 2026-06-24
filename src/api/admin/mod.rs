@@ -10,6 +10,7 @@ mod list;
 mod metrics;
 mod probes;
 pub(crate) mod read_model;
+mod search;
 mod stats;
 mod topology;
 pub(crate) mod troubleshooting;

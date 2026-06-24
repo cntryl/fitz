@@ -1,3 +1,4 @@
+import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Card, CardContent, CardHeader, CardTitle, Badge } from "@askrjs/themes/surfaces";
 import { formatNumber } from "@/shared/format";
@@ -97,26 +98,27 @@ export function MessagingFlow({
               </div>
             ) : (
               <div class="flow-session-list">
-                {topology.sessionGroups.map((group) => {
-                  const id = topologySessionGroupSelectionId(group.routeFamily);
+                <For each={topology.sessionGroups} by={(group) => group.routeFamily}>
+                  {(group) => {
+                    const id = topologySessionGroupSelectionId(group.routeFamily);
 
-                  return (
-                    <FlowButton
-                      key={id}
-                      className="flow-node flow-session-node"
-                      isSelected={selectedId === id}
-                      label={`Inspect route family ${group.routeFamily}`}
-                      onSelect={() => setSelectedId(id)}
-                    >
-                      <span>Route family {group.routeFamily}</span>
-                      <strong>{formatNumber(group.sessions)} sessions</strong>
-                      <small>
-                        {formatNumber(group.messagesReceived)} received /{" "}
-                        {formatNumber(group.messagesSent)} sent
-                      </small>
-                    </FlowButton>
-                  );
-                })}
+                    return (
+                      <FlowButton
+                        className="flow-node flow-session-node"
+                        isSelected={selectedId === id}
+                        label={`Inspect route family ${group.routeFamily}`}
+                        onSelect={() => setSelectedId(id)}
+                      >
+                        <span>Route family {group.routeFamily}</span>
+                        <strong>{formatNumber(group.sessions)} sessions</strong>
+                        <small>
+                          {formatNumber(group.messagesReceived)} received /{" "}
+                          {formatNumber(group.messagesSent)} sent
+                        </small>
+                      </FlowButton>
+                    );
+                  }}
+                </For>
               </div>
             )}
           </div>
@@ -137,30 +139,31 @@ export function MessagingFlow({
             </FlowButton>
 
             <div class="flow-lane-stack">
-              {topology.lanes.map((lane) => {
-                const id = topologyLaneSelectionId(lane.id);
-                const trend = laneTrendDirection(history, lane.id);
+              <For each={topology.lanes} by={(lane) => lane.id}>
+                {(lane) => {
+                  const id = topologyLaneSelectionId(lane.id);
+                  const trend = laneTrendDirection(history, lane.id);
 
-                return (
-                  <FlowButton
-                    key={id}
-                    className={`flow-lane flow-lane-${lane.state}`}
-                    isSelected={selectedId === id}
-                    label={`Inspect ${lane.title}`}
-                    onSelect={() => setSelectedId(id)}
-                  >
-                    <span class="flow-lane-pulse" aria-hidden="true" />
-                    <span>
-                      <strong>{lane.title}</strong>
-                      <small>{topologyDomainDescriptions[lane.id]}</small>
-                    </span>
-                    <span>
-                      <strong>{stateLabel(lane.state)}</strong>
-                      <small>{trendLabel(trend)} pressure</small>
-                    </span>
-                  </FlowButton>
-                );
-              })}
+                  return (
+                    <FlowButton
+                      className={`flow-lane flow-lane-${lane.state}`}
+                      isSelected={selectedId === id}
+                      label={`Inspect ${lane.title}`}
+                      onSelect={() => setSelectedId(id)}
+                    >
+                      <span class="flow-lane-pulse" aria-hidden="true" />
+                      <span>
+                        <strong>{lane.title}</strong>
+                        <small>{topologyDomainDescriptions[lane.id]}</small>
+                      </span>
+                      <span>
+                        <strong>{stateLabel(lane.state)}</strong>
+                        <small>{trendLabel(trend)} pressure</small>
+                      </span>
+                    </FlowButton>
+                  );
+                }}
+              </For>
             </div>
           </div>
 
@@ -182,35 +185,37 @@ export function MessagingFlow({
               {resources.length === 0 ? (
                 <span class="domain-muted">No scoped resources reported.</span>
               ) : (
-                resources.map((resource) => (
-                  <FlowButton
-                    key={resource.id}
-                    className={`flow-resource-row flow-lane-${resource.state}`}
-                    isSelected={selectedId === topologyResourceSelectionId(resource.id)}
-                    label={`Inspect ${resource.label}`}
-                    onSelect={() => setSelectedId(topologyResourceSelectionId(resource.id))}
-                  >
-                    <span>{resource.label}</span>
-                    <strong>{resource.domain}</strong>
-                  </FlowButton>
-                ))
+                <For each={resources} by={(resource) => resource.id}>
+                  {(resource) => (
+                    <FlowButton
+                      className={`flow-resource-row flow-lane-${resource.state}`}
+                      isSelected={selectedId === topologyResourceSelectionId(resource.id)}
+                      label={`Inspect ${resource.label}`}
+                      onSelect={() => setSelectedId(topologyResourceSelectionId(resource.id))}
+                    >
+                      <span>{resource.label}</span>
+                      <strong>{resource.domain}</strong>
+                    </FlowButton>
+                  )}
+                </For>
               )}
             </div>
 
             <div class="flow-connection-list" aria-label="Visible connections">
               <span class="flow-column-label">Visible connections</span>
-              {visibleConnections.map((connection) => (
-                <FlowButton
-                  key={connection.id}
-                  className={`flow-connection-row flow-lane-${connection.state}`}
-                  isSelected={selectedId === topologyConnectionSelectionId(connection.id)}
-                  label={`Inspect ${connection.label}`}
-                  onSelect={() => setSelectedId(topologyConnectionSelectionId(connection.id))}
-                >
-                  <span>{connection.label}</span>
-                  <strong>{topologyConnectionKindLabel(connection.kind)}</strong>
-                </FlowButton>
-              ))}
+              <For each={visibleConnections} by={(connection) => connection.id}>
+                {(connection) => (
+                  <FlowButton
+                    className={`flow-connection-row flow-lane-${connection.state}`}
+                    isSelected={selectedId === topologyConnectionSelectionId(connection.id)}
+                    label={`Inspect ${connection.label}`}
+                    onSelect={() => setSelectedId(topologyConnectionSelectionId(connection.id))}
+                  >
+                    <span>{connection.label}</span>
+                    <strong>{topologyConnectionKindLabel(connection.kind)}</strong>
+                  </FlowButton>
+                )}
+              </For>
               {topology.connections.truncated ? (
                 <span class="domain-muted">
                   Showing {formatNumber(topology.connections.items.length)} of{" "}
@@ -256,12 +261,14 @@ function TopologyInspector({
       </CardHeader>
       <CardContent>
         <div class="flow-inspector-grid">
-          {selected.counters.slice(0, 8).map((counter) => (
-            <div key={counter.key}>
-              <span>{counter.label}</span>
-              <strong>{formatNumber(counter.value)}</strong>
-            </div>
-          ))}
+          <For each={selected.counters.slice(0, 8)} by={(counter) => counter.key}>
+            {(counter) => (
+              <div>
+                <span>{counter.label}</span>
+                <strong>{formatNumber(counter.value)}</strong>
+              </div>
+            )}
+          </For>
         </div>
 
         {"scope" in selected && selected.scope ? (

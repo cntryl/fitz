@@ -1,26 +1,26 @@
 .flow-stage {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.34fr);
-  gap: var(--ak-space-3, 0.75rem);
+  gap: var(--fitz-section-gap);
   align-items: start;
 }
 
 .flow-map {
   display: grid;
   grid-template-columns: minmax(12rem, 0.85fr) minmax(22rem, 1.6fr) minmax(12rem, 0.85fr);
-  gap: var(--ak-space-3, 0.75rem);
+  gap: var(--fitz-section-gap);
   align-items: stretch;
 }
 
 .flow-column {
   display: grid;
-  gap: var(--ak-space-3, 0.75rem);
+  gap: var(--fitz-section-gap);
   min-width: 0;
 }
 
 .flow-column-label {
   color: var(--fitz-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--fitz-caption-size);
   font-weight: 700;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -38,7 +38,7 @@
 .flow-column-core::after {
   position: absolute;
   top: 4.75rem;
-  width: var(--ak-space-3, 0.75rem);
+  width: var(--fitz-section-gap);
   border-top: 1px solid var(--fitz-border);
   content: "";
 }
@@ -64,7 +64,7 @@
 .flow-node {
   display: grid;
   gap: 0.125rem;
-  padding: var(--ak-space-3, 0.75rem);
+  padding: var(--fitz-panel-padding);
 }
 
 .flow-selectable {
@@ -98,8 +98,8 @@
 }
 
 .flow-node strong {
-  font-size: 1.25rem;
-  line-height: 1.2;
+  font-size: 1.125rem;
+  line-height: var(--fitz-title-line-height);
 }
 
 .flow-node-broker {
@@ -111,16 +111,16 @@
 .flow-resource-list,
 .flow-connection-list {
   display: grid;
-  gap: var(--ak-space-2, 0.5rem);
+  gap: var(--fitz-control-gap);
 }
 
 .flow-lane {
   position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) minmax(8rem, 0.7fr);
-  gap: var(--ak-space-3, 0.75rem);
+  gap: var(--fitz-section-gap);
   align-items: center;
-  padding: var(--ak-space-2, 0.5rem) var(--ak-space-3, 0.75rem);
+  padding: var(--fitz-control-gap) var(--fitz-panel-padding);
   text-decoration: none;
 }
 
@@ -171,40 +171,40 @@
 .flow-connection-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--ak-space-2, 0.5rem);
+  gap: var(--fitz-control-gap);
   align-items: center;
-  padding: var(--ak-space-2, 0.5rem) var(--ak-space-3, 0.75rem);
+  padding: var(--fitz-control-gap) var(--fitz-panel-padding);
 }
 
 .flow-resource-row strong,
 .flow-connection-row strong {
   color: var(--fitz-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--fitz-caption-size);
   font-weight: 650;
   text-transform: uppercase;
 }
 
 .flow-inspector {
   position: sticky;
-  top: calc(var(--ak-layout-navbar-height, 0px) + var(--ak-space-3, 0.75rem));
+  top: calc(var(--ak-layout-navbar-height, 0px) + var(--fitz-page-padding-block));
   min-width: 0;
 }
 
 .flow-inspector-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--ak-space-2, 0.5rem);
+  gap: var(--fitz-control-gap);
 }
 
 .flow-inspector-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr));
-  gap: var(--ak-space-2, 0.5rem);
+  gap: var(--fitz-control-gap);
 }
 
 .flow-inspector-grid div {
   min-width: 0;
-  padding: var(--ak-space-2, 0.5rem);
+  padding: var(--fitz-control-gap);
   border: 1px solid var(--fitz-border-subtle);
   border-radius: var(--fitz-row-radius);
   background: var(--fitz-surface-soft);
@@ -214,7 +214,7 @@
 .flow-scope-list dt {
   display: block;
   color: var(--fitz-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--fitz-caption-size);
 }
 
 .flow-inspector-grid strong,
@@ -225,8 +225,8 @@
 .flow-scope-list {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: var(--ak-space-1, 0.25rem) var(--ak-space-2, 0.5rem);
-  margin: var(--ak-space-3, 0.75rem) 0 0;
+  gap: var(--ak-space-1, 0.25rem) var(--fitz-control-gap);
+  margin: var(--fitz-section-gap) 0 0;
 }
 
 .flow-scope-list dd {
@@ -235,6 +235,6 @@
 
 .flow-inspector-link {
   display: inline-flex;
-  margin-top: var(--ak-space-3, 0.75rem);
+  margin-top: var(--fitz-section-gap);
   font-weight: 650;
 }

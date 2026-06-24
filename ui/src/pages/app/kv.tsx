@@ -1,8 +1,8 @@
 import DomainHeader from "@/components/shared/domain-header";
-import DomainBarChart from "@/components/shared/domain-bar-chart";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
+import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import { Stack } from "@askrjs/themes/layouts";
 import {
   QueryErrorState,
@@ -11,6 +11,7 @@ import {
 } from "@/components/shared/query-state";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import KvStateExplorer from "@/features/kv/kv-state-explorer";
 import { createKvOverviewQuery } from "@/features/kv/kv-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 
@@ -67,7 +68,7 @@ export default function KvPage() {
       transactionsActive: 0,
     },
   );
-  const sidebar = createDomainSidebar({
+  const snapshot = createDomainSidebar({
     data,
     title: "KV snapshot",
     description: "Current authoritative state and transaction context.",
@@ -94,7 +95,7 @@ export default function KvPage() {
   });
 
   return (
-    <DomainPageFrame sidebar={sidebar}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Authoritative state"
@@ -110,6 +111,8 @@ export default function KvPage() {
             tone: overview.refreshing ? "info" : overview.stale ? "warning" : health.tone,
           }}
         />
+
+        {snapshot}
 
         {!data && overview.loading ? (
           <QueryLoadingState description="Loading KV overview..." />
@@ -129,6 +132,12 @@ export default function KvPage() {
               <QueryRefreshingState description="Refreshing KV overview..." />
             ) : null}
 
+            <KvStateExplorer
+              error={inventory.error}
+              inventory={inventory.data}
+              loading={inventory.loading}
+            />
+
             <DomainMetricTable
               title="KV metrics"
               description="Current key count, transaction pressure, and throughput."
@@ -145,30 +154,6 @@ export default function KvPage() {
               ]}
             />
 
-            <DomainBarChart
-              title="KV signal"
-              description="Current key volume and live transaction pressure."
-              label="KV state snapshot"
-              scope="Live KV snapshot"
-              data={[
-                {
-                  label: "Active transactions",
-                  unitLabel: "transactions",
-                  value: data.stats.transactionsActive,
-                },
-                {
-                  label: "Keys",
-                  unitLabel: "keys",
-                  value: data.stats.keysTotal,
-                },
-                {
-                  label: "Ops / sec",
-                  unitLabel: "ops/sec",
-                  value: data.stats.operationsPerSecond,
-                },
-              ]}
-            />
-
             <DomainRealmTable
               title="KV realms"
               realms={data.realms}
@@ -180,6 +165,13 @@ export default function KvPage() {
               error={inventory.error}
               inventory={inventory.data}
               loading={inventory.loading}
+            />
+
+            <DomainWorkflowPanel
+              archetype="KV State Explorer"
+              workflows={["Lookup", "Search", "Inspect", "Debug"]}
+              questions={["What is stored?", "What changed?", "Why does this value exist?"]}
+              diagnostics={["Transaction pressure", "Storage internals", "Advanced metrics"]}
             />
           </Stack>
         ) : null}
