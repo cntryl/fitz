@@ -36,8 +36,11 @@ pub struct RealmActor {
     /// Key: area name, Value: watermark
     area_watermarks: HashMap<String, u64>,
 
-    /// Realm watermark (minimum of all area watermarks)
-    realm_watermark: u64,
+    /// Realm watermark (minimum of all observed area watermarks).
+    ///
+    /// `None` means no area has reported a committed watermark yet. Offset 0 is
+    /// a valid committed watermark because realm offsets are minted from zero.
+    realm_watermark: Option<u64>,
 
     /// Debounce timer id for realm watermark notification
     notification_timer: Option<crate::runtime::context::TimerId>,
@@ -57,7 +60,7 @@ impl RealmActor {
             store,
             next_realm_offset: 0,
             area_watermarks: HashMap::new(),
-            realm_watermark: 0,
+            realm_watermark: None,
             notification_timer: None,
             pending_publish: None,
         }
@@ -94,7 +97,7 @@ impl RealmActor {
     /// Recalculate realm watermark as minimum of all area watermarks
     fn recalculate_realm_watermark(&mut self, ctx: &mut Context<Self>) {
         if self.area_watermarks.is_empty() {
-            self.realm_watermark = 0;
+            self.realm_watermark = None;
             return;
         }
 
@@ -102,22 +105,31 @@ impl RealmActor {
 
         // Realm watermark is the minimum of all area watermarks
         // This ensures we only commit realm offsets when all areas have caught up
-        let new_watermark = *self.area_watermarks.values().min().unwrap_or(&0);
-
-        self.realm_watermark = new_watermark;
+        let candidate_watermark = *self.area_watermarks.values().min().unwrap_or(&0);
+        let new_watermark = match old_watermark {
+            None => Some(candidate_watermark),
+            Some(current) if candidate_watermark > current => Some(candidate_watermark),
+            Some(current) => Some(current),
+        };
 
         // Emit realm watermark notification ONLY if watermark advanced
-        if new_watermark > old_watermark {
+        if new_watermark != old_watermark {
+            let current_watermark = new_watermark.expect("advanced realm watermark");
+            let previous_watermark = old_watermark.unwrap_or(0);
+            self.realm_watermark = new_watermark;
+
             // Persist realm watermark to storage
-            let _ =
-                self.store
-                    .set_realm_watermark(self.family_id.as_u64(), &self.realm, new_watermark);
+            let _ = self.store.set_realm_watermark(
+                self.family_id.as_u64(),
+                &self.realm,
+                current_watermark,
+            );
 
             let route_str = format!("stream://{}/*/*/watermark", self.realm);
             let route = Route::new(route_str);
             let payload_json = serde_json::json!({
-                "previous": old_watermark,
-                "watermark": new_watermark,
+                "previous": previous_watermark,
+                "watermark": current_watermark,
                 "ts": std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -134,12 +146,14 @@ impl RealmActor {
                     .schedule_once(std::time::Duration::from_millis(Self::NOTICE_DEBOUNCE_MS));
                 self.notification_timer = Some(timer_id);
             }
+        } else {
+            self.realm_watermark = new_watermark;
         }
     }
 
     /// Get current realm watermark (for testing)
     pub fn watermark(&self) -> u64 {
-        self.realm_watermark
+        self.realm_watermark.unwrap_or(0)
     }
 
     /// Get area watermarks (for testing)
@@ -232,8 +246,8 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act
-        actor.handle_area_watermark_advanced("area1".to_string(), 100, &mut ctx);
         actor.handle_area_watermark_advanced("area2".to_string(), 50, &mut ctx);
+        actor.handle_area_watermark_advanced("area1".to_string(), 100, &mut ctx);
         actor.handle_area_watermark_advanced("area3".to_string(), 75, &mut ctx);
 
         // Assert
@@ -246,8 +260,8 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act
-        actor.handle_area_watermark_advanced("area1".to_string(), 100, &mut ctx);
         actor.handle_area_watermark_advanced("area2".to_string(), 50, &mut ctx);
+        actor.handle_area_watermark_advanced("area1".to_string(), 100, &mut ctx);
 
         // Assert
         assert_eq!(actor.watermark(), 50);
@@ -257,6 +271,33 @@ mod tests {
 
         // Assert
         assert_eq!(actor.watermark(), 75); // Now advances to 75
+    }
+
+    #[test]
+    fn should_record_first_realm_watermark_at_offset_zero() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+
+        // Act
+        actor.handle_area_watermark_advanced("area1".to_string(), 0, &mut ctx);
+
+        // Assert
+        assert_eq!(actor.realm_watermark, Some(0));
+        assert_eq!(actor.watermark(), 0);
+    }
+
+    #[test]
+    fn should_not_regress_realm_watermark_given_new_lower_area() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+        actor.handle_area_watermark_advanced("area1".to_string(), 100, &mut ctx);
+
+        // Act
+        actor.handle_area_watermark_advanced("area2".to_string(), 50, &mut ctx);
+
+        // Assert
+        assert_eq!(actor.watermark(), 100);
+        assert_eq!(*actor.area_watermarks().get("area2").expect("area2"), 50);
     }
 
     #[test]

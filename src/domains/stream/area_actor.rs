@@ -37,8 +37,11 @@ pub struct AreaActor {
     /// Next area offset to assign
     next_area_offset: u64,
 
-    /// Area watermark (highest contiguous committed offset)
-    area_watermark: u64,
+    /// Area watermark (highest contiguous committed offset).
+    ///
+    /// `None` means no offset has committed yet. Offset 0 is a valid committed
+    /// watermark because area offsets are minted from zero.
+    area_watermark: Option<u64>,
 
     /// Committed ranges from resources (for watermark calculation)
     /// Key: first_offset, Value: last_offset
@@ -74,7 +77,7 @@ impl AreaActor {
             area,
             store,
             next_area_offset: 0,
-            area_watermark: 0,
+            area_watermark: None,
             committed_ranges: BTreeMap::new(),
             realm_lease_next: 0,
             realm_lease_end: 0,
@@ -165,21 +168,24 @@ impl AreaActor {
         self.advance_watermark();
 
         // Persist watermark and notify RealmActor if watermark advanced
-        if self.area_watermark > old_watermark {
+        if self.area_watermark != old_watermark {
+            let current_watermark = self.area_watermark.expect("advanced area watermark");
+            let previous_watermark = old_watermark.unwrap_or(0);
+
             // Persist watermark to storage
             let _ = self.store.set_watermark(
                 self.family_id.as_u64(),
                 &self.realm,
                 &self.area,
-                self.area_watermark,
+                current_watermark,
             );
 
             // Build area watermark publish message (debounced, best-effort)
             let route_str = format!("stream://{}/{}/*/watermark", self.realm, self.area);
             let route = Route::new(route_str);
             let payload_json = serde_json::json!({
-                "previous": old_watermark,
-                "watermark": self.area_watermark,
+                "previous": previous_watermark,
+                "watermark": current_watermark,
                 "ts": std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -201,7 +207,7 @@ impl AreaActor {
             let notification =
                 StreamCoordinationMessage::AreaWatermarkAdvanced(AreaWatermarkAdvanced {
                     area: self.area.clone(),
-                    watermark: self.area_watermark,
+                    watermark: current_watermark,
                 });
             let realm_addr = self.realm_actor_address();
             let _ = ctx.send(realm_addr, notification);
@@ -215,23 +221,23 @@ impl AreaActor {
     ///
     /// This prevents bridging gaps where offsets are missing.
     ///
-    /// **OPTIMIZATION**: Uses BTreeMap::first_entry() for O(1) lookup when
-    /// ranges are ordered, avoiding full iteration.
+    /// **OPTIMIZATION**: Uses BTreeMap exact-key lookup for the next contiguous
+    /// range, avoiding full iteration.
     fn advance_watermark(&mut self) {
-        loop {
-            let next_offset = self.area_watermark + 1;
-
-            // Fast path: Check if first range starts at watermark+1
-            // BTreeMap keeps keys sorted, so first_entry is O(log N)
+        while let Some(next_offset) = self
+            .area_watermark
+            .map_or(Some(0), |watermark| watermark.checked_add(1))
+        {
+            // Fast path: Check whether a range starts at watermark+1.
             let found_range = self
                 .committed_ranges
-                .iter()
-                .find(|(&first, _)| first == next_offset)
-                .map(|(&first, &last)| (first, last));
+                .get(&next_offset)
+                .copied()
+                .map(|last| (next_offset, last));
 
             if let Some((first, last)) = found_range {
                 // Advance watermark to end of this range
-                self.area_watermark = last;
+                self.area_watermark = Some(last);
 
                 // Remove this consumed range
                 self.committed_ranges.remove(&first);
@@ -242,8 +248,10 @@ impl AreaActor {
         }
 
         // Clean up any ranges that are now behind the watermark
-        self.committed_ranges
-            .retain(|_, last| *last > self.area_watermark);
+        if let Some(area_watermark) = self.area_watermark {
+            self.committed_ranges
+                .retain(|_, last| *last > area_watermark);
+        }
     }
 
     /// Update realm lease from RealmActor grant
@@ -261,7 +269,7 @@ impl AreaActor {
     /// Get current watermark (for testing)
     #[allow(dead_code)]
     pub fn watermark(&self) -> u64 {
-        self.area_watermark
+        self.area_watermark.unwrap_or(0)
     }
 
     /// Process pending lease requests after realm lease grant arrives
@@ -397,11 +405,25 @@ mod tests {
         // Arrange
         let (mut actor, mut ctx) = make_test_actor();
 
-        // Act - Commit range [1,3] (watermark starts at 0, advances to 3)
-        actor.handle_batch_committed(1, 3, &mut ctx);
+        // Act
+        actor.handle_batch_committed(0, 3, &mut ctx);
 
         // Assert
         assert_eq!(actor.watermark(), 3);
+    }
+
+    #[test]
+    fn should_advance_watermark_given_first_committed_offset_zero() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+
+        // Act
+        actor.handle_batch_committed(0, 0, &mut ctx);
+
+        // Assert
+        assert_eq!(actor.area_watermark, Some(0));
+        assert_eq!(actor.watermark(), 0);
+        assert!(actor.committed_ranges().is_empty());
     }
 
     #[test]
@@ -409,8 +431,8 @@ mod tests {
         // Arrange
         let (mut actor, mut ctx) = make_test_actor();
 
-        // Act - Commit [1,3] then [6,8] (gap at 4-5)
-        actor.handle_batch_committed(1, 3, &mut ctx);
+        // Act
+        actor.handle_batch_committed(0, 3, &mut ctx);
         actor.handle_batch_committed(6, 8, &mut ctx); // Gap at 4-5
 
         // Assert
@@ -423,7 +445,7 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act - Create gap then fill it
-        actor.handle_batch_committed(1, 3, &mut ctx);
+        actor.handle_batch_committed(0, 3, &mut ctx);
         actor.handle_batch_committed(6, 8, &mut ctx);
         actor.handle_batch_committed(4, 5, &mut ctx); // Fill gap
 
@@ -437,7 +459,7 @@ mod tests {
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act - Commit contiguous ranges
-        actor.handle_batch_committed(1, 3, &mut ctx);
+        actor.handle_batch_committed(0, 3, &mut ctx);
         actor.handle_batch_committed(4, 6, &mut ctx);
 
         // Assert
@@ -453,7 +475,7 @@ mod tests {
         // Act - Commit in reverse order
         actor.handle_batch_committed(11, 13, &mut ctx);
         actor.handle_batch_committed(6, 8, &mut ctx);
-        actor.handle_batch_committed(1, 3, &mut ctx);
+        actor.handle_batch_committed(0, 3, &mut ctx);
 
         // Assert
         assert_eq!(actor.watermark(), 3);
