@@ -2001,6 +2001,7 @@ impl QueueActor {
             return QueueResponse::SentBatch { ids: vec![] };
         }
 
+        let was_empty = self.ready_count == 0;
         let now_instant = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
         let cf_id = self.queue_key.family.id();
@@ -2159,6 +2160,9 @@ impl QueueActor {
         }
         if !self.index_meta_written {
             self.index_meta_written = true;
+        }
+        if was_empty && staged_ready_add > 0 && self.ready_count > 0 {
+            self.needs_wake_waiters = true;
         }
 
         QueueResponse::SentBatch { ids }
@@ -2711,11 +2715,118 @@ impl QueueActor {
         Ok(true)
     }
 
+    fn promote_delayed_message(&mut self, delayed: DelayedMessage) -> bool {
+        let id = delayed.id;
+        let visible_at_ms = self
+            .persisted_delayed
+            .get(&id)
+            .copied()
+            .unwrap_or(delayed.visible_at_ms);
+        let ready_seq = self.next_ready_seq;
+        let (ready_shard, ready_range) = Self::prepare_persisted_ready_append(
+            self.persisted_ready_shards[Self::shard_for_id(id)]
+                .back()
+                .copied(),
+            id,
+        );
+        let staged_delayed_count = self
+            .persisted_delayed
+            .len()
+            .saturating_sub(usize::from(self.persisted_delayed.contains_key(&id)));
+        let staged_next_delayed_visibility = if self.persisted_delayed.contains_key(&id) {
+            self.min_persisted_delayed_visibility_ms_excluding(id)
+        } else {
+            self.min_persisted_delayed_visibility_ms()
+        };
+        let cf_id = self.queue_key.family.id();
+        let mut txn = match self
+            .store
+            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+        {
+            Ok(txn) => txn,
+            Err(error) => {
+                tracing::warn!(
+                    queue = ?self.queue_key,
+                    route_family = self.queue_key.family.as_u64(),
+                    message_id = id.as_u64(),
+                    error = ?error,
+                    "Failed to begin queue delayed promotion transaction"
+                );
+                return false;
+            }
+        };
+
+        if let Err(error) = txn.delete(self.delayed_index_key(visible_at_ms, id)) {
+            tracing::warn!(
+                queue = ?self.queue_key,
+                route_family = self.queue_key.family.as_u64(),
+                message_id = id.as_u64(),
+                error = ?error,
+                "Failed to delete queue delayed index during promotion"
+            );
+            return false;
+        }
+
+        if let Err(error) = txn.put(
+            self.ready_range_key(ready_shard, ready_range.next),
+            Self::encode_ready_range_value(ready_range),
+            None,
+        ) {
+            tracing::warn!(
+                queue = ?self.queue_key,
+                route_family = self.queue_key.family.as_u64(),
+                message_id = id.as_u64(),
+                error = ?error,
+                "Failed to write queue ready index during delayed promotion"
+            );
+            return false;
+        }
+
+        if let Err(error) = txn.put(
+            self.index_meta_key.clone(),
+            Self::encode_index_meta(
+                self.next_id_limit,
+                (self.persisted_ready_count + 1) as u64,
+                staged_delayed_count as u64,
+                staged_next_delayed_visibility,
+            ),
+            None,
+        ) {
+            tracing::warn!(
+                queue = ?self.queue_key,
+                route_family = self.queue_key.family.as_u64(),
+                message_id = id.as_u64(),
+                error = ?error,
+                "Failed to update queue index meta during delayed promotion"
+            );
+            return false;
+        }
+
+        if let Err(error) = txn.commit(self.commit_write_options) {
+            tracing::warn!(
+                queue = ?self.queue_key,
+                route_family = self.queue_key.family.as_u64(),
+                message_id = id.as_u64(),
+                error = ?error,
+                "Failed to commit queue delayed promotion"
+            );
+            return false;
+        }
+
+        self.remove_persisted_delayed(id);
+        self.push_persisted_ready(id);
+        self.push_ready_entry(ready_seq, id);
+        self.next_ready_seq = self.next_ready_seq.saturating_add(1);
+        self.index_meta_written = true;
+        true
+    }
+
     /// Handle inflight expiration (internal timer event)
     /// Process delayed messages that are now visible
     /// Updates the cached deadline for the next delayed message check
     pub fn process_delayed_messages(&mut self) {
         let now = self.clock.now_instant();
+        let was_empty = self.ready_count == 0;
 
         while let Some(Reverse(delayed)) = self.delayed.peek() {
             if delayed.visible_at > now {
@@ -2727,13 +2838,20 @@ impl QueueActor {
             // Pop now-visible message
             let delayed = self.delayed.pop().unwrap().0;
 
-            // Add to ready queue
-            self.push_ready(delayed.id);
+            if !self.promote_delayed_message(delayed.clone()) {
+                self.delayed.push(Reverse(delayed));
+                self.next_delayed_deadline = now + Duration::from_secs(1);
+                break;
+            }
         }
 
         // If no more delayed messages, set deadline to far future
         if self.delayed.is_empty() {
             self.next_delayed_deadline = now + Duration::from_secs(3600); // 1 hour
+        }
+
+        if was_empty && self.ready_count > 0 {
+            self.needs_wake_waiters = true;
         }
     }
 
@@ -2864,6 +2982,32 @@ pub mod tests {
         }
     }
 
+    fn send_and_dead_letter_single_message(
+        actor: &mut QueueActor,
+        clock: &MockClock,
+        body: &str,
+        attempts: u32,
+    ) -> MessageId {
+        let msg_id = match actor.handle_send(Bytes::from(body.to_string()), None) {
+            QueueResponse::Sent { id } => id,
+            other => panic!("Expected Sent response, found {other:?}"),
+        };
+
+        for expected_attempt in 1..=attempts {
+            match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
+                QueueResponse::Received { messages } => {
+                    assert_eq!(messages.len(), 1);
+                    assert_eq!(messages[0].attempts, expected_attempt);
+                }
+                other => panic!("Expected Received response, found {other:?}"),
+            }
+            clock.advance(Duration::from_secs(31));
+            actor.process_expired_timers();
+        }
+
+        msg_id
+    }
+
     fn read_index_meta(
         store: &Arc<cntryl_midge::MidgeEngine>,
         queue_key: &QueueKey,
@@ -2926,6 +3070,32 @@ pub mod tests {
         }
 
         entries.sort_unstable_by_key(|(id, visible_at_ms)| (*visible_at_ms, id.as_u64()));
+        entries
+    }
+
+    fn read_dlq_index_entries(
+        store: &Arc<cntryl_midge::MidgeEngine>,
+        queue_key: &QueueKey,
+    ) -> Vec<(MessageId, u64)> {
+        let txn = store
+            .begin_tx(
+                queue_key.family.id(),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
+            .expect("begin read tx");
+        let prefix = QueueActor::dlq_index_prefix(queue_key);
+        let query = cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&prefix));
+        let mut iter = txn.scan(&query).expect("scan dlq index");
+        let mut entries = Vec::new();
+
+        while let Some((key, _value)) = iter.next() {
+            let (dead_lettered_at_ms, id) =
+                QueueActor::parse_dlq_index_key(&key, &prefix).expect("parse dlq key");
+            entries.push((id, dead_lettered_at_ms));
+        }
+
+        entries
+            .sort_unstable_by_key(|(id, dead_lettered_at_ms)| (*dead_lettered_at_ms, id.as_u64()));
         entries
     }
 
@@ -3160,6 +3330,57 @@ pub mod tests {
         assert!(actor.records.len() <= QueueActor::RECORD_CACHE_LIMIT);
         assert_eq!(actor.body_cache.len(), QueueActor::BODY_CACHE_LIMIT);
         assert!(actor.body_cache_bytes <= QueueActor::BODY_CACHE_LIMIT_BYTES);
+    }
+
+    #[test]
+    fn should_wake_waiters_given_batch_send_transitions_empty_queue_to_ready() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-batch-wake");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+
+        // Act
+        let response = actor.handle_send_batch(&[(Bytes::from_static(b"ready"), None)]);
+
+        // Assert
+        assert!(matches!(response, QueueResponse::SentBatch { .. }));
+        assert!(actor.take_needs_wake_waiters());
+        assert!(!actor.take_needs_wake_waiters());
+    }
+
+    #[test]
+    fn should_not_wake_waiters_given_batch_send_only_delayed_messages() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-batch-delayed-no-wake");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+
+        // Act
+        let response = actor.handle_send_batch(&[(Bytes::from_static(b"delayed"), Some(60))]);
+
+        // Assert
+        assert!(matches!(response, QueueResponse::SentBatch { .. }));
+        assert!(!actor.take_needs_wake_waiters());
+        assert_eq!(actor.ready_len(), 0);
+        assert_eq!(actor.delayed.len(), 1);
     }
 
     #[test]
@@ -3459,6 +3680,137 @@ pub mod tests {
         ));
         // Assert
         assert!(read_delayed_index_entries(&store, &queue_key).is_empty());
+    }
+
+    #[test]
+    fn should_persist_delayed_promotion_before_restart() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-delayed-promotion");
+        let clock = MockClock::new();
+
+        {
+            let mut actor = QueueActor::with_clock(
+                RouteFamily::new(0),
+                queue_key.clone(),
+                store.clone(),
+                Box::new(clock.clone()),
+                None,
+                crate::utils::idempotency::default_dedup_store(),
+            );
+            let response = actor.handle_send(Bytes::from("delayed"), Some(1));
+            assert!(matches!(response, QueueResponse::Sent { .. }));
+        }
+
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            Box::new(clock.clone()),
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        clock.advance(Duration::from_secs(2));
+
+        // Act
+        actor.process_delayed_messages();
+        let recovered = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            Box::new(clock),
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+
+        // Assert
+        assert_eq!(actor.ready_len(), 1);
+        assert_eq!(actor.persisted_delayed.len(), 0);
+        assert!(read_delayed_index_entries(&store, &queue_key).is_empty());
+        assert_eq!(read_ready_index_ranges(&store, &queue_key).len(), 1);
+        assert_eq!(recovered.ready_len(), 1);
+        assert_eq!(recovered.persisted_delayed.len(), 0);
+        assert_eq!(recovered.admin_snapshot().messages_delayed, 0);
+        assert_eq!(recovered.admin_snapshot().messages_ready, 1);
+    }
+
+    #[test]
+    fn should_recover_mixed_batch_visibility_counts_after_restart() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-mixed-batch-restart");
+        let clock = MockClock::new();
+        {
+            let mut actor = QueueActor::with_clock(
+                RouteFamily::new(0),
+                queue_key.clone(),
+                store.clone(),
+                Box::new(clock.clone()),
+                None,
+                crate::utils::idempotency::default_dedup_store(),
+            );
+            let response = actor.handle_send_batch(&[
+                (Bytes::from_static(b"ready-a"), None),
+                (Bytes::from_static(b"delayed"), Some(60)),
+                (Bytes::from_static(b"ready-b"), None),
+            ]);
+            assert!(matches!(response, QueueResponse::SentBatch { .. }));
+        }
+
+        // Act
+        let mut recovered = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            Box::new(clock.clone()),
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let recovered_snapshot = recovered.admin_snapshot();
+        let recovered_ready_ranges = read_ready_index_ranges(&store, &queue_key).len();
+        let recovered_delayed_entries = read_delayed_index_entries(&store, &queue_key).len();
+        let ready_response = recovered.handle_receive_for_session(TEST_SESSION_ID, 120, Some(3));
+        clock.advance(Duration::from_secs(61));
+        recovered.process_delayed_messages();
+        let delayed_response = recovered.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+
+        // Assert
+        assert_eq!(recovered_snapshot.messages_ready, 2);
+        assert_eq!(recovered_snapshot.messages_delayed, 1);
+        assert_eq!(recovered_ready_ranges, 2);
+        assert_eq!(recovered_delayed_entries, 1);
+        let ready_messages = match ready_response {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 2);
+                assert_eq!(messages[0].body, Bytes::from_static(b"ready-a"));
+                assert_eq!(messages[1].body, Bytes::from_static(b"ready-b"));
+                messages
+            }
+            other => panic!("Expected ready messages after restart, found {other:?}"),
+        };
+        let delayed_messages = match delayed_response {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].body, Bytes::from_static(b"delayed"));
+                messages
+            }
+            other => panic!("Expected delayed message after promotion, found {other:?}"),
+        };
+        for message in ready_messages.iter().chain(delayed_messages.iter()) {
+            assert_eq!(
+                recovered.handle_ack_for_session(TEST_SESSION_ID, message.id, message.token),
+                QueueResponse::Acked
+            );
+        }
+        assert!(read_ready_index_ranges(&store, &queue_key).is_empty());
+        assert!(read_delayed_index_entries(&store, &queue_key).is_empty());
+        assert_eq!(recovered.admin_snapshot().messages_total, 0);
     }
 
     #[test]
@@ -3773,6 +4125,91 @@ pub mod tests {
 
         // Assert
         assert!(matches!(response, QueueResponse::Error { .. }));
+    }
+
+    #[test]
+    fn should_allow_ack_retry_after_ack_commit_fails() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-ack-commit-retry");
+        let mut actor = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key,
+            store,
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let (id, token) = send_and_reserve_single_message(&mut actor, "test message");
+        QueueActor::fail_next_ack_commit_for_tests();
+
+        // Act
+        let failed = actor.handle_ack_for_session(TEST_SESSION_ID, id, token);
+        let retried = actor.handle_ack_for_session(TEST_SESSION_ID, id, token);
+        let duplicate = actor.handle_ack_for_session(TEST_SESSION_ID, id, token);
+
+        // Assert
+        assert!(matches!(failed, QueueResponse::Error { .. }));
+        assert_eq!(retried, QueueResponse::Acked);
+        assert_eq!(duplicate, QueueResponse::Acked);
+        assert_eq!(actor.inflight.len(), 0);
+        assert_eq!(actor.ready_len(), 0);
+    }
+
+    #[test]
+    fn should_recover_reserved_unacked_message_as_ready_after_restart() {
+        // Arrange
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-reserved-restart");
+        let message_id = {
+            let mut actor = QueueActor::new(
+                RouteFamily::new(0),
+                queue_key.clone(),
+                store.clone(),
+                None,
+                crate::utils::idempotency::default_dedup_store(),
+            );
+            let response = actor.handle_send(Bytes::from_static(b"unacked"), None);
+            let message_id = match response {
+                QueueResponse::Sent { id } => id,
+                other => panic!("Expected Sent response, found {other:?}"),
+            };
+            let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+            match response {
+                QueueResponse::Received { messages } => {
+                    assert_eq!(messages.len(), 1);
+                    assert_eq!(messages[0].id, message_id);
+                }
+                other => panic!("Expected Received response, found {other:?}"),
+            }
+            assert_eq!(read_ready_index_ranges(&store, &queue_key).len(), 1);
+            message_id
+        };
+
+        // Act
+        let mut recovered = QueueActor::new(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            None,
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let response = recovered.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+
+        // Assert
+        match response {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].id, message_id);
+                assert_eq!(messages[0].body, Bytes::from_static(b"unacked"));
+            }
+            other => panic!("Expected unacked message after restart, found {other:?}"),
+        }
     }
 
     #[test]
@@ -4773,6 +5210,56 @@ pub mod tests {
     }
 
     #[test]
+    fn should_recover_replayed_dead_letter_as_ready_after_restart() {
+        // Arrange
+        let clock = MockClock::new();
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-dlq-replay-restart");
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            Box::new(clock.clone()),
+            Some(2),
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let msg_id = send_and_dead_letter_single_message(&mut actor, &clock, "test message", 2);
+        assert_eq!(actor.dlq_count, 1);
+        assert_eq!(read_dlq_index_entries(&store, &queue_key).len(), 1);
+
+        // Act
+        let replayed = actor
+            .replay_dead_letter(msg_id)
+            .expect("replay dead letter");
+        let mut recovered = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            Box::new(clock),
+            Some(2),
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let reserve_response = recovered.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+
+        // Assert
+        assert!(replayed);
+        assert!(read_dlq_index_entries(&store, &queue_key).is_empty());
+        assert_eq!(recovered.dlq_count, 0);
+        assert_eq!(recovered.ready_len(), 0);
+        match reserve_response {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].id, msg_id);
+                assert_eq!(messages[0].attempts, 1);
+            }
+            other => panic!("Expected Received response after replay restart, found {other:?}"),
+        }
+    }
+
+    #[test]
     fn should_purge_dead_letter_given_retained_dlq_message() {
         // Arrange
         let clock = MockClock::new();
@@ -4814,6 +5301,51 @@ pub mod tests {
             QueueResponse::Received { messages } => assert!(messages.is_empty()),
             other => panic!("Expected empty queue after purge, found {other:?}"),
         }
+    }
+
+    #[test]
+    fn should_keep_purged_dead_letter_deleted_after_restart() {
+        // Arrange
+        let clock = MockClock::new();
+        let store = Arc::new(
+            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+                .expect("Failed to open Midge"),
+        );
+        let queue_key = unique_queue_key("jobs-dlq-purge-restart");
+        let mut actor = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            Box::new(clock.clone()),
+            Some(2),
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let msg_id = send_and_dead_letter_single_message(&mut actor, &clock, "test message", 2);
+        assert_eq!(actor.dlq_count, 1);
+        assert_eq!(read_dlq_index_entries(&store, &queue_key).len(), 1);
+
+        // Act
+        let purged = actor.purge_dead_letter(msg_id).expect("purge dead letter");
+        let mut recovered = QueueActor::with_clock(
+            RouteFamily::new(0),
+            queue_key.clone(),
+            store.clone(),
+            Box::new(clock),
+            Some(2),
+            crate::utils::idempotency::default_dedup_store(),
+        );
+        let reserve_response = recovered.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+
+        // Assert
+        assert!(purged);
+        assert!(read_dlq_index_entries(&store, &queue_key).is_empty());
+        assert_eq!(recovered.dlq_count, 0);
+        assert_eq!(recovered.ready_len(), 0);
+        match reserve_response {
+            QueueResponse::Received { messages } => assert!(messages.is_empty()),
+            other => panic!("Expected empty queue after purge restart, found {other:?}"),
+        }
+        assert!(recovered.load_record_metadata_from_store(msg_id).is_err());
     }
 
     #[test]

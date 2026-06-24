@@ -25,6 +25,7 @@ use super::storage::{
 std::thread_local! {
     static FAIL_NEXT_AREA_WATERMARK_GUARD_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_NEXT_REALM_WATERMARK_GUARD_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_NEXT_PROMOTION_FRONTIER_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[derive(Debug, Clone)]
@@ -1237,6 +1238,20 @@ impl StreamStore {
             StreamWriteMode::Buffered => cntryl_midge::WriteOptions::buffered(),
             StreamWriteMode::CloudStrict => cntryl_midge::WriteOptions::cloud_strict(),
         };
+        #[cfg(test)]
+        {
+            let should_fail = FAIL_NEXT_PROMOTION_FRONTIER_COMMIT.with(|cell| {
+                let should_fail = cell.get();
+                if should_fail {
+                    cell.set(false);
+                }
+                should_fail
+            });
+
+            if should_fail {
+                return Err("Injected stream commit failure".to_string());
+            }
+        }
         txn.commit(write_options)
             .map_err(|e| format!("midge commit error: {:?}", e))?;
 
@@ -1442,6 +1457,52 @@ impl StreamStore {
             })
     }
 
+    fn scan_next_area_offset_from_txn(
+        txn: &cntryl_midge::Transaction,
+        realm: &str,
+        area: &str,
+    ) -> Result<u64, String> {
+        let query = cntryl_midge::Query::new().prefix(Bytes::from(
+            Self::build_compact_area_page_prefix(realm, area),
+        ));
+        let mut iter = txn
+            .scan(&query)
+            .map_err(|e| format!("scan error: {:?}", e))?;
+        let results = iter.collect_all();
+
+        if let Some((key, value)) = results.last() {
+            let page_start = decode_area_offset_from_key(key)?;
+            let page = CompactAreaPageValue::try_decode(value).map_err(|error| {
+                Self::invalid_compact_area_page_error(realm, area, page_start, error)
+            })?;
+            Ok(page_start.saturating_add(page.records.len() as u64))
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn load_effective_area_watermark_for_guard(
+        txn: &cntryl_midge::Transaction,
+        realm: &str,
+        area: &str,
+        watermark_key: &[u8],
+        counter_key: &[u8],
+    ) -> Result<u64, String> {
+        if let Some(current) = Self::load_existing_area_watermark_for_guard(txn, watermark_key)? {
+            return Ok(current);
+        }
+
+        match txn
+            .get(counter_key)
+            .map_err(|e| format!("midge get error: {:?}", e))?
+        {
+            Some(bytes) => Ok(AreaCounterValue::decode(&bytes)?
+                .next_offset
+                .saturating_sub(1)),
+            None => Ok(Self::scan_next_area_offset_from_txn(txn, realm, area)?.saturating_sub(1)),
+        }
+    }
+
     fn load_existing_realm_watermark_for_guard(
         txn: &cntryl_midge::Transaction,
         key: &[u8],
@@ -1470,6 +1531,50 @@ impl StreamStore {
             })
     }
 
+    fn scan_next_realm_offset_from_txn(
+        txn: &cntryl_midge::Transaction,
+        realm: &str,
+    ) -> Result<u64, String> {
+        let query = cntryl_midge::Query::new().prefix(Bytes::from(
+            Self::build_compressed_compact_realm_page_prefix(realm),
+        ));
+        let mut iter = txn
+            .scan(&query)
+            .map_err(|e| format!("scan error: {:?}", e))?;
+        let results = iter.collect_all();
+
+        if let Some((key, value)) = results.last() {
+            let page_start_offset = decode_realm_offset_from_key(key)?;
+            let page = CompressedCompactRealmPageValue::try_decode(value)
+                .map_err(|error| Self::invalid_compact_realm_page_error(page_start_offset, error))?
+                .into_compact_realm_page();
+            Ok(page_start_offset.saturating_add(page.records.len() as u64))
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn load_effective_realm_watermark_for_guard(
+        txn: &cntryl_midge::Transaction,
+        realm: &str,
+        watermark_key: &[u8],
+        counter_key: &[u8],
+    ) -> Result<u64, String> {
+        if let Some(current) = Self::load_existing_realm_watermark_for_guard(txn, watermark_key)? {
+            return Ok(current);
+        }
+
+        match txn
+            .get(counter_key)
+            .map_err(|e| format!("midge get error: {:?}", e))?
+        {
+            Some(bytes) => Ok(RealmCounterValue::decode(&bytes)?
+                .next_offset
+                .saturating_sub(1)),
+            None => Ok(Self::scan_next_realm_offset_from_txn(txn, realm)?.saturating_sub(1)),
+        }
+    }
+
     #[cfg(test)]
     fn fail_next_area_watermark_guard_read_for_tests() {
         FAIL_NEXT_AREA_WATERMARK_GUARD_READ.with(|cell| cell.set(true));
@@ -1478,6 +1583,11 @@ impl StreamStore {
     #[cfg(test)]
     fn fail_next_realm_watermark_guard_read_for_tests() {
         FAIL_NEXT_REALM_WATERMARK_GUARD_READ.with(|cell| cell.set(true));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_promotion_frontier_commit_for_tests() {
+        FAIL_NEXT_PROMOTION_FRONTIER_COMMIT.with(|cell| cell.set(true));
     }
 
     fn resource_identity_from_key(
@@ -1774,39 +1884,21 @@ impl StreamStore {
 
         let resource_meta_state = self.resource_meta_state(family, realm, area, resource);
         let mut resource_meta_state = resource_meta_state.lock();
-        let resource_meta_before = match resource_meta_state.snapshot.clone() {
-            Some(snapshot) => snapshot,
-            None => {
-                let (snapshot, _) =
-                    self.load_resource_meta_snapshot(family, realm, area, resource)?;
-                resource_meta_state.snapshot = Some(snapshot.clone());
-                snapshot
-            }
-        };
+        let (resource_meta_before, _) =
+            self.load_resource_meta_snapshot(family, realm, area, resource)?;
+        resource_meta_state.snapshot = Some(resource_meta_before.clone());
         if resource_meta_before.next_offset != expected_resource_next_offset {
             return Err("ERR_CONCURRENCY_CONFLICT".to_string());
         }
 
         let realm_sequence_state = self.realm_sequence_state(family, realm);
         let mut realm_sequence_state = realm_sequence_state.lock();
-        let area_next_offset = match realm_sequence_state.next_area_offsets.get(area).copied() {
-            Some(next_offset) => next_offset,
-            None => {
-                let (next_offset, _) = self.load_area_next_offset_snapshot(family, realm, area)?;
-                realm_sequence_state
-                    .next_area_offsets
-                    .insert(area.to_string(), next_offset);
-                next_offset
-            }
-        };
-        let realm_next_offset = match realm_sequence_state.next_realm_offset {
-            Some(next_offset) => next_offset,
-            None => {
-                let (next_offset, _) = self.load_realm_next_offset_snapshot(family, realm)?;
-                realm_sequence_state.next_realm_offset = Some(next_offset);
-                next_offset
-            }
-        };
+        let (area_next_offset, _) = self.load_area_next_offset_snapshot(family, realm, area)?;
+        realm_sequence_state
+            .next_area_offsets
+            .insert(area.to_string(), area_next_offset);
+        let (realm_next_offset, _) = self.load_realm_next_offset_snapshot(family, realm)?;
+        realm_sequence_state.next_realm_offset = Some(realm_next_offset);
 
         let (response, resource_meta_after) =
             self.commit_promotion_frontier_batch(CommitPromotionFrontierBatchParams {
@@ -2634,6 +2726,7 @@ impl StreamStore {
         self.ensure_layout_activation_for_family(family)?;
 
         let key = encode_watermark_key(realm, area);
+        let counter_key = encode_area_counter_key(realm, area);
 
         let mut txn = self
             .db
@@ -2642,10 +2735,10 @@ impl StreamStore {
 
         // Monotonicity guard: watermarks must only advance, never regress.
         // If the new value is not strictly greater than the current value, no-op.
-        if let Some(current) = Self::load_existing_area_watermark_for_guard(&txn, &key)? {
-            if watermark <= current {
-                return Ok(());
-            }
+        let current =
+            Self::load_effective_area_watermark_for_guard(&txn, realm, area, &key, &counter_key)?;
+        if watermark <= current {
+            return Ok(());
         }
 
         let value = WatermarkValue { watermark };
@@ -2697,6 +2790,7 @@ impl StreamStore {
         self.ensure_layout_activation_for_family(family)?;
 
         let key = crate::domains::stream::storage::encode_realm_watermark_key(realm);
+        let counter_key = encode_realm_counter_key(realm);
 
         let mut txn = self
             .db
@@ -2704,10 +2798,10 @@ impl StreamStore {
             .map_err(|e| format!("failed to begin tx: {:?}", e))?;
 
         // Monotonicity guard: realm watermarks must only advance, never regress.
-        if let Some(current) = Self::load_existing_realm_watermark_for_guard(&txn, &key)? {
-            if watermark <= current {
-                return Ok(());
-            }
+        let current =
+            Self::load_effective_realm_watermark_for_guard(&txn, realm, &key, &counter_key)?;
+        if watermark <= current {
+            return Ok(());
         }
 
         let value = WatermarkValue { watermark };
@@ -3425,6 +3519,49 @@ mod tests {
     }
 
     #[test]
+    fn should_preserve_area_watermark_given_lower_value_than_derived_committed_watermark() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let events = vec![
+            EventPayload {
+                body: Bytes::from_static(b"first"),
+                metadata: None,
+                discriminator: None,
+            },
+            EventPayload {
+                body: Bytes::from_static(b"second"),
+                metadata: None,
+                discriminator: None,
+            },
+        ];
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("seed committed area watermark");
+
+        // Act
+        store
+            .set_watermark(1, "test", "events", 0)
+            .expect("lower area watermark should no-op");
+
+        // Assert
+        assert_eq!(
+            store
+                .get_watermark(1, "test", "events")
+                .expect("read area watermark"),
+            1
+        );
+    }
+
+    #[test]
     fn should_return_error_when_realm_watermark_guard_read_fails() {
         // Arrange
         let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
@@ -3487,6 +3624,49 @@ mod tests {
                 .get_realm_watermark(1, "test")
                 .expect("read realm watermark"),
             10
+        );
+    }
+
+    #[test]
+    fn should_preserve_realm_watermark_given_lower_value_than_derived_committed_watermark() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let events = vec![
+            EventPayload {
+                body: Bytes::from_static(b"first"),
+                metadata: None,
+                discriminator: None,
+            },
+            EventPayload {
+                body: Bytes::from_static(b"second"),
+                metadata: None,
+                discriminator: None,
+            },
+        ];
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("seed committed realm watermark");
+
+        // Act
+        store
+            .set_realm_watermark(1, "test", 0)
+            .expect("lower realm watermark should no-op");
+
+        // Assert
+        assert_eq!(
+            store
+                .get_realm_watermark(1, "test")
+                .expect("read realm watermark"),
+            1
         );
     }
 
@@ -3568,6 +3748,69 @@ mod tests {
         // Assert
         assert_eq!(second.first_area_offset, 1);
         assert_eq!(second.first_realm_offset, 1);
+    }
+
+    #[test]
+    fn should_refresh_scope_offsets_given_stale_store_cache() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        let first_store = StreamStore::new(db.clone());
+        let second_store = StreamStore::new(db);
+        let first_events = single_event(b"first");
+        let second_events = single_event(b"second");
+        let third_events = single_event(b"third");
+        first_store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("first commit");
+        second_store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "audits",
+                expected_resource_next_offset: 0,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit from separate store");
+
+        // Act
+        let third = first_store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 1,
+                events: &third_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("third commit from stale store");
+        let (area_items, area_cursor) = first_store
+            .read_area(1, "test", "events", 0, 10, None)
+            .expect("read area records");
+        let area_records = event_records(area_items);
+
+        // Assert
+        assert_eq!(third.first_area_offset, 2);
+        assert_eq!(third.first_realm_offset, 2);
+        assert_eq!(area_records.len(), 3);
+        assert_eq!(area_records[0].body, Bytes::from_static(b"first"));
+        assert_eq!(area_records[1].body, Bytes::from_static(b"second"));
+        assert_eq!(area_records[2].body, Bytes::from_static(b"third"));
+        assert_eq!(area_cursor.last_area_offset, Some(2));
+        assert!(!area_cursor.has_more);
     }
 
     #[test]
@@ -3657,6 +3900,128 @@ mod tests {
                 .expect("next resource offset"),
             2
         );
+    }
+
+    #[test]
+    fn should_reject_stale_expected_resource_offset_given_other_store_advanced_resource() {
+        // Arrange
+        let db = create_test_engine_with_cfs(vec![1]);
+        let first_store = StreamStore::new(db.clone());
+        let second_store = StreamStore::new(db);
+        let first_events = single_event(b"first");
+        let second_events = single_event(b"second");
+        let third_events = single_event(b"third");
+        first_store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &first_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("first commit");
+        second_store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 1,
+                events: &second_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("second commit from separate store");
+
+        // Act
+        let stale_result = first_store.commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "orders",
+            expected_resource_next_offset: 1,
+            events: &third_events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Buffered,
+        });
+        let fresh_result = first_store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 2,
+                events: &third_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("fresh retry should commit");
+
+        // Assert
+        assert_eq!(
+            stale_result.expect_err("stale expected resource offset should fail"),
+            "ERR_CONCURRENCY_CONFLICT"
+        );
+        assert_eq!(fresh_result.first_resource_offset, 2);
+        assert_eq!(
+            first_store
+                .get_next_resource_offset(1, "test", "events", "orders")
+                .expect("next resource offset"),
+            3
+        );
+    }
+
+    #[test]
+    fn should_not_advance_sequence_cache_given_injected_commit_failure() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let failed_events = single_event(b"failed");
+        let retry_events = single_event(b"retry");
+        StreamStore::fail_next_promotion_frontier_commit_for_tests();
+
+        // Act
+        let failed = store.commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "orders",
+            expected_resource_next_offset: 0,
+            events: &failed_events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Buffered,
+        });
+        let retry = store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &retry_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("retry commit should reuse original offsets");
+        let (records, cursor) = store
+            .read_area(1, "test", "events", 0, 10, None)
+            .expect("read committed area records");
+        let records = event_records(records);
+
+        // Assert
+        assert_eq!(
+            failed.expect_err("injected commit failure should fail"),
+            "Injected stream commit failure"
+        );
+        assert_eq!(retry.first_resource_offset, 0);
+        assert_eq!(retry.first_area_offset, 0);
+        assert_eq!(retry.first_realm_offset, 0);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].body, Bytes::from_static(b"retry"));
+        assert_eq!(cursor.last_area_offset, Some(0));
+        assert!(!cursor.has_more);
     }
 
     #[test]
@@ -3897,6 +4262,92 @@ mod tests {
         assert_eq!(records[0].body, Bytes::from_static(b"keep"));
         assert!(!cursor.has_more);
         assert_eq!(cursor.last_realm_offset, Some(1));
+    }
+
+    #[test]
+    fn should_page_filtered_resource_read_through_filtered_items() {
+        // Arrange
+        let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+        let events = vec![
+            EventPayload {
+                body: Bytes::from_static(b"skip-0"),
+                metadata: None,
+                discriminator: Some(StreamDiscriminator::from("ignore")),
+            },
+            EventPayload {
+                body: Bytes::from_static(b"skip-1"),
+                metadata: None,
+                discriminator: Some(StreamDiscriminator::from("ignore")),
+            },
+            EventPayload {
+                body: Bytes::from_static(b"keep"),
+                metadata: None,
+                discriminator: Some(StreamDiscriminator::from("match")),
+            },
+        ];
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: 0,
+                events: &events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("commit filtered resource records");
+
+        // Act
+        let filter = StreamFilterSet {
+            clauses: vec![StreamFilterClause::Equals("match".to_string())],
+        };
+        let (first_page, first_cursor) = store
+            .read_resource_with_filter(
+                &ReadResourceParams {
+                    family: 1,
+                    realm: "test",
+                    area: "events",
+                    resource: "orders",
+                    from_offset: 0,
+                    limit: 2,
+                    max_bytes: None,
+                },
+                Some(&filter),
+            )
+            .expect("read first filtered page");
+        let (second_page, second_cursor) = store
+            .read_resource_with_filter(
+                &ReadResourceParams {
+                    family: 1,
+                    realm: "test",
+                    area: "events",
+                    resource: "orders",
+                    from_offset: first_cursor.last_resource_offset + 1,
+                    limit: 2,
+                    max_bytes: None,
+                },
+                Some(&filter),
+            )
+            .expect("read second filtered page");
+        let second_records = event_records(second_page);
+
+        // Assert
+        assert_eq!(first_page.len(), 2);
+        assert!(matches!(
+            first_page[0],
+            StreamReadItem::Filtered { offset: 0, .. }
+        ));
+        assert!(matches!(
+            first_page[1],
+            StreamReadItem::Filtered { offset: 1, .. }
+        ));
+        assert!(first_cursor.has_more);
+        assert_eq!(first_cursor.last_resource_offset, 1);
+        assert_eq!(second_records.len(), 1);
+        assert_eq!(second_records[0].body, Bytes::from_static(b"keep"));
+        assert_eq!(second_records[0].resource_offset, 2);
+        assert!(!second_cursor.has_more);
     }
 
     #[test]

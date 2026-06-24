@@ -355,4 +355,61 @@ mod tests {
         };
         assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
     }
+
+    #[test]
+    fn should_preserve_active_session_given_store_commit_failure() {
+        // Arrange
+        let store = Arc::new(StreamStore::new(create_test_engine_with_cfs(vec![1])));
+        let mut actor = StreamActor::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "events".to_string(),
+            "orders".to_string(),
+            store.clone(),
+        )
+        .expect("create actor");
+        actor
+            .begin_append_session(10, 100, None)
+            .expect("begin append session");
+        actor
+            .append_to_session_with_discriminator_for_owner(
+                10,
+                100,
+                0,
+                Bytes::from_static(b"retry"),
+                None,
+                None,
+            )
+            .expect("append staged event");
+        StreamStore::fail_next_promotion_frontier_commit_for_tests();
+
+        // Act
+        let failed = actor.commit_session_for_owner(10, 100, StreamWriteMode::Buffered);
+        let retry = actor
+            .commit_session_for_owner(10, 100, StreamWriteMode::Buffered)
+            .expect("retry commit should preserve staged event");
+        let (records, cursor) = store
+            .read_resource(&crate::domains::stream::store::ReadResourceParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "orders",
+                from_offset: 0,
+                limit: 10,
+                max_bytes: None,
+            })
+            .expect("read committed resource records");
+
+        // Assert
+        assert_eq!(
+            failed.expect_err("injected store failure should fail"),
+            "Injected stream commit failure"
+        );
+        assert_eq!(retry.first_resource_offset, 0);
+        assert_eq!(retry.first_area_offset, 0);
+        assert_eq!(retry.first_realm_offset, 0);
+        assert!(!actor.has_active_session());
+        assert_eq!(records.len(), 1);
+        assert_eq!(cursor.last_resource_offset, 0);
+    }
 }
