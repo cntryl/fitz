@@ -50,7 +50,8 @@ pub enum QueueMessage {
     ///
     /// Route format: `queue://{realm}/{area}/{resource}`
     ///
-    /// Writes the message body to durable storage and adds it to the ready queue.
+    /// Writes the message body according to the configured queue write policy and
+    /// adds it to the ready queue.
     /// If delay_seconds is provided, message won't be visible until delay elapses.
     /// Returns the MessageId for tracking.
     Send {
@@ -95,7 +96,8 @@ pub enum QueueMessage {
     /// Route format: `queue://{realm}/{area}/{resource}`
     ///
     /// Marks message as successfully processed and acknowledges delivery.
-    /// Removes inflight entry and deletes durable record.
+    /// Removes inflight entry and deletes the queue record according to the
+    /// configured queue write policy.
     /// Requires valid token. Fails if token mismatches or inflight entry expired.
     Ack {
         family_id: RouteFamily,

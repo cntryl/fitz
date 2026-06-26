@@ -52,7 +52,7 @@ KV provides transactional storage for current authoritative state. It is the sys
 
 ### Queue
 
-Queue provides durable competing-consumer work delivery with reservation, retry, redelivery, and optional dead-letter handling. It exists to manage work backlog and work lifecycle, not to expose durable history or live request-response semantics.
+Queue provides competing-consumer work delivery with configurable durability, reservation, retry, redelivery, and optional dead-letter handling. It exists to manage work backlog and work lifecycle, not to expose durable history or live request-response semantics.
 
 ### RPC
 
@@ -368,7 +368,7 @@ Schedule does NOT guarantee:
 
 ### Queue + RPC
 
-- Queue distributes durable work.
+- Queue distributes work that becomes durable according to the configured queue write policy.
 - RPC executes work that a live worker must answer now.
 - Queue must not become RPC with hidden backlog.
 - RPC must not become a durable retry system.
@@ -567,7 +567,7 @@ Place a new feature in the domain that owns its primary guarantee:
 - if it requires replay -> Stream
 - if it requires durable ordering of committed history -> Stream
 - if it requires current authoritative state -> KV
-- if it requires retries or durable backlog -> Queue
+- if it requires retries or backlog with a defined durability policy -> Queue
 - if it requires live request execution -> RPC
 - if it requires ownership or fencing -> Lease
 - if it requires timing intent -> Schedule
@@ -588,7 +588,7 @@ Reject features that:
 Require architecture review when a proposal:
 
 - adds replay to a non-Stream domain
-- adds durable backlog to a non-Queue domain
+- adds backlog durability to a non-Queue domain
 - adds durable delivery claims to Notice or RPC
 - adds queue-style reservation to Stream
 - adds workflow or orchestration semantics to Schedule

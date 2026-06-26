@@ -9,8 +9,8 @@ RPC provides live request and response dispatch to currently registered workers.
 - Problem solved: low-latency request routing to live workers with correlation and optional streaming responses.
 - Optimized for: interactive call and response, bounded pending queues, and in-memory worker pools.
 - Not trying to do: durable request backlog, durable worker registration, or replayable work recovery.
-- Adjacent overlap: Queue also routes work, but Queue owns durable backlog and redelivery; RPC owns live request and response.
-- Strict boundary: if the caller needs durable buffering or restart-safe pending work, that belongs to Queue or Stream-backed workflow design, not RPC.
+- Adjacent overlap: Queue also routes work, but Queue owns backlog durability policy and redelivery; RPC owns live request and response.
+- Strict boundary: if the caller needs buffering with a defined durability policy or restart-safe pending work, that belongs to Queue or Stream-backed workflow design, not RPC.
 
 ## B. Semantic Contract
 
@@ -162,7 +162,7 @@ Current gaps to keep explicit:
 
 ## H. Cross-Domain Boundaries
 
-- RPC versus Queue: RPC is live request and response; Queue is durable backlog and acknowledgement.
+- RPC versus Queue: RPC is live request and response; Queue is backlog and acknowledgement with configurable durability.
 - RPC versus Stream: RPC streaming chunks are not durable replay.
 - RPC versus Notice: Notice is broadcast fanout; RPC is single-request correlation.
 

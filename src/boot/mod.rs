@@ -97,14 +97,19 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
 
     // Step 3: Register domain actors
     let server_write_options = config.server_write_options();
+    let queue_write_options = config.queue_write_options();
     let domains = match domains::setup(
         &router,
         &store,
         &runtime.admin_read_model(),
-        server_write_options,
-        config.request_sync_write_options(),
-        None,
-        config.stream_storage_layout,
+        domains::DomainSetupOptions {
+            server_write_options,
+            queue_write_options,
+            queue_fast_flush_interval: config.queue_fast_flush_interval(),
+            request_sync_write_options: config.request_sync_write_options(),
+            rpc_request_timeout: None,
+            stream_storage_layout: config.stream_storage_layout,
+        },
     ) {
         Ok(domains) => domains,
         Err(error) => {

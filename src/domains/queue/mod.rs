@@ -7,7 +7,7 @@
 //! - **At-least-once delivery**: Messages may be delivered multiple times
 //! - **Minimal fairness**: Messages distributed fairly among consumers (not strict FIFO)
 //! - **Atomic batch operations**: All-or-nothing for ID allocation + message writes
-//! - **Full recovery**: Persisted state survives process crashes
+//! - **Configurable durability**: Fast queue writes trade a small crash-loss window for low latency
 //!
 //! # Competing Consumer Model
 //!
@@ -30,8 +30,11 @@
 //!
 //! - **Not strict FIFO**: Multiple competing consumers naturally break FIFO ordering.
 //!   Messages are delivered in ready-queue order, but reserve order is non-deterministic.
-//! - **Committed-state durability**: Uses atomic batch operations (ID allocation + writes commit together).
-//!   Success responses are returned only after the configured queue write policy commits.
+//! - **Policy-scoped durability**: Uses atomic batch operations (ID allocation + writes commit together).
+//!   Success responses are returned after the configured queue write policy accepts the mutation.
+//!   The default fast policy skips WAL on the hot path and flushes dirty queue column families
+//!   in the background, so accepted recent mutations can be lost on process or host crash before
+//!   the configured loss window elapses.
 //! - **Automatic redelivery**: Inflight expiration automatically returns messages (ephemeral inflight state).
 //!   Crashes automatically trigger redelivery (inflight state not persisted).
 //! - **Fair distribution**: Reserve operations pop from front of ready queue (simple FIFO internally).
@@ -40,7 +43,8 @@
 //! # Intent vs Events
 //!
 //! Queues represent **intent** (work to be done), not events of record.
-//! - Committed queue state is durable according to the configured `WriteOptions`
+//! - Queue state durability follows `FITZ_QUEUE_WRITE_POLICY`
+//! - The default `fast` policy accepts a bounded recent-data-loss window
 //! - Producers can regenerate lost work items
 //! - Inflight entries and inflight tokens remain broker-local, in-memory coordination state
 //!
@@ -51,7 +55,7 @@
 //! - **Microsecond latency**: In-memory reserve/complete with persistent backing
 //! - **Token-based operations**: Random tokens prevent accidental duplicate operations
 //! - **Dead Letter Queue (DLQ)**: Optional max_attempts threshold for failed messages
-//! - **Atomic recovery**: Full state restored after restart (messages + delayed visibility)
+//! - **Recovery**: Flushed or WAL-backed state restored after restart (messages + delayed visibility)
 //!
 //! # Route Format
 //!

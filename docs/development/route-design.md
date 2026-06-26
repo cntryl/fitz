@@ -754,7 +754,7 @@ rpc://tenant-a/**#write   # RPC request access
 | Domain | Persistence | Cleanup | Recovery |
 |--------|-------------|---------|----------|
 | KV | Midge LSM | Manual | Full recovery |
-| Queue | Midge LSM | Manual/DLQ | Full recovery |
+| Queue | Midge LSM | Manual/DLQ | Policy-scoped recovery |
 | RPC | In-memory | Auto on disconnect | None |
 | Lease | In-memory | TTL/Auto | None |
 | Notice | In-memory | Auto on disconnect | None |

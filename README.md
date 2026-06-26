@@ -128,6 +128,8 @@ If you want a single local service, this is the smallest useful compose file:
 - Cloud storage requires FITZ_STORAGE_PROVIDER plus provider-specific values. Supported providers are `peas-s3`, `peas-azure`, `peas-gcs`, `aws-s3`, `s3-compatible`, `minio`, `wasabi`, `oci-s3`, `azure-blob`, and `gcs`.
 - Cloud storage uses FITZ_STORAGE_CACHE_PATH for its local cache and defaults to `./.fitz-cloud-cache`; it does not read FITZ_STORAGE_PATH.
 - FITZ_STORAGE_CLOUD_DURABILITY can be `background` or `strict`; any other value is rejected. `background` keeps provider upload asynchronous; `strict` waits for provider acknowledgement for broker-selected durable cloud writes and request-level sync writes.
+- FITZ_QUEUE_WRITE_POLICY can be `fast`, `buffered`, or `strict` and defaults to `fast`. `fast` skips WAL on queue mutations and flushes dirty queue storage in the background, so accepted recent queue sends/completes can be lost before the flush window closes.
+- FITZ_QUEUE_LOSS_WINDOW_MS defaults to `100` and controls the target background flush interval for `FITZ_QUEUE_WRITE_POLICY=fast`.
 - Authenticated JWTs resolve to a route family server-side. Keep `FITZ_ROUTE_FAMILIES=1,2,...` as the provisioned allowlist, set `FITZ_ROUTE_FAMILY_MAP=tid-value=1,other=2`, and use `FITZ_ROUTE_FAMILY_CLAIM` to choose the default identity claim (`tid` by default).
 - `FITZ_AUTH_ORG_CLAIM` optionally overrides identity lookup before `FITZ_ROUTE_FAMILY_CLAIM` when that claim is present in the token. Example: `FITZ_AUTH_ORG_CLAIM=fitz://org_id`.
 - `FITZ_AUTH_CUSTOM_CLAIM` can point at a namespaced JWT object containing only `permissions`, for example `https://example.com/fitz`.

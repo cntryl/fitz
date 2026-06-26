@@ -119,7 +119,7 @@ impl QueueAgeBuckets {
 /// Counts reflect only the queue actor state currently warm in memory on this
 /// broker. They are refreshed from live actors, can disappear after idle
 /// eviction or broker restart, and do not represent a durable inventory of all
-/// committed queues. `backlog_age_buckets` groups ready + delayed work by age
+/// accepted queues. `backlog_age_buckets` groups ready + delayed work by age
 /// so operators can see whether pressure is fresh or stale.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueResourceDetail {
@@ -1008,9 +1008,9 @@ pub struct QueuesList {
 /// Warm in-memory Queue snapshot for a single resource on the current broker
 /// process.
 ///
-/// Committed queue data remains in storage, but these counts only reflect the
-/// current live actor state. A cold queue can be absent here until traffic
-/// rehydrates it.
+/// Queue data remains in storage according to the configured queue write policy,
+/// but these counts only reflect the current live actor state. A cold queue can
+/// be absent here until traffic rehydrates it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueInfo {
     pub family: u64,

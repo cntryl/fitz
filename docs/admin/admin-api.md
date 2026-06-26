@@ -430,7 +430,7 @@ Force-removes an active in-memory notice subscription from the current broker in
 **Headers**: `X-Confirm: true`
 **Response**: 200 OK or 404 Not Found
 ### Queue Domain
-Queue admin responses reflect only the current broker's warm in-memory actor state unless otherwise noted. Committed queue data remains durable in storage, but warm resource counts and live lease rows can disappear after disconnect cleanup, idle actor eviction, or broker restart until traffic rehydrates that queue.
+Queue admin responses reflect only the current broker's warm in-memory actor state unless otherwise noted. Queue data remains durable according to the configured queue write policy, but warm resource counts and live lease rows can disappear after disconnect cleanup, idle actor eviction, or broker restart until traffic rehydrates that queue.
 
 #### List Queue Resources Under An Area
 ```
@@ -443,7 +443,7 @@ GET /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}?family={famil
 ```
 `family` is optional on read routes. When omitted, queue detail aggregates warm state across route families that share the same `{realm}/{area}/{resource}` on the current broker. When provided, the response is filtered to that exact queue identity.
 
-`messages_ready`, `messages_delayed`, `messages_inflight`, `messages_dead_lettered`, and `messages_total` are point-in-time counts for the current broker only. They are not a durable catalog of every committed queue in storage.
+`messages_ready`, `messages_delayed`, `messages_inflight`, `messages_dead_lettered`, and `messages_total` are point-in-time counts for the current broker only. They are not a durable catalog of every accepted queue in storage.
 
 **Response**:
 ```json

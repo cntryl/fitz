@@ -106,6 +106,8 @@ For the complete production auth and browser-perimeter checklist, see [../operat
 | FITZ_STORAGE_CACHE_PATH | Filesystem path | ./.fitz-cloud-cache | Local cache path for cloud-backed storage mode. |
 | FITZ_STORAGE_CLOUD_DURABILITY | background or strict | background | Cloud sync behavior for broker-selected durable writes. |
 | FITZ_STORAGE_MEMTABLE_BYTES | Unsigned integer byte count | Auto | Optional explicit memtable size override for embedded engine. |
+| FITZ_QUEUE_WRITE_POLICY | fast, buffered, or strict | fast | Queue mutation write policy. `fast` skips WAL on the hot path and flushes dirty queue storage in the background. |
+| FITZ_QUEUE_LOSS_WINDOW_MS | Positive integer millisecond count | 100 | Target background flush interval for fast queue writes. Accepted recent queue mutations can be lost before this window closes. |
 | FITZ_STREAM_STORAGE_LAYOUT | promotion-frontier or aliases | promotion-frontier | Stream layout selector. Legacy aliases are accepted but normalized to promotion-frontier. |
 | FITZ_MIN_MEMORY_BYTES | Unsigned integer byte count | 134217728 | Startup preflight minimum cgroup memory threshold. Set 0 to bypass memory-limit check. |
 

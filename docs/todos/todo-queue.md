@@ -4,19 +4,20 @@ This file defines Queue-specific contract detail and proof points. For Fitz-wide
 
 ## A. Domain Purpose Statement
 
-Queue provides durable competing-consumer work delivery with visibility inflight reservations, redelivery, and optional dead-lettering.
+Queue provides competing-consumer work delivery with configurable durability, visibility inflight reservations, redelivery, and optional dead-lettering.
 
 - Problem solved: durable work backlog that consumers reserve, extend, complete, and retry.
-- Optimized for: at-least-once delivery, durable queue state, fair enough competing-consumer distribution, and bounded hot in-memory coordination.
+- Optimized for: at-least-once delivery, durable queue state with an explicit write-policy tradeoff, fair enough competing-consumer distribution, and bounded hot in-memory coordination.
 - Not trying to do: exactly-once delivery, durable inflight recovery, or durable event history.
 - Adjacent overlap: RPC also routes work to workers, but RPC is live-only. Stream also stores records, but Stream is immutable history rather than mutable work state.
-- Strict boundary: if the system needs durable work lifecycle, use Queue; if it needs immutable replayable history, use Stream.
+- Strict boundary: if the system needs work lifecycle with configurable durability, use Queue; if it needs immutable replayable history, use Stream.
 
 ## B. Semantic Contract
 
 Clients can rely on the following:
 
-- Enqueue persists a message into durable queue state according to the queue's configured write policy.
+- Enqueue accepts a message according to the queue's configured write policy.
+- With `FITZ_QUEUE_WRITE_POLICY=fast` (default), accepted recent queue mutations can be lost before the `FITZ_QUEUE_LOSS_WINDOW_MS` background flush window closes.
 - Reserve grants exclusive live processing ownership for a message using an inflight token and visibility timeout.
 - Complete removes the inflight message when the correct live token is supplied.
 - Extend prolongs the current inflight reservation when the correct token is supplied.
@@ -25,7 +26,8 @@ Clients can rely on the following:
 
 Server guarantees:
 
-- Queue committed messages and primary indexes survive restart according to the configured write policy.
+- Queue messages and primary indexes that reached durable storage survive restart according to the configured write policy.
+- Under the default fast policy, only flushed queue state is crash-durable; recent accepted sends, completes, DLQ replays, and DLQ purges can be lost inside the configured window.
 - Inflight ownership, inflight tokens, and warm actor state are ephemeral.
 - Delivery is at-least-once, not exactly-once.
 - Ready-queue ordering is maintained inside the durable ready sequence, but competing consumers do not imply a strict global consumption order.
@@ -40,7 +42,8 @@ Fairness and ordering expectations:
 
 Crash and disconnect semantics:
 
-- Committed messages remain durable.
+- Messages durable under the selected write policy remain available.
+- Under the fast policy, a crash before background flush can lose recent accepted sends; a lost recent complete can make already-processed work redeliver.
 - Old inflight tokens and live lease ownership do not survive reconnect or restart.
 - A client cannot safely continue an old lease after reconnect.
 
@@ -78,9 +81,9 @@ Intentionally unsupported:
 	- How it fails: a message dead-letters twice or continues normal redelivery after crossing `max_attempts`.
 	- How to test it: [tests/queue_advanced.rs](../../tests/queue_advanced.rs) `should_dlq_message_after_max_attempts`.
 
-- Invariant: restart does not lose committed messages or durable indexes.
-	- Why it matters: Queue is the durable work backlog surface.
-	- How it fails: committed messages, delayed visibility, or next-id state regress after restart.
+- Invariant: restart does not lose queue messages or indexes that have reached durable storage under the selected write policy.
+	- Why it matters: Queue is the work backlog surface with configurable durability.
+	- How it fails: flushed or WAL-backed messages, delayed visibility, or next-id state regress after restart.
 	- How to test it: [tests/queue_advanced.rs](../../tests/queue_advanced.rs) `should_redelivery_messages_after_crash`, `should_preserve_fifo_order_after_recovery`, `should_preserve_delayed_visibility_across_restart`, and `should_prevent_id_collisions_across_crash`.
 
 - Invariant: wrong or expired inflight token cannot extend or complete a message.
@@ -94,13 +97,14 @@ Intentionally unsupported:
 - Queue must not imply exactly-once delivery.
 - Queue must not turn inflight tokens into durable recovery handles.
 - Queue must not impersonate Stream replay for normal backlog consumption.
-- Queue must not hide buffered write-policy tradeoffs behind synchronous durability language.
+- Queue must not hide fast or buffered write-policy tradeoffs behind synchronous durability language.
 
 ## E. Failure Semantics
 
 - Client disconnect: Fitz does not promise durable continuation of the old inflight token. Redelivery follows expiry or restart recovery.
-- Server restart: committed messages and durable indexes recover; inflight lease ownership and tokens do not.
-- Storage failure during durable mutation: enqueue, complete, or DLQ mutation fails and must not be reported as committed success.
+- Server restart: queue state that reached durable storage recovers; inflight lease ownership and tokens do not.
+- Fast-policy crash window: accepted recent queue mutations can be lost before background flush. This can drop recent sends or resurrect recently completed work for redelivery.
+- Storage failure during a strict or buffered durable mutation: enqueue, complete, or DLQ mutation fails and must not be reported as accepted success.
 - Empty queue reserve: explicit empty result.
 - Invalid batch size or invalid token: explicit error.
 - Backpressure: transport or RPC-layer backpressure is separate from queue durability.
@@ -157,7 +161,7 @@ Current gaps to keep explicit:
 
 ## H. Cross-Domain Boundaries
 
-- Queue versus RPC: Queue is durable backlog with reservation and redelivery; RPC is live request and response.
+- Queue versus RPC: Queue is backlog with reservation, redelivery, and configurable durability; RPC is live request and response.
 - Queue versus Stream: Queue models mutable work lifecycle; Stream models immutable history.
 - Queue versus Lease: queue inflight tokens govern message visibility only; they are not lease-domain fencing tokens.
 - Queue versus Notice: Notice availability signals are hints around queue behavior, not durable queue state.
@@ -171,6 +175,6 @@ Current gaps to keep explicit:
 
 ## J. Recommended Wording For Fitz Docs / ADRs
 
-- Use this sentence in broader docs: `Queue provides durable at-least-once work delivery. Committed messages survive restart; live lease ownership does not.`
+- Use this sentence in broader docs: `Queue provides at-least-once work delivery with configurable durability. State that reached durable storage survives restart; live lease ownership does not.`
 - Use this sentence when comparing Queue and RPC: `Queue is for work that may wait durably. RPC is for work that must be answered by a live worker.`
 - Use this sentence when comparing Queue and Stream: `Queue is mutable work state. Stream is immutable history.`

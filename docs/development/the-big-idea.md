@@ -74,10 +74,10 @@ exactly-once delivery.
 ---
 
 ## Reliability & Delivery Semantics 🛡️
-- Delivery semantics stay domain-specific: Notice is live ephemeral fanout, Stream is durable history and replay, Queue is durable at-least-once work delivery, and RPC is live request and response.
+- Delivery semantics stay domain-specific: Notice is live ephemeral fanout, Stream is durable history and replay, Queue is at-least-once work delivery with configurable durability, and RPC is live request and response.
 - Subscription semantics: wildcards (`*`, `**`) and pattern matching.
 - Ordering and partitioning guarantees configurable per resource (per-route).
-- Durable Queue messages and Stream history survive restart where the configured storage backend supports persistence.
+- Queue messages that reached durable storage under the configured queue write policy and Stream history survive restart where the configured storage backend supports persistence.
 
 ---
 

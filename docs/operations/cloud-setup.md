@@ -134,9 +134,17 @@ GOOGLE_CLOUD_PROJECT=...
 
 Any other value is rejected at startup.
 
-Queue and Schedule use this policy for server-selected durable writes. KV and Stream still honor client-selected buffered versus sync modes; when cloud strict is configured, sync maps to provider-ack writes.
+Schedule uses this policy for server-selected durable writes. KV and Stream still honor client-selected buffered versus sync modes; when cloud strict is configured, sync maps to provider-ack writes.
 
 This setting does not change Fitz domain semantics. Notice, RPC, and Lease remain live or ephemeral as defined by the protocol; cloud storage only backs durable domains that already persist state or history.
+
+Queue has a separate hot-path policy:
+
+- `FITZ_QUEUE_WRITE_POLICY=fast`: default; skips WAL for queue mutations and flushes dirty queue column families in the background.
+- `FITZ_QUEUE_WRITE_POLICY=buffered`: uses buffered WAL writes without waiting for fsync or provider acknowledgement per queue mutation.
+- `FITZ_QUEUE_WRITE_POLICY=strict`: waits for local sync writes; in cloud mode it waits for provider acknowledgement.
+
+`FITZ_QUEUE_LOSS_WINDOW_MS` defaults to `100` and controls the target flush interval for fast queue writes. In fast mode, accepted recent queue sends, completes, DLQ replays, and DLQ purges can be lost if the process or host crashes before the background flush completes. A recent complete lost inside that window can make already-processed work redeliver after recovery.
 
 ## Operations Checklist
 

@@ -1,6 +1,7 @@
 use super::BootResult;
 use crate::domains::stream::StreamStorageLayout;
 use std::path::Path;
+use std::time::Duration;
 
 const DEFAULT_LOCAL_STORAGE_PATH: &str = "./.fitz";
 const DEFAULT_CLOUD_CACHE_PATH: &str = "./.fitz-cloud-cache";
@@ -9,8 +10,11 @@ const DEFAULT_PEAS_ACCESS_KEY: &str = "admin";
 const DEFAULT_PEAS_SECRET_KEY: &str = "easy-peasy";
 const DEFAULT_PEAS_BUCKET: &str = "fitz";
 const ENV_STORAGE_MEMTABLE_BYTES: &str = "FITZ_STORAGE_MEMTABLE_BYTES";
+const ENV_QUEUE_WRITE_POLICY: &str = "FITZ_QUEUE_WRITE_POLICY";
+const ENV_QUEUE_LOSS_WINDOW_MS: &str = "FITZ_QUEUE_LOSS_WINDOW_MS";
 const ENV_DRAIN_GRACE_SECONDS: &str = "FITZ_DRAIN_GRACE_SECONDS";
 const ENV_DRAIN_CLOSE_REASON: &str = "FITZ_DRAIN_CLOSE_REASON";
+const DEFAULT_QUEUE_LOSS_WINDOW_MS: u64 = 100;
 const DEFAULT_DRAIN_GRACE_SECONDS: u64 = 25;
 const DEFAULT_DRAIN_CLOSE_REASON: &str = "broker draining for redeploy";
 const DEFAULT_LOCAL_WS_ALLOWED_ORIGIN_VALUES: [&str; 4] = [
@@ -46,6 +50,45 @@ impl CloudDurabilityMode {
                     other
                 ),
             },
+        }
+    }
+}
+
+/// Queue commit policy for durable queue mutations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueueWritePolicy {
+    /// Skip WAL on the enqueue path and flush dirty queue column families in the background.
+    Fast,
+    /// Use buffered WAL writes without forcing fsync per operation.
+    Buffered,
+    /// Wait for local sync or cloud provider acknowledgement before accepting a mutation.
+    Strict,
+    /// Invalid queue write policy captured for later validation.
+    Invalid { reason: String },
+}
+
+impl QueueWritePolicy {
+    fn from_env() -> Self {
+        match env_non_empty(ENV_QUEUE_WRITE_POLICY)
+            .unwrap_or_else(|| "fast".to_string())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "fast" => Self::Fast,
+            "buffered" => Self::Buffered,
+            "strict" => Self::Strict,
+            other => Self::Invalid {
+                reason: format!(
+                    "unsupported {ENV_QUEUE_WRITE_POLICY}='{other}'; expected fast, buffered, or strict"
+                ),
+            },
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::Fast | Self::Buffered | Self::Strict => Ok(()),
+            Self::Invalid { reason } => Err(reason.clone()),
         }
     }
 }
@@ -431,6 +474,26 @@ fn drain_grace_seconds_from_env() -> (u64, Option<String>) {
     }
 }
 
+fn queue_loss_window_ms_from_env() -> (u64, Option<String>) {
+    let Some(value) = env_non_empty(ENV_QUEUE_LOSS_WINDOW_MS) else {
+        return (DEFAULT_QUEUE_LOSS_WINDOW_MS, None);
+    };
+
+    match value.parse::<u64>() {
+        Ok(0) => (
+            0,
+            Some(format!("{ENV_QUEUE_LOSS_WINDOW_MS} must be greater than 0")),
+        ),
+        Ok(milliseconds) => (milliseconds, None),
+        Err(_) => (
+            0,
+            Some(format!(
+                "{ENV_QUEUE_LOSS_WINDOW_MS} must be an unsigned integer millisecond count"
+            )),
+        ),
+    }
+}
+
 /// Boot configuration for the Fitz broker.
 #[derive(Debug, Clone)]
 pub struct BootConfig {
@@ -466,6 +529,11 @@ pub struct BootConfig {
     pub cloud_durability: CloudDurabilityMode,
     /// Optional explicit Midge memtable size in bytes.
     pub storage_memtable: StorageMemtableConfig,
+    /// Commit policy for queue durable mutations.
+    pub queue_write_policy: QueueWritePolicy,
+    /// Target dirty-data window before best-effort queue writes are flushed.
+    pub queue_loss_window_ms: u64,
+    pub(crate) queue_loss_window_error: Option<String>,
     /// Whether an external TLS terminator is explicitly protecting public listeners.
     pub assume_external_tls: bool,
     /// Browser origins allowed to open the WebSocket data-plane endpoint.
@@ -506,6 +574,24 @@ impl BootConfig {
             _ => cntryl_midge::WriteOptions::sync(),
         }
     }
+
+    pub fn queue_write_options(&self) -> cntryl_midge::WriteOptions {
+        match (&self.storage_mode, &self.queue_write_policy) {
+            (StorageMode::Memory, _) => cntryl_midge::WriteOptions::best_effort(),
+            (_, QueueWritePolicy::Fast) => cntryl_midge::WriteOptions::best_effort(),
+            (_, QueueWritePolicy::Buffered) => cntryl_midge::WriteOptions::buffered(),
+            (StorageMode::CloudBacked(_), QueueWritePolicy::Strict) => {
+                cntryl_midge::WriteOptions::cloud_strict()
+            }
+            (_, QueueWritePolicy::Strict) => cntryl_midge::WriteOptions::sync(),
+            (_, QueueWritePolicy::Invalid { .. }) => cntryl_midge::WriteOptions::buffered(),
+        }
+    }
+
+    pub fn queue_fast_flush_interval(&self) -> Option<Duration> {
+        matches!(self.queue_write_policy, QueueWritePolicy::Fast)
+            .then(|| Duration::from_millis(self.queue_loss_window_ms))
+    }
 }
 
 impl Default for BootConfig {
@@ -534,6 +620,7 @@ impl Default for BootConfig {
         let (ws_allowed_origins, ws_allowed_origins_error) =
             parse_ws_allowed_origins_from_env().unwrap_or_else(default_local_ws_allowed_origins);
         let (drain_grace_seconds, drain_config_error) = drain_grace_seconds_from_env();
+        let (queue_loss_window_ms, queue_loss_window_error) = queue_loss_window_ms_from_env();
         let drain_close_reason = env_non_empty(ENV_DRAIN_CLOSE_REASON)
             .unwrap_or_else(|| DEFAULT_DRAIN_CLOSE_REASON.to_string());
         let route_families = std::env::var("FITZ_ROUTE_FAMILIES")
@@ -559,6 +646,9 @@ impl Default for BootConfig {
             channel_capacity: 1000,
             cloud_durability: CloudDurabilityMode::from_env(),
             storage_memtable: StorageMemtableConfig::from_env(),
+            queue_write_policy: QueueWritePolicy::from_env(),
+            queue_loss_window_ms,
+            queue_loss_window_error,
             assume_external_tls,
             ws_allowed_origins,
             ws_allowed_origins_error,
@@ -693,6 +783,15 @@ impl BootConfig {
         }
         if let CloudDurabilityMode::Invalid { reason } = &self.cloud_durability {
             return Err(reason.clone().into());
+        }
+        self.queue_write_policy
+            .validate()
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+        if let Some(error) = &self.queue_loss_window_error {
+            return Err(error.clone().into());
+        }
+        if self.queue_loss_window_ms == 0 {
+            return Err(format!("{ENV_QUEUE_LOSS_WINDOW_MS} must be greater than 0").into());
         }
         self.storage_memtable
             .validate()
@@ -901,6 +1000,8 @@ mod tests {
             "FITZ_ADMIN_PASSWORD_HASH",
             "FITZ_ADMIN_COOKIE_SECURE",
             "FITZ_ADMIN_PUBLIC_ORIGIN",
+            ENV_QUEUE_WRITE_POLICY,
+            ENV_QUEUE_LOSS_WINDOW_MS,
             ENV_DRAIN_GRACE_SECONDS,
             ENV_DRAIN_CLOSE_REASON,
         ];
@@ -948,6 +1049,8 @@ mod tests {
             "FITZ_STORAGE_ACCOUNT",
             "FITZ_STORAGE_CLOUD_DURABILITY",
             "FITZ_STORAGE_MEMTABLE_BYTES",
+            ENV_QUEUE_WRITE_POLICY,
+            ENV_QUEUE_LOSS_WINDOW_MS,
             "AWS_REGION",
             "AWS_DEFAULT_REGION",
             "AZURE_STORAGE_ACCOUNT_NAME",
@@ -1019,6 +1122,9 @@ mod tests {
         assert_eq!(config.max_connections, 10_000);
         assert_eq!(config.cloud_durability, CloudDurabilityMode::Background);
         assert_eq!(config.storage_memtable, StorageMemtableConfig::Auto);
+        assert_eq!(config.queue_write_policy, QueueWritePolicy::Fast);
+        assert_eq!(config.queue_loss_window_ms, DEFAULT_QUEUE_LOSS_WINDOW_MS);
+        assert!(config.queue_write_options().is_best_effort());
         assert_eq!(config.drain_grace_seconds, DEFAULT_DRAIN_GRACE_SECONDS);
         assert_eq!(config.drain_close_reason, DEFAULT_DRAIN_CLOSE_REASON);
         assert!(!config.assume_external_tls);
@@ -2687,6 +2793,83 @@ mod tests {
                     .contains("unsupported FITZ_STORAGE_CLOUD_DURABILITY='stict'"));
             },
         );
+    }
+
+    #[test]
+    #[serial]
+    fn should_map_queue_strict_write_policy_to_local_sync() {
+        with_storage_env(&[("FITZ_QUEUE_WRITE_POLICY", "strict")], || {
+            // Arrange
+
+            // Act
+            let config = BootConfig::new();
+            let write_options = config.queue_write_options();
+
+            // Assert
+            assert_eq!(config.queue_write_policy, QueueWritePolicy::Strict);
+            assert!(write_options.is_sync());
+            assert!(!write_options.is_cloud_strict());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn should_map_queue_strict_write_policy_to_cloud_strict() {
+        with_storage_env(
+            &[
+                ("FITZ_STORAGE_MODE", "cloud"),
+                ("FITZ_STORAGE_PROVIDER", "peas-s3"),
+                ("FITZ_QUEUE_WRITE_POLICY", "strict"),
+            ],
+            || {
+                // Arrange
+
+                // Act
+                let config = BootConfig::new();
+
+                // Assert
+                assert_eq!(config.queue_write_policy, QueueWritePolicy::Strict);
+                assert!(config.queue_write_options().is_cloud_strict());
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_invalid_queue_write_policy() {
+        with_storage_env(&[("FITZ_QUEUE_WRITE_POLICY", "speedy")], || {
+            // Arrange
+
+            // Act
+            let config = BootConfig::new();
+            let result = config.validate();
+
+            // Assert
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported FITZ_QUEUE_WRITE_POLICY='speedy'"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn should_reject_invalid_queue_loss_window() {
+        with_storage_env(&[("FITZ_QUEUE_LOSS_WINDOW_MS", "0")], || {
+            // Arrange
+
+            // Act
+            let config = BootConfig::new();
+            let result = config.validate();
+
+            // Assert
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("FITZ_QUEUE_LOSS_WINDOW_MS must be greater than 0"));
+        });
     }
 
     #[test]

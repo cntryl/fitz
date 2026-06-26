@@ -1,4 +1,4 @@
-//! QueueActor: manages a single durable message queue
+//! QueueActor: manages a single message queue with configurable durability
 //!
 //! Each queue has:
 //! - Identity: (realm, area, resource) from route
@@ -11,14 +11,14 @@
 //! 2. **At-least-once delivery**: Messages may be delivered multiple times
 //! 3. **Inflight isolation**: Reserved messages invisible to other consumers
 //! 4. **Automatic redelivery**: Expired inflight entries or crashes return messages to ready queue
-//! 5. **Full recovery**: All persisted state restored on restart (V-003 Fix)
+//! 5. **Policy-scoped recovery**: State that reached durable storage is restored on restart
 //! 6. **Correct time semantics**: Delays use absolute SystemTime epochs (V-002 Fix)
 //! 7. **Fair distribution**: Competing consumers get best-effort ready-queue order
 //!
 //! # Intent vs Events
 //!
 //! Queues represent **intent** (work to be done), not events of record.
-//! Minimal data loss is acceptable (producers can regenerate work items).
+//! Minimal data loss is acceptable under the fast queue write policy (producers can regenerate work items).
 //! Messages commit together with any required ID-reservation extension.
 //! Crashes may create ID gaps, but never ID reuse or collisions.
 //!
@@ -1798,7 +1798,7 @@ impl QueueActor {
     }
 
     /// Drop any live inflight entries owned by a disconnected session and return the
-    /// committed messages to the ready queue. The inflight ownership itself is
+    /// accepted messages to the ready queue. The inflight ownership itself is
     /// ephemeral and is not durably recovered.
     pub fn cleanup_session_inflight(&mut self, session_id: u64) -> usize {
         let released: Vec<_> = self

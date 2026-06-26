@@ -7,7 +7,7 @@ use crate::observability as obs;
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -77,6 +77,9 @@ pub struct QueueDomainSink {
     active: AtomicBool,
     next_idle_sweep_at: Mutex<Instant>,
     next_dedup_sweep_at: Mutex<Instant>,
+    dirty_fast_flush_families: Mutex<HashSet<u32>>,
+    fast_flush_interval: Option<Duration>,
+    next_fast_flush_at: Mutex<Instant>,
 }
 
 impl QueueDomainSink {
@@ -118,6 +121,9 @@ impl QueueDomainSink {
             active: AtomicBool::new(true),
             next_idle_sweep_at: Mutex::new(Instant::now()),
             next_dedup_sweep_at: Mutex::new(Instant::now()),
+            dirty_fast_flush_families: Mutex::new(HashSet::new()),
+            fast_flush_interval: None,
+            next_fast_flush_at: Mutex::new(Instant::now()),
         }
     }
 
@@ -127,6 +133,14 @@ impl QueueDomainSink {
     ) -> Self {
         self.metrics = Some(QueueMetrics::new(collector));
         self.refresh_metrics_gauges();
+        self
+    }
+
+    pub fn with_fast_flush_interval(mut self, interval: Option<Duration>) -> Self {
+        self.fast_flush_interval = interval;
+        if let Some(interval) = interval {
+            *self.next_fast_flush_at.lock() = Instant::now() + interval;
+        }
         self
     }
 
@@ -344,6 +358,94 @@ impl QueueDomainSink {
     fn sweep_runtime_state_at(&self, now: Instant) {
         self.sweep_idle_actors_at(now);
         self.maybe_cleanup_dedup_at(now);
+        self.maybe_flush_dirty_fast_families_at(now);
+    }
+
+    fn fast_flush_enabled(&self) -> bool {
+        self.queue_write_options.is_best_effort() && self.fast_flush_interval.is_some()
+    }
+
+    fn mark_fast_flush_dirty(&self, family_id: crate::runtime::routing::RouteFamily) {
+        if self.fast_flush_enabled() {
+            self.dirty_fast_flush_families.lock().insert(family_id.id());
+        }
+    }
+
+    fn maybe_flush_dirty_fast_families_at(&self, now: Instant) {
+        let Some(interval) = self.fast_flush_interval else {
+            return;
+        };
+        if !self.queue_write_options.is_best_effort() {
+            return;
+        }
+
+        let should_flush = {
+            let mut next_fast_flush_at = self.next_fast_flush_at.lock();
+            if now < *next_fast_flush_at {
+                false
+            } else {
+                *next_fast_flush_at = now + interval;
+                true
+            }
+        };
+
+        if should_flush {
+            self.flush_dirty_fast_families();
+        }
+    }
+
+    fn flush_dirty_fast_families(&self) {
+        let dirty_family_ids = {
+            let mut dirty = self.dirty_fast_flush_families.lock();
+            dirty.drain().collect::<Vec<_>>()
+        };
+        if dirty_family_ids.is_empty() {
+            return;
+        }
+
+        let families = match self.store.list_column_families() {
+            Ok(families) => families,
+            Err(error) => {
+                tracing::warn!(
+                    domain = "queue",
+                    error = ?error,
+                    "Failed to list queue column families for fast flush"
+                );
+                self.dirty_fast_flush_families
+                    .lock()
+                    .extend(dirty_family_ids);
+                return;
+            }
+        };
+
+        let mut retry_family_ids = Vec::new();
+        for family_id in dirty_family_ids {
+            let Some(cf) = families.iter().find(|cf| cf.id() == family_id) else {
+                tracing::warn!(
+                    domain = "queue",
+                    family = family_id,
+                    "Queue fast flush skipped missing column family"
+                );
+                retry_family_ids.push(family_id);
+                continue;
+            };
+
+            if let Err(error) = self.store.flush_cf(cf) {
+                tracing::warn!(
+                    domain = "queue",
+                    family = family_id,
+                    error = ?error,
+                    "Queue fast flush failed"
+                );
+                retry_family_ids.push(family_id);
+            }
+        }
+
+        if !retry_family_ids.is_empty() {
+            self.dirty_fast_flush_families
+                .lock()
+                .extend(retry_family_ids);
+        }
     }
 
     fn maybe_cleanup_dedup_at(&self, now: Instant) {
@@ -519,7 +621,7 @@ impl QueueDomainSink {
     }
 
     /// Drop all live queue inflight entries owned by the disconnected session and return
-    /// those committed messages to the ready queue. Inflight ownership is
+    /// those accepted messages to the ready queue. Inflight ownership is
     /// broker-local runtime state only.
     pub fn cleanup_session(&self, session_id: u64) {
         let mut released_any = false;
@@ -622,6 +724,7 @@ impl QueueDomainSink {
         };
 
         if matches!(result, Ok(true)) {
+            self.mark_fast_flush_dirty(key.family);
             let snapshot = actor_handle.lock().admin_snapshot();
             let notification = self.record_ready_state(&key, snapshot);
             self.mark_admin_snapshot_dirty();
@@ -657,6 +760,7 @@ impl QueueDomainSink {
         };
 
         if matches!(result, Ok(true)) {
+            self.mark_fast_flush_dirty(key.family);
             self.mark_admin_snapshot_dirty();
         }
 
@@ -1038,6 +1142,7 @@ impl MailboxSink for QueueDomainSink {
         };
         if should_mark_admin_snapshot_dirty {
             self.mark_admin_snapshot_dirty();
+            self.mark_fast_flush_dirty(route_family);
         }
 
         if let Some((key, notification)) = ready_notification {
@@ -1255,6 +1360,108 @@ mod tests {
 
         // Assert
         assert!(sink.active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_mark_fast_queue_family_dirty_given_successful_send() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+        let sender_mailbox = Arc::new(Mailbox::new(8));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        router.register(sender_address.clone(), sender_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = new_queue_domain_sink(
+            store,
+            router,
+            admin_read_model,
+            cntryl_midge::WriteOptions::best_effort(),
+        )
+        .with_fast_flush_interval(Some(Duration::from_millis(100)));
+
+        // Act
+        sink.deliver(Envelope::from_route(
+            sender_address,
+            queue_address,
+            FrameContext::new(
+                7,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send("queue://acme/email/jobs", b"email"),
+                family,
+            ),
+        ))
+        .expect("send should enqueue");
+
+        // Assert
+        let response_frame = receive_queue_frame(&sender_mailbox, "send response");
+        assert_eq!(response_frame.payload[0], 0);
+        assert!(sink.dirty_fast_flush_families.lock().contains(&1));
+    }
+
+    #[test]
+    fn should_clear_dirty_fast_queue_family_after_flush_window() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+        let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+        let sender_mailbox = Arc::new(Mailbox::new(8));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        router.register(sender_address.clone(), sender_mailbox.clone());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = new_queue_domain_sink(
+            store,
+            router,
+            admin_read_model,
+            cntryl_midge::WriteOptions::best_effort(),
+        )
+        .with_fast_flush_interval(Some(Duration::from_millis(100)));
+
+        sink.deliver(Envelope::from_route(
+            sender_address,
+            queue_address,
+            FrameContext::new(
+                7,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send("queue://acme/email/jobs", b"email"),
+                family,
+            ),
+        ))
+        .expect("send should enqueue");
+        let _ = receive_queue_frame(&sender_mailbox, "send response");
+        assert!(sink.dirty_fast_flush_families.lock().contains(&1));
+
+        // Act
+        sink.sweep_runtime_state_at(Instant::now() + Duration::from_millis(100));
+
+        // Assert
+        assert!(sink.dirty_fast_flush_families.lock().is_empty());
+    }
+
+    #[test]
+    fn should_keep_dirty_fast_queue_family_when_flush_cannot_find_cf() {
+        // Arrange
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let sink = new_queue_domain_sink(
+            store,
+            router,
+            admin_read_model,
+            cntryl_midge::WriteOptions::best_effort(),
+        )
+        .with_fast_flush_interval(Some(Duration::from_millis(100)));
+        sink.dirty_fast_flush_families.lock().insert(99);
+
+        // Act
+        sink.sweep_runtime_state_at(Instant::now() + Duration::from_millis(100));
+
+        // Assert
+        assert!(sink.dirty_fast_flush_families.lock().contains(&99));
     }
 
     #[test]

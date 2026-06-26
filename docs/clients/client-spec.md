@@ -2421,7 +2421,7 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 - **Session-Scoped**: Subscriptions tied to connection; lost on disconnect
 - **Acknowledgements & Retries**: `NOTIFY` frames are never acknowledged by clients and are never retried by the broker. Clients MUST NOT send acknowledgements for `NOTIFY` frames and MUST NOT expect guaranteed replay.
 - **Toleration:** Clients **MUST** tolerate missed notifications across reconnects and transient backpressure periods.
-- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use Queue for durable delivery. Use RPC only for low-latency request/response when callers and workers can tolerate disconnect or broker-restart loss and retry explicitly at the application layer.**
+- **Usage Guidance:** `NOTICE` is a **best-effort, non-durable** mechanism. **Clients MUST NOT use Notices for workflows that require acknowledgement, durability, or guaranteed delivery. Use Queue for work delivery that needs reservation, redelivery, and configurable durability. Use RPC only for low-latency request/response when callers and workers can tolerate disconnect or broker-restart loss and retry explicitly at the application layer.**
 
 ##### Pattern Matching & Precedence
 
@@ -3073,7 +3073,7 @@ Every operation includes route:
 - **FIFO-ish**: Generally delivered in enqueue order; leasing can cause out-of-order
 - **Visibility Timeout**: Reserved messages are invisible to other consumers until expiry
 - **Token Binding**: Complete/Extend require both message_id and inflight_token
-- **Durability Split**: Committed queue data survives restart according to the broker's configured write policy; live inflight reservations and inflight tokens do not
+- **Durability Split**: Queue data survives restart according to `FITZ_QUEUE_WRITE_POLICY`; the default fast policy can lose accepted recent mutations before the flush window closes. Live inflight reservations and inflight tokens do not survive restart.
 
 ##### Opaque Server-Generated IDs
 

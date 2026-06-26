@@ -27,7 +27,7 @@ This directory is the canonical contract surface for Fitz domain semantics. Thes
 - RouteFamily is a hard isolation boundary. Cross-family delivery, recovery, or state bleed is a contract violation.
 - Notice is the live-now fanout domain. It is not a recovery, replay, or history domain.
 - Stream is the durable history, replay, and catch-up domain. If a client needs rebuild, catch-up, or historical replay, it belongs to Stream.
-- KV, Queue, Schedule, and Stream may persist committed state. They still keep some live coordination state in memory.
+- KV, Queue, Schedule, and Stream may persist committed state. Queue durability is scoped by `FITZ_QUEUE_WRITE_POLICY`; its default fast policy can lose accepted recent mutations before the flush window closes. They still keep some live coordination state in memory.
 - Lease, Notice, and RPC are intentionally ephemeral current-process facilities.
 - RouteFamily selection may remain a deployment concern for now. Durable behavior must not depend on server-side recovery of broker-local session memory.
 

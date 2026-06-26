@@ -280,6 +280,9 @@ impl TestServer {
             channel_capacity: 10_000,
             cloud_durability: crate::boot::runtime::CloudDurabilityMode::Background,
             storage_memtable: crate::boot::runtime::StorageMemtableConfig::Auto,
+            queue_write_policy: crate::boot::runtime::QueueWritePolicy::Fast,
+            queue_loss_window_ms: 100,
+            queue_loss_window_error: None,
             assume_external_tls: false,
             ws_allowed_origins,
             ws_allowed_origins_error: None,
@@ -301,14 +304,19 @@ impl TestServer {
 
         // Step 3: Register domain actors
         let server_write_options = boot_config.server_write_options();
+        let queue_write_options = boot_config.queue_write_options();
         let domains = crate::boot::domains::setup(
             &router,
             &store,
             &runtime.admin_read_model(),
-            server_write_options,
-            boot_config.request_sync_write_options(),
-            rpc_request_timeout,
-            boot_config.stream_storage_layout,
+            crate::boot::domains::DomainSetupOptions {
+                server_write_options,
+                queue_write_options,
+                queue_fast_flush_interval: boot_config.queue_fast_flush_interval(),
+                request_sync_write_options: boot_config.request_sync_write_options(),
+                rpc_request_timeout,
+                stream_storage_layout: boot_config.stream_storage_layout,
+            },
         )?;
         runtime.attach_domains(Arc::new(domains));
 

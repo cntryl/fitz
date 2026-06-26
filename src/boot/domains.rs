@@ -79,21 +79,27 @@ impl DomainHandles {
     }
 }
 
+pub struct DomainSetupOptions {
+    pub server_write_options: cntryl_midge::WriteOptions,
+    pub queue_write_options: cntryl_midge::WriteOptions,
+    pub queue_fast_flush_interval: Option<std::time::Duration>,
+    pub request_sync_write_options: cntryl_midge::WriteOptions,
+    pub rpc_request_timeout: Option<std::time::Duration>,
+    pub stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+}
+
 /// Set up all 7 domain actors and register them with the router.
 pub fn setup(
     router: &StdArc<Router>,
     store: &StdArc<cntryl_midge::Engine>,
     admin_read_model: &Arc<crate::api::admin::read_model::AdminReadModel>,
-    server_write_options: cntryl_midge::WriteOptions,
-    request_sync_write_options: cntryl_midge::WriteOptions,
-    rpc_request_timeout: Option<std::time::Duration>,
-    stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+    options: DomainSetupOptions,
 ) -> BootResult<DomainHandles> {
     let metrics = (*crate::observability::metrics()).clone();
 
     let kv_sink = Arc::new(
         KvDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
-            .with_sync_write_options(request_sync_write_options)
+            .with_sync_write_options(options.request_sync_write_options)
             .with_metrics(metrics.clone()),
     );
     router.register_domain_pattern(
@@ -107,9 +113,10 @@ pub fn setup(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
-            server_write_options,
+            options.queue_write_options,
             crate::utils::idempotency::default_dedup_store(),
         )?
+        .with_fast_flush_interval(options.queue_fast_flush_interval)
         .with_metrics(metrics.clone()),
     );
     router.register_domain_pattern(
@@ -133,9 +140,9 @@ pub fn setup(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
-            stream_storage_layout,
+            options.stream_storage_layout,
         )?
-        .with_sync_write_options(request_sync_write_options)
+        .with_sync_write_options(options.request_sync_write_options)
         .with_metrics(metrics.clone()),
     );
     router.register_domain_pattern(
@@ -146,7 +153,11 @@ pub fn setup(
 
     let rpc_sink = Arc::new(
         RpcDomainSink::new(router.clone(), admin_read_model.clone())
-            .with_request_timeout(rpc_request_timeout.unwrap_or(std::time::Duration::from_secs(30)))
+            .with_request_timeout(
+                options
+                    .rpc_request_timeout
+                    .unwrap_or(std::time::Duration::from_secs(30)),
+            )
             .with_metrics(metrics.clone()),
     );
     router.register_domain_pattern(
@@ -169,7 +180,7 @@ pub fn setup(
 
     let schedule_sink = Arc::new(
         ScheduleDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
-            .with_write_options(server_write_options)
+            .with_write_options(options.server_write_options)
             .with_metrics(metrics.clone()),
     );
     router.register_domain_pattern(
@@ -282,10 +293,14 @@ mod tests {
             &router,
             &store,
             &admin_read_model,
-            cntryl_midge::WriteOptions::best_effort(),
-            cntryl_midge::WriteOptions::sync(),
-            None,
-            crate::domains::stream::StreamStorageLayout::default(),
+            DomainSetupOptions {
+                server_write_options: cntryl_midge::WriteOptions::best_effort(),
+                queue_write_options: cntryl_midge::WriteOptions::best_effort(),
+                queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
+                request_sync_write_options: cntryl_midge::WriteOptions::sync(),
+                rpc_request_timeout: None,
+                stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
+            },
         );
 
         // Assert
@@ -304,10 +319,14 @@ mod tests {
             &router,
             &store,
             &admin_read_model,
-            cntryl_midge::WriteOptions::best_effort(),
-            cntryl_midge::WriteOptions::sync(),
-            None,
-            crate::domains::stream::StreamStorageLayout::default(),
+            DomainSetupOptions {
+                server_write_options: cntryl_midge::WriteOptions::best_effort(),
+                queue_write_options: cntryl_midge::WriteOptions::best_effort(),
+                queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
+                request_sync_write_options: cntryl_midge::WriteOptions::sync(),
+                rpc_request_timeout: None,
+                stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
+            },
         )
         .expect("setup domains");
 
