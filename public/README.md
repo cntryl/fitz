@@ -1,31 +1,43 @@
-# Fitz Embedded UI Inputs
+# Fitz Public Inputs
 
-This directory is no longer a runtime dependency for the Fitz admin UI. Production assets are embedded into the Fitz executable at build time, and the running broker serves them directly from memory.
+This directory is not the runtime asset root for the Fitz admin UI. The broker serves production SPA files from the fixed runtime directory `/app/public`.
 
 ## Current Role
 
 ```
 public/
-├── index.html          # Last-resort local fallback when ui/dist is unavailable
-├── favicon.svg         # Ancillary static file kept in the repo
+├── index.html          # Legacy static file; not used as a broker fallback
+├── favicon.svg         # Legacy static file; not used as a broker fallback
 ├── openapi.yml         # Client adapter input for the UI workspace
 └── README.md           # This file
 ```
 
-The preferred production asset source is `ui/dist/`. During Docker builds, those generated assets are copied into the Rust build stage and embedded into the binary.
+`public/openapi.yml` remains the input for `npm run gen:adapters` in the `ui/` workspace. Checked-in files in `public/` are not embedded into the Rust binary and are not consulted when `/app/public` is missing.
+
+## Runtime Asset Root
+
+Production packaging must place the built SPA at `/app/public`:
+
+- `/app/public/index.html`
+- `/app/public/assets/*`
+- Any other files emitted by the UI build
+
+The Docker build runs `npm run build` in `ui/` and copies `ui/dist/` directly into the final runtime image at `/app/public/`.
 
 ## Serving Behavior
 
-The HTTP server now serves embedded assets with the same public route contract as before:
+The HTTP server serves filesystem assets from `/app/public`:
 
-- `/` → embedded `index.html`
-- `/assets/*` → embedded static assets from the production UI build
-- Any other path that does not resolve to an embedded file falls back to embedded `index.html`
+- `/` -> `/app/public/index.html`
+- `/assets/*` -> matching files under `/app/public/assets/`
+- Existing files under `/app/public` are served directly
+- Unknown non-API GET paths fall back to `/app/public/index.html`
 - Path traversal is rejected
+- If `/app/public/index.html` is missing, root and fallback UI requests return `404`
 
 ## Content Types
 
-The embedded asset server preserves the existing content-type map:
+The asset server preserves the existing content-type map:
 
 | Extension | Content-Type |
 |-----------|-------------|
@@ -39,12 +51,12 @@ The embedded asset server preserves the existing content-type map:
 | `.ico` | `image/x-icon` |
 | `.woff`, `.woff2`, `.ttf` | Font types |
 
-## Security
+## Security And Caching
 
-- No authentication required for SPA access (public)
-- API endpoints use `/api/v1/` prefix and require authentication
-- Embedded responses preserve `Cache-Control: public, max-age=3600`
-- Embedded responses now also emit `ETag`, `Vary: Accept-Encoding`, and compressed representations for supported text assets
+- No authentication is required for SPA access
+- API endpoints use the `/api/v1/` prefix and keep their existing authentication behavior
+- Static responses emit `Cache-Control: public, max-age=3600`
+- Static responses emit `ETag`, `Vary: Accept-Encoding`, and compressed representations for supported text assets
 
 ## Development
 
@@ -52,8 +64,6 @@ To iterate on the admin UI:
 
 1. Work in the `ui/` workspace
 2. Run `npm run build` from `ui/` to refresh `ui/dist/`
-3. Rebuild Fitz so the new production assets are embedded into the executable
+3. Copy or package `ui/dist/` to `/app/public/` for production-like broker serving
 
-If `ui/dist/` is unavailable during a local Rust build, Fitz falls back to embedding the checked-in `public/` directory so the binary still compiles.
-
-This fallback is for developer convenience only. Production containers no longer ship a `/app/public` tree.
+Rebuilding the Rust binary does not refresh UI assets. If `/app/public/index.html` is unavailable, the broker returns `404` for UI entry and fallback requests.

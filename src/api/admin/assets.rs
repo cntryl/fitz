@@ -1,4 +1,4 @@
-//! Embedded admin UI asset serving.
+//! Admin UI asset serving.
 //!
 //! This module owns the production static-asset contract for the admin SPA,
 //! including lookup, MIME mapping, SPA fallback, compression negotiation, and
@@ -10,44 +10,26 @@ use bytes::Bytes;
 use hyper::header::{self, HeaderMap, HeaderValue};
 use hyper::StatusCode;
 use once_cell::sync::Lazy;
+use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::fs;
 use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::SystemTime;
 
 const CACHE_CONTROL: &str = "public, max-age=3600";
 const INDEX_PATH: &str = "index.html";
+const PUBLIC_ASSET_ROOT: &str = "/app/public";
 const VARY_ACCEPT_ENCODING: &str = "Accept-Encoding";
 
-#[derive(Clone, Copy)]
-struct EmbeddedAssetSource {
-    path: &'static str,
-    bytes: &'static [u8],
-}
-
-impl EmbeddedAssetSource {
-    const fn new(path: &'static str, bytes: &'static [u8]) -> Self {
-        Self { path, bytes }
-    }
-}
-
-include!(concat!(env!("OUT_DIR"), "/embedded_assets.rs"));
-
-static ASSET_INDEX: Lazy<AssetIndex> = Lazy::new(|| {
-    AssetIndex::from_sources(EMBEDDED_ASSET_SOURCES.iter().map(|source| AssetSource {
-        path: source.path,
-        bytes: source.bytes,
-    }))
-});
+static PUBLIC_ASSET_SERVER: Lazy<AssetServer> =
+    Lazy::new(|| AssetServer::new(Path::new(PUBLIC_ASSET_ROOT)));
 
 pub(crate) fn serve_request<B>(req: &hyper::Request<B>) -> Result<Response, Infallible> {
-    ASSET_INDEX.serve(req.uri().path(), req.headers())
-}
-
-#[derive(Clone, Copy)]
-struct AssetSource<'a> {
-    path: &'a str,
-    bytes: &'a [u8],
+    PUBLIC_ASSET_SERVER.serve(req.uri().path(), req.headers())
 }
 
 #[derive(Clone)]
@@ -58,14 +40,6 @@ struct AssetRepresentation {
 }
 
 impl AssetRepresentation {
-    fn from_bytes(bytes: &[u8], content_encoding: Option<&'static str>) -> Self {
-        Self {
-            body: Bytes::copy_from_slice(bytes),
-            etag: strong_etag(bytes),
-            content_encoding,
-        }
-    }
-
     fn from_vec(bytes: Vec<u8>, content_encoding: Option<&'static str>) -> Self {
         Self {
             etag: strong_etag(&bytes),
@@ -84,20 +58,20 @@ struct AssetEntry {
 }
 
 impl AssetEntry {
-    fn new(path: &str, bytes: &[u8]) -> Self {
+    fn new(path: &str, bytes: Vec<u8>) -> Self {
         let content_type = content_type_for_path(path);
-        let identity = AssetRepresentation::from_bytes(bytes, None);
         let (gzip, brotli) = if is_compressible(path, content_type) {
-            let gzip = gzip_compress(bytes)
+            let gzip = gzip_compress(&bytes)
                 .filter(|compressed| compressed.len() < bytes.len())
                 .map(|compressed| AssetRepresentation::from_vec(compressed, Some("gzip")));
-            let brotli = brotli_compress(bytes)
+            let brotli = brotli_compress(&bytes)
                 .filter(|compressed| compressed.len() < bytes.len())
                 .map(|compressed| AssetRepresentation::from_vec(compressed, Some("br")));
             (gzip, brotli)
         } else {
             (None, None)
         };
+        let identity = AssetRepresentation::from_vec(bytes, None);
 
         Self {
             content_type,
@@ -117,35 +91,64 @@ impl AssetEntry {
     }
 }
 
-struct AssetIndex {
-    assets: HashMap<String, AssetEntry>,
+#[derive(Clone)]
+struct CachedAssetEntry {
+    fingerprint: AssetFingerprint,
+    entry: Arc<AssetEntry>,
 }
 
-impl AssetIndex {
-    fn from_sources<'a, I>(sources: I) -> Self
-    where
-        I: IntoIterator<Item = AssetSource<'a>>,
-    {
-        let mut assets = HashMap::new();
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AssetFingerprint {
+    len: u64,
+    modified: Option<SystemTime>,
+}
 
-        for source in sources {
-            let path = normalize_embedded_path(source.path);
-            if path.is_empty() {
-                continue;
-            }
-
-            assets.insert(path.clone(), AssetEntry::new(&path, source.bytes));
+impl AssetFingerprint {
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
+        Self {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
         }
+    }
+}
 
-        Self { assets }
+struct ResolvedAsset {
+    relative_path: String,
+    absolute_path: PathBuf,
+    fingerprint: AssetFingerprint,
+}
+
+enum AssetResolution {
+    Found(ResolvedAsset),
+    Missing,
+    Unsafe,
+}
+
+struct AssetServer {
+    canonical_root: Option<PathBuf>,
+    cache: RwLock<HashMap<String, CachedAssetEntry>>,
+    #[cfg(test)]
+    entry_builds: std::sync::atomic::AtomicUsize,
+}
+
+impl AssetServer {
+    fn new(root: &Path) -> Self {
+        let canonical_root = fs::canonicalize(root).ok().filter(|path| path.is_dir());
+
+        Self {
+            canonical_root,
+            cache: RwLock::new(HashMap::new()),
+            #[cfg(test)]
+            entry_builds: std::sync::atomic::AtomicUsize::new(0),
+        }
     }
 
     fn serve(&self, path: &str, headers: &HeaderMap) -> Result<Response, Infallible> {
-        let Some(resolved_path) = self.resolve_path(path) else {
+        let Some(resolved_asset) = self.resolve_path(path) else {
             return Ok(super::not_found());
         };
 
-        let Some(asset) = self.assets.get(resolved_path.as_str()) else {
+        let Some(asset) = self.asset_entry(&resolved_asset) else {
             return Ok(super::not_found());
         };
 
@@ -153,7 +156,7 @@ impl AssetIndex {
         if if_none_match_matches(headers.get(header::IF_NONE_MATCH), &representation.etag) {
             return Ok(response_for_asset(
                 StatusCode::NOT_MODIFIED,
-                asset,
+                &asset,
                 representation,
                 true,
             ));
@@ -161,21 +164,93 @@ impl AssetIndex {
 
         Ok(response_for_asset(
             StatusCode::OK,
-            asset,
+            &asset,
             representation,
             false,
         ))
     }
 
-    fn resolve_path(&self, path: &str) -> Option<String> {
+    fn resolve_path(&self, path: &str) -> Option<ResolvedAsset> {
         let normalized_path = normalize_request_path(path)?;
-        if self.assets.contains_key(normalized_path.as_str()) {
-            return Some(normalized_path);
+        match self.resolve_file(normalized_path.as_str()) {
+            AssetResolution::Found(resolved_asset) => return Some(resolved_asset),
+            AssetResolution::Unsafe => return None,
+            AssetResolution::Missing => {}
         }
 
-        self.assets
-            .contains_key(INDEX_PATH)
-            .then(|| INDEX_PATH.to_string())
+        match self.resolve_file(INDEX_PATH) {
+            AssetResolution::Found(resolved_asset) => Some(resolved_asset),
+            AssetResolution::Missing | AssetResolution::Unsafe => None,
+        }
+    }
+
+    fn resolve_file(&self, relative_path: &str) -> AssetResolution {
+        let Some(canonical_root) = self.canonical_root.as_ref() else {
+            return AssetResolution::Missing;
+        };
+        let absolute_path = match fs::canonicalize(canonical_root.join(relative_path)) {
+            Ok(path) => path,
+            Err(_) => return AssetResolution::Missing,
+        };
+
+        if !absolute_path.starts_with(canonical_root) {
+            return AssetResolution::Unsafe;
+        }
+
+        let metadata = match fs::metadata(&absolute_path) {
+            Ok(metadata) => metadata,
+            Err(_) => return AssetResolution::Missing,
+        };
+        if !metadata.is_file() {
+            return AssetResolution::Missing;
+        }
+
+        AssetResolution::Found(ResolvedAsset {
+            relative_path: relative_path.to_string(),
+            absolute_path,
+            fingerprint: AssetFingerprint::from_metadata(&metadata),
+        })
+    }
+
+    fn asset_entry(&self, resolved_asset: &ResolvedAsset) -> Option<Arc<AssetEntry>> {
+        if let Some(cached_asset) = self.cache.read().get(resolved_asset.relative_path.as_str()) {
+            if cached_asset.fingerprint == resolved_asset.fingerprint {
+                return Some(Arc::clone(&cached_asset.entry));
+            }
+        }
+
+        let bytes = fs::read(&resolved_asset.absolute_path).ok()?;
+        let metadata = fs::metadata(&resolved_asset.absolute_path).ok()?;
+        if !metadata.is_file() {
+            return None;
+        }
+        let fingerprint = AssetFingerprint::from_metadata(&metadata);
+
+        #[cfg(test)]
+        self.entry_builds
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        let entry = Arc::new(AssetEntry::new(&resolved_asset.relative_path, bytes));
+        self.cache.write().insert(
+            resolved_asset.relative_path.clone(),
+            CachedAssetEntry {
+                fingerprint,
+                entry: Arc::clone(&entry),
+            },
+        );
+
+        Some(entry)
+    }
+
+    #[cfg(test)]
+    fn reset_entry_build_count(&self) {
+        self.entry_builds
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    fn entry_build_count(&self) -> usize {
+        self.entry_builds.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -220,10 +295,6 @@ fn response_for_asset(
         .unwrap()
 }
 
-fn normalize_embedded_path(path: &str) -> String {
-    path.trim_start_matches('/').replace('\\', "/")
-}
-
 fn normalize_request_path(path: &str) -> Option<String> {
     let trimmed = path.trim_start_matches('/');
     if trimmed.is_empty() || trimmed == "/" {
@@ -232,7 +303,7 @@ fn normalize_request_path(path: &str) -> Option<String> {
 
     let mut normalized = Vec::new();
     for component in trimmed.split('/') {
-        if component == "." || component == ".." {
+        if component == "." || component == ".." || component.contains('\\') {
             return None;
         }
         if component.is_empty() {
@@ -356,30 +427,46 @@ fn brotli_compress(bytes: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+    use tempfile::TempDir;
 
-    fn test_index() -> AssetIndex {
-        AssetIndex::from_sources([
-            AssetSource {
-                path: "index.html",
-                bytes: b"<!doctype html><html><body><script src=\"/assets/app.js\"></script></body></html>",
-            },
-            AssetSource {
-                path: "assets/app.js",
-                bytes: b"console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');",
-            },
-            AssetSource {
-                path: "favicon.svg",
-                bytes: b"<svg></svg>",
-            },
-            AssetSource {
-                path: "logo.png",
-                bytes: &[137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3, 4, 5],
-            },
-        ])
+    const APP_JS: &[u8] = b"console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');";
+    const INDEX_HTML: &[u8] =
+        b"<!doctype html><html><body><script src=\"/assets/app.js\"></script></body></html>";
+
+    fn test_root() -> TempDir {
+        let root = tempfile::tempdir().expect("create asset root");
+        write_asset(root.path(), INDEX_PATH, INDEX_HTML);
+        write_asset(root.path(), "assets/app.js", APP_JS);
+        write_asset(root.path(), "favicon.svg", b"<svg></svg>");
+        write_asset(
+            root.path(),
+            "logo.png",
+            &[137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3, 4, 5],
+        );
+        root
+    }
+
+    fn write_asset(root: &Path, path: &str, bytes: &[u8]) {
+        let absolute_path = root.join(path);
+        if let Some(parent) = absolute_path.parent() {
+            std::fs::create_dir_all(parent).expect("create asset directory");
+        }
+        std::fs::write(absolute_path, bytes).expect("write asset");
     }
 
     async fn serve(
-        index: &AssetIndex,
+        root: &Path,
+        path: &str,
+        accept_encoding: Option<&str>,
+        if_none_match: Option<&str>,
+    ) -> Response {
+        let server = AssetServer::new(root);
+        serve_with_server(&server, path, accept_encoding, if_none_match).await
+    }
+
+    async fn serve_with_server(
+        server: &AssetServer,
         path: &str,
         accept_encoding: Option<&str>,
         if_none_match: Option<&str>,
@@ -393,28 +480,35 @@ mod tests {
         }
 
         let request = request.body(Body::default()).unwrap();
-        index
+        server
             .serve(request.uri().path(), request.headers())
             .unwrap()
     }
 
     #[tokio::test]
-    async fn should_lookup_asset_by_exact_path() {
-        let response = serve(&test_index(), "/assets/app.js", None, None).await;
+    async fn should_lookup_asset_by_exact_path_given_file_exists() {
+        // Arrange
+        let root = test_root();
+
+        // Act
+        let response = serve(root.path(), "/assets/app.js", None, None).await;
         let body = crate::testkit::body::to_bytes(response.into_body())
             .await
             .unwrap();
 
-        assert_eq!(
-            body.as_ref(),
-            b"console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');console.log('fitz');"
-        );
+        // Assert
+        assert_eq!(body.as_ref(), APP_JS);
     }
 
     #[tokio::test]
     async fn should_apply_svg_mime_type() {
-        let response = serve(&test_index(), "/favicon.svg", None, None).await;
+        // Arrange
+        let root = test_root();
 
+        // Act
+        let response = serve(root.path(), "/favicon.svg", None, None).await;
+
+        // Assert
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(header::CONTENT_TYPE).unwrap(),
@@ -424,12 +518,17 @@ mod tests {
 
     #[tokio::test]
     async fn should_fallback_to_index_for_client_routes() {
-        let response = serve(&test_index(), "/sessions/123", None, None).await;
+        // Arrange
+        let root = test_root();
+
+        // Act
+        let response = serve(root.path(), "/sessions/123", None, None).await;
         let status = response.status();
         let body = crate::testkit::body::to_bytes(response.into_body())
             .await
             .unwrap();
 
+        // Assert
         assert_eq!(status, StatusCode::OK);
         assert!(std::str::from_utf8(&body)
             .unwrap()
@@ -438,7 +537,11 @@ mod tests {
 
     #[tokio::test]
     async fn should_preserve_missing_asset_fallback_behavior() {
-        let response = serve(&test_index(), "/assets/missing.js", None, None).await;
+        // Arrange
+        let root = test_root();
+
+        // Act
+        let response = serve(root.path(), "/assets/missing.js", None, None).await;
         let status = response.status();
         let content_type = response
             .headers()
@@ -449,6 +552,7 @@ mod tests {
             .await
             .unwrap();
 
+        // Assert
         assert_eq!(status, StatusCode::OK);
         assert_eq!(content_type, "text/html; charset=utf-8");
         assert!(std::str::from_utf8(&body)
@@ -458,12 +562,17 @@ mod tests {
 
     #[tokio::test]
     async fn should_preserve_missing_root_file_fallback_behavior() {
-        let response = serve(&test_index(), "/missing.css", None, None).await;
+        // Arrange
+        let root = test_root();
+
+        // Act
+        let response = serve(root.path(), "/missing.css", None, None).await;
         let status = response.status();
         let body = crate::testkit::body::to_bytes(response.into_body())
             .await
             .unwrap();
 
+        // Assert
         assert_eq!(status, StatusCode::OK);
         assert!(std::str::from_utf8(&body)
             .unwrap()
@@ -471,16 +580,150 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_reject_path_traversal() {
-        let response = serve(&test_index(), "/../secret", None, None).await;
+    async fn should_return_not_found_given_index_missing_for_root_request() {
+        // Arrange
+        let root = tempfile::tempdir().expect("create asset root");
+        write_asset(root.path(), "assets/app.js", APP_JS);
 
+        // Act
+        let response = serve(root.path(), "/", None, None).await;
+
+        // Assert
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn should_prefer_brotli_when_supported() {
-        let response = serve(&test_index(), "/assets/app.js", Some("gzip, br"), None).await;
+    async fn should_serve_exact_asset_given_index_missing() {
+        // Arrange
+        let root = tempfile::tempdir().expect("create asset root");
+        write_asset(root.path(), "assets/app.js", APP_JS);
 
+        // Act
+        let response = serve(root.path(), "/assets/app.js", None, None).await;
+        let status = response.status();
+        let body = crate::testkit::body::to_bytes(response.into_body())
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_ref(), APP_JS);
+    }
+
+    #[tokio::test]
+    async fn should_reject_path_traversal() {
+        // Arrange
+        let root = test_root();
+
+        // Act
+        let response = serve(root.path(), "/../secret", None, None).await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn should_reject_file_symlink_escape_from_root() {
+        // Arrange
+        let root = test_root();
+        let outside = tempfile::tempdir().expect("create outside root");
+        write_asset(outside.path(), "secret.js", b"outside");
+        std::fs::remove_file(root.path().join("assets/app.js")).expect("remove real asset");
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.js"),
+            root.path().join("assets/app.js"),
+        )
+        .expect("create escaping file symlink");
+
+        // Act
+        let response = serve(root.path(), "/assets/app.js", None, None).await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn should_reject_directory_symlink_escape_from_root() {
+        // Arrange
+        let root = test_root();
+        let outside = tempfile::tempdir().expect("create outside root");
+        write_asset(outside.path(), "secret.js", b"outside");
+        std::fs::remove_dir_all(root.path().join("assets")).expect("remove real assets directory");
+        std::os::unix::fs::symlink(outside.path(), root.path().join("assets"))
+            .expect("create escaping directory symlink");
+
+        // Act
+        let response = serve(root.path(), "/assets/secret.js", None, None).await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn should_reuse_cached_entry_given_unchanged_asset_metadata() {
+        // Arrange
+        let root = test_root();
+        let server = AssetServer::new(root.path());
+        server.reset_entry_build_count();
+
+        // Act
+        let first = serve_with_server(&server, "/assets/app.js", Some("gzip"), None).await;
+        let second = serve_with_server(&server, "/assets/app.js", Some("gzip"), None).await;
+
+        // Assert
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(second.status(), StatusCode::OK);
+        assert_eq!(server.entry_build_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn should_refresh_cached_entry_given_changed_asset_metadata() {
+        // Arrange
+        let root = test_root();
+        let server = AssetServer::new(root.path());
+        server.reset_entry_build_count();
+        let initial = serve_with_server(&server, "/assets/app.js", None, None).await;
+        let initial_etag = initial
+            .headers()
+            .get(header::ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        write_asset(
+            root.path(),
+            "assets/app.js",
+            b"console.log('fitz');console.log('changed');",
+        );
+
+        // Act
+        let response = serve_with_server(&server, "/assets/app.js", None, None).await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_ne!(
+            response
+                .headers()
+                .get(header::ETAG)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            initial_etag.as_str()
+        );
+        assert_eq!(server.entry_build_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn should_prefer_brotli_when_supported() {
+        // Arrange
+        let root = test_root();
+
+        // Act
+        let response = serve(root.path(), "/assets/app.js", Some("gzip, br"), None).await;
+
+        // Assert
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(header::CONTENT_ENCODING).unwrap(),
@@ -494,8 +737,13 @@ mod tests {
 
     #[tokio::test]
     async fn should_skip_compression_for_non_compressible_assets() {
-        let response = serve(&test_index(), "/logo.png", Some("br, gzip"), None).await;
+        // Arrange
+        let root = test_root();
 
+        // Act
+        let response = serve(root.path(), "/logo.png", Some("br, gzip"), None).await;
+
+        // Assert
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().get(header::CONTENT_ENCODING).is_none());
         assert_eq!(
@@ -506,7 +754,9 @@ mod tests {
 
     #[tokio::test]
     async fn should_return_not_modified_when_etag_matches_representation() {
-        let initial = serve(&test_index(), "/assets/app.js", Some("gzip"), None).await;
+        // Arrange
+        let root = test_root();
+        let initial = serve(root.path(), "/assets/app.js", Some("gzip"), None).await;
         let etag = initial
             .headers()
             .get(header::ETAG)
@@ -515,8 +765,10 @@ mod tests {
             .unwrap()
             .to_string();
 
-        let response = serve(&test_index(), "/assets/app.js", Some("gzip"), Some(&etag)).await;
+        // Act
+        let response = serve(root.path(), "/assets/app.js", Some("gzip"), Some(&etag)).await;
 
+        // Assert
         assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
         assert_eq!(
             response.headers().get(header::CONTENT_ENCODING).unwrap(),

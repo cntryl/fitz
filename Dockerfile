@@ -49,9 +49,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
   cargo chef cook --release --locked --recipe-path recipe.json
 
 COPY . .
-COPY --from=frontend /ui/dist/ /usr/src/fitz/embedded-ui/
-
-ENV FITZ_EMBED_UI_DIR=/usr/src/fitz/embedded-ui
 
 # cargo-chef primes the target dir with a placeholder binary for dependency caching.
 # Remove that stub so the final image always contains a binary built from the real sources.
@@ -74,6 +71,7 @@ ENV FITZ_HTTP_PORT=4090 \
 
 COPY --from=runtime-fs --chown=65532:65532 /data /data
 COPY --from=backend /usr/src/fitz/target/release/fitz /app/fitz
+COPY --from=frontend --chown=65532:65532 /ui/dist/ /app/public/
 
 USER 65532:65532
 

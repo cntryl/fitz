@@ -5,7 +5,7 @@
 - `ui/` is the Askr-based admin SPA workspace.
 - `skills/` in this directory is the UI-local skill root.
 - `../skills/` contains repo-wide skills for shared workflows.
-- `../public/` is the broker-served static output target.
+- `../public/openapi.yml` is the UI adapter input; production static assets are served from `/app/public`.
 
 ## Read First
 

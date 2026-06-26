@@ -21,8 +21,12 @@ export function createAdminSearchQuery(request: AdminSearchRequest) {
 
   return createQuery<AdminSearchResults>({
     key,
-    fetch: stableQueryFetch(adminSearchFetches, key, () => ({ signal }) =>
-      searchService.searchAdminState(request, { signal }),
+    fetch: stableQueryFetch(
+      adminSearchFetches,
+      key,
+      () =>
+        ({ signal }) =>
+          searchService.searchAdminState(request, { signal }),
     ),
   });
 }

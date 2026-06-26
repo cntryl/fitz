@@ -1250,14 +1250,8 @@ async function expectRouteChrome(page: Page, route: RouteScenario) {
     return;
   }
 
-  if (!isMobile) {
-    await expect(primaryNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
-    await expect(primaryNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
-  }
-
-  if (isMobile) {
-    await expect(primaryNav.getByRole("button", { name: /Menu|Navigation/ })).toBeVisible();
-  }
+  await expect(primaryNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
+  await expect(primaryNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
 }
 
 const sprint16Routes: RouteScenario[] = [

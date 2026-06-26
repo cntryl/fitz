@@ -63,9 +63,6 @@ lz4_flex = "0.13.1"
 cntryl-midge = { git = "https://github.com/cntryl/midge", features = ["testkit"] }
 cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "9e75be255d73261b88dfd1d273a55fb9eb177e40" }
 
-[build-dependencies]
-walkdir = "2"
-
 [dev-dependencies]
 url = "2"
 futures-util = "0.3"

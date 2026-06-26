@@ -28,9 +28,9 @@ npm run test:e2e
 npm run build
 ```
 
-Production build output is written to `ui/dist/`. During Docker builds, that directory is copied into the Rust backend build stage and embedded into the Fitz executable.
+Production build output is written to `ui/dist/`. During Docker builds, that directory is copied directly into the final Fitz runtime image at `/app/public/`.
 
-For local Rust builds, Fitz prefers embedding `ui/dist/` when it exists. If it does not exist, the build falls back to the checked-in `../public` directory so the binary still compiles.
+Local Rust builds do not embed UI assets and do not fall back to `../public`. For a production-like local run, place the contents of `ui/dist/` at `/app/public/`.
 
 ## Public Config
 
@@ -61,9 +61,10 @@ The SPA uses the existing admin session endpoints at `/api/v1/session`.
 
 ## Production Delivery
 
-- Production containers now ship a single Fitz executable rather than an executable plus `/app/public`
-- The Rust HTTP layer serves embedded assets, including SPA fallback for client routes
+- Production containers ship the Fitz executable plus SPA files under `/app/public`
+- The Rust HTTP layer serves filesystem assets from `/app/public`, including SPA fallback for client routes
 - Asset responses preserve the existing content-type and cache-control behavior and now include ETag plus compression negotiation for supported text assets
+- If `/app/public/index.html` is missing, UI entry and fallback requests return `404`
 
 ## Stack
 

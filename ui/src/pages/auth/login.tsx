@@ -1,7 +1,7 @@
 import { state } from "@askrjs/askr";
 import { currentRoute, navigate } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
-import { Button, Field, FieldHint } from "@askrjs/themes/controls";
+import { Button, Field } from "@askrjs/themes/controls";
 import {
   Alert,
   Card,
@@ -12,9 +12,6 @@ import {
 } from "@askrjs/themes/surfaces";
 import { createSignInMutation } from "@/features/session/session-mutation";
 import { formatUnknownError } from "@/shared/errors/format";
-
-const usernameHintId = "login-username-hint";
-const passwordHintId = "login-password-hint";
 
 function resolveNextTarget() {
   const next = currentRoute().query.get("next");
@@ -51,7 +48,7 @@ export default function Login() {
 
   return (
     <Card class="auth-card" variant="raised">
-      <CardHeader>
+      <CardHeader class="auth-card-header">
         <CardTitle>Sign in to Fitz Admin</CardTitle>
         <CardDescription>Use your Fitz Admin account to continue.</CardDescription>
       </CardHeader>
@@ -65,14 +62,10 @@ export default function Login() {
               name="username"
               autocomplete="username"
               required
-              aria-describedby={usernameHintId}
               value={username()}
               onInput={(event: Event) => setUsername((event.target as HTMLInputElement).value)}
               placeholder="admin"
             />
-            <FieldHint id={usernameHintId}>
-              Use the Fitz Admin username for this workspace.
-            </FieldHint>
           </Field>
 
           <Field>
@@ -83,12 +76,10 @@ export default function Login() {
               name="password"
               autocomplete="current-password"
               required
-              aria-describedby={passwordHintId}
               value={password()}
               onInput={(event: Event) => setPassword((event.target as HTMLInputElement).value)}
               placeholder="Enter your password"
             />
-            <FieldHint id={passwordHintId}>Use the current password for that account.</FieldHint>
           </Field>
 
           <Button

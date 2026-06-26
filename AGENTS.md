@@ -3,7 +3,7 @@
 ## Repo Layout
 - Root is a Rust workspace. Main code lives under `src/`.
 - `ui/` is a separate Node/Vite workspace with its own `AGENTS.md` and local `skills/` tree.
-- `public/` contains the static SPA served by the broker.
+- `public/` contains `openapi.yml` for UI adapter generation and legacy static files; production SPA assets are served from `/app/public`.
 - Root workspace skills live under root `skills/`.
 
 ## Read First

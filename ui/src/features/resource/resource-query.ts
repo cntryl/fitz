@@ -26,8 +26,12 @@ export function createResourceInventoryQuery(domain: DomainId) {
 
   return createQuery<ResourceInventory>({
     key,
-    fetch: stableQueryFetch(resourceInventoryFetches, key, () => ({ signal }) =>
-      resourceService.getResourceInventory(domain, { signal }),
+    fetch: stableQueryFetch(
+      resourceInventoryFetches,
+      key,
+      () =>
+        ({ signal }) =>
+          resourceService.getResourceInventory(domain, { signal }),
     ),
   });
 }
@@ -41,8 +45,12 @@ export function createResourceQuery(
 
   return createQuery<ResourceDetail>({
     key,
-    fetch: stableQueryFetch(resourceDetailFetches, key, () => ({ signal }) =>
-      resourceService.getResource(domain, ref, against, { signal }),
+    fetch: stableQueryFetch(
+      resourceDetailFetches,
+      key,
+      () =>
+        ({ signal }) =>
+          resourceService.getResource(domain, ref, against, { signal }),
     ),
   });
 }

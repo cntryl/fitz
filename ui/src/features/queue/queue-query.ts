@@ -61,8 +61,12 @@ export function createQueueDeadLettersQuery(
 
   return createQuery({
     key,
-    fetch: stableQueryFetch(queueDeadLetterFetches, key, () => ({ signal }) =>
-      queueService.listDeadLetters(resourceRef, filters, { signal }),
+    fetch: stableQueryFetch(
+      queueDeadLetterFetches,
+      key,
+      () =>
+        ({ signal }) =>
+          queueService.listDeadLetters(resourceRef, filters, { signal }),
     ),
   });
 }

@@ -29,8 +29,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
-    "@types/node": "^26.0.0",
-    "autoprefixer": "^10.5.1",
+    "@types/node": "^26.0.1",
+    "autoprefixer": "^10.5.2",
     "jsdom": "^29.1.1",
     "postcss": "^8.5.15",
     "typescript": "^6.0.3",

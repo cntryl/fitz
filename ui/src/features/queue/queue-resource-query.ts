@@ -57,8 +57,12 @@ export function createQueueResourceQuery(resourceRef: QueueResourceRef) {
 
   return createQuery<QueueResourceOverview>({
     key,
-    fetch: stableQueryFetch(queueResourceFetches, key, () => ({ signal }) =>
-      queueResourceService.getResource(resourceRef, { signal }),
+    fetch: stableQueryFetch(
+      queueResourceFetches,
+      key,
+      () =>
+        ({ signal }) =>
+          queueResourceService.getResource(resourceRef, { signal }),
     ),
   });
 }
@@ -68,8 +72,12 @@ export function createQueueResourceTimelineQuery(resourceRef: QueueResourceRef) 
 
   return createQuery<QueueResourceTimeline>({
     key,
-    fetch: stableQueryFetch(queueResourceTimelineFetches, key, () => ({ signal }) =>
-      queueResourceService.getTimeline(resourceRef, { signal }),
+    fetch: stableQueryFetch(
+      queueResourceTimelineFetches,
+      key,
+      () =>
+        ({ signal }) =>
+          queueResourceService.getTimeline(resourceRef, { signal }),
     ),
   });
 }
@@ -82,17 +90,21 @@ export function createQueueResourceComparisonQuery(
 
   return createQuery<QueueResourceComparison>({
     key,
-    fetch: stableQueryFetch(queueResourceComparisonFetches, key, () => ({ signal }) =>
-      queueResourceService.compareResource(
-        resourceRef,
-        {
-          area: againstResourceRef.area,
-          family: againstResourceRef.family,
-          realm: againstResourceRef.realm,
-          resource: againstResourceRef.resource,
-        },
-        { signal },
-      ),
+    fetch: stableQueryFetch(
+      queueResourceComparisonFetches,
+      key,
+      () =>
+        ({ signal }) =>
+          queueResourceService.compareResource(
+            resourceRef,
+            {
+              area: againstResourceRef.area,
+              family: againstResourceRef.family,
+              realm: againstResourceRef.realm,
+              resource: againstResourceRef.resource,
+            },
+            { signal },
+          ),
     ),
   });
 }

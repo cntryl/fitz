@@ -1,7 +1,7 @@
 import { Link } from "@askrjs/askr/router";
 import { MoonIcon, ShieldIcon, SunIcon } from "@askrjs/lucide";
 import { Badge } from "@askrjs/themes/surfaces";
-import { Container, Flex } from "@askrjs/themes/layouts";
+import { Container } from "@askrjs/themes/layouts";
 import { Header, Navbar, NavBrand, NavGroup } from "@askrjs/themes/shells";
 import { ThemeToggle } from "@askrjs/themes/theme";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
@@ -16,10 +16,10 @@ export default function Layout({ children }: { children?: unknown }) {
         Skip to main content
       </a>
 
-      <Header>
+      <Header class="auth-header">
         <Container size="xl">
-          <Navbar breakpoint="md" aria-label="Primary navigation">
-            <NavBrand>
+          <Navbar class="auth-navbar" aria-label="Primary navigation">
+            <NavBrand class="auth-brand">
               <Link href="/" aria-label="Fitz admin home">
                 <ShieldIcon size={18} />
                 <span>Fitz Admin</span>
@@ -49,16 +49,10 @@ export default function Layout({ children }: { children?: unknown }) {
         </Container>
       </Header>
 
-      <Container size="sm" p="4">
-        <Flex
-          align="center"
-          justify="center"
-          style={{ minHeight: "calc(100dvh - var(--ak-layout-navbar-height, 60px))" }}
-        >
-          <main id="main-content" class="route-transition-surface">
-            {children}
-          </main>
-        </Flex>
+      <Container size="sm" class="auth-shell-container">
+        <main id="main-content" class="auth-shell route-transition-surface">
+          {children}
+        </main>
       </Container>
     </>
   );
