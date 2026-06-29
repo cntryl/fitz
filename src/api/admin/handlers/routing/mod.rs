@@ -109,24 +109,21 @@ where
         (Method::GET, "/api/v1/features") => handle_features(&runtime).await,
 
         (Method::POST, "/api/v1/runtime/drain") => {
-            if let Err(response) = require_admin(&req, &runtime) {
-                return Ok(*response);
-            }
-            if let Err(response) = require_same_origin(&req, &runtime) {
+            if let Err(response) = require_admin_with_origin(&req, &runtime) {
                 return Ok(*response);
             }
             handle_runtime_drain(runtime).await
         }
 
         (Method::GET, "/metrics") => {
-            if let Err(response) = require_admin(&req, &runtime) {
+            if let Err(response) = require_admin_only(&req, &runtime) {
                 return Ok(*response);
             }
             metrics::handle_metrics(runtime).await
         }
 
         (Method::GET, "/api/v1/sessions") => {
-            if let Err(response) = require_admin(&req, &runtime) {
+            if let Err(response) = require_admin_only(&req, &runtime) {
                 return Ok(*response);
             }
             list::list_sessions(runtime).await
@@ -135,30 +132,21 @@ where
         (Method::GET, path) if path.starts_with("/api/v1/sessions/") => Ok(super::not_found()),
 
         (Method::GET, "/api/v1/stats") => {
-            if let Err(response) = require_admin(&req, &runtime) {
-                return Ok(*response);
-            }
-            if let Err(response) = require_data_plane_ready(&runtime) {
+            if let Err(response) = require_admin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
             stats::handle_global_stats(runtime).await
         }
 
         (Method::GET, "/api/v1/topology") => {
-            if let Err(response) = require_admin(&req, &runtime) {
-                return Ok(*response);
-            }
-            if let Err(response) = require_data_plane_ready(&runtime) {
+            if let Err(response) = require_admin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
             topology::handle_topology(runtime).await
         }
 
         (Method::GET, "/api/v1/troubleshooting") => {
-            if let Err(response) = require_admin(&req, &runtime) {
-                return Ok(*response);
-            }
-            if let Err(response) = require_data_plane_ready(&runtime) {
+            if let Err(response) = require_admin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
             stats::handle_global_troubleshooting(runtime).await
@@ -191,10 +179,7 @@ where
                 Ok(principal) => principal,
                 Err(response) => return Ok(*response),
             };
-            if let Err(response) = require_same_origin(&req, &runtime) {
-                return Ok(*response);
-            }
-            if let Err(response) = require_data_plane_ready(&runtime) {
+            if let Err(response) = require_origin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
             handle_hierarchical_post(&req, runtime, &principal).await
@@ -205,10 +190,7 @@ where
                 Ok(principal) => principal,
                 Err(response) => return Ok(*response),
             };
-            if let Err(response) = require_same_origin(&req, &runtime) {
-                return Ok(*response);
-            }
-            if let Err(response) = require_data_plane_ready(&runtime) {
+            if let Err(response) = require_origin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
             handle_hierarchical_delete(&req, runtime, &principal).await
@@ -217,4 +199,35 @@ where
         (Method::GET, _) => Ok(super::assets::serve_request(&req)),
         _ => Ok(super::not_found()),
     }
+}
+
+fn require_admin_only<B>(
+    req: &hyper::Request<B>,
+    runtime: &Arc<Runtime>,
+) -> Result<(), Box<Response>> {
+    require_admin(req, runtime).map(|_| ())
+}
+
+fn require_admin_and_ready<B>(
+    req: &hyper::Request<B>,
+    runtime: &Arc<Runtime>,
+) -> Result<(), Box<Response>> {
+    require_admin(req, runtime)?;
+    require_data_plane_ready(runtime)
+}
+
+fn require_admin_with_origin<B>(
+    req: &hyper::Request<B>,
+    runtime: &Arc<Runtime>,
+) -> Result<(), Box<Response>> {
+    require_admin(req, runtime)?;
+    require_same_origin(req, runtime)
+}
+
+fn require_origin_and_ready<B>(
+    req: &hyper::Request<B>,
+    runtime: &Arc<Runtime>,
+) -> Result<(), Box<Response>> {
+    require_same_origin(req, runtime)?;
+    require_data_plane_ready(runtime)
 }

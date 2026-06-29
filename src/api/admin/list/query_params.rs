@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    DEFAULT_ADMIN_RECORD_LIMIT, DEFAULT_KV_SCAN_LIMIT, MAX_ADMIN_RECORD_LIMIT, MAX_KV_SCAN_LIMIT,
+};
+use base64::Engine;
+use std::collections::HashMap;
 
 pub fn parse_query_params(uri: &hyper::Uri) -> HashMap<String, String> {
     uri.query()
@@ -10,6 +14,11 @@ pub fn parse_query_params(uri: &hyper::Uri) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
+/// Parses an optional unsigned integer query parameter.
+///
+/// # Errors
+///
+/// Returns an error when the parameter is present but not a valid `u64`.
 pub fn parse_optional_u64_query_param(uri: &hyper::Uri, key: &str) -> Result<Option<u64>, String> {
     let params = parse_query_params(uri);
     match params.get(key) {
@@ -21,6 +30,11 @@ pub fn parse_optional_u64_query_param(uri: &hyper::Uri, key: &str) -> Result<Opt
     }
 }
 
+/// Parses the common `limit` query parameter with bounds.
+///
+/// # Errors
+///
+/// Returns an error when `limit` is present but invalid or zero.
 pub fn parse_limit_query_param(
     uri: &hyper::Uri,
     default: usize,
@@ -42,6 +56,12 @@ pub fn parse_limit_query_param(
     }
 }
 
+/// Parses a required KV key-style query parameter as bytes.
+///
+/// # Errors
+///
+/// Returns an error when the parameter is missing, the encoding is invalid, or
+/// base64 decoding fails.
 pub fn parse_kv_query_bytes(uri: &hyper::Uri, key: &str) -> Result<Vec<u8>, String> {
     let params = parse_query_params(uri);
     let value = params
@@ -58,6 +78,11 @@ pub fn parse_kv_query_bytes(uri: &hyper::Uri, key: &str) -> Result<Vec<u8>, Stri
     }
 }
 
+/// Parses an optional KV key-style query parameter as bytes.
+///
+/// # Errors
+///
+/// Returns an error when the encoding is invalid or base64 decoding fails.
 pub fn parse_optional_kv_query_bytes(
     uri: &hyper::Uri,
     key: &str,
@@ -78,6 +103,11 @@ pub fn parse_optional_kv_query_bytes(
     }
 }
 
+/// Parses the optional KV scan cursor.
+///
+/// # Errors
+///
+/// Returns an error when the cursor is present but not valid base64.
 pub fn parse_optional_kv_cursor(uri: &hyper::Uri) -> Result<Option<Vec<u8>>, String> {
     let params = parse_query_params(uri);
     let Some(value) = params.get("cursor") else {
@@ -90,10 +120,20 @@ pub fn parse_optional_kv_cursor(uri: &hyper::Uri) -> Result<Option<Vec<u8>>, Str
         .map_err(|_| "Invalid cursor query parameter".to_string())
 }
 
+/// Parses the bounded KV scan limit.
+///
+/// # Errors
+///
+/// Returns an error when `limit` is present but invalid or zero.
 pub fn parse_kv_scan_limit(uri: &hyper::Uri) -> Result<usize, String> {
     parse_limit_query_param(uri, DEFAULT_KV_SCAN_LIMIT, MAX_KV_SCAN_LIMIT)
 }
 
+/// Parses the bounded admin record limit.
+///
+/// # Errors
+///
+/// Returns an error when `limit` is present but invalid or zero.
 pub fn parse_admin_record_limit(uri: &hyper::Uri) -> Result<usize, String> {
     parse_limit_query_param(uri, DEFAULT_ADMIN_RECORD_LIMIT, MAX_ADMIN_RECORD_LIMIT)
 }

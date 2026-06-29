@@ -8,8 +8,8 @@ mod resource_inventory;
 mod resource_paths;
 
 use crate::api::admin::troubleshooting::{
-    self, DiagnosticSnapshot, ResourceComparison, ResourceComparisonMetrics,
-    ResourceComparisonScope, ResourceComparisonSide,
+    self, ResourceComparison, ResourceComparisonMetrics, ResourceComparisonScope,
+    ResourceComparisonSide,
 };
 use crate::api::http::Response;
 use crate::boot::Runtime;
@@ -17,7 +17,6 @@ use crate::domains::kv::sink::AdminKvRowsRequest;
 use crate::domains::stream::sink::AdminStreamReadRequest;
 use crate::runtime::routing::{route_quad, route_triplet, RouteFamily};
 use base64::Engine;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::convert::Infallible;
 use std::sync::Arc;

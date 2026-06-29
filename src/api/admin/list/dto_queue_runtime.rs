@@ -1,4 +1,4 @@
-use super::*;
+use serde::{Deserialize, Serialize};
 
 pub use crate::control::admin::{
     LeaseInfo, QueueDeadLetter, QueueInflight, QueueInfo, RpcLatencyBuckets, RpcPendingRequest,

@@ -1,4 +1,12 @@
-use super::*;
+use super::{
+    matches_family, route_quad, route_triplet, troubleshooting, worse_queue_status,
+    KvResourceDetail, KvResourceInventoryEntry, LeaseResourceDetail, NoticeResourceDetail,
+    OwnedRpcOperation, QueueResourceDetail, ResourceComparison, ResourceComparisonMetrics,
+    ResourceComparisonScope, ResourceComparisonSide, ResourcePath, ResourceRef, RpcOperationDetail,
+    RpcOperationPath, Runtime, ScheduleResourceDetail, StreamAreaWatermarkDetail,
+    StreamRealmWatermarkDetail, StreamResourceDetail,
+};
+use crate::api::admin::troubleshooting::DiagnosticSnapshot;
 
 pub fn kv_detail(
     runtime: &Runtime,
@@ -66,6 +74,10 @@ pub fn kv_detail(
 }
 
 #[must_use]
+/// # Panics
+///
+/// Panics if a concrete `family` is requested and the filtered queue list is
+/// unexpectedly empty after the earlier emptiness check.
 pub fn queue_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -193,6 +205,10 @@ pub fn lease_detail(
 }
 
 #[must_use]
+/// # Panics
+///
+/// Panics if the filtered schedule list reports exactly one item but that item
+/// cannot be retrieved from the iterator.
 pub fn schedule_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -345,7 +361,7 @@ pub(crate) fn queue_comparison_metrics(detail: &QueueResourceDetail) -> Resource
 pub(crate) fn stream_comparison_metrics(
     detail: &StreamResourceDetail,
 ) -> ResourceComparisonMetrics {
-    let lag = detail.offset.saturating_sub(detail.watermark) as usize;
+    let lag = usize::try_from(detail.offset.saturating_sub(detail.watermark)).unwrap_or(usize::MAX);
     ResourceComparisonMetrics {
         backlog: Some(lag),
         inflight: None,

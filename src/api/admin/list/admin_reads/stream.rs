@@ -1,4 +1,8 @@
-use super::super::*;
+use super::super::{
+    kv_byte_value, matches_family, troubleshooting, AdminStreamReadRequest, Arc, Infallible,
+    ResourcePath, Response, RouteFamily, Runtime, StreamAdminRecord, StreamRecordsResponse,
+    StreamSearchRequest,
+};
 
 fn stream_read_item_to_admin_record(
     route_family: u64,
@@ -25,6 +29,11 @@ fn stream_read_item_to_admin_record(
     }
 }
 
+/// Returns committed stream records for a specific resource.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn stream_records_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
@@ -142,6 +151,11 @@ pub(crate) async fn stream_search(
     })
 }
 
+/// Returns recent stream timeline events for the given resource.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn stream_events_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,

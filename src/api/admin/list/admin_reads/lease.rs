@@ -51,80 +51,23 @@ pub(crate) async fn lease_search(
 
     let mut items = Vec::new();
     if include_owned {
-        for lease in leases {
-            if items.len() >= request.limit {
-                break;
-            }
-            if !scope_matches(
-                lease.route_family,
-                &lease.realm,
-                &lease.area,
-                &lease.resource,
-            ) || !owner_matches(&lease.owner_session_id)
-            {
-                continue;
-            }
-            let pending_waiters = waiter_counts
-                .get(&(
-                    lease.route_family,
-                    lease.realm.clone(),
-                    lease.area.clone(),
-                    lease.resource.clone(),
-                ))
-                .copied()
-                .unwrap_or(0);
-            if request.state.as_deref() == Some("contention") && pending_waiters == 0 {
-                continue;
-            }
-            items.push(LeaseSearchItem {
-                route_family: lease.route_family,
-                realm: lease.realm,
-                area: lease.area,
-                resource: lease.resource,
-                state: if pending_waiters > 0 {
-                    "owned_with_waiters".to_string()
-                } else {
-                    "owned".to_string()
-                },
-                owner_id: Some(lease.owner_session_id.clone()),
-                owner_session_id: Some(lease.owner_session_id),
-                queued_token: Some(lease.fencing_token),
-                expires_at: Some(lease.expires_at),
-                acquired_at: Some(lease.acquired_at),
-                renewals: Some(lease.renewals),
-                pending_waiters,
-            });
-        }
+        collect_owned_leases(
+            &request,
+            &leases,
+            &waiter_counts,
+            &scope_matches,
+            &owner_matches,
+            &mut items,
+        );
     }
     if include_waiting {
-        for waiter in waiters {
-            if items.len() >= request.limit {
-                break;
-            }
-            if !scope_matches(
-                waiter.route_family,
-                &waiter.realm,
-                &waiter.area,
-                &waiter.resource,
-            ) || !(owner_matches(&waiter.owner_id) || owner_matches(&waiter.session_id))
-            {
-                continue;
-            }
-            items.push(LeaseSearchItem {
-                route_family: waiter.route_family,
-                realm: waiter.realm,
-                area: waiter.area,
-                resource: waiter.resource,
-                state: "waiting".to_string(),
-                owner_id: Some(waiter.owner_id),
-                owner_session_id: Some(waiter.session_id),
-                queued_token: Some(waiter.queued_token),
-                expires_at: Some(waiter.expires_at),
-                acquired_at: None,
-                renewals: None,
-                pending_waiters: 0,
-            });
-        }
+        collect_waiting_leases(
+            &request,
+            &waiters,
+            &scope_matches,
+            &owner_matches,
+            &mut items,
+        );
     }
 
     crate::api::admin::json_response(LeaseSearchResponse {
@@ -132,6 +75,103 @@ pub(crate) async fn lease_search(
         limit: request.limit,
         items,
     })
+}
+
+fn collect_owned_leases<F, G>(
+    request: &LeaseSearchRequest,
+    leases: &[crate::control::admin::LeaseInfo],
+    waiter_counts: &HashMap<(u64, String, String, String), usize>,
+    scope_matches: &F,
+    owner_matches: &G,
+    items: &mut Vec<LeaseSearchItem>,
+) where
+    F: Fn(u64, &str, &str, &str) -> bool,
+    G: Fn(&str) -> bool,
+{
+    for lease in leases {
+        if items.len() >= request.limit {
+            break;
+        }
+        if !scope_matches(
+            lease.route_family,
+            &lease.realm,
+            &lease.area,
+            &lease.resource,
+        ) || !owner_matches(&lease.owner_session_id)
+        {
+            continue;
+        }
+        let pending_waiters = waiter_counts
+            .get(&(
+                lease.route_family,
+                lease.realm.clone(),
+                lease.area.clone(),
+                lease.resource.clone(),
+            ))
+            .copied()
+            .unwrap_or(0);
+        if request.state.as_deref() == Some("contention") && pending_waiters == 0 {
+            continue;
+        }
+        items.push(LeaseSearchItem {
+            route_family: lease.route_family,
+            realm: lease.realm.clone(),
+            area: lease.area.clone(),
+            resource: lease.resource.clone(),
+            state: if pending_waiters > 0 {
+                "owned_with_waiters".to_string()
+            } else {
+                "owned".to_string()
+            },
+            owner_id: Some(lease.owner_session_id.clone()),
+            owner_session_id: Some(lease.owner_session_id.clone()),
+            queued_token: Some(lease.fencing_token),
+            expires_at: Some(lease.expires_at.clone()),
+            acquired_at: Some(lease.acquired_at.clone()),
+            renewals: Some(lease.renewals),
+            pending_waiters,
+        });
+    }
+}
+
+fn collect_waiting_leases<F, G>(
+    request: &LeaseSearchRequest,
+    waiters: &[crate::control::admin::LeaseWaiterInfo],
+    scope_matches: &F,
+    owner_matches: &G,
+    items: &mut Vec<LeaseSearchItem>,
+) where
+    F: Fn(u64, &str, &str, &str) -> bool,
+    G: Fn(&str) -> bool,
+{
+    for waiter in waiters {
+        if items.len() >= request.limit {
+            break;
+        }
+        if !scope_matches(
+            waiter.route_family,
+            &waiter.realm,
+            &waiter.area,
+            &waiter.resource,
+        ) || !(owner_matches(&waiter.owner_id) || owner_matches(&waiter.session_id))
+        {
+            continue;
+        }
+        items.push(LeaseSearchItem {
+            route_family: waiter.route_family,
+            realm: waiter.realm.clone(),
+            area: waiter.area.clone(),
+            resource: waiter.resource.clone(),
+            state: "waiting".to_string(),
+            owner_id: Some(waiter.owner_id.clone()),
+            owner_session_id: Some(waiter.session_id.clone()),
+            queued_token: Some(waiter.queued_token),
+            expires_at: Some(waiter.expires_at.clone()),
+            acquired_at: None,
+            renewals: None,
+            pending_waiters: 0,
+        });
+    }
 }
 
 /// Returns recent lease timeline events for the given resource.

@@ -23,7 +23,7 @@ pub(crate) use stream::stream_search;
 pub use stream::{stream_events_for_resource, stream_records_for_resource};
 
 fn timestamp_ms_to_rfc3339(timestamp_ms: u64) -> String {
-    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_ms as i64)
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_ms.cast_signed())
         .map(|timestamp| timestamp.to_rfc3339())
         .unwrap_or_default()
 }

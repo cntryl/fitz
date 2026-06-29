@@ -321,6 +321,24 @@ async fn handle_queue_notice_rpc_state_routes(
     scheme: &str,
     tail: &[&str],
 ) -> Result<Option<Response>, Infallible> {
+    if let Some(response) = handle_queue_state_routes(uri, runtime, scope, scheme, tail).await? {
+        return Ok(Some(response));
+    }
+
+    if let Some(response) = handle_notice_rpc_state_routes(runtime, scope, scheme, tail).await? {
+        return Ok(Some(response));
+    }
+
+    Ok(None)
+}
+
+async fn handle_queue_state_routes(
+    uri: &hyper::Uri,
+    runtime: &Arc<Runtime>,
+    scope: AdminFamilyScope,
+    scheme: &str,
+    tail: &[&str],
+) -> Result<Option<Response>, Infallible> {
     let response = match tail {
         ["realms", realm, "areas", area, "resources", resource, "inflight"]
             if scheme == "queue" =>
@@ -362,6 +380,19 @@ async fn handle_queue_notice_rpc_state_routes(
                 .await?,
             )
         }
+        _ => None,
+    };
+
+    Ok(response)
+}
+
+async fn handle_notice_rpc_state_routes(
+    runtime: &Arc<Runtime>,
+    scope: AdminFamilyScope,
+    scheme: &str,
+    tail: &[&str],
+) -> Result<Option<Response>, Infallible> {
+    let response = match tail {
         ["realms", realm, "areas", area, "resources", resource, "subscriptions"]
             if scheme == "notice" =>
         {
