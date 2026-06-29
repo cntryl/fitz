@@ -168,10 +168,7 @@ impl CompactPagedRealmValue {
         let mut total_len = 4;
         for record in &self.records {
             total_len += 8 + 8 + 8 + 4 + 4 + record.body.len();
-            total_len += record
-                .metadata
-                .as_ref()
-                .map_or(0, bytes::Bytes::len);
+            total_len += record.metadata.as_ref().map_or(0, bytes::Bytes::len);
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -216,10 +213,7 @@ impl CompactAreaPageValue {
         let mut total_len = 4;
         for record in &self.records {
             total_len += 8 + 8 + 4 + 4 + record.body.len();
-            total_len += record
-                .metadata
-                .as_ref()
-                .map_or(0, bytes::Bytes::len);
+            total_len += record.metadata.as_ref().map_or(0, bytes::Bytes::len);
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -302,10 +296,7 @@ impl CompactResourcePageValue {
         let mut total_len = 4;
         for record in &self.records {
             total_len += 8 + 8 + 8 + 4 + 4 + record.body.len();
-            total_len += record
-                .metadata
-                .as_ref()
-                .map_or(0, bytes::Bytes::len);
+            total_len += record.metadata.as_ref().map_or(0, bytes::Bytes::len);
         }
 
         let mut bytes = Vec::with_capacity(total_len);

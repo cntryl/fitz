@@ -143,10 +143,7 @@ impl CompactAreaPageValue {
         let mut total_len = 6;
         for record in &self.records {
             total_len += 8 + 8 + 4 + 4 + record.body.len();
-            total_len += record
-                .metadata
-                .as_ref()
-                .map_or(0, bytes::Bytes::len);
+            total_len += record.metadata.as_ref().map_or(0, bytes::Bytes::len);
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -236,10 +233,7 @@ impl CompactResourcePageValue {
         let mut total_len = 6;
         for record in &self.records {
             total_len += 8 + 8 + 8 + 4 + 4 + record.body.len();
-            total_len += record
-                .metadata
-                .as_ref()
-                .map_or(0, bytes::Bytes::len);
+            total_len += record.metadata.as_ref().map_or(0, bytes::Bytes::len);
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -332,10 +326,7 @@ impl CompactPagedRealmValue {
         let mut total_len = 6;
         for record in &self.records {
             total_len += 8 + 8 + 8 + 4 + 4 + record.body.len();
-            total_len += record
-                .metadata
-                .as_ref()
-                .map_or(0, bytes::Bytes::len);
+            total_len += record.metadata.as_ref().map_or(0, bytes::Bytes::len);
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -1048,10 +1039,7 @@ fn encode_stream_read_data(
         if let Some(max_bytes) = max_bytes {
             let projected = total_bytes
                 + record.body.len()
-                + record
-                    .metadata
-                    .as_ref()
-                    .map_or(0, bytes::Bytes::len);
+                + record.metadata.as_ref().map_or(0, bytes::Bytes::len);
             if !selected.is_empty() && projected > max_bytes {
                 has_more = true;
                 break;

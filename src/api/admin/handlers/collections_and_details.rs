@@ -1,8 +1,14 @@
-use super::*;
+use super::auth_and_mutations::{
+    auth_error_response, no_content_response, require_admin, require_same_origin,
+};
+use super::{
+    auth, list, AdminFeaturesResponse, Infallible, Response, Runtime, SessionResponse, StatusCode,
+};
+use std::sync::Arc;
 
 pub(super) fn handle_realms_collection(
     scheme: &str,
-    runtime: Arc<Runtime>,
+    runtime: &Arc<Runtime>,
     family: Option<u64>,
 ) -> Result<Response, Infallible> {
     if scheme == "queue" {
@@ -20,7 +26,7 @@ pub(super) fn handle_realms_collection(
 
 pub(super) fn handle_areas_collection(
     scheme: &str,
-    runtime: Arc<Runtime>,
+    runtime: &Arc<Runtime>,
     realm: &str,
     family: Option<u64>,
 ) -> Result<Response, Infallible> {
@@ -39,7 +45,7 @@ pub(super) fn handle_areas_collection(
 
 pub(super) fn handle_resources_collection(
     scheme: &str,
-    runtime: Arc<Runtime>,
+    runtime: &Arc<Runtime>,
     realm: &str,
     area: &str,
     family: Option<u64>,
@@ -68,7 +74,7 @@ pub(super) fn handle_resources_collection(
 
 pub(super) fn handle_resource_detail(
     scheme: &str,
-    runtime: Arc<Runtime>,
+    runtime: &Arc<Runtime>,
     realm: &str,
     area: &str,
     resource: &str,
@@ -122,7 +128,7 @@ pub(super) fn resources_for_scheme(
 
 pub(super) async fn handle_login<B>(
     req: hyper::Request<B>,
-    runtime: Arc<Runtime>,
+    runtime: &Arc<Runtime>,
 ) -> Result<Response, Infallible>
 where
     B: hyper::body::Body + Send,
@@ -143,14 +149,11 @@ where
         return Ok(*response);
     }
 
-    let login = match auth::parse_login_request(req).await {
-        Ok(login) => login,
-        Err(_) => {
-            return Ok(super::error_response(
-                StatusCode::BAD_REQUEST,
-                "Invalid login request",
-            ));
-        }
+    let Ok(login) = auth::parse_login_request(req).await else {
+        return Ok(super::error_response(
+            StatusCode::BAD_REQUEST,
+            "Invalid login request",
+        ));
     };
 
     let principal = match admin_auth.authenticate_credentials(&login.username, &login.password) {
@@ -168,7 +171,7 @@ where
 
 pub(super) async fn handle_current_session<B>(
     req: hyper::Request<B>,
-    runtime: Arc<Runtime>,
+    runtime: &Arc<Runtime>,
 ) -> Result<Response, Infallible> {
     let principal = match require_admin(&req, &runtime) {
         Ok(principal) => principal,
@@ -185,7 +188,7 @@ pub(super) async fn handle_current_session<B>(
 
 pub(super) async fn handle_logout<B>(
     req: &hyper::Request<B>,
-    runtime: Arc<Runtime>,
+    runtime: &Arc<Runtime>,
 ) -> Result<Response, Infallible> {
     if let Err(response) = require_same_origin(req, &runtime) {
         return Ok(*response);
@@ -196,7 +199,7 @@ pub(super) async fn handle_logout<B>(
     ))
 }
 
-pub(super) async fn handle_features(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
+pub(super) async fn handle_features(runtime: &Arc<Runtime>) -> Result<Response, Infallible> {
     let admin_auth = runtime.admin_auth();
     let route_family_access = if admin_auth.login_required() {
         None
@@ -208,10 +211,10 @@ pub(super) async fn handle_features(runtime: Arc<Runtime>) -> Result<Response, I
         admin_auth_mode: admin_auth.auth_mode(),
         route_families: route_family_access
             .as_ref()
-            .map(|access| access.route_families())
+            .map(crate::api::admin::auth::AdminRouteFamilyAccess::route_families)
             .unwrap_or_default(),
         route_families_wildcard: route_family_access
             .as_ref()
-            .is_some_and(|access| access.is_wildcard()),
+            .is_some_and(crate::api::admin::auth::AdminRouteFamilyAccess::is_wildcard),
     })
 }

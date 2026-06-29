@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    list, AdminFamilyScope, AdminPrincipal, AuthFailure, Body, Infallible, Response, RouteFamily,
+    Runtime, RuntimeDrainResponse, StatusCode,
+};
+use std::sync::Arc;
 
 pub(super) fn require_data_plane_ready(runtime: &Arc<Runtime>) -> Result<(), Box<Response>> {
     if runtime.is_ready_for_traffic() {
@@ -116,9 +120,8 @@ pub(super) fn resource_family_filter(
 ) -> Result<Option<u64>, Box<Response>> {
     match scope {
         AdminFamilyScope::Family(family) => Ok(Some(family)),
-        AdminFamilyScope::All => Ok(None),
         AdminFamilyScope::Legacy if scheme == "queue" => parse_optional_queue_family(uri),
-        AdminFamilyScope::Legacy => Ok(None),
+        AdminFamilyScope::All | AdminFamilyScope::Legacy => Ok(None),
     }
 }
 
@@ -184,14 +187,11 @@ pub(super) fn require_allowed_route_family(
     uri: &hyper::Uri,
     principal: &AdminPrincipal,
 ) -> Result<u64, Box<Response>> {
-    let family = match parse_optional_u64_param(uri, "route_family")? {
-        Some(family) => family,
-        None => {
-            return Err(Box::new(super::error_response(
-                StatusCode::BAD_REQUEST,
-                "Missing route_family query parameter",
-            )));
-        }
+    let Some(family) = parse_optional_u64_param(uri, "route_family")? else {
+        return Err(Box::new(super::error_response(
+            StatusCode::BAD_REQUEST,
+            "Missing route_family query parameter",
+        )));
     };
 
     if !principal.route_family_access.allows(&family.to_string()) {
@@ -247,20 +247,20 @@ pub(super) fn parse_message_id(value: &str) -> Result<u64, Box<Response>> {
 
 pub(super) fn handle_queue_dead_letter_replay(
     uri: &hyper::Uri,
-    runtime: Arc<Runtime>,
+    runtime: &Arc<Runtime>,
     scope: AdminFamilyScope,
     realm: &str,
     area: &str,
     resource: &str,
     message_id: &str,
-) -> Result<Response, Infallible> {
+) -> Response {
     let family = match require_concrete_queue_family(scope, uri) {
         Ok(family) => family,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
     let message_id = match parse_message_id(message_id) {
         Ok(message_id) => message_id,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
 
     match runtime.queue_replay_dead_letter(
@@ -270,31 +270,28 @@ pub(super) fn handle_queue_dead_letter_replay(
         resource,
         message_id,
     ) {
-        Ok(true) => Ok(no_content_response()),
-        Ok(false) => Ok(super::not_found()),
-        Err(message) => Ok(super::error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &message,
-        )),
+        Ok(true) => no_content_response(),
+        Ok(false) => super::not_found(),
+        Err(message) => super::error_response(StatusCode::INTERNAL_SERVER_ERROR, &message),
     }
 }
 
 pub(super) fn handle_queue_dead_letter_purge(
     uri: &hyper::Uri,
-    runtime: Arc<Runtime>,
+    runtime: &Arc<Runtime>,
     scope: AdminFamilyScope,
     realm: &str,
     area: &str,
     resource: &str,
     message_id: &str,
-) -> Result<Response, Infallible> {
+) -> Response {
     let family = match require_concrete_queue_family(scope, uri) {
         Ok(family) => family,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
     let message_id = match parse_message_id(message_id) {
         Ok(message_id) => message_id,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
 
     match runtime.queue_purge_dead_letter(
@@ -304,12 +301,9 @@ pub(super) fn handle_queue_dead_letter_purge(
         resource,
         message_id,
     ) {
-        Ok(true) => Ok(no_content_response()),
-        Ok(false) => Ok(super::not_found()),
-        Err(message) => Ok(super::error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &message,
-        )),
+        Ok(true) => no_content_response(),
+        Ok(false) => super::not_found(),
+        Err(message) => super::error_response(StatusCode::INTERNAL_SERVER_ERROR, &message),
     }
 }
 

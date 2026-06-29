@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    handle_queue_dead_letter_purge, handle_queue_dead_letter_replay, parse_domain_path,
+    AdminPrincipal, Infallible, Response, Runtime,
+};
+use std::sync::Arc;
 
 pub(super) async fn handle_hierarchical_post<B>(
     req: &hyper::Request<B>,
@@ -16,15 +20,15 @@ pub(super) async fn handle_hierarchical_post<B>(
         ["realms", realm, "areas", area, "resources", resource, "dead-letters", message_id, "replay"]
             if scheme == "queue" =>
         {
-            handle_queue_dead_letter_replay(
+            Ok(handle_queue_dead_letter_replay(
                 req.uri(),
-                runtime,
+                &runtime,
                 scope,
                 realm,
                 area,
                 resource,
                 message_id,
-            )
+            ))
         }
         _ => Ok(super::not_found()),
     }
@@ -46,15 +50,15 @@ pub(super) async fn handle_hierarchical_delete<B>(
         ["realms", realm, "areas", area, "resources", resource, "dead-letters", message_id]
             if scheme == "queue" =>
         {
-            handle_queue_dead_letter_purge(
+            Ok(handle_queue_dead_letter_purge(
                 req.uri(),
-                runtime,
+                &runtime,
                 scope,
                 realm,
                 area,
                 resource,
                 message_id,
-            )
+            ))
         }
         _ => Ok(super::not_found()),
     }

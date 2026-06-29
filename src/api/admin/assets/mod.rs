@@ -14,7 +14,6 @@ mod server;
 
 use crate::api::http::Response;
 use once_cell::sync::Lazy;
-use std::convert::Infallible;
 use std::path::Path;
 
 const CACHE_CONTROL: &str = "public, max-age=3600";
@@ -25,8 +24,8 @@ const VARY_ACCEPT_ENCODING: &str = "Accept-Encoding";
 static PUBLIC_ASSET_SERVER: Lazy<server::AssetServer> =
     Lazy::new(|| server::AssetServer::new(Path::new(PUBLIC_ASSET_ROOT)));
 
-pub(crate) fn serve_request<B>(req: &hyper::Request<B>) -> Result<Response, Infallible> {
-    Ok(PUBLIC_ASSET_SERVER.serve(req.uri().path(), req.headers()))
+pub(crate) fn serve_request<B>(req: &hyper::Request<B>) -> Response {
+    PUBLIC_ASSET_SERVER.serve(req.uri().path(), req.headers())
 }
 
 #[cfg(test)]

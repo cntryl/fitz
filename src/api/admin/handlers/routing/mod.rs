@@ -3,7 +3,18 @@
 mod hierarchical_get;
 mod hierarchical_mutations;
 
-use super::*;
+use super::auth_and_mutations::{
+    handle_queue_dead_letter_purge, handle_queue_dead_letter_replay, handle_runtime_drain,
+    parse_domain_path, parse_event_limit, parse_optional_allowed_family_param,
+    parse_optional_u64_param, parse_required_string_query_param, require_admin,
+    require_concrete_route_family, require_data_plane_ready, require_same_origin,
+    resource_family_filter,
+};
+use super::collections_and_details::{
+    handle_areas_collection, handle_current_session, handle_features, handle_login, handle_logout,
+    handle_realms_collection, handle_resource_detail, handle_resources_collection,
+};
+use super::{error_response, json_response, not_found};
 use crate::api::admin::auth::AdminPrincipal;
 use crate::api::http::Response;
 use crate::boot::Runtime;
@@ -88,10 +99,10 @@ where
         (Method::GET, "/startupz") => probes::handle_startup(runtime).await,
         (Method::GET, "/health") => probes::handle_health(runtime).await,
 
-        (Method::POST, "/api/v1/session") => handle_login(req, runtime).await,
-        (Method::GET, "/api/v1/session") => handle_current_session(req, runtime).await,
-        (Method::DELETE, "/api/v1/session") => handle_logout(&req, runtime).await,
-        (Method::GET, "/api/v1/features") => handle_features(runtime).await,
+        (Method::POST, "/api/v1/session") => handle_login(req, &runtime).await,
+        (Method::GET, "/api/v1/session") => handle_current_session(req, &runtime).await,
+        (Method::DELETE, "/api/v1/session") => handle_logout(&req, &runtime).await,
+        (Method::GET, "/api/v1/features") => handle_features(&runtime).await,
 
         (Method::POST, "/api/v1/runtime/drain") => {
             if let Err(response) = require_admin(&req, &runtime) {
@@ -199,7 +210,7 @@ where
             handle_hierarchical_delete(&req, runtime, &principal).await
         }
 
-        (Method::GET, _) => super::assets::serve_request(&req),
+        (Method::GET, _) => Ok(super::assets::serve_request(&req)),
         _ => Ok(super::not_found()),
     }
 }

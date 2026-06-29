@@ -68,18 +68,16 @@ impl AssetServer {
         let Some(canonical_root) = self.canonical_root.as_ref() else {
             return AssetResolution::Missing;
         };
-        let absolute_path = match fs::canonicalize(canonical_root.join(relative_path)) {
-            Ok(path) => path,
-            Err(_) => return AssetResolution::Missing,
+        let Ok(absolute_path) = fs::canonicalize(canonical_root.join(relative_path)) else {
+            return AssetResolution::Missing;
         };
 
         if !absolute_path.starts_with(canonical_root) {
             return AssetResolution::Unsafe;
         }
 
-        let metadata = match fs::metadata(&absolute_path) {
-            Ok(metadata) => metadata,
-            Err(_) => return AssetResolution::Missing,
+        let Ok(metadata) = fs::metadata(&absolute_path) else {
+            return AssetResolution::Missing;
         };
         if !metadata.is_file() {
             return AssetResolution::Missing;

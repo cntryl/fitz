@@ -195,6 +195,14 @@ impl AdminAuth {
         matches!(self.mode, AdminAuthMode::Protected)
     }
 
+    /// Authenticates admin credentials against the configured password hash.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthFailure::Unavailable`] when admin auth is not configured or
+    /// the stored password hash cannot be parsed. Returns
+    /// [`AuthFailure::InvalidCredentials`] when the username or password does not
+    /// match.
     pub fn authenticate_credentials(
         &self,
         username: &str,
@@ -223,6 +231,12 @@ impl AdminAuth {
         })
     }
 
+    /// Issues a signed admin session cookie for the authenticated principal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthFailure::Unavailable`] when admin auth is not configured or
+    /// the session token cannot be encoded.
     pub fn issue_session_cookie(&self, principal: &AdminPrincipal) -> Result<String, AuthFailure> {
         let settings = self
             .settings
@@ -263,6 +277,14 @@ impl AdminAuth {
         clear_cookie(secure)
     }
 
+    /// Extracts and validates the admin principal from the incoming request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthFailure::Unavailable`] when admin auth is not configured,
+    /// [`AuthFailure::MissingSession`] when the session cookie is absent, and
+    /// [`AuthFailure::InvalidSession`] when the token is invalid or has the wrong
+    /// role.
     pub fn principal_from_request<B>(
         &self,
         req: &hyper::Request<B>,
@@ -313,6 +335,13 @@ impl AdminAuth {
             })
     }
 
+    /// Verifies the request origin against the configured admin origin policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthFailure::Unavailable`] when admin auth is not configured and
+    /// [`AuthFailure::Csrf`] when the request origin does not match the expected
+    /// admin origin.
     pub fn validate_same_origin<B>(&self, req: &hyper::Request<B>) -> Result<(), AuthFailure> {
         if matches!(self.mode, AdminAuthMode::Open) {
             return Ok(());

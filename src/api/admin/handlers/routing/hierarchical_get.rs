@@ -142,7 +142,7 @@ pub(super) async fn handle_hierarchical_get(
             )
             .await
         }
-        ["realms"] => handle_realms_collection(scheme, runtime, scope.filter()),
+        ["realms"] => handle_realms_collection(scheme, &runtime, scope.filter()),
         ["realms", realm, "watermarks"] if scheme == "stream" => {
             super::json_response(list::stream_realm_watermark_detail(runtime.as_ref(), realm))
         }
@@ -155,7 +155,7 @@ pub(super) async fn handle_hierarchical_get(
             realm: (*realm).to_string(),
         }),
         ["realms", realm, "areas"] => {
-            handle_areas_collection(scheme, runtime, realm, scope.filter())
+            handle_areas_collection(scheme, &runtime, realm, scope.filter())
         }
         ["realms", realm, "areas", area, "watermarks"] if scheme == "stream" => {
             super::json_response(list::stream_area_watermark_detail(
@@ -172,14 +172,14 @@ pub(super) async fn handle_hierarchical_get(
             area: (*area).to_string(),
         }),
         ["realms", realm, "areas", area, "resources"] => {
-            handle_resources_collection(scheme, runtime, realm, area, scope.filter())
+            handle_resources_collection(scheme, &runtime, realm, area, scope.filter())
         }
         ["realms", realm, "areas", area, "resources", resource] => {
             let family = match resource_family_filter(scope, uri, scheme) {
                 Ok(family) => family,
                 Err(response) => return Ok(*response),
             };
-            handle_resource_detail(scheme, runtime, realm, area, resource, family)
+            handle_resource_detail(scheme, &runtime, realm, area, resource, family)
         }
         ["realms", realm, "areas", area, "resources", resource, "events"] => {
             let family = match resource_family_filter(scope, uri, scheme) {
