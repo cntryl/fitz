@@ -1,6 +1,6 @@
 import { Link } from "@askrjs/askr/router";
 import { MoonIcon, ShieldIcon, SunIcon } from "@askrjs/lucide";
-import { Badge } from "@askrjs/themes/components";
+import { Badge, Block } from "@askrjs/themes/components";
 import { Container } from "@askrjs/themes/components";
 import { Header, Navbar, NavBrand, NavGroup } from "@askrjs/themes/components";
 import { ThemeToggle } from "@askrjs/themes/theme";
@@ -11,7 +11,7 @@ export default function Layout({ children }: { children?: unknown }) {
   const accountLabel = currentSession.data?.authenticated ? currentSession.data.username : "Guest";
 
   return (
-    <>
+    <Block minHeight="screen" direction="column">
       <a class="skip-link" href="#main-content">
         Skip to main content
       </a>
@@ -49,11 +49,11 @@ export default function Layout({ children }: { children?: unknown }) {
         </Container>
       </Header>
 
-      <Container size="sm" class="auth-shell-container">
-        <main id="main-content" class="auth-shell route-transition-surface">
+      <Container size="sm" grow align="center" justify="center" paddingY="2xl">
+        <Block as="main" id="main-content" class="route-transition-surface" width="full" center>
           {children}
-        </main>
+        </Block>
       </Container>
-    </>
+    </Block>
   );
 }

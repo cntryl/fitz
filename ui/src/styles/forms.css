@@ -31,18 +31,6 @@
   color: var(--ak-color-primary, currentColor);
 }
 
-.auth-shell-container {
-  padding-block: 0;
-}
-
-.auth-shell {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-block-size: calc(100dvh - var(--ak-layout-navbar-height, 60px));
-  padding-block: var(--ak-space-6, 1.5rem);
-}
-
 .auth-card {
   width: min(100%, 25rem);
   border-color: var(--fitz-border-subtle);
