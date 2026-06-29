@@ -145,6 +145,19 @@ const inventory = {
       areas: [
         {
           area: "ops",
+          resourceEntries: [
+            {
+              estimateComplete: true,
+              estimatedRecordCount: 300,
+              estimatedStorageBytes: 16_384,
+              readLatencyAvgMs: 2.4,
+              readLatencyP95Ms: 12.5,
+              resource: "primary",
+              transactionsActive: 1,
+              writeLatencyAvgMs: 4.1,
+              writeLatencyP95Ms: 18.3,
+            },
+          ],
           resources: ["primary"],
         },
       ],
@@ -613,78 +626,95 @@ const streamResource = {
 
 const domainOverviews = [
   {
-    assertText: "KV overview",
-    queryKey: "kv",
+    assertText: "KV tables",
+    inventoryKey: "inventory",
     module: () => import("@/pages/app/kv"),
     path: "/kv",
     routePath: "/kv",
-    emptyText: "No visible KV resources at the current level.",
-    errorText: "KV overview unavailable",
-    loadingText: "Loading KV overview",
+    emptyText: "No KV tables are currently visible.",
+    errorText: "KV inventory unavailable",
+    errorTitle: "Unable to load KV tables",
+    loadingText: "Loading KV tables",
+    resourceHref: "/admin/1/kv/default/ops/primary",
+    statLabels: ["Domain keys", "Domain txns", "Ops / sec", "Failures"],
   },
   {
-    assertText: "Lease overview",
-    queryKey: "lease",
+    assertText: "Lease inventory",
+    inventoryKey: "inventory",
     module: () => import("@/pages/app/lease"),
     path: "/lease",
     routePath: "/lease",
-    errorTitle: "Lease overview loading failure",
-    emptyText: "No lease realms are currently visible.",
-    errorText: "Lease overview loading failure",
-    loadingText: "Loading lease overview snapshot...",
+    errorTitle: "Unable to load lease inventory",
+    emptyText: "No lease resources are currently visible.",
+    errorText: "Lease inventory unavailable",
+    loadingText: "Loading lease inventory...",
+    resourceHref: "/admin/1/lease/default/ops/primary",
+    statLabels: ["Active leases", "Waiters", "Oldest age", "Ops / sec", "Pressure"],
   },
   {
-    assertText: "Notice overview",
-    queryKey: "notice",
+    assertText: "Notice inventory",
+    inventoryKey: "inventory",
     module: () => import("@/pages/app/notice"),
     path: "/notice",
     routePath: "/notice",
-    errorTitle: "Notice overview loading failure",
-    emptyText: "No notice realms are currently visible.",
-    errorText: "Notice overview loading failure",
-    loadingText: "Loading notice overview snapshot...",
+    errorTitle: "Unable to load notice inventory",
+    emptyText: "No notice resources are currently visible.",
+    errorText: "Notice inventory unavailable",
+    loadingText: "Loading notice inventory...",
+    resourceHref: "/admin/1/notice/default/ops/primary",
+    statLabels: ["Subscriptions", "Routes", "Publishes / sec", "Drops", "Wildcard rejects"],
   },
   {
-    assertText: "RPC overview",
-    queryKey: "rpc",
+    assertText: "RPC inventory",
+    inventoryKey: "inventory",
     module: () => import("@/pages/app/rpc"),
     path: "/rpc",
     routePath: "/rpc",
-    emptyText: "No RPC realms are currently visible.",
-    errorTitle: "RPC overview loading failure",
-    errorText: "RPC overview loading failure",
-    loadingText: "Loading RPC overview snapshot...",
+    emptyText: "No RPC resources are currently visible.",
+    errorTitle: "Unable to load RPC inventory",
+    errorText: "RPC inventory unavailable",
+    loadingText: "Loading RPC inventory...",
+    resourceHref: "/admin/1/rpc/default/ops/primary",
+    statLabels: ["Pending", "Workers", "Pending routes", "Timeouts", "Failures"],
   },
   {
-    assertText: "Schedule overview",
-    queryKey: "schedule",
+    assertText: "Schedule inventory",
+    inventoryKey: "inventory",
     module: () => import("@/pages/app/schedule"),
     path: "/schedule",
     routePath: "/schedule",
-    emptyText: "No schedule realms are currently visible.",
-    errorTitle: "Schedule overview loading failure",
-    errorText: "Schedule overview loading failure",
-    loadingText: "Loading schedule overview snapshot...",
+    emptyText: "No schedule resources are currently visible.",
+    errorTitle: "Unable to load schedule inventory",
+    errorText: "Schedule inventory unavailable",
+    loadingText: "Loading schedule inventory...",
+    resourceHref: "/admin/1/schedule/default/ops/primary",
+    statLabels: ["Active", "Subscriptions", "Pending claims", "Failures", "Exec / min"],
   },
   {
-    assertText: "Stream overview",
-    queryKey: "stream",
+    assertText: "Stream inventory",
+    inventoryKey: "inventory",
     module: () => import("@/pages/app/stream"),
     path: "/stream",
     routePath: "/stream",
-    emptyText: "No stream realms are currently visible.",
-    errorText: "Stream overview unavailable",
-    loadingText: "Loading stream overview",
+    emptyText: "No stream resources are currently visible.",
+    errorTitle: "Unable to load stream inventory",
+    errorText: "Stream inventory unavailable",
+    loadingText: "Loading stream inventory",
+    resourceHref: "/admin/1/stream/default/ops/primary",
+    statLabels: ["Events", "Streams", "Subscriptions", "Watermark lag", "Ops / sec"],
   },
   {
-    assertText: "Queue overview",
-    queryKey: "queue",
+    assertText: "Queue inventory",
+    inventoryKey: "queueInventory",
     module: () => import("@/pages/app/queue"),
     path: "/queue",
     routePath: "/queue",
-    emptyText: "No visible queues at the current level.",
-    errorText: "Queue overview unavailable",
-    loadingText: "Loading queue overview",
+    emptyText: "No queue resources are currently visible.",
+    errorTitle: "Unable to load queue inventory",
+    errorText: "Queue inventory unavailable",
+    loadingText: "Loading queue inventory",
+    resourceHref: "/admin/1/queue/default/ops/primary",
+    statLabels: ["Ready", "Delayed", "In flight", "Dead-lettered", "Oldest"],
   },
 ];
 
@@ -984,13 +1014,13 @@ const genericResourceRoutes = [
 
 const scheduleHierarchyRoutes = [
   {
-    assertText: "default",
+    assertText: "Schedule inventory",
     path: "/schedule/default",
     routePath: "/schedule/{realm}",
     module: () => import("@/pages/app/schedule"),
   },
   {
-    assertText: "ops",
+    assertText: "Schedule inventory",
     path: "/schedule/default/ops",
     routePath: "/schedule/{realm}/{area}",
     module: () => import("@/pages/app/schedule"),
@@ -1019,23 +1049,6 @@ const noticeHierarchyRoutes = [
     module: () => import("@/pages/app/notice-operation"),
   },
 ];
-
-type DomainOverviewFixture = {
-  realms: Array<{ realm: string }>;
-  stats: {
-    [key: string]: number | { [key: string]: number };
-  };
-};
-
-const domainOverviewDataByKey: Record<string, DomainOverviewFixture> = {
-  kv: kvOverview,
-  lease: leaseOverview,
-  notice: noticeOverview,
-  rpc: rpcOverview,
-  schedule: scheduleOverview,
-  stream: streamOverview,
-  queue: queueOverview,
-};
 
 function resetQueries() {
   mocks.queryStates.currentSession = queryState.fresh({ username: "admin" }, queryOptions());
@@ -1150,19 +1163,19 @@ describe("admin page smoke tests", () => {
         routePath: "/diagnostics",
       },
       {
-        assertText: "Queue overview",
+        assertText: "Queue inventory",
         module: () => import("@/pages/app/queue"),
         path: "/queue",
         routePath: "/queue",
       },
       {
-        assertText: "Realm totals",
+        assertText: "Queue inventory",
         module: () => import("@/pages/app/queue"),
         path: "/queue/default",
         routePath: "/queue/{realm}",
       },
       {
-        assertText: "Area totals",
+        assertText: "Queue inventory",
         module: () => import("@/pages/app/queue"),
         path: "/queue/default/ops",
         routePath: "/queue/{realm}/{area}",
@@ -1174,19 +1187,19 @@ describe("admin page smoke tests", () => {
         routePath: "/queue/{realm}/{area}/{resource}",
       },
       {
-        assertText: "KV overview",
+        assertText: "KV tables",
         module: () => import("@/pages/app/kv"),
         path: "/kv",
         routePath: "/kv",
       },
       {
-        assertText: "KV realm default",
+        assertText: "KV tables",
         module: () => import("@/pages/app/kv"),
         path: "/kv/default",
         routePath: "/kv/{realm}",
       },
       {
-        assertText: "KV area ops",
+        assertText: "KV tables",
         module: () => import("@/pages/app/kv"),
         path: "/kv/default/ops",
         routePath: "/kv/{realm}/{area}",
@@ -1198,19 +1211,19 @@ describe("admin page smoke tests", () => {
         routePath: "/admin/{family}/kv/{realm}/{area}/{resource}",
       },
       {
-        assertText: "Lease overview",
+        assertText: "Lease inventory",
         module: () => import("@/pages/app/lease"),
         path: "/lease",
         routePath: "/lease",
       },
       {
-        assertText: "default",
+        assertText: "Lease inventory",
         module: () => import("@/pages/app/lease"),
         path: "/lease/default",
         routePath: "/lease/{realm}",
       },
       {
-        assertText: "ops",
+        assertText: "Lease inventory",
         module: () => import("@/pages/app/lease"),
         path: "/lease/default/ops",
         routePath: "/lease/{realm}/{area}",
@@ -1222,37 +1235,37 @@ describe("admin page smoke tests", () => {
         routePath: "/lease/{realm}/{area}/{resource}",
       },
       {
-        assertText: "Notice overview",
+        assertText: "Notice inventory",
         module: () => import("@/pages/app/notice"),
         path: "/notice",
         routePath: "/notice",
       },
       {
-        assertText: "default",
+        assertText: "Notice inventory",
         module: () => import("@/pages/app/notice"),
         path: "/notice/default",
         routePath: "/notice/{realm}",
       },
       {
-        assertText: "ops",
+        assertText: "Notice inventory",
         module: () => import("@/pages/app/notice"),
         path: "/notice/default/ops",
         routePath: "/notice/{realm}/{area}",
       },
       {
-        assertText: "RPC overview",
+        assertText: "RPC inventory",
         module: () => import("@/pages/app/rpc"),
         path: "/rpc",
         routePath: "/rpc",
       },
       {
-        assertText: "Schedule overview",
+        assertText: "Schedule inventory",
         module: () => import("@/pages/app/schedule"),
         path: "/schedule",
         routePath: "/schedule",
       },
       {
-        assertText: "Stream overview",
+        assertText: "Stream inventory",
         module: () => import("@/pages/app/stream"),
         path: "/stream",
         routePath: "/stream",
@@ -1316,12 +1329,56 @@ describe("admin page smoke tests", () => {
 
       expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
       expect(text).toContain(page.assertText);
+      expect(text).toContain("Resource inventory");
+      expect(text).toContain("Realm");
+      expect(text).toContain("Area");
+      expect(text).toContain("Resource");
+      expect(text).toContain("default");
+      expect(text).toContain("ops");
+      expect(text).toContain("primary");
+      for (const statLabel of page.statLabels) {
+        expect(text).toContain(statLabel);
+      }
       expect(text).toContain("Refresh");
       expect(text).toMatch(/Live|Healthy|Quiet|Pressure|Attention/);
-      expect(text).toContain("Operator guide");
+      expect(root.querySelector('[data-slot="virtual-table"]')).toBeTruthy();
+      expect(root.querySelector(`a[href="${page.resourceHref}"]`)).toBeTruthy();
 
       cleanupApp(root);
       document.body.innerHTML = "";
+    }
+  });
+
+  it("renders the flat inventory for domain overview, realm, and area routes", async () => {
+    for (const page of domainOverviews) {
+      const { default: Component } = await page.module();
+      const routeVariants = [
+        { path: page.path, routePath: page.routePath },
+        { path: `${page.path}/default`, routePath: `${page.routePath}/{realm}` },
+        { path: `${page.path}/default/ops`, routePath: `${page.routePath}/{realm}/{area}` },
+      ];
+
+      for (const routeVariant of routeVariants) {
+        resetQueries();
+        const root = await mountRoute(routeVariant.path, routeVariant.routePath, Component);
+        const text = root.textContent ?? "";
+
+        expect(text).toContain(page.assertText);
+        expect(text).toContain("Resource inventory");
+        expect(text).toContain("Realm");
+        expect(text).toContain("Area");
+        expect(text).toContain("Resource");
+        expect(text).toContain("default");
+        expect(text).toContain("ops");
+        expect(text).toContain("primary");
+        for (const statLabel of page.statLabels) {
+          expect(text).toContain(statLabel);
+        }
+        expect(root.querySelector(`a[href="${page.resourceHref}"]`)).toBeTruthy();
+
+        cleanupApp(root);
+        document.body.innerHTML = "";
+      }
     }
   });
 
@@ -1361,41 +1418,41 @@ describe("admin page smoke tests", () => {
     const { default: NoticePage } = await import("@/pages/app/notice");
     const { default: NoticeOperationPage } = await import("@/pages/app/notice-operation");
 
-    mocks.queryStates.notice = queryState.loading(queryOptions());
+    mocks.queryStates.inventory = queryState.loading(queryOptions());
     const noticeOverviewRoot = await mountRoute("/notice", "/notice", NoticePage);
-    expect(noticeOverviewRoot.textContent).toContain("Loading notice overview snapshot...");
+    expect(noticeOverviewRoot.textContent).toContain("Loading notice inventory...");
     cleanupApp(noticeOverviewRoot);
     document.body.innerHTML = "";
 
-    mocks.queryStates.notice = queryState.error(
-      new Error("Notice unavailable"),
+    mocks.queryStates.inventory = queryState.error(
+      new Error("Notice inventory unavailable"),
       undefined,
       queryOptions(),
     );
     const noticeOverviewError = await mountRoute("/notice", "/notice", NoticePage);
-    expect(noticeOverviewError.textContent).toContain("Notice overview loading failure");
+    expect(noticeOverviewError.textContent).toContain("Unable to load notice inventory");
     cleanupApp(noticeOverviewError);
     document.body.innerHTML = "";
 
-    mocks.queryStates.notice = queryState.fresh(noticeOverview, queryOptions());
-    mocks.queryStates.noticeRealm = queryState.loading(queryOptions());
+    mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
     const noticeRealmRoot = await mountRoute("/notice/default", "/notice/{realm}", NoticePage);
-    expect(noticeRealmRoot.textContent).toContain("Loading notice realm...");
+    expect(noticeRealmRoot.textContent).toContain("Notice inventory");
+    expect(noticeRealmRoot.textContent).toContain("Resource inventory");
+    expect(noticeRealmRoot.textContent).toContain("primary");
     cleanupApp(noticeRealmRoot);
     document.body.innerHTML = "";
 
-    mocks.queryStates.noticeRealm = queryState.fresh(noticeRealmInventory, queryOptions());
-    mocks.queryStates.noticeArea = queryState.loading(queryOptions());
     const noticeAreaRoot = await mountRoute(
       "/notice/default/ops",
       "/notice/{realm}/{area}",
       NoticePage,
     );
-    expect(noticeAreaRoot.textContent).toContain("Loading notice area...");
+    expect(noticeAreaRoot.textContent).toContain("Notice inventory");
+    expect(noticeAreaRoot.textContent).toContain("Resource inventory");
+    expect(noticeAreaRoot.textContent).toContain("primary");
     cleanupApp(noticeAreaRoot);
     document.body.innerHTML = "";
 
-    mocks.queryStates.noticeArea = queryState.fresh(noticeAreaInventory, queryOptions());
     mocks.queryStates.noticeResourceRows = queryState.loading(queryOptions());
     const noticeResourceRoot = await mountRoute(
       "/notice/default/ops/primary",
@@ -1426,7 +1483,8 @@ describe("admin page smoke tests", () => {
 
   it("renders domain overview loading states consistently", async () => {
     for (const page of domainOverviews) {
-      mocks.queryStates[page.queryKey] = queryState.loading(queryOptions());
+      resetQueries();
+      mocks.queryStates[page.inventoryKey] = queryState.loading(queryOptions());
 
       const { default: Component } = await page.module();
       const root = await mountRoute(page.path, page.routePath, Component);
@@ -1441,7 +1499,8 @@ describe("admin page smoke tests", () => {
 
   it("renders domain overview error states with page-specific framing", async () => {
     for (const page of domainOverviews) {
-      mocks.queryStates[page.queryKey] = queryState.error(
+      resetQueries();
+      mocks.queryStates[page.inventoryKey] = queryState.error(
         new Error(page.errorText),
         undefined,
         queryOptions(),
@@ -1458,7 +1517,7 @@ describe("admin page smoke tests", () => {
     }
   });
 
-  it("renders lease risk and ownership-pressure priority metrics", async () => {
+  it("renders lease health in the inventory header", async () => {
     mocks.queryStates.lease = queryState.fresh(
       {
         ...leaseOverview,
@@ -1478,56 +1537,35 @@ describe("admin page smoke tests", () => {
     const { default: LeasePage } = await import("@/pages/app/lease");
     const root = await mountRoute("/lease", "/lease", LeasePage);
     const text = root.textContent ?? "";
-    const labels = [
-      "Active leases",
-      "Waiters",
-      "Oldest lease age",
-      "Ownership pressure",
-      "Acquire timeouts",
-      "Forced releases",
-      "Token rejects",
-    ];
 
-    let cursor = -1;
-    for (const label of labels) {
-      const index = text.indexOf(label, cursor + 1);
-      expect(index).toBeGreaterThan(cursor);
-      cursor = index;
-    }
-
+    expect(text).toContain("Lease inventory");
+    expect(text).toContain("Resource inventory");
+    expect(text).toContain("primary");
     expect(text).toContain("1h");
     expect(text).toContain("Attention");
     expect(text).toContain("acquire timeout");
     expect(text).toContain("Ephemeral ownership");
-    expect(text).toContain("Broker-local owners");
-    expect(text).toContain("explicit reacquire");
+    expect(text).not.toContain("Broker-local owners");
+    expect(root.querySelector('a[href="/admin/1/lease/default/ops/primary"]')).toBeTruthy();
   });
 
-  it("renders kv state and transactional-pressure priority metrics", async () => {
-    mocks.queryStates.kv = queryState.fresh(
-      {
-        ...kvOverview,
-        stats: {
-          ...kvOverview.stats,
-          keysTotal: 180,
-          transactionsActive: 4,
-          operationsPerSecond: 4.25,
-          commitsFailedTotal: 2,
-          invalidTransactionRejectsTotal: 3,
-        },
-      },
-      queryOptions(),
-    );
-
+  it("renders kv tables with inventory stats and explorer links", async () => {
     const { default: KvPage } = await import("@/pages/app/kv");
     const root = await mountRoute("/kv", "/kv", KvPage);
     const text = root.textContent ?? "";
     const labels = [
-      "Keys total",
-      "Active transactions",
+      "Realm",
+      "Area",
+      "Resource",
+      "Records",
+      "Storage",
+      "Txns",
+      "Read p95 ms",
+      "Write p95 ms",
+      "Domain keys",
+      "Domain txns",
       "Ops / sec",
-      "Commit failures",
-      "Invalid transaction rejects",
+      "Failures",
     ];
 
     let cursor = -1;
@@ -1537,32 +1575,32 @@ describe("admin page smoke tests", () => {
       cursor = index;
     }
 
-    expect(text).toContain("2");
-    expect(text).toContain("3");
-    expect(text).toContain("Active transactions");
-    expect(text).toContain("Attention");
-    expect(text).toContain("authoritative");
-    expect(text).toContain("broker-local");
-    expect(text).toContain("KV Resources");
-    expect(text).toContain("Realm");
-    expect(text).toContain("Resources");
+    expect(text).toContain("KV tables");
+    expect(text).toContain("default");
+    expect(text).toContain("ops");
+    expect(text).toContain("primary");
+    expect(text).toContain("300");
+    expect(text).toContain("16.0 KiB");
+    expect(text).toContain("12.5");
+    expect(text).toContain("18.3");
+    expect(text).not.toContain("2.4 / 12.5");
+    expect(text).not.toContain("4.1 / 18.3");
+    expect(root.querySelector('a[href="/admin/1/kv/default/ops/primary"]')).not.toBeNull();
   });
 
-  it("renders domain overviews with empty realm tables", async () => {
+  it("renders domain overviews with empty resource inventories", async () => {
     for (const page of domainOverviews) {
-      const baseOverview = domainOverviewDataByKey[page.queryKey];
-      if (!baseOverview) {
-        continue;
-      }
+      resetQueries();
 
-      mocks.queryStates[page.queryKey] = queryState.fresh(
-        {
-          ...baseOverview,
-          realms: [],
-        },
-        queryOptions(),
-      );
-      if (page.queryKey === "kv") {
+      if (page.inventoryKey === "queueInventory") {
+        mocks.queryStates.queueInventory = queryState.fresh(
+          {
+            ...queueInventory,
+            realms: [],
+          },
+          queryOptions(),
+        );
+      } else {
         mocks.queryStates.inventory = queryState.fresh(
           {
             ...inventory,
@@ -1586,29 +1624,27 @@ describe("admin page smoke tests", () => {
     const { default: LeasePage } = await import("@/pages/app/lease");
     const { default: LeaseResourcePage } = await import("@/pages/app/lease-resource");
 
-    mocks.queryStates.lease = queryState.fresh(
+    mocks.queryStates.inventory = queryState.fresh(
       {
-        ...leaseOverview,
+        ...inventory,
         realms: [],
       },
       queryOptions(),
     );
     let root = await mountRoute("/lease", "/lease", LeasePage);
-    expect(root.textContent).toContain("No lease realms are currently visible.");
+    expect(root.textContent).toContain("No lease resources are currently visible.");
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.leaseRealm = queryState.fresh({ ...leaseRealm, areas: [] }, queryOptions());
     root = await mountRoute("/lease/default", "/lease/{realm}", LeasePage);
-    expect(root.textContent).toContain("No visible lease areas at the current level.");
+    expect(root.textContent).toContain("No lease resources are currently visible.");
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.leaseArea = queryState.fresh({ ...leaseArea, resources: [] }, queryOptions());
     root = await mountRoute("/lease/default/ops", "/lease/{realm}/{area}", LeasePage);
-    expect(root.textContent).toContain("No visible lease resources at the current level.");
+    expect(root.textContent).toContain("No lease resources are currently visible.");
 
     cleanupApp(root);
     document.body.innerHTML = "";
@@ -1633,27 +1669,25 @@ describe("admin page smoke tests", () => {
     const { default: NoticePage } = await import("@/pages/app/notice");
     const { default: NoticeOperationPage } = await import("@/pages/app/notice-operation");
 
-    mocks.queryStates.notice = queryState.fresh({ ...noticeOverview, realms: [] }, queryOptions());
+    mocks.queryStates.inventory = queryState.fresh(
+      {
+        ...inventory,
+        realms: [],
+      },
+      queryOptions(),
+    );
     let root = await mountRoute("/notice", "/notice", NoticePage);
-    expect(root.textContent).toContain("No notice realms are currently visible.");
+    expect(root.textContent).toContain("No notice resources are currently visible.");
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.noticeRealm = queryState.fresh(
-      { ...noticeRealmInventory, areas: [] },
-      queryOptions(),
-    );
     root = await mountRoute("/notice/default", "/notice/{realm}", NoticePage);
-    expect(root.textContent).toContain("No visible notice areas at the current level.");
+    expect(root.textContent).toContain("No notice resources are currently visible.");
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.noticeArea = queryState.fresh(
-      { ...noticeAreaInventory, resources: [] },
-      queryOptions(),
-    );
     root = await mountRoute("/notice/default/ops", "/notice/{realm}/{area}", NoticePage);
-    expect(root.textContent).toContain("No visible notice resources at the current level.");
+    expect(root.textContent).toContain("No notice resources are currently visible.");
     cleanupApp(root);
     document.body.innerHTML = "";
 
@@ -1740,7 +1774,7 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("not crash-safe continuity");
   });
 
-  it("renders notice risk and fanout-priority metrics", async () => {
+  it("renders notice health in the inventory header", async () => {
     mocks.queryStates.notice = queryState.fresh(
       {
         ...noticeOverview,
@@ -1760,28 +1794,16 @@ describe("admin page smoke tests", () => {
     const { default: NoticePage } = await import("@/pages/app/notice");
     const root = await mountRoute("/notice", "/notice", NoticePage);
     const text = root.textContent ?? "";
-    const labels = [
-      "Active subscriptions",
-      "Publish rate",
-      "Delivery drops",
-      "Wildcard limit rejects",
-    ];
 
-    let cursor = -1;
-    for (const label of labels) {
-      const index = text.indexOf(label, cursor + 1);
-      expect(index).toBeGreaterThan(cursor);
-      cursor = index;
-    }
-
-    expect(text).toContain("2");
-    expect(text).toContain("1");
+    expect(text).toContain("Notice inventory");
+    expect(text).toContain("Resource inventory");
+    expect(text).toContain("primary");
     expect(text).toContain("Attention");
+    expect(text).toContain("2 delivery drop");
+    expect(text).toContain("1 wildcard reject");
     expect(text).toContain("live fanout");
-    expect(text).toContain("Communication flow");
-    expect(text).toContain("Existing API");
-    expect(text).toContain("Failure signals");
-    expect(text).toContain("No matching notice routes");
+    expect(text).not.toContain("Communication flow");
+    expect(root.querySelector('a[href="/admin/1/notice/default/ops/primary"]')).toBeTruthy();
   });
 
   it("renders notice operation metrics and delivery evidence", async () => {
@@ -1807,7 +1829,7 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("session-2");
   });
 
-  it("renders schedule pressure-first health and failure metrics", async () => {
+  it("renders schedule health in the inventory header", async () => {
     mocks.queryStates.schedule = queryState.fresh(
       {
         ...scheduleOverview,
@@ -1830,35 +1852,22 @@ describe("admin page smoke tests", () => {
     const { default: SchedulePage } = await import("@/pages/app/schedule");
     const root = await mountRoute("/schedule", "/schedule", SchedulePage);
     const text = root.textContent ?? "";
-    const labels = [
-      "Is anyone listening?",
-      "When is the next run?",
-      "Pending fire claims",
-      "Oldest pending claim age",
-      "Persistence failures",
-      "Handoff failures",
-    ];
 
-    let cursor = -1;
-    for (const label of labels) {
-      const index = text.indexOf(label, cursor + 1);
-      expect(index).toBeGreaterThan(cursor);
-      cursor = index;
-    }
-
+    expect(text).toContain("Schedule inventory");
+    expect(text).toContain("Resource inventory");
+    expect(text).toContain("primary");
     expect(text).toContain("Attention");
     expect(text).toContain("Schedule does not imply durable downstream delivery.");
-    expect(text).toContain("Persisted timing claims awaiting live handoff");
-    expect(text).toContain("9 live subscription(s)");
-    expect(text).toContain("Open a schedule resource");
-    expect(text).toContain("Schedule realms");
+    expect(text).toContain("Persistence and handoff failure counters need attention.");
+    expect(text).not.toContain("Schedule realms");
+    expect(root.querySelector('a[href="/admin/1/schedule/default/ops/primary"]')).toBeTruthy();
   });
 
-  it("renders schedule realm, area, and resource drill-down pages", async () => {
+  it("renders schedule compatibility routes and resource drill-down pages", async () => {
     const { default: SchedulePage } = await import("@/pages/app/schedule");
     const realmRoot = await mountRoute("/schedule/default", "/schedule/{realm}", SchedulePage);
-    expect(realmRoot.textContent).toContain("Schedule realm");
-    expect(realmRoot.textContent).toContain("Schedule areas");
+    expect(realmRoot.textContent).toContain("Schedule inventory");
+    expect(realmRoot.textContent).toContain("Resource inventory");
     expect(realmRoot.textContent).toContain("ops");
     cleanupApp(realmRoot);
     document.body.innerHTML = "";
@@ -1868,8 +1877,8 @@ describe("admin page smoke tests", () => {
       "/schedule/{realm}/{area}",
       SchedulePage,
     );
-    expect(areaRoot.textContent).toContain("Schedule area");
-    expect(areaRoot.textContent).toContain("Schedule resources");
+    expect(areaRoot.textContent).toContain("Schedule inventory");
+    expect(areaRoot.textContent).toContain("Resource inventory");
     expect(areaRoot.textContent).toContain("primary");
     cleanupApp(areaRoot);
     document.body.innerHTML = "";
@@ -1891,7 +1900,7 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("handoff");
   });
 
-  it("renders stream replay-priority metrics and readable lag buckets", async () => {
+  it("renders stream health in the inventory header", async () => {
     mocks.queryStates.stream = queryState.fresh(
       {
         ...streamOverview,
@@ -1914,44 +1923,32 @@ describe("admin page smoke tests", () => {
     const { default: StreamPage } = await import("@/pages/app/stream");
     const root = await mountRoute("/stream", "/stream", StreamPage);
     const text = root.textContent ?? "";
-    const labels = [
-      "Events total",
-      "Active streams",
-      "Active subscriptions",
-      "Watermark lag",
-      "Ops / sec",
-    ];
 
-    let cursor = -1;
-    for (const label of labels) {
-      const index = text.indexOf(label, cursor + 1);
-      expect(index).toBeGreaterThan(cursor);
-      cursor = index;
-    }
-
-    expect(text).toContain("behind 100+");
+    expect(text).toContain("Stream inventory");
+    expect(text).toContain("Resource inventory");
+    expect(text).toContain("primary");
+    expect(text).toContain("100+ behind");
     expect(text).toContain("Attention");
-    expect(text).toContain("Durable stream history");
     expect(text).toContain("live subscriptions");
-    expect(text).toContain("Stream metrics");
-    expect(text).toContain("Stream realms");
+    expect(text).not.toContain("Stream metrics");
+    expect(root.querySelector('a[href="/admin/1/stream/default/ops/primary"]')).toBeTruthy();
   });
 
-  it("renders Stream drill-down rollups and committed resource records", async () => {
+  it("renders Stream compatibility routes and committed resource records", async () => {
     const { default: StreamPage } = await import("@/pages/app/stream");
     const { default: StreamResourcePage } = await import("@/pages/app/stream-resource");
 
     let root = await mountRoute("/stream/default", "/stream/{realm}", StreamPage);
     let text = root.textContent ?? "";
-    expect(text).toContain("Stream realm");
-    expect(text).toContain("Stream areas");
-    expect(text).toContain("Family watermarks");
+    expect(text).toContain("Stream inventory");
+    expect(text).toContain("Resource inventory");
+    expect(text).toContain("primary");
 
     root = await mountRoute("/stream/default/ops", "/stream/{realm}/{area}", StreamPage);
     text = root.textContent ?? "";
-    expect(text).toContain("Stream area");
-    expect(text).toContain("Stream resources");
-    expect(text).toContain("events");
+    expect(text).toContain("Stream inventory");
+    expect(text).toContain("Resource inventory");
+    expect(text).toContain("primary");
 
     root = await mountRoute(
       "/stream/default/ops/events",
@@ -1965,7 +1962,7 @@ describe("admin page smoke tests", () => {
     expect(text).toContain('{"ok":true}');
   });
 
-  it("renders rpc pressure-first health and risk signals", async () => {
+  it("renders rpc health in the inventory header", async () => {
     mocks.queryStates.rpc = queryState.fresh(
       {
         ...rpcOverview,
@@ -1984,48 +1981,33 @@ describe("admin page smoke tests", () => {
     const { default: RpcPage } = await import("@/pages/app/rpc");
     const root = await mountRoute("/rpc", "/rpc", RpcPage);
     const text = root.textContent ?? "";
-    const labels = [
-      "Requests pending",
-      "Workers registered",
-      "Pending routes active",
-      "Ops / sec",
-      "Request timeouts",
-      "Failure responses",
-    ];
 
-    let cursor = -1;
-    for (const label of labels) {
-      const index = text.indexOf(label, cursor + 1);
-      expect(index).toBeGreaterThan(cursor);
-      cursor = index;
-    }
-
+    expect(text).toContain("RPC inventory");
+    expect(text).toContain("Resource inventory");
+    expect(text).toContain("primary");
     expect(text).toContain("Attention");
     expect(text).toContain("Response reliability");
     expect(text).toContain("Pending work is in-memory");
-    expect(text).toContain("pending requests");
-    expect(text).toContain("Communication flow");
-    expect(text).toContain("Existing API");
-    expect(text).toContain("Failure signals");
-    expect(text).toContain("1 matching RPC route");
-    expect(text).toContain("Open operations");
+    expect(text).toContain("pending request(s)");
+    expect(text).not.toContain("Communication flow");
+    expect(root.querySelector('a[href="/admin/1/rpc/default/ops/primary"]')).toBeTruthy();
   });
 
-  it("renders RPC drill-down resource and operation pages", async () => {
+  it("renders RPC compatibility routes and operation pages", async () => {
     const { default: RpcPage } = await import("@/pages/app/rpc");
     const { default: RpcResourcePage } = await import("@/pages/app/rpc-resource");
     const { default: RpcOperationPage } = await import("@/pages/app/rpc-operation");
 
     let root = await mountRoute("/rpc/default", "/rpc/{realm}", RpcPage);
     let text = root.textContent ?? "";
-    expect(text).toContain("RPC realm");
-    expect(text).toContain("RPC areas");
+    expect(text).toContain("RPC inventory");
+    expect(text).toContain("Resource inventory");
     expect(text).toContain("ops");
 
     root = await mountRoute("/rpc/default/ops", "/rpc/{realm}/{area}", RpcPage);
     text = root.textContent ?? "";
-    expect(text).toContain("RPC area");
-    expect(text).toContain("RPC resources");
+    expect(text).toContain("RPC inventory");
+    expect(text).toContain("Resource inventory");
     expect(text).toContain("primary");
 
     root = await mountRoute(
@@ -2345,36 +2327,36 @@ describe("admin page smoke tests", () => {
 
     const { default: QueuePage } = await import("@/pages/app/queue");
 
-    mocks.queryStates.queue = queryState.loading(queryOptions());
+    mocks.queryStates.queueInventory = queryState.loading(queryOptions());
     let root = await mountRoute("/queue", "/queue", QueuePage);
-    expect(root.textContent).toContain("Loading queue overview");
+    expect(root.textContent).toContain("Loading queue inventory");
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.queue = queryState.error(
-      new Error("Queue unavailable"),
+    mocks.queryStates.queueInventory = queryState.error(
+      new Error("Queue inventory unavailable"),
       undefined,
       queryOptions(),
     );
     root = await mountRoute("/queue", "/queue", QueuePage);
-    expect(root.textContent).toContain("Queue unavailable");
+    expect(root.textContent).toContain("Queue inventory unavailable");
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
-    mocks.queryStates.queue = queryState.fresh(
+    mocks.queryStates.queueInventory = queryState.fresh(
       {
-        ...queueOverview,
+        ...queueInventory,
         realms: [],
       },
       queryOptions(),
     );
     root = await mountRoute("/queue", "/queue", QueuePage);
-    expect(root.textContent).toContain("No visible queues at the current level");
+    expect(root.textContent).toContain("No queue resources are currently visible");
   });
 
-  it("keeps queue overview content visible while refresh is in flight", async () => {
+  it("keeps queue inventory content visible while refresh is in flight", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");
 
     mocks.queryStates.queue = queryState.refreshing(queueOverview, queryOptions());
@@ -2382,30 +2364,29 @@ describe("admin page smoke tests", () => {
     const root = await mountRoute("/queue", "/queue", QueuePage);
 
     expect(root.textContent).toContain("Refreshing");
-    expect(root.textContent).toContain("Scope summary");
-    expect(root.textContent).toContain("Queue realms");
-    expect(root.textContent).toContain("Queue totals");
-    expect(root.textContent).toContain("Durable work posture");
-    expect(root.textContent).toContain("Subscriptions");
-    expect(root.textContent).toContain("Falling behind");
+    expect(root.textContent).toContain("Queue inventory");
+    expect(root.textContent).toContain("Resource inventory");
+    expect(root.textContent).toContain("primary");
+    expect(root.textContent).toContain("message(s) are visible");
+    expect(root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')).toBeTruthy();
   });
 
-  it("renders queue hierarchy links for realm, area, and queue rows", async () => {
+  it("renders queue resource links for overview, realm, and area routes", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");
 
     let root = await mountRoute("/admin/1/queue", "/admin/{family}/queue", QueuePage);
-    expect(root.querySelector('a[href="/admin/1/queue/default"]')?.textContent).toContain(
-      "default",
-    );
+    expect(root.textContent).toContain("Queue inventory");
+    expect(root.querySelector('a[href="/admin/1/queue/default"]')).toBeNull();
+    expect(
+      root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
+    ).toContain("primary");
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
     root = await mountRoute("/admin/1/queue/default", "/admin/{family}/queue/{realm}", QueuePage);
-    expect(root.textContent).toContain("Realm totals");
-    expect(root.querySelector('a[href="/admin/1/queue/default/ops"]')?.textContent).toContain(
-      "ops",
-    );
+    expect(root.textContent).toContain("Queue inventory");
+    expect(root.querySelector('a[href="/admin/1/queue/default/ops"]')).toBeNull();
     expect(
       root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
     ).toContain("primary");
@@ -2418,7 +2399,7 @@ describe("admin page smoke tests", () => {
       "/admin/{family}/queue/{realm}/{area}",
       QueuePage,
     );
-    expect(root.textContent).toContain("Area totals");
+    expect(root.textContent).toContain("Queue inventory");
     expect(
       root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
     ).toContain("primary");

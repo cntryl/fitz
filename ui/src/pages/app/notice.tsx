@@ -10,31 +10,24 @@ import {
   Stack,
 } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
-import DomainMetricTable from "@/components/shared/domain-metric-table";
-import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
-import DomainRealmTable from "@/components/shared/domain-realm-table";
-import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import DomainInventoryPage from "@/components/shared/domain-inventory-page";
+import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import {
   QueryEmptyState,
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
 } from "@/components/shared/query-state";
-import CommunicationFlowWorkspace from "@/features/communication/communication-flow-workspace";
 import {
-  createNoticeAreaQuery,
   createNoticeOverviewQuery,
-  createNoticeRealmQuery,
   createNoticeResourceRowsQuery,
 } from "@/features/notice/notice-query";
-import type {
-  NoticeAreaResourceRows,
-  NoticeRealmInventory,
-  NoticeResourceOperationRows,
-} from "@/features/notice/notice-models";
+import type { NoticeResourceOperationRows } from "@/features/notice/notice-models";
+import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatNumber } from "@/shared/format";
-import { domainResourceHref, domainScopeHref } from "@/shared/navigation/domains";
+import { domainScopeHref } from "@/shared/navigation/domains";
 import NoticeOperationPage from "./notice-operation";
 
 function decodeParam(value: string | undefined) {
@@ -71,74 +64,128 @@ function summarizeNoticeHealth(stats: {
   const riskCount = stats.deliveryDropsTotal + stats.wildcardLimitRejectsTotal;
   const hasRisk = riskCount > 0;
   const pressureSignals = [
-    stats.deliveryDropsTotal > 0 ? `${stats.deliveryDropsTotal} delivery drop(s)` : null,
+    stats.deliveryDropsTotal > 0
+      ? `${formatNumber(stats.deliveryDropsTotal)} delivery drop(s)`
+      : null,
     stats.wildcardLimitRejectsTotal > 0
-      ? `${stats.wildcardLimitRejectsTotal} wildcard reject(s)`
+      ? `${formatNumber(stats.wildcardLimitRejectsTotal)} wildcard reject(s)`
       : null,
   ].filter((signal): signal is string => signal !== null);
 
   if (hasRisk) {
     return {
-      detail: `${stats.subscriptionsActive} active subscriptions and ${stats.publishesPerSecond.toFixed(2)} publishes/sec. ${pressureSignals.join(", ")} are above healthy fanout baseline.`,
+      detail: `${formatNumber(stats.subscriptionsActive)} active subscriptions and ${stats.publishesPerSecond.toFixed(2)} publishes/sec. ${pressureSignals.join(", ")} are above healthy fanout baseline.`,
       label: "Attention" as const,
       tone: "danger" as const,
     };
   }
 
   return {
-    detail: `${stats.subscriptionsActive} active subscriptions across ${stats.routesActive} route(s). ${stats.publishesPerSecond.toFixed(2)} publishes/sec is moving through live fanout.`,
+    detail: `${formatNumber(stats.subscriptionsActive)} active subscriptions across ${formatNumber(
+      stats.routesActive,
+    )} route(s). ${stats.publishesPerSecond.toFixed(2)} publishes/sec is moving through live fanout.`,
     label: "Live" as const,
     tone: "success" as const,
   };
 }
 
-function metricWithRisk(value: number, label: string) {
-  return {
-    label,
-    value,
-    ...(value > 0 ? { caption: "attention" } : undefined),
-  };
-}
-
-function NoticeAreaTableRows(props: { areas: NoticeRealmInventory["areas"] }) {
+function resourceCount(data: ReturnType<typeof createResourceInventoryQuery>["data"]) {
   return (
-    <For each={props.areas} by={(area) => `${area.realm}/${area.area}`}>
-      {(area) => (
-        <TableRow>
-          <TableCell>
-            <Link href={domainScopeHref("notice", { area: area.area, realm: area.realm })}>
-              {area.area}
-            </Link>
-          </TableCell>
-          <TableCell>{formatNumber(area.resources.length)}</TableCell>
-        </TableRow>
-      )}
-    </For>
+    data?.realms.reduce(
+      (sum, realm) =>
+        sum + realm.areas.reduce((areaSum, area) => areaSum + area.resources.length, 0),
+      0,
+    ) ?? 0
   );
 }
 
-function NoticeResourceTableRows(props: { data: NoticeAreaResourceRows }) {
+function NoticeLandingPage() {
+  const overview = createNoticeOverviewQuery();
+  const inventory = createResourceInventoryQuery("notice");
+  const health = summarizeNoticeHealth(
+    overview.data?.stats ?? {
+      deliveryDropsTotal: 0,
+      subscriptionsActive: 0,
+      wildcardLimitRejectsTotal: 0,
+      publishesPerSecond: 0,
+      routesActive: 0,
+    },
+  );
+  const noticeCount = resourceCount(inventory.data);
+  const stats = overview.data?.stats;
+  const noticeMetricColumns: readonly DomainResourceMetricColumn[] = [
+    {
+      id: "subscriptions",
+      header: "Subscriptions",
+      width: "12%",
+      cell: () => (stats ? formatNumber(stats.subscriptionsActive) : "--"),
+    },
+    {
+      id: "routes",
+      header: "Routes",
+      width: "10%",
+      cell: () => (stats ? formatNumber(stats.routesActive) : "--"),
+    },
+    {
+      id: "publishes",
+      header: "Publishes / sec",
+      width: "12%",
+      cell: () => (stats ? stats.publishesPerSecond.toFixed(2) : "--"),
+    },
+    {
+      id: "drops",
+      header: "Drops",
+      width: "10%",
+      cell: () => (stats ? formatNumber(stats.deliveryDropsTotal) : "--"),
+    },
+    {
+      id: "wildcard-rejects",
+      header: "Wildcard rejects",
+      width: "13%",
+      cell: () => (stats ? formatNumber(stats.wildcardLimitRejectsTotal) : "--"),
+    },
+  ];
+
   return (
-    <For
-      each={props.data.resources}
-      by={(resource) => `${props.data.realm}:${props.data.area}:${resource}`}
-    >
-      {(resource) => (
-        <TableRow>
-          <TableCell>
-            <Link
-              href={domainResourceHref("notice", {
-                area: props.data.area,
-                realm: props.data.realm,
-                resource,
-              })}
-            >
-              {resource}
-            </Link>
-          </TableCell>
-        </TableRow>
-      )}
-    </For>
+    <DomainInventoryPage
+      domain="notice"
+      eyebrow="Live awareness"
+      title="Notice inventory"
+      description="Live fanout resources for the active route family."
+      refreshLabel="Refresh notice"
+      inventory={inventory}
+      refreshing={overview.refreshing || inventory.refreshing}
+      refreshers={[() => overview.refresh(), () => inventory.refresh()]}
+      loadingDescription="Loading notice inventory..."
+      errorTitle="Unable to load notice inventory"
+      refreshingDescription="Refreshing notice inventory..."
+      emptyDescription="No notice resources are currently visible."
+      tableTitle="Resource inventory"
+      metricColumns={noticeMetricColumns}
+      status={{
+        detail: overview.data
+          ? `${formatNumber(noticeCount)} notice resource${noticeCount === 1 ? "" : "s"} visible. ${
+              health.detail
+            } Notice is live fanout only; subscriptions expire on disconnect or restart.`
+          : overview.error
+            ? "Notice health is unavailable. Resource inventory can still be inspected when loaded."
+            : "Loading notice health.",
+        label: overview.refreshing
+          ? "Refreshing"
+          : overview.error
+            ? "Health unavailable"
+            : overview.stale
+              ? "Stale"
+              : health.label,
+        tone: overview.refreshing
+          ? "info"
+          : overview.error
+            ? "warning"
+            : overview.stale
+              ? "warning"
+              : health.tone,
+      }}
+    />
   );
 }
 
@@ -165,290 +212,6 @@ function NoticeOperationTableRows(props: { data: NoticeResourceOperationRows }) 
         </TableRow>
       )}
     </For>
-  );
-}
-
-function NoticeOverviewPage() {
-  const overview = createNoticeOverviewQuery();
-  const inventory = createNoticeOverviewQuery();
-  const data = overview.data;
-  const health = summarizeNoticeHealth(
-    data?.stats ?? {
-      deliveryDropsTotal: 0,
-      subscriptionsActive: 0,
-      wildcardLimitRejectsTotal: 0,
-      publishesPerSecond: 0,
-      routesActive: 0,
-    },
-  );
-  const snapshot = createDomainSidebar({
-    data,
-    title: "Notice fanout snapshot",
-    description: "Live subscription scope and fanout pressure diagnostics.",
-    stats: (current) => [
-      { label: "Visible notice realms", value: current.realms.length },
-      { label: "Active routes", value: current.stats.routesActive },
-      {
-        label: "Publish rate",
-        value: current.stats.publishesPerSecond.toFixed(2),
-        note: "ops/sec",
-      },
-      { label: "Active subscriptions", value: current.stats.subscriptionsActive },
-      {
-        label: "Risk indicators",
-        value: current.stats.deliveryDropsTotal + current.stats.wildcardLimitRejectsTotal,
-      },
-      {
-        label: "Max route subscribers",
-        value: current.stats.maxRouteSubscribers,
-      },
-    ],
-  });
-
-  return (
-    <DomainPageFrame>
-      <Stack gap="3">
-        <DomainHeader
-          eyebrow="Live awareness"
-          title="Notice overview"
-          description="Live fanout health, active subscription scope, and realm coverage."
-          primaryAction={{
-            label: "Refresh notice",
-            onPress: () => overview.refresh(),
-          }}
-          status={{
-            detail: `${health.detail} Notice is live fanout only; subscriptions expire on disconnect or restart.`,
-            label: overview.refreshing ? "Refreshing" : overview.stale ? "Stale" : health.label,
-            tone: overview.refreshing ? "info" : overview.stale ? "warning" : health.tone,
-          }}
-        />
-
-        {snapshot}
-
-        {!data && overview.loading ? (
-          <QueryLoadingState description="Loading notice overview snapshot..." />
-        ) : null}
-
-        {!data && overview.error ? (
-          <QueryErrorState
-            title="Notice overview loading failure"
-            error={overview.error}
-            onRetry={() => overview.refresh()}
-          />
-        ) : null}
-
-        {data ? (
-          <Stack gap="3">
-            {overview.refreshing ? (
-              <QueryRefreshingState description="Refreshing notice overview..." />
-            ) : null}
-
-            <CommunicationFlowWorkspace
-              domain="notice"
-              error={inventory.error}
-              inventory={null}
-              loading={inventory.loading}
-              stats={data.stats}
-            />
-
-            <DomainMetricTable
-              title="Notice metrics"
-              description="Live fanout health, publish, and subscription risk signals."
-              metrics={[
-                { label: "Active subscriptions", value: data.stats.subscriptionsActive },
-                { label: "Publish rate", value: data.stats.publishesPerSecond.toFixed(2) },
-                metricWithRisk(data.stats.deliveryDropsTotal, "Delivery drops"),
-                metricWithRisk(data.stats.wildcardLimitRejectsTotal, "Wildcard limit rejects"),
-              ]}
-            />
-
-            <DomainRealmTable
-              domain="notice"
-              title="Notice realms"
-              realms={data.realms}
-              emptyMessage="No notice realms are currently visible."
-            />
-
-            <DomainWorkflowPanel
-              archetype="Notice Communication Flow"
-              workflows={[
-                "View flow",
-                "Inspect participants",
-                "Inspect drops",
-                "Review performance",
-              ]}
-              questions={[
-                "Who talks to whom?",
-                "What is failing?",
-                "Where is live fanout dropping?",
-              ]}
-              diagnostics={["Fanout pressure", "Delivery drops", "Subscription internals"]}
-            />
-          </Stack>
-        ) : null}
-      </Stack>
-    </DomainPageFrame>
-  );
-}
-
-function NoticeRealmPage(props: { realm: string }) {
-  const realmQuery = createNoticeRealmQuery(props.realm);
-  const data = realmQuery.data;
-
-  const snapshot = createDomainSidebar({
-    data,
-    title: `Notice realm ${props.realm}`,
-    description: props.realm,
-    stats: (current) => [
-      { label: "Areas", value: current.areas.length },
-      {
-        label: "Resources",
-        value: current.areas.reduce((sum, area) => sum + area.resources.length, 0),
-      },
-    ],
-    footer: <Link href={domainScopeHref("notice")}>Back to overview</Link>,
-  });
-
-  return (
-    <DomainPageFrame>
-      <Stack gap="3">
-        <DomainHeader
-          eyebrow="Notice realm"
-          title={props.realm}
-          description={`Area inventory for ${props.realm}.`}
-          primaryAction={{ label: "Refresh realm", onPress: () => realmQuery.refresh() }}
-          status={{
-            detail: data ? `${data.areas.length} visible area(s).` : "Loading notice realm.",
-            label: realmQuery.refreshing ? "Refreshing" : realmQuery.stale ? "Stale" : "Live",
-            tone: realmQuery.refreshing ? "info" : realmQuery.stale ? "warning" : "success",
-          }}
-        />
-
-        {snapshot}
-
-        {!data && realmQuery.loading ? (
-          <QueryLoadingState description="Loading notice realm..." />
-        ) : null}
-        {!data && realmQuery.error ? (
-          <QueryErrorState
-            title="Unable to load notice realm"
-            error={realmQuery.error}
-            onRetry={() => realmQuery.refresh()}
-          />
-        ) : null}
-
-        {data ? (
-          <Stack gap="3">
-            {realmQuery.refreshing ? (
-              <QueryRefreshingState description="Refreshing notice realm..." />
-            ) : null}
-
-            <Card padding="sm" variant="default">
-              <CardHeader>
-                <CardTitle>Notice areas</CardTitle>
-                <CardDescription>{data.areas.length} area(s)</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {data.areas.length === 0 ? (
-                  <QueryEmptyState description="No visible notice areas at the current level." />
-                ) : (
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableHeaderCell>Area</TableHeaderCell>
-                        <TableHeaderCell>Resources</TableHeaderCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      <NoticeAreaTableRows areas={data.areas} />
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
-          </Stack>
-        ) : null}
-      </Stack>
-    </DomainPageFrame>
-  );
-}
-
-function NoticeAreaPage(props: { realm: string; area: string }) {
-  const areaQuery = createNoticeAreaQuery(props.realm, props.area);
-  const data = areaQuery.data;
-
-  const snapshot = createDomainSidebar({
-    data,
-    title: `Notice area ${props.area}`,
-    description: `${props.realm} / ${props.area}`,
-    stats: (current) => [{ label: "Resources", value: current.resources.length }],
-    footer: (
-      <span>
-        <Link href={domainScopeHref("notice", { realm: props.realm })}>Back to realm</Link>
-        <Link href={domainScopeHref("notice")}>Back to overview</Link>
-      </span>
-    ),
-  });
-
-  return (
-    <DomainPageFrame>
-      <Stack gap="3">
-        <DomainHeader
-          eyebrow="Notice area"
-          title={props.area}
-          description={`Resources in ${props.realm}/${props.area}.`}
-          primaryAction={{ label: "Refresh area", onPress: () => areaQuery.refresh() }}
-          status={{
-            detail: data ? `${data.resources.length} resource(s).` : "Loading notice area.",
-            label: areaQuery.refreshing ? "Refreshing" : areaQuery.stale ? "Stale" : "Live",
-            tone: areaQuery.refreshing ? "info" : areaQuery.stale ? "warning" : "success",
-          }}
-        />
-
-        {snapshot}
-
-        {!data && areaQuery.loading ? (
-          <QueryLoadingState description="Loading notice area..." />
-        ) : null}
-        {!data && areaQuery.error ? (
-          <QueryErrorState
-            title="Unable to load notice area"
-            error={areaQuery.error}
-            onRetry={() => areaQuery.refresh()}
-          />
-        ) : null}
-
-        {data ? (
-          <Stack gap="3">
-            {areaQuery.refreshing ? (
-              <QueryRefreshingState description="Refreshing notice area..." />
-            ) : null}
-            <Card padding="sm" variant="default">
-              <CardHeader>
-                <CardTitle>Notice resources</CardTitle>
-                <CardDescription>{data.resources.length} resource(s)</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {data.resources.length === 0 ? (
-                  <QueryEmptyState description="No visible notice resources at the current level." />
-                ) : (
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableHeaderCell>Resource</TableHeaderCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      <NoticeResourceTableRows data={data} />
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
-          </Stack>
-        ) : null}
-      </Stack>
-    </DomainPageFrame>
   );
 }
 
@@ -483,7 +246,7 @@ function NoticeResourcePage(props: { realm: string; area: string; resource: stri
     ],
     footer: (
       <Link href={domainScopeHref("notice", { area: props.area, realm: props.realm })}>
-        Back to area
+        Back to inventory
       </Link>
     ),
   });
@@ -573,13 +336,5 @@ export default function NoticePage() {
     return <NoticeResourcePage area={area} realm={realm} resource={resource} />;
   }
 
-  if (realm && area) {
-    return <NoticeAreaPage area={area} realm={realm} />;
-  }
-
-  if (realm) {
-    return <NoticeRealmPage realm={realm} />;
-  }
-
-  return <NoticeOverviewPage />;
+  return <NoticeLandingPage />;
 }

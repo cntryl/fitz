@@ -13,7 +13,7 @@ async function openDashboard(page: Page, theme: "light" | "dark" = "light", setu
     await mockHomeRouteApis(page);
   }
 
-  await page.goto("/admin");
+  await page.goto("/admin/1");
 
   await expect(page.locator("main#main-content")).toHaveCount(1);
   const primaryNav = page.getByRole("navigation", { name: "Primary navigation" });
@@ -23,7 +23,6 @@ async function openDashboard(page: Page, theme: "light" | "dark" = "light", setu
   await expect(contextNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
   await expect(contextNav.getByRole("button", { name: "Route Family selector" })).toBeVisible();
   await expect(contextNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
-  await expect(contextNav.getByRole("button", { name: "User menu" })).toBeVisible();
 
   if ((viewport?.width ?? 0) < 768) {
     await expect(primaryNav.getByRole("button", { name: /Menu|Navigation/ })).toBeVisible();
@@ -31,9 +30,9 @@ async function openDashboard(page: Page, theme: "light" | "dark" = "light", setu
   }
 
   await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
-  await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
   await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
-  await expect(primaryNav.getByRole("link", { name: "Settings" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Metrics" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
 }
 
 type DomainOverviewFixture = {
@@ -46,6 +45,8 @@ type DomainOverviewFixture = {
 const adminFeatures = {
   admin_auth_required: false,
   admin_auth_mode: "open" as const,
+  route_families: ["1", "7", "42"],
+  route_families_wildcard: false,
 };
 
 async function mockAdminFeatures(page: Page) {
@@ -140,39 +141,39 @@ const topologyApiPayload: MessagingTopology = {
 
 const domainOverviewPages = [
   {
-    path: "/kv",
+    path: "/admin/1/kv",
     domain: "kv",
-    heading: "KV overview",
+    heading: "KV tables",
   },
   {
-    path: "/lease",
+    path: "/admin/1/lease",
     domain: "lease",
-    heading: "Lease overview",
+    heading: "Lease inventory",
   },
   {
-    path: "/notice",
+    path: "/admin/1/notice",
     domain: "notice",
-    heading: "Notice overview",
+    heading: "Notice inventory",
   },
   {
-    path: "/rpc",
+    path: "/admin/1/rpc",
     domain: "rpc",
-    heading: "RPC overview",
+    heading: "RPC inventory",
   },
   {
-    path: "/schedule",
+    path: "/admin/1/schedule",
     domain: "schedule",
-    heading: "Schedule overview",
+    heading: "Schedule inventory",
   },
   {
-    path: "/stream",
+    path: "/admin/1/stream",
     domain: "stream",
-    heading: "Stream overview",
+    heading: "Stream inventory",
   },
   {
-    path: "/queue",
+    path: "/admin/1/queue",
     domain: "queue",
-    heading: "Queue overview",
+    heading: "Queue inventory",
   },
 ];
 
@@ -689,7 +690,7 @@ function exactHeadingMatcher(title: string | RegExp): string | RegExp {
   }
 
   const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^${escaped}$`);
+  return new RegExp(`^${escaped}(?:\\s.+)?$`);
 }
 
 const viewportPresets: ViewportPreset[] = [
@@ -917,7 +918,11 @@ function parseResourceScope(segments: string[]): ResourceScope | null {
 }
 
 function parseRouteResourceScope(path: string): ResourceScope {
-  const parts = path.split("?")[0].split("/").filter(Boolean);
+  let parts = path.split("?")[0].split("/").filter(Boolean);
+  if (parts[0] === "admin") {
+    parts = parts.slice(2);
+  }
+
   return {
     area: decodeURIComponent(parts[2] ?? ""),
     realm: decodeURIComponent(parts[1] ?? ""),
@@ -1777,7 +1782,6 @@ async function expectRouteChrome(page: Page, route: RouteScenario) {
     await expect(contextNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
     await expect(contextNav.getByRole("button", { name: "Route Family selector" })).toBeVisible();
     await expect(contextNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
-    await expect(contextNav.getByRole("button", { name: "User menu" })).toBeVisible();
 
     if (isMobile) {
       const menu = primaryNav.getByRole("button", { name: /Menu|Navigation/ });
@@ -1785,9 +1789,9 @@ async function expectRouteChrome(page: Page, route: RouteScenario) {
       await menu.click();
 
       await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
-      await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
       await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
-      await expect(primaryNav.getByRole("link", { name: "Settings" })).toBeVisible();
+      await expect(primaryNav.getByRole("link", { name: "Metrics" })).toBeVisible();
+      await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
       await expectNoHorizontalOverflow(page);
 
       await page.keyboard.press("Escape");
@@ -1799,7 +1803,7 @@ async function expectRouteChrome(page: Page, route: RouteScenario) {
     await expect(primaryNav.getByRole("link", { name: "KV" })).toBeVisible();
     await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
     await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
-    await expect(primaryNav.getByRole("link", { name: "Settings" })).toBeVisible();
+    await expect(primaryNav.getByRole("link", { name: "Metrics" })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     return;
   }
@@ -1810,162 +1814,164 @@ async function expectRouteChrome(page: Page, route: RouteScenario) {
 
 const sprint16Routes: RouteScenario[] = [
   {
-    path: "/",
+    path: "/admin/1",
     shell: "app",
     setup: mockHomeRouteApis,
     title: "Fitz status",
   },
   {
-    path: "/admin",
-    shell: "app",
-    setup: mockHomeRouteApis,
-    title: "Fitz status",
-  },
-  {
-    path: "/sessions",
+    path: "/admin/1/sessions",
     shell: "app",
     setup: (page) => mockSessionsApi(page, sessionsWithData),
     title: "Active sessions",
   },
   {
-    path: "/admin/metrics",
+    path: "/admin/1/metrics",
     shell: "app",
     setup: mockMetricsApi,
     title: "Metrics explorer",
   },
   {
-    path: "/diagnostics",
+    path: "/admin/1/diagnostics",
     shell: "app",
     setup: mockDiagnosticsApis,
     title: "Diagnostics",
   },
   {
-    path: "/settings",
+    path: "/admin/1/settings",
     shell: "app",
     setup: mockHomeRouteApis,
     title: "Settings",
   },
   {
-    path: "/lease",
+    path: "/admin/1/lease",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Lease overview",
+    title: "Lease inventory",
   },
   {
-    path: "/lease/default",
+    path: "/admin/1/lease/default",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "default",
+    title: "Lease inventory",
   },
   {
-    path: "/lease/default/ops",
+    path: "/admin/1/lease/default/ops",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "ops",
+    title: "Lease inventory",
   },
   {
-    path: "/notice",
+    path: "/admin/1/notice",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Notice overview",
+    title: "Notice inventory",
   },
   {
-    path: "/notice/default",
+    path: "/admin/1/notice/default",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "default",
+    title: "Notice inventory",
   },
   {
-    path: "/notice/default/ops",
+    path: "/admin/1/notice/default/ops",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "ops",
+    title: "Notice inventory",
   },
   {
-    path: "/notice/default/ops/primary",
+    path: "/admin/1/notice/default/ops/primary",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
     title: "Notice operations",
   },
   {
-    path: "/notice/default/ops/primary/GetStatus",
+    path: "/admin/1/notice/default/ops/primary/GetStatus",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
     title: "GetStatus",
   },
   {
-    path: "/rpc",
+    path: "/admin/1/rpc",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "RPC overview",
+    title: "RPC inventory",
   },
   {
-    path: "/schedule",
+    path: "/admin/1/schedule",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Schedule overview",
+    title: "Schedule inventory",
   },
   {
-    path: "/schedule/default",
+    path: "/admin/1/schedule/default",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "default",
+    title: "Schedule inventory",
   },
   {
-    path: "/schedule/default/ops",
+    path: "/admin/1/schedule/default/ops",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "ops",
+    title: "Schedule inventory",
   },
   {
-    path: "/queue",
+    path: "/admin/1/queue",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Queue overview",
+    title: "Queue inventory",
   },
   {
-    path: "/queue/default",
+    path: "/admin/1/queue/default",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "default",
+    title: "Queue inventory",
   },
   {
-    path: "/queue/default/ops",
+    path: "/admin/1/queue/default/ops",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "ops",
+    title: "Queue inventory",
   },
   {
-    path: "/stream",
+    path: "/admin/1/stream",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Stream overview",
+    title: "Stream inventory",
   },
   {
-    path: "/kv",
+    path: "/admin/1/kv",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "KV overview",
+    title: "KV tables",
   },
   {
-    path: "/queue/default/ops/primary",
+    path: "/admin/1/queue/default/ops/primary",
     shell: "app",
     setup: (page) =>
-      mockQueueResourceApis(page, parseRouteResourceScope("/queue/default/ops/primary")),
+      mockQueueResourceApis(page, parseRouteResourceScope("/admin/1/queue/default/ops/primary")),
     title: "Queue resource inspection",
   },
   {
-    path: "/kv/default/ops/primary",
+    path: "/admin/1/kv/default/ops/primary",
     shell: "app",
     setup: (page) =>
-      mockResourceDetailApis(page, "kv", parseRouteResourceScope("/kv/default/ops/primary")),
+      mockResourceDetailApis(
+        page,
+        "kv",
+        parseRouteResourceScope("/admin/1/kv/default/ops/primary"),
+      ),
     title: "primary",
   },
   {
-    path: "/lease/default/ops/primary",
+    path: "/admin/1/lease/default/ops/primary",
     shell: "app",
     setup: (page) =>
-      mockResourceDetailApis(page, "lease", parseRouteResourceScope("/lease/default/ops/primary")),
+      mockResourceDetailApis(
+        page,
+        "lease",
+        parseRouteResourceScope("/admin/1/lease/default/ops/primary"),
+      ),
     title: "primary",
   },
   {
@@ -1980,27 +1986,34 @@ const sprint16Routes: RouteScenario[] = [
     title: "primary",
   },
   {
-    path: "/rpc/default/ops/primary",
+    path: "/admin/1/rpc/default/ops/primary",
     shell: "app",
     setup: (page) =>
-      mockResourceDetailApis(page, "rpc", parseRouteResourceScope("/rpc/default/ops/primary")),
+      mockResourceDetailApis(
+        page,
+        "rpc",
+        parseRouteResourceScope("/admin/1/rpc/default/ops/primary"),
+      ),
     title: "primary",
   },
   {
-    path: "/schedule/default/ops/primary",
+    path: "/admin/1/schedule/default/ops/primary",
     shell: "app",
     setup: (page) =>
-      mockScheduleResourceApis(page, parseRouteResourceScope("/schedule/default/ops/primary")),
+      mockScheduleResourceApis(
+        page,
+        parseRouteResourceScope("/admin/1/schedule/default/ops/primary"),
+      ),
     title: "Schedule resource inspection",
   },
   {
-    path: "/stream/default/ops/primary",
+    path: "/admin/1/stream/default/ops/primary",
     shell: "app",
     setup: (page) =>
       mockResourceDetailApis(
         page,
         "stream",
-        parseRouteResourceScope("/stream/default/ops/primary"),
+        parseRouteResourceScope("/admin/1/stream/default/ops/primary"),
       ),
     title: "primary",
   },
@@ -2143,23 +2156,26 @@ test("captures desktop domain navigation", async ({ page }, testInfo) => {
 
   await mockDomainOverviewApis(page);
   await primaryNav.getByRole("link", { name: "Queue" }).click();
-  await expect(page).toHaveURL(/\/queue$/);
+  await expect(page).toHaveURL(/\/admin\/1\/queue$/);
   await expect(page.locator("main#main-content")).toHaveCount(1);
 });
 
-test("captures a domain page with lead snapshot", async ({ page }, testInfo) => {
+test("captures a domain inventory page", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await mockDomainOverviewApis(page);
-  await page.goto("/queue");
+  await page.goto("/admin/1/queue");
 
   await expect(page.locator("main#main-content")).toHaveCount(1);
   await expect(page.locator(".page-frame-sidebar")).toHaveCount(0);
-  await expect(page.locator(".domain-sidebar")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Scope summary" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Queue overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Queue inventory/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Resource inventory" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "primary" })).toHaveAttribute(
+    "href",
+    "/admin/1/queue/default/ops/primary",
+  );
   await page.screenshot({
     fullPage: true,
-    path: testInfo.outputPath("queue-lead-snapshot.png"),
+    path: testInfo.outputPath("queue-inventory.png"),
     animations: "disabled",
   });
 });
@@ -2170,9 +2186,9 @@ test("captures lease overview empty state", async ({ page }, testInfo) => {
     lease: applyLeaseOverride({ realms: [] }),
   });
 
-  await page.goto("/lease");
-  await expect(page.getByRole("heading", { name: "Lease overview" })).toBeVisible();
-  await expect(page.getByText("No lease realms are currently visible.")).toBeVisible();
+  await page.goto("/admin/1/lease");
+  await expect(page.getByRole("heading", { name: /Lease inventory/ })).toBeVisible();
+  await expect(page.getByText("No lease resources are currently visible.")).toBeVisible();
 
   await page.screenshot({
     fullPage: true,
@@ -2194,23 +2210,13 @@ test("navigates lease scope drill-down links and shows ownership countdown updat
   await mockDomainOverviewApis(page);
   await mockResourceDetailApis(page, "lease", leaseScope);
 
-  await page.goto("/lease");
-  await page.locator('a[href="/admin/all/lease/default"]').click();
-  await expect(page).toHaveURL("/admin/all/lease/default");
-  await expect(page.getByRole("link", { name: "Back to overview" })).toHaveAttribute(
-    "href",
-    "/admin/all/lease",
-  );
-
-  await page.locator('a[href="/admin/all/lease/default/default"]').click();
-  await expect(page).toHaveURL("/admin/all/lease/default/default");
-
-  await page.locator('a[href="/admin/all/lease/default/default/primary"]').click();
-  await expect(page).toHaveURL("/admin/all/lease/default/default/primary");
+  await page.goto("/admin/1/lease");
+  await page.locator('a[href="/admin/1/lease/default/default/primary"]').click();
+  await expect(page).toHaveURL("/admin/1/lease/default/default/primary");
   await expect(page.getByRole("heading", { name: "primary" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Back to area" })).toHaveAttribute(
     "href",
-    "/admin/all/lease/default/default",
+    "/admin/1/lease/default/default",
   );
 
   const remainingCell = page.locator("table tbody tr td").nth(5);
@@ -2228,21 +2234,17 @@ test("navigates notice scope drill-down links to operation detail", async ({ pag
 
   await mockDomainOverviewApis(page);
 
-  await page.goto("/notice");
-  await page.locator('a[href="/admin/all/notice/default"]').click();
-  await expect(page).toHaveURL("/admin/all/notice/default");
-  await page.locator('a[href="/admin/all/notice/default/default"]').click();
-  await expect(page).toHaveURL("/admin/all/notice/default/default");
-  await page.locator('a[href="/admin/all/notice/default/default/primary"]').click();
-  await expect(page).toHaveURL("/admin/all/notice/default/default/primary");
+  await page.goto("/admin/1/notice");
+  await page.locator('a[href="/admin/1/notice/default/default/primary"]').click();
+  await expect(page).toHaveURL("/admin/1/notice/default/default/primary");
   await expect(page.getByRole("heading", { level: 1, name: "Notice operations" })).toBeVisible();
-  await page.locator('a[href="/admin/all/notice/default/default/primary/GetStatus"]').click();
-  await expect(page).toHaveURL("/admin/all/notice/default/default/primary/GetStatus");
+  await page.locator('a[href="/admin/1/notice/default/default/primary/GetStatus"]').click();
+  await expect(page).toHaveURL("/admin/1/notice/default/default/primary/GetStatus");
   await expect(page.getByRole("heading", { level: 1, name: "GetStatus" })).toBeVisible();
   await expect(page.getByText("Latency unavailable via current API")).toBeVisible();
   await expect(page.getByRole("link", { name: "Back to resource" })).toHaveAttribute(
     "href",
-    "/admin/all/notice/default/default/primary",
+    "/admin/1/notice/default/default/primary",
   );
 });
 
@@ -2257,14 +2259,10 @@ test("navigates schedule scope drill-down links to resource detail", async ({ pa
   await mockDomainOverviewApis(page);
   await mockScheduleResourceApis(page, scheduleScope);
 
-  await page.goto("/schedule");
-  await expect(page.getByRole("cell", { name: "Is anyone listening?" })).toBeVisible();
-  await page.locator('a[href="/admin/all/schedule/default"]').click();
-  await expect(page).toHaveURL("/admin/all/schedule/default");
-  await page.locator('a[href="/admin/all/schedule/default/default"]').click();
-  await expect(page).toHaveURL("/admin/all/schedule/default/default");
-  await page.locator('a[href="/admin/all/schedule/default/default/primary"]').click();
-  await expect(page).toHaveURL("/admin/all/schedule/default/default/primary");
+  await page.goto("/admin/1/schedule");
+  await expect(page.getByRole("heading", { name: /Schedule inventory/ })).toBeVisible();
+  await page.locator('a[href="/admin/1/schedule/default/default/primary"]').click();
+  await expect(page).toHaveURL("/admin/1/schedule/default/default/primary");
   await expect(page.getByRole("heading", { name: "Schedule resource inspection" })).toBeVisible();
   await expect(page.getByText("Broker-observed, non-authoritative counter")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Execution observations" })).toBeVisible();
@@ -2286,9 +2284,9 @@ test("captures kv overview empty state", async ({ page }, testInfo) => {
     },
   });
 
-  await page.goto("/kv");
-  await expect(page.getByRole("heading", { name: "KV overview" })).toBeVisible();
-  await expect(page.getByText("No visible KV resources at the current level.")).toBeVisible();
+  await page.goto("/admin/1/kv");
+  await expect(page.getByRole("heading", { name: /KV tables/ })).toBeVisible();
+  await expect(page.getByText("No KV tables are currently visible.")).toBeVisible();
 
   await page.screenshot({
     fullPage: true,
@@ -2313,9 +2311,9 @@ test("captures notice overview empty state", async ({ page }, testInfo) => {
     },
   });
 
-  await page.goto("/notice");
-  await expect(page.getByRole("heading", { name: "Notice overview" })).toBeVisible();
-  await expect(page.getByText("No notice realms are currently visible.")).toBeVisible();
+  await page.goto("/admin/1/notice");
+  await expect(page.getByRole("heading", { name: /Notice inventory/ })).toBeVisible();
+  await expect(page.getByText("No notice resources are currently visible.")).toBeVisible();
 
   await page.screenshot({
     fullPage: true,
@@ -2344,9 +2342,9 @@ test("captures stream overview empty state", async ({ page }, testInfo) => {
     },
   });
 
-  await page.goto("/stream");
-  await expect(page.getByRole("heading", { name: "Stream overview" })).toBeVisible();
-  await expect(page.getByText("No stream realms are currently visible.")).toBeVisible();
+  await page.goto("/admin/1/stream");
+  await expect(page.getByRole("heading", { name: /Stream inventory/ })).toBeVisible();
+  await expect(page.getByText("No stream resources are currently visible.")).toBeVisible();
 
   await page.screenshot({
     fullPage: true,
@@ -2376,9 +2374,9 @@ test("captures rpc overview empty state", async ({ page }, testInfo) => {
     },
   });
 
-  await page.goto("/rpc");
-  await expect(page.getByRole("heading", { name: "RPC overview" })).toBeVisible();
-  await expect(page.getByText("No RPC realms are currently visible.")).toBeVisible();
+  await page.goto("/admin/1/rpc");
+  await expect(page.getByRole("heading", { name: /RPC inventory/ })).toBeVisible();
+  await expect(page.getByText("No RPC resources are currently visible.")).toBeVisible();
 
   await page.screenshot({
     fullPage: true,
@@ -2407,9 +2405,9 @@ test("captures schedule overview empty state", async ({ page }, testInfo) => {
     },
   });
 
-  await page.goto("/schedule");
-  await expect(page.getByRole("heading", { name: "Schedule overview" })).toBeVisible();
-  await expect(page.getByText("No schedule realms are currently visible.")).toBeVisible();
+  await page.goto("/admin/1/schedule");
+  await expect(page.getByRole("heading", { name: /Schedule inventory/ })).toBeVisible();
+  await expect(page.getByText("No schedule resources are currently visible.")).toBeVisible();
 
   await page.screenshot({
     fullPage: true,
@@ -2459,9 +2457,9 @@ test("captures the mobile navbar panel", async ({ page }, testInfo) => {
 
   await primaryNav.getByRole("button", { name: /Menu|Navigation/ }).click();
   await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
-  await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
   await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
-  await expect(primaryNav.getByRole("link", { name: "Settings" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Metrics" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
 
   await page.screenshot({
     fullPage: true,
@@ -2474,7 +2472,7 @@ test("captures sessions data state", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await mockSessionsApi(page, sessionsWithData);
 
-  await page.goto("/sessions");
+  await page.goto("/admin/1/sessions");
   await expect(page.getByRole("heading", { name: "Active sessions", exact: true })).toBeVisible();
   await expect(page.locator("table tbody tr").first()).toBeVisible();
 
@@ -2489,7 +2487,7 @@ test("captures sessions empty state", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await mockSessionsApi(page, sessionsEmpty);
 
-  await page.goto("/sessions");
+  await page.goto("/admin/1/sessions");
   await expect(page.getByRole("heading", { name: "Active sessions", exact: true })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "No active sessions", exact: true }),
@@ -2506,7 +2504,7 @@ test("captures sessions on mobile", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockSessionsApi(page, sessionsWithData);
 
-  await page.goto("/sessions");
+  await page.goto("/admin/1/sessions");
   await expect(page.getByRole("heading", { name: "Active sessions", exact: true })).toBeVisible();
   await expect(page.locator("ul.session-mobile-list li").first()).toBeVisible();
 
@@ -2520,7 +2518,7 @@ test("captures sessions on mobile", async ({ page }, testInfo) => {
 test("captures metrics desktop", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await mockMetricsApi(page);
-  await page.goto("/admin/metrics");
+  await page.goto("/admin/1/metrics");
 
   await expect(page.getByRole("heading", { name: "Metrics explorer" })).toBeVisible();
   await expect(page.locator('input[aria-label="Filter metrics"]')).toBeVisible();
@@ -2536,7 +2534,7 @@ test("captures metrics desktop", async ({ page }, testInfo) => {
 test("captures metrics filtered empty state", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await mockMetricsApi(page);
-  await page.goto("/admin/metrics");
+  await page.goto("/admin/1/metrics");
 
   const filter = page.locator('input[aria-label="Filter metrics"]');
   await filter.fill("does-not-exist");
@@ -2552,7 +2550,7 @@ test("captures metrics filtered empty state", async ({ page }, testInfo) => {
 test("captures metrics on mobile", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockMetricsApi(page);
-  await page.goto("/admin/metrics");
+  await page.goto("/admin/1/metrics");
 
   await expect(page.getByRole("heading", { name: "Metrics explorer" })).toBeVisible();
   await expect(page.locator('input[aria-label="Filter metrics"]')).toBeVisible();
@@ -2571,7 +2569,7 @@ test("captures metrics in dark mode", async ({ page }, testInfo) => {
     localStorage.setItem("fitz-admin-theme", "dark");
   });
 
-  await page.goto("/admin/metrics");
+  await page.goto("/admin/1/metrics");
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(page.getByRole("heading", { name: "Metrics explorer" })).toBeVisible();
