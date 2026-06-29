@@ -1,73 +1,191 @@
 import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
 import { currentRoute, Link, navigate } from "@askrjs/askr/router";
+import { ChevronDownIcon, MenuIcon, MoonIcon, NetworkIcon, SunIcon } from "@askrjs/lucide";
+import { Block, Brand, BrandLabel, Button, Container, Grid, Text } from "@askrjs/themes/components";
 import {
-  ChevronDownIcon,
-  LogOutIcon,
-  MenuIcon,
-  MoonIcon,
-  ShieldIcon,
-  SunIcon,
-  UserIcon,
-} from "@askrjs/lucide";
-import { Container } from "@askrjs/themes/components";
-import {
-  Dropdown,
-  DropdownContent,
-  DropdownItem,
-  DropdownLabel,
-  DropdownPortal,
-  DropdownTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuPortal,
+  DropdownMenuTrigger,
 } from "@askrjs/themes/components";
-import { Header, NavBrand, NavGroup, NavLink, Navbar, Sidebar } from "@askrjs/themes/components";
-import { Badge } from "@askrjs/themes/components";
+import {
+  Header,
+  NavBrand,
+  NavGroup,
+  Navbar,
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@askrjs/themes/components";
 import { ThemeToggle } from "@askrjs/themes/theme";
+import AppFooter from "@/components/shared/app-footer";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createMessagingTopologyQuery } from "@/features/topology/topology-query";
-import { appConfig } from "@/shared/config";
 import {
-  adminChildHref,
   adminHref,
+  contentPathFromRouteFamilyPath,
   domainLinks,
   pathWithRouteFamily,
   routeFamilyFromPath,
   shellLinks,
 } from "@/shared/navigation/domains";
-import {
-  createOperatorContextSnapshot,
-  OperatorContext,
-  readInitialRouteFamily,
-} from "@/shared/operator-context";
+import { createOperatorContextSnapshot, OperatorContext } from "@/shared/operator-context";
+import RouteFamilySelectorPage from "./route-family";
 
-const overviewLinks = shellLinks.filter((link) => link.title === "Overview");
-const utilityLinks = shellLinks.filter((link) => link.title !== "Overview");
+const workspaceLinks = shellLinks.filter(
+  (link) => link.title === "Overview" || link.title === "Diagnostics" || link.title === "Metrics",
+);
 const sidebarDomainLinks = [...domainLinks].sort((first, second) =>
   first.title.localeCompare(second.title),
 );
 
+function contentPathForRoute(path: string) {
+  return contentPathFromRouteFamilyPath(path);
+}
+
+function contentPathForHref(href: string) {
+  return contentPathForRoute(href);
+}
+
+function WorkspaceShell({
+  children,
+  closeMobileNavigation,
+  isActiveShellLink,
+  isMobileNavOpen,
+  scopedFamily,
+  toggleMobileNavigation,
+}: {
+  children?: unknown;
+  closeMobileNavigation: () => void;
+  isActiveShellLink: (href: string, exact: boolean) => boolean;
+  isMobileNavOpen: boolean;
+  scopedFamily: string;
+  toggleMobileNavigation: () => void;
+}) {
+  return (
+    <Grid
+      class="operator-shell-layout"
+      columns={{ base: 1, md: "13rem minmax(0, 1fr)" }}
+      gap="md"
+      align="start"
+    >
+      <Sidebar
+        class="operator-sidebar"
+        collapsible="none"
+        minHeight="auto"
+        padding="md"
+        borderRight={false}
+        shrink={false}
+        width="full"
+        data-mobile-open={isMobileNavOpen ? "true" : undefined}
+        onKeyDown={(event: KeyboardEvent) => {
+          if (event.key === "Escape") {
+            closeMobileNavigation();
+          }
+        }}
+        aria-label="Primary navigation"
+        role="navigation"
+      >
+        <Button
+          type="button"
+          class="operator-sidebar-toggle"
+          variant="outline"
+          aria-controls="operator-sidebar-panel"
+          aria-expanded={isMobileNavOpen}
+          aria-label="Navigation menu"
+          onClick={toggleMobileNavigation}
+        >
+          <MenuIcon size={16} />
+          <span>Navigation</span>
+        </Button>
+
+        <div class="operator-sidebar-panel" id="operator-sidebar-panel">
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <For each={workspaceLinks} by={(link) => link.href}>
+                    {(link) => (
+                      <SidebarMenuItem>
+                        <SidebarMenuButton
+                          active={isActiveShellLink(link.href, link.title === "Overview")}
+                          asChild
+                        >
+                          <Link
+                            href={pathWithRouteFamily(link.href, scopedFamily)}
+                            onClick={closeMobileNavigation}
+                          >
+                            <link.icon size={16} aria-hidden="true" />
+                            <Text as="span" size="sm" weight="medium">
+                              {link.title}
+                            </Text>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )}
+                  </For>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+
+            <SidebarGroup>
+              <SidebarGroupLabel>Domains</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <For each={sidebarDomainLinks} by={(link) => link.href}>
+                    {(link) => (
+                      <SidebarMenuItem>
+                        <SidebarMenuButton active={isActiveShellLink(link.href, false)} asChild>
+                          <Link
+                            href={pathWithRouteFamily(link.href, scopedFamily)}
+                            onClick={closeMobileNavigation}
+                          >
+                            <link.icon size={16} aria-hidden="true" />
+                            <Text as="span" size="sm" weight="medium">
+                              {link.title}
+                            </Text>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )}
+                  </For>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+        </div>
+      </Sidebar>
+
+      <div class="route-transition-surface">{children}</div>
+    </Grid>
+  );
+}
+
 export default function Layout({ children }: { children?: unknown }) {
   const route = currentRoute();
+  const currentPath = typeof window === "undefined" ? route.path : window.location.pathname;
   const currentSession = createCurrentSessionQuery();
   const topology = createMessagingTopologyQuery();
-  const [selectedRouteFamilyId, setSelectedRouteFamilyId] = state(
-    routeFamilyFromPath(route.path) ?? readInitialRouteFamily(),
-  );
   const [mobileNavOpen, setMobileNavOpen] = state(false);
-  const activeRouteFamilyId = routeFamilyFromPath(route.path) ?? selectedRouteFamilyId();
+  const activeRouteFamilyId = routeFamilyFromPath(currentPath) ?? "";
   const operator = createOperatorContextSnapshot(
     topology.data,
     currentSession.data,
     activeRouteFamilyId,
-    setSelectedRouteFamilyId,
   );
   const scopedFamily = operator.selectedRouteFamilyId;
-  const username = currentSession.data?.username ?? "admin";
-  const showUserBadge = currentSession.data?.authenticated === true;
+  const hasRouteFamilyScope =
+    activeRouteFamilyId !== "" && operator.selectedRouteFamilyId === activeRouteFamilyId;
   const isMobileNavOpen = mobileNavOpen();
-
-  function onLogout() {
-    navigate("/logout");
-  }
 
   function selectRouteFamily(routeFamilyId: string) {
     const pathname = typeof window === "undefined" ? route.path : window.location.pathname;
@@ -85,49 +203,39 @@ export default function Layout({ children }: { children?: unknown }) {
     setMobileNavOpen(false);
   }
 
+  function isActiveShellLink(href: string, exact: boolean) {
+    const currentPath = contentPathForRoute(route.path);
+    const linkPath = contentPathForHref(href);
+
+    if (exact) {
+      return currentPath === linkPath;
+    }
+
+    return currentPath === linkPath || currentPath.startsWith(`${linkPath}/`);
+  }
+
   return (
     <OperatorContext.Scope value={operator}>
-      <div class="operator-context-root">
+      <Block class="operator-context-root" minHeight="screen" direction="column">
         <a class="skip-link" href="#main-content">
           Skip to main content
         </a>
 
-        <Header position="sticky" class="operator-shell-header">
-          <Container size="xl" class="operator-shell-container">
-            <Navbar class="operator-topbar" aria-label="Operator context">
-              <NavBrand class="operator-shell-brand">
-                <Link href={adminHref(scopedFamily)} aria-label="Fitz admin home">
-                  <ShieldIcon size={18} />
-                  <span>Fitz Admin</span>
-                </Link>
+        <Header sticky>
+          <Container paddingY="sm">
+            <Navbar class="operator-shell-navbar" aria-label="Operator context">
+              <NavBrand>
+                <Brand asChild>
+                  <Link
+                    href={hasRouteFamilyScope ? adminHref(scopedFamily) : "/admin"}
+                    aria-label="Fitz admin home"
+                  >
+                    <BrandLabel>Fitz Admin</BrandLabel>
+                  </Link>
+                </Brand>
               </NavBrand>
 
-              <NavGroup class="operator-shell-context" aria-label="Route Family" role="group">
-                <Dropdown>
-                  <div class="route-family-selector">
-                    <DropdownTrigger aria-label="Route Family selector">
-                      <span class="route-family-selector-label">Route Family</span>
-                      <strong>{operator.selectedRouteFamily.label}</strong>
-                      <ChevronDownIcon size={14} />
-                    </DropdownTrigger>
-                    <DropdownPortal>
-                      <DropdownContent align="start" sideOffset={8}>
-                        <For each={operator.routeFamilies} by={(family) => family.id}>
-                          {(family) => (
-                            <DropdownItem onSelect={() => selectRouteFamily(family.id)}>
-                              {family.label}
-                            </DropdownItem>
-                          )}
-                        </For>
-                      </DropdownContent>
-                    </DropdownPortal>
-                  </div>
-                </Dropdown>
-
-                <Badge variant="outline">{appConfig.environmentLabel}</Badge>
-              </NavGroup>
-
-              <NavGroup class="operator-shell-actions" aria-label="Account" role="group">
+              <NavGroup align="end" aria-label="View controls" role="group">
                 <ThemeToggle
                   aria-label="Toggle color theme"
                   variant="ghost"
@@ -135,126 +243,52 @@ export default function Layout({ children }: { children?: unknown }) {
                   lightIcon={<SunIcon size={16} />}
                   darkIcon={<MoonIcon size={16} />}
                 />
-                <Dropdown>
-                  <div class="user-menu">
-                    <DropdownTrigger aria-label="User menu">
-                      <UserIcon size={16} />
-                      <span>{showUserBadge ? username : "Admin"}</span>
-                      <ChevronDownIcon size={14} />
-                    </DropdownTrigger>
-                    <DropdownPortal>
-                      <DropdownContent align="end" sideOffset={8}>
-                        <DropdownLabel>Signed in as {username}</DropdownLabel>
-                        <DropdownItem asChild>
-                          <Link href={adminChildHref("settings", scopedFamily)}>Settings</Link>
-                        </DropdownItem>
-                        <DropdownItem asChild>
-                          <Link href={adminChildHref("sessions", scopedFamily)}>Sessions</Link>
-                        </DropdownItem>
-                        <DropdownItem onSelect={onLogout}>
-                          <LogOutIcon size={16} />
-                          Sign out
-                        </DropdownItem>
-                      </DropdownContent>
-                    </DropdownPortal>
-                  </div>
-                </Dropdown>
+                <DropdownMenu>
+                  <DropdownMenuTrigger aria-label="Route Family selector">
+                    <NetworkIcon size={16} aria-hidden="true" />
+                    <Block as="span" hide={{ base: true, sm: false }}>
+                      <Text as="span" size="sm" weight="medium">
+                        {operator.selectedRouteFamily.label}
+                      </Text>
+                    </Block>
+                    <ChevronDownIcon size={14} aria-hidden="true" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuPortal>
+                    <DropdownMenuContent align="end" sideOffset={8}>
+                      <DropdownMenuLabel>Route Family</DropdownMenuLabel>
+                      <For each={operator.routeFamilies} by={(family) => family.id}>
+                        {(family) => (
+                          <DropdownMenuItem onSelect={() => selectRouteFamily(family.id)}>
+                            {family.label}
+                          </DropdownMenuItem>
+                        )}
+                      </For>
+                    </DropdownMenuContent>
+                  </DropdownMenuPortal>
+                </DropdownMenu>
               </NavGroup>
             </Navbar>
           </Container>
         </Header>
 
-        <Container size="xl" class="operator-shell-workspace">
-          <div class="operator-shell-layout">
-            <Sidebar
-              class="operator-sidebar"
-              collapsible="none"
-              data-mobile-open={isMobileNavOpen ? "true" : undefined}
-              onKeyDown={(event: KeyboardEvent) => {
-                if (event.key === "Escape") {
-                  closeMobileNavigation();
-                }
-              }}
-              aria-label="Primary navigation"
-              role="navigation"
+        <Container class="operator-shell-workspace" paddingY="0" grow>
+          {hasRouteFamilyScope ? (
+            <WorkspaceShell
+              closeMobileNavigation={closeMobileNavigation}
+              isActiveShellLink={isActiveShellLink}
+              isMobileNavOpen={isMobileNavOpen}
+              scopedFamily={scopedFamily}
+              toggleMobileNavigation={toggleMobileNavigation}
             >
-              <button
-                type="button"
-                class="operator-sidebar-toggle"
-                aria-controls="operator-sidebar-panel"
-                aria-expanded={isMobileNavOpen}
-                aria-label="Navigation menu"
-                onClick={toggleMobileNavigation}
-              >
-                <MenuIcon size={16} />
-                <span>Navigation</span>
-              </button>
-
-              <div class="operator-sidebar-panel" id="operator-sidebar-panel">
-                <NavBrand class="operator-sidebar-brand">
-                  <Link
-                    href={adminHref(scopedFamily)}
-                    aria-label="Fitz admin home"
-                    onClick={closeMobileNavigation}
-                  >
-                    <ShieldIcon size={18} />
-                    <span>Fitz Admin</span>
-                  </Link>
-                </NavBrand>
-
-                <NavGroup label="Workspace">
-                  <For each={overviewLinks} by={(link) => link.href}>
-                    {(link) => (
-                      <NavLink
-                        href={pathWithRouteFamily(link.href, scopedFamily)}
-                        match="exact"
-                        onClick={closeMobileNavigation}
-                      >
-                        <link.icon size={16} />
-                        {link.title}
-                      </NavLink>
-                    )}
-                  </For>
-                </NavGroup>
-
-                <NavGroup label="Domains">
-                  <For each={sidebarDomainLinks} by={(link) => link.href}>
-                    {(link) => (
-                      <NavLink
-                        href={pathWithRouteFamily(link.href, scopedFamily)}
-                        match="prefix"
-                        onClick={closeMobileNavigation}
-                      >
-                        <link.icon size={16} />
-                        {link.title}
-                      </NavLink>
-                    )}
-                  </For>
-                </NavGroup>
-
-                <NavGroup label="Operate">
-                  <For each={utilityLinks} by={(link) => link.href}>
-                    {(link) => (
-                      <NavLink
-                        href={pathWithRouteFamily(link.href, scopedFamily)}
-                        match="prefix"
-                        onClick={closeMobileNavigation}
-                      >
-                        <link.icon size={16} />
-                        {link.title}
-                      </NavLink>
-                    )}
-                  </For>
-                </NavGroup>
-              </div>
-            </Sidebar>
-
-            <Container size="xl" class="route-transition-surface">
               {children}
-            </Container>
-          </div>
+            </WorkspaceShell>
+          ) : (
+            <RouteFamilySelectorPage />
+          )}
         </Container>
-      </div>
+
+        <AppFooter />
+      </Block>
     </OperatorContext.Scope>
   );
 }

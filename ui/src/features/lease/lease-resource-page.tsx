@@ -19,7 +19,7 @@ import { deriveLeaseRemainingLifetime } from "@/features/lease/lease-mappers";
 import type { LeaseOwnershipSearchRow } from "@/features/lease/lease-models";
 
 let leaseClockSetNow: ((now: number) => void) | null = null;
-let leaseClockHandle: ReturnType<typeof setInterval> | null = null;
+let leaseClockHandle: ReturnType<Window["setInterval"]> | null = null;
 
 function ensureLeaseClockRunning(setClockNow: (now: number) => void) {
   if (typeof window === "undefined") {

@@ -4,6 +4,7 @@ import { Badge, Block } from "@askrjs/themes/components";
 import { Container } from "@askrjs/themes/components";
 import { Header, Navbar, NavBrand, NavGroup } from "@askrjs/themes/components";
 import { ThemeToggle } from "@askrjs/themes/theme";
+import AppFooter from "@/components/shared/app-footer";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 
 export default function Layout({ children }: { children?: unknown }) {
@@ -54,6 +55,8 @@ export default function Layout({ children }: { children?: unknown }) {
           {children}
         </Block>
       </Container>
+
+      <AppFooter />
     </Block>
   );
 }

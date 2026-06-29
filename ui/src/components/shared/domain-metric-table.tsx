@@ -6,6 +6,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Text,
 } from "@askrjs/themes/components";
 import { formatDisplayValue } from "@/shared/format";
 
@@ -43,7 +44,15 @@ export default function DomainMetricTable({ description, metrics, title }: Domai
                   <TableRow>
                     <TableCell>{metric.label}</TableCell>
                     <TableCell>
-                      <span class="domain-metric-value">{formatDisplayValue(metric.value)}</span>
+                      <Text
+                        as="span"
+                        class="domain-metric-value"
+                        font="mono"
+                        numeric="tabular"
+                        weight="semibold"
+                      >
+                        {formatDisplayValue(metric.value)}
+                      </Text>
                       {metric.caption ? (
                         <span class="domain-metric-caption">{metric.caption}</span>
                       ) : null}

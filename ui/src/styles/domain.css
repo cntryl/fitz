@@ -1,14 +1,17 @@
 .domain-header,
 .domain-section-header {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
   gap: var(--fitz-section-gap);
 }
 
 .domain-header {
-  padding: 0 0 var(--fitz-section-gap);
-  border-bottom: 1px solid var(--fitz-border);
+  display: grid;
+  padding: 0;
+}
+
+.domain-section-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
 }
 
 .domain-header-copy,
@@ -79,6 +82,12 @@
   max-width: 58ch;
 }
 
+.domain-header-description {
+  display: inline-flex;
+  flex-wrap: wrap;
+  column-gap: var(--ak-space-1, 0.25rem);
+}
+
 .domain-header-detail {
   margin: 0;
   color: var(--fitz-text-muted);
@@ -101,16 +110,8 @@
   font-size: var(--fitz-body-size);
 }
 
-[data-slot="section"],
 .domain-section {
   padding-block: var(--fitz-control-gap);
-}
-
-[data-slot="section"] + [data-slot="section"],
-.domain-section + .domain-section,
-[data-slot="section"] + .domain-section,
-.domain-section + [data-slot="section"] {
-  border-top: 1px solid var(--fitz-border-subtle);
 }
 
 .domain-table-wrap {
@@ -436,15 +437,6 @@
 }
 
 .metrics-value-cell {
-  font-family: var(
-    --ak-font-family-mono,
-    ui-monospace,
-    Consolas,
-    "SFMono-Regular",
-    Menlo,
-    Monaco,
-    monospace
-  );
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -796,8 +788,6 @@
 
 .domain-metric-value {
   display: block;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
 }
 
 .domain-metric-caption {
@@ -818,7 +808,7 @@
   overflow: hidden;
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--fitz-border);
-  border-radius: var(--fitz-radius-sm);
+  border-radius: var(--fitz-row-radius);
   color: var(--fitz-text-muted);
   font-size: var(--fitz-caption-size);
   text-overflow: ellipsis;

@@ -6,6 +6,7 @@ use crate::boot::domains::{
 use crate::domains::schedule::store::{ScheduleFireClaim, ScheduleInsert, ScheduleStore};
 use crate::runtime::Router;
 use bytes::Bytes;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -121,6 +122,34 @@ fn assert_metric_exported(metrics: &str, metric_name: &str) {
         .unwrap_or_else(|err| panic!("invalid metric value for {metric_name}: {err}"));
 }
 
+fn metric_family_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+
+    let name = trimmed
+        .split(|character: char| character == '{' || character.is_whitespace())
+        .next()?;
+
+    Some(
+        ["_bucket", "_count", "_sum"]
+            .iter()
+            .find_map(|suffix| name.strip_suffix(suffix))
+            .unwrap_or(name)
+            .to_string(),
+    )
+}
+
+fn typed_metric_families(metrics: &str) -> BTreeSet<String> {
+    metrics
+        .lines()
+        .filter_map(|line| line.strip_prefix("# TYPE "))
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_string)
+        .collect()
+}
+
 #[test]
 fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
     // Arrange
@@ -172,4 +201,30 @@ fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
     assert_metric_exported(&metrics, "fitz_rpc_wrong_worker_rejects_total");
     assert_metric_exported(&metrics, "fitz_lease_waiter_depth");
     assert_metric_exported(&metrics, "fitz_notice_wildcard_limit_rejects_total");
+}
+
+#[test]
+fn should_export_type_metadata_for_every_metric_family() {
+    // Arrange
+    let metrics = crate::observability::metrics();
+    metrics.counter_inc("fitz_test_typed_counter_total");
+    metrics.gauge_set("fitz_test_typed_gauge", 7);
+    metrics.histogram_observe_ms("fitz_test_typed_latency_ms", 1);
+    let runtime = Arc::new(Runtime::with_admin_read_model(
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    ));
+
+    // Act
+    let payload = generate_prometheus_metrics(runtime);
+
+    // Assert
+    let typed = typed_metric_families(&payload);
+    let untyped = payload
+        .lines()
+        .filter_map(metric_family_name)
+        .filter(|family| !typed.contains(family))
+        .collect::<BTreeSet<_>>();
+
+    assert!(untyped.is_empty(), "untyped metric families: {:?}", untyped);
 }

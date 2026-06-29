@@ -12,7 +12,8 @@ const DOMAIN_API_SEGMENTS = new Set([
   "rpc",
 ]);
 const ROUTE_FAMILY_STORAGE_KEY = "fitz-admin-route-family";
-const DEFAULT_ROUTE_FAMILY_SEGMENT = "all";
+const DEFAULT_ROUTE_FAMILY_SEGMENT = "1";
+const routeFamilyPattern = /^\d+$/;
 
 function createTraceId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -28,14 +29,15 @@ function routeFamilyFromLocation() {
   }
 
   const parts = window.location.pathname.split("/").filter(Boolean);
-  if (
-    parts[0] === "admin" &&
-    (parts[1] === DEFAULT_ROUTE_FAMILY_SEGMENT || /^\d+$/.test(parts[1] ?? ""))
-  ) {
+  if (parts[0] === "admin" && routeFamilyPattern.test(parts[1] ?? "")) {
     return decodeURIComponent(parts[1]);
   }
 
-  return window.localStorage?.getItem(ROUTE_FAMILY_STORAGE_KEY) ?? DEFAULT_ROUTE_FAMILY_SEGMENT;
+  const storedRouteFamily = window.localStorage?.getItem(ROUTE_FAMILY_STORAGE_KEY);
+
+  return routeFamilyPattern.test(storedRouteFamily ?? "")
+    ? (storedRouteFamily ?? DEFAULT_ROUTE_FAMILY_SEGMENT)
+    : DEFAULT_ROUTE_FAMILY_SEGMENT;
 }
 
 function familyFirstAdminUrl(url: string | undefined) {

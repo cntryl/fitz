@@ -1,8 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { state } from "@askrjs/askr";
 import { Input, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
-import { Button } from "@askrjs/themes/components";
-import { Stack } from "@askrjs/themes/components";
+import { Button, Stack, Text } from "@askrjs/themes/components";
 import {
   Card,
   CardContent,
@@ -551,9 +550,17 @@ export default function MetricsPage() {
       header: "Value",
       width: "16%",
       cellComponent: ({ row }) => (
-        <code class="metrics-value-cell" title={String(row.value)}>
+        <Text
+          as="span"
+          class="metrics-value-cell"
+          font="mono"
+          numeric="tabular"
+          size="sm"
+          title={String(row.value)}
+          weight="medium"
+        >
           {row.value}
-        </code>
+        </Text>
       ),
     },
   ];

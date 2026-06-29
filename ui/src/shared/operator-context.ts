@@ -3,7 +3,8 @@ import type { SessionState } from "@/features/session/session-models";
 import type { MessagingTopologyOverview } from "@/features/topology/topology-models";
 
 const STORAGE_KEY = "fitz-admin-route-family";
-const ALL_ROUTE_FAMILIES = "all";
+const unselectedRouteFamilyId = "";
+const routeFamilyPattern = /^\d+$/;
 
 export interface RouteFamilyOption {
   description: string;
@@ -18,22 +19,26 @@ export interface OperatorContextSnapshot {
   setRouteFamily: (routeFamilyId: string) => void;
 }
 
-const allRouteFamilies: RouteFamilyOption = {
-  description: "Wildcard admin context across every authorized Route Family.",
-  id: ALL_ROUTE_FAMILIES,
-  label: "All Route Families",
+const unselectedRouteFamily: RouteFamilyOption = {
+  description: "Choose a concrete Route Family before opening the operator workspace.",
+  id: unselectedRouteFamilyId,
+  label: "Select Route Family",
 };
 
 export function readInitialRouteFamily() {
   if (typeof window === "undefined" || !window.localStorage) {
-    return ALL_ROUTE_FAMILIES;
+    return unselectedRouteFamilyId;
   }
 
-  return window.localStorage.getItem(STORAGE_KEY) ?? ALL_ROUTE_FAMILIES;
+  const storedRouteFamily = window.localStorage.getItem(STORAGE_KEY);
+
+  return routeFamilyPattern.test(storedRouteFamily ?? "")
+    ? (storedRouteFamily ?? unselectedRouteFamilyId)
+    : unselectedRouteFamilyId;
 }
 
-function persistRouteFamily(routeFamilyId: string, setRouteFamilyState: StateSetter<string>) {
-  setRouteFamilyState(routeFamilyId);
+function persistRouteFamily(routeFamilyId: string, setRouteFamilyState?: StateSetter<string>) {
+  setRouteFamilyState?.(routeFamilyId);
 
   if (typeof window !== "undefined" && window.localStorage) {
     window.localStorage.setItem(STORAGE_KEY, routeFamilyId);
@@ -86,7 +91,7 @@ export function routeFamilyLabel(routeFamilyId: string) {
 }
 
 export function parseConcreteRouteFamilyId(routeFamilyId: string) {
-  if (/^\d+$/.test(routeFamilyId)) {
+  if (routeFamilyPattern.test(routeFamilyId)) {
     return Number(routeFamilyId);
   }
 
@@ -97,19 +102,17 @@ export function createOperatorContextSnapshot(
   topology: MessagingTopologyOverview | null | undefined,
   session: SessionState | null | undefined,
   selectedRouteFamilyId: string,
-  setRouteFamilyState: StateSetter<string>,
+  setRouteFamilyState?: StateSetter<string>,
 ): OperatorContextSnapshot {
   const topologyFamilies =
     topology?.sessionGroups.map((group) => optionFromTopologyRouteFamily(group.routeFamily)) ?? [];
-  const sessionFamilies = session?.routeFamilies?.map(optionFromSessionRouteFamily) ?? [];
-  const routeFamiliesWildcard = session?.routeFamiliesWildcard ?? true;
-  const routeFamilies = routeFamiliesWildcard
-    ? uniqueOptions([allRouteFamilies, ...topologyFamilies])
-    : uniqueOptions(sessionFamilies.length > 0 ? sessionFamilies : [allRouteFamilies]);
+  const sessionFamilies =
+    session?.routeFamilies
+      ?.filter((routeFamily) => routeFamilyPattern.test(routeFamily))
+      .map(optionFromSessionRouteFamily) ?? [];
+  const routeFamilies = uniqueOptions([...sessionFamilies, ...topologyFamilies]);
   const selectedRouteFamily =
-    routeFamilies.find((option) => option.id === selectedRouteFamilyId) ??
-    routeFamilies[0] ??
-    allRouteFamilies;
+    routeFamilies.find((option) => option.id === selectedRouteFamilyId) ?? unselectedRouteFamily;
 
   return {
     routeFamilies,
@@ -120,9 +123,9 @@ export function createOperatorContextSnapshot(
 }
 
 const defaultOperatorContext: OperatorContextSnapshot = {
-  routeFamilies: [allRouteFamilies],
-  selectedRouteFamily: allRouteFamilies,
-  selectedRouteFamilyId: allRouteFamilies.id,
+  routeFamilies: [],
+  selectedRouteFamily: unselectedRouteFamily,
+  selectedRouteFamilyId: unselectedRouteFamily.id,
   setRouteFamily: () => undefined,
 };
 

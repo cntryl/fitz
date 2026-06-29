@@ -1,17 +1,27 @@
 import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/components";
-import { Inline, Stack } from "@askrjs/themes/components";
 import {
   Badge,
+  Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
+  Inline,
+  Label,
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectPortal,
+  SelectTrigger,
+  SelectValue,
+  Stack,
 } from "@askrjs/themes/components";
-import { Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
+import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import type {
   NoticeDeliveryObservation,
   NoticeDeliveryObservationList,
@@ -217,6 +227,10 @@ function includesQuery(value: string, query: string) {
   return normalized.length === 0 || value.toLowerCase().includes(normalized);
 }
 
+function uniqueSorted(values: string[]) {
+  return Array.from(new Set(values)).sort((first, second) => first.localeCompare(second));
+}
+
 function filterRows(
   rows: CommunicationResourceRow[],
   filters: {
@@ -237,38 +251,6 @@ function trimToUndefined(value: string) {
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function queryLabel(domain: CommunicationDomain, mode: CommunicationMode) {
-  if (domain === "notice") {
-    if (mode === "participants") return "Session/pattern";
-    if (mode === "failures") return "Drop or reject";
-    if (mode === "search") return "Delivery";
-
-    return "Pattern";
-  }
-
-  if (mode === "participants") return "Operation/worker";
-  if (mode === "failures") return "Failure/correlation";
-  if (mode === "search") return "Call/correlation";
-
-  return "Operation";
-}
-
-function queryPlaceholder(domain: CommunicationDomain, mode: CommunicationMode) {
-  if (domain === "notice") {
-    if (mode === "participants") return "session-123 or billing.*";
-    if (mode === "failures") return "delivery drop";
-    if (mode === "search") return "delivery-123";
-
-    return "billing.*";
-  }
-
-  if (mode === "participants") return "SettlePayment or session-123";
-  if (mode === "failures") return "timeout or correlation id";
-  if (mode === "search") return "corr-123";
-
-  return "SettlePayment";
 }
 
 function resourceNoun(domain: CommunicationDomain, count: number) {
@@ -309,8 +291,8 @@ function modeDetailDescription(domain: CommunicationDomain, mode: CommunicationM
   }
 
   return domain === "notice"
-    ? "Search broker-local subscription delivery counters and route publish counters by Route Family, realm, area, resource, session, or route text."
-    : "Search broker-local RPC worker registrations and pending calls by Route Family, realm, area, resource, operation, session, or correlation id.";
+    ? "Search broker-local subscription delivery counters and route publish counters by selected Route Family and route scope."
+    : "Search broker-local RPC worker registrations and pending calls by selected Route Family and route scope.";
 }
 
 const noticeObservationColumns: readonly VirtualTableColumn<NoticeDeliveryObservation>[] = [
@@ -475,7 +457,6 @@ export default function CommunicationFlowWorkspace({
   const [realm, setRealm] = state("");
   const [area, setArea] = state("");
   const [resource, setResource] = state("");
-  const [query, setQuery] = state("");
   const [searchLoading, setSearchLoading] = state(false);
   const [searchError, setSearchError] = state<unknown>(null);
   const [noticeResult, setNoticeResult] = state<NoticeDeliveryObservationList | null>(null);
@@ -484,12 +465,18 @@ export default function CommunicationFlowWorkspace({
   const realmValue = realm();
   const areaValue = area();
   const resourceValue = resource();
-  const queryValue = query();
   const searchLoadingValue = searchLoading();
   const searchErrorValue = searchError();
   const noticeResultValue = noticeResult();
   const rpcResultValue = rpcResult();
   const rows = flattenInventory(inventory);
+  const selectedRealmRows = realmValue ? rows.filter((row) => row.realm === realmValue) : rows;
+  const selectedAreaRows = areaValue
+    ? selectedRealmRows.filter((row) => row.area === areaValue)
+    : selectedRealmRows;
+  const realmOptions = uniqueSorted(rows.map((row) => row.realm));
+  const areaOptions = uniqueSorted(selectedRealmRows.map((row) => row.area));
+  const resourceOptions = uniqueSorted(selectedAreaRows.map((row) => row.resource));
   const filteredRows = filterRows(rows, {
     area: areaValue,
     realm: realmValue,
@@ -503,7 +490,6 @@ export default function CommunicationFlowWorkspace({
   const trimmedRealm = trimToUndefined(realmValue);
   const trimmedArea = trimToUndefined(areaValue);
   const trimmedResource = trimToUndefined(resourceValue);
-  const trimmedQuery = trimToUndefined(queryValue);
   const canRunSearch = searchMode && routeFamilyReady && !searchLoadingValue;
   const canOpenExactResource = filteredRows.some(
     (row) => row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
@@ -541,6 +527,30 @@ export default function CommunicationFlowWorkspace({
     },
   ];
 
+  function resetSearchResults() {
+    setSearchError(null);
+    setNoticeResult(null);
+    setRpcResult(null);
+  }
+
+  function selectRealm(nextRealm: string) {
+    setRealm(nextRealm);
+    setArea("");
+    setResource("");
+    resetSearchResults();
+  }
+
+  function selectArea(nextArea: string) {
+    setArea(nextArea);
+    setResource("");
+    resetSearchResults();
+  }
+
+  function selectResource(nextResource: string) {
+    setResource(nextResource);
+    resetSearchResults();
+  }
+
   async function runSearch() {
     if (!canRunSearch || routeFamily === null) {
       return;
@@ -557,7 +567,6 @@ export default function CommunicationFlowWorkspace({
           await noticeService.searchDeliveries({
             area: trimmedArea,
             limit: 50,
-            query: trimmedQuery,
             realm: trimmedRealm,
             resource: trimmedResource,
             routeFamily,
@@ -567,9 +576,7 @@ export default function CommunicationFlowWorkspace({
         setRpcResult(
           await rpcService.searchCalls({
             area: trimmedArea,
-            correlationId: trimmedQuery,
             limit: 50,
-            query: trimmedQuery,
             realm: trimmedRealm,
             resource: trimmedResource,
             routeFamily,
@@ -625,9 +632,7 @@ export default function CommunicationFlowWorkspace({
                   variant={modeValue === modeOption.value ? "primary" : "outline"}
                   onPress={() => {
                     setMode(modeOption.value);
-                    setSearchError(null);
-                    setNoticeResult(null);
-                    setRpcResult(null);
+                    resetSearchResults();
                   }}
                   aria-pressed={modeValue === modeOption.value}
                   title={modeOption.description}
@@ -642,40 +647,80 @@ export default function CommunicationFlowWorkspace({
             <div class="form-grid">
               <div class="auth-field">
                 <Label for={`${domain}-flow-realm`}>Realm</Label>
-                <Input
-                  id={`${domain}-flow-realm`}
+                <Select
                   value={realmValue}
-                  onInput={(event: Event) => setRealm((event.target as HTMLInputElement).value)}
-                  placeholder="billing"
-                />
+                  onValueChange={selectRealm}
+                  disabled={realmOptions.length === 0}
+                >
+                  <SelectTrigger id={`${domain}-flow-realm`}>
+                    <SelectValue placeholder="All realms" />
+                  </SelectTrigger>
+                  <SelectPortal>
+                    <SelectContent align="start" sideOffset={6}>
+                      <SelectGroup>
+                        <SelectLabel>Realm scope</SelectLabel>
+                        <SelectItem value="">All realms</SelectItem>
+                        <For each={realmOptions} by={(option) => option}>
+                          {(option) => <SelectItem value={option}>{option}</SelectItem>}
+                        </For>
+                      </SelectGroup>
+                    </SelectContent>
+                  </SelectPortal>
+                </Select>
               </div>
               <div class="auth-field">
                 <Label for={`${domain}-flow-area`}>Area</Label>
-                <Input
-                  id={`${domain}-flow-area`}
+                <Select
                   value={areaValue}
-                  onInput={(event: Event) => setArea((event.target as HTMLInputElement).value)}
-                  placeholder="payments"
-                />
+                  onValueChange={selectArea}
+                  disabled={areaOptions.length === 0}
+                >
+                  <SelectTrigger id={`${domain}-flow-area`}>
+                    <SelectValue placeholder="All areas" />
+                  </SelectTrigger>
+                  <SelectPortal>
+                    <SelectContent align="start" sideOffset={6}>
+                      <SelectGroup>
+                        <SelectLabel>Area scope</SelectLabel>
+                        <SelectItem value="">All areas</SelectItem>
+                        <For each={areaOptions} by={(option) => option}>
+                          {(option) => <SelectItem value={option}>{option}</SelectItem>}
+                        </For>
+                      </SelectGroup>
+                    </SelectContent>
+                  </SelectPortal>
+                </Select>
               </div>
               <div class="auth-field">
-                <Label for={`${domain}-flow-resource`}>Resource</Label>
-                <Input
-                  id={`${domain}-flow-resource`}
+                <Label for={`${domain}-flow-resource`}>
+                  {domain === "notice" ? "Notice route" : "RPC route"}
+                </Label>
+                <Select
                   value={resourceValue}
-                  onInput={(event: Event) => setResource((event.target as HTMLInputElement).value)}
-                  placeholder={domain === "notice" ? "invoice-events" : "settlement-api"}
-                />
-              </div>
-              <div class="auth-field">
-                <Label for={`${domain}-flow-query`}>{queryLabel(domain, modeValue)}</Label>
-                <Input
-                  id={`${domain}-flow-query`}
-                  value={queryValue}
-                  disabled={modeValue === "flow"}
-                  onInput={(event: Event) => setQuery((event.target as HTMLInputElement).value)}
-                  placeholder={queryPlaceholder(domain, modeValue)}
-                />
+                  onValueChange={selectResource}
+                  disabled={resourceOptions.length === 0}
+                >
+                  <SelectTrigger id={`${domain}-flow-resource`}>
+                    <SelectValue
+                      placeholder={domain === "notice" ? "All notice routes" : "All RPC routes"}
+                    />
+                  </SelectTrigger>
+                  <SelectPortal>
+                    <SelectContent align="start" sideOffset={6}>
+                      <SelectGroup>
+                        <SelectLabel>
+                          {domain === "notice" ? "Notice route scope" : "RPC route scope"}
+                        </SelectLabel>
+                        <SelectItem value="">
+                          {domain === "notice" ? "All notice routes" : "All RPC routes"}
+                        </SelectItem>
+                        <For each={resourceOptions} by={(option) => option}>
+                          {(option) => <SelectItem value={option}>{option}</SelectItem>}
+                        </For>
+                      </SelectGroup>
+                    </SelectContent>
+                  </SelectPortal>
+                </Select>
               </div>
             </div>
             {searchMode ? (
@@ -687,8 +732,8 @@ export default function CommunicationFlowWorkspace({
                 wrap="wrap"
               >
                 <p class="domain-muted">
-                  Querying {operatorContext.selectedRouteFamily.label}. Communication observation
-                  reads require a concrete numeric Route Family.
+                  Querying {operatorContext.selectedRouteFamily.label} with the selected route
+                  scope. Leave selectors on All to broaden the evidence read.
                 </p>
                 <Button type="submit" disabled={!canRunSearch}>
                   {searchLoadingValue ? "Running" : "Run search"}
@@ -744,7 +789,7 @@ export default function CommunicationFlowWorkspace({
             filteredRows.length === 0 ? (
               <QueryEmptyState
                 title={`No matching ${domain === "notice" ? "notice routes" : "RPC routes"}`}
-                description="Adjust the realm, area, or resource filters to find visible communication resources."
+                description="Adjust the realm, area, or route selectors to find visible communication resources."
               />
             ) : (
               <Stack gap="3">

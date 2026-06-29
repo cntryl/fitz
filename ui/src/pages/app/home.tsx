@@ -237,9 +237,9 @@ export default function Home() {
             ) : null}
 
             <OverviewStatusBand overview={overview} />
-            <OverviewIssues overview={overview} />
-            <DomainHealth overview={overview} />
             <BrokerVitals overview={overview} />
+            <DomainHealth overview={overview} />
+            <OverviewIssues overview={overview} />
           </>
         ) : null}
       </Stack>

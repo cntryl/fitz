@@ -4,7 +4,7 @@ import { mapAdminSearchResponse } from "./search-mappers";
 import type { AdminSearchRequest, AdminSearchResults } from "./search-models";
 
 function routeFamilyParam(routeFamily: string | undefined) {
-  return routeFamily && routeFamily !== "all" ? routeFamily : undefined;
+  return routeFamily || undefined;
 }
 
 async function searchAdminState(

@@ -11,6 +11,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+const HISTOGRAM_BUCKET_BOUNDS: [&str; 9] = [
+    "1ms", "5ms", "10ms", "50ms", "100ms", "500ms", "1s", "5s", "+Inf",
+];
+
+fn append_metric_metadata(output: &mut String, name: &str, metric_type: &str, help: &str) {
+    output.push_str(&format!("# HELP {name} {help}\n"));
+    output.push_str(&format!("# TYPE {name} {metric_type}\n"));
+}
+
 /// Metrics collector instance.
 /// Clone-safe; backed by Arc<DashMap>.
 #[derive(Clone)]
@@ -313,37 +322,27 @@ impl MetricsCollector {
     pub fn to_prometheus_text(&self) -> String {
         let mut output = String::new();
 
-        // Export counter comments and values
-        output.push_str("# HELP fitz_counters Fitz counter metrics\n");
-        output.push_str("# TYPE fitz_counters counter\n");
         for (name, value) in self.export_counters() {
+            append_metric_metadata(&mut output, &name, "counter", "Fitz counter metric");
             output.push_str(&format!("{} {}\n", name, value));
+            output.push('\n');
         }
 
-        output.push('\n');
-
-        // Export gauge comments and values
-        output.push_str("# HELP fitz_gauges Fitz gauge metrics\n");
-        output.push_str("# TYPE fitz_gauges gauge\n");
         for (name, value) in self.export_gauges() {
+            append_metric_metadata(&mut output, &name, "gauge", "Fitz gauge metric");
             output.push_str(&format!("{} {}\n", name, value));
+            output.push('\n');
         }
 
-        output.push('\n');
-
-        // Export histogram comments and bucket values
-        output.push_str("# HELP fitz_histograms Fitz histogram metrics (latency in milliseconds or microseconds)\n");
-        output.push_str("# TYPE fitz_histograms histogram\n");
-        let bucket_bounds = [
-            "1ms", "5ms", "10ms", "50ms", "100ms", "500ms", "1s", "5s", "+Inf",
-        ];
         for (name, buckets) in self.export_histograms() {
+            append_metric_metadata(&mut output, &name, "histogram", "Fitz histogram metric");
             let mut cumsum = 0u64;
-            for (i, bucket_bound) in bucket_bounds.iter().enumerate() {
+            for (i, bucket_bound) in HISTOGRAM_BUCKET_BOUNDS.iter().enumerate() {
                 cumsum += buckets[i];
                 output.push_str(&format!("{}{{le=\"{}\"}} {}\n", name, bucket_bound, cumsum));
             }
             output.push_str(&format!("{}\u{005f}count {}\n", name, cumsum));
+            output.push('\n');
         }
 
         output
@@ -443,12 +442,17 @@ mod tests {
         let mc = MetricsCollector::new();
         mc.counter_add("test_counter", 42);
         mc.gauge_set("test_gauge", 10);
+        mc.histogram_observe_ms("test_latency_ms", 1);
 
         // Act
         let text = mc.to_prometheus_text();
 
         // Assert
+        assert!(text.contains("# TYPE test_counter counter"));
         assert!(text.contains("test_counter 42"));
+        assert!(text.contains("# TYPE test_gauge gauge"));
         assert!(text.contains("test_gauge 10"));
+        assert!(text.contains("# TYPE test_latency_ms histogram"));
+        assert!(text.contains("test_latency_ms_count 1"));
     }
 }

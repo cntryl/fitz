@@ -8,7 +8,7 @@ import { topologyDomainDescriptions } from "@/features/topology/topology-mappers
 import type { MessagingTopologyOverview } from "@/features/topology/topology-models";
 import { badgeVariant, formatTopologyRate, stateLabel } from "@/features/topology/topology-view";
 
-const domainLinksByHref = new Map(domainLinks.map((link) => [link.href, link]));
+const domainLinksBySegment = new Map(domainLinks.map((link) => [link.segment, link]));
 
 export default function DashboardDomainSignals({
   topology,
@@ -28,7 +28,7 @@ export default function DashboardDomainSignals({
       <ul class="dashboard-signal-list">
         <For each={topology.lanes} by={(lane) => lane.id}>
           {(lane) => {
-            const link = domainLinksByHref.get(lane.href);
+            const link = domainLinksBySegment.get(lane.id);
             const Icon = link?.icon;
 
             return (

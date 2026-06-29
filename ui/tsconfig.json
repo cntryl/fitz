@@ -20,6 +20,5 @@
       "@askrjs/askr/jsx-dev-runtime": ["./node_modules/@askrjs/askr/dist/jsx/jsx-dev-runtime.d.ts"]
     }
   },
-  "include": ["src", "tests"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "include": ["src", "tests", "dev", "vite.config.ts", "playwright.config.ts"]
 }

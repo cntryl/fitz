@@ -2,6 +2,7 @@ import {
   DatabaseIcon,
   FileLockIcon,
   BoxesIcon,
+  ChartLineIcon,
   GaugeIcon,
   LayoutDashboardIcon,
   MessagesSquareIcon,
@@ -43,11 +44,29 @@ export interface ShellLink {
   icon: typeof BoxesIcon;
 }
 
-export const DEFAULT_ROUTE_FAMILY_SEGMENT = "all";
+export const DEFAULT_ROUTE_FAMILY_SEGMENT = "1";
+export const LEGACY_ALL_ROUTE_FAMILY_SEGMENT = "all";
 export const RESOURCE_ROUTE_SHAPE = "{realm}/{area}/{resource}";
+const routeFamilyPattern = /^\d+$/;
+const domainSegmentValues = [
+  "stream",
+  "kv",
+  "schedule",
+  "queue",
+  "lease",
+  "notice",
+  "rpc",
+] as const satisfies readonly DomainSegment[];
+const adminContentSegments = new Set<string>([
+  "diagnostics",
+  "metrics",
+  "settings",
+  "sessions",
+  ...domainSegmentValues,
+]);
 
 export function isRouteFamilyPathSegment(value: string | undefined) {
-  return value === DEFAULT_ROUTE_FAMILY_SEGMENT || /^\d+$/.test(value ?? "");
+  return routeFamilyPattern.test(value ?? "");
 }
 
 export function routeFamilyFromPath(path: string) {
@@ -94,10 +113,46 @@ export function pathWithRouteFamily(path: string, family: string) {
       return `/${["admin", encodeURIComponent(family), ...parts.slice(2)].join("/")}`;
     }
 
-    return adminChildHref(parts.slice(1).join("/"), family);
+    if (parts[1] === LEGACY_ALL_ROUTE_FAMILY_SEGMENT) {
+      return adminChildHref(parts.slice(2).join("/"), family);
+    }
+
+    if (adminContentSegments.has(parts[1] ?? "")) {
+      return adminChildHref(parts.slice(1).join("/"), family);
+    }
+
+    if (adminContentSegments.has(parts[2] ?? "")) {
+      return adminChildHref(parts.slice(2).join("/"), family);
+    }
+
+    return adminHref(family);
   }
 
   return adminChildHref(parts.join("/"), family);
+}
+
+export function contentPathFromRouteFamilyPath(path: string) {
+  const parts = path.split("/").filter(Boolean);
+
+  if (parts[0] !== "admin") {
+    return path === "/" ? "/" : `/${parts.join("/")}`;
+  }
+
+  if (isRouteFamilyPathSegment(parts[1]) || parts[1] === LEGACY_ALL_ROUTE_FAMILY_SEGMENT) {
+    const child = parts.slice(2).join("/");
+
+    return child ? `/${child}` : "/";
+  }
+
+  if (adminContentSegments.has(parts[1] ?? "")) {
+    return `/${parts.slice(1).join("/")}`;
+  }
+
+  if (adminContentSegments.has(parts[2] ?? "")) {
+    return `/${parts.slice(2).join("/")}`;
+  }
+
+  return "/";
 }
 
 export function domainHref(segment: DomainSegment, family = currentRouteFamilySegment()) {
@@ -218,17 +273,22 @@ export function domainScopeHref(
 
 export const shellLinks: ShellLink[] = [
   {
-    href: adminHref(DEFAULT_ROUTE_FAMILY_SEGMENT),
+    href: "/",
     title: "Overview",
     icon: LayoutDashboardIcon,
   },
   {
-    href: adminChildHref("diagnostics", DEFAULT_ROUTE_FAMILY_SEGMENT),
+    href: "/diagnostics",
     title: "Diagnostics",
     icon: GaugeIcon,
   },
   {
-    href: adminChildHref("settings", DEFAULT_ROUTE_FAMILY_SEGMENT),
+    href: "/metrics",
+    title: "Metrics",
+    icon: ChartLineIcon,
+  },
+  {
+    href: "/settings",
     title: "Settings",
     icon: SettingsIcon,
   },
@@ -236,49 +296,49 @@ export const shellLinks: ShellLink[] = [
 
 export const domainLinks: DomainLink[] = [
   {
-    href: domainHref("stream", DEFAULT_ROUTE_FAMILY_SEGMENT),
+    href: "/stream",
     segment: "stream",
     title: "Stream",
     description: "Durable history, event exploration, and replay evidence.",
     icon: DatabaseZapIcon,
   },
   {
-    href: domainHref("kv", DEFAULT_ROUTE_FAMILY_SEGMENT),
+    href: "/kv",
     segment: "kv",
     title: "KV",
     description: "Current authoritative state, lookup, and validation workflows.",
     icon: DatabaseIcon,
   },
   {
-    href: domainHref("schedule", DEFAULT_ROUTE_FAMILY_SEGMENT),
+    href: "/schedule",
     segment: "schedule",
     title: "Schedule",
     description: "Durable timing intent, timeline review, and execution health.",
     icon: TimerResetIcon,
   },
   {
-    href: domainHref("queue", DEFAULT_ROUTE_FAMILY_SEGMENT),
+    href: "/queue",
     segment: "queue",
     title: "Queue",
     description: "Durable work delivery, backlog, retries, and dead letters.",
     icon: Rows3Icon,
   },
   {
-    href: domainHref("lease", DEFAULT_ROUTE_FAMILY_SEGMENT),
+    href: "/lease",
     segment: "lease",
     title: "Lease",
     description: "Ephemeral ownership, contention, and lease health.",
     icon: FileLockIcon,
   },
   {
-    href: domainHref("notice", DEFAULT_ROUTE_FAMILY_SEGMENT),
+    href: "/notice",
     segment: "notice",
     title: "Notice",
     description: "Live ephemeral fanout, participants, and delivery pressure.",
     icon: MessagesSquareIcon,
   },
   {
-    href: domainHref("rpc", DEFAULT_ROUTE_FAMILY_SEGMENT),
+    href: "/rpc",
     segment: "rpc",
     title: "RPC",
     description: "Live request/response flow, workers, failures, and latency.",
@@ -286,7 +346,7 @@ export const domainLinks: DomainLink[] = [
   },
 ];
 
-export const domainSegments = domainLinks.map((link) => link.segment);
+export const domainSegments = [...domainSegmentValues];
 export const genericResourceDomainSegments = domainSegments.filter(
   (segment): segment is GenericResourceDomainSegment => segment !== "queue",
 );

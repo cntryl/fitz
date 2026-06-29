@@ -19,6 +19,15 @@ Expected companion services:
 - Fitz backend on `http://localhost:4090`
 - Vite proxy forwards `/api`, `/metrics`, and `/ws`
 
+For UI-only design work without a running broker, enable the Vite mock API:
+
+```bash
+VITE_FITZ_MOCK_API=1 vp dev
+```
+
+The mock server returns DTO-shaped admin payloads for the shell, overview, diagnostics, metrics,
+and domain inventory/resource pages.
+
 ## Build and Verification
 
 ```bash
@@ -37,6 +46,7 @@ Local Rust builds do not embed UI assets and do not fall back to `../public`. Fo
 The browser client reads these public Vite env vars through `src/shared/config.ts`:
 
 - `VITE_FITZ_API_BASE_URL`
+- `VITE_FITZ_MOCK_API`
 - `VITE_FITZ_REQUEST_TIMEOUT_MS`
 - `VITE_FITZ_LOG_LEVEL`
 

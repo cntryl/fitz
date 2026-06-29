@@ -10,7 +10,7 @@ export function createAdminSearchQuery(request: AdminSearchRequest) {
   const key = searchQueries.key(
     "admin",
     request.query,
-    request.routeFamily ?? "all",
+    request.routeFamily ?? "unscoped",
     request.domain ?? "any",
     request.realm ?? "any",
     request.area ?? "any",

@@ -1,4 +1,4 @@
-import { Container, Inline, Stack } from "@askrjs/themes/components";
+import { Block, Grid, Main, Stack } from "@askrjs/themes/components";
 import OperatorBreadcrumbs from "./operator-breadcrumbs";
 
 export interface DomainPageFrameProps {
@@ -10,23 +10,33 @@ export default function DomainPageFrame({ children, sidebar }: DomainPageFramePr
   const hasSidebar = sidebar !== undefined && sidebar !== null;
 
   return (
-    <Container class="domain-page-frame" size="xl">
-      <Inline
-        class="page-frame-layout"
-        direction={{ base: "column", md: "row" }}
-        gap="3"
-        align={{ base: "stretch", md: "start" }}
-        wrap="nowrap"
-      >
-        <main id="main-content" class="page-frame-main" tabIndex={-1}>
-          <Stack gap="3">
-            <OperatorBreadcrumbs />
-            {children}
-          </Stack>
-        </main>
+    <Main
+      id="main-content"
+      class="domain-page-frame route-transition-surface"
+      paddingY="xl"
+      tabIndex={-1}
+    >
+      <Stack gap="3">
+        <OperatorBreadcrumbs />
 
-        {hasSidebar ? <aside class="page-frame-sidebar">{sidebar}</aside> : null}
-      </Inline>
-    </Container>
+        {hasSidebar ? (
+          <Grid
+            class="page-frame-layout"
+            columns={{ base: 1, lg: "minmax(0, 1fr) minmax(17rem, 21rem)" }}
+            gap="lg"
+            align="start"
+          >
+            <Block class="page-frame-main">
+              <Stack gap="3">{children}</Stack>
+            </Block>
+            <aside class="page-frame-sidebar">{sidebar}</aside>
+          </Grid>
+        ) : (
+          <Block class="page-frame-main">
+            <Stack gap="3">{children}</Stack>
+          </Block>
+        )}
+      </Stack>
+    </Main>
   );
 }

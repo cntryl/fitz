@@ -12,11 +12,11 @@ import { useOperatorContext } from "@/shared/operator-context";
 import {
   adminChildHref,
   adminHref,
+  contentPathFromRouteFamilyPath,
   domainHref,
   domainScopeHref,
   domainTitleForSegment,
   isDomainSegment,
-  isRouteFamilyPathSegment,
   routeFamilyFromPath,
   shellLinks,
 } from "@/shared/navigation/domains";
@@ -36,21 +36,7 @@ function decodeSegment(value: string | undefined) {
 }
 
 function contentPathForRoute(path: string) {
-  const parts = path.split("/").filter(Boolean);
-
-  if (parts[0] !== "admin") {
-    return path;
-  }
-
-  if (isRouteFamilyPathSegment(parts[1])) {
-    const child = parts.slice(2).join("/");
-
-    return child ? `/${child}` : "/";
-  }
-
-  const legacyChild = parts.slice(1).join("/");
-
-  return legacyChild ? `/${legacyChild}` : "/";
+  return contentPathFromRouteFamilyPath(path);
 }
 
 function routeCrumbs(path: string, params: Record<string, string | undefined>, family: string) {
@@ -61,8 +47,12 @@ function routeCrumbs(path: string, params: Record<string, string | undefined>, f
     return [{ href: adminHref(family), label: "Overview" }];
   }
 
-  if (path === "/diagnostics" || path === "/metrics") {
+  if (path === "/diagnostics") {
     return [{ href: adminChildHref("diagnostics", family), label: "Diagnostics" }];
+  }
+
+  if (path === "/metrics") {
+    return [{ href: adminChildHref("metrics", family), label: "Metrics" }];
   }
 
   if (path === "/settings") {

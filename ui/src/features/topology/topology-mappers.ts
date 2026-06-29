@@ -136,15 +136,21 @@ function domainForConnection(connection: TopologyConnectionDto): TopologyDomain 
 }
 
 export function topologyScopeHref(domain: TopologyDomain, scope: TopologyScope): string {
+  const family = scope.routeFamily?.toString();
+
   if (!scope.realm || !scope.area || !scope.resource) {
-    return domainHref(domain);
+    return domainHref(domain, family);
   }
 
-  return domainResourceHref(domain, {
-    area: scope.area,
-    realm: scope.realm,
-    resource: scope.resource,
-  });
+  return domainResourceHref(
+    domain,
+    {
+      area: scope.area,
+      realm: scope.realm,
+      resource: scope.resource,
+    },
+    family,
+  );
 }
 
 function mapResource(

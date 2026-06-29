@@ -2,6 +2,7 @@ import { askr } from "@askrjs/vite";
 import autoprefixer from "autoprefixer";
 import { defineConfig } from "vite-plus";
 import type { UserConfig } from "@voidzero-dev/vite-plus-core";
+import { fitzMockApiPlugin } from "./dev/mock-api";
 
 function fileUrlPath(path: string) {
   return decodeURIComponent(new URL(path, import.meta.url).pathname).replace(
@@ -11,6 +12,8 @@ function fileUrlPath(path: string) {
 }
 
 const srcDir = fileUrlPath("./src");
+const useMockApi =
+  process.env.VITE_FITZ_MOCK_API === "1" || process.env.VITE_FITZ_MOCK_API === "true";
 
 const config = {
   fmt: {},
@@ -22,6 +25,7 @@ const config = {
     },
   },
   plugins: [
+    ...(useMockApi ? [fitzMockApiPlugin()] : []),
     askr({
       optimizeTemplates: true,
     }),

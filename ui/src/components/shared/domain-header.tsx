@@ -1,7 +1,6 @@
 import { RefreshCwIcon } from "@askrjs/lucide";
-import { Button } from "@askrjs/themes/components";
+import { Button, PageHeader, Text } from "@askrjs/themes/components";
 import { Badge } from "@askrjs/themes/components";
-import { Stack } from "@askrjs/themes/components";
 
 export interface DomainHeaderProps {
   eyebrow?: string;
@@ -41,29 +40,37 @@ export default function DomainHeader({
 
   return (
     <header class="domain-header">
-      <div class="domain-header-copy">
-        <p class="domain-header-kicker">{eyebrow ?? _domain ?? "Broker workspace"}</p>
-        <div class="domain-header-title-row">
-          <h1>{title}</h1>
-          {status ? <Badge variant={status.tone ?? "info"}>{status.label}</Badge> : null}
-        </div>
-        <p>{description}</p>
-        {status?.detail ? <p class="domain-header-detail">{status.detail}</p> : null}
-      </div>
-
-      {action ? (
-        <Stack gap="2" class="domain-header-actions">
-          <Button
-            variant="outline"
-            aria-label={action.label}
-            title={action.label}
-            onPress={action.onPress}
-          >
-            {action.icon ?? <RefreshCwIcon size={16} />}
-            <span>{action.label}</span>
-          </Button>
-        </Stack>
-      ) : null}
+      <Text as="span" class="domain-header-kicker">
+        {eyebrow ?? _domain ?? "Broker workspace"}
+      </Text>
+      <PageHeader
+        class="domain-header-page"
+        title={
+          <span class="domain-header-title-row">
+            <span>{title}</span>
+            {status ? <Badge variant={status.tone ?? "info"}>{status.label}</Badge> : null}
+          </span>
+        }
+        description={
+          <span class="domain-header-description">
+            <span>{description}</span>
+            {status?.detail ? <span class="domain-header-detail"> {status.detail}</span> : null}
+          </span>
+        }
+        actions={
+          action ? (
+            <Button
+              variant="outline"
+              aria-label={action.label}
+              title={action.label}
+              onPress={action.onPress}
+            >
+              {action.icon ?? <RefreshCwIcon size={16} />}
+              <span>{action.label}</span>
+            </Button>
+          ) : undefined
+        }
+      />
     </header>
   );
 }

@@ -8,7 +8,12 @@ import type {
 } from "@/features/topology/topology-models";
 import { hotspotHref, humanizeSeconds, scopeText } from "@/features/topology/topology-view";
 import { formatNumber } from "@/shared/format";
-import { adminChildHref, domainLinks, type DomainSegment } from "@/shared/navigation/domains";
+import {
+  adminChildHref,
+  domainHref,
+  domainLinks,
+  type DomainSegment,
+} from "@/shared/navigation/domains";
 
 export type OverviewTone = "danger" | "info" | "success" | "warning";
 
@@ -83,7 +88,7 @@ function stateLabel(state: TopologyState | undefined, issueCount: number) {
 }
 
 function actionForHref(href: string, domain?: DomainSegment) {
-  if (href === "/diagnostics") return "Open diagnostics";
+  if (href.endsWith("/diagnostics")) return "Open diagnostics";
   if (domain) return `Open ${domainLinkBySegment.get(domain)?.title ?? domain}`;
   return "Open scope";
 }
@@ -412,7 +417,7 @@ function domainStatuses(
 
     return {
       description: link.description,
-      href: link.href,
+      href: domainHref(link.segment),
       issueCount: domainIssues.length,
       signal:
         topIssue?.description ??

@@ -635,8 +635,8 @@ describe("service endpoint contracts", () => {
     });
 
     expect(mocks.apiv1.listKvRealms).toHaveBeenCalledTimes(1);
-    expect(mocks.apiv1.listKvAreas).toHaveBeenCalledWith("all", "default", {});
-    expect(mocks.apiv1.listKvResources).toHaveBeenCalledWith("all", "default", "ops", {});
+    expect(mocks.apiv1.listKvAreas).toHaveBeenCalledWith("1", "default", {});
+    expect(mocks.apiv1.listKvResources).toHaveBeenCalledWith("1", "default", "ops", {});
   });
 
   it("fans out generic resource detail requests through detail, timeline, and related endpoints", async () => {
@@ -648,9 +648,9 @@ describe("service endpoint contracts", () => {
       null,
     );
 
-    expect(mocks.apiv1.getKvResource).toHaveBeenCalledWith("all", "default", "ops", "primary", {});
+    expect(mocks.apiv1.getKvResource).toHaveBeenCalledWith("1", "default", "ops", "primary", {});
     expect(mocks.apiv1.listKvResourceEvents).toHaveBeenCalledWith(
-      "all",
+      "1",
       "default",
       "ops",
       "primary",
@@ -658,7 +658,7 @@ describe("service endpoint contracts", () => {
       {},
     );
     expect(mocks.apiv1.listKvTransactions).toHaveBeenCalledWith(
-      "all",
+      "1",
       "default",
       "ops",
       "primary",
@@ -733,29 +733,23 @@ describe("service endpoint contracts", () => {
       resource: "primary",
     });
 
-    expect(mocks.apiv1.getQueueResource).toHaveBeenCalledWith(
-      "all",
-      "default",
-      "ops",
-      "primary",
-      {},
-    );
+    expect(mocks.apiv1.getQueueResource).toHaveBeenCalledWith("1", "default", "ops", "primary", {});
     expect(mocks.apiv1.listQueueInflightEntries).toHaveBeenCalledWith(
-      "all",
+      "1",
       "default",
       "ops",
       "primary",
       {},
     );
     expect(mocks.apiv1.listQueueDeadLetters).toHaveBeenCalledWith(
-      "all",
+      "1",
       "default",
       "ops",
       "primary",
       {},
     );
     expect(mocks.apiv1.listQueueResourceEvents).toHaveBeenCalledWith(
-      "all",
+      "1",
       "default",
       "ops",
       "primary",
@@ -781,10 +775,10 @@ describe("service endpoint contracts", () => {
       realm: "default",
     });
 
-    expect(mocks.apiv1.listQueueRealms).toHaveBeenCalledWith("all", {});
-    expect(mocks.apiv1.getQueueStats).toHaveBeenCalledWith("all", {});
-    expect(mocks.apiv1.getQueueRealm).toHaveBeenCalledWith("all", "default", {});
-    expect(mocks.apiv1.getQueueArea).toHaveBeenCalledWith("all", "default", "ops", {});
+    expect(mocks.apiv1.listQueueRealms).toHaveBeenCalledWith("1", {});
+    expect(mocks.apiv1.getQueueStats).toHaveBeenCalledWith("1", {});
+    expect(mocks.apiv1.getQueueRealm).toHaveBeenCalledWith("1", "default", {});
+    expect(mocks.apiv1.getQueueArea).toHaveBeenCalledWith("1", "default", "ops", {});
   });
 
   it("loads lease overview and drill-down inventory through lease-specific scoped endpoints", async () => {
@@ -851,7 +845,7 @@ describe("service endpoint contracts", () => {
     );
 
     expect(mocks.apiv1.compareQueueResourceSnapshots).toHaveBeenCalledWith(
-      "all",
+      "1",
       "default",
       "ops",
       "primary",
@@ -966,8 +960,8 @@ describe("service endpoint contracts", () => {
       routeFamily: 7,
     });
 
-    expect(mocks.apiv1.listScheduleAreas).toHaveBeenCalledWith("all", "default", {});
-    expect(mocks.apiv1.listScheduleResources).toHaveBeenCalledWith("all", "default", "ops", {});
+    expect(mocks.apiv1.listScheduleAreas).toHaveBeenCalledWith("1", "default", {});
+    expect(mocks.apiv1.listScheduleResources).toHaveBeenCalledWith("1", "default", "ops", {});
     expect(mocks.apiv1.getScheduleResource).toHaveBeenCalledWith(
       "7",
       "default",
