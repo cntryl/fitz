@@ -103,7 +103,7 @@ impl DomainFrameDispatcher<'_> {
                     error = %error,
                     "Ingress: unauthorized response delivery failed"
                 );
-                IngressDecision::Close(format!("unauthorized response delivery failed: {}", error))
+                IngressDecision::Close(format!("unauthorized response delivery failed: {error}"))
             }
         }
     }
@@ -276,8 +276,7 @@ impl DomainFrameDispatcher<'_> {
                     "Ingress: router.route failed for domain dispatch"
                 );
                 Err(IngressDecision::Close(format!(
-                    "route delivery failed: {}",
-                    error
+                    "route delivery failed: {error}"
                 )))
             }
         }
@@ -312,8 +311,7 @@ impl DomainFrameDispatcher<'_> {
                     "Ingress: failed to derive route for authorization"
                 );
                 return Err(IngressDecision::Close(format!(
-                    "authorization parse failed: {}",
-                    error
+                    "authorization parse failed: {error}"
                 )));
             }
         };
@@ -339,8 +337,7 @@ impl DomainFrameDispatcher<'_> {
             }
             AuthorizationFailure::PermissionDenied => self
                 .send_unauthorized_domain_response(&dispatch)
-                .map(|()| IngressDecision::Accept)
-                .unwrap_or_else(|decision| decision),
+                .map_or_else(|decision| decision, |()| IngressDecision::Accept),
         })?;
         self.dispatch_domain_frame(dispatch, message_payload)
     }
@@ -424,7 +421,7 @@ impl DomainFrameDispatcher<'_> {
 
         match payload[durability_offset] {
             0 | 1 => Ok(access),
-            value => Err(format!("Invalid durability mode: {}", value)),
+            value => Err(format!("Invalid durability mode: {value}")),
         }
     }
 }

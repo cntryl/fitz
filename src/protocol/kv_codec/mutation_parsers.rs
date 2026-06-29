@@ -4,6 +4,7 @@ use crate::domains::kv::{KvMessage, KvNotification, ScanQuery};
 use crate::protocol::kv_codec::frame_and_routes::{decode_route_str, parse_route_resource};
 use crate::runtime::routing::{Route, RouteFamily};
 
+#[must_use]
 pub fn encode_notify(subscription_id: u64, route: &Route, notification: KvNotification) -> Vec<u8> {
     use bytes::BufMut;
 

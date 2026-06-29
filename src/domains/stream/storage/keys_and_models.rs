@@ -60,6 +60,7 @@ pub(super) fn stream_kind_key(realm: &str, kind: KeyPrefix, extra_capacity: usiz
     stream_kind_encoder(realm, kind, extra_capacity).into_vec()
 }
 
+#[must_use]
 pub fn stream_key_suffix(key: &[u8]) -> &[u8] {
     storage_key::strip_domain_prefix(key, DomainKeyspace::Stream).unwrap_or(key)
 }
@@ -116,6 +117,7 @@ pub(super) fn decode_two_u64_value(
 }
 
 /// Encodes a resource stream key
+#[must_use]
 pub fn encode_resource_key(
     realm: &str,
     area: &str,
@@ -131,6 +133,7 @@ pub fn encode_resource_key(
 }
 
 /// Encodes an area index key
+#[must_use]
 pub fn encode_area_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(realm, KeyPrefix::Area, area.len() + 9);
     storage_key::encode_segment_into(&mut encoder, area);
@@ -139,6 +142,7 @@ pub fn encode_area_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
 }
 
 /// Encodes a realm index key
+#[must_use]
 pub fn encode_realm_key(realm: &str, realm_offset: u64) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(realm, KeyPrefix::Realm, 9);
     encoder.encode_u64_into(realm_offset);
@@ -168,6 +172,7 @@ pub fn decode_realm_offset_from_key(key: &[u8]) -> Result<u64, String> {
 }
 
 /// Encodes a watermark key
+#[must_use]
 pub fn encode_watermark_key(realm: &str, area: &str) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(realm, KeyPrefix::Watermark, area.len());
     encoder.encode_string_into(area);
@@ -175,6 +180,7 @@ pub fn encode_watermark_key(realm: &str, area: &str) -> Vec<u8> {
 }
 
 /// Encodes an offset counter key (metadata, independent of TTL)
+#[must_use]
 pub fn encode_offset_counter_key(realm: &str, area: &str, resource: &str) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(
         realm,
@@ -187,11 +193,13 @@ pub fn encode_offset_counter_key(realm: &str, area: &str, resource: &str) -> Vec
 }
 
 /// Encodes a realm watermark key (metadata, independent of TTL)
+#[must_use]
 pub fn encode_realm_watermark_key(realm: &str) -> Vec<u8> {
     stream_kind_key(realm, KeyPrefix::RealmWatermark, 0)
 }
 
 /// Encodes a resource metadata key.
+#[must_use]
 pub fn encode_resource_meta_key(realm: &str, area: &str, resource: &str) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(
         realm,
@@ -204,6 +212,7 @@ pub fn encode_resource_meta_key(realm: &str, area: &str, resource: &str) -> Vec<
 }
 
 /// Encodes an area offset counter key.
+#[must_use]
 pub fn encode_area_counter_key(realm: &str, area: &str) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(realm, KeyPrefix::AreaCounter, area.len());
     encoder.encode_string_into(area);
@@ -211,11 +220,13 @@ pub fn encode_area_counter_key(realm: &str, area: &str) -> Vec<u8> {
 }
 
 /// Encodes a realm offset counter key.
+#[must_use]
 pub fn encode_realm_counter_key(realm: &str) -> Vec<u8> {
     stream_kind_key(realm, KeyPrefix::RealmCounter, 0)
 }
 
 /// Encodes a resource discriminator sidecar key.
+#[must_use]
 pub fn encode_resource_discriminator_key(
     realm: &str,
     area: &str,
@@ -234,6 +245,7 @@ pub fn encode_resource_discriminator_key(
 }
 
 /// Encodes an area discriminator sidecar key.
+#[must_use]
 pub fn encode_area_discriminator_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(realm, KeyPrefix::AreaDiscriminator, area.len() + 10);
     storage_key::encode_segment_into(&mut encoder, area);
@@ -242,6 +254,7 @@ pub fn encode_area_discriminator_key(realm: &str, area: &str, area_offset: u64) 
 }
 
 /// Encodes a realm discriminator sidecar key.
+#[must_use]
 pub fn encode_realm_discriminator_key(realm: &str, realm_offset: u64) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(realm, KeyPrefix::RealmDiscriminator, 9);
     encoder.encode_u64_into(realm_offset);
@@ -249,6 +262,7 @@ pub fn encode_realm_discriminator_key(realm: &str, realm_offset: u64) -> Vec<u8>
 }
 
 /// Encodes a prototype canonical resource key.
+#[must_use]
 pub fn encode_canonical_resource_key(stream_id: u64, resource_offset: u64) -> Vec<u8> {
     let mut encoder = lexkey::Encoder::with_capacity(17);
     encoder.push_byte(KeyPrefix::CanonicalResource as u8);
@@ -258,6 +272,7 @@ pub fn encode_canonical_resource_key(stream_id: u64, resource_offset: u64) -> Ve
 }
 
 /// Encodes a prototype area locator key.
+#[must_use]
 pub fn encode_area_locator_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(realm, KeyPrefix::AreaLocator, area.len() + 10);
     storage_key::encode_segment_into(&mut encoder, area);
@@ -266,6 +281,7 @@ pub fn encode_area_locator_key(realm: &str, area: &str, area_offset: u64) -> Vec
 }
 
 /// Encodes a prototype realm locator key.
+#[must_use]
 pub fn encode_realm_locator_key(realm: &str, realm_offset: u64) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(realm, KeyPrefix::RealmLocator, 9);
     encoder.encode_u64_into(realm_offset);
@@ -273,6 +289,7 @@ pub fn encode_realm_locator_key(realm: &str, realm_offset: u64) -> Vec<u8> {
 }
 
 /// Encodes a promotion-frontier compact area page key.
+#[must_use]
 pub fn encode_compact_area_page_key(
     realm: &str,
     area: &str,
@@ -285,6 +302,7 @@ pub fn encode_compact_area_page_key(
 }
 
 /// Encodes a promotion-frontier compressed compact realm page key.
+#[must_use]
 pub fn encode_compressed_compact_realm_page_key(
     realm: &str,
     page_start_realm_offset: u64,
@@ -295,6 +313,7 @@ pub fn encode_compressed_compact_realm_page_key(
 }
 
 /// Encodes a promotion-frontier compact resource mini-page key.
+#[must_use]
 pub fn encode_compact_resource_page_key(
     realm: &str,
     area: &str,
@@ -324,6 +343,7 @@ pub fn decode_resource_offset_from_key(key: &[u8]) -> Result<u64, String> {
 }
 
 /// Encodes the per-family stream storage layout marker key.
+#[must_use]
 pub fn encode_stream_layout_marker_key() -> Vec<u8> {
     vec![KeyPrefix::LayoutMarker as u8]
 }

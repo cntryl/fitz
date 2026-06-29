@@ -42,6 +42,7 @@ fn env_f64(name: &str, default_value: f64) -> f64 {
 }
 
 #[allow(dead_code)]
+#[must_use]
 pub fn criterion_config_for_tier1() -> Criterion {
     // ---------------------------------------------------------------
     // Tier 1 — Hotpath (ns → µs)
@@ -60,6 +61,7 @@ pub fn criterion_config_for_tier1() -> Criterion {
 }
 
 #[allow(dead_code)]
+#[must_use]
 pub fn criterion_config_for_tier2() -> Criterion {
     // ---------------------------------------------------------------
     // Tier 2 — Subsystem (µs → ms)

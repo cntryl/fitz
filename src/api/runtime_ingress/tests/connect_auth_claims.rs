@@ -11,7 +11,7 @@ fn should_reject_connect_with_unprovisioned_resolved_route_family() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "user:55",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["notice://prod/orders/**#read"]
     }));
@@ -43,7 +43,7 @@ fn should_reject_connect_with_unmapped_identity_claim() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "user:56",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "unmapped",
         "permissions": ["notice://prod/orders/**#read"]
     }));
@@ -74,7 +74,7 @@ fn should_preserve_resolved_route_families_when_sessions_reconnect_in_reverse_or
             "iss": "",
             "aud": "fitz-broker",
             "sub": subject,
-            "exp": 9999999999u64,
+            "exp": 9_999_999_999_u64,
             "tid": subject,
             "permissions": ["kv://shared/data/item#read"]
         }))
@@ -169,7 +169,7 @@ fn should_reject_connect_with_malformed_permissions() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["badperm#oops"]
     });
@@ -202,7 +202,7 @@ fn should_reject_connect_when_issuer_cannot_derive_jwks() {
         "iss": "not-a-valid-issuer",
         "aud": "fitz-broker",
         "sub": "user:54",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["notice://prod/orders/**#read"]
     }));
@@ -249,7 +249,7 @@ fn should_set_permissions_on_connect_with_issuer_valid_signature() {
         "iss": issuer,
         "aud": "fitz-broker",
         "sub": "user:80",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["notice://prod/orders/**#write"]
     });
@@ -340,7 +340,7 @@ async fn should_not_block_unrelated_sessions_while_jwks_fetch_is_pending() {
             "iss": issuer,
             "aud": "fitz-broker",
             "sub": "user:82",
-            "exp": 9999999999u64,
+            "exp": 9_999_999_999_u64,
             "tid": "acme-prod",
             "permissions": ["notice://prod/orders/**#write"]
         }),
@@ -413,7 +413,7 @@ fn should_reject_connect_with_issuer_invalid_signature() {
         "iss": issuer,
         "aud": "fitz-broker",
         "sub": "user:81",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["notice://prod/orders/**#write"]
     });
@@ -479,7 +479,7 @@ fn should_update_session_actor_on_connect() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["notice://prod/orders/**#write"]
     });
@@ -521,7 +521,7 @@ fn should_allow_stream_followup_after_begin_without_global_stream_write_permissi
         "iss": "",
         "aud": "fitz-broker",
         "sub": "user:62",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["stream://acme/logs/**#write"]
     });
@@ -603,7 +603,7 @@ fn should_deny_e2e_notification_publish_via_ingress_snapshot() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "user:70",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["notice://prod/orders/**#read"]
     });
@@ -669,7 +669,7 @@ fn should_allow_e2e_notification_publish_via_ingress_snapshot() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "user:71",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["notice://prod/orders/**#write"]
     });
@@ -815,8 +815,7 @@ async fn should_allow_anonymous_access_when_auth_not_required() {
     // Assert - Should accept (anonymous mode)
     assert!(
         matches!(result, IngressDecision::Accept),
-        "Expected Accept in anonymous mode, got {:?}",
-        result
+        "Expected Accept in anonymous mode, got {result:?}"
     );
 
     // Verify session has full permissions

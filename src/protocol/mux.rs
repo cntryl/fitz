@@ -14,6 +14,7 @@ impl ChannelId {
     pub const COUNT: usize = 6;
 
     #[inline]
+    #[must_use]
     pub fn idx(self) -> usize {
         self as usize
     }
@@ -47,8 +48,8 @@ pub enum MuxError {
 impl fmt::Display for MuxError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnknownMessageType(t) => write!(f, "unknown message type: {}", t),
-            Self::ChannelFull(ch) => write!(f, "channel full: {}", ch),
+            Self::UnknownMessageType(t) => write!(f, "unknown message type: {t}"),
+            Self::ChannelFull(ch) => write!(f, "channel full: {ch}"),
         }
     }
 }
@@ -73,6 +74,7 @@ impl Default for TypeMapping {
 }
 
 impl TypeMapping {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -92,6 +94,7 @@ impl TypeMapping {
 
     /// Get channel for msg_type. Fast path: if no overrides, do only a range check.
     #[inline]
+    #[must_use]
     pub fn get_channel(&self, msg_type: u16) -> Option<ChannelId> {
         // If overrides exist, do a small linear scan first (overrides rare and small)
         if !self.overrides.is_empty() {
@@ -165,6 +168,7 @@ impl<'a> Drop for ChannelGrant<'a> {
 }
 
 impl Mux {
+    #[must_use]
     pub fn new(channel_capacity: usize) -> Self {
         let mut capacities = [0usize; ChannelId::COUNT];
         let mut counters = [0usize; ChannelId::COUNT];
@@ -181,6 +185,7 @@ impl Mux {
         }
     }
 
+    #[must_use]
     pub fn with_mapping(channel_capacity: usize, mapping: TypeMapping) -> Self {
         let mut mux = Self::new(channel_capacity);
         mux.type_mapping = mapping;
@@ -259,6 +264,7 @@ impl Mux {
     }
 
     /// Inspect current occupancy for a channel (useful for tests and benches)
+    #[must_use]
     pub fn occupancy(&self, channel: ChannelId) -> usize {
         self.counters[channel.idx()]
     }

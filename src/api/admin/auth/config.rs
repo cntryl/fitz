@@ -1,5 +1,6 @@
 use super::{AdminAuthMode, AdminRouteFamilyAccess};
 
+#[must_use]
 pub fn protected_admin_configured_from_env() -> bool {
     let mode = match std::env::var("FITZ_ADMIN_AUTH_MODE") {
         Ok(value) if value.eq_ignore_ascii_case("open") => AdminAuthMode::Open,

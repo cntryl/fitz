@@ -26,15 +26,14 @@ impl ScheduleActor {
         ) = self
             .schedules
             .get(&route)
-            .map(|existing| {
+            .map_or((None, None, None, 0), |existing| {
                 (
                     Some(existing.next_fire_ms),
                     Some(existing.list_index),
                     existing.last_fire_ms,
                     existing.executions_total,
                 )
-            })
-            .unwrap_or((None, None, None, 0));
+            });
 
         if let Some(existing) = self.schedules.get(&route) {
             if existing.cron == cron && existing.payload == payload {
@@ -274,10 +273,12 @@ impl ScheduleActor {
         Ok(false)
     }
 
+    #[must_use]
     pub fn schedule_count(&self) -> usize {
         self.schedules.len()
     }
 
+    #[must_use]
     pub fn list_defs(&self) -> Vec<(String, String, Bytes)> {
         self.list_entries
             .iter()

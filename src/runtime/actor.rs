@@ -51,6 +51,7 @@ pub struct ActorMetrics {
 }
 
 impl ActorMetrics {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -155,6 +156,7 @@ pub struct Context<A: Actor + ?Sized> {
 }
 
 impl<A: Actor + ?Sized> Context<A> {
+    #[must_use]
     pub fn new(address: RouteAddress, router: Arc<Router>) -> Self {
         Self {
             address,
@@ -185,6 +187,7 @@ impl<A: Actor + ?Sized> Context<A> {
     }
 
     /// Get a reference to the actor metrics
+    #[must_use]
     pub fn metrics(&self) -> &Arc<ActorMetrics> {
         &self.metrics
     }
@@ -194,6 +197,7 @@ impl<A: Actor + ?Sized> Context<A> {
     /// Returns Some if this context is processing a message; None if called
     /// outside message processing (e.g., from timer callbacks where deferred
     /// responses must be sent manually).
+    #[must_use]
     pub fn current_metadata(&self) -> &Option<crate::runtime::envelope::EnvelopeMetadata> {
         &self.current_metadata
     }
@@ -207,6 +211,7 @@ impl<A: Actor + ?Sized> Context<A> {
     }
 
     /// Get the actor's route address
+    #[must_use]
     pub fn address(&self) -> &RouteAddress {
         &self.address
     }
@@ -215,6 +220,7 @@ impl<A: Actor + ?Sized> Context<A> {
     ///
     /// Useful for optimized fanout paths that want to cache sinks and avoid
     /// repeated route registry lookups.
+    #[must_use]
     pub fn resolve_sink(
         &self,
         dest: &RouteAddress,
@@ -350,6 +356,7 @@ impl<A: Actor + ?Sized> Context<A> {
     }
 
     /// Check if the actor should continue running
+    #[must_use]
     pub fn is_running(&self) -> bool {
         matches!(self.state, ActorState::Running)
     }
@@ -365,10 +372,12 @@ impl<A: Actor + ?Sized> Context<A> {
 pub struct ActorId(u64);
 
 impl ActorId {
+    #[must_use]
     pub fn new(id: u64) -> Self {
         Self(id)
     }
 
+    #[must_use]
     pub fn as_u64(&self) -> u64 {
         self.0
     }
@@ -392,6 +401,7 @@ pub struct ActorRef<M: Send + 'static> {
 }
 
 impl<M: Send + 'static> ActorRef<M> {
+    #[must_use]
     pub fn new(address: RouteAddress, router: Arc<Router>) -> Self {
         Self {
             address,
@@ -420,6 +430,7 @@ impl<M: Send + 'static> ActorRef<M> {
     }
 
     /// Get the actor's route address
+    #[must_use]
     pub fn address(&self) -> &RouteAddress {
         &self.address
     }
@@ -457,16 +468,15 @@ impl fmt::Display for ActorError {
         match self {
             ActorError::MailboxFull => write!(f, "Actor mailbox is full"),
             ActorError::ActorStopped => write!(f, "Actor has stopped"),
-            ActorError::SendFailed(msg) => write!(f, "Failed to send message: {}", msg),
-            ActorError::Panic(msg) => write!(f, "Actor panicked: {}", msg),
+            ActorError::SendFailed(msg) => write!(f, "Failed to send message: {msg}"),
+            ActorError::Panic(msg) => write!(f, "Actor panicked: {msg}"),
             ActorError::TypeMismatch {
                 expected,
                 envelope_id,
             } => {
                 write!(
                     f,
-                    "Type mismatch: expected {}, envelope ID {}",
-                    expected, envelope_id
+                    "Type mismatch: expected {expected}, envelope ID {envelope_id}"
                 )
             }
         }
@@ -490,6 +500,7 @@ pub enum SendError {
 
 impl SendError {
     /// Get the target address for error context
+    #[must_use]
     pub fn target(&self) -> &RouteAddress {
         match self {
             SendError::MailboxFull { target, .. } => target,
@@ -511,10 +522,10 @@ impl fmt::Display for SendError {
                 )
             }
             SendError::ActorStopped { target } => {
-                write!(f, "Actor {} has stopped", target)
+                write!(f, "Actor {target} has stopped")
             }
             SendError::RouteNotFound { target } => {
-                write!(f, "Route {} not found", target)
+                write!(f, "Route {target} not found")
             }
         }
     }
@@ -576,7 +587,7 @@ mod tests {
         let actor_id = ActorId::new(123);
 
         // Act
-        let formatted = format!("{}", actor_id);
+        let formatted = format!("{actor_id}");
 
         // Assert
         assert_eq!(formatted, "Actor(123)");

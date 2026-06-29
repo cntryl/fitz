@@ -18,9 +18,10 @@ pub(super) fn configured_ws_allowed_origins(
 pub(super) fn parse_ws_allowed_origins_from_env(
 ) -> Option<(Vec<crate::api::origin::ExactOrigin>, Option<String>)> {
     env_non_empty("FITZ_WS_ALLOWED_ORIGINS").map(|value| {
-        crate::api::origin::parse_exact_origin_list(&value)
-            .map(|origins| (origins, None))
-            .unwrap_or_else(|error| (Vec::new(), Some(format!("FITZ_WS_ALLOWED_ORIGINS {error}"))))
+        crate::api::origin::parse_exact_origin_list(&value).map_or_else(
+            |error| (Vec::new(), Some(format!("FITZ_WS_ALLOWED_ORIGINS {error}"))),
+            |origins| (origins, None),
+        )
     })
 }
 
@@ -102,6 +103,5 @@ pub(super) fn bind_addr_is_loopback(bind_addr: &str) -> bool {
     }
 
     host.parse::<std::net::IpAddr>()
-        .map(|addr| addr.is_loopback())
-        .unwrap_or(false)
+        .is_ok_and(|addr| addr.is_loopback())
 }

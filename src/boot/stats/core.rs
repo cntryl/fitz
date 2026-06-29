@@ -18,6 +18,7 @@ fn current_epoch_ms() -> u64 {
 
 impl Runtime {
     /// Create a new runtime statistics tracker.
+    #[must_use]
     pub fn new(router: Arc<Router>) -> Self {
         Self::with_admin_read_model(
             router,
@@ -59,10 +60,12 @@ impl Runtime {
         }
     }
 
+    #[must_use]
     pub fn admin_auth(&self) -> Arc<crate::api::admin::auth::AdminAuth> {
         self.admin_auth.clone()
     }
 
+    #[must_use]
     pub fn admin_read_model(&self) -> Arc<crate::control::admin::read_model::AdminReadModel> {
         self.admin_read_model.clone()
     }
@@ -75,10 +78,12 @@ impl Runtime {
         *self.domains.write() = Some(domains);
     }
 
+    #[must_use]
     pub fn detach_domains(&self) -> Option<Arc<DomainHandles>> {
         self.domains.write().take()
     }
 
+    #[must_use]
     pub fn detach_ingress(&self) -> Option<Arc<RuntimeIngress>> {
         self.ingress.write().take()
     }
@@ -87,6 +92,7 @@ impl Runtime {
         *self.auth_config.write() = auth_config;
     }
 
+    #[must_use]
     pub fn auth_config(&self) -> crate::auth::AuthConfig {
         self.auth_config.read().clone()
     }
@@ -96,6 +102,7 @@ impl Runtime {
             .store(assume_external_tls, Ordering::SeqCst);
     }
 
+    #[must_use]
     pub fn assume_external_tls(&self) -> bool {
         self.assume_external_tls.load(Ordering::SeqCst)
     }
@@ -110,6 +117,7 @@ impl Runtime {
         self.storage_ready.store(1, Ordering::SeqCst);
     }
 
+    #[must_use]
     pub fn is_storage_ready(&self) -> bool {
         self.storage_ready.load(Ordering::SeqCst) == 1
     }
@@ -118,6 +126,7 @@ impl Runtime {
         self.domains_ready.store(1, Ordering::SeqCst);
     }
 
+    #[must_use]
     pub fn are_domains_ready(&self) -> bool {
         self.domains_ready.load(Ordering::SeqCst) == 1
     }
@@ -126,6 +135,7 @@ impl Runtime {
         self.auth_config_ready.store(1, Ordering::SeqCst);
     }
 
+    #[must_use]
     pub fn is_auth_config_ready(&self) -> bool {
         self.auth_config_ready.load(Ordering::SeqCst) == 1
     }
@@ -134,10 +144,12 @@ impl Runtime {
         self.startup_complete.store(1, Ordering::SeqCst);
     }
 
+    #[must_use]
     pub fn is_startup_complete(&self) -> bool {
         self.startup_complete.load(Ordering::SeqCst) == 1
     }
 
+    #[must_use]
     pub fn lifecycle_state(&self) -> BrokerLifecycleState {
         BrokerLifecycleState::from_u8(self.lifecycle_state.load(Ordering::SeqCst))
     }
@@ -167,18 +179,22 @@ impl Runtime {
             .store(LIFECYCLE_SHUTTING_DOWN, Ordering::SeqCst);
     }
 
+    #[must_use]
     pub fn is_draining(&self) -> bool {
         self.lifecycle_state() == BrokerLifecycleState::Draining
     }
 
+    #[must_use]
     pub fn is_shutting_down(&self) -> bool {
         self.lifecycle_state() == BrokerLifecycleState::ShuttingDown
     }
 
+    #[must_use]
     pub fn is_accepting_traffic(&self) -> bool {
         self.lifecycle_state() == BrokerLifecycleState::Running
     }
 
+    #[must_use]
     pub fn is_ready_for_traffic(&self) -> bool {
         self.is_storage_ready()
             && self.are_domains_ready()
@@ -187,6 +203,7 @@ impl Runtime {
             && self.is_accepting_traffic()
     }
 
+    #[must_use]
     pub fn traffic_status(&self) -> &'static str {
         match self.lifecycle_state() {
             BrokerLifecycleState::Running => "ok",
@@ -195,28 +212,34 @@ impl Runtime {
         }
     }
 
+    #[must_use]
     pub fn drain_grace_seconds(&self) -> u64 {
         self.drain_grace_seconds.load(Ordering::SeqCst)
     }
 
+    #[must_use]
     pub fn drain_grace(&self) -> Duration {
         Duration::from_secs(self.drain_grace_seconds())
     }
 
+    #[must_use]
     pub fn drain_close_reason(&self) -> String {
         self.drain_close_reason.read().clone()
     }
 
+    #[must_use]
     pub fn drain_started_epoch_ms(&self) -> Option<u64> {
         let value = self.drain_started_epoch_ms.load(Ordering::SeqCst);
         (value != 0).then_some(value)
     }
 
+    #[must_use]
     pub fn drain_deadline_epoch_ms(&self) -> Option<u64> {
         let value = self.drain_deadline_epoch_ms.load(Ordering::SeqCst);
         (value != 0).then_some(value)
     }
 
+    #[must_use]
     pub fn remaining_drain_grace(&self) -> Duration {
         let Some(deadline) = self.drain_deadline_epoch_ms() else {
             return self.drain_grace();
@@ -229,18 +252,22 @@ impl Runtime {
         }
     }
 
+    #[must_use]
     pub fn startup_duration(&self) -> Duration {
         self.startup_time.elapsed()
     }
 
+    #[must_use]
     pub fn uptime(&self) -> Duration {
         self.startup_time.elapsed()
     }
 
+    #[must_use]
     pub fn uptime_seconds(&self) -> u64 {
         self.uptime().as_secs()
     }
 
+    #[must_use]
     pub fn connection_count(&self) -> usize {
         self.connection_count.load(Ordering::Relaxed)
     }
@@ -253,12 +280,12 @@ impl Runtime {
         self.connection_count.fetch_sub(1, Ordering::Relaxed);
     }
 
+    #[must_use]
     pub fn session_count(&self) -> usize {
-        self.ingress
-            .read()
-            .as_ref()
-            .map(|ingress| ingress.session_count())
-            .unwrap_or_else(|| self.session_count.load(Ordering::Relaxed))
+        self.ingress.read().as_ref().map_or_else(
+            || self.session_count.load(Ordering::Relaxed),
+            |ingress| ingress.session_count(),
+        )
     }
 
     pub fn increment_sessions(&self) {
@@ -269,6 +296,7 @@ impl Runtime {
         self.session_count.fetch_sub(1, Ordering::Relaxed);
     }
 
+    #[must_use]
     pub fn messages_received(&self) -> u64 {
         self.messages_received.load(Ordering::Relaxed)
     }
@@ -277,6 +305,7 @@ impl Runtime {
         self.messages_received.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[must_use]
     pub fn messages_sent(&self) -> u64 {
         self.messages_sent.load(Ordering::Relaxed)
     }
@@ -285,32 +314,33 @@ impl Runtime {
         self.messages_sent.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[must_use]
     pub fn registered_route_count(&self) -> usize {
         self.router.len()
     }
 
+    #[must_use]
     pub fn router(&self) -> Arc<Router> {
         self.router.clone()
     }
 
+    #[must_use]
     pub fn authenticated_session_count(&self) -> usize {
-        self.ingress
-            .read()
-            .as_ref()
-            .map(|ingress| {
-                ingress
-                    .active_sessions()
-                    .into_iter()
-                    .filter(|session| session.authenticated)
-                    .count()
-            })
-            .unwrap_or(0)
+        self.ingress.read().as_ref().map_or(0, |ingress| {
+            ingress
+                .active_sessions()
+                .into_iter()
+                .filter(|session| session.authenticated)
+                .count()
+        })
     }
 
+    #[must_use]
     pub fn active_realms(&self) -> Vec<String> {
         Vec::new()
     }
 
+    #[must_use]
     pub fn messages_per_second(&self) -> f64 {
         let uptime_secs = self.uptime_seconds() as f64;
         if uptime_secs < 0.001 {

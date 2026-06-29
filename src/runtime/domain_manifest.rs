@@ -37,22 +37,27 @@ impl DomainKind {
         Self::Queue,
     ];
 
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         self.descriptor().scheme
     }
 
+    #[must_use]
     pub const fn wildcard_route(self) -> &'static str {
         self.descriptor().wildcard_route
     }
 
+    #[must_use]
     pub fn cleanup_route(self) -> Route {
         self.descriptor().cleanup_route().clone()
     }
 
+    #[must_use]
     pub fn inbound_route(self) -> &'static Route {
         self.descriptor().inbound_route()
     }
 
+    #[must_use]
     pub const fn descriptor(self) -> &'static DomainDescriptor {
         match self {
             Self::Kv => &DOMAIN_DESCRIPTORS[0],
@@ -76,10 +81,12 @@ pub struct DomainDescriptor {
 }
 
 impl DomainDescriptor {
+    #[must_use]
     pub fn inbound_route(&self) -> &'static Route {
         (self.inbound_route)()
     }
 
+    #[must_use]
     pub fn cleanup_route(&self) -> &'static Route {
         (self.cleanup_route)()
     }
@@ -92,14 +99,17 @@ impl DomainDescriptor {
 pub struct DomainRegistry;
 
 impl DomainRegistry {
+    #[must_use]
     pub const fn all() -> &'static [DomainDescriptor; 7] {
         &DOMAIN_DESCRIPTORS
     }
 
+    #[must_use]
     pub const fn cleanup_order() -> &'static [DomainKind; 7] {
         &DomainKind::SESSION_CLEANUP_ORDER
     }
 
+    #[must_use]
     pub const fn descriptor(kind: DomainKind) -> &'static DomainDescriptor {
         kind.descriptor()
     }

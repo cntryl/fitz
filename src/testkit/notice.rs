@@ -19,16 +19,19 @@ impl Default for TestSink {
 }
 
 impl TestSink {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             delivered: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
+    #[must_use]
     pub fn count(&self) -> usize {
         self.delivered.lock().len()
     }
 
+    #[must_use]
     pub fn delivered(&self) -> Vec<Arc<Envelope>> {
         self.delivered.lock().clone()
     }
@@ -50,20 +53,24 @@ impl MailboxSink for TestSink {
 }
 
 /// Helper builders used by E2E tests
+#[must_use]
 pub fn make_router() -> Router {
     Router::new()
 }
 
 /// Build a Route for tests
+#[must_use]
 pub fn route(path: &str) -> Route {
     Route::new(path)
 }
 
 /// Build a RouteAddress in the default test family
+#[must_use]
 pub fn addr(path: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(1), route(path))
 }
 
+#[must_use]
 pub fn session_id(n: u64) -> SessionId {
     SessionId(n)
 }

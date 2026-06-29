@@ -24,6 +24,7 @@ pub struct DomainSink {
 }
 
 impl DomainSink {
+    #[must_use]
     pub fn new(name: &'static str) -> Self {
         Self {
             name,
@@ -183,7 +184,7 @@ pub fn setup(
         .register_sink(router, schedule_sink.clone() as Arc<dyn MailboxSink>);
     schedule_sink
         .preload_persisted_families()
-        .map_err(|error| format!("schedule preload failed: {}", error))?;
+        .map_err(|error| format!("schedule preload failed: {error}"))?;
     tracing::info!("Registered Schedule domain (handles schedule://* across all route families)");
 
     tracing::info!(

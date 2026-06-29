@@ -24,7 +24,7 @@ pub(in crate::api::admin::topology) fn queue_lane(
         + stats.notify_drops_total as usize
         + stats.complete_rejected_total as usize;
     let activity = stats.operations_per_second > 0.0 || stats.inflight_active > 0;
-    let state = topology_state(&stats.diagnostics, pressure > 0, activity);
+    let lane_state = topology_state(&stats.diagnostics, pressure > 0, activity);
     let counters = vec![
         counter("ready", "Ready", stats.messages_ready as f64),
         counter("delayed", "Delayed", stats.messages_delayed as f64),
@@ -45,7 +45,7 @@ pub(in crate::api::admin::topology) fn queue_lane(
     add_broker_domain_flow(
         connections,
         "queue",
-        &state,
+        &lane_state,
         stats.operations_per_second,
         counters.clone(),
     );
@@ -73,7 +73,7 @@ pub(in crate::api::admin::topology) fn queue_lane(
 
     topology_lane(
         ("queue", "Queue"),
-        state,
+        lane_state,
         stats.operations_per_second,
         &stats.diagnostics,
         counters,

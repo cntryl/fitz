@@ -523,7 +523,7 @@ fn should_set_permissions_on_connect_with_valid_token() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["notice://prod/orders/**#read"]
     });
@@ -573,7 +573,7 @@ fn should_set_permissions_on_connect_for_auth0_shape() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "auth0|user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "org_id": "org_acme",
         "permissions": ["notice://prod/orders/**#read"]
     }));
@@ -615,7 +615,7 @@ fn should_set_permissions_on_connect_for_entra_delegated_shape() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "entra-user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "entra-tenant-1",
         "scp": "notice.read"
     }));
@@ -657,7 +657,7 @@ fn should_set_permissions_on_connect_for_entra_app_only_shape() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "service-principal-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "entra-tenant-2",
         "roles": ["queue.read"]
     }));
@@ -707,7 +707,7 @@ fn should_set_permissions_on_connect_for_cognito_shape() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "cognito-user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "custom:tenant_id": "acme-prod",
         "scope": "fitz/kv.read"
     }));
@@ -757,7 +757,7 @@ fn should_set_permissions_on_connect_for_okta_shape() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "okta-user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "https://fitz.example.com/identity": "okta-acme",
         "https://fitz.example.com/claims": {
             "permissions": ["notice://prod/orders/**#write"]
@@ -803,7 +803,7 @@ fn should_assign_route_families_from_verified_claims() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "user:a",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "tenant-a",
         "permissions": ["notice://tenant-a/**#read"]
     }));
@@ -811,7 +811,7 @@ fn should_assign_route_families_from_verified_claims() {
         "iss": "",
         "aud": "fitz-broker",
         "sub": "user:b",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "tenant-b",
         "permissions": ["notice://tenant-b/**#read"]
     }));

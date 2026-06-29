@@ -20,19 +20,16 @@ pub(crate) async fn lease_search(
     let include_owned = request
         .state
         .as_deref()
-        .map(|value| value == "owned" || value == "contention")
-        .unwrap_or(true);
+        .is_none_or(|value| value == "owned" || value == "contention");
     let include_waiting = request
         .state
         .as_deref()
-        .map(|value| value == "waiting" || value == "contention")
-        .unwrap_or(true);
+        .is_none_or(|value| value == "waiting" || value == "contention");
     let owner_matches = |value: &str| {
         request
             .owner
             .as_ref()
-            .map(|needle| value.contains(needle))
-            .unwrap_or(true)
+            .is_none_or(|needle| value.contains(needle))
     };
     let scope_matches =
         |item_family: u64, item_realm: &str, item_area: &str, item_resource: &str| {
@@ -40,18 +37,12 @@ pub(crate) async fn lease_search(
                 && request
                     .realm
                     .as_ref()
-                    .map(|value| item_realm == value)
-                    .unwrap_or(true)
-                && request
-                    .area
-                    .as_ref()
-                    .map(|value| item_area == value)
-                    .unwrap_or(true)
+                    .is_none_or(|value| item_realm == value)
+                && request.area.as_ref().is_none_or(|value| item_area == value)
                 && request
                     .resource
                     .as_ref()
-                    .map(|value| item_resource == value)
-                    .unwrap_or(true)
+                    .is_none_or(|value| item_resource == value)
         };
 
     let mut items = Vec::new();

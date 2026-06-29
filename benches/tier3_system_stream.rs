@@ -284,7 +284,7 @@ fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
 
     let context = setup_stream_sink();
     let routes: Vec<String> = (0..10)
-        .map(|i| format!("stream://bench/system/area{}/append", i))
+        .map(|i| format!("stream://bench/system/area{i}/append"))
         .collect();
     let append_requests: Vec<(String, u16, Bytes)> = routes
         .iter()

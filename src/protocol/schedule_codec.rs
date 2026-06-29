@@ -68,7 +68,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             }
             Ok(None)
         }
-        _ => Err(format!("Unknown operation: {}", msg_type)),
+        _ => Err(format!("Unknown operation: {msg_type}")),
     }
 }
 
@@ -92,6 +92,7 @@ pub fn extract_batch_auth_routes(payload: &[u8]) -> Result<Vec<&str>, String> {
 }
 
 /// Encode domain response to TLV-encoded bytes
+#[must_use]
 pub fn encode_response(response: &ScheduleResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_response_into(&mut enc, response)
@@ -273,6 +274,7 @@ fn parse_unsubscribe(
 /// Wire format: [u64 subscription_id][bytes payload]
 /// Payload is the stored schedule payload handed to the live notify path. The
 /// notification itself is not durably replayed as a delivery artifact.
+#[must_use]
 pub fn encode_notify(subscription_id: u64, payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_notify_into(&mut enc, subscription_id, payload)

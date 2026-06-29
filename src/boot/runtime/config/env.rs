@@ -11,7 +11,7 @@ pub(super) fn env_non_empty(key: &str) -> Option<String> {
 }
 
 pub(super) fn required_env(key: &str) -> Result<String, String> {
-    env_non_empty(key).ok_or_else(|| format!("cloud storage requires {}", key))
+    env_non_empty(key).ok_or_else(|| format!("cloud storage requires {key}"))
 }
 
 pub(super) fn required_region() -> Result<String, String> {
@@ -25,7 +25,7 @@ pub(super) fn env_bool(key: &str, default: bool) -> Result<bool, String> {
     match env_non_empty(key) {
         Some(value) => value
             .parse::<bool>()
-            .map_err(|_| format!("{} must be true or false", key)),
+            .map_err(|_| format!("{key} must be true or false")),
         None => Ok(default),
     }
 }

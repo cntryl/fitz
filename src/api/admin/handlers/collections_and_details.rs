@@ -9,7 +9,7 @@ pub(super) fn handle_realms_collection(
         let queues = runtime
             .queue_list_queues(None)
             .into_iter()
-            .filter(|queue| family.map(|value| queue.family == value).unwrap_or(true))
+            .filter(|queue| family.is_none_or(|value| queue.family == value))
             .collect::<Vec<_>>();
         return super::json_response(list::collect_queue_realms(&queues));
     }
@@ -28,7 +28,7 @@ pub(super) fn handle_areas_collection(
         let queues = runtime
             .queue_list_queues(Some(realm))
             .into_iter()
-            .filter(|queue| family.map(|value| queue.family == value).unwrap_or(true))
+            .filter(|queue| family.is_none_or(|value| queue.family == value))
             .collect::<Vec<_>>();
         return super::json_response(list::collect_queue_areas(&queues, realm));
     }
@@ -48,7 +48,7 @@ pub(super) fn handle_resources_collection(
         let queues = runtime
             .queue_list_queues(Some(realm))
             .into_iter()
-            .filter(|queue| family.map(|value| queue.family == value).unwrap_or(true))
+            .filter(|queue| family.is_none_or(|value| queue.family == value))
             .collect::<Vec<_>>();
         return super::json_response(list::collect_queue_resources(&queues, realm, area));
     }
@@ -212,7 +212,6 @@ pub(super) async fn handle_features(runtime: Arc<Runtime>) -> Result<Response, I
             .unwrap_or_default(),
         route_families_wildcard: route_family_access
             .as_ref()
-            .map(|access| access.is_wildcard())
-            .unwrap_or(false),
+            .is_some_and(|access| access.is_wildcard()),
     })
 }

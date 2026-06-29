@@ -28,6 +28,7 @@ pub struct FrameQueueSink {
 }
 
 impl FrameQueueSink {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -65,6 +66,7 @@ pub struct CountingSink {
 }
 
 impl CountingSink {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -89,13 +91,12 @@ impl MailboxSink for CountingSink {
     }
 }
 
+#[must_use]
 pub fn session_inbox_route(family: RouteFamily, session_id: u64) -> RouteAddress {
-    RouteAddress::new(
-        family,
-        Route::new(format!("inbox://session/{}", session_id)),
-    )
+    RouteAddress::new(family, Route::new(format!("inbox://session/{session_id}")))
 }
 
+#[must_use]
 pub fn register_session_queue_sink(
     router: &Arc<Router>,
     family: RouteFamily,
@@ -107,6 +108,7 @@ pub fn register_session_queue_sink(
     (route, sink)
 }
 
+#[must_use]
 pub fn register_session_counting_sink(
     router: &Arc<Router>,
     family: RouteFamily,
@@ -134,7 +136,10 @@ pub fn route_frame(
     let envelope = crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_msg_type(msg_type)
         .ok()
         .flatten()
-        .map(|descriptor| {
+        .map_or_else(|| {
+            let frame = FrameContext::new(session_id, channel_id, msg_type, payload.clone(), family);
+            Envelope::from_route(source.clone(), destination.clone(), frame)
+        }, |descriptor| {
             descriptor.build_request_envelope(
                 crate::api::runtime_ingress::domain_registry::DomainEnvelopeBuildRequest {
                     session_id,
@@ -146,10 +151,6 @@ pub fn route_frame(
                     destination: destination.clone(),
                 },
             )
-        })
-        .unwrap_or_else(|| {
-            let frame = FrameContext::new(session_id, channel_id, msg_type, payload, family);
-            Envelope::from_route(source.clone(), destination, frame)
         });
     router.route(envelope)
 }
@@ -220,7 +221,7 @@ fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
             Bytes::from(crate::protocol::queue_codec::encode_notify(
                 notification.subscription_id,
                 &notification.route,
-                notification.notification.clone(),
+                notification.notification,
             )),
             notification.route_family,
         ));
@@ -433,6 +434,7 @@ fn protocol_channel_from_client(channel: crate::runtime::ClientChannel) -> Chann
     }
 }
 
+#[must_use]
 pub fn create_bench_notice_sink(router: Arc<Router>) -> Arc<NoticeDomainSink> {
     Arc::new(NoticeDomainSink::new(
         router,
@@ -440,6 +442,7 @@ pub fn create_bench_notice_sink(router: Arc<Router>) -> Arc<NoticeDomainSink> {
     ))
 }
 
+#[must_use]
 pub fn create_bench_queue_sink(router: Arc<Router>) -> Arc<QueueDomainSink> {
     Arc::new(QueueDomainSink::new(
         create_bench_store(),
@@ -450,6 +453,7 @@ pub fn create_bench_queue_sink(router: Arc<Router>) -> Arc<QueueDomainSink> {
     ))
 }
 
+#[must_use]
 pub fn create_bench_lease_sink(router: Arc<Router>) -> Arc<LeaseDomainSink> {
     Arc::new(LeaseDomainSink::new(
         router,
@@ -457,6 +461,7 @@ pub fn create_bench_lease_sink(router: Arc<Router>) -> Arc<LeaseDomainSink> {
     ))
 }
 
+#[must_use]
 pub fn create_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDomainSink> {
     create_bench_stream_sink_with_layout(
         router,
@@ -464,6 +469,7 @@ pub fn create_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDomainSink> {
     )
 }
 
+#[must_use]
 pub fn create_bench_stream_sink_with_layout(
     router: Arc<Router>,
     stream_storage_layout: crate::domains::stream::StreamStorageLayout,
@@ -479,6 +485,7 @@ pub fn create_bench_stream_sink_with_layout(
     )
 }
 
+#[must_use]
 pub fn create_bench_rpc_sink(router: Arc<Router>) -> Arc<RpcDomainSink> {
     Arc::new(RpcDomainSink::new(
         router,
@@ -486,6 +493,7 @@ pub fn create_bench_rpc_sink(router: Arc<Router>) -> Arc<RpcDomainSink> {
     ))
 }
 
+#[must_use]
 pub fn create_bench_rpc_sink_with_timeout(
     router: Arc<Router>,
     request_timeout: Duration,
@@ -499,6 +507,7 @@ pub fn create_bench_rpc_sink_with_timeout(
     )
 }
 
+#[must_use]
 pub fn create_bench_rpc_sink_with_route_pending_capacity(
     router: Arc<Router>,
     route_pending_capacity: usize,
@@ -512,6 +521,7 @@ pub fn create_bench_rpc_sink_with_route_pending_capacity(
     )
 }
 
+#[must_use]
 pub fn create_bench_rpc_sink_with_metrics(
     router: Arc<Router>,
     metrics: MetricsCollector,
@@ -525,6 +535,7 @@ pub fn create_bench_rpc_sink_with_metrics(
     )
 }
 
+#[must_use]
 pub fn create_bench_schedule_sink(router: Arc<Router>) -> Arc<ScheduleDomainSink> {
     Arc::new(ScheduleDomainSink::new(
         create_bench_store(),

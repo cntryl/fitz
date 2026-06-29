@@ -150,6 +150,5 @@ fn is_websocket_upgrade(req: &Request) -> bool {
     req.headers()
         .get("upgrade")
         .and_then(|value| value.to_str().ok())
-        .map(|value| value.eq_ignore_ascii_case("websocket"))
-        .unwrap_or(false)
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
 }

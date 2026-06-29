@@ -364,8 +364,7 @@ pub fn parse_lease_watch_delivery(frame: &[u8]) -> Result<LeaseWatchDelivery, St
         .ok_or_else(|| "Missing lease watch delivery frame".to_string())?;
     if msg_type != 409 {
         return Err(format!(
-            "Unexpected lease watch delivery msg_type: {}",
-            msg_type
+            "Unexpected lease watch delivery msg_type: {msg_type}"
         ));
     }
 
@@ -615,7 +614,7 @@ pub fn parse_notice_delivery(frame: &[u8]) -> Result<NoticeDelivery, String> {
         .next_field()
         .ok_or_else(|| "Missing notice delivery frame".to_string())?;
     if msg_type != 504 {
-        return Err(format!("Unexpected notice delivery msg_type: {}", msg_type));
+        return Err(format!("Unexpected notice delivery msg_type: {msg_type}"));
     }
 
     let mut dec = PayloadDecoder::new(&payload);
@@ -778,7 +777,7 @@ pub fn parse_queue_watch_delivery(frame: &[u8]) -> Result<QueueWatchDelivery, St
         .next_field_ref()
         .ok_or_else(|| "Missing queue watch delivery frame".to_string())?;
     if msg_type != 209 {
-        return Err(format!("Unexpected queue watch msg_type: {}", msg_type));
+        return Err(format!("Unexpected queue watch msg_type: {msg_type}"));
     }
 
     if payload.len() < 36 {
@@ -970,7 +969,7 @@ pub fn build_rpc_request(route: &str, _method: &str, payload: &[u8]) -> Vec<u8> 
     buf.put_slice(route.as_bytes());
 
     // Reply route (use inbox pattern)
-    let reply_route = format!("inbox://session/1/{}", uuid);
+    let reply_route = format!("inbox://session/1/{uuid}");
     buf.put_u32(reply_route.len() as u32);
     buf.put_slice(reply_route.as_bytes());
 
@@ -1044,7 +1043,7 @@ pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, St
         .next_field()
         .ok_or_else(|| "Missing RPC request delivery frame".to_string())?;
     if msg_type != 302 {
-        return Err(format!("Unexpected RPC request msg_type: {}", msg_type));
+        return Err(format!("Unexpected RPC request msg_type: {msg_type}"));
     }
 
     let mut dec = PayloadDecoder::new(&payload);
@@ -1081,7 +1080,7 @@ pub fn parse_rpc_response_delivery(frame: &[u8]) -> Result<RpcResponseDelivery, 
         .next_field()
         .ok_or_else(|| "Missing RPC response delivery frame".to_string())?;
     if msg_type != 303 {
-        return Err(format!("Unexpected RPC response msg_type: {}", msg_type));
+        return Err(format!("Unexpected RPC response msg_type: {msg_type}"));
     }
 
     let mut dec = PayloadDecoder::new(&payload);
@@ -1372,7 +1371,7 @@ pub fn parse_stream_delivery(frame: &[u8]) -> Result<StreamDelivery, String> {
         .next_field()
         .ok_or_else(|| "Missing stream delivery frame".to_string())?;
     if msg_type != 609 {
-        return Err(format!("Unexpected stream delivery msg_type: {}", msg_type));
+        return Err(format!("Unexpected stream delivery msg_type: {msg_type}"));
     }
 
     let mut dec = PayloadDecoder::new(&payload);
@@ -1565,10 +1564,7 @@ pub fn parse_schedule_delivery(frame: &[u8]) -> Result<ScheduleDelivery, String>
         .next_field()
         .ok_or_else(|| "Missing schedule delivery frame".to_string())?;
     if msg_type != 705 {
-        return Err(format!(
-            "Unexpected schedule delivery msg_type: {}",
-            msg_type
-        ));
+        return Err(format!("Unexpected schedule delivery msg_type: {msg_type}"));
     }
 
     let mut dec = PayloadDecoder::new(&payload);
@@ -1769,10 +1765,7 @@ pub fn parse_kv_watch_delivery(frame: &[u8]) -> Result<KvWatchDelivery, String> 
         .next_field()
         .ok_or_else(|| "Missing KV watch delivery frame".to_string())?;
     if msg_type != 111 {
-        return Err(format!(
-            "Unexpected KV watch delivery msg_type: {}",
-            msg_type
-        ));
+        return Err(format!("Unexpected KV watch delivery msg_type: {msg_type}"));
     }
 
     let mut decoder = PayloadDecoder::new(&payload);

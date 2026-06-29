@@ -92,7 +92,7 @@ pub fn parse_request(
         msg_type::RENEW => parse_extend(&mut dec, route_family),
         msg_type::RELEASE => parse_release(&mut dec, route_family),
         msg_type::QUERY => parse_query(&mut dec, route_family),
-        _ => Err(format!("Unknown operation: {}", msg_type)),
+        _ => Err(format!("Unknown operation: {msg_type}")),
     }
 }
 
@@ -140,7 +140,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             Ok(Some(route))
         }
         msg_type::NOTIFY => Err("LEASE_NOTIFY is server-to-client only".to_string()),
-        _ => Err(format!("Unknown operation: {}", msg_type)),
+        _ => Err(format!("Unknown operation: {msg_type}")),
     }
 }
 
@@ -152,6 +152,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
 /// - QUERY success (free): status=0, has_holder=0, pending_waiters=0
 /// - QUERY success (held): status=0, has_holder=1, owner_id, ttl_remaining_secs, pending_waiters
 /// - All errors: status=1, error_len, error_msg
+#[must_use]
 pub fn encode_domain_response(response: &DomainLeaseResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_domain_response_into(&mut enc, response)
@@ -226,12 +227,12 @@ pub fn encode_domain_response_into(
         DomainLeaseResponse::QueueFull { pending_count } => encode_error_into(
             enc,
             crate::protocol::error_codes::lease::ERR_QUEUE_FULL,
-            &format!("QueueFull: {} pending", pending_count),
+            &format!("QueueFull: {pending_count} pending"),
         ),
         DomainLeaseResponse::HeldByOther { current_owner } => encode_error_into(
             enc,
             crate::protocol::error_codes::lease::ERR_LEASE_HELD,
-            &format!("HeldByOther: {}", current_owner),
+            &format!("HeldByOther: {current_owner}"),
         ),
         DomainLeaseResponse::NotHeld => encode_error_into(
             enc,
@@ -241,7 +242,7 @@ pub fn encode_domain_response_into(
         DomainLeaseResponse::Fenced { current_token } => encode_error_into(
             enc,
             crate::protocol::error_codes::lease::ERR_INVALID_FENCE,
-            &format!("Fenced: current_token={}", current_token),
+            &format!("Fenced: current_token={current_token}"),
         ),
         DomainLeaseResponse::Expired => encode_error_into(
             enc,
@@ -404,6 +405,7 @@ fn parse_unsubscribe(
 /// Encode a lease change notification
 ///
 /// Wire format: `[u64 subscription_id][string route][bytes payload]`
+#[must_use]
 pub fn encode_notify(subscription_id: u64, route: &str, _payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_notify_into(&mut enc, subscription_id, route, _payload)

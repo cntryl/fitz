@@ -92,7 +92,7 @@ fn bench_route_batch_exact_primary(c: &mut Criterion) {
         group.throughput(Throughput::Elements(route_count as u64));
 
         group.bench_function(
-            format!("route_batch_exact_{}_noop_primary", route_count),
+            format!("route_batch_exact_{route_count}_noop_primary"),
             |b| {
                 let mut seq = 0_u64;
                 b.iter(|| {

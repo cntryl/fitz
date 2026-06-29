@@ -41,6 +41,7 @@ impl Runtime {
         }
     }
 
+    #[must_use]
     pub fn kv_list_transactions(
         &self,
         realm: Option<&str>,
@@ -131,6 +132,7 @@ impl Runtime {
         domains.kv.admin_scan_committed_rows(request)
     }
 
+    #[must_use]
     pub fn stream_list_streams(
         &self,
         realm: Option<&str>,
@@ -172,6 +174,7 @@ impl Runtime {
         self.admin_read_model.stream_realm_watermark(realm)
     }
 
+    #[must_use]
     pub fn stream_list_realm_watermarks(
         &self,
         realm: &str,
@@ -197,6 +200,7 @@ impl Runtime {
         self.admin_read_model.stream_area_watermark(realm, area)
     }
 
+    #[must_use]
     pub fn stream_list_area_watermarks(
         &self,
         realm: &str,
@@ -207,6 +211,7 @@ impl Runtime {
             .unwrap_or_default()
     }
 
+    #[must_use]
     pub fn notice_list_subscriptions(
         &self,
         realm: Option<&str>,
@@ -217,6 +222,7 @@ impl Runtime {
             .notice_subscriptions(realm, route_pattern)
     }
 
+    #[must_use]
     pub fn notice_list_routes(
         &self,
         realm: Option<&str>,
@@ -225,11 +231,13 @@ impl Runtime {
         self.admin_read_model.notice_routes(realm)
     }
 
+    #[must_use]
     pub fn queue_list_queues(&self, realm: Option<&str>) -> Vec<crate::control::admin::QueueInfo> {
         self.refresh_queue_admin_snapshot();
         self.admin_read_model.queues(realm)
     }
 
+    #[must_use]
     pub fn queue_list_inflight(
         &self,
         realm: Option<&str>,
@@ -238,6 +246,7 @@ impl Runtime {
         self.admin_read_model.queue_inflight(realm)
     }
 
+    #[must_use]
     pub fn queue_list_dead_letters(
         &self,
         realm: Option<&str>,
@@ -294,11 +303,13 @@ impl Runtime {
         )
     }
 
+    #[must_use]
     pub fn rpc_list_workers(&self, realm: Option<&str>) -> Vec<crate::control::admin::RpcWorker> {
         self.refresh_rpc_admin_snapshot();
         self.admin_read_model.rpc_workers(realm)
     }
 
+    #[must_use]
     pub fn rpc_list_pending(
         &self,
         realm: Option<&str>,
@@ -311,10 +322,12 @@ impl Runtime {
         self.rpc_list_pending(None)
     }
 
+    #[must_use]
     pub fn lease_list_leases(&self, realm: Option<&str>) -> Vec<crate::control::admin::LeaseInfo> {
         self.admin_read_model.leases(realm)
     }
 
+    #[must_use]
     pub fn lease_list_waiters(&self) -> Vec<crate::control::admin::LeaseWaiterInfo> {
         self.domains
             .read()
@@ -323,6 +336,7 @@ impl Runtime {
             .unwrap_or_default()
     }
 
+    #[must_use]
     pub fn schedule_list_schedules(
         &self,
         realm: Option<&str>,
@@ -331,6 +345,7 @@ impl Runtime {
         self.admin_read_model.schedules(realm)
     }
 
+    #[must_use]
     pub fn schedule_list_pending_claims(
         &self,
         family: RouteFamily,
@@ -342,6 +357,7 @@ impl Runtime {
             .unwrap_or_default()
     }
 
+    #[must_use]
     pub fn list_sessions(&self) -> Vec<crate::control::admin::SessionInfo> {
         let Some(ingress) = self.ingress.read().clone() else {
             return self.admin_read_model.sessions();

@@ -94,12 +94,12 @@ async fn should_support_multiple_queue_messages_with_lease_usage_tcp() {
 
     // Act
     for i in 1..=3 {
-        let data = format!("task-{}", i).into_bytes();
+        let data = format!("task-{i}").into_bytes();
         let frame = build_queue_enqueue("work", &data);
         let response = queue_client
             .send_and_receive(&frame, 2000)
             .await
-            .unwrap_or_else(|_| panic!("enqueue {}", i));
+            .unwrap_or_else(|_| panic!("enqueue {i}"));
 
         let (_msg_type, status, _data) = parse_queue_response(&response);
         assert_eq!(status, 0);
@@ -134,12 +134,12 @@ async fn should_support_multiple_queue_messages_with_lease_usage_ws() {
 
     // Act
     for i in 1..=3 {
-        let data = format!("task-{}", i).into_bytes();
+        let data = format!("task-{i}").into_bytes();
         let frame = build_queue_enqueue("work", &data);
         let response = queue_client
             .send_and_receive(&frame, 2000)
             .await
-            .unwrap_or_else(|_| panic!("enqueue {}", i));
+            .unwrap_or_else(|_| panic!("enqueue {i}"));
 
         let (_msg_type, status, _data) = parse_queue_response(&response);
         assert_eq!(status, 0);
@@ -565,9 +565,12 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_tcp() {
         .await
         .expect("rpc client 2");
     let rpc2_frame = build_rpc_request("rpc://test/services/api", "setConfig", b"key=value");
-    let mut rpc_client2_handle = rpc_client2;
-    let rpc2_response_handle =
-        tokio::spawn(async move { rpc_client2_handle.send_and_receive(&rpc2_frame, 2000).await });
+    let mut second_rpc_client_handle = rpc_client2;
+    let rpc2_response_handle = tokio::spawn(async move {
+        second_rpc_client_handle
+            .send_and_receive(&rpc2_frame, 2000)
+            .await
+    });
 
     // Give the RPC request time to start executing
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -657,9 +660,12 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_ws() {
         .await
         .expect("rpc client 2");
     let rpc2_frame = build_rpc_request("rpc://test/services/api", "setConfig", b"key=value");
-    let mut rpc_client2_handle = rpc_client2;
-    let rpc2_response_handle =
-        tokio::spawn(async move { rpc_client2_handle.send_and_receive(&rpc2_frame, 2000).await });
+    let mut second_rpc_client_handle = rpc_client2;
+    let rpc2_response_handle = tokio::spawn(async move {
+        second_rpc_client_handle
+            .send_and_receive(&rpc2_frame, 2000)
+            .await
+    });
 
     // Give the RPC request time to start executing
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;

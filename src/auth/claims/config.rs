@@ -29,6 +29,7 @@ impl Default for AuthClaimsConfig {
 }
 
 impl AuthClaimsConfig {
+    #[must_use]
     pub fn from_env() -> Self {
         let identity_claim = env_non_empty(ENV_ROUTE_FAMILY_CLAIM)
             .unwrap_or_else(|| DEFAULT_ROUTE_FAMILY_CLAIM.to_string());

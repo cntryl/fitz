@@ -55,7 +55,7 @@ fn create_request(correlation_id: Uuid) -> RpcRequest {
 fn create_worker_addr(id: u64) -> RouteAddress {
     RouteAddress::new(
         RouteFamily::new(1),
-        Route::new(format!("worker://test/worker{}", id)),
+        Route::new(format!("worker://test/worker{id}")),
     )
 }
 

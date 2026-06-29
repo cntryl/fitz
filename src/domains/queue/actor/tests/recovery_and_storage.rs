@@ -238,7 +238,7 @@ fn should_preserve_ready_body_cache_when_receiving_uncached_message() {
     let mut ids = Vec::with_capacity(QueueActor::BODY_CACHE_LIMIT + 1);
 
     for i in 0..(QueueActor::BODY_CACHE_LIMIT + 1) {
-        let body = Bytes::from(format!("message-{}", i));
+        let body = Bytes::from(format!("message-{i}"));
         let response = actor.handle_send(body, None);
         let id = match response {
             QueueResponse::Sent { id } => id,
@@ -321,7 +321,7 @@ fn should_compact_hot_body_fifo_under_cache_churn() {
 
     // Act
     for i in 0..(QueueActor::BODY_CACHE_LIMIT * 3) {
-        let body = Bytes::from(format!("message-{}", i));
+        let body = Bytes::from(format!("message-{i}"));
         let response = actor.handle_send(body, None);
         let id = match response {
             QueueResponse::Sent { id } => id,

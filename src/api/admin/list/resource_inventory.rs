@@ -19,6 +19,7 @@ pub(crate) fn kv_byte_value(bytes: &[u8]) -> KvByteValue {
     }
 }
 
+#[must_use]
 pub fn collect_realms(resources: &[ResourceRef]) -> RealmCollection {
     RealmCollection {
         realms: collect_distinct_entries(
@@ -28,6 +29,7 @@ pub fn collect_realms(resources: &[ResourceRef]) -> RealmCollection {
     }
 }
 
+#[must_use]
 pub fn collect_areas(resources: &[ResourceRef], realm: &str) -> AreaCollection {
     AreaCollection {
         realm: realm.to_string(),
@@ -75,6 +77,7 @@ pub fn kv_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceRef> 
         .collect()
 }
 
+#[must_use]
 pub fn collect_kv_resources(
     runtime: &Runtime,
     realm: &str,
@@ -128,6 +131,7 @@ pub fn collect_kv_resources(
     }
 }
 
+#[must_use]
 pub fn queue_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceRef> {
     collect_resource_refs(
         runtime
@@ -137,6 +141,7 @@ pub fn queue_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceRe
     )
 }
 
+#[must_use]
 pub fn stream_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceRef> {
     collect_resource_refs(
         runtime
@@ -146,6 +151,7 @@ pub fn stream_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceR
     )
 }
 
+#[must_use]
 pub fn lease_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceRef> {
     collect_resource_refs(
         runtime
@@ -155,6 +161,7 @@ pub fn lease_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceRe
     )
 }
 
+#[must_use]
 pub fn schedule_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceRef> {
     collect_resource_refs(
         runtime
@@ -164,6 +171,7 @@ pub fn schedule_resources(runtime: &Runtime, family: Option<u64>) -> Vec<Resourc
     )
 }
 
+#[must_use]
 pub fn notice_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceRef> {
     runtime
         .notice_list_subscriptions(None, None)
@@ -173,6 +181,7 @@ pub fn notice_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceR
         .collect()
 }
 
+#[must_use]
 pub fn rpc_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceRef> {
     runtime
         .rpc_list_workers(None)
@@ -182,6 +191,7 @@ pub fn rpc_resources(runtime: &Runtime, family: Option<u64>) -> Vec<ResourceRef>
         .collect()
 }
 
+#[must_use]
 pub fn rpc_operations(
     runtime: &Runtime,
     path: &ResourcePath<'_>,

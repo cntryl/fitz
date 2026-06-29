@@ -140,11 +140,13 @@ pub struct RpcRouteActor {
 
 impl RpcRouteActor {
     /// Create new RPC route actor with default capacity
+    #[must_use]
     pub fn new(family: RouteFamily) -> Self {
         Self::with_capacity(family, DEFAULT_QUEUE_CAPACITY)
     }
 
     /// Create new RPC route actor with specific capacity
+    #[must_use]
     pub fn with_capacity(family: RouteFamily, capacity: usize) -> Self {
         Self {
             family,
@@ -159,6 +161,7 @@ impl RpcRouteActor {
     }
 
     /// Create RPC route actor with custom lease timeout
+    #[must_use]
     pub fn with_timeout(family: RouteFamily, capacity: usize, lease_timeout: Duration) -> Self {
         Self {
             family,
@@ -173,11 +176,13 @@ impl RpcRouteActor {
     }
 
     /// Get number of pending requests
+    #[must_use]
     pub fn pending_count(&self) -> usize {
         self.pending.len()
     }
 
     /// Get number of registered workers
+    #[must_use]
     pub fn worker_count(&self) -> usize {
         self.workers
             .iter()
@@ -186,6 +191,7 @@ impl RpcRouteActor {
     }
 
     /// Get number of active leases
+    #[must_use]
     pub fn active_leases(&self) -> usize {
         self.assignments.len()
     }
@@ -563,7 +569,7 @@ mod tests {
     fn make_worker_addr(n: u64) -> RouteAddress {
         RouteAddress::new(
             RouteFamily::new(1),
-            Route::new(format!("worker://test/worker{}", n)),
+            Route::new(format!("worker://test/worker{n}")),
         )
     }
 

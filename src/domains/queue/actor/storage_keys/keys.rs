@@ -27,15 +27,13 @@ impl QueueActor {
     ) -> Result<(), String> {
         if bytes.len() != 8 {
             return Err(format!(
-                "queue validation failed: family={} key_category={} error=invalid message id",
-                family, category
+                "queue validation failed: family={family} key_category={category} error=invalid message id"
             ));
         }
         let id = u64::from_be_bytes(bytes.try_into().unwrap());
         if id == 0 {
             return Err(format!(
-                "queue validation failed: family={} key_category={} error=invalid message id",
-                family, category
+                "queue validation failed: family={family} key_category={category} error=invalid message id"
             ));
         }
         Ok(())

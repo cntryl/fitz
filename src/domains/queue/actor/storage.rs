@@ -42,7 +42,7 @@ impl QueueActor {
             1 => QueueState::Delayed,
             2 => QueueState::Inflight,
             3 => QueueState::Dlq,
-            other => return Err(format!("Unknown queue state {}", other)),
+            other => return Err(format!("Unknown queue state {other}")),
         };
         let enqueue_seq = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
         let ready_seq = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
@@ -57,7 +57,7 @@ impl QueueActor {
         let dlq_reason = match bytes[78] {
             0 => None,
             1 => Some(DlqReason::MaxAttemptsExceeded),
-            other => return Err(format!("Unknown DLQ reason {}", other)),
+            other => return Err(format!("Unknown DLQ reason {other}")),
         };
 
         Ok(QueueRecord {
@@ -87,7 +87,7 @@ impl QueueActor {
         let txn = self
             .store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("Failed to begin read tx for message {}: {:?}", id, e))?;
+            .map_err(|e| format!("Failed to begin read tx for message {id}: {e:?}"))?;
 
         match txn.get(&header_key) {
             Ok(Some(bytes)) => {
@@ -110,10 +110,10 @@ impl QueueActor {
                     let record = Self::decode_legacy_record(bytes)?;
                     Ok((record.metadata_only_from(), StoredRecordLayout::LegacyKey))
                 }
-                Ok(None) => Err(format!("Message {} disappeared from storage", id)),
-                Err(e) => Err(format!("Failed to read legacy message {}: {:?}", id, e)),
+                Ok(None) => Err(format!("Message {id} disappeared from storage")),
+                Err(e) => Err(format!("Failed to read legacy message {id}: {e:?}")),
             },
-            Err(e) => Err(format!("Failed to read message header {}: {:?}", id, e)),
+            Err(e) => Err(format!("Failed to read message header {id}: {e:?}")),
         }
     }
 
@@ -125,7 +125,7 @@ impl QueueActor {
         let txn = self
             .store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("Failed to begin read tx for message body {}: {:?}", id, e))?;
+            .map_err(|e| format!("Failed to begin read tx for message body {id}: {e:?}"))?;
 
         match txn.get(&body_key) {
             Ok(Some(bytes)) => Ok(bytes),
@@ -134,24 +134,21 @@ impl QueueActor {
                     let record = Self::decode_legacy_record(bytes)?;
                     record
                         .body
-                        .ok_or_else(|| format!("Embedded message {} body missing", id))
+                        .ok_or_else(|| format!("Embedded message {id} body missing"))
                 }
-                Ok(Some(_)) | Ok(None) => match txn.get(&legacy_key) {
+                Ok(Some(_) | None) => match txn.get(&legacy_key) {
                     Ok(Some(bytes)) => {
                         let record = Self::decode_legacy_record(bytes)?;
                         record
                             .body
-                            .ok_or_else(|| format!("Legacy message {} body missing", id))
+                            .ok_or_else(|| format!("Legacy message {id} body missing"))
                     }
-                    Ok(None) => Err(format!("Message body {} disappeared from storage", id)),
-                    Err(e) => Err(format!(
-                        "Failed to read legacy message body {}: {:?}",
-                        id, e
-                    )),
+                    Ok(None) => Err(format!("Message body {id} disappeared from storage")),
+                    Err(e) => Err(format!("Failed to read legacy message body {id}: {e:?}")),
                 },
-                Err(e) => Err(format!("Failed to read message header {}: {:?}", id, e)),
+                Err(e) => Err(format!("Failed to read message header {id}: {e:?}")),
             },
-            Err(e) => Err(format!("Failed to read message body {}: {:?}", id, e)),
+            Err(e) => Err(format!("Failed to read message body {id}: {e:?}")),
         }
     }
 
@@ -166,7 +163,7 @@ impl QueueActor {
         let txn = self
             .store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("Failed to begin read tx for message {}: {:?}", id, e))?;
+            .map_err(|e| format!("Failed to begin read tx for message {id}: {e:?}"))?;
 
         match txn.get(&header_key) {
             Ok(Some(header_bytes)) => {
@@ -184,16 +181,16 @@ impl QueueActor {
                         },
                         StoredRecordLayout::SplitHeaderBody,
                     )),
-                    Ok(None) => Err(format!("Message body {} disappeared from storage", id)),
-                    Err(e) => Err(format!("Failed to read message body {}: {:?}", id, e)),
+                    Ok(None) => Err(format!("Message body {id} disappeared from storage")),
+                    Err(e) => Err(format!("Failed to read message body {id}: {e:?}")),
                 }
             }
-            Err(e) => Err(format!("Failed to read message {}: {:?}", id, e)),
+            Err(e) => Err(format!("Failed to read message {id}: {e:?}")),
             Ok(None) => match txn.get(&legacy_key) {
                 Ok(Some(bytes)) => Self::decode_legacy_record(bytes)
                     .map(|record| (record, StoredRecordLayout::LegacyKey)),
-                Ok(None) => Err(format!("Message {} disappeared from storage", id)),
-                Err(e) => Err(format!("Failed to read legacy message {}: {:?}", id, e)),
+                Ok(None) => Err(format!("Message {id} disappeared from storage")),
+                Err(e) => Err(format!("Failed to read legacy message {id}: {e:?}")),
             },
         }
     }
@@ -244,7 +241,7 @@ impl QueueActor {
     }
 
     pub(super) fn is_missing_read_snapshot_error(error: &impl std::fmt::Debug) -> bool {
-        format!("{:?}", error).contains("read snapshot not available")
+        format!("{error:?}").contains("read snapshot not available")
     }
 
     pub(super) fn hydrate_record_for_receive(
@@ -269,7 +266,7 @@ impl QueueActor {
         let body = record
             .body
             .clone()
-            .ok_or_else(|| format!("Message {} body missing after hydration", id))?;
+            .ok_or_else(|| format!("Message {id} body missing after hydration"))?;
         self.cache_record(id, record.metadata_only_from(), layout);
         Ok((body, record.attempts))
     }
@@ -308,7 +305,7 @@ impl QueueActor {
         meta: QueueMetaSnapshot,
     ) -> Result<(), String> {
         txn.put(self.meta_key.clone(), Self::encode_meta(meta), None)
-            .map_err(|e| format!("Failed to write queue meta: {:?}", e))
+            .map_err(|e| format!("Failed to write queue meta: {e:?}"))
     }
 
     #[allow(dead_code)]
@@ -321,7 +318,7 @@ impl QueueActor {
     ) -> Result<(), String> {
         if matches!(prior_layout, Some(StoredRecordLayout::LegacyKey)) {
             txn.delete(self.cached_legacy_message_key(id))
-                .map_err(|e| format!("Failed to delete legacy queue record: {:?}", e))?;
+                .map_err(|e| format!("Failed to delete legacy queue record: {e:?}"))?;
         }
 
         txn.put(
@@ -329,14 +326,14 @@ impl QueueActor {
             Self::encode_record_header(record),
             None,
         )
-        .map_err(|e| format!("Failed to write queue header: {:?}", e))?;
+        .map_err(|e| format!("Failed to write queue header: {e:?}"))?;
 
         let body = record
             .body
             .as_ref()
-            .ok_or_else(|| format!("Queue record {} missing body for write", id))?;
+            .ok_or_else(|| format!("Queue record {id} missing body for write"))?;
         txn.put(self.cached_body_key(id), body.to_vec(), None)
-            .map_err(|e| format!("Failed to write queue body: {:?}", e))?;
+            .map_err(|e| format!("Failed to write queue body: {e:?}"))?;
         Ok(())
     }
 
@@ -355,8 +352,7 @@ impl QueueActor {
         let bytes = txn.get(&self.ack_dedup_key(id, token)).ok()??;
         Some(
             Self::decode_ack_dedup_value(bytes.as_ref())
-                .map(|expires_at_ms| expires_at_ms > now_epoch_ms)
-                .unwrap_or(false),
+                .is_some_and(|expires_at_ms| expires_at_ms > now_epoch_ms),
         )
     }
 
@@ -408,7 +404,7 @@ impl QueueActor {
             }
         }
 
-        txn.commit(write_options).map_err(|e| format!("{:?}", e))
+        txn.commit(write_options).map_err(|e| format!("{e:?}"))
     }
 
     pub(super) fn commit_redelivery_transaction(
@@ -430,7 +426,7 @@ impl QueueActor {
             }
         }
 
-        txn.commit(write_options).map_err(|e| format!("{:?}", e))
+        txn.commit(write_options).map_err(|e| format!("{e:?}"))
     }
 
     #[cfg(test)]

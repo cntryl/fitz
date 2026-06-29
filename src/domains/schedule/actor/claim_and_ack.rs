@@ -199,6 +199,7 @@ impl ScheduleActor {
     }
 
     #[doc(hidden)]
+    #[must_use]
     pub fn bench_pending_claimed_occurrences_for_publish(&self) -> Vec<PersistedPendingFireClaim> {
         self.pending_claimed_occurrences_for_publish()
     }

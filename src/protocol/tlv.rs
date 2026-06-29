@@ -18,21 +18,25 @@ impl MessageType {
     pub const CONNECT: MessageType = MessageType(1); // control connect message
 
     #[inline]
+    #[must_use]
     pub fn new(value: u16) -> Self {
         Self(value)
     }
 
     #[inline]
+    #[must_use]
     pub fn as_u16(&self) -> u16 {
         self.0
     }
 
     #[inline]
+    #[must_use]
     pub fn is_single_byte(&self) -> bool {
         self.0 <= Self::MAX_SINGLE_BYTE
     }
 
     #[inline]
+    #[must_use]
     pub fn encoded_type_len(&self) -> usize {
         if self.is_single_byte() {
             1
@@ -42,6 +46,7 @@ impl MessageType {
     }
 
     #[inline]
+    #[must_use]
     pub fn encoded_size(&self, value_len: usize) -> usize {
         self.encoded_type_len() + 2 + value_len
     }
@@ -112,14 +117,12 @@ impl fmt::Display for TlvError {
         match self {
             Self::IncompleteType => write!(f, "incomplete type field"),
             Self::IncompleteLength => write!(f, "incomplete length field"),
-            Self::IncompleteValue { needed, available } => write!(
-                f,
-                "incomplete value: need {} bytes, have {}",
-                needed, available
-            ),
+            Self::IncompleteValue { needed, available } => {
+                write!(f, "incomplete value: need {needed} bytes, have {available}")
+            }
             Self::InvalidTypeEncoding => write!(f, "invalid type encoding"),
-            Self::LengthTooLarge(len) => write!(f, "value length too large: {}", len),
-            Self::DuplicateTag(tag) => write!(f, "duplicate tag in frame: {}", tag),
+            Self::LengthTooLarge(len) => write!(f, "value length too large: {len}"),
+            Self::DuplicateTag(tag) => write!(f, "duplicate tag in frame: {tag}"),
             Self::EmptyFrame => write!(f, "empty frame"),
         }
     }
@@ -159,6 +162,7 @@ pub struct TlvDecoder {
 }
 
 impl TlvDecoder {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             // Default to u16 maximum to match TLV value size invariant (<= 65535 bytes)
@@ -166,6 +170,7 @@ impl TlvDecoder {
         }
     }
 
+    #[must_use]
     pub fn with_max_len(max_value_len: u32) -> Self {
         Self { max_value_len }
     }
@@ -291,6 +296,7 @@ impl TlvDecoder {
     }
 
     /// Iterator over zero-copy decoded records. Yields `Ok((MessageType, &value))` or an `Err` on first failure.
+    #[must_use]
     pub fn iter<'a>(&'a self, input: &'a [u8]) -> TlvDecoderIter<'a> {
         TlvDecoderIter {
             decoder: self,
@@ -347,12 +353,14 @@ impl TlvEncoder {
     ///
     /// PERF: In hot paths, prefer reusing a single encoder via `clear()`
     /// instead of constructing a new encoder for every frame.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             buffer: BytesMut::with_capacity(512),
         }
     }
 
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             buffer: BytesMut::with_capacity(capacity),
@@ -386,6 +394,7 @@ impl TlvEncoder {
         self.buffer.extend_from_slice(value);
     }
 
+    #[must_use]
     pub fn finish(self) -> Bytes {
         self.buffer.freeze()
     }
@@ -467,7 +476,7 @@ mod tests {
         // Act
         let decoder = TlvDecoder::new();
         let res = decoder.decode_all(&data);
-        println!("duplicate test res = {:?}", res);
+        println!("duplicate test res = {res:?}");
 
         // Assert
         assert!(matches!(res, Err(TlvError::DuplicateTag(1))));

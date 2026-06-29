@@ -19,8 +19,7 @@ pub(super) fn extract_cookie_value<B>(
 
 pub(super) fn build_cookie(token: &str, secure: bool, max_age: i64) -> String {
     let mut cookie = format!(
-        "{}={}; HttpOnly; Path=/; SameSite=Strict; Max-Age={}",
-        ADMIN_SESSION_COOKIE, token, max_age
+        "{ADMIN_SESSION_COOKIE}={token}; HttpOnly; Path=/; SameSite=Strict; Max-Age={max_age}"
     );
 
     if secure {
@@ -31,10 +30,8 @@ pub(super) fn build_cookie(token: &str, secure: bool, max_age: i64) -> String {
 }
 
 pub(super) fn clear_cookie(secure: bool) -> String {
-    let mut cookie = format!(
-        "{}=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0",
-        ADMIN_SESSION_COOKIE
-    );
+    let mut cookie =
+        format!("{ADMIN_SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0");
     if secure {
         cookie.push_str("; Secure");
     }

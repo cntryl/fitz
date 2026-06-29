@@ -13,6 +13,7 @@ pub struct NoticeMetrics {
 }
 
 impl NoticeMetrics {
+    #[must_use]
     pub fn new(collector: MetricsCollector) -> Self {
         Self {
             metrics: DomainMetricSet::new(
@@ -25,6 +26,7 @@ impl NoticeMetrics {
         }
     }
 
+    #[must_use]
     pub fn record_request_start(&self) -> Instant {
         self.metrics.record_request_start()
     }

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tracing::info;
 
 fn websocket_session_frame_error_reason(error: &crate::session::SessionError) -> String {
-    format!("session frame error: {:?}", error)
+    format!("session frame error: {error:?}")
 }
 
 fn websocket_close_reason(result: &Result<(), String>) -> CloseReason {
@@ -265,7 +265,7 @@ where
                 tracing::debug!(session_id = session_id, "WS received Close frame");
                 break Ok(());
             }
-            Ok(Message::Ping(_)) | Ok(Message::Pong(_)) | Ok(Message::Text(_)) => {
+            Ok(Message::Ping(_) | Message::Pong(_) | Message::Text(_)) => {
                 tracing::trace!(
                     session_id = session_id,
                     "WS received non-binary frame (ignored)"
@@ -278,7 +278,7 @@ where
                     break Ok(());
                 }
                 tracing::error!(session_id = session_id, error = %e, "WS session error");
-                break Err(format!("WebSocket error: {}", e));
+                break Err(format!("WebSocket error: {e}"));
             }
         }
     };

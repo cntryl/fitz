@@ -15,6 +15,7 @@ use crate::runtime::routing::RouteFamily;
 /// * `area` - Area name for the queue
 /// * `resource` - Resource name for the queue
 /// * `max_attempts` - Optional maximum delivery attempts before DLQ
+#[must_use]
 pub fn create_bench_queue_actor(
     realm: &str,
     area: &str,
@@ -55,6 +56,7 @@ pub fn create_bench_queue_actor(
 ///
 /// A tuple of (QueueActor, TempDir). The TempDir must be kept alive for the
 /// lifetime of the actor, otherwise the directory will be deleted.
+#[must_use]
 pub fn create_local_bench_queue_actor(
     realm: &str,
     area: &str,

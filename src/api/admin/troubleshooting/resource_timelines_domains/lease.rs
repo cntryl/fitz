@@ -72,12 +72,10 @@ pub(crate) fn lease_resource_timeline(
     if active_leases > 0 {
         let summary = match next_expiry_seconds {
             Some(remaining_seconds) => format!(
-                "{} active lease(s); next expiry in {}s; {} renewal(s)",
-                active_leases, remaining_seconds, renewals_total
+                "{active_leases} active lease(s); next expiry in {remaining_seconds}s; {renewals_total} renewal(s)"
             ),
             None => format!(
-                "{} active lease(s); {} renewal(s)",
-                active_leases, renewals_total
+                "{active_leases} active lease(s); {renewals_total} renewal(s)"
             ),
         };
         candidates.push(timeline_candidate(

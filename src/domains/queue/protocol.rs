@@ -160,6 +160,7 @@ pub struct QueueClientResponse {
 }
 
 impl QueueClientResponse {
+    #[must_use]
     pub fn new(meta: ClientFrameMeta, response: QueueResponse) -> Self {
         Self { meta, response }
     }
@@ -176,6 +177,7 @@ pub struct QueueClientNotification {
 }
 
 impl QueueClientNotification {
+    #[must_use]
     pub fn new(
         session_id: u64,
         route_family: RouteFamily,
@@ -212,6 +214,7 @@ pub enum QueueError {
 }
 
 impl QueueError {
+    #[must_use]
     pub fn code(&self) -> u16 {
         match self {
             QueueError::InvalidRealm => 3010,

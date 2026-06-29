@@ -49,8 +49,7 @@ pub(super) fn parse_route_family_map_env() -> (HashMap<String, u32>, Option<Stri
             return (
                 mappings,
                 Some(format!(
-                    "{ENV_ROUTE_FAMILY_MAP} contains duplicate identity '{}'",
-                    identity
+                    "{ENV_ROUTE_FAMILY_MAP} contains duplicate identity '{identity}'"
                 )),
             );
         }
@@ -58,8 +57,7 @@ pub(super) fn parse_route_family_map_env() -> (HashMap<String, u32>, Option<Stri
             return (
                 mappings,
                 Some(format!(
-                    "{ENV_ROUTE_FAMILY_MAP} family for identity '{}' must be an unsigned integer",
-                    identity
+                    "{ENV_ROUTE_FAMILY_MAP} family for identity '{identity}' must be an unsigned integer"
                 )),
             );
         };

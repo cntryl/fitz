@@ -13,6 +13,7 @@
 
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 
+#[must_use]
 pub fn encode_error_body(code: u16, message: &str) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_error_body_into(code, message, &mut enc)

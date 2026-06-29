@@ -2,6 +2,7 @@ use super::*;
 
 impl RuntimeIngress {
     /// Create a new ingress implementation
+    #[must_use]
     pub fn new(auth_required: bool) -> Self {
         Self {
             sessions: Arc::new(DashMap::new()),
@@ -23,6 +24,7 @@ impl RuntimeIngress {
     /// Set the event handler for session events
     ///
     /// The handler is called for each session lifecycle event (open, frame, close).
+    #[must_use]
     pub fn with_event_handler<F>(mut self, handler: F) -> Self
     where
         F: Fn(SessionEvent) + Send + Sync + 'static,
@@ -32,11 +34,13 @@ impl RuntimeIngress {
     }
 
     /// Attach a router reference for dispatching frames directly from ingress
+    #[must_use]
     pub fn with_router(mut self, router: Arc<crate::runtime::Router>) -> Self {
         self.router = Some(router);
         self
     }
 
+    #[must_use]
     pub fn with_admin_read_model(
         mut self,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
@@ -45,11 +49,13 @@ impl RuntimeIngress {
         self
     }
 
+    #[must_use]
     pub fn with_auth_config(mut self, auth_config: crate::auth::AuthConfig) -> Self {
         self.auth_config = Some(auth_config);
         self
     }
 
+    #[must_use]
     pub fn with_auth_claims_config(
         mut self,
         auth_claims_config: crate::auth::AuthClaimsConfig,
@@ -58,6 +64,7 @@ impl RuntimeIngress {
         self
     }
 
+    #[must_use]
     pub fn with_route_family_resolver(
         mut self,
         route_family_resolver: crate::auth::RouteFamilyResolverConfig,
@@ -77,12 +84,14 @@ impl RuntimeIngress {
         self
     }
 
+    #[must_use]
     pub fn with_route_families(mut self, route_families: &[u32]) -> Self {
         self.route_families = Arc::new(route_families.iter().copied().collect());
         self
     }
 
     /// Get a clone of the session actor for authorization checks
+    #[must_use]
     pub fn get_session_actor(
         &self,
         session_id: u64,
@@ -91,16 +100,19 @@ impl RuntimeIngress {
     }
 
     /// Get a session by ID
+    #[must_use]
     pub fn get_session(&self, session_id: u64) -> Option<SessionInfo> {
         self.session_registry().session(session_id)
     }
 
     /// Get all active sessions
+    #[must_use]
     pub fn active_sessions(&self) -> Vec<SessionInfo> {
         self.session_registry().active_sessions()
     }
 
     /// Get session count
+    #[must_use]
     pub fn session_count(&self) -> usize {
         self.session_registry().session_count()
     }

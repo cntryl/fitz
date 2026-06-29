@@ -59,7 +59,7 @@ fn create_test_actor(clock: Arc<dyn Clock>) -> ScheduleActor {
 }
 
 fn build_route(index: usize) -> String {
-    let route = format!("schedule://acme/jobs/task{:06}/run", index);
+    let route = format!("schedule://acme/jobs/task{index:06}/run");
     validate_concrete_schedule_route(&route).expect("valid schedule benchmark route");
     route
 }
@@ -74,7 +74,7 @@ fn precompute_data(count: usize) -> ScheduleFixtures {
             })
             .collect(),
         payloads: (0..count)
-            .map(|i| Bytes::from(format!("payload-{:06}", i)))
+            .map(|i| Bytes::from(format!("payload-{i:06}")))
             .collect(),
     }
 }
@@ -136,7 +136,7 @@ fn bench_scan_shapes(c: &mut Criterion) {
         let partial_ready = (count / 10).max(1);
 
         for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
-            group.bench_function(format!("scan_{}_{}_mixed_crons", label, count), |b| {
+            group.bench_function(format!("scan_{label}_{count}_mixed_crons"), |b| {
                 let bench_clock = bench_clock.clone();
                 let fixtures = &fixtures;
                 b.iter_custom(|iters| {

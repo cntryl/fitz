@@ -423,7 +423,7 @@ fn should_distribute_requests_across_multiple_workers() {
     for i in 1..=3 {
         let worker_addr = RouteAddress::new(
             RouteFamily::new(1),
-            Route::new(format!("worker://realm/service/worker{}", i)),
+            Route::new(format!("worker://realm/service/worker{i}")),
         );
         let subscribe_msg = RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),

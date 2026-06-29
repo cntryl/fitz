@@ -508,10 +508,7 @@ fn bench_rpc_dispatch_primary(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(DISPATCH_BATCH_SIZE as u64));
         group.bench_function(
-            format!(
-                "dispatch_ack_cleanup_256_ops_{}_workers_primary",
-                worker_count
-            ),
+            format!("dispatch_ack_cleanup_256_ops_{worker_count}_workers_primary"),
             |b| {
                 b.iter(|| {
                     for _ in 0..DISPATCH_BATCH_SIZE {
@@ -624,10 +621,7 @@ fn bench_rpc_response_primary(c: &mut Criterion) {
             (chunk_count * STREAM_RESPONSE_BATCH_SIZE) as u64,
         ));
         group.bench_function(
-            format!(
-                "response_forward_stream_8_workers_{}_chunks_primary",
-                chunk_count
-            ),
+            format!("response_forward_stream_8_workers_{chunk_count}_chunks_primary"),
             |b| {
                 b.iter_batched(
                     || prepare_streaming_response_case(chunk_count),
@@ -669,8 +663,7 @@ fn bench_rpc_timeout_sweep_primary(c: &mut Criterion) {
         ));
         group.bench_function(
             format!(
-                "dispatch_timeout_sweep_{}_expired_pending_x{}_cases_primary",
-                expired_pending, case_batch_size
+                "dispatch_timeout_sweep_{expired_pending}_expired_pending_x{case_batch_size}_cases_primary"
             ),
             |b| {
                 b.iter_batched(

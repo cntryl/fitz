@@ -286,6 +286,7 @@ pub struct SubscriptionIndex {
 
 impl SubscriptionIndex {
     /// Create a new empty subscription index
+    #[must_use]
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
@@ -378,12 +379,14 @@ impl SubscriptionIndex {
     /// Match order is not part of the API contract and may vary with internal
     /// trie layout and removal order.
     #[inline]
+    #[must_use]
     pub fn match_all(&self, family_id: RouteFamily, route: &Route) -> SubscriptionMatches {
         self.match_all_route_str_with_capacity(family_id, route.as_str(), 8)
     }
 
     /// Find all subscriptions matching a raw route string.
     #[inline]
+    #[must_use]
     pub fn match_all_route_str(&self, family_id: RouteFamily, route: &str) -> SubscriptionMatches {
         self.match_all_route_str_with_capacity(family_id, route, 8)
     }
@@ -391,6 +394,7 @@ impl SubscriptionIndex {
     /// Find all subscriptions matching a route with pre-allocated capacity
     ///
     /// Use this when you expect a specific number of matches to avoid re-allocations.
+    #[must_use]
     pub fn match_all_with_capacity(
         &self,
         family_id: RouteFamily,
@@ -401,6 +405,7 @@ impl SubscriptionIndex {
     }
 
     /// Find all subscriptions matching a raw route string with pre-allocated capacity.
+    #[must_use]
     pub fn match_all_route_str_with_capacity(
         &self,
         family_id: RouteFamily,
@@ -458,6 +463,7 @@ impl SubscriptionIndex {
     }
 
     /// Count subscriptions in a specific RouteFamily (for diagnostics/metrics)
+    #[must_use]
     pub fn count_subscriptions(&self, family_id: RouteFamily) -> usize {
         let Some(&root) = self.family_roots.get(&family_id) else {
             return 0;

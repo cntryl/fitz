@@ -2,7 +2,7 @@
 //!
 //! This module owns the production static-asset contract for the admin SPA,
 //! including lookup, MIME mapping, SPA fallback, compression negotiation, and
-//! ETag handling. The request handler delegates here so the rest of the admin
+//! `ETag` handling. The request handler delegates here so the rest of the admin
 //! API remains unchanged.
 
 mod cache;
@@ -26,7 +26,7 @@ static PUBLIC_ASSET_SERVER: Lazy<server::AssetServer> =
     Lazy::new(|| server::AssetServer::new(Path::new(PUBLIC_ASSET_ROOT)));
 
 pub(crate) fn serve_request<B>(req: &hyper::Request<B>) -> Result<Response, Infallible> {
-    PUBLIC_ASSET_SERVER.serve(req.uri().path(), req.headers())
+    Ok(PUBLIC_ASSET_SERVER.serve(req.uri().path(), req.headers()))
 }
 
 #[cfg(test)]

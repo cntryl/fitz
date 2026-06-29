@@ -121,7 +121,7 @@ fn should_roundtrip_resource_value() {
         resource_offset: 42,
         body: Bytes::from("test"),
         metadata: Some(Bytes::from("meta")),
-        created_at: 1234567890,
+        created_at: 1_234_567_890,
         area_offset: Some(10),
         realm_offset: Some(5),
     };
@@ -144,7 +144,7 @@ fn should_reject_resource_value_with_wrong_marker() {
         resource_offset: 42,
         body: Bytes::from("test"),
         metadata: Some(Bytes::from("meta")),
-        created_at: 1234567890,
+        created_at: 1_234_567_890,
         area_offset: Some(10),
         realm_offset: Some(5),
     }

@@ -21,11 +21,13 @@ impl Default for PayloadEncoder {
 
 impl PayloadEncoder {
     /// Create a new encoder
+    #[must_use]
     pub fn new() -> Self {
         Self { buf: Vec::new() }
     }
 
     /// Create encoder with pre-allocated capacity (reduces reallocations when reusing)
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             buf: Vec::with_capacity(capacity),
@@ -112,16 +114,19 @@ pub struct PayloadDecoder<'a> {
 
 impl<'a> PayloadDecoder<'a> {
     /// Create a new decoder
+    #[must_use]
     pub fn new(payload: &'a [u8]) -> Self {
         Self { payload, offset: 0 }
     }
 
     /// Get remaining bytes
+    #[must_use]
     pub fn remaining(&self) -> usize {
         self.payload.len().saturating_sub(self.offset)
     }
 
     /// Get the current decoder offset.
+    #[must_use]
     pub fn offset(&self) -> usize {
         self.offset
     }
@@ -282,6 +287,7 @@ impl<'a> PayloadDecoder<'a> {
     }
 
     /// Check if we've consumed all input
+    #[must_use]
     pub fn is_complete(&self) -> bool {
         self.offset == self.payload.len()
     }
@@ -298,8 +304,8 @@ mod tests {
         let mut enc = PayloadEncoder::new();
         enc.put_u8(42);
         enc.put_u16(1000);
-        enc.put_u32(100000);
-        enc.put_u64(9999999999);
+        enc.put_u32(100_000);
+        enc.put_u64(9_999_999_999);
 
         // Act
         let buf = enc.finish();
@@ -308,8 +314,8 @@ mod tests {
         // Assert
         assert_eq!(dec.get_u8().unwrap(), 42);
         assert_eq!(dec.get_u16().unwrap(), 1000);
-        assert_eq!(dec.get_u32().unwrap(), 100000);
-        assert_eq!(dec.get_u64().unwrap(), 9999999999);
+        assert_eq!(dec.get_u32().unwrap(), 100_000);
+        assert_eq!(dec.get_u64().unwrap(), 9_999_999_999);
         assert!(dec.is_complete());
     }
 

@@ -104,9 +104,9 @@ fn decode_cached_response(bytes: &[u8]) -> Result<QueueResponse, String> {
         [version, tag] if *version == CACHED_RESPONSE_VERSION => match *tag {
             CACHED_RESPONSE_ACKED => Ok(QueueResponse::Acked),
             CACHED_RESPONSE_NOT_FOUND => Ok(QueueResponse::NotFound),
-            other => Err(format!("Unknown cached response tag {}", other)),
+            other => Err(format!("Unknown cached response tag {other}")),
         },
-        [version, ..] => Err(format!("Unknown cached response version {}", version)),
+        [version, ..] => Err(format!("Unknown cached response version {version}")),
         _ => Err("Cached response payload too short".to_string()),
     }
 }
@@ -402,8 +402,7 @@ impl RollingRateWindow {
         while self
             .events_epoch_ms
             .front()
-            .map(|event_epoch_ms| *event_epoch_ms < cutoff)
-            .unwrap_or(false)
+            .is_some_and(|event_epoch_ms| *event_epoch_ms < cutoff)
         {
             self.events_epoch_ms.pop_front();
         }

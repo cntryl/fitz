@@ -641,11 +641,11 @@ proptest::proptest! {
 
         // Insert each pattern as an exact route (no wildcards for simplicity)
         for (i, p) in patterns.iter().enumerate() {
-            let full_pattern = format!("test://{}", p);
+            let full_pattern = format!("test://{p}");
             index.insert(f, &route(&full_pattern), sub_id(i as u64));
         }
 
-        let full_route = format!("test://{}", route_str);
+        let full_route = format!("test://{route_str}");
         let r = route(&full_route);
 
         // Act
@@ -656,7 +656,7 @@ proptest::proptest! {
         // Brute-force scan: check each pattern with Pattern::matches
         let mut bf_matches = SubscriptionMatches::new();
         for (i, p) in patterns.iter().enumerate() {
-            let full_pattern = format!("test://{}", p);
+            let full_pattern = format!("test://{p}");
             let pattern = Pattern::new(&full_pattern);
             if pattern.matches(&r) {
                 bf_matches.push(sub_id(i as u64));
@@ -665,7 +665,7 @@ proptest::proptest! {
         bf_matches.sort_by_key(|id| id.0);
 
         // Assert
-        assert_eq!(trie_matches, bf_matches, "trie diverged from brute-force for patterns={:?} route={}", patterns, full_route);
+        assert_eq!(trie_matches, bf_matches, "trie diverged from brute-force for patterns={patterns:?} route={full_route}");
     }
 
     #[test]
@@ -678,8 +678,8 @@ proptest::proptest! {
         // Arrange
         let f = family(1);
         let mut index = SubscriptionIndex::new();
-        let full_pattern = format!("test://{}", pattern_str);
-        let full_route = format!("test://{}", route_str);
+        let full_pattern = format!("test://{pattern_str}");
+        let full_route = format!("test://{route_str}");
         let p = route(&full_pattern);
         let r = route(&full_route);
 

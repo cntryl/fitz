@@ -303,13 +303,13 @@ fn bench_queue_enqueue_primary(c: &mut Criterion) {
     for queue_count in [1usize, 64usize, 256usize] {
         group.throughput(Throughput::Elements(queue_count as u64));
         group.bench_function(
-            format!("enqueue_1_message_each_{}_queues_primary", queue_count),
+            format!("enqueue_1_message_each_{queue_count}_queues_primary"),
             |b| {
                 b.iter_batched(
                     || {
                         let (router, family, source, inbox) = setup_queue_request_sink();
-                        let routes = build_queue_routes(queue_count);
-                        let enqueue_frames: Vec<(u16, Bytes)> = routes
+                        let queue_routes = build_queue_routes(queue_count);
+                        let enqueue_frames: Vec<(u16, Bytes)> = queue_routes
                             .iter()
                             .map(|route| {
                                 let frame = build_queue_enqueue(route, b"queue enqueue payload");
@@ -351,33 +351,30 @@ fn bench_queue_dequeue_primary(c: &mut Criterion) {
         group.throughput(Throughput::Elements(
             (batch_size * DEQUEUE_OPERATION_BATCH_SIZE) as u64,
         ));
-        group.bench_function(
-            format!("dequeue_32_ops_batch_{}_primary", batch_size),
-            |b| {
-                b.iter_batched(
-                    || prepare_dequeue_case(batch_size),
-                    |case| {
-                        for _ in 0..DEQUEUE_OPERATION_BATCH_SIZE {
-                            let response = request_queue_response(
-                                &case.router,
-                                case.family,
-                                &case.source,
-                                &case.inbox,
-                                ROUTE_STR,
-                                case.dequeue_msg_type,
-                                black_box(case.dequeue_payload.clone()),
-                            );
-                            assert_eq!(
-                                queue_response_message_count(&response),
-                                case.batch_size,
-                                "expected a full queue receive batch"
-                            );
-                        }
-                    },
-                    BatchSize::SmallInput,
-                )
-            },
-        );
+        group.bench_function(format!("dequeue_32_ops_batch_{batch_size}_primary"), |b| {
+            b.iter_batched(
+                || prepare_dequeue_case(batch_size),
+                |case| {
+                    for _ in 0..DEQUEUE_OPERATION_BATCH_SIZE {
+                        let response = request_queue_response(
+                            &case.router,
+                            case.family,
+                            &case.source,
+                            &case.inbox,
+                            ROUTE_STR,
+                            case.dequeue_msg_type,
+                            black_box(case.dequeue_payload.clone()),
+                        );
+                        assert_eq!(
+                            queue_response_message_count(&response),
+                            case.batch_size,
+                            "expected a full queue receive batch"
+                        );
+                    }
+                },
+                BatchSize::SmallInput,
+            )
+        });
     }
 
     group.finish();
@@ -420,7 +417,7 @@ fn bench_queue_waiter_wake_primary(c: &mut Criterion) {
     for waiter_count in [1usize, 16usize, 64usize] {
         group.throughput(Throughput::Elements(waiter_count as u64));
         group.bench_function(
-            format!("notify_{}_waiting_receivers_primary", waiter_count),
+            format!("notify_{waiter_count}_waiting_receivers_primary"),
             |b| {
                 b.iter_batched(
                     || {

@@ -191,7 +191,7 @@ fn receive_single_message(actor: &mut QueueActor) -> ReservedMessage {
             assert_eq!(messages.len(), 1, "expected a single reserved message");
             messages.pop().expect("reserved message")
         }
-        other => panic!("expected received message, got {:?}", other),
+        other => panic!("expected received message, got {other:?}"),
     }
 }
 
@@ -201,7 +201,7 @@ fn receive_batch_messages(actor: &mut QueueActor, batch_size: usize) -> Vec<Rese
             assert_eq!(messages.len(), batch_size, "expected a full receive batch");
             messages
         }
-        other => panic!("expected received batch, got {:?}", other),
+        other => panic!("expected received batch, got {other:?}"),
     }
 }
 
@@ -434,7 +434,7 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
             let immediate = match actor.handle_receive_for_session(CLIENT_SESSION_ID, 30, Some(80))
             {
                 QueueResponse::Received { messages } => messages,
-                other => panic!("expected received immediate batch, got {:?}", other),
+                other => panic!("expected received immediate batch, got {other:?}"),
             };
             assert_eq!(immediate.len(), 80);
             for message in immediate {
@@ -448,7 +448,7 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
 
             let delayed = match actor.handle_receive_for_session(CLIENT_SESSION_ID, 30, Some(20)) {
                 QueueResponse::Received { messages } => messages,
-                other => panic!("expected received delayed batch, got {:?}", other),
+                other => panic!("expected received delayed batch, got {other:?}"),
             };
             assert_eq!(delayed.len(), 20);
             for message in delayed {
@@ -559,10 +559,10 @@ fn should_complete_routed_enqueue_sustained(ctx: &mut StressContext) {
     ctx.tag("batch_size", "single_enqueue");
 
     let (router, family, source, inbox) = setup_queue_request_sink();
-    let routes: Vec<String> = (0..64)
+    let queue_routes: Vec<String> = (0..64)
         .map(|queue| format!("queue://bench/system/enqueue{queue}"))
         .collect();
-    let enqueue_frames: Vec<(u16, Bytes)> = routes
+    let enqueue_frames: Vec<(u16, Bytes)> = queue_routes
         .iter()
         .map(|route| {
             let frame = build_queue_enqueue(route, b"routed enqueue payload");

@@ -11,23 +11,19 @@ pub(crate) async fn rpc_call_observations(
         request
             .realm
             .as_ref()
-            .map(|value| parsed.realm == *value)
-            .unwrap_or(true)
+            .is_none_or(|value| parsed.realm == *value)
             && request
                 .area
                 .as_ref()
-                .map(|value| parsed.area == *value)
-                .unwrap_or(true)
+                .is_none_or(|value| parsed.area == *value)
             && request
                 .resource
                 .as_ref()
-                .map(|value| parsed.resource == *value)
-                .unwrap_or(true)
+                .is_none_or(|value| parsed.resource == *value)
             && request
                 .operation
                 .as_ref()
-                .map(|value| parsed.operation == *value)
-                .unwrap_or(true)
+                .is_none_or(|value| parsed.operation == *value)
     };
 
     let mut observations = Vec::new();
@@ -37,19 +33,14 @@ pub(crate) async fn rpc_call_observations(
         }
         if pending.route_family != request.family
             || !scope_matches(&pending.route)
-            || !request
-                .query
-                .as_ref()
-                .map(|needle| {
-                    pending.correlation_id.contains(needle)
-                        || pending.route.contains(needle)
-                        || pending
-                            .worker_session_id
-                            .as_ref()
-                            .map(|session| session.contains(needle))
-                            .unwrap_or(false)
-                })
-                .unwrap_or(true)
+            || !request.query.as_ref().is_none_or(|needle| {
+                pending.correlation_id.contains(needle)
+                    || pending.route.contains(needle)
+                    || pending
+                        .worker_session_id
+                        .as_ref()
+                        .is_some_and(|session| session.contains(needle))
+            })
         {
             continue;
         }
@@ -78,11 +69,9 @@ pub(crate) async fn rpc_call_observations(
         }
         if worker.route_family != request.family
             || !scope_matches(&worker.route)
-            || !request
-                .query
-                .as_ref()
-                .map(|needle| worker.route.contains(needle) || worker.session_id.contains(needle))
-                .unwrap_or(true)
+            || !request.query.as_ref().is_none_or(|needle| {
+                worker.route.contains(needle) || worker.session_id.contains(needle)
+            })
         {
             continue;
         }

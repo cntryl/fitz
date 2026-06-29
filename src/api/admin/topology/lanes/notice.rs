@@ -20,7 +20,7 @@ pub(in crate::api::admin::topology) fn notice_lane(
         + stats.wildcard_limit_rejects_total
         + stats.unsubscribes_total;
     let activity = stats.publishes_per_second > 0.0 || stats.subscriptions_active > 0;
-    let state = topology_state(&stats.diagnostics, pressure > 0, activity);
+    let lane_state = topology_state(&stats.diagnostics, pressure > 0, activity);
     let counters = vec![
         counter(
             "subscriptions",
@@ -44,7 +44,7 @@ pub(in crate::api::admin::topology) fn notice_lane(
     add_broker_domain_flow(
         connections,
         "notice",
-        &state,
+        &lane_state,
         stats.publishes_per_second,
         counters.clone(),
     );
@@ -77,7 +77,7 @@ pub(in crate::api::admin::topology) fn notice_lane(
 
     topology_lane(
         ("notice", "Notice"),
-        state,
+        lane_state,
         stats.publishes_per_second,
         &stats.diagnostics,
         counters,

@@ -23,7 +23,7 @@ pub(in crate::api::admin::topology) fn rpc_lane(
         + stats.failure_total as usize
         + stats.responses_missing_pending_total as usize;
     let activity = stats.operations_per_second > 0.0 || stats.workers_registered > 0;
-    let state = topology_state(&stats.diagnostics, pressure > 0, activity);
+    let lane_state = topology_state(&stats.diagnostics, pressure > 0, activity);
     let counters = vec![
         counter("workers", "Workers", stats.workers_registered as f64),
         counter("pending", "Pending", stats.requests_pending as f64),
@@ -43,7 +43,7 @@ pub(in crate::api::admin::topology) fn rpc_lane(
     add_broker_domain_flow(
         connections,
         "rpc",
-        &state,
+        &lane_state,
         stats.operations_per_second,
         counters.clone(),
     );
@@ -75,12 +75,11 @@ pub(in crate::api::admin::topology) fn rpc_lane(
     }
 
     for request in pending {
-        let target = request
-            .worker_session_id
-            .as_deref()
-            .map(session_node_id)
-            .unwrap_or_else(|| format!("rpc-pending:{}", request.correlation_id));
-        let state = if request.worker_session_id.is_some() {
+        let target = request.worker_session_id.as_deref().map_or_else(
+            || format!("rpc-pending:{}", request.correlation_id),
+            session_node_id,
+        );
+        let request_state = if request.worker_session_id.is_some() {
             TopologyState::Flowing
         } else {
             TopologyState::Pressure
@@ -94,7 +93,7 @@ pub(in crate::api::admin::topology) fn rpc_lane(
             ),
             TopologyConnectionKind::RpcPendingAssignment,
             request.route.clone(),
-            state,
+            request_state,
             scope_for_route(&request.route, request.worker_session_id.clone()),
             vec![counter("age_seconds", "Age", request.age_seconds as f64)],
         ));
@@ -102,7 +101,7 @@ pub(in crate::api::admin::topology) fn rpc_lane(
 
     topology_lane(
         ("rpc", "RPC"),
-        state,
+        lane_state,
         stats.operations_per_second,
         &stats.diagnostics,
         counters,

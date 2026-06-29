@@ -78,22 +78,21 @@ impl StreamStore {
 
     pub(in crate::domains::stream::store) fn event_size_bytes(event: &EventPayload) -> u64 {
         (event.body.len()
-            + event.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+            + event.metadata.as_ref().map_or(0, |m| m.len())
             + event
                 .discriminator
                 .as_ref()
-                .map(|discriminator| discriminator.as_str().len())
-                .unwrap_or(0)) as u64
+                .map_or(0, |discriminator| discriminator.as_str().len())) as u64
     }
 
     pub(super) fn load_optional_discriminator(
         txn: &cntryl_midge::Transaction,
         key: &[u8],
     ) -> Result<Option<String>, String> {
-        match txn.get(key).map_err(|e| format!("get error: {:?}", e))? {
+        match txn.get(key).map_err(|e| format!("get error: {e:?}"))? {
             Some(value_bytes) => String::from_utf8(value_bytes.to_vec())
                 .map(Some)
-                .map_err(|error| format!("invalid stream discriminator bytes: {:?}", error)),
+                .map_err(|error| format!("invalid stream discriminator bytes: {error:?}")),
             None => Ok(None),
         }
     }
@@ -130,7 +129,7 @@ impl StreamStore {
                 discriminator_bytes.clone(),
                 ttl_opt,
             )
-            .map_err(|e| format!("txn put failed: {:?}", e))?;
+            .map_err(|e| format!("txn put failed: {e:?}"))?;
 
             txn.put(
                 crate::domains::stream::storage::encode_area_discriminator_key(
@@ -141,7 +140,7 @@ impl StreamStore {
                 discriminator_bytes.clone(),
                 ttl_opt,
             )
-            .map_err(|e| format!("txn put failed: {:?}", e))?;
+            .map_err(|e| format!("txn put failed: {e:?}"))?;
 
             txn.put(
                 crate::domains::stream::storage::encode_realm_discriminator_key(
@@ -151,7 +150,7 @@ impl StreamStore {
                 discriminator_bytes,
                 ttl_opt,
             )
-            .map_err(|e| format!("txn put failed: {:?}", e))?;
+            .map_err(|e| format!("txn put failed: {e:?}"))?;
         }
 
         Ok(())
@@ -187,7 +186,7 @@ impl StreamStore {
         }
 
         txn.get(key)
-            .map_err(|e| format!("midge get error: {:?}", e))
+            .map_err(|e| format!("midge get error: {e:?}"))
             .and_then(|existing| {
                 existing
                     .map(|bytes| WatermarkValue::decode(&bytes).map(|value| value.watermark))
@@ -203,9 +202,7 @@ impl StreamStore {
         let query = cntryl_midge::Query::new().prefix(Bytes::from(
             Self::build_compact_area_page_prefix(realm, area),
         ));
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
         if let Some((key, value)) = results.last() {
@@ -232,7 +229,7 @@ impl StreamStore {
 
         match txn
             .get(counter_key)
-            .map_err(|e| format!("midge get error: {:?}", e))?
+            .map_err(|e| format!("midge get error: {e:?}"))?
         {
             Some(bytes) => Ok(AreaCounterValue::decode(&bytes)?
                 .next_offset
@@ -261,7 +258,7 @@ impl StreamStore {
         }
 
         txn.get(key)
-            .map_err(|e| format!("midge get error: {:?}", e))
+            .map_err(|e| format!("midge get error: {e:?}"))
             .and_then(|existing| {
                 existing
                     .map(|bytes| WatermarkValue::decode(&bytes).map(|value| value.watermark))
@@ -276,9 +273,7 @@ impl StreamStore {
         let query = cntryl_midge::Query::new().prefix(Bytes::from(
             Self::build_compressed_compact_realm_page_prefix(realm),
         ));
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
         if let Some((key, value)) = results.last() {
@@ -304,7 +299,7 @@ impl StreamStore {
 
         match txn
             .get(counter_key)
-            .map_err(|e| format!("midge get error: {:?}", e))?
+            .map_err(|e| format!("midge get error: {e:?}"))?
         {
             Some(bytes) => Ok(RealmCounterValue::decode(&bytes)?
                 .next_offset
@@ -401,10 +396,8 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
+        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
         let mut next_offset = 0_u64;
@@ -418,7 +411,7 @@ impl StreamStore {
             for record in page.records {
                 committed_size_bytes = committed_size_bytes
                     .saturating_add(record.body.len() as u64)
-                    .saturating_add(record.metadata.as_ref().map(|m| m.len()).unwrap_or(0) as u64);
+                    .saturating_add(record.metadata.as_ref().map_or(0, |m| m.len()) as u64);
             }
         }
 
@@ -437,10 +430,8 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
+        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
         if let Some((key, value)) = results.last() {
@@ -461,10 +452,8 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
+        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
         if let Some((key, value)) = results.last() {
@@ -491,10 +480,8 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
+        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
         if let Some((key, value)) = results.last() {
@@ -519,11 +506,11 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
         match txn
             .get(&meta_key)
-            .map_err(|e| format!("get error: {:?}", e))?
+            .map_err(|e| format!("get error: {e:?}"))?
         {
             Some(bytes) => Ok((ResourceMetaValue::decode(&bytes)?, false)),
             None => {
@@ -552,7 +539,7 @@ impl StreamStore {
 
         match txn
             .get(&resource_meta_key)
-            .map_err(|e| format!("get error: {:?}", e))?
+            .map_err(|e| format!("get error: {e:?}"))?
         {
             Some(value_bytes) => Ok(ResourceMetaValue::decode(&value_bytes)?.next_offset),
             None => self.scan_next_resource_offset(family, realm, area, resource),
@@ -569,9 +556,9 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
-        match txn.get(&key).map_err(|e| format!("get error: {:?}", e))? {
+        match txn.get(&key).map_err(|e| format!("get error: {e:?}"))? {
             Some(bytes) => Ok((AreaCounterValue::decode(&bytes)?.next_offset, false)),
             None => Ok((self.scan_next_area_offset(family, realm, area)?, true)),
         }
@@ -586,9 +573,9 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
-        match txn.get(&key).map_err(|e| format!("get error: {:?}", e))? {
+        match txn.get(&key).map_err(|e| format!("get error: {e:?}"))? {
             Some(bytes) => Ok((RealmCounterValue::decode(&bytes)?.next_offset, false)),
             None => Ok((self.scan_next_realm_offset(family, realm)?, true)),
         }

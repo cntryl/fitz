@@ -79,7 +79,7 @@ pub fn parse_request(
         msg_type::DELETE => parse_delete(route_family, payload),
         msg_type::DELETE_RANGE => parse_delete_range(route_family, payload),
         msg_type::SCAN => parse_scan(route_family, payload),
-        _ => Err(format!("Unknown KV message type: {}", msg_type)),
+        _ => Err(format!("Unknown KV message type: {msg_type}")),
     }
 }
 
@@ -225,8 +225,7 @@ fn parse_route(route_str: &str) -> Result<(String, String, String), String> {
             Ok((realm.to_string(), area.to_string(), resource.to_string()))
         }
         None => Err(format!(
-            "Route must be realm/area/resource, got '{}'",
-            route_str
+            "Route must be realm/area/resource, got '{route_str}'"
         )),
     }
 }
@@ -235,8 +234,7 @@ pub(super) fn parse_route_resource(route_str: &str) -> Result<String, String> {
     match split_route(route_str) {
         Some((_realm, _area, resource)) => Ok(resource.to_string()),
         None => Err(format!(
-            "Route must be realm/area/resource, got '{}'",
-            route_str
+            "Route must be realm/area/resource, got '{route_str}'"
         )),
     }
 }
@@ -246,8 +244,7 @@ fn validate_route(route_str: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "Route must be realm/area/resource, got '{}'",
-            route_str
+            "Route must be realm/area/resource, got '{route_str}'"
         ))
     }
 }
@@ -288,7 +285,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
         | msg_type::DELETE_RANGE
         | msg_type::SCAN => {
             if payload.len() < 12 {
-                return Err(format!("{} payload too short", msg_type));
+                return Err(format!("{msg_type} payload too short"));
             }
 
             let mut offset = 8;
@@ -297,7 +294,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             Ok(None)
         }
         msg_type::NOTIFY => Err("KV_NOTIFY is server-to-client only".to_string()),
-        _ => Err(format!("Unknown KV message type: {}", msg_type)),
+        _ => Err(format!("Unknown KV message type: {msg_type}")),
     }
 }
 
@@ -436,7 +433,7 @@ fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, S
     let write_options = match payload[offset] {
         0 => cntryl_midge::WriteOptions::buffered(),
         1 => cntryl_midge::WriteOptions::sync(),
-        value => return Err(format!("Invalid durability mode: {}", value)),
+        value => return Err(format!("Invalid durability mode: {value}")),
     };
 
     Ok(KvMessage::Begin {

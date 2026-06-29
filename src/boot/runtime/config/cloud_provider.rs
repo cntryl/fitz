@@ -72,8 +72,7 @@ pub(super) fn build_cloud_provider_config(
         "azure-blob" => build_azure_blob_provider(),
         "gcs" => build_gcs_provider(),
         other => Err(format!(
-            "unsupported FITZ_STORAGE_PROVIDER='{}'; expected peas-s3, peas-azure, peas-gcs, aws-s3, s3-compatible, minio, wasabi, oci-s3, azure-blob, or gcs",
-            other
+            "unsupported FITZ_STORAGE_PROVIDER='{other}'; expected peas-s3, peas-azure, peas-gcs, aws-s3, s3-compatible, minio, wasabi, oci-s3, azure-blob, or gcs"
         )),
     }
 }

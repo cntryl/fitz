@@ -14,11 +14,11 @@ fn put_raw(
 ) -> Result<(), String> {
     let mut txn = db
         .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
-        .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+        .map_err(|e| format!("begin_tx failed: {e:?}"))?;
     txn.put(key, value, None)
-        .map_err(|e| format!("put failed: {:?}", e))?;
+        .map_err(|e| format!("put failed: {e:?}"))?;
     txn.commit(WriteOptions::buffered())
-        .map_err(|e| format!("commit failed: {:?}", e))
+        .map_err(|e| format!("commit failed: {e:?}"))
 }
 
 fn read_raw_value(db: &Arc<cntryl_midge::Engine>, cf_id: u64, key: &[u8]) -> Option<Vec<u8>> {

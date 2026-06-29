@@ -56,11 +56,12 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             Ok(Some(route))
         }
         303 | 304 => Ok(None),
-        _ => Err(format!("Unknown operation: {}", msg_type)),
+        _ => Err(format!("Unknown operation: {msg_type}")),
     }
 }
 
 /// Encode domain response to TLV-encoded bytes
+#[must_use]
 pub fn encode_response(response: &RpcClientResponseBody) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_response_into(response, &mut enc)
@@ -91,6 +92,7 @@ pub fn encode_response_into(response: &RpcClientResponseBody, enc: &mut PayloadE
 }
 
 /// Encode a standard RPC error body with numeric code and message.
+#[must_use]
 pub fn encode_error_body(code: u16, message: &str) -> Vec<u8> {
     crate::protocol::error_codes::encode_error_body(code, message)
 }
@@ -283,6 +285,7 @@ pub fn encode_response_message_into(response: &RpcResponse, enc: &mut PayloadEnc
 ///
 /// Sent to acknowledge receipt of a worker's RESPONSE message (303).
 /// This unblocks the worker so they can send additional responses.
+#[must_use]
 pub fn encode_ack(correlation_id: &Uuid) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_ack_into(correlation_id, &mut enc)

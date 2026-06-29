@@ -143,6 +143,7 @@ pub struct KvClientNotification {
 }
 
 impl KvClientNotification {
+    #[must_use]
     pub fn new(
         session_id: u64,
         route_family: RouteFamily,
@@ -284,28 +285,27 @@ pub enum KvError {
 impl std::fmt::Display for KvError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            KvError::InvalidRoute(msg) => write!(f, "Invalid route: {}", msg),
-            KvError::InvalidRequest(msg) => write!(f, "Invalid request: {}", msg),
+            KvError::InvalidRoute(msg) => write!(f, "Invalid route: {msg}"),
+            KvError::InvalidRequest(msg) => write!(f, "Invalid request: {msg}"),
             KvError::InvalidRealm => write!(f, "Invalid realm"),
             KvError::InvalidRouteFamily => {
                 write!(f, "Invalid route family (cannot be zero)")
             }
             KvError::RealmMismatch => write!(f, "Realm mismatch"),
-            KvError::UnknownResource(res) => write!(f, "Unknown resource: {}", res),
+            KvError::UnknownResource(res) => write!(f, "Unknown resource: {res}"),
             KvError::InvalidTxId => write!(f, "Invalid or unknown transaction ID"),
             KvError::NoActiveTx => write!(f, "No active transaction"),
             KvError::TxScopeViolation { expected, actual } => {
                 write!(
                     f,
-                    "Transaction scope violation: expected resource '{}', got '{}'",
-                    expected, actual
+                    "Transaction scope violation: expected resource '{expected}', got '{actual}'"
                 )
             }
             KvError::NotFound => write!(f, "Key not found"),
             KvError::AlreadyExists => write!(f, "Key already exists"),
-            KvError::Conflict(msg) => write!(f, "Transaction conflict: {}", msg),
-            KvError::BackendUnavailable(msg) => write!(f, "Backend unavailable: {}", msg),
-            KvError::BackendError(msg) => write!(f, "Backend error: {}", msg),
+            KvError::Conflict(msg) => write!(f, "Transaction conflict: {msg}"),
+            KvError::BackendUnavailable(msg) => write!(f, "Backend unavailable: {msg}"),
+            KvError::BackendError(msg) => write!(f, "Backend error: {msg}"),
         }
     }
 }

@@ -146,8 +146,7 @@ impl CompactAreaPageValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -162,8 +161,7 @@ impl CompactAreaPageValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -241,8 +239,7 @@ impl CompactResourcePageValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -258,8 +255,7 @@ impl CompactResourcePageValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -339,8 +335,7 @@ impl CompactPagedRealmValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -356,8 +351,7 @@ impl CompactPagedRealmValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -1057,8 +1051,7 @@ fn encode_stream_read_data(
                 + record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len())
-                    .unwrap_or(0);
+                    .map_or(0, |metadata| metadata.len());
             if !selected.is_empty() && projected > max_bytes {
                 has_more = true;
                 break;
@@ -1071,8 +1064,7 @@ fn encode_stream_read_data(
 
     let last_resource_offset = selected
         .last()
-        .map(|record| record.resource_offset)
-        .unwrap_or(from_offset);
+        .map_or(from_offset, |record| record.resource_offset);
     let last_area_offset = selected.last().and_then(|record| record.area_offset);
     let last_realm_offset = selected.last().and_then(|record| record.realm_offset);
 

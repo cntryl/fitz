@@ -71,6 +71,7 @@ impl StreamDomainSink {
         })
     }
 
+    #[must_use]
     pub fn with_sync_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
         self.sync_write_mode = if write_options.is_cloud_strict() {
             crate::domains::stream::protocol::StreamWriteMode::CloudStrict
@@ -80,6 +81,7 @@ impl StreamDomainSink {
         self
     }
 
+    #[must_use]
     pub fn with_metrics(
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
@@ -358,7 +360,7 @@ impl StreamDomainSink {
             if committed_snapshot.is_none() && last_offset.is_none() {
                 continue;
             }
-            let committed_size_bytes = committed_snapshot.map(|item| item.size_bytes).unwrap_or(0);
+            let committed_size_bytes = committed_snapshot.map_or(0, |item| item.size_bytes);
             let committed_offset = committed_snapshot.map(|item| item.offset);
             let visible_offset = last_offset.or(committed_offset).unwrap_or(0);
 

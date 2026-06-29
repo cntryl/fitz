@@ -20,6 +20,7 @@ impl RpcDomainSink {
         }
     }
 
+    #[must_use]
     pub fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
         self.request_timeout = if request_timeout.is_zero() {
             RPC_MIN_TIMEOUT_SWEEP_INTERVAL
@@ -29,11 +30,13 @@ impl RpcDomainSink {
         self
     }
 
+    #[must_use]
     pub fn with_route_pending_capacity(mut self, route_pending_capacity: usize) -> Self {
         self.route_pending_capacity = route_pending_capacity.max(1);
         self
     }
 
+    #[must_use]
     pub fn with_metrics(
         mut self,
         metrics: crate::observability::metrics::MetricsCollector,
@@ -155,10 +158,10 @@ impl RpcDomainSink {
 
         self.gauge_set(
             "rpc_pending_requests",
-            removed
-                .as_ref()
-                .map(|(_, pending_len)| *pending_len as u64)
-                .unwrap_or_else(|| self.pending_request_count() as u64),
+            removed.as_ref().map_or_else(
+                || self.pending_request_count() as u64,
+                |(_, pending_len)| *pending_len as u64,
+            ),
         );
         removed
     }
@@ -469,20 +472,17 @@ impl RpcDomainSink {
                 Ok(()) => {
                     self.counter_inc("rpc_requests_dispatched_total");
                 }
-                Err(crate::runtime::RouteError::RouteNotFound(_))
-                | Err(crate::runtime::RouteError::DeliveryFailed(_, DeliveryError::ActorStopped)) =>
-                {
+                Err(
+                    crate::runtime::RouteError::RouteNotFound(_)
+                    | crate::runtime::RouteError::DeliveryFailed(_, DeliveryError::ActorStopped),
+                ) => {
                     self.counter_inc("rpc_request_forward_errors_total");
                     let cleanup_result = self.apply_session_cleanup(dispatch.worker.session_id);
                     self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
                 }
                 Err(crate::runtime::RouteError::DeliveryFailed(
                     _,
-                    DeliveryError::MailboxFull { .. },
-                ))
-                | Err(crate::runtime::RouteError::DeliveryFailed(
-                    _,
-                    DeliveryError::HighLaneFull { .. },
+                    DeliveryError::MailboxFull { .. } | DeliveryError::HighLaneFull { .. },
                 )) => {
                     self.counter_inc("rpc_request_forward_errors_total");
                     self.counter_inc("rpc_backpressure_rejects_total");

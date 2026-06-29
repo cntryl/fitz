@@ -20,10 +20,10 @@ const ERR_STREAM_FILTER_INVALID_PAYLOAD: &str = "ERR_STREAM_FILTER_INVALID_PAYLO
 
 fn map_stream_filter_decode_error(error: String) -> String {
     if error.contains("missing marker") {
-        return format!("{}: {}", ERR_STREAM_FILTER_UNSUPPORTED_VERSION, error);
+        return format!("{ERR_STREAM_FILTER_UNSUPPORTED_VERSION}: {error}");
     }
 
-    format!("{}: {}", ERR_STREAM_FILTER_INVALID_PAYLOAD, error)
+    format!("{ERR_STREAM_FILTER_INVALID_PAYLOAD}: {error}")
 }
 
 /// Parse incoming message from TLV-encoded bytes.
@@ -111,11 +111,12 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             }
             Ok(Some(route))
         }
-        _ => Err(format!("Unknown operation: {}", msg_type)),
+        _ => Err(format!("Unknown operation: {msg_type}")),
     }
 }
 
 /// Encode domain response to TLV-encoded bytes
+#[must_use]
 pub fn encode_response(response: &StreamClientResponseBody) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_response_into(&mut enc, response)
@@ -226,7 +227,7 @@ fn parse_commit(dec: &mut PayloadDecoder) -> Result<StreamMessage, String> {
     let mode = match mode_byte {
         0 => StreamWriteMode::Buffered,
         1 => StreamWriteMode::Sync,
-        _ => return Err(format!("Invalid write mode: {}", mode_byte)),
+        _ => return Err(format!("Invalid write mode: {mode_byte}")),
     };
 
     if !dec.is_complete() {
@@ -366,6 +367,7 @@ fn parse_unsubscribe(
 /// Encode a STREAM_NOTIFY (609) payload.
 ///
 /// Wire format: `[u64 subscription_id][string route][bytes payload]`
+#[must_use]
 pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_notify_into(&mut enc, subscription_id, route, payload)

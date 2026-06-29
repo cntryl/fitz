@@ -17,6 +17,7 @@ use std::sync::Arc;
 ///
 /// # Returns
 /// StreamActor ready for benchmarking
+#[must_use]
 pub fn create_bench_stream_actor(realm: &str, area: &str, resource: &str) -> StreamActor {
     create_bench_stream_actor_with_layout(
         realm,
@@ -26,6 +27,7 @@ pub fn create_bench_stream_actor(realm: &str, area: &str, resource: &str) -> Str
     )
 }
 
+#[must_use]
 pub fn create_bench_stream_actor_with_layout(
     realm: &str,
     area: &str,
@@ -58,6 +60,7 @@ pub fn create_bench_stream_actor_with_layout(
 /// # Returns
 /// Tuple of (StreamActor, TempDir). The TempDir must be kept alive for the
 /// lifetime of the actor, otherwise the directory will be deleted.
+#[must_use]
 pub fn create_local_bench_stream_actor(
     realm: &str,
     area: &str,
@@ -71,6 +74,7 @@ pub fn create_local_bench_stream_actor(
     )
 }
 
+#[must_use]
 pub fn create_local_bench_stream_actor_with_layout(
     realm: &str,
     area: &str,
@@ -104,6 +108,7 @@ pub fn create_local_bench_stream_actor_with_layout(
 ///
 /// # Returns
 /// Vector of byte arrays, each containing the event index in the first 8 bytes
+#[must_use]
 pub fn create_bench_event_payloads(count: usize, size: usize) -> Vec<Vec<u8>> {
     (0..count)
         .map(|i| {

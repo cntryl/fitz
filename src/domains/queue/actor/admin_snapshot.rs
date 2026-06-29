@@ -1,6 +1,7 @@
 use super::*;
 
 impl QueueActor {
+    #[must_use]
     pub fn ready_len(&self) -> usize {
         self.ready.len()
     }
@@ -33,6 +34,7 @@ impl QueueActor {
         buckets
     }
 
+    #[must_use]
     pub fn admin_snapshot(&self) -> QueueAdminSnapshot {
         let now_epoch_ms = self.clock.now_epoch_ms();
         let (backlog_age_buckets, oldest_backlog_age_seconds) =
@@ -47,10 +49,9 @@ impl QueueActor {
                 + self.inflight.len()
                 + self.persisted_delayed.len()
                 + self.persisted_dlq.len(),
-            oldest_message_age_seconds: self
-                .oldest_ready_enqueued_at_ms
-                .map(|timestamp| now_epoch_ms.saturating_sub(timestamp) / 1_000)
-                .unwrap_or(0),
+            oldest_message_age_seconds: self.oldest_ready_enqueued_at_ms.map_or(0, |timestamp| {
+                now_epoch_ms.saturating_sub(timestamp) / 1_000
+            }),
             oldest_backlog_age_seconds,
             backlog_age_buckets,
             delay_age_buckets,
@@ -61,6 +62,7 @@ impl QueueActor {
         }
     }
 
+    #[must_use]
     pub fn admin_inflight(&self) -> Vec<QueueInflightSnapshot> {
         let now_instant = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
@@ -82,6 +84,7 @@ impl QueueActor {
             .collect()
     }
 
+    #[must_use]
     pub fn admin_dead_letters(&self) -> Vec<QueueDeadLetterSnapshot> {
         let mut dead_letters: Vec<_> = self
             .persisted_dlq
@@ -110,8 +113,7 @@ impl QueueActor {
                 let reason = record
                     .as_ref()
                     .and_then(|record| record.dlq_reason)
-                    .map(Self::dlq_reason_label)
-                    .unwrap_or("unknown");
+                    .map_or("unknown", Self::dlq_reason_label);
 
                 QueueDeadLetterSnapshot {
                     message_id: id.as_u64(),
@@ -161,6 +163,7 @@ impl QueueActor {
         released.len()
     }
 
+    #[must_use]
     pub fn ready_contains(&self, id: MessageId) -> bool {
         self.ready.iter().any(|entry| entry.id == id)
     }

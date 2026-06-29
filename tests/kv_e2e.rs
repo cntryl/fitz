@@ -7,7 +7,7 @@ use fixtures::transport::*;
 
 fn expect_kv_begin_ok(response: &[u8], context: &str) -> u64 {
     let (_msg_type, status, data) = parse_kv_response(response);
-    assert_eq!(status, 0, "Expected BEGIN success for {}", context);
+    assert_eq!(status, 0, "Expected BEGIN success for {context}");
     parse_kv_tx_id(&data).expect("extract tx_id")
 }
 
@@ -177,13 +177,11 @@ where
 
     assert_eq!(
         status1, 0,
-        "First BEGIN should succeed, got status {}",
-        status1
+        "First BEGIN should succeed, got status {status1}"
     );
     assert_eq!(
         status2, 0,
-        "Second BEGIN should succeed, got status {}",
-        status2
+        "Second BEGIN should succeed, got status {status2}"
     );
     assert!(
         data1.len() >= 9,
@@ -282,7 +280,7 @@ where
 {
     let run_tx = |idx: usize| async move {
         let mut client = C::connect(server).await.expect("connect failed");
-        let route = format!("kv://test/app/resource{}", idx);
+        let route = format!("kv://test/app/resource{idx}");
 
         let begin_frame = build_kv_begin(&route, 1, 0);
         let response = client
@@ -673,13 +671,13 @@ where
     assert_eq!(value1, b"1");
 
     // Act - PUT new value (overwrite)
-    let put2_frame = build_kv_put(1, route, b"counter", b"2");
-    let put2_response = client
-        .request(&put2_frame, 2000)
+    let overwrite_frame = build_kv_put(1, route, b"counter", b"2");
+    let overwrite_response = client
+        .request(&overwrite_frame, 2000)
         .await
         .expect("PUT 2 failed");
 
-    let (_msg_type, status, _data) = parse_kv_response(&put2_response);
+    let (_msg_type, status, _data) = parse_kv_response(&overwrite_response);
     assert_eq!(status, 0);
 
     // Act - GET again to verify overwrite
@@ -721,9 +719,12 @@ where
     assert_eq!(status, 0);
 
     // Act - Second transaction: BEGIN, GET to verify persistence
-    let begin2_frame = build_kv_begin(route, 1, 0);
-    let begin2_response = client.request(&begin2_frame, 2000).await.expect("BEGIN 2");
-    let (_msg_type, status, data) = parse_kv_response(&begin2_response);
+    let verify_begin_frame = build_kv_begin(route, 1, 0);
+    let verify_begin_response = client
+        .request(&verify_begin_frame, 2000)
+        .await
+        .expect("BEGIN 2");
+    let (_msg_type, status, data) = parse_kv_response(&verify_begin_response);
     assert_eq!(status, 0);
     let tx_id2 = parse_kv_tx_id(&data).expect("parse tx_id2");
 
@@ -750,16 +751,16 @@ where
 
     // Act - Write 50 key-value pairs
     for i in 0..50 {
-        let key = format!("key_{:03}", i).into_bytes();
-        let value = format!("value_{:03}", i).into_bytes();
+        let key = format!("key_{i:03}").into_bytes();
+        let value = format!("value_{i:03}").into_bytes();
         let put_frame = build_kv_put(1, route, &key, &value);
         let response = client
             .request(&put_frame, 2000)
             .await
-            .unwrap_or_else(|_| panic!("PUT {} failed", i));
+            .unwrap_or_else(|_| panic!("PUT {i} failed"));
 
         let (_msg_type, status, _data) = parse_kv_response(&response);
-        assert_eq!(status, 0, "PUT {} should succeed", i);
+        assert_eq!(status, 0, "PUT {i} should succeed");
     }
 
     let commit_frame = build_kv_commit(1, route);

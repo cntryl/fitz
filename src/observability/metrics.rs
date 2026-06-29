@@ -7,6 +7,7 @@
 /// Safe to use from sync domain code.
 use dashmap::DashMap;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -16,8 +17,8 @@ const HISTOGRAM_BUCKET_BOUNDS: [&str; 9] = [
 ];
 
 fn append_metric_metadata(output: &mut String, name: &str, metric_type: &str, help: &str) {
-    output.push_str(&format!("# HELP {name} {help}\n"));
-    output.push_str(&format!("# TYPE {name} {metric_type}\n"));
+    let _ = writeln!(output, "# HELP {name} {help}");
+    let _ = writeln!(output, "# TYPE {name} {metric_type}");
 }
 
 /// Metrics collector instance.
@@ -44,6 +45,7 @@ pub struct DomainMetricSet {
 }
 
 impl DomainMetricSet {
+    #[must_use]
     pub fn new(
         collector: MetricsCollector,
         requests_total: &'static str,
@@ -60,6 +62,7 @@ impl DomainMetricSet {
         }
     }
 
+    #[must_use]
     pub fn record_request_start(&self) -> Instant {
         self.collector.counter_inc(self.requests_total);
         Instant::now()
@@ -145,8 +148,8 @@ impl Histogram {
 
     /// Record a value in microseconds (converts to milliseconds).
     pub fn observe_us(&self, value_us: u64) {
-        let value_ms = value_us / 1000;
-        self.observe_ms(value_ms);
+        let millis = value_us / 1000;
+        self.observe_ms(millis);
     }
 
     /// Get all bucket counts (for Prometheus export).
@@ -167,6 +170,7 @@ impl Histogram {
 
 impl MetricsCollector {
     /// Create a new metrics collector.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             counters: Arc::new(DashMap::new()),
@@ -202,11 +206,11 @@ impl MetricsCollector {
     }
 
     /// Get current counter value.
+    #[must_use]
     pub fn counter_get(&self, name: &str) -> u64 {
         self.counters
             .get(name)
-            .map(|c| c.load(Ordering::Relaxed))
-            .unwrap_or(0)
+            .map_or(0, |c| c.load(Ordering::Relaxed))
     }
 
     // ========================================================================
@@ -244,11 +248,11 @@ impl MetricsCollector {
     }
 
     /// Get current gauge value.
+    #[must_use]
     pub fn gauge_get(&self, name: &str) -> u64 {
         self.gauges
             .get(name)
-            .map(|g| g.load(Ordering::Relaxed))
-            .unwrap_or(0)
+            .map_or(0, |g| g.load(Ordering::Relaxed))
     }
 
     // ========================================================================
@@ -276,6 +280,7 @@ impl MetricsCollector {
     }
 
     /// Get histogram bucket counts.
+    #[must_use]
     pub fn histogram_get_buckets(&self, name: &str) -> Option<[u64; 9]> {
         self.histograms.get(name).map(|h| h.get_buckets())
     }
@@ -285,6 +290,7 @@ impl MetricsCollector {
     // ========================================================================
 
     /// Export all counters as a map (for Prometheus scrape).
+    #[must_use]
     pub fn export_counters(&self) -> BTreeMap<String, u64> {
         let mut result = BTreeMap::new();
         for entry in self.counters.iter() {
@@ -296,6 +302,7 @@ impl MetricsCollector {
     }
 
     /// Export all gauges as a map (for Prometheus scrape).
+    #[must_use]
     pub fn export_gauges(&self) -> BTreeMap<String, u64> {
         let mut result = BTreeMap::new();
         for entry in self.gauges.iter() {
@@ -307,6 +314,7 @@ impl MetricsCollector {
     }
 
     /// Export all histograms with their buckets (for Prometheus scrape).
+    #[must_use]
     pub fn export_histograms(&self) -> BTreeMap<String, [u64; 9]> {
         let mut result = BTreeMap::new();
         for entry in self.histograms.iter() {
@@ -319,18 +327,19 @@ impl MetricsCollector {
 
     /// Generate Prometheus text format output.
     /// This is called by the `/metrics` HTTP endpoint.
+    #[must_use]
     pub fn to_prometheus_text(&self) -> String {
         let mut output = String::new();
 
         for (name, value) in self.export_counters() {
             append_metric_metadata(&mut output, &name, "counter", "Fitz counter metric");
-            output.push_str(&format!("{} {}\n", name, value));
+            let _ = writeln!(output, "{name} {value}");
             output.push('\n');
         }
 
         for (name, value) in self.export_gauges() {
             append_metric_metadata(&mut output, &name, "gauge", "Fitz gauge metric");
-            output.push_str(&format!("{} {}\n", name, value));
+            let _ = writeln!(output, "{name} {value}");
             output.push('\n');
         }
 
@@ -339,9 +348,9 @@ impl MetricsCollector {
             let mut cumsum = 0u64;
             for (i, bucket_bound) in HISTOGRAM_BUCKET_BOUNDS.iter().enumerate() {
                 cumsum += buckets[i];
-                output.push_str(&format!("{}{{le=\"{}\"}} {}\n", name, bucket_bound, cumsum));
+                let _ = writeln!(output, "{name}{{le=\"{bucket_bound}\"}} {cumsum}");
             }
-            output.push_str(&format!("{}\u{005f}count {}\n", name, cumsum));
+            let _ = writeln!(output, "{name}\u{005f}count {cumsum}");
             output.push('\n');
         }
 

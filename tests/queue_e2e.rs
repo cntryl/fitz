@@ -138,15 +138,15 @@ where
 
     // Act - Enqueue multiple messages
     for i in 0..10 {
-        let data = format!("task-{}", i).into_bytes();
+        let data = format!("task-{i}").into_bytes();
         let frame = build_queue_enqueue("queue://test/app/batch", &data);
         let response = client
             .send_and_receive(&frame, 2000)
             .await
-            .unwrap_or_else(|_| panic!("enqueue {}", i));
+            .unwrap_or_else(|_| panic!("enqueue {i}"));
 
         let (_msg_type, status, _data) = parse_queue_response(&response);
-        assert_eq!(status, 0, "Enqueue {} should succeed", i);
+        assert_eq!(status, 0, "Enqueue {i} should succeed");
     }
 
     // Assert - Dequeue to verify all were stored

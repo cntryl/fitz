@@ -361,8 +361,8 @@ pub(super) fn should_scan_key_range() {
             tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
-            key: Bytes::from(format!("key{:02}", i)),
-            value: Bytes::from(format!("value{}", i)),
+            key: Bytes::from(format!("key{i:02}")),
+            value: Bytes::from(format!("value{i}")),
         });
     }
 
@@ -747,8 +747,8 @@ pub(super) fn should_scan_with_limit() {
             tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
-            key: Bytes::from(format!("k{:02}", i)),
-            value: Bytes::from(format!("v{}", i)),
+            key: Bytes::from(format!("k{i:02}")),
+            value: Bytes::from(format!("v{i}")),
         });
     }
 
@@ -797,8 +797,8 @@ pub(super) fn should_scan_reverse() {
             tx_id,
             route_family: RouteFamily::new(1),
             resource: "table1".to_string(),
-            key: Bytes::from(format!("k{}", i)),
-            value: Bytes::from(format!("v{}", i)),
+            key: Bytes::from(format!("k{i}")),
+            value: Bytes::from(format!("v{i}")),
         });
     }
 

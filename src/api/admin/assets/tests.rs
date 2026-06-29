@@ -56,9 +56,7 @@ async fn serve_with_server(
     }
 
     let request = request.body(Body::default()).unwrap();
-    server
-        .serve(request.uri().path(), request.headers())
-        .unwrap()
+    server.serve(request.uri().path(), request.headers())
 }
 
 #[tokio::test]

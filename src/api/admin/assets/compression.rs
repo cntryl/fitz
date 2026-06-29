@@ -1,5 +1,6 @@
 use hyper::header::{self, HeaderMap};
 use std::io::Write;
+use std::path::Path;
 
 use super::model::AssetEntry;
 
@@ -16,7 +17,9 @@ pub(super) fn is_compressible(path: &str, content_type: &str) -> bool {
             content_type,
             "application/javascript; charset=utf-8" | "application/json" | "image/svg+xml"
         )
-        || path.ends_with(".map")
+        || Path::new(path)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("map"))
 }
 
 pub(super) fn preferred_encoding(headers: &HeaderMap, asset: &AssetEntry) -> CompressionEncoding {

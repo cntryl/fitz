@@ -36,6 +36,7 @@ impl Mailbox {
     /// Creates two independent bounded channels with the same capacity:
     /// - High-priority lane for runtime-internal messages
     /// - Normal-priority lane for user messages
+    #[must_use]
     pub fn new(capacity: usize) -> Self {
         let (high_priority, high_receiver) = bounded(capacity);
         let (sender, receiver) = bounded(capacity);
@@ -50,12 +51,14 @@ impl Mailbox {
 
     /// Get a sender for this mailbox
     #[inline]
+    #[must_use]
     pub fn sender(&self) -> Sender<Envelope> {
         self.sender.clone()
     }
 
     /// Get a receiver for this mailbox
     #[inline]
+    #[must_use]
     pub fn receiver(&self) -> &Receiver<Envelope> {
         &self.receiver
     }
@@ -72,21 +75,25 @@ impl Mailbox {
     }
 
     /// Get the mailbox capacity
+    #[must_use]
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
     /// Check if the mailbox is empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.receiver.is_empty()
     }
 
     /// Get the current number of messages in the mailbox
+    #[must_use]
     pub fn len(&self) -> usize {
         self.receiver.len()
     }
 
     /// Get the current number of high-priority messages in the mailbox
+    #[must_use]
     pub fn high_priority_len(&self) -> usize {
         self.high_receiver.len()
     }

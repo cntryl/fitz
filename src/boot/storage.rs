@@ -70,7 +70,7 @@ async fn init_memory(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine
 
     let open_options = build_midge_open_options(cntryl_midge::OpenOptions::in_memory(), config)?;
     let store = cntryl_midge::Engine::open(open_options)
-        .map_err(|e| format!("Failed to open in-memory Midge: {}", e))?;
+        .map_err(|e| format!("Failed to open in-memory Midge: {e}"))?;
 
     ensure_column_families(&store, config)?;
 
@@ -87,7 +87,7 @@ async fn init_local_disk(
 
     tokio::fs::create_dir_all(db_path)
         .await
-        .map_err(|e| format!("Failed to create storage directory {}: {}", db_path, e))?;
+        .map_err(|e| format!("Failed to create storage directory {db_path}: {e}"))?;
 
     let store = open_local_disk_with_retry(config, db_path).await?;
 
@@ -110,7 +110,7 @@ async fn open_local_disk_with_retry(
             Ok(store) => return Ok(store),
             Err(error) if should_retry_storage_open(&error) => {
                 let Some(delay) = storage_open_retry_delay(retry_started_at, retry_attempt) else {
-                    return Err(format!("Failed to open Midge at {}: {}", db_path, error).into());
+                    return Err(format!("Failed to open Midge at {db_path}: {error}").into());
                 };
                 warn!(
                     db_path = db_path,
@@ -124,9 +124,7 @@ async fn open_local_disk_with_retry(
                 retry_attempt += 1;
                 tokio::time::sleep(delay).await;
             }
-            Err(error) => {
-                return Err(format!("Failed to open Midge at {}: {}", db_path, error).into())
-            }
+            Err(error) => return Err(format!("Failed to open Midge at {db_path}: {error}").into()),
         }
     }
 }
@@ -251,7 +249,7 @@ async fn open_cloud_with_retry(
             Ok(Ok(store)) => return Ok(store),
             Ok(Err(error)) if should_retry_storage_open(&error) => {
                 let Some(delay) = storage_open_retry_delay(retry_started_at, retry_attempt) else {
-                    return Err(format!("Failed to open cloud-backed Midge: {}", error).into());
+                    return Err(format!("Failed to open cloud-backed Midge: {error}").into());
                 };
                 warn!(
                     provider = %cloud.provider_name,
@@ -268,10 +266,10 @@ async fn open_cloud_with_retry(
                 tokio::time::sleep(delay).await;
             }
             Ok(Err(error)) => {
-                return Err(format!("Failed to open cloud-backed Midge: {}", error).into())
+                return Err(format!("Failed to open cloud-backed Midge: {error}").into())
             }
             Err(error) => {
-                return Err(format!("Cloud-backed Midge open task failed: {}", error).into())
+                return Err(format!("Cloud-backed Midge open task failed: {error}").into())
             }
         }
     }

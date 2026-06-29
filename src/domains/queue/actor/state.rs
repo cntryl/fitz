@@ -91,17 +91,16 @@ impl QueueActor {
     }
 
     pub(super) fn push_ready_entry(&mut self, ready_seq: u64, id: MessageId) {
-        let ready_enqueued_at_ms = self
-            .records
-            .get(&id)
-            .map(|record| {
+        let ready_enqueued_at_ms = self.records.get(&id).map_or_else(
+            || self.clock.now_epoch_ms(),
+            |record| {
                 if record.first_enqueued_at_ms != 0 {
                     record.first_enqueued_at_ms
                 } else {
                     self.clock.now_epoch_ms()
                 }
-            })
-            .unwrap_or_else(|| self.clock.now_epoch_ms());
+            },
+        );
 
         self.ready.push_back(ReadyEntry {
             ready_seq,
@@ -111,8 +110,9 @@ impl QueueActor {
         self.ready_count = self.ready.len();
         self.oldest_ready_enqueued_at_ms = Some(
             self.oldest_ready_enqueued_at_ms
-                .map(|current| current.min(ready_enqueued_at_ms))
-                .unwrap_or(ready_enqueued_at_ms),
+                .map_or(ready_enqueued_at_ms, |current| {
+                    current.min(ready_enqueued_at_ms)
+                }),
         );
     }
 

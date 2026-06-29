@@ -46,8 +46,7 @@ impl CloudDurabilityMode {
             "strict" => Self::Strict,
             other => Self::Invalid {
                 reason: format!(
-                    "unsupported FITZ_STORAGE_CLOUD_DURABILITY='{}'; expected background or strict",
-                    other
+                    "unsupported FITZ_STORAGE_CLOUD_DURABILITY='{other}'; expected background or strict"
                 ),
             },
         }
@@ -135,6 +134,7 @@ impl StorageMemtableConfig {
         }
     }
 
+    #[must_use]
     pub fn bytes(&self) -> Option<usize> {
         match self {
             Self::Bytes(bytes) => Some(*bytes),
@@ -213,14 +213,12 @@ impl StorageMode {
             },
             "s3" | "gcs" | "azure" => Self::Invalid {
                 reason: format!(
-                    "FITZ_STORAGE_MODE={} is no longer supported; set FITZ_STORAGE_MODE=cloud and FITZ_STORAGE_PROVIDER=...",
-                    mode
+                    "FITZ_STORAGE_MODE={mode} is no longer supported; set FITZ_STORAGE_MODE=cloud and FITZ_STORAGE_PROVIDER=..."
                 ),
             },
             _ => Self::Invalid {
                 reason: format!(
-                    "unsupported FITZ_STORAGE_MODE='{}'; expected memory, local, or cloud",
-                    mode
+                    "unsupported FITZ_STORAGE_MODE='{mode}'; expected memory, local, or cloud"
                 ),
             },
         }
@@ -343,6 +341,7 @@ pub struct BootConfig {
 }
 
 impl BootConfig {
+    #[must_use]
     pub fn storage_path(&self) -> String {
         match &self.storage_mode {
             StorageMode::LocalDisk { db_path } => db_path.clone(),
@@ -352,6 +351,7 @@ impl BootConfig {
         }
     }
 
+    #[must_use]
     pub fn server_write_options(&self) -> cntryl_midge::WriteOptions {
         match (&self.storage_mode, &self.cloud_durability) {
             (StorageMode::Memory, _) => cntryl_midge::WriteOptions::best_effort(),
@@ -362,6 +362,7 @@ impl BootConfig {
         }
     }
 
+    #[must_use]
     pub fn request_sync_write_options(&self) -> cntryl_midge::WriteOptions {
         match (&self.storage_mode, &self.cloud_durability) {
             (StorageMode::CloudBacked(_), CloudDurabilityMode::Strict) => {
@@ -371,6 +372,7 @@ impl BootConfig {
         }
     }
 
+    #[must_use]
     pub fn queue_write_options(&self) -> cntryl_midge::WriteOptions {
         match (&self.storage_mode, &self.queue_write_policy) {
             (StorageMode::Memory, _) => cntryl_midge::WriteOptions::best_effort(),
@@ -384,6 +386,7 @@ impl BootConfig {
         }
     }
 
+    #[must_use]
     pub fn queue_fast_flush_interval(&self) -> Option<Duration> {
         matches!(self.queue_write_policy, QueueWritePolicy::Fast)
             .then(|| Duration::from_millis(self.queue_loss_window_ms))
@@ -455,10 +458,12 @@ impl Default for BootConfig {
 }
 
 impl BootConfig {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_memory_storage() -> Self {
         Self {
             storage_mode: StorageMode::Memory,
@@ -475,31 +480,37 @@ impl BootConfig {
         }
     }
 
+    #[must_use]
     pub fn with_http_port(mut self, port: u16) -> Self {
         self.http_port = port;
         self
     }
 
+    #[must_use]
     pub fn with_tcp_port(mut self, port: u16) -> Self {
         self.tcp_port = port;
         self
     }
 
+    #[must_use]
     pub fn with_tcp_enabled(mut self, enabled: bool) -> Self {
         self.tcp_enabled = enabled;
         self
     }
 
+    #[must_use]
     pub fn with_bind_addr(mut self, addr: String) -> Self {
         self.bind_addr = addr;
         self
     }
 
+    #[must_use]
     pub fn with_assume_external_tls(mut self, assume_external_tls: bool) -> Self {
         self.assume_external_tls = assume_external_tls;
         self
     }
 
+    #[must_use]
     pub fn with_ws_allowed_origins(
         mut self,
         origins: Vec<crate::api::origin::ExactOrigin>,
@@ -509,33 +520,39 @@ impl BootConfig {
         self
     }
 
+    #[must_use]
     pub fn with_drain_grace_seconds(mut self, seconds: u64) -> Self {
         self.drain_grace_seconds = seconds;
         self.drain_config_error = None;
         self
     }
 
+    #[must_use]
     pub fn with_drain_close_reason(mut self, reason: impl Into<String>) -> Self {
         self.drain_close_reason = reason.into();
         self
     }
 
+    #[must_use]
     pub fn with_storage_mode(mut self, mode: StorageMode) -> Self {
         self.storage_mode = mode;
         self
     }
 
+    #[must_use]
     pub fn with_stream_storage_layout(mut self, layout: StreamStorageLayout) -> Self {
         self.stream_storage_layout = layout.normalize_requested();
         self
     }
 
+    #[must_use]
     pub fn with_auth_config(mut self, auth_config: crate::auth::AuthConfig) -> Self {
         self.auth_required = !matches!(auth_config, crate::auth::AuthConfig::Disabled);
         self.auth_config = auth_config;
         self
     }
 
+    #[must_use]
     pub fn with_auth_claims_config(
         mut self,
         auth_claims_config: crate::auth::AuthClaimsConfig,
@@ -544,6 +561,7 @@ impl BootConfig {
         self
     }
 
+    #[must_use]
     pub fn with_route_family_resolver(
         mut self,
         route_family_resolver: crate::auth::RouteFamilyResolverConfig,
@@ -552,16 +570,19 @@ impl BootConfig {
         self
     }
 
+    #[must_use]
     pub fn with_route_families(mut self, route_families: Vec<u32>) -> Self {
         self.route_families = route_families;
         self
     }
 
+    #[must_use]
     pub fn with_storage_memtable_bytes(mut self, bytes: usize) -> Self {
         self.storage_memtable = StorageMemtableConfig::Bytes(bytes);
         self
     }
 
+    #[must_use]
     pub fn storage_memtable_bytes(&self) -> Option<usize> {
         self.storage_memtable.bytes()
     }
@@ -627,8 +648,7 @@ impl BootConfig {
             let expected = index as u32 + 1;
             if family != expected {
                 return Err(format!(
-                    "FITZ_ROUTE_FAMILIES must be contiguous non-zero values starting at 1; expected {}, found {}",
-                    expected, family
+                    "FITZ_ROUTE_FAMILIES must be contiguous non-zero values starting at 1; expected {expected}, found {family}"
                 )
                 .into());
             }

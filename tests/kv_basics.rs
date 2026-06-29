@@ -112,8 +112,7 @@ fn should_enforce_realm_equality_strictly_in_session() {
         // Assert
         assert!(
             result.is_err(),
-            "Realm '{}' should not match 'acme'",
-            invalid_realm
+            "Realm '{invalid_realm}' should not match 'acme'"
         );
     }
 }
@@ -405,7 +404,7 @@ fn should_check_realm_match_first_in_pipeline() {
         identity_claim: Some("tid".to_string()),
         identity_value: Some("prod".to_string()),
         permissions: vec![perm],
-        exp: 9999999999,
+        exp: 9_999_999_999,
     };
 
     let mut actor = SessionActorLayer2::new(SessionId(1), perms.clone());
@@ -432,7 +431,7 @@ fn should_check_area_match_after_realm_in_pipeline() {
         identity_claim: Some("tid".to_string()),
         identity_value: Some("acme".to_string()),
         permissions: vec![perm],
-        exp: 9999999999,
+        exp: 9_999_999_999,
     };
 
     let mut actor = SessionActorLayer2::new(SessionId(1), perms.clone());
@@ -459,7 +458,7 @@ fn should_check_scope_match_after_area_in_pipeline() {
         identity_claim: Some("tid".to_string()),
         identity_value: Some("acme".to_string()),
         permissions: vec![perm],
-        exp: 9999999999,
+        exp: 9_999_999_999,
     };
 
     let mut actor = SessionActorLayer2::new(SessionId(1), perms.clone());
@@ -486,7 +485,7 @@ fn should_allow_when_all_permission_checks_pass() {
         identity_claim: Some("tid".to_string()),
         identity_value: Some("acme".to_string()),
         permissions: vec![perm],
-        exp: 9999999999,
+        exp: 9_999_999_999,
     };
 
     let mut actor = SessionActorLayer2::new(SessionId(1), perms.clone());

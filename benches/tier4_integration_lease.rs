@@ -176,9 +176,9 @@ fn should_complete_multiclient_acquire_release(ctx: &mut StressContext) {
                 clients.iter().enumerate().map(|(idx, arc)| {
                     let arc = arc.clone();
                     async move {
-                        let owner = format!("owner{}", idx);
+                        let owner = format!("owner{idx}");
                         // Each client uses a distinct lease so all acquires succeed under concurrency.
-                        let route = format!("lease://tier4/locks/primary_{}", idx);
+                        let route = format!("lease://tier4/locks/primary_{idx}");
                         let acquire_frame = build_lease_acquire_immediate(&route, &owner, 30);
                         let mut c = arc.lock().await;
                         let response = c.request(&acquire_frame, 2000).await.expect("acquire");

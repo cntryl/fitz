@@ -124,7 +124,7 @@ pub(crate) fn collect_distinct_entries<T>(
 }
 
 pub(crate) fn matches_family(scope: Option<u64>, route_family: u64) -> bool {
-    scope.map(|family| family == route_family).unwrap_or(true)
+    scope.is_none_or(|family| family == route_family)
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +228,7 @@ pub(crate) fn queue_resource_entries(
         .collect()
 }
 
+#[must_use]
 pub fn collect_queue_realms(queues: &[QueueInfo]) -> QueueRealmCollection {
     let mut grouped: BTreeMap<String, Vec<&QueueInfo>> = BTreeMap::new();
     for queue in queues {
@@ -271,6 +272,7 @@ pub fn collect_queue_realms(queues: &[QueueInfo]) -> QueueRealmCollection {
     }
 }
 
+#[must_use]
 pub fn collect_queue_areas(queues: &[QueueInfo], realm: &str) -> QueueAreaCollection {
     let mut grouped: BTreeMap<String, Vec<&QueueInfo>> = BTreeMap::new();
     for queue in queues {
@@ -312,6 +314,7 @@ pub fn collect_queue_areas(queues: &[QueueInfo], realm: &str) -> QueueAreaCollec
     }
 }
 
+#[must_use]
 pub fn collect_queue_resources(
     queues: &[QueueInfo],
     realm: &str,
@@ -324,6 +327,7 @@ pub fn collect_queue_resources(
     }
 }
 
+#[must_use]
 pub fn queue_realm_detail(runtime: &Runtime, realm: &str, family: Option<u64>) -> QueueRealmDetail {
     let queues = runtime
         .queue_list_queues(Some(realm))
@@ -357,6 +361,7 @@ pub fn queue_realm_detail(runtime: &Runtime, realm: &str, family: Option<u64>) -
     }
 }
 
+#[must_use]
 pub fn queue_area_detail(
     runtime: &Runtime,
     realm: &str,

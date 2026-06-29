@@ -46,8 +46,9 @@ fn instant_to_epoch_ms(instant: Instant) -> u64 {
     let now_instant = Instant::now();
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|elapsed| (elapsed.as_secs() * 1000) + elapsed.subsec_millis() as u64)
-        .unwrap_or(0);
+        .map_or(0, |elapsed| {
+            (elapsed.as_secs() * 1000) + elapsed.subsec_millis() as u64
+        });
 
     if instant >= now_instant {
         now_ms.saturating_add(instant.duration_since(now_instant).as_millis() as u64)

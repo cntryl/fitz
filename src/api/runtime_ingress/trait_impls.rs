@@ -189,10 +189,7 @@ impl RuntimeIngress {
                             area,
                             resource,
                             ..
-                        } => Ok(Some(Route::new(format!(
-                            "kv://{}/{}/{}",
-                            realm, area, resource
-                        )))),
+                        } => Ok(Some(Route::new(format!("kv://{realm}/{area}/{resource}")))),
                         crate::domains::kv::KvMessage::Get {
                             route_family: _,
                             resource: _,

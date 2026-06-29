@@ -19,7 +19,7 @@ fn bench_tlv_encode_sizes(c: &mut Criterion) {
         let payload = vec![0u8; size];
 
         group.throughput(Throughput::Elements(size as u64));
-        let bench_name = format!("encode_clear_encode_{}B", size);
+        let bench_name = format!("encode_clear_encode_{size}B");
         group.bench_function(&bench_name, |b| {
             b.iter(|| {
                 encoder.clear();
@@ -29,7 +29,7 @@ fn bench_tlv_encode_sizes(c: &mut Criterion) {
         });
 
         // include finish() cost — finish consumes the encoder, so allocate per-iteration
-        let bench_name = format!("encode_new_finish_{}B", size);
+        let bench_name = format!("encode_new_finish_{size}B");
         group.bench_function(&bench_name, |b| {
             b.iter(|| {
                 // realistic path: build and finish the buffer
@@ -63,7 +63,7 @@ fn bench_tlv_decode_sizes(c: &mut Criterion) {
         let data = encoder.finish();
 
         group.throughput(Throughput::Elements(records as u64));
-        let bench_name = format!("decode_all_{}B_{}recs", size, records);
+        let bench_name = format!("decode_all_{size}B_{records}recs");
         group.bench_function(&bench_name, |b| {
             let decoder = TlvDecoder::new();
             b.iter(|| {
@@ -73,7 +73,7 @@ fn bench_tlv_decode_sizes(c: &mut Criterion) {
         });
 
         // decode-by-iter-loop but reuse a preallocated Vec to avoid Vec growth allocations
-        let bench_name = format!("decode_iter_reuse_{}B_{}recs", size, records);
+        let bench_name = format!("decode_iter_reuse_{size}B_{records}recs");
         group.bench_function(&bench_name, |b| {
             let decoder = TlvDecoder::new();
             // pre-allocate outside hot path
@@ -109,7 +109,7 @@ fn bench_tlv_decode_single_record(c: &mut Criterion) {
         encoder.encode(MessageType::new(42), &payload);
         let data = encoder.finish();
 
-        let bench_name = format!("decode_one_{}B", size);
+        let bench_name = format!("decode_one_{size}B");
         group.bench_function(&bench_name, |b| {
             let decoder = TlvDecoder::new();
             b.iter(|| {

@@ -24,7 +24,7 @@ pub(in crate::api::admin::topology) fn schedule_lane(
     let activity = stats.executions_per_minute > 0.0
         || stats.schedules_active > 0
         || stats.subscriptions_active > 0;
-    let state = topology_state(&stats.diagnostics, pressure > 0, activity);
+    let lane_state = topology_state(&stats.diagnostics, pressure > 0, activity);
     let activity_per_second = stats.executions_per_minute / 60.0;
     let counters = vec![
         counter("schedules", "Schedules", stats.schedules_active as f64),
@@ -58,7 +58,7 @@ pub(in crate::api::admin::topology) fn schedule_lane(
     add_broker_domain_flow(
         connections,
         "schedule",
-        &state,
+        &lane_state,
         activity_per_second,
         counters.clone(),
     );
@@ -84,7 +84,7 @@ pub(in crate::api::admin::topology) fn schedule_lane(
 
     topology_lane(
         ("schedule", "Schedule"),
-        state,
+        lane_state,
         activity_per_second,
         &stats.diagnostics,
         counters,

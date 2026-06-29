@@ -329,8 +329,7 @@ pub(crate) fn rpc_operation_diagnostics(
             }
             if slowest_worker_average_latency_ms > 0.0 {
                 hints.push(format!(
-                    "slowest worker average latency is {:.1}ms",
-                    slowest_worker_average_latency_ms
+                    "slowest worker average latency is {slowest_worker_average_latency_ms:.1}ms"
                 ));
             }
             hints
@@ -347,7 +346,7 @@ pub(crate) fn schedule_resource_diagnostics(
     let now = Utc::now();
     let next_run_at = next_run.and_then(parse_rfc3339);
     let last_run_at = last_run.and_then(parse_rfc3339);
-    let is_overdue = enabled && next_run_at.map(|next| next <= now).unwrap_or(false);
+    let is_overdue = enabled && next_run_at.is_some_and(|next| next <= now);
     let age_seconds = if is_overdue {
         next_run_at.map(|next| (now - next).num_seconds().max(0) as u64)
     } else {
@@ -411,10 +410,7 @@ pub(crate) fn schedule_resource_diagnostics(
         last_run_at,
         None,
         age_seconds,
-        if last_run_at
-            .map(|last| is_recent(last, now))
-            .unwrap_or(false)
-        {
+        if last_run_at.is_some_and(|last| is_recent(last, now)) {
             1
         } else {
             0

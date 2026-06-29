@@ -85,7 +85,7 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     // Enqueue 30 messages (10 per consumer)
     let mut message_ids = Vec::new();
     for i in 0..30 {
-        let body = Bytes::from(format!("task {}", i));
+        let body = Bytes::from(format!("task {i}"));
         match actor.handle_send(body, None) {
             QueueResponse::Sent { id } => message_ids.push(id),
             _ => panic!("Expected Enqueued"),
@@ -164,7 +164,7 @@ fn should_redeliver_messages_after_crash() {
         );
 
         for i in 0..10 {
-            let body = format!("task {}", i);
+            let body = format!("task {i}");
             original_bodies.push(body.clone());
             match actor.handle_send(Bytes::from(body), None) {
                 QueueResponse::Sent { id } => original_ids.push(id),
@@ -255,7 +255,7 @@ fn should_preserve_fifo_order_after_recovery() {
     );
 
     for i in 0..12 {
-        match reference_actor.handle_send(Bytes::from(format!("task {}", i)), None) {
+        match reference_actor.handle_send(Bytes::from(format!("task {i}")), None) {
             QueueResponse::Sent { .. } => {}
             _ => panic!("Expected Enqueued"),
         }
@@ -292,7 +292,7 @@ fn should_preserve_fifo_order_after_recovery() {
         );
 
         for i in 0..12 {
-            match actor.handle_send(Bytes::from(format!("task {}", i)), None) {
+            match actor.handle_send(Bytes::from(format!("task {i}")), None) {
                 QueueResponse::Sent { .. } => {}
                 _ => panic!("Expected Enqueued"),
             }
@@ -405,7 +405,7 @@ fn should_prevent_id_collisions_across_crash() {
         );
 
         for i in 0..10 {
-            let body = Bytes::from(format!("batch1-{}", i));
+            let body = Bytes::from(format!("batch1-{i}"));
             match actor.handle_send(body, None) {
                 QueueResponse::Sent { id } => first_batch_ids.push(id.as_u64()),
                 _ => panic!("Expected Enqueued"),
@@ -429,7 +429,7 @@ fn should_prevent_id_collisions_across_crash() {
         );
 
         for i in 0..10 {
-            let body = Bytes::from(format!("batch2-{}", i));
+            let body = Bytes::from(format!("batch2-{i}"));
             match actor.handle_send(body, None) {
                 QueueResponse::Sent { id } => second_batch_ids.push(id.as_u64()),
                 _ => panic!("Expected Enqueued"),

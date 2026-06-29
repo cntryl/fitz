@@ -349,7 +349,7 @@ fn should_fan_out_one_notification_to_many_subscriptions() {
 
     for i in 0..5 {
         let sink = Arc::new(TestSink::new());
-        let sub = addr(&format!("notice://realm/area/one/sink{}", i));
+        let sub = addr(&format!("notice://realm/area/one/sink{i}"));
         router.register(sub.clone(), sink.clone());
         let mut ctx = Context::new(sub.clone(), Arc::new(router.clone()));
         let subscribe = SubscribeMessage::new(
@@ -391,7 +391,7 @@ fn should_fan_out_many_notifications_to_many_subscriptions() {
 
     for i in 0..3 {
         let sink = Arc::new(TestSink::new());
-        let sub = addr(&format!("notice://realm/area/many/sink{}", i));
+        let sub = addr(&format!("notice://realm/area/many/sink{i}"));
         router.register(sub.clone(), sink.clone());
         let mut ctx = Context::new(sub.clone(), Arc::new(router.clone()));
         let subscribe = SubscribeMessage::new(
@@ -412,7 +412,7 @@ fn should_fan_out_many_notifications_to_many_subscriptions() {
     for n in 0..4 {
         let pubmsg = PublishMessage::new(
             family,
-            route(&format!("notice://realm/area/many/item{}", n)),
+            route(&format!("notice://realm/area/many/item{n}")),
             Bytes::from("p"),
         );
         actor.receive(NotificationMessage::Publish(pubmsg), &mut pubctx);
@@ -461,7 +461,7 @@ fn should_produce_exactly_n_deliveries_for_n_matching_subscriptions() {
 
     for i in 0..n {
         let sink = Arc::new(TestSink::new());
-        let sub = addr(&format!("notice://realm/area/exact/s{}", i));
+        let sub = addr(&format!("notice://realm/area/exact/s{i}"));
         router.register(sub.clone(), sink.clone());
         let mut ctx = Context::new(sub.clone(), Arc::new(router.clone()));
         let subscribe = SubscribeMessage::new(

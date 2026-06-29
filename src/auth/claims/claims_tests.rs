@@ -9,7 +9,7 @@ fn should_parse_jwt_noverify_extract_permissions() {
         "iss": "https://idp.example/",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["notice://prod/orders/**#read"]
     });
@@ -34,7 +34,7 @@ fn should_normalize_raw_claims_into_immutable_claims() {
         "iss": "https://idp.example/",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "roles": ["admin"],
         "permissions": ["notice://prod/orders/**#read"]
@@ -85,7 +85,7 @@ fn should_validate_expired_token() {
     let result = raw.normalize(
         &["https://idp.example/"],
         &["fitz-broker"],
-        9999999999,
+        9_999_999_999,
         &AuthClaimsConfig::default(),
     );
 
@@ -101,7 +101,7 @@ fn should_reject_issuer_not_in_allowlist() {
         "iss": "https://attacker.example/",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
     });
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
@@ -128,7 +128,7 @@ fn should_reject_legacy_route_family_claim_by_default() {
         "iss": "https://idp.example/",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "fitz": { "route_family": 1 },
         "permissions": ["notice://prod/orders/**#read"]
@@ -158,7 +158,7 @@ fn should_reject_legacy_permissions_claim() {
         "iss": "https://idp.example/",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "fitz": { "permissions": ["notice://prod/orders/**#read"] },
         "permissions": ["notice://prod/orders/**#read"]
@@ -188,7 +188,7 @@ fn should_keep_identity_context_orthogonal_to_route_family_resolution() {
         "iss": "https://idp.example/",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "realm-a",
         "permissions": ["notice://prod/orders/**#read"]
     });
@@ -220,7 +220,7 @@ fn should_accept_audience_array_when_any_audience_matches() {
         "iss": "https://idp.example/",
         "aud": ["fitz-broker", "https://idp.example/userinfo"],
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["notice://prod/orders/**#read"]
     });
@@ -249,7 +249,7 @@ fn should_prefer_configured_custom_claim_permissions() {
         "iss": "https://idp.example/",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["notice://prod/orders/**#read"],
         "roles": ["notice.write"],
@@ -282,7 +282,7 @@ fn should_prefer_top_level_permissions_over_role_claim() {
         "iss": "https://idp.example/",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "permissions": ["notice://prod/orders/**#read"],
         "roles": ["notice.write"]
@@ -306,7 +306,7 @@ fn should_prefer_role_claim_over_scp() {
         "iss": "https://idp.example/",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "roles": ["notice.write"],
         "scp": "notice.read"
@@ -330,7 +330,7 @@ fn should_prefer_scp_over_scope() {
         "iss": "https://idp.example/",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "scp": "notice.read",
         "scope": "notice.write"
@@ -354,7 +354,7 @@ fn should_support_entra_roles_shape() {
         "iss": "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0",
         "aud": "api://fitz",
         "sub": "service-principal-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "11111111-1111-1111-1111-111111111111",
         "roles": ["queue.read"]
     });
@@ -387,7 +387,7 @@ fn should_support_cognito_resource_server_scope_shape() {
         "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_Example",
         "aud": "https://fitz.example.com/api",
         "sub": "cognito-user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "custom:tenant_id": "acme-prod",
         "scope": "fitz/notice.write"
     });
@@ -415,7 +415,7 @@ fn should_reject_malformed_role_claim() {
         "iss": "https://idp.example/",
         "aud": "fitz-broker",
         "sub": "user:42",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "acme-prod",
         "roles": ["notice.read", 42]
     });
@@ -485,7 +485,7 @@ fn should_prefer_org_claim_override_over_identity_claim() {
         "iss": "https://tenant.auth0.com/",
         "aud": "https://fitz.example.com/api",
         "sub": "auth0|user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "tid-realm",
         "fitz://org_id": "org-realm",
         "permissions": ["notice://prod/orders/**#read"]
@@ -521,7 +521,7 @@ fn should_fallback_to_identity_claim_when_org_claim_override_missing() {
         "iss": "https://tenant.auth0.com/",
         "aud": "https://fitz.example.com/api",
         "sub": "auth0|user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "tid-realm",
         "permissions": ["notice://prod/orders/**#read"]
     });
@@ -556,7 +556,7 @@ fn should_use_permissions_claim_override_before_role_claim() {
         "iss": "https://tenant.auth0.com/",
         "aud": "https://fitz.example.com/api",
         "sub": "auth0|user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "tid-realm",
         "roles": ["notice.read"],
         "fitz://permissions": ["notice://prod/orders/**#write"]
@@ -594,7 +594,7 @@ fn should_prefer_top_level_permissions_over_permissions_claim_override() {
         "iss": "https://tenant.auth0.com/",
         "aud": "https://fitz.example.com/api",
         "sub": "auth0|user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "tid-realm",
         "permissions": ["notice://prod/orders/**#read"],
         "fitz://permissions": ["notice://prod/orders/**#write"]
@@ -692,7 +692,7 @@ fn should_support_auth0_org_id_permissions_shape() {
         "iss": "https://tenant.auth0.com/",
         "aud": ["https://fitz.example.com/api", "https://tenant.auth0.com/userinfo"],
         "sub": "auth0|user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "org_id": "org_acme",
         "permissions": ["notice://prod/orders/**#read"]
     });
@@ -728,7 +728,7 @@ fn should_support_entra_scp_shape() {
         "iss": "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0",
         "aud": "api://fitz",
         "sub": "user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "11111111-1111-1111-1111-111111111111",
         "scp": "notice://prod/orders/**#read kv.write"
     });
@@ -769,7 +769,7 @@ fn should_support_cognito_scope_shape() {
         "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_Example",
         "aud": "https://fitz.example.com/api",
         "sub": "cognito-user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "custom:tenant_id": "acme-prod",
         "scope": "notice.write"
     });
@@ -805,7 +805,7 @@ fn should_support_okta_custom_permissions_shape() {
         "iss": "https://dev-123456.okta.com/oauth2/default",
         "aud": "api://fitz",
         "sub": "okta-user-1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "https://fitz.example.com/identity": "okta-acme",
         "scope": "notice.read",
         "https://fitz.example.com/claims": {

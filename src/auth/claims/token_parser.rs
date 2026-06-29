@@ -15,10 +15,10 @@ pub fn parse_jwt_noverify(compact: &str) -> Result<RawClaims, String> {
     let payload = parts[1];
     let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload)
-        .map_err(|e| format!("base64 decode error: {}", e))?;
+        .map_err(|e| format!("base64 decode error: {e}"))?;
 
-    let s = String::from_utf8(decoded).map_err(|e| format!("utf8 error: {}", e))?;
+    let s = String::from_utf8(decoded).map_err(|e| format!("utf8 error: {e}"))?;
     let claims: RawClaims =
-        serde_json::from_str(&s).map_err(|e| format!("json parse error: {}", e))?;
+        serde_json::from_str(&s).map_err(|e| format!("json parse error: {e}"))?;
     Ok(claims)
 }

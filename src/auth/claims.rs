@@ -89,7 +89,7 @@ impl RawClaims {
                     .as_str()
                     .map(|value| Some(value.to_string()))
                     .ok_or_else(|| {
-                        format!("route family identity claim '{}' must be a string", other)
+                        format!("route family identity claim '{other}' must be a string")
                     }),
                 None => Ok(None),
             },
@@ -148,8 +148,7 @@ impl RawClaims {
             .is_some_and(|fitz| fitz.contains_key("route_family"))
         {
             return Err(format!(
-                "fitz.route_family claim is not accepted; configure {} instead",
-                ENV_ROUTE_FAMILY_MAP
+                "fitz.route_family claim is not accepted; configure {ENV_ROUTE_FAMILY_MAP} instead"
             ));
         }
 

@@ -194,7 +194,7 @@ impl WebSocketHandler {
 /// Helper: preview first N bytes as hex string for trace logging
 fn hex_preview(data: &[u8]) -> String {
     let limit = data.len().min(32);
-    let hex: Vec<String> = data[..limit].iter().map(|b| format!("{:02x}", b)).collect();
+    let hex: Vec<String> = data[..limit].iter().map(|b| format!("{b:02x}")).collect();
     if data.len() > limit {
         format!("{}... ({} bytes total)", hex.join(" "), data.len())
     } else {

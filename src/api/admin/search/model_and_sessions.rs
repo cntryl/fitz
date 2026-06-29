@@ -89,10 +89,7 @@ impl SearchOptions {
     }
 
     pub(crate) fn matches_domain(&self, domain: &str) -> bool {
-        self.domain
-            .as_deref()
-            .map(|filter| filter == domain)
-            .unwrap_or(true)
+        self.domain.as_deref().is_none_or(|filter| filter == domain)
     }
 
     pub(crate) fn matches_scope(
@@ -217,9 +214,7 @@ pub(crate) fn route_family_is_visible(
         return true;
     }
 
-    route_family
-        .map(|route_family| route_family_access.allows(route_family))
-        .unwrap_or(false)
+    route_family.is_some_and(|route_family| route_family_access.allows(route_family))
 }
 
 pub(crate) fn collect_session_candidates(

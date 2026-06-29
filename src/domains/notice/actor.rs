@@ -60,6 +60,7 @@ pub struct NoticeRouteActor {
 
 impl NoticeRouteActor {
     /// Create a new NoticeRouteActor for a specific route family
+    #[must_use]
     pub fn new(family_id: RouteFamily) -> Self {
         Self {
             family_id,
@@ -184,11 +185,13 @@ impl NoticeRouteActor {
     }
 
     /// Testing helpers: number of tracked subscriptions
+    #[must_use]
     pub fn subscription_count(&self) -> usize {
         self.subscriptions.len()
     }
 
     /// Testing helpers: number of index subscriptions for actor's family
+    #[must_use]
     pub fn index_count(&self) -> usize {
         self.index.count_subscriptions(self.family_id)
     }
@@ -228,7 +231,7 @@ mod tests {
 
     fn test_address(suffix: &str) -> RouteAddress {
         let family = test_family();
-        RouteAddress::new(family, test_route(&format!("test://{}", suffix)))
+        RouteAddress::new(family, test_route(&format!("test://{suffix}")))
     }
 
     fn test_session_id(n: u64) -> SessionId {

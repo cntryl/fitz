@@ -28,10 +28,10 @@ fn make_subscription_batch(count: usize, id_offset: u64) -> Vec<(Route, Subscrip
     (0..count)
         .map(|i| {
             let pattern = match i % 4 {
-                0 => Route::new(format!("notify://realm/orders/create/{}", i)),
-                1 => Route::new(format!("notify://realm/orders/*/{}", i)),
-                2 => Route::new(format!("notify://realm/**/created/{}", i)),
-                _ => Route::new(format!("notify://realm/items/*/action/{}", i)),
+                0 => Route::new(format!("notify://realm/orders/create/{i}")),
+                1 => Route::new(format!("notify://realm/orders/*/{i}")),
+                2 => Route::new(format!("notify://realm/**/created/{i}")),
+                _ => Route::new(format!("notify://realm/items/*/action/{i}")),
             };
             (pattern, SubscriptionId(id_offset + i as u64))
         })
@@ -59,7 +59,7 @@ fn make_index_fanout_sparse(sub_count: usize) -> (SubscriptionIndex, Route, Rout
 
     // Insert many non-overlapping patterns
     for i in 0..sub_count {
-        let pattern = Route::new(format!("notify://realm/orders/item{}/action", i));
+        let pattern = Route::new(format!("notify://realm/orders/item{i}/action"));
         index.insert(family, &pattern, SubscriptionId(i as u64));
     }
 
@@ -95,7 +95,7 @@ fn make_index_with_depth(
     for i in 0..sub_count {
         let mut path = vec!["notify://realm".to_string()];
         for d in 0..depth {
-            path.push(format!("seg{}", d));
+            path.push(format!("seg{d}"));
         }
         path.push("action".to_string());
         let pattern = Route::new(path.join("/"));
@@ -105,7 +105,7 @@ fn make_index_with_depth(
     // Route that matches all
     let mut route_path = vec!["notify://realm".to_string()];
     for d in 0..depth {
-        route_path.push(format!("seg{}", d));
+        route_path.push(format!("seg{d}"));
     }
     route_path.push("action".to_string());
     let route = Route::new(route_path.join("/"));

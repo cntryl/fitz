@@ -110,7 +110,7 @@ impl QueueActor {
                                 Self::encode_record_header(&record),
                                 None,
                             )
-                            .map_err(|e| format!("Failed to write DLQ header: {:?}", e))
+                            .map_err(|e| format!("Failed to write DLQ header: {e:?}"))
                         } else {
                             if record.body.is_none() {
                                 match self.load_body_from_store(id) {
@@ -312,28 +312,22 @@ impl QueueActor {
                     );
                     self.schedule_inflight_retry(id, &inflight);
                     return;
-                } else {
-                    let update_start = Instant::now();
-                    if let Err(e) =
-                        Self::commit_redelivery_transaction(txn, self.commit_write_options)
-                    {
-                        tracing::warn!(
-                            queue = ?self.queue_key,
-                            route_family = self.queue_key.family.as_u64(),
-                            message_id = id.as_u64(),
-                            error = ?e,
-                            "Failed to commit queue redelivery retry transaction"
-                        );
-                        self.schedule_inflight_retry(id, &inflight);
-                        return;
-                    } else {
-                        Self::observe_elapsed_us(
-                            obs::METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY,
-                            update_start,
-                        );
-                        Self::increment_counter(obs::METRIC_QUEUE_REDELIVERIES);
-                    }
                 }
+                let update_start = Instant::now();
+                if let Err(e) = Self::commit_redelivery_transaction(txn, self.commit_write_options)
+                {
+                    tracing::warn!(
+                        queue = ?self.queue_key,
+                        route_family = self.queue_key.family.as_u64(),
+                        message_id = id.as_u64(),
+                        error = ?e,
+                        "Failed to commit queue redelivery retry transaction"
+                    );
+                    self.schedule_inflight_retry(id, &inflight);
+                    return;
+                }
+                Self::observe_elapsed_us(obs::METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY, update_start);
+                Self::increment_counter(obs::METRIC_QUEUE_REDELIVERIES);
             }
             Err(e) => {
                 tracing::warn!(

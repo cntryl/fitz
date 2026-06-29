@@ -111,10 +111,10 @@ impl SessionRegistry<'_> {
         self.ingress
             .session_inbox_routes
             .get(&session_id)
-            .map(|entry| entry.value().clone())
-            .unwrap_or_else(|| {
-                crate::runtime::routing::Route::new(format!("inbox://session/{session_id}"))
-            })
+            .map_or_else(
+                || crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
+                |entry| entry.value().clone(),
+            )
     }
 
     pub(super) fn finalize_close(&self, session_id: u64) {

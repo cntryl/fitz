@@ -230,14 +230,14 @@ fn should_publish_each_expired_lease_route_given_batched_tick() {
     actor.on_timer(timer_id, &mut ctx);
 
     // Assert
-    let mut routes = captured_events
+    let mut event_routes = captured_events
         .lock()
         .iter()
         .map(|event| event.route.as_str().to_string())
         .collect::<Vec<_>>();
-    routes.sort();
+    event_routes.sort();
     assert_eq!(
-        routes,
+        event_routes,
         vec![
             "lease://acme/locks/resource-a".to_string(),
             "lease://acme/locks/resource-b".to_string(),
@@ -831,7 +831,7 @@ fn should_scale_under_high_contention_queueing() {
 
     // Rapidly enqueue many waiters
     for i in 0..200 {
-        let owner = format!("w{:03}", i);
+        let owner = format!("w{i:03}");
         let _ = actor.handle_acquire(key.clone(), owner, 30, 10, None, &mut ctx);
     }
 
@@ -843,8 +843,7 @@ fn should_scale_under_high_contention_queueing() {
         } => {
             assert!(
                 pending_waiters >= 200,
-                "expected at least 200 waiters, got {}",
-                pending_waiters
+                "expected at least 200 waiters, got {pending_waiters}"
             );
         }
         _ => panic!("expected status"),

@@ -33,6 +33,7 @@ impl LeaseKey {
     /// or `{realm}/{area}/{resource}`
     ///
     /// Returns None if the route doesn't match the expected format.
+    #[must_use]
     pub fn from_route(family: RouteFamily, route: &Route) -> Option<Self> {
         let parts = route_triplet(route.as_str())?;
 
@@ -49,6 +50,7 @@ impl LeaseKey {
     }
 
     /// Convert key back into a canonical lease route string (no operation suffix).
+    #[must_use]
     pub fn to_route(&self) -> Route {
         let mut s =
             String::with_capacity(8 + self.realm.len() + self.area.len() + self.resource.len());
@@ -126,6 +128,7 @@ pub enum LeaseError {
 }
 
 impl LeaseError {
+    #[must_use]
     pub fn code(&self) -> u16 {
         match self {
             LeaseError::InvalidRealm => 3020,
@@ -234,6 +237,7 @@ pub struct LeaseClientRequest {
 }
 
 impl LeaseClientRequest {
+    #[must_use]
     pub fn new(meta: ClientFrameMeta, frame: Result<LeaseClientFrame, String>) -> Self {
         Self { meta, frame }
     }
@@ -254,6 +258,7 @@ pub struct LeaseClientResponse {
 }
 
 impl LeaseClientResponse {
+    #[must_use]
     pub fn new(meta: ClientFrameMeta, response: LeaseResponse) -> Self {
         Self { meta, response }
     }

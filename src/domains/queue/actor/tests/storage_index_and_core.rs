@@ -471,7 +471,7 @@ pub(super) fn should_bound_hot_body_cache_size() {
 
     // Act
     for i in 0..(QueueActor::BODY_CACHE_LIMIT + 32) {
-        let body = Bytes::from(format!("message-{}", i));
+        let body = Bytes::from(format!("message-{i}"));
         let response = actor.handle_send(body, None);
         assert!(matches!(response, QueueResponse::Sent { .. }));
     }
@@ -551,7 +551,7 @@ pub(super) fn should_bound_metadata_cache_size() {
 
     // Act
     for i in 0..(QueueActor::RECORD_CACHE_LIMIT + 32) {
-        let body = Bytes::from(format!("message-{}", i));
+        let body = Bytes::from(format!("message-{i}"));
         let response = actor.handle_send(body, None);
         assert!(matches!(response, QueueResponse::Sent { .. }));
     }
@@ -613,7 +613,7 @@ pub(super) fn should_not_hydrate_metadata_cache_during_recovery() {
         );
 
         for i in 0..64 {
-            let body = Bytes::from(format!("recovered-{}", i));
+            let body = Bytes::from(format!("recovered-{i}"));
             let response = actor.handle_send(body, None);
             assert!(matches!(response, QueueResponse::Sent { .. }));
         }
@@ -659,7 +659,7 @@ pub(super) fn should_rewrite_missing_queue_index_via_fallback() {
         );
 
         for i in 0..12 {
-            let response = actor.handle_send(Bytes::from(format!("visible-{}", i)), None);
+            let response = actor.handle_send(Bytes::from(format!("visible-{i}")), None);
             assert!(matches!(response, QueueResponse::Sent { .. }));
         }
     }
@@ -703,7 +703,7 @@ pub(super) fn should_rewrite_corrupted_queue_index_meta_via_fallback() {
         );
 
         for i in 0..8 {
-            let response = actor.handle_send(Bytes::from(format!("task-{}", i)), None);
+            let response = actor.handle_send(Bytes::from(format!("task-{i}")), None);
             assert!(matches!(response, QueueResponse::Sent { .. }));
         }
     }
@@ -819,7 +819,7 @@ pub(super) fn should_remove_delayed_index_entry_after_ack_even_when_visibility_p
 
     let reserved = match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
         QueueResponse::Received { messages } => messages,
-        other => panic!("Expected Received response, got {:?}", other),
+        other => panic!("Expected Received response, got {other:?}"),
     };
     assert_eq!(reserved.len(), 1);
 

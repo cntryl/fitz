@@ -38,27 +38,17 @@ impl QueueActor {
         let mut txn = self
             .store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("Failed to begin replay tx for message {}: {:?}", id, e))?;
+            .map_err(|e| format!("Failed to begin replay tx for message {id}: {e:?}"))?;
 
         self.write_record_as_split(&mut txn, id, &record, Some(record_layout))?;
         txn.delete(self.dlq_index_key(dead_lettered_at_ms, id))
-            .map_err(|e| {
-                format!(
-                    "Failed to delete queue DLQ index for message {}: {:?}",
-                    id, e
-                )
-            })?;
+            .map_err(|e| format!("Failed to delete queue DLQ index for message {id}: {e:?}"))?;
         txn.put(
             self.ready_range_key(ready_shard, ready_range.next),
             Self::encode_ready_range_value(ready_range),
             None,
         )
-        .map_err(|e| {
-            format!(
-                "Failed to write queue ready index for message {}: {:?}",
-                id, e
-            )
-        })?;
+        .map_err(|e| format!("Failed to write queue ready index for message {id}: {e:?}"))?;
         txn.put(
             self.index_meta_key.clone(),
             Self::encode_index_meta(
@@ -69,14 +59,9 @@ impl QueueActor {
             ),
             None,
         )
-        .map_err(|e| {
-            format!(
-                "Failed to update queue index meta for message {}: {:?}",
-                id, e
-            )
-        })?;
+        .map_err(|e| format!("Failed to update queue index meta for message {id}: {e:?}"))?;
         txn.commit(self.commit_write_options)
-            .map_err(|e| format!("Failed to commit replay tx for message {}: {:?}", id, e))?;
+            .map_err(|e| format!("Failed to commit replay tx for message {id}: {e:?}"))?;
 
         self.remove_persisted_dlq(id);
         self.cache_record_state(id, &record, StoredRecordLayout::SplitHeaderBody);
@@ -117,7 +102,7 @@ impl QueueActor {
         let mut txn = self
             .store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("Failed to begin purge tx for message {}: {:?}", id, e))?;
+            .map_err(|e| format!("Failed to begin purge tx for message {id}: {e:?}"))?;
 
         Self::delete_record_for_layout(
             &mut txn,
@@ -126,14 +111,9 @@ impl QueueActor {
             self.cached_body_key(id),
             self.cached_legacy_message_key(id),
         )
-        .map_err(|e| format!("Failed to delete message {} in purge tx: {:?}", id, e))?;
+        .map_err(|e| format!("Failed to delete message {id} in purge tx: {e:?}"))?;
         txn.delete(self.dlq_index_key(dead_lettered_at_ms, id))
-            .map_err(|e| {
-                format!(
-                    "Failed to delete queue DLQ index for message {}: {:?}",
-                    id, e
-                )
-            })?;
+            .map_err(|e| format!("Failed to delete queue DLQ index for message {id}: {e:?}"))?;
         txn.put(
             self.index_meta_key.clone(),
             Self::encode_index_meta(
@@ -144,14 +124,9 @@ impl QueueActor {
             ),
             None,
         )
-        .map_err(|e| {
-            format!(
-                "Failed to update queue index meta for message {}: {:?}",
-                id, e
-            )
-        })?;
+        .map_err(|e| format!("Failed to update queue index meta for message {id}: {e:?}"))?;
         txn.commit(self.commit_write_options)
-            .map_err(|e| format!("Failed to commit purge tx for message {}: {:?}", id, e))?;
+            .map_err(|e| format!("Failed to commit purge tx for message {id}: {e:?}"))?;
 
         self.remove_persisted_dlq(id);
         self.evict_cached_record(id);

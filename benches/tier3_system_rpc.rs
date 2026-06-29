@@ -428,15 +428,15 @@ fn measure_multi_route_full_roundtrip_scaling(
     ctx.tag("route_count", route_count.to_string());
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
-    let routes = build_route_set(route_count);
-    let workers: Vec<WorkerHandle> = routes
+    let rpc_routes = build_route_set(route_count);
+    let workers: Vec<WorkerHandle> = rpc_routes
         .iter()
         .enumerate()
         .map(|(index, route)| {
             register_worker_for_route(&router, family, 2_000 + index as u64, route)
         })
         .collect();
-    let mut request_rings: Vec<RequestFrameRing> = routes
+    let mut request_rings: Vec<RequestFrameRing> = rpc_routes
         .iter()
         .map(|route| {
             RequestFrameRing::new(
@@ -453,26 +453,26 @@ fn measure_multi_route_full_roundtrip_scaling(
         || {
             for _ in 0..per_iteration_requests {
                 let route_index = next_route_index;
-                next_route_index = (next_route_index + 1) % routes.len();
+                next_route_index = (next_route_index + 1) % rpc_routes.len();
 
                 let (request_msg_type, request_payload) = request_rings[route_index].next_frame();
                 dispatch_request_to_route(
                     &router,
                     family,
                     &requester_source,
-                    &routes[route_index],
+                    &rpc_routes[route_index],
                     request_msg_type,
                     request_payload,
                 );
                 let _ = service_worker_on_route(
                     &router,
                     family,
-                    &routes[route_index],
+                    &rpc_routes[route_index],
                     &workers[route_index],
                 );
                 assert_requester_received_worker_responses(requester_inbox.drain(), 1);
             }
-            black_box((&routes, &workers));
+            black_box((&rpc_routes, &workers));
         },
     );
     ctx.set_elements(per_iteration_requests * iterations as u64);
@@ -492,15 +492,15 @@ fn measure_multi_route_dispatch_only_scaling(
     ctx.tag("route_count", route_count.to_string());
 
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
-    let routes = build_route_set(route_count);
-    let workers: Vec<WorkerHandle> = routes
+    let rpc_routes = build_route_set(route_count);
+    let workers: Vec<WorkerHandle> = rpc_routes
         .iter()
         .enumerate()
         .map(|(index, route)| {
             register_worker_for_route(&router, family, 3_000 + index as u64, route)
         })
         .collect();
-    let mut request_rings: Vec<RequestFrameRing> = routes
+    let mut request_rings: Vec<RequestFrameRing> = rpc_routes
         .iter()
         .map(|route| {
             RequestFrameRing::new(
@@ -517,26 +517,26 @@ fn measure_multi_route_dispatch_only_scaling(
         || {
             for _ in 0..per_iteration_requests {
                 let route_index = next_route_index;
-                next_route_index = (next_route_index + 1) % routes.len();
+                next_route_index = (next_route_index + 1) % rpc_routes.len();
 
                 let (request_msg_type, request_payload) = request_rings[route_index].next_frame();
                 dispatch_request_to_route(
                     &router,
                     family,
                     &requester_source,
-                    &routes[route_index],
+                    &rpc_routes[route_index],
                     request_msg_type,
                     request_payload,
                 );
                 cleanup_worker_request_on_route(
                     &router,
                     family,
-                    &routes[route_index],
+                    &rpc_routes[route_index],
                     &workers[route_index],
                 );
                 let _ = requester_inbox.drain();
             }
-            black_box((&routes, &workers));
+            black_box((&rpc_routes, &workers));
         },
     );
     ctx.set_elements(per_iteration_requests * iterations as u64);

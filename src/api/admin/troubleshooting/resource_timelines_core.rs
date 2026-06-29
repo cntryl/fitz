@@ -140,8 +140,7 @@ pub(crate) fn kv_resource_timeline(
                 rfc3339(started_at)
             ),
             None => format!(
-                "{} open transaction(s); oldest idle {}s",
-                open_transactions, oldest_idle_seconds
+                "{open_transactions} open transaction(s); oldest idle {oldest_idle_seconds}s"
             ),
         };
         candidates.push(timeline_candidate(

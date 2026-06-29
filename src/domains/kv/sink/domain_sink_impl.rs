@@ -22,11 +22,13 @@ impl KvDomainSink {
         }
     }
 
+    #[must_use]
     pub fn with_sync_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
         self.sync_write_options = write_options;
         self
     }
 
+    #[must_use]
     pub fn with_metrics(
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
@@ -218,10 +220,10 @@ impl KvDomainSink {
         );
         let scoped_prefix =
             crate::domains::kv::KvActor::encode_scoped_key(&resource_prefix, request.starts_with);
-        let scoped_start = request
-            .cursor
-            .map(|cursor| crate::domains::kv::KvActor::encode_scoped_key(&resource_prefix, cursor))
-            .unwrap_or_else(|| scoped_prefix.clone());
+        let scoped_start = request.cursor.map_or_else(
+            || scoped_prefix.clone(),
+            |cursor| crate::domains::kv::KvActor::encode_scoped_key(&resource_prefix, cursor),
+        );
         let query_limit = request.limit.saturating_add(1);
         let midge_query = cntryl_midge::Query::new()
             .prefix(Bytes::from(scoped_prefix.clone()))
@@ -241,8 +243,7 @@ impl KvDomainSink {
             };
             if request
                 .cursor
-                .map(|cursor| user_key.as_slice() <= cursor)
-                .unwrap_or(false)
+                .is_some_and(|cursor| user_key.as_slice() <= cursor)
             {
                 continue;
             }

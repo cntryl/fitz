@@ -12,7 +12,7 @@ impl ScheduleStore {
         let read_tx = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         let mut schedules = BTreeMap::<String, PersistedSchedule>::new();
         let mut normalized_definitions = Vec::<PersistedSchedule>::new();
@@ -60,8 +60,7 @@ impl ScheduleStore {
                 }
                 (Err(error), _) | (_, Err(error)) => {
                     return Err(format!(
-                        "decode persisted schedule definition failed: {}",
-                        error
+                        "decode persisted schedule definition failed: {error}"
                     ));
                 }
             }
@@ -77,7 +76,7 @@ impl ScheduleStore {
                     body_definitions.insert(route, (cron, payload));
                 }
                 (Err(error), _) | (_, Err(error)) => {
-                    return Err(format!("decode persisted schedule body failed: {}", error));
+                    return Err(format!("decode persisted schedule body failed: {error}"));
                 }
             }
         }
@@ -99,8 +98,7 @@ impl ScheduleStore {
                 }
                 None => {
                     return Err(format!(
-                        "missing schedule body row for persisted definition: {}",
-                        route
+                        "missing schedule body row for persisted definition: {route}"
                     ));
                 }
             }
@@ -128,7 +126,7 @@ impl ScheduleStore {
                     schedules.insert(route.clone(), persisted);
                 }
                 (Err(error), _) | (_, Err(error)) => {
-                    return Err(format!("decode legacy schedule row failed: {}", error));
+                    return Err(format!("decode legacy schedule row failed: {error}"));
                 }
             }
         }
@@ -140,7 +138,7 @@ impl ScheduleStore {
         let mut write_tx = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin migration tx failed: {:?}", e))?;
+            .map_err(|e| format!("begin migration tx failed: {e:?}"))?;
 
         for schedule in &normalized_definitions {
             Self::put_schedule_definition(
@@ -154,13 +152,13 @@ impl ScheduleStore {
                     payload: &schedule.payload,
                 },
             )
-            .map_err(|error| format!("import schedule definition failed: {}", error))?;
+            .map_err(|error| format!("import schedule definition failed: {error}"))?;
         }
 
         for (key, _) in due_rows {
             write_tx
                 .delete(key)
-                .map_err(|e| format!("delete stale due index failed: {:?}", e))?;
+                .map_err(|e| format!("delete stale due index failed: {e:?}"))?;
         }
 
         for schedule in schedules.values() {
@@ -176,19 +174,19 @@ impl ScheduleStore {
                     DUE_INDEX_VALUE.to_vec(),
                     None,
                 )
-                .map_err(|e| format!("rebuild due index failed: {:?}", e))?;
+                .map_err(|e| format!("rebuild due index failed: {e:?}"))?;
         }
 
         for (key, _) in legacy_index_rows {
             write_tx
                 .delete(key)
-                .map_err(|e| format!("delete legacy schedule index failed: {:?}", e))?;
+                .map_err(|e| format!("delete legacy schedule index failed: {e:?}"))?;
         }
 
         for (key, _) in legacy_rows {
             write_tx
                 .delete(key)
-                .map_err(|e| format!("delete legacy schedule row failed: {:?}", e))?;
+                .map_err(|e| format!("delete legacy schedule row failed: {e:?}"))?;
         }
 
         self.commit_or_inject(write_tx, write_options)?;
@@ -202,7 +200,7 @@ impl ScheduleStore {
         let read_tx = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         let rows = Self::scan_schedule_rows(&read_tx, PENDING_FIRE_PREFIX)?;
 
@@ -221,7 +219,7 @@ impl ScheduleStore {
                     });
                 }
                 (Err(error), _) | (_, Err(error)) => {
-                    return Err(format!("decode pending schedule fire failed: {}", error));
+                    return Err(format!("decode pending schedule fire failed: {error}"));
                 }
             }
         }
@@ -245,11 +243,11 @@ impl ScheduleStore {
         let mut txn = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         for (fire_ms, route) in items {
             txn.delete(Self::encode_pending_fire_key(*fire_ms, route))
-                .map_err(|e| format!("delete pending fire failed: {:?}", e))?;
+                .map_err(|e| format!("delete pending fire failed: {e:?}"))?;
         }
 
         self.commit_or_inject(txn, write_options)
@@ -275,7 +273,7 @@ impl ScheduleStore {
         }
 
         txn.commit(write_options)
-            .map_err(|e| format!("commit failed: {:?}", e))
+            .map_err(|e| format!("commit failed: {e:?}"))
     }
 
     #[cfg(not(test))]
@@ -285,6 +283,6 @@ impl ScheduleStore {
         write_options: WriteOptions,
     ) -> Result<(), String> {
         txn.commit(write_options)
-            .map_err(|e| format!("commit failed: {:?}", e))
+            .map_err(|e| format!("commit failed: {e:?}"))
     }
 }

@@ -29,6 +29,7 @@ pub struct ExponentialBackoff {
 
 impl ExponentialBackoff {
     /// Create new backoff with base delay and maximum cap
+    #[must_use]
     pub fn new(base: Duration, max: Duration) -> Self {
         Self {
             base_ms: base.as_millis() as u64,
@@ -43,6 +44,7 @@ impl ExponentialBackoff {
     ///
     /// # Returns
     /// Duration to wait before this attempt
+    #[must_use]
     pub fn delay(&self, attempt: u32) -> Duration {
         let delay_ms = self.base_ms.saturating_mul(2_u64.saturating_pow(attempt));
         let capped = delay_ms.min(self.max_ms);
@@ -89,11 +91,13 @@ impl RetryConfig {
     }
 
     /// Calculate if we should retry after this attempt
+    #[must_use]
     pub fn should_retry(&self, attempt: u32) -> bool {
         attempt < self.max_retries
     }
 
     /// Get delay for next attempt
+    #[must_use]
     pub fn next_delay(&self, attempt: u32) -> Duration {
         self.backoff.delay(attempt)
     }
@@ -127,6 +131,7 @@ pub struct RetryableError {
 }
 
 impl RetryableError {
+    #[must_use]
     pub fn new(message: String, classification: ErrorClassification) -> Self {
         Self {
             message,
@@ -134,6 +139,7 @@ impl RetryableError {
         }
     }
 
+    #[must_use]
     pub fn is_retryable(&self) -> bool {
         self.classification == ErrorClassification::Retryable
     }
@@ -153,6 +159,7 @@ impl RetryableError {
 /// - ERR_INVALID_UTF8: Protocol violation
 /// - ERR_UNAUTHORIZED: Authorization failure
 /// - ERR_INVALID_OPERATION: Protocol violation
+#[must_use]
 pub fn default_error_classification(error_msg: &str) -> ErrorClassification {
     let msg_lower = error_msg.to_lowercase();
 

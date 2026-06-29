@@ -103,7 +103,7 @@ fn should_reserve_multiple_messages_in_batch() {
 
     // Enqueue 5 messages
     for i in 0..5 {
-        let body = Bytes::from(format!("message {}", i));
+        let body = Bytes::from(format!("message {i}"));
         actor.handle_send(body, None);
     }
 
@@ -139,7 +139,7 @@ fn should_dequeue_all_enqueued_messages() {
 
     // Seed the queue in a known order.
     for i in 0..5 {
-        let body = Bytes::from(format!("msg-{}", i));
+        let body = Bytes::from(format!("msg-{i}"));
         let _ = actor.handle_send(body, None);
     }
 
@@ -167,7 +167,7 @@ fn should_dequeue_all_enqueued_messages() {
     }
 
     // Assert
-    let mut expected: Vec<Bytes> = (0..5).map(|i| Bytes::from(format!("msg-{}", i))).collect();
+    let mut expected: Vec<Bytes> = (0..5).map(|i| Bytes::from(format!("msg-{i}"))).collect();
     reserved_all.sort();
     expected.sort();
     assert_eq!(reserved_all, expected);
@@ -469,7 +469,7 @@ fn should_move_to_dlq_after_max_attempts() {
                 assert_eq!(messages.len(), 1);
                 assert_eq!(messages[0].attempts, attempt);
             }
-            _ => panic!("Expected Reserved response on attempt {}", attempt),
+            _ => panic!("Expected Reserved response on attempt {attempt}"),
         }
 
         // Expire inflight entry (simulating failed processing)
@@ -845,7 +845,7 @@ fn should_allow_unlimited_retries_when_max_attempts_is_none() {
                 assert_eq!(messages.len(), 1);
                 assert_eq!(messages[0].attempts, attempt);
             }
-            _ => panic!("Expected Reserved response on attempt {}", attempt),
+            _ => panic!("Expected Reserved response on attempt {attempt}"),
         }
 
         // Expire inflight entry

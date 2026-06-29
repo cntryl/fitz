@@ -80,15 +80,13 @@ pub(crate) async fn stream_search(
             request
                 .area
                 .as_ref()
-                .map(|value| item.area == *value)
-                .unwrap_or(true)
+                .is_none_or(|value| item.area == *value)
         })
         .filter(|item| {
             request
                 .resource
                 .as_ref()
-                .map(|value| item.resource == *value)
-                .unwrap_or(true)
+                .is_none_or(|value| item.resource == *value)
         })
         .collect::<Vec<_>>();
 

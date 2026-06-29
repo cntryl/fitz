@@ -60,18 +60,11 @@ pub(crate) async fn schedule_missed_observations(
         .into_iter()
         .filter_map(|claim| {
             let route = route_quad(&claim.route)?;
-            if realm
-                .as_ref()
-                .map(|value| route.realm == value)
-                .unwrap_or(true)
-                && area
-                    .as_ref()
-                    .map(|value| route.area == value)
-                    .unwrap_or(true)
+            if realm.as_ref().is_none_or(|value| route.realm == value)
+                && area.as_ref().is_none_or(|value| route.area == value)
                 && resource
                     .as_ref()
-                    .map(|value| route.resource == value)
-                    .unwrap_or(true)
+                    .is_none_or(|value| route.resource == value)
             {
                 Some(ScheduleMissedObservation {
                     route_family: family,

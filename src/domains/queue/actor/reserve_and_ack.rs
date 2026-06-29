@@ -59,8 +59,7 @@ impl QueueActor {
             let inflight_epoch = self
                 .records
                 .get(&id)
-                .map(|record| record.inflight_epoch.saturating_add(1))
-                .unwrap_or(1);
+                .map_or(1, |record| record.inflight_epoch.saturating_add(1));
             let expires_at_epoch_ms =
                 now_epoch_ms.saturating_add(inflight_seconds.saturating_mul(1_000));
 
@@ -327,7 +326,7 @@ impl QueueActor {
                         error = ?e,
                         "Failed to delete queue message in transaction"
                     );
-                    Err(format!("Failed to delete message {} in txn: {:?}", id, e))
+                    Err(format!("Failed to delete message {id} in txn: {e:?}"))
                 }
                 Ok(()) => {
                     if let Err(error) =
@@ -349,18 +348,12 @@ impl QueueActor {
                                 error_reason = %e,
                                 "Failed to commit queue delete transaction"
                             );
-                            Err(format!(
-                                "Failed to commit delete txn for message {}: {}",
-                                id, e
-                            ))
+                            Err(format!("Failed to commit delete txn for message {id}: {e}"))
                         }
                     }
                 }
             },
-            Err(e) => Err(format!(
-                "Failed to begin tx to delete message {}: {:?}",
-                id, e
-            )),
+            Err(e) => Err(format!("Failed to begin tx to delete message {id}: {e:?}")),
         };
 
         if let Err(message) = commit_result {

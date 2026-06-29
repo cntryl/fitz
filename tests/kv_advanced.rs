@@ -76,7 +76,7 @@ fn read_committed_value_for_family(actor: &mut KvActor, family: RouteFamily) -> 
             found: true,
             value: Some(value),
         } => value,
-        other => panic!("Expected stored value, got {:?}", other),
+        other => panic!("Expected stored value, got {other:?}"),
     }
 }
 
@@ -257,13 +257,12 @@ fn should_restore_committed_kv_value_on_engine_restart() {
             let mem_hint = temp_path.join("target").join("tmp");
             if mem_hint.exists() {
                 println!(
-                    "SKIP: underlying Midge engine appears memory-backed; skipping disk-restart check (response={:?})",
-                    other
+                    "SKIP: underlying Midge engine appears memory-backed; skipping disk-restart check (response={other:?})"
                 );
                 return;
             }
 
-            panic!("Expected persisted value after restart (got: {:?})", other);
+            panic!("Expected persisted value after restart (got: {other:?})");
         }
     }
 
@@ -331,10 +330,7 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
             found: false,
             value: None,
         } => {}
-        other => panic!(
-            "Expected uncommitted value to be lost after restart, got {:?}",
-            other
-        ),
+        other => panic!("Expected uncommitted value to be lost after restart, got {other:?}"),
     }
 
     let rollback = actor2.handle(KvMessage::Rollback { tx_id: tx2 });
@@ -454,7 +450,7 @@ fn should_handle_high_throughput_batch_puts() {
             _ => panic!("Begin failed"),
         };
 
-        let key = Bytes::from(format!("k{:04}", i));
+        let key = Bytes::from(format!("k{i:04}"));
         let _ = actor.handle(KvMessage::Put {
             tx_id,
             route_family: RouteFamily::new(1),

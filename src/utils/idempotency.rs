@@ -21,11 +21,13 @@ pub enum Idempotency {
 
 impl Idempotency {
     /// Returns true if the operation is safe to retry (either idempotent or context-dependent)
+    #[must_use]
     pub fn is_safe_to_retry(&self) -> bool {
         matches!(self, Self::Idempotent | Self::ContextDependent { .. })
     }
 
     /// Returns the deduplication key description if context-dependent
+    #[must_use]
     pub fn dedup_key(&self) -> Option<&'static str> {
         if let Self::ContextDependent { dedup_key } = self {
             Some(dedup_key)
@@ -40,7 +42,7 @@ impl fmt::Display for Idempotency {
         match self {
             Self::Idempotent => write!(f, "Idempotent"),
             Self::NonIdempotent => write!(f, "Non-Idempotent"),
-            Self::ContextDependent { dedup_key } => write!(f, "Context-Dependent ({})", dedup_key),
+            Self::ContextDependent { dedup_key } => write!(f, "Context-Dependent ({dedup_key})"),
         }
     }
 }
@@ -102,6 +104,7 @@ pub struct DedupStore {
 
 impl DedupStore {
     /// Create a new deduplication store with the specified default TTL
+    #[must_use]
     pub fn new(default_ttl: Duration) -> Self {
         Self {
             records: DashMap::new(),
@@ -110,6 +113,7 @@ impl DedupStore {
     }
 
     /// Check if an operation has already been processed and return its cached result
+    #[must_use]
     pub fn get(&self, key: &DedupKey) -> Option<Vec<u8>> {
         if let Some(record) = self.records.get(key) {
             if record.expires_at > Instant::now() {
@@ -138,22 +142,26 @@ impl DedupStore {
     }
 
     /// Get current count of active deduplication records
+    #[must_use]
     pub fn len(&self) -> usize {
         self.records.len()
     }
 
     /// Check if deduplication store is empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 }
 
 /// Create a fresh deduplication store using the default queue/RPC retry TTL.
+#[must_use]
 pub fn default_dedup_store() -> Arc<DedupStore> {
     Arc::new(DedupStore::new(Duration::from_secs(300)))
 }
 
 /// Classify an operation by domain and message type ID
+#[must_use]
 pub fn classify(domain: Domain, msg_type: u16) -> Idempotency {
     match domain {
         Domain::Kv => classify_kv(msg_type),

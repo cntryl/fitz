@@ -2,10 +2,12 @@ use super::*;
 use bytes::Bytes;
 
 impl CompactRealmPageValue {
+    #[must_use]
     pub fn is_encoded(bytes: &[u8]) -> bool {
         bytes.starts_with(&COMPACT_REALM_PAGE_VALUE_V1_MARKER)
     }
 
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut total_len = 6;
         for record in &self.records {
@@ -13,8 +15,7 @@ impl CompactRealmPageValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -30,8 +31,7 @@ impl CompactRealmPageValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -43,6 +43,7 @@ impl CompactRealmPageValue {
         bytes
     }
 
+    #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize compact realm page value")
     }
@@ -118,10 +119,12 @@ impl CompactRealmPageValue {
 }
 
 impl CompactAreaPageValue {
+    #[must_use]
     pub fn is_encoded(bytes: &[u8]) -> bool {
         bytes.starts_with(&COMPACT_AREA_PAGE_VALUE_V1_MARKER)
     }
 
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut total_len = 6;
         for record in &self.records {
@@ -129,8 +132,7 @@ impl CompactAreaPageValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -145,8 +147,7 @@ impl CompactAreaPageValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -158,6 +159,7 @@ impl CompactAreaPageValue {
         bytes
     }
 
+    #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize compact area page value")
     }
@@ -230,10 +232,12 @@ impl CompactAreaPageValue {
 }
 
 impl CompactResourcePageValue {
+    #[must_use]
     pub fn is_encoded(bytes: &[u8]) -> bool {
         bytes.starts_with(&COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER)
     }
 
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut total_len = 6;
         for record in &self.records {
@@ -241,8 +245,7 @@ impl CompactResourcePageValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -258,8 +261,7 @@ impl CompactResourcePageValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -271,6 +273,7 @@ impl CompactResourcePageValue {
         bytes
     }
 
+    #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize compact resource page value")
     }

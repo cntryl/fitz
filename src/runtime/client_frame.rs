@@ -28,6 +28,7 @@ pub struct ClientFrameMeta {
 }
 
 impl ClientFrameMeta {
+    #[must_use]
     pub fn new(
         session_id: u64,
         channel: ClientChannel,

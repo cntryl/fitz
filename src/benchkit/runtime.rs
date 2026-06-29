@@ -11,6 +11,7 @@ pub static SHARED_BENCH_RUNTIME: Lazy<Runtime> =
     Lazy::new(|| Runtime::new().expect("create shared bench runtime"));
 
 /// Returns a reference to the shared benchmark runtime. Use for tier4 TCP/WS test setup.
+#[must_use]
 pub fn shared_bench_runtime() -> &'static Runtime {
     &SHARED_BENCH_RUNTIME
 }

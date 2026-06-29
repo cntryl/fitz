@@ -42,6 +42,7 @@ pub struct McpCostBudget {
 }
 
 impl McpCostBudget {
+    #[must_use]
     pub const fn summary() -> Self {
         Self {
             max_result_items: 1,
@@ -50,6 +51,7 @@ impl McpCostBudget {
         }
     }
 
+    #[must_use]
     pub const fn inspect() -> Self {
         Self {
             max_result_items: 8,
@@ -58,6 +60,7 @@ impl McpCostBudget {
         }
     }
 
+    #[must_use]
     pub const fn timeline() -> Self {
         Self {
             max_result_items: 50,
@@ -66,10 +69,9 @@ impl McpCostBudget {
         }
     }
 
+    #[must_use]
     pub fn allows_value(&self, value: &Value) -> bool {
-        serde_json::to_vec(value)
-            .map(|bytes| bytes.len() <= self.max_result_bytes)
-            .unwrap_or(false)
+        serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= self.max_result_bytes)
     }
 }
 
@@ -85,10 +87,12 @@ impl McpCapabilityPolicy {
         }
     }
 
+    #[must_use]
     pub fn summary_only() -> Self {
         Self::from_classes([McpCapabilityClass::Summary])
     }
 
+    #[must_use]
     pub fn read_only() -> Self {
         Self::from_classes([
             McpCapabilityClass::Summary,
@@ -97,6 +101,7 @@ impl McpCapabilityPolicy {
         ])
     }
 
+    #[must_use]
     pub fn allows(&self, capability: McpCapabilityClass) -> bool {
         self.allowed_classes.contains(&capability)
     }
@@ -157,6 +162,7 @@ pub struct McpExecutionContext {
 }
 
 impl McpExecutionContext {
+    #[must_use]
     pub fn authenticated(principal: AdminPrincipal, permissions: SessionPermissions) -> Self {
         Self {
             principal: Some(principal),
@@ -165,6 +171,7 @@ impl McpExecutionContext {
         }
     }
 
+    #[must_use]
     pub fn anonymous(permissions: SessionPermissions) -> Self {
         Self {
             principal: None,
@@ -173,6 +180,7 @@ impl McpExecutionContext {
         }
     }
 
+    #[must_use]
     pub fn audit_records(&self) -> Vec<McpAuditRecord> {
         self.audit_log.lock().clone()
     }
@@ -263,11 +271,7 @@ impl fmt::Display for McpToolError {
             McpToolError::CapabilityDenied {
                 tool_name,
                 capability,
-            } => write!(
-                f,
-                "MCP tool {tool_name} requires {:?} capability",
-                capability
-            ),
+            } => write!(f, "MCP tool {tool_name} requires {capability:?} capability"),
             McpToolError::InvalidArguments { tool_name, reason } => {
                 write!(
                     f,
@@ -317,6 +321,7 @@ pub struct McpToolRegistry {
 }
 
 impl McpToolRegistry {
+    #[must_use]
     pub fn summary_only() -> Self {
         Self {
             tools: vec![
@@ -326,6 +331,7 @@ impl McpToolRegistry {
         }
     }
 
+    #[must_use]
     pub fn read_only() -> Self {
         Self {
             tools: vec![
@@ -338,6 +344,7 @@ impl McpToolRegistry {
         }
     }
 
+    #[must_use]
     pub fn tool_descriptors(&self) -> Vec<McpToolDescriptor> {
         self.tools
             .iter()

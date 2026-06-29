@@ -114,7 +114,7 @@ pub(crate) fn error_response(status: StatusCode, message: &str) -> Response {
     hyper::http::Response::builder()
         .status(status)
         .header("Content-Type", "application/json")
-        .body(Body::from(format!(r#"{{"error":"{}"}}"#, message)))
+        .body(Body::from(format!(r#"{{"error":"{message}"}}"#)))
         .unwrap()
 }
 

@@ -80,6 +80,7 @@ pub fn validate_realm_format(realm: &str) -> Result<&str, RealmError> {
 ///
 /// **Invariant:** Realm comparison MUST be strict string equality.
 /// No case folding, no prefix matching, no fuzzy matching.
+#[must_use]
 pub fn realm_matches(claimed: &str, authorized: &str) -> bool {
     claimed == authorized
 }

@@ -77,7 +77,7 @@ impl StreamStore {
                 area,
                 page_start_offset,
             ))
-            .map_err(|e| format!("get error: {:?}", e))?
+            .map_err(|e| format!("get error: {e:?}"))?
         {
             Some(value_bytes) => CompactAreaPageValue::try_decode(&value_bytes).map_err(|error| {
                 Self::invalid_compact_area_page_error(realm, area, page_start_offset, error)
@@ -123,7 +123,7 @@ impl StreamStore {
                 page.encode(),
                 ttl_opt,
             )
-            .map_err(|e| format!("txn put failed: {:?}", e))?;
+            .map_err(|e| format!("txn put failed: {e:?}"))?;
 
             next_record_index += append_count;
             current_area_offset = current_area_offset.saturating_add(append_count as u64);
@@ -146,7 +146,7 @@ impl StreamStore {
                 resource,
                 page_start_offset,
             ))
-            .map_err(|e| format!("get error: {:?}", e))?
+            .map_err(|e| format!("get error: {e:?}"))?
         {
             Some(value_bytes) => {
                 CompactResourcePageValue::try_decode(&value_bytes).map_err(|error| {
@@ -206,7 +206,7 @@ impl StreamStore {
                 page.encode(),
                 ttl_opt,
             )
-            .map_err(|e| format!("txn put failed: {:?}", e))?;
+            .map_err(|e| format!("txn put failed: {e:?}"))?;
 
             next_record_index += append_count;
             current_resource_offset = current_resource_offset.saturating_add(append_count as u64);
@@ -225,7 +225,7 @@ impl StreamStore {
                 realm,
                 page_start_offset,
             ))
-            .map_err(|e| format!("get error: {:?}", e))?
+            .map_err(|e| format!("get error: {e:?}"))?
         {
             Some(value_bytes) => CompressedCompactRealmPageValue::try_decode(&value_bytes)
                 .map_err(|error| Self::invalid_compact_realm_page_error(page_start_offset, error)),
@@ -269,7 +269,7 @@ impl StreamStore {
                 page.encode(),
                 ttl_opt,
             )
-            .map_err(|e| format!("txn put failed: {:?}", e))?;
+            .map_err(|e| format!("txn put failed: {e:?}"))?;
 
             next_record_index += append_count;
             current_realm_offset = current_realm_offset.saturating_add(append_count as u64);
@@ -363,7 +363,7 @@ impl StreamStore {
         let mut txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
         self.write_promotion_frontier_event_rows(
             &mut txn,
             PromotionFrontierWriteRowsParams {
@@ -400,7 +400,7 @@ impl StreamStore {
             resource_meta_after.encode(),
             None,
         )
-        .map_err(|e| format!("txn put failed: {:?}", e))?;
+        .map_err(|e| format!("txn put failed: {e:?}"))?;
 
         txn.put(
             encode_area_counter_key(realm, area),
@@ -410,7 +410,7 @@ impl StreamStore {
             .encode(),
             None,
         )
-        .map_err(|e| format!("txn put failed: {:?}", e))?;
+        .map_err(|e| format!("txn put failed: {e:?}"))?;
 
         txn.put(
             encode_realm_counter_key(realm),
@@ -420,7 +420,7 @@ impl StreamStore {
             .encode(),
             None,
         )
-        .map_err(|e| format!("txn put failed: {:?}", e))?;
+        .map_err(|e| format!("txn put failed: {e:?}"))?;
 
         let write_options = match mode {
             StreamWriteMode::Sync => cntryl_midge::WriteOptions::sync(),
@@ -442,7 +442,7 @@ impl StreamStore {
             }
         }
         txn.commit(write_options)
-            .map_err(|e| format!("midge commit error: {:?}", e))?;
+            .map_err(|e| format!("midge commit error: {e:?}"))?;
 
         Ok((
             CommitResponse {

@@ -10,10 +10,10 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         match txn
             .get(&key)
-            .map_err(|e| format!("midge get error: {:?}", e))?
+            .map_err(|e| format!("midge get error: {e:?}"))?
         {
             Some(bytes) => {
                 let value = WatermarkValue::decode(&bytes)?;
@@ -21,7 +21,7 @@ impl StreamStore {
             }
             None => match txn
                 .get(&counter_key)
-                .map_err(|e| format!("midge get error: {:?}", e))?
+                .map_err(|e| format!("midge get error: {e:?}"))?
             {
                 Some(bytes) => Ok(AreaCounterValue::decode(&bytes)?
                     .next_offset
@@ -48,7 +48,7 @@ impl StreamStore {
         let mut txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
         // Monotonicity guard: watermarks must only advance, never regress.
         // If the new value is not strictly greater than the current value, no-op.
@@ -60,10 +60,10 @@ impl StreamStore {
 
         let value = WatermarkValue { watermark };
         txn.put(key, value.encode(), None)
-            .map_err(|e| format!("txn put failed: {:?}", e))?;
+            .map_err(|e| format!("txn put failed: {e:?}"))?;
         let opts = cntryl_midge::WriteOptions::sync();
         txn.commit(opts)
-            .map_err(|e| format!("midge commit error: {:?}", e))
+            .map_err(|e| format!("midge commit error: {e:?}"))
     }
 
     pub fn get_realm_watermark(&self, family: u64, realm: &str) -> Result<u64, String> {
@@ -75,10 +75,10 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         match txn
             .get(&key)
-            .map_err(|e| format!("midge get error: {:?}", e))?
+            .map_err(|e| format!("midge get error: {e:?}"))?
         {
             Some(bytes) => {
                 let value = WatermarkValue::decode(&bytes)?;
@@ -86,7 +86,7 @@ impl StreamStore {
             }
             None => match txn
                 .get(&counter_key)
-                .map_err(|e| format!("midge get error: {:?}", e))?
+                .map_err(|e| format!("midge get error: {e:?}"))?
             {
                 Some(bytes) => Ok(RealmCounterValue::decode(&bytes)?
                     .next_offset
@@ -112,7 +112,7 @@ impl StreamStore {
         let mut txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
         // Monotonicity guard: realm watermarks must only advance, never regress.
         let current =
@@ -123,10 +123,10 @@ impl StreamStore {
 
         let value = WatermarkValue { watermark };
         txn.put(key, value.encode(), None)
-            .map_err(|e| format!("txn put failed: {:?}", e))?;
+            .map_err(|e| format!("txn put failed: {e:?}"))?;
         let opts = cntryl_midge::WriteOptions::sync();
         txn.commit(opts)
-            .map_err(|e| format!("midge commit error: {:?}", e))
+            .map_err(|e| format!("midge commit error: {e:?}"))
     }
 
     /// Get stream metadata (limits, TTL, offsets, watermarks)
@@ -192,10 +192,8 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
+        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
         if let Some((key, value)) = results.last() {
@@ -243,10 +241,8 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
+        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
         for (key, value) in results {
@@ -288,7 +284,7 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         self.load_next_resource_offset_from_txn(&txn, family, realm, area, resource)
     }
 }

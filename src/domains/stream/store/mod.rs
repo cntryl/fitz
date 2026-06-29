@@ -205,6 +205,7 @@ impl StreamStorageLayout {
         }
     }
 
+    #[must_use]
     pub fn normalize_requested(self) -> Self {
         match self {
             Self::PromotionFrontier => Self::PromotionFrontier,
@@ -218,6 +219,7 @@ impl StreamStorageLayout {
         }
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::LegacyCovering => "legacy-covering",
@@ -227,12 +229,14 @@ impl StreamStorageLayout {
 }
 
 impl StreamTTL {
+    #[must_use]
     pub fn with_seconds(seconds: u64) -> Self {
         Self {
             ttl_seconds: Some(seconds),
         }
     }
 
+    #[must_use]
     pub fn never() -> Self {
         Self { ttl_seconds: None }
     }
@@ -291,7 +295,7 @@ struct ReadPageState<'a> {
 }
 
 fn resource_page_record_bytes(page_record: &CompactResourcePageRecord) -> usize {
-    page_record.body.len() + page_record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+    page_record.body.len() + page_record.metadata.as_ref().map_or(0, |m| m.len())
 }
 
 fn update_resource_cursor(
@@ -305,7 +309,7 @@ fn update_resource_cursor(
 }
 
 fn area_page_record_bytes(page_record: &CompactAreaPageRecord) -> usize {
-    page_record.body.len() + page_record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+    page_record.body.len() + page_record.metadata.as_ref().map_or(0, |m| m.len())
 }
 
 fn update_area_cursor(
@@ -319,7 +323,7 @@ fn update_area_cursor(
 }
 
 fn realm_page_record_bytes(page_record: &CompactRealmPageRecord) -> usize {
-    page_record.body.len() + page_record.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+    page_record.body.len() + page_record.metadata.as_ref().map_or(0, |m| m.len())
 }
 
 fn update_realm_cursor(

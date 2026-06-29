@@ -283,9 +283,7 @@ pub(crate) fn calculate_confidence(
         .into_iter()
         .flatten()
         .any(|timestamp| is_recent(timestamp, now))
-        || age_seconds
-            .map(|age| age <= RECENT_WINDOW_SECS as u64)
-            .unwrap_or(false)
+        || age_seconds.is_some_and(|age| age <= RECENT_WINDOW_SECS as u64)
         || recent_transition_count > 0;
 
     let (primary_signal_name, primary_signal, coverage_target) = match current_stage {
@@ -466,9 +464,9 @@ impl DiagnosticHotspot {
         let area = self.area.as_ref()?;
         let resource = self.resource.as_ref()?;
         if let Some(operation) = &self.operation {
-            Some(format!("{}/{}/{}/{}", realm, area, resource, operation))
+            Some(format!("{realm}/{area}/{resource}/{operation}"))
         } else {
-            Some(format!("{}/{}/{}", realm, area, resource))
+            Some(format!("{realm}/{area}/{resource}"))
         }
     }
 

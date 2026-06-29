@@ -1,5 +1,6 @@
 use crate::boot::observability;
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 
 const HISTOGRAM_BUCKET_BOUNDS: [&str; 9] = [
     "1ms", "5ms", "10ms", "50ms", "100ms", "500ms", "1s", "5s", "+Inf",
@@ -25,8 +26,8 @@ fn append_metric_metadata(
         return;
     }
 
-    output.push_str(&format!("# HELP {name} {help}\n"));
-    output.push_str(&format!("# TYPE {name} {metric_type}\n"));
+    let _ = writeln!(output, "# HELP {name} {help}");
+    let _ = writeln!(output, "# TYPE {name} {metric_type}");
 }
 
 pub(super) fn append_observability_metrics(output: &mut String) {
@@ -47,7 +48,7 @@ pub(super) fn append_observability_metrics(output: &mut String) {
                 "counter",
                 "Fitz observability counter metric",
             );
-            result.push_str(&format!("{} {}\n", name, value));
+            let _ = writeln!(result, "{name} {value}");
         }
 
         result.push('\n');
@@ -60,7 +61,7 @@ pub(super) fn append_observability_metrics(output: &mut String) {
                 "gauge",
                 "Fitz observability gauge metric",
             );
-            result.push_str(&format!("{} {}\n", name, value));
+            let _ = writeln!(result, "{name} {value}");
         }
 
         result.push('\n');
@@ -76,9 +77,9 @@ pub(super) fn append_observability_metrics(output: &mut String) {
             let mut cumsum = 0u64;
             for (i, bucket_bound) in HISTOGRAM_BUCKET_BOUNDS.iter().enumerate() {
                 cumsum += buckets[i];
-                result.push_str(&format!("{}{{le=\"{}\"}} {}\n", name, bucket_bound, cumsum));
+                let _ = writeln!(result, "{name}{{le=\"{bucket_bound}\"}} {cumsum}");
             }
-            result.push_str(&format!("{}_count {}\n", name, cumsum));
+            let _ = writeln!(result, "{name}_count {cumsum}");
         }
 
         result

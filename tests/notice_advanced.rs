@@ -32,7 +32,7 @@ fn should_scale_linearly_with_subscription_count() {
     let mut small_sinks = Vec::new();
     for i in 0..small_n {
         let sink = Arc::new(TestSink::new());
-        let sub = addr(&format!("notice://realm/area/scale/s{}_x", i));
+        let sub = addr(&format!("notice://realm/area/scale/s{i}_x"));
         router.register(sub.clone(), sink.clone());
         let mut ctx = Context::new(sub.clone(), Arc::new(router.clone()));
         let subscribe = SubscribeMessage::new(
@@ -48,7 +48,7 @@ fn should_scale_linearly_with_subscription_count() {
     let mut large_sinks = Vec::new();
     for i in 0..large_n {
         let sink = Arc::new(TestSink::new());
-        let sub = addr(&format!("notice://realm/area/scale/l{}_x", i));
+        let sub = addr(&format!("notice://realm/area/scale/l{i}_x"));
         router.register(sub.clone(), sink.clone());
         let mut ctx = Context::new(sub.clone(), Arc::new(router.clone()));
         let subscribe = SubscribeMessage::new(
@@ -95,7 +95,7 @@ fn should_not_exhibit_quadratic_fanout_growth() {
         let mut sinks = Vec::new();
         for i in 0..n {
             let sink = Arc::new(TestSink::new());
-            let sub = addr(&format!("notice://realm/area/q/s{}_{}", n, i));
+            let sub = addr(&format!("notice://realm/area/q/s{n}_{i}"));
             router.register(sub.clone(), sink.clone());
             let mut ctx = Context::new(sub.clone(), Arc::new(router.clone()));
             let subscribe = SubscribeMessage::new(
@@ -118,8 +118,7 @@ fn should_not_exhibit_quadratic_fanout_growth() {
         // Assert
         assert_eq!(
             total, n,
-            "expected exactly {} deliveries for {} subscriptions",
-            n, n
+            "expected exactly {n} deliveries for {n} subscriptions"
         );
     }
 }
@@ -136,7 +135,7 @@ fn should_handle_large_subscription_sets_without_failure() {
 
     for i in 0..n {
         let sink = Arc::new(TestSink::new());
-        let sub = addr(&format!("notice://realm/area/scale_big/s{}", i));
+        let sub = addr(&format!("notice://realm/area/scale_big/s{i}"));
         router.register(sub.clone(), sink.clone());
         let mut ctx = Context::new(sub.clone(), Arc::new(router.clone()));
         let subscribe = SubscribeMessage::new(
@@ -265,7 +264,7 @@ fn should_handle_1k_subscriptions_end_to_end() {
 
     for i in 0..n {
         let sink = Arc::new(TestSink::new());
-        let sub = addr(&format!("notice://realm/area/scale_e2e/s{}", i));
+        let sub = addr(&format!("notice://realm/area/scale_e2e/s{i}"));
         router.register(sub.clone(), sink.clone());
         let mut ctx = Context::new(sub.clone(), Arc::new(router.clone()));
         let subscribe = SubscribeMessage::new(
@@ -307,7 +306,7 @@ fn should_handle_5k_subscriptions_without_failure_end_to_end() {
 
     for i in 0..n {
         let sink = Arc::new(TestSink::new());
-        let sub = addr(&format!("notice://realm/area/scale_e2e_big/s{}", i));
+        let sub = addr(&format!("notice://realm/area/scale_e2e_big/s{i}"));
         router.register(sub.clone(), sink.clone());
         let mut ctx = Context::new(sub.clone(), Arc::new(router.clone()));
         let subscribe = SubscribeMessage::new(

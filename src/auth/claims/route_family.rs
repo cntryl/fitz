@@ -29,6 +29,7 @@ impl Default for RouteFamilyResolverConfig {
 }
 
 impl RouteFamilyResolverConfig {
+    #[must_use]
     pub fn from_env() -> Self {
         let identity_claim = env_non_empty(ENV_ROUTE_FAMILY_CLAIM)
             .unwrap_or_else(|| DEFAULT_ROUTE_FAMILY_CLAIM.to_string());
@@ -106,8 +107,7 @@ impl RouteFamilyResolverConfig {
             }
             if !provisioned.contains(family) {
                 return Err(format!(
-                    "{ENV_ROUTE_FAMILY_MAP} maps identity '{}' to unprovisioned route family {}",
-                    identity, family
+                    "{ENV_ROUTE_FAMILY_MAP} maps identity '{identity}' to unprovisioned route family {family}"
                 ));
             }
         }
@@ -122,8 +122,7 @@ impl RouteFamilyResolverConfig {
                     return Ok(*family);
                 }
                 return Err(format!(
-                    "route family identity claim {}={} is not mapped by {}",
-                    org_claim, identity_value, ENV_ROUTE_FAMILY_MAP
+                    "route family identity claim {org_claim}={identity_value} is not mapped by {ENV_ROUTE_FAMILY_MAP}"
                 ));
             }
         }

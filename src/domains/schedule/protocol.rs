@@ -120,6 +120,7 @@ pub struct ScheduleClientResponse {
 }
 
 impl ScheduleClientResponse {
+    #[must_use]
     pub fn new(meta: ClientFrameMeta, response: ScheduleResponse) -> Self {
         Self { meta, response }
     }
@@ -304,6 +305,7 @@ impl CronSchedule {
     }
 
     /// Calculate next fire time from current time
+    #[must_use]
     pub fn next_fire_time(&self, from: Instant) -> Instant {
         self.next_fire_time_with_clock(from, &SystemClock)
     }
@@ -593,7 +595,7 @@ fn parse_cron_field(field: &str, min: u32, max: u32) -> Result<CronField, String
         if n >= min && n <= max {
             return Ok(CronField::Single(n));
         }
-        return Err(format!("Value {} out of range [{}, {}]", n, min, max));
+        return Err(format!("Value {n} out of range [{min}, {max}]"));
     }
 
     if field.contains('-') {
@@ -615,7 +617,7 @@ fn parse_cron_field(field: &str, min: u32, max: u32) -> Result<CronField, String
             if v >= min && v <= max {
                 values.push(v);
             } else {
-                return Err(format!("Value {} out of range [{}, {}]", v, min, max));
+                return Err(format!("Value {v} out of range [{min}, {max}]"));
             }
         }
         return Ok(CronField::List(values));
@@ -633,7 +635,7 @@ fn parse_cron_field(field: &str, min: u32, max: u32) -> Result<CronField, String
         return Err("Invalid step format".to_string());
     }
 
-    Err(format!("Unparseable cron field: {}", field))
+    Err(format!("Unparseable cron field: {field}"))
 }
 
 #[cfg(test)]
@@ -800,6 +802,7 @@ pub enum ScheduleError {
 }
 
 impl ScheduleError {
+    #[must_use]
     pub fn code(&self) -> u16 {
         match self {
             ScheduleError::InvalidCron => 7002,

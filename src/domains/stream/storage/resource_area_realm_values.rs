@@ -3,10 +3,12 @@ use super::*;
 use bytes::Bytes;
 
 impl StreamLayoutMarkerValue {
+    #[must_use]
     pub fn new(layout: StreamStorageLayout) -> Self {
         Self { layout }
     }
 
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         vec![
             STREAM_LAYOUT_MARKER_VALUE_V1_MARKER[0],
@@ -28,8 +30,7 @@ impl StreamLayoutMarkerValue {
             1 => StreamStorageLayout::PromotionFrontier,
             other => {
                 return Err(format!(
-                    "decode stream layout marker: unknown layout id {}",
-                    other
+                    "decode stream layout marker: unknown layout id {other}"
                 ));
             }
         };
@@ -40,7 +41,7 @@ impl StreamLayoutMarkerValue {
 
 impl ResourceValue {
     pub fn encode(&self) -> Vec<u8> {
-        let metadata_len = self.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let metadata_len = self.metadata.as_ref().map_or(0, |m| m.len());
         let mut buf = Vec::with_capacity(42 + self.body.len() + metadata_len);
         buf.extend_from_slice(&RESOURCE_VALUE_V2_MARKER);
         buf.extend_from_slice(&self.resource_offset.to_le_bytes());
@@ -62,8 +63,7 @@ impl ResourceValue {
             &self
                 .metadata
                 .as_ref()
-                .map(|m| m.len() as u32)
-                .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                .map_or(OPTIONAL_BYTES_ABSENT, |m| m.len() as u32)
                 .to_le_bytes(),
         );
         buf.extend_from_slice(&self.body);
@@ -77,6 +77,7 @@ impl ResourceValue {
         Self::decode_v2(bytes)
     }
 
+    #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize resource value")
     }
@@ -137,7 +138,7 @@ impl ResourceValue {
 
 impl AreaValue {
     pub fn encode(&self) -> Vec<u8> {
-        let metadata_len = self.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let metadata_len = self.metadata.as_ref().map_or(0, |m| m.len());
         let mut buf = Vec::with_capacity(26 + self.body.len() + metadata_len);
         buf.extend_from_slice(&AREA_VALUE_V2_MARKER);
         buf.extend_from_slice(&self.resource_offset.to_le_bytes());
@@ -147,8 +148,7 @@ impl AreaValue {
             &self
                 .metadata
                 .as_ref()
-                .map(|m| m.len() as u32)
-                .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                .map_or(OPTIONAL_BYTES_ABSENT, |m| m.len() as u32)
                 .to_le_bytes(),
         );
         buf.extend_from_slice(&self.body);
@@ -162,6 +162,7 @@ impl AreaValue {
         Self::decode_v2(bytes)
     }
 
+    #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize area value")
     }
@@ -223,7 +224,7 @@ impl RealmValue {
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        let metadata_len = self.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let metadata_len = self.metadata.as_ref().map_or(0, |m| m.len());
         let mut buf = Vec::with_capacity(34 + self.body.len() + metadata_len);
         buf.extend_from_slice(&REALM_VALUE_V2_MARKER);
         buf.extend_from_slice(&self.area_offset.to_le_bytes());
@@ -234,8 +235,7 @@ impl RealmValue {
             &self
                 .metadata
                 .as_ref()
-                .map(|m| m.len() as u32)
-                .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                .map_or(OPTIONAL_BYTES_ABSENT, |m| m.len() as u32)
                 .to_le_bytes(),
         );
         buf.extend_from_slice(&self.body);
@@ -245,6 +245,7 @@ impl RealmValue {
         buf
     }
 
+    #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize realm value")
     }

@@ -52,8 +52,7 @@ static JWKS_CACHE: Lazy<DashMap<String, CachedJwksEntry>> = Lazy::new(DashMap::n
 fn now_epoch_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
 fn is_cache_entry_stale(entry: &CachedJwksEntry, now: u64) -> bool {
@@ -73,7 +72,7 @@ pub fn cache_jwks_from_json_with_ttl(
     ttl_seconds: u64,
 ) -> Result<(), String> {
     let jwks: Jwks =
-        serde_json::from_str(jwks_json).map_err(|e| format!("jwks json parse error: {}", e))?;
+        serde_json::from_str(jwks_json).map_err(|e| format!("jwks json parse error: {e}"))?;
 
     let mut map: HashMap<String, CachedJwk> = HashMap::new();
     for k in jwks.keys.into_iter() {
@@ -84,7 +83,7 @@ pub fn cache_jwks_from_json_with_ttl(
                     // base64url decode (no pad)
                     let secret = base64::engine::general_purpose::URL_SAFE_NO_PAD
                         .decode(kval)
-                        .map_err(|e| format!("invalid oct secret: {}", e))?;
+                        .map_err(|e| format!("invalid oct secret: {e}"))?;
                     map.insert(kid, CachedJwk::Oct(secret));
                 }
             }
@@ -155,19 +154,19 @@ pub fn get_decoding_key_from_cache(jwks_url: &str, kid: &str) -> Option<jsonwebt
 /// Async fetch JWKS from a well-known jwks URL and cache the result.
 pub async fn fetch_and_cache_jwks(jwks_url: &str) -> Result<(), String> {
     super::validate_jwks_url(jwks_url, super::allow_insecure_jwks_http())
-        .map_err(|error| format!("invalid JWKS URL: {}", error))?;
+        .map_err(|error| format!("invalid JWKS URL: {error}"))?;
 
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|error| format!("build jwks client error: {}", error))?;
+        .map_err(|error| format!("build jwks client error: {error}"))?;
 
     // Simple HTTPS fetch, cache with default TTL of 1 hour
     let resp = client
         .get(jwks_url)
         .send()
         .await
-        .map_err(|e| format!("fetch jwks error: {}", e))?;
+        .map_err(|e| format!("fetch jwks error: {e}"))?;
 
     if resp.status().is_redirection() {
         return Err(format!(
@@ -185,7 +184,7 @@ pub async fn fetch_and_cache_jwks(jwks_url: &str) -> Result<(), String> {
     let text = resp
         .text()
         .await
-        .map_err(|e| format!("read jwks body error: {}", e))?;
+        .map_err(|e| format!("read jwks body error: {e}"))?;
 
     cache_jwks_from_json_with_ttl(jwks_url, &text, 3600)
 }
@@ -203,8 +202,8 @@ pub async fn ensure_jwks_cached(jwks_url: &str) -> Result<(), String> {
 pub fn derive_jwks_url_from_issuer(iss: &str) -> Result<String, String> {
     let base = iss.trim_end_matches('/');
     // validate url
-    let _ = url::Url::parse(base).map_err(|e| format!("invalid issuer url: {}", e))?;
-    Ok(format!("{}/.well-known/jwks.json", base))
+    let _ = url::Url::parse(base).map_err(|e| format!("invalid issuer url: {e}"))?;
+    Ok(format!("{base}/.well-known/jwks.json"))
 }
 
 #[cfg(test)]

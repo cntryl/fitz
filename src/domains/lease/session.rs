@@ -47,6 +47,7 @@ pub struct SessionActor {
 }
 
 impl SessionActor {
+    #[must_use]
     pub fn new(session_id: SessionId, permissions: SessionPermissions) -> Self {
         Self {
             session_id,

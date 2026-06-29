@@ -55,7 +55,7 @@ fn bench_scheduler_spawn_smoke(c: &mut Criterion) {
 
     let scheduler = Arc::new(Scheduler::new(1));
     let addresses: Vec<_> = (0..16)
-        .map(|i| test_address(1, &format!("/bench/spawn/{}", i)))
+        .map(|i| test_address(1, &format!("/bench/spawn/{i}")))
         .collect();
 
     scheduler.spawn(SpawnActor, addresses[0].clone(), 100);
@@ -149,7 +149,7 @@ fn bench_scheduler_spawn_cross_family_smoke(c: &mut Criterion) {
     // Setup: Create scheduler ONCE, precompute addresses
     let scheduler = Arc::new(Scheduler::new(1));
     let addresses: Vec<_> = (0..5)
-        .map(|i| test_address(i, &format!("/bench/family{}/actor", i)))
+        .map(|i| test_address(i, &format!("/bench/family{i}/actor")))
         .collect();
 
     // Warmup: ensure any lazy init happens before measurement

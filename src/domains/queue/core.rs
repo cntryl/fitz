@@ -13,6 +13,7 @@ pub struct QueueKey {
 
 impl QueueKey {
     /// Parse a route into queue key.
+    #[must_use]
     pub fn from_route(family: RouteFamily, route: &Route) -> Option<Self> {
         let parts = route_triplet(route.as_str())?;
 
@@ -34,10 +35,12 @@ impl QueueKey {
 pub struct MessageId(u64);
 
 impl MessageId {
+    #[must_use]
     pub fn new(id: u64) -> Self {
         Self(id)
     }
 
+    #[must_use]
     pub fn as_u64(&self) -> u64 {
         self.0
     }

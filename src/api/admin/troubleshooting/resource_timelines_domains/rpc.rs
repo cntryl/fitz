@@ -120,8 +120,7 @@ pub(crate) fn rpc_resource_timeline(
                 ResourceTimelineKind::Observation,
                 now,
                 format!(
-                    "{} pending request(s); worker starvation and oldest request {}s old",
-                    requests_pending, oldest_pending_age
+                    "{requests_pending} pending request(s); worker starvation and oldest request {oldest_pending_age}s old"
                 ),
                 path,
                 None,
@@ -145,14 +144,10 @@ pub(crate) fn rpc_resource_timeline(
         };
         let summary = if requests_pending > 0 {
             format!(
-                "{} worker(s), {} pending request(s); oldest request {}s old{}",
-                workers_registered, requests_pending, oldest_pending_age, latency_note
+                "{workers_registered} worker(s), {requests_pending} pending request(s); oldest request {oldest_pending_age}s old{latency_note}"
             )
         } else {
-            format!(
-                "{} worker(s) registered{}",
-                workers_registered, latency_note
-            )
+            format!("{workers_registered} worker(s) registered{latency_note}")
         };
         candidates.push(timeline_candidate(
             now,

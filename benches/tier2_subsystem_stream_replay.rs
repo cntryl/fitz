@@ -270,8 +270,7 @@ impl PagedRealmValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -287,8 +286,7 @@ impl PagedRealmValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -418,8 +416,7 @@ impl CompactPagedRealmValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -435,8 +432,7 @@ impl CompactPagedRealmValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -557,8 +553,7 @@ impl CompactAreaPageValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -573,8 +568,7 @@ impl CompactAreaPageValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -820,8 +814,7 @@ impl CompactResourcePageValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -837,8 +830,7 @@ impl CompactResourcePageValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -1356,7 +1348,7 @@ fn seed_replay_case(
         for (stream_index, stream) in streams.iter().enumerate() {
             let event = build_event_payload(stream_index, record_index, profile);
             expected_payload_bytes +=
-                event.body.len() + event.metadata.as_ref().map(|meta| meta.len()).unwrap_or(0);
+                event.body.len() + event.metadata.as_ref().map_or(0, |meta| meta.len());
             let commit = store
                 .commit_records(CommitRecordsParams {
                     family: FAMILY,
@@ -1755,10 +1747,7 @@ fn load_area_page_cached<'a>(
             .get(&page_key)
             .map_err(|error| format!("get error: {error:?}"))?
             .ok_or_else(|| {
-                format!(
-                    "missing compact area page for area {} page {}",
-                    area_name, page_start_offset
-                )
+                format!("missing compact area page for area {area_name} page {page_start_offset}")
             })?;
         entry.insert(CompactAreaPageValue::decode(&page_bytes));
     }
@@ -2862,9 +2851,7 @@ fn assert_matching_records(left: &[StreamRecord], right: &[StreamRecord]) {
 fn assert_total_payload_bytes(records: &[StreamRecord], expected_payload_bytes: usize) {
     let observed = records
         .iter()
-        .map(|record| {
-            record.body.len() + record.metadata.as_ref().map(|meta| meta.len()).unwrap_or(0)
-        })
+        .map(|record| record.body.len() + record.metadata.as_ref().map_or(0, |meta| meta.len()))
         .sum::<usize>();
 
     assert_eq!(observed, expected_payload_bytes);

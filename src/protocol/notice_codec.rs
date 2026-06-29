@@ -86,11 +86,12 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             }
             Ok(Some(route))
         }
-        _ => Err(format!("Unknown operation: {}", msg_type)),
+        _ => Err(format!("Unknown operation: {msg_type}")),
     }
 }
 
 /// Encode domain response to TLV-encoded bytes
+#[must_use]
 pub fn encode_response(response: &NoticeResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_response_into(response, &mut enc)
@@ -217,6 +218,7 @@ fn parse_unsubscribe_all(
 ///
 /// The subscription_id allows client-side demultiplexing to the correct handler.
 /// The route and payload carry the actual delivery content.
+#[must_use]
 pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_notify_route_into(subscription_id, route.as_str(), payload, &mut enc)
@@ -249,6 +251,7 @@ pub fn encode_notify_route_into(
 /// Encode the route/payload suffix shared by all NOTIFY deliveries for one publish.
 ///
 /// Wire format: `[string route][bytes payload]`
+#[must_use]
 pub fn encode_notify_shared_suffix(route: &str, payload: &[u8]) -> Bytes {
     let mut suffix = BytesMut::with_capacity(4 + route.len() + 4 + payload.len());
     suffix.put_u32(route.len() as u32);

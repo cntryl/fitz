@@ -366,9 +366,10 @@ pub(crate) fn collect_notice_candidates(
                     subscription.session_id, subscription.created_at
                 ),
                 health: Some("live".to_string()),
-                href: parsed
-                    .map(|route| resource_href("notice", route.realm, route.area, route.resource))
-                    .unwrap_or_else(|| "/notice".to_string()),
+                href: parsed.map_or_else(
+                    || "/notice".to_string(),
+                    |route| resource_href("notice", route.realm, route.area, route.resource),
+                ),
                 matched_fields: Vec::new(),
                 metadata,
             },
@@ -423,9 +424,10 @@ pub(crate) fn collect_notice_candidates(
                     }
                     .to_string(),
                 ),
-                href: parsed
-                    .map(|value| resource_href("notice", value.realm, value.area, value.resource))
-                    .unwrap_or_else(|| "/notice".to_string()),
+                href: parsed.map_or_else(
+                    || "/notice".to_string(),
+                    |value| resource_href("notice", value.realm, value.area, value.resource),
+                ),
                 matched_fields: Vec::new(),
                 metadata,
             },

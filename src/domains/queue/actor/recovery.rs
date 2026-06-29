@@ -13,7 +13,7 @@ impl QueueActor {
                 self.index_meta_written = false;
                 return IndexRecoveryAttempt::Error {
                     next_id: 1,
-                    reason: format!("Failed to begin index recovery tx: {:?}", e),
+                    reason: format!("Failed to begin index recovery tx: {e:?}"),
                 };
             }
         };
@@ -31,7 +31,7 @@ impl QueueActor {
                 self.index_meta_written = false;
                 return IndexRecoveryAttempt::Error {
                     next_id: self.load_next_id_from_meta_key(),
-                    reason: format!("Failed to read queue index meta: {:?}", e),
+                    reason: format!("Failed to read queue index meta: {e:?}"),
                 };
             }
         };
@@ -88,7 +88,7 @@ impl QueueActor {
             Err(e) => {
                 return IndexRecoveryAttempt::Error {
                     next_id: meta_snapshot.next_id,
-                    reason: format!("Failed to scan queue ready index: {:?}", e),
+                    reason: format!("Failed to scan queue ready index: {e:?}"),
                 };
             }
         };
@@ -97,7 +97,7 @@ impl QueueActor {
             Err(e) => {
                 return IndexRecoveryAttempt::Error {
                     next_id: meta_snapshot.next_id,
-                    reason: format!("Failed to scan queue delayed index: {:?}", e),
+                    reason: format!("Failed to scan queue delayed index: {e:?}"),
                 };
             }
         };
@@ -106,7 +106,7 @@ impl QueueActor {
             Err(e) => {
                 return IndexRecoveryAttempt::Error {
                     next_id: meta_snapshot.next_id,
-                    reason: format!("Failed to scan queue DLQ index: {:?}", e),
+                    reason: format!("Failed to scan queue DLQ index: {e:?}"),
                 };
             }
         };
@@ -142,7 +142,7 @@ impl QueueActor {
             }
             self.push_persisted_ready_range(range);
             scanned_ready_count += Self::range_len(range) as u64;
-            max_id = Some(max_id.map(|m| m.max(range.end)).unwrap_or(range.end));
+            max_id = Some(max_id.map_or(range.end, |m| m.max(range.end)));
         }
 
         while let Some((key_bytes, _value_bytes)) = delayed_iter.next() {
@@ -157,11 +157,9 @@ impl QueueActor {
             self.insert_persisted_delayed(id, visible_at_ms);
             scanned_delayed_count += 1;
             scanned_next_delayed = Some(
-                scanned_next_delayed
-                    .map(|current| current.min(visible_at_ms))
-                    .unwrap_or(visible_at_ms),
+                scanned_next_delayed.map_or(visible_at_ms, |current| current.min(visible_at_ms)),
             );
-            max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
+            max_id = Some(max_id.map_or(id.as_u64(), |m| m.max(id.as_u64())));
 
             if visible_at_ms <= now_epoch_ms {
                 matured_delayed_ids.push(id);
@@ -191,7 +189,7 @@ impl QueueActor {
             };
 
             self.insert_persisted_dlq(id, dead_lettered_at_ms);
-            max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
+            max_id = Some(max_id.map_or(id.as_u64(), |m| m.max(id.as_u64())));
         }
 
         if self.delayed.is_empty() {
@@ -231,7 +229,7 @@ impl QueueActor {
         let mut txn = self
             .store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("Failed to begin queue index rebuild tx: {:?}", e))?;
+            .map_err(|e| format!("Failed to begin queue index rebuild tx: {e:?}"))?;
 
         let ready_query =
             cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.ready_index_prefix));
@@ -242,13 +240,13 @@ impl QueueActor {
 
         let mut ready_iter = txn
             .scan(&ready_query)
-            .map_err(|e| format!("Failed to scan ready index for rebuild: {:?}", e))?;
+            .map_err(|e| format!("Failed to scan ready index for rebuild: {e:?}"))?;
         let mut delayed_iter = txn
             .scan(&delayed_query)
-            .map_err(|e| format!("Failed to scan delayed index for rebuild: {:?}", e))?;
+            .map_err(|e| format!("Failed to scan delayed index for rebuild: {e:?}"))?;
         let mut dlq_iter = txn
             .scan(&dlq_query)
-            .map_err(|e| format!("Failed to scan DLQ index for rebuild: {:?}", e))?;
+            .map_err(|e| format!("Failed to scan DLQ index for rebuild: {e:?}"))?;
         let mut ready_keys = Vec::new();
         let mut delayed_keys = Vec::new();
         let mut dlq_keys = Vec::new();
@@ -265,7 +263,7 @@ impl QueueActor {
 
         for key in ready_keys.into_iter().chain(delayed_keys).chain(dlq_keys) {
             txn.delete(key)
-                .map_err(|e| format!("Failed to delete stale queue index key: {:?}", e))?;
+                .map_err(|e| format!("Failed to delete stale queue index key: {e:?}"))?;
         }
 
         for (shard, ranges) in self.persisted_ready_shards.iter().enumerate() {
@@ -275,13 +273,13 @@ impl QueueActor {
                     Self::encode_ready_range_value(*range),
                     None,
                 )
-                .map_err(|e| format!("Failed to write queue ready index: {:?}", e))?;
+                .map_err(|e| format!("Failed to write queue ready index: {e:?}"))?;
             }
         }
 
         for (&id, &visible_at_ms) in &self.persisted_delayed {
             txn.put(self.delayed_index_key(visible_at_ms, id), Vec::new(), None)
-                .map_err(|e| format!("Failed to write queue delayed index: {:?}", e))?;
+                .map_err(|e| format!("Failed to write queue delayed index: {e:?}"))?;
         }
 
         for (&id, &dead_lettered_at_ms) in &self.persisted_dlq {
@@ -290,7 +288,7 @@ impl QueueActor {
                 Vec::new(),
                 None,
             )
-            .map_err(|e| format!("Failed to write queue DLQ index: {:?}", e))?;
+            .map_err(|e| format!("Failed to write queue DLQ index: {e:?}"))?;
         }
 
         txn.put(
@@ -303,10 +301,10 @@ impl QueueActor {
             ),
             None,
         )
-        .map_err(|e| format!("Failed to write queue index meta: {:?}", e))?;
+        .map_err(|e| format!("Failed to write queue index meta: {e:?}"))?;
 
         txn.commit(self.commit_write_options)
-            .map_err(|e| format!("Failed to commit queue index rebuild: {:?}", e))?;
+            .map_err(|e| format!("Failed to commit queue index rebuild: {e:?}"))?;
         self.index_meta_written = true;
         Ok(())
     }
@@ -320,7 +318,7 @@ impl QueueActor {
         let txn = self
             .store
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("Failed to begin recovery scan tx: {:?}", e))?;
+            .map_err(|e| format!("Failed to begin recovery scan tx: {e:?}"))?;
 
         self.reset_recovery_state();
 
@@ -333,10 +331,7 @@ impl QueueActor {
             Ok(iter) => iter,
             Err(e) if Self::is_missing_read_snapshot_error(&e) => return Ok(None),
             Err(e) => {
-                return Err(format!(
-                    "Failed to scan queue headers for recovery: {:?}",
-                    e
-                ));
+                return Err(format!("Failed to scan queue headers for recovery: {e:?}"));
             }
         };
         let mut legacy_iter = match txn.scan(&legacy_query) {
@@ -344,8 +339,7 @@ impl QueueActor {
             Err(e) if Self::is_missing_read_snapshot_error(&e) => return Ok(None),
             Err(e) => {
                 return Err(format!(
-                    "Failed to scan legacy queue records for recovery: {:?}",
-                    e
+                    "Failed to scan legacy queue records for recovery: {e:?}"
                 ));
             }
         };
@@ -380,12 +374,11 @@ impl QueueActor {
                 record.metadata_only_from()
             } else {
                 return Err(format!(
-                    "Malformed authoritative queue header record for message {}",
-                    id
+                    "Malformed authoritative queue header record for message {id}"
                 ));
             };
 
-            max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
+            max_id = Some(max_id.map_or(id.as_u64(), |m| m.max(id.as_u64())));
             if matches!(record.state, QueueState::Dlq) {
                 self.insert_persisted_dlq(
                     id,
@@ -427,13 +420,12 @@ impl QueueActor {
                 Ok(record) => record,
                 Err(error) => {
                     return Err(format!(
-                        "Malformed authoritative legacy queue message {}: {}",
-                        id, error
+                        "Malformed authoritative legacy queue message {id}: {error}"
                     ));
                 }
             };
 
-            max_id = Some(max_id.map(|m| m.max(id.as_u64())).unwrap_or(id.as_u64()));
+            max_id = Some(max_id.map_or(id.as_u64(), |m| m.max(id.as_u64())));
             if matches!(record.state, QueueState::Dlq) {
                 self.insert_persisted_dlq(
                     id,
@@ -479,8 +471,7 @@ impl QueueActor {
         Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_FALLBACKS);
 
         let rebuild_next_id = max_id
-            .map(|value| value.saturating_add(1))
-            .unwrap_or(fallback_next_id)
+            .map_or(fallback_next_id, |value| value.saturating_add(1))
             .max(fallback_next_id);
 
         self.rewrite_index_from_memory(rebuild_next_id)?;

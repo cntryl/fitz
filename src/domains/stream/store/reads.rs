@@ -81,10 +81,8 @@ impl StreamStore {
                 params.family as u32,
                 cntryl_midge::TransactionMode::ReadOnly,
             )
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
+        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
         let limit = params.limit as usize;
@@ -251,10 +249,8 @@ impl StreamStore {
                 params.family as u32,
                 cntryl_midge::TransactionMode::ReadOnly,
             )
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
+        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
         let limit = params.limit as usize;
@@ -405,10 +401,8 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
+        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
         let limit = limit as usize;

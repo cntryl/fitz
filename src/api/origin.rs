@@ -11,27 +11,30 @@ pub struct ExactOrigin {
 }
 
 impl ExactOrigin {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.serialized
     }
 
+    #[must_use]
     pub fn scheme(&self) -> &str {
         &self.scheme
     }
 
+    #[must_use]
     pub fn same_origin(&self, other: &Self) -> bool {
         self.scheme == other.scheme
             && self.host.eq_ignore_ascii_case(&other.host)
             && self.port == other.port
     }
 
+    #[must_use]
     pub fn is_loopback(&self) -> bool {
         self.host.eq_ignore_ascii_case("localhost")
             || self
                 .host
                 .parse::<std::net::IpAddr>()
-                .map(|addr| addr.is_loopback())
-                .unwrap_or(false)
+                .is_ok_and(|addr| addr.is_loopback())
     }
 }
 
@@ -61,12 +64,11 @@ pub fn parse_exact_origin(value: &str) -> Result<ExactOrigin, String> {
 fn origin_has_explicit_suffix(value: &str) -> bool {
     value
         .split_once("://")
-        .map(|(_, authority_and_suffix)| {
+        .is_some_and(|(_, authority_and_suffix)| {
             authority_and_suffix.contains('/')
                 || authority_and_suffix.contains('?')
                 || authority_and_suffix.contains('#')
         })
-        .unwrap_or(false)
 }
 
 pub fn parse_url_origin(value: &str) -> Result<ExactOrigin, String> {

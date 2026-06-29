@@ -107,16 +107,14 @@ pub(crate) fn schedule_resource_timeline(
                     "{} overdue by {}s",
                     matching_schedules
                         .first()
-                        .map(|schedule| schedule.operation.as_str())
-                        .unwrap_or("schedule"),
+                        .map_or("schedule", |schedule| schedule.operation.as_str()),
                     (now - next_run).num_seconds().max(0)
                 ),
                 None => format!(
                     "{} is overdue",
                     matching_schedules
                         .first()
-                        .map(|schedule| schedule.operation.as_str())
-                        .unwrap_or("schedule")
+                        .map_or("schedule", |schedule| schedule.operation.as_str())
                 ),
             }
         } else if let Some(next_run) = latest_next_run_at {
@@ -124,8 +122,7 @@ pub(crate) fn schedule_resource_timeline(
                 "{} next runs at {}",
                 matching_schedules
                     .first()
-                    .map(|schedule| schedule.operation.as_str())
-                    .unwrap_or("schedule"),
+                    .map_or("schedule", |schedule| schedule.operation.as_str()),
                 rfc3339(next_run)
             )
         } else {
@@ -133,8 +130,7 @@ pub(crate) fn schedule_resource_timeline(
                 "{} enabled with {} execution(s)",
                 matching_schedules
                     .first()
-                    .map(|schedule| schedule.operation.as_str())
-                    .unwrap_or("schedule"),
+                    .map_or("schedule", |schedule| schedule.operation.as_str()),
                 matching_schedules
                     .iter()
                     .map(|schedule| schedule.executions_total)
@@ -151,8 +147,7 @@ pub(crate) fn schedule_resource_timeline(
         }
         if oldest_pending_claim_age_seconds > 0 {
             pressure_notes.push(format!(
-                "oldest pending claim {}s old",
-                oldest_pending_claim_age_seconds
+                "oldest pending claim {oldest_pending_claim_age_seconds}s old"
             ));
         }
         if notify_failures > 0 {

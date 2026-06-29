@@ -18,7 +18,7 @@ pub(in crate::api::admin::topology) fn lease_lane(
     let pressure =
         stats.waiter_depth + stats.acquire_timeouts_total as usize + stats.failure_total as usize;
     let activity = stats.operations_per_second > 0.0 || stats.leases_active > 0;
-    let state = topology_state(&stats.diagnostics, pressure > 0, activity);
+    let lane_state = topology_state(&stats.diagnostics, pressure > 0, activity);
     let counters = vec![
         counter("leases", "Leases", stats.leases_active as f64),
         counter("waiters", "Waiters", stats.waiter_depth as f64),
@@ -38,7 +38,7 @@ pub(in crate::api::admin::topology) fn lease_lane(
     add_broker_domain_flow(
         connections,
         "lease",
-        &state,
+        &lane_state,
         stats.operations_per_second,
         counters.clone(),
     );
@@ -69,7 +69,7 @@ pub(in crate::api::admin::topology) fn lease_lane(
 
     topology_lane(
         ("lease", "Lease"),
-        state,
+        lane_state,
         stats.operations_per_second,
         &stats.diagnostics,
         counters,

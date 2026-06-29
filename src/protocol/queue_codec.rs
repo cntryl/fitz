@@ -59,11 +59,12 @@ pub fn parse_request(
         msg_type::RESERVE => parse_reserve(route_family, payload),
         msg_type::EXTEND => parse_extend(route_family, payload),
         msg_type::COMPLETE => parse_complete(route_family, payload),
-        _ => Err(format!("Unknown Queue message type: {}", msg_type)),
+        _ => Err(format!("Unknown Queue message type: {msg_type}")),
     }
 }
 
 /// Encode Queue response to bytes
+#[must_use]
 pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
     use bytes::BufMut;
 
@@ -173,7 +174,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             parse_route_str_ref(payload, &mut offset).map(Some)
         }
         msg_type::NOTIFY => Err("QUEUE_NOTIFY is server-to-client only".to_string()),
-        _ => Err(format!("Unknown Queue message type: {}", msg_type)),
+        _ => Err(format!("Unknown Queue message type: {msg_type}")),
     }
 }
 
@@ -344,6 +345,7 @@ fn parse_unwatch(
     })
 }
 
+#[must_use]
 pub fn encode_notify(
     subscription_id: u64,
     route: &Route,
@@ -541,7 +543,7 @@ mod tests {
         // Assert
         match result {
             Err(error) => assert_eq!(error, "Trailing data in reserve request"),
-            Ok(message) => panic!("expected trailing-data error, got {:?}", message),
+            Ok(message) => panic!("expected trailing-data error, got {message:?}"),
         }
     }
 

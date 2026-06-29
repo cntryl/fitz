@@ -18,7 +18,7 @@ impl ScheduleStore {
         let mut txn = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         Self::put_schedule_definition(
             &mut txn,
@@ -40,7 +40,7 @@ impl ScheduleStore {
                     schedule.route,
                     DUE_PREFIX,
                 ))
-                .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
+                .map_err(|e| format!("delete previous due key failed: {e:?}"))?;
             }
         }
 
@@ -64,7 +64,7 @@ impl ScheduleStore {
         let mut txn = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         for item in items {
             let parsed = parse_concrete_schedule_route(&item.route)?;
@@ -88,7 +88,7 @@ impl ScheduleStore {
                         &item.route,
                         DUE_PREFIX,
                     ))
-                    .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
+                    .map_err(|e| format!("delete previous due key failed: {e:?}"))?;
                 }
             }
         }
@@ -109,7 +109,7 @@ impl ScheduleStore {
         let mut txn = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         for item in items {
             let parsed = parse_concrete_schedule_route(item.route)?;
@@ -134,14 +134,14 @@ impl ScheduleStore {
                     item.route,
                     DUE_PREFIX,
                 ))
-                .map_err(|e| format!("delete previous due key failed: {:?}", e))?;
+                .map_err(|e| format!("delete previous due key failed: {e:?}"))?;
             }
             txn.put(
                 pending_fire_key,
                 Self::encode_pending_fire_value(item.payload, item.claimed_at_ms),
                 None,
             )
-            .map_err(|e| format!("put pending fire failed: {:?}", e))?;
+            .map_err(|e| format!("put pending fire failed: {e:?}"))?;
         }
 
         self.commit_or_inject(txn, write_options)
@@ -160,7 +160,7 @@ impl ScheduleStore {
         let mut txn = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         for item in items {
             let parsed = parse_concrete_schedule_route(item.route)?;
@@ -170,7 +170,7 @@ impl ScheduleStore {
                 item.route,
                 PENDING_FIRE_PREFIX,
             ))
-            .map_err(|e| format!("delete pending fire failed: {:?}", e))?;
+            .map_err(|e| format!("delete pending fire failed: {e:?}"))?;
 
             if let Some(definition) = &item.definition {
                 Self::put_definition_metadata(
@@ -181,7 +181,7 @@ impl ScheduleStore {
                     definition.executions_total,
                 )
                 .map_err(|error| {
-                    format!("update schedule acknowledgement state failed: {}", error)
+                    format!("update schedule acknowledgement state failed: {error}")
                 })?;
             }
         }
@@ -211,27 +211,27 @@ impl ScheduleStore {
         let mut txn = self
             .db
             .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {:?}", e))?;
+            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         txn.delete(Self::encode_prefixed_route_key_from_realm(
             realm,
             route,
             DEFINITION_PREFIX,
         ))
-        .map_err(|e| format!("delete schedule definition failed: {:?}", e))?;
+        .map_err(|e| format!("delete schedule definition failed: {e:?}"))?;
         txn.delete(Self::encode_prefixed_route_key_from_realm(
             realm,
             route,
             BODY_PREFIX,
         ))
-        .map_err(|e| format!("delete schedule body failed: {:?}", e))?;
+        .map_err(|e| format!("delete schedule body failed: {e:?}"))?;
         txn.delete(Self::encode_prefixed_timed_route_key_from_realm(
             realm,
             next_fire_ms,
             route,
             DUE_PREFIX,
         ))
-        .map_err(|e| format!("delete schedule due index failed: {:?}", e))?;
+        .map_err(|e| format!("delete schedule due index failed: {e:?}"))?;
 
         self.commit_or_inject(txn, write_options)
     }

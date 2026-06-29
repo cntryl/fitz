@@ -31,7 +31,7 @@ fn create_test_actor() -> ScheduleActor {
 }
 
 fn build_route(index: usize) -> String {
-    let route = format!("schedule://acme/jobs/task{:06}/run", index);
+    let route = format!("schedule://acme/jobs/task{index:06}/run");
     validate_concrete_schedule_route(&route).expect("valid schedule benchmark route");
     route
 }
@@ -88,7 +88,7 @@ fn precompute_data(count: usize) -> (Vec<String>, Vec<String>, Vec<Bytes>) {
         .collect();
 
     let payloads = (0..count)
-        .map(|i| Bytes::from(format!("payload-{:06}", i)))
+        .map(|i| Bytes::from(format!("payload-{i:06}")))
         .collect();
 
     (routes, crons, payloads)

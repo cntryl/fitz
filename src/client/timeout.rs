@@ -25,6 +25,7 @@ pub struct TimeoutConfig {
 }
 
 impl TimeoutConfig {
+    #[must_use]
     pub fn new(
         operation: Duration,
         partial_frame: Duration,
@@ -60,23 +61,27 @@ pub struct TimeoutTracker {
 
 impl TimeoutTracker {
     /// Create a new timeout tracker with operation timeout
+    #[must_use]
     pub fn new(config: TimeoutConfig) -> Self {
         let deadline = Instant::now() + config.operation_timeout;
         Self { config, deadline }
     }
 
     /// Create with custom timeout
+    #[must_use]
     pub fn with_timeout(config: TimeoutConfig, timeout: Duration) -> Self {
         let deadline = Instant::now() + timeout;
         Self { config, deadline }
     }
 
     /// Check if operation has timed out
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         Instant::now() > self.deadline
     }
 
     /// Get remaining time before timeout
+    #[must_use]
     pub fn remaining(&self) -> Option<Duration> {
         self.deadline.checked_duration_since(Instant::now())
     }
@@ -110,6 +115,7 @@ pub struct FrameBuffer {
 
 impl FrameBuffer {
     /// Create new frame buffer
+    #[must_use]
     pub fn new(max_size: usize, timeout_config: TimeoutConfig) -> Self {
         Self {
             data: Vec::new(),
@@ -137,17 +143,20 @@ impl FrameBuffer {
     }
 
     /// Check if buffer has timed out (idle for too long)
+    #[must_use]
     pub fn is_idle_timeout(&self) -> bool {
         Instant::now().duration_since(self.last_activity)
             > self.timeout_config.partial_frame_timeout
     }
 
     /// Get current buffered data
+    #[must_use]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
 
     /// Take ownership of buffered data
+    #[must_use]
     pub fn take(self) -> Vec<u8> {
         self.data
     }
@@ -159,11 +168,13 @@ impl FrameBuffer {
     }
 
     /// Check if buffer is empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
     /// Current buffer size
+    #[must_use]
     pub fn len(&self) -> usize {
         self.data.len()
     }

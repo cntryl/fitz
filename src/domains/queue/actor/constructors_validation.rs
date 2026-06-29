@@ -208,15 +208,11 @@ impl QueueActor {
             .begin_tx(family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| {
                 format!(
-                    "queue validation failed: family={} key_category=transaction error={:?}",
-                    family, error
+                    "queue validation failed: family={family} key_category=transaction error={error:?}"
                 )
             })?;
         let mut iter = txn.scan(&cntryl_midge::Query::new()).map_err(|error| {
-            format!(
-                "queue validation failed: family={} key_category=scan error={:?}",
-                family, error
-            )
+            format!("queue validation failed: family={family} key_category=scan error={error:?}")
         })?;
         let mut required_bodies = HashSet::<Vec<u8>>::new();
         let mut body_rows = HashSet::<Vec<u8>>::new();
@@ -236,14 +232,12 @@ impl QueueActor {
                 QUEUE_KEY_FAMILY_META => {
                     let Some(meta) = Self::decode_meta(&value) else {
                         return Err(format!(
-                            "queue validation failed: family={} key_category=meta error=invalid encoding",
-                            family
+                            "queue validation failed: family={family} key_category=meta error=invalid encoding"
                         ));
                     };
                     if meta.next_id == 0 {
                         return Err(format!(
-                            "queue validation failed: family={} key_category=meta error=next_id is zero",
-                            family
+                            "queue validation failed: family={family} key_category=meta error=next_id is zero"
                         ));
                     }
                 }
@@ -254,8 +248,7 @@ impl QueueActor {
                         && Self::decode_legacy_record(value.clone()).is_err()
                     {
                         return Err(format!(
-                            "queue validation failed: family={} key_category=header error=invalid encoding",
-                            family
+                            "queue validation failed: family={family} key_category=header error=invalid encoding"
                         ));
                     }
                     if is_split {
@@ -266,8 +259,7 @@ impl QueueActor {
                     Self::validate_authoritative_message_id(family, "legacy_message", suffix_tail)?;
                     Self::decode_legacy_record(value).map_err(|error| {
                         format!(
-                            "queue validation failed: family={} key_category=legacy_message error={}",
-                            family, error
+                            "queue validation failed: family={family} key_category=legacy_message error={error}"
                         )
                     })?;
                 }
@@ -282,15 +274,13 @@ impl QueueActor {
         for required_body in required_bodies {
             if !body_rows.remove(&required_body) {
                 return Err(format!(
-                    "queue validation failed: family={} key_category=body error=missing body for split header",
-                    family
+                    "queue validation failed: family={family} key_category=body error=missing body for split header"
                 ));
             }
         }
         if !body_rows.is_empty() {
             return Err(format!(
-                "queue validation failed: family={} key_category=body error=orphan body row",
-                family
+                "queue validation failed: family={family} key_category=body error=orphan body row"
             ));
         }
 

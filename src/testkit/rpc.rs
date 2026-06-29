@@ -14,6 +14,7 @@ use uuid::Uuid;
 ///
 /// # Arguments
 /// * `route_str` - The RPC route string (e.g., "rpc://realm/service/operation")
+#[must_use]
 pub fn create_test_rpc_context(route_str: &str) -> Context<RpcRouteActor> {
     let router = Arc::new(Router::new());
     let addr = RouteAddress::new(RouteFamily::new(1), Route::new(route_str));
@@ -21,11 +22,13 @@ pub fn create_test_rpc_context(route_str: &str) -> Context<RpcRouteActor> {
 }
 
 /// Create a reply inbox actor for testing
+#[must_use]
 pub fn create_test_inbox() -> ReplyInboxActor {
     ReplyInboxActor::new(RouteFamily::new(1))
 }
 
 /// Create an inbox context for testing
+#[must_use]
 pub fn create_test_inbox_context() -> Context<ReplyInboxActor> {
     let router = Arc::new(Router::new());
     let addr = RouteAddress::new(RouteFamily::new(1), Route::new("inbox://session/1"));
@@ -39,6 +42,7 @@ pub fn create_test_inbox_context() -> Context<ReplyInboxActor> {
 /// * `route` - RPC operation route
 /// * `reply_route` - Reply inbox route
 /// * `body` - Request body bytes
+#[must_use]
 pub fn create_test_rpc_request(
     correlation_id: Uuid,
     route: &str,
@@ -61,6 +65,7 @@ pub fn create_test_rpc_request(
 /// * `seq` - Sequence number (for streaming)
 /// * `stream_end` - Whether this is the final response
 /// * `body` - Response body bytes
+#[must_use]
 pub fn create_test_rpc_response(
     correlation_id: Uuid,
     seq: u64,
@@ -79,10 +84,11 @@ pub fn create_test_rpc_response(
 ///
 /// # Arguments
 /// * `id` - Worker ID number
+#[must_use]
 pub fn create_test_worker_addr(id: u64) -> RouteAddress {
     RouteAddress::new(
         RouteFamily::new(1),
-        Route::new(format!("worker://realm/service/worker{}", id)),
+        Route::new(format!("worker://realm/service/worker{id}")),
     )
 }
 
@@ -90,6 +96,7 @@ pub fn create_test_worker_addr(id: u64) -> RouteAddress {
 ///
 /// # Arguments
 /// * `timeout_ms` - Timeout in milliseconds
+#[must_use]
 pub fn create_test_rpc_actor_with_timeout(timeout_ms: u64) -> RpcRouteActor {
     RpcRouteActor::with_timeout(
         RouteFamily::new(1),

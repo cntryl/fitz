@@ -215,7 +215,7 @@ fn should_create_schedule_successfully() {
     // Assert
     match response {
         ScheduleResponse::Ok => {}
-        ScheduleResponse::Error(e) => panic!("Expected Ok, got Error: {}", e),
+        ScheduleResponse::Error(e) => panic!("Expected Ok, got Error: {e}"),
         _ => panic!("Expected Ok response"),
     }
 }

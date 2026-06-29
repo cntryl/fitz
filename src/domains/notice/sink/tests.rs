@@ -192,9 +192,9 @@ fn should_include_notice_subscription_given_flexible_route_shape() {
 
     // Assert
     let subscriptions = admin_read_model.notice_subscriptions(None, None);
-    let routes = admin_read_model.notice_routes(None);
+    let notice_routes = admin_read_model.notice_routes(None);
     assert_notice_admin_subscriptions(&subscriptions, &[notice_route]);
-    assert_notice_admin_routes(&routes, &[notice_route]);
+    assert_notice_admin_routes(&notice_routes, &[notice_route]);
     assert_eq!(subscriptions[0].realm, "acme");
 }
 
@@ -241,12 +241,12 @@ fn should_track_notice_publish_activity_given_matching_publish() {
     refresh_notice_admin_snapshot(&sink);
 
     // Assert
-    let routes = admin_read_model.notice_routes(None);
-    assert_eq!(routes.len(), 1);
-    assert_eq!(routes[0].route, notice_route);
-    assert_eq!(routes[0].subscribers, 1);
-    assert_eq!(routes[0].publishes_total, 1);
-    assert_eq!(routes[0].publishes_per_minute, 1.0);
+    let notice_routes = admin_read_model.notice_routes(None);
+    assert_eq!(notice_routes.len(), 1);
+    assert_eq!(notice_routes[0].route, notice_route);
+    assert_eq!(notice_routes[0].subscribers, 1);
+    assert_eq!(notice_routes[0].publishes_total, 1);
+    assert_eq!(notice_routes[0].publishes_per_minute, 1.0);
 }
 
 #[test]
@@ -595,9 +595,9 @@ fn should_retain_notice_admin_snapshot_entry_given_unsubscribe_of_sibling_patter
     refresh_notice_admin_snapshot(&sink);
 
     let subscriptions = admin_read_model.notice_subscriptions(None, None);
-    let routes = admin_read_model.notice_routes(None);
+    let notice_routes = admin_read_model.notice_routes(None);
     assert_notice_admin_subscriptions(&subscriptions, &[retained_route]);
-    assert_notice_admin_routes(&routes, &[retained_route]);
+    assert_notice_admin_routes(&notice_routes, &[retained_route]);
 }
 
 #[test]

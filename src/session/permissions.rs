@@ -64,15 +64,18 @@ pub struct SessionPermissions {
 }
 
 impl SessionPermissions {
+    #[must_use]
     pub fn new(map: HashMap<String, String>) -> Self {
         Self::from_parts(map, Vec::new())
     }
 
     /// Create permissions from parsed `auth::Permission` structs
+    #[must_use]
     pub fn from_permissions(perms: Vec<Permission>) -> Self {
         Self::from_parts(HashMap::new(), Self::compile_permissions(perms))
     }
 
+    #[must_use]
     pub fn empty() -> Self {
         Self::from_parts(HashMap::new(), Vec::new())
     }
@@ -80,6 +83,7 @@ impl SessionPermissions {
     /// Create a permission set that allow all operations on all routes
     ///
     /// Used for unauthenticated sessions when auth_required=false
+    #[must_use]
     pub fn all() -> Self {
         Self::from_permissions(vec![Permission {
             raw: "**#all".to_string(),
@@ -87,18 +91,21 @@ impl SessionPermissions {
         }])
     }
 
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&str> {
         self.inner.get(key).map(|s| s.as_str())
     }
 
     /// Check whether the permission set allows the given access to the route
     #[inline]
+    #[must_use]
     pub fn allows(&self, route: &crate::runtime::routing::Route, access: Access) -> bool {
         self.allows_route(route.as_str(), access)
     }
 
     /// Check whether the permission set allows the given access to a raw route string.
     #[inline]
+    #[must_use]
     pub fn allows_route(&self, route: &str, access: Access) -> bool {
         let access_bits = access_to_bits(access);
 

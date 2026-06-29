@@ -54,8 +54,8 @@ impl fmt::Display for CloseReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CloseReason::ClientClose => write!(f, "client_close"),
-            CloseReason::ServerClose(msg) => write!(f, "server_close: {}", msg),
-            CloseReason::Error(err) => write!(f, "error: {}", err),
+            CloseReason::ServerClose(msg) => write!(f, "server_close: {msg}"),
+            CloseReason::Error(err) => write!(f, "error: {err}"),
             CloseReason::Timeout => write!(f, "timeout"),
         }
     }
@@ -97,31 +97,38 @@ impl Default for SessionMetadata {
 }
 
 impl SessionMetadata {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_property(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.properties.insert(key.into(), value.into());
         self
     }
 
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&str> {
         self.properties.get(key).map(|s| s.as_str())
     }
 
+    #[must_use]
     pub fn connected_at(&self) -> SystemTime {
         self.live.connected_at
     }
 
+    #[must_use]
     pub fn idle_seconds(&self) -> u64 {
         self.live.last_activity.lock().elapsed().as_secs()
     }
 
+    #[must_use]
     pub fn messages_received(&self) -> u64 {
         self.live.messages_received.load(Ordering::Relaxed)
     }
 
+    #[must_use]
     pub fn messages_sent(&self) -> u64 {
         self.live.messages_sent.load(Ordering::Relaxed)
     }
@@ -154,18 +161,22 @@ pub struct SessionInfo {
 }
 
 impl SessionInfo {
+    #[must_use]
     pub fn connected_at(&self) -> SystemTime {
         self.metadata.connected_at()
     }
 
+    #[must_use]
     pub fn idle_seconds(&self) -> u64 {
         self.metadata.idle_seconds()
     }
 
+    #[must_use]
     pub fn messages_received(&self) -> u64 {
         self.metadata.messages_received()
     }
 
+    #[must_use]
     pub fn messages_sent(&self) -> u64 {
         self.metadata.messages_sent()
     }
@@ -193,10 +204,10 @@ pub enum SessionError {
 impl fmt::Display for SessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Decode(err) => write!(f, "TLV decode error: {}", err),
-            Self::Mux(err) => write!(f, "Mux error: {}", err),
-            Self::IngressClose(reason) => write!(f, "ingress requested close: {}", reason),
-            Self::Backpressure(channel) => write!(f, "backpressure on channel {}", channel),
+            Self::Decode(err) => write!(f, "TLV decode error: {err}"),
+            Self::Mux(err) => write!(f, "Mux error: {err}"),
+            Self::IngressClose(reason) => write!(f, "ingress requested close: {reason}"),
+            Self::Backpressure(channel) => write!(f, "backpressure on channel {channel}"),
         }
     }
 }
@@ -226,6 +237,7 @@ pub struct NewSessionConfig {
 
 impl NewSessionConfig {
     #[allow(clippy::too_many_arguments)]
+    #[must_use]
     pub fn authenticated(
         transport_kind: TransportKind,
         peer_addr: Option<SocketAddr>,
@@ -248,6 +260,7 @@ impl NewSessionConfig {
         }
     }
 
+    #[must_use]
     pub fn unauthenticated(
         transport_kind: TransportKind,
         peer_addr: Option<SocketAddr>,
@@ -330,6 +343,7 @@ impl Session {
     }
 
     /// Get session metadata for runtime ingress
+    #[must_use]
     pub fn info(&self) -> SessionInfo {
         self.info.clone()
     }
@@ -384,10 +398,12 @@ impl Session {
                     SessionError::Mux(error)
                 })
             }
-            Err(crate::protocol::tlv::TlvError::IncompleteType)
-            | Err(crate::protocol::tlv::TlvError::IncompleteLength)
-            | Err(crate::protocol::tlv::TlvError::IncompleteValue { .. })
-            | Err(crate::protocol::tlv::TlvError::EmptyFrame) => {
+            Err(
+                crate::protocol::tlv::TlvError::IncompleteType
+                | crate::protocol::tlv::TlvError::IncompleteLength
+                | crate::protocol::tlv::TlvError::IncompleteValue { .. }
+                | crate::protocol::tlv::TlvError::EmptyFrame,
+            ) => {
                 trace!(
                     session_id = self.info.session_id,
                     buffer_remaining = self.buffer.len(),
@@ -410,11 +426,13 @@ impl Session {
     }
 
     /// Access permissions snapshot
+    #[must_use]
     pub fn permissions(&self) -> &SessionPermissions {
         &self.info.permissions_snapshot
     }
 
     /// Get the immutable claims for this session (if authenticated)
+    #[must_use]
     pub fn claims(&self) -> Option<&crate::auth::Claims> {
         self.info.claims.as_ref().map(|c| c.as_ref())
     }

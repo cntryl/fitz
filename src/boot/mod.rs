@@ -77,8 +77,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
 
     ws_ready.await.map_err(|e| {
         Box::new(std::io::Error::other(format!(
-            "WebSocket listener failed to start: {}",
-            e
+            "WebSocket listener failed to start: {e}"
         ))) as Box<dyn std::error::Error>
     })?;
 
@@ -156,8 +155,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         } = tcp_listener;
         tcp_ready.await.map_err(|e| {
             Box::new(std::io::Error::other(format!(
-                "TCP listener failed to start: {}",
-                e
+                "TCP listener failed to start: {e}"
             ))) as Box<dyn std::error::Error>
         })?;
         (Some(shutdown), Some(join))
@@ -218,7 +216,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         domains.stop();
     }
     router.clear();
-    runtime.detach_ingress();
+    let _ = runtime.detach_ingress();
     drop(domains);
     drop(ingress);
     drop(router);
@@ -232,7 +230,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     })?;
     store
         .shutdown()
-        .map_err(|error| format!("Midge shutdown failed: {}", error))?;
+        .map_err(|error| format!("Midge shutdown failed: {error}"))?;
 
     Ok(())
 }
@@ -243,8 +241,8 @@ async fn wait_for_listener(
 ) -> Result<(), String> {
     tokio::time::timeout(std::time::Duration::from_secs(6), join)
         .await
-        .map_err(|_| format!("{} listener shutdown timed out", name))?
-        .map_err(|error| format!("{} listener join failed: {}", name, error))
+        .map_err(|_| format!("{name} listener shutdown timed out"))?
+        .map_err(|error| format!("{name} listener join failed: {error}"))
 }
 
 async fn wait_for_shutdown_signal() -> BootResult<ShutdownSignal> {

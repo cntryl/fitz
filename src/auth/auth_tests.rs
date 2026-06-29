@@ -245,7 +245,7 @@ async fn should_verify_permissions_using_inline_jwks_for_hmac_token() {
         "iss": "https://idp.example/",
         "aud": "fitz-broker",
         "sub": "user:1",
-        "exp": 9999999999u64,
+        "exp": 9_999_999_999_u64,
         "tid": "realm1",
         "permissions": ["stream://realm1/area1/orders/*#write"]
     });

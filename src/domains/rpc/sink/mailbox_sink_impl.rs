@@ -80,12 +80,10 @@ impl MailboxSink for RpcDomainSink {
                 let duplicate_correlation = state.contains_correlation(&req.correlation_id);
                 let route_exists = state.has_registered_workers(&req.route);
                 let total_live_requests = state.live_request_count();
-                let route_requires_queue = state
-                    .route_state(&req.route)
-                    .map(|route_state| {
+                let route_requires_queue =
+                    state.route_state(&req.route).is_some_and(|route_state| {
                         route_state.has_queued_requests() || !route_state.has_available_worker()
-                    })
-                    .unwrap_or(false);
+                    });
                 let mut worker_selection_us = 0_u64;
 
                 if duplicate_correlation {
@@ -167,8 +165,7 @@ impl MailboxSink for RpcDomainSink {
                 } else if route_requires_queue {
                     let queued_len = state
                         .route_state(&req.route)
-                        .map(|route_state| route_state.queued_len())
-                        .unwrap_or(0);
+                        .map_or(0, |route_state| route_state.queued_len());
 
                     if queued_len >= self.route_pending_capacity {
                         let state_hold_us = state_hold_start.elapsed().as_micros() as u64;
@@ -304,11 +301,13 @@ impl MailboxSink for RpcDomainSink {
                                     false,
                                 )
                             }
-                            Err(crate::runtime::RouteError::RouteNotFound(_))
-                            | Err(crate::runtime::RouteError::DeliveryFailed(
-                                _,
-                                DeliveryError::ActorStopped,
-                            )) => {
+                            Err(
+                                crate::runtime::RouteError::RouteNotFound(_)
+                                | crate::runtime::RouteError::DeliveryFailed(
+                                    _,
+                                    DeliveryError::ActorStopped,
+                                ),
+                            ) => {
                                 self.counter_inc("rpc_request_forward_errors_total");
                                 let cleanup_result = self.apply_session_cleanup(worker.session_id);
                                 let disconnect_deliveries = cleanup_result
@@ -338,11 +337,8 @@ impl MailboxSink for RpcDomainSink {
                             }
                             Err(crate::runtime::RouteError::DeliveryFailed(
                                 _,
-                                DeliveryError::MailboxFull { .. },
-                            ))
-                            | Err(crate::runtime::RouteError::DeliveryFailed(
-                                _,
-                                DeliveryError::HighLaneFull { .. },
+                                DeliveryError::MailboxFull { .. }
+                                | DeliveryError::HighLaneFull { .. },
                             )) => {
                                 self.counter_inc("rpc_request_forward_errors_total");
                                 let pending_len = self

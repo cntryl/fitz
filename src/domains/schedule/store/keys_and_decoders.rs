@@ -51,11 +51,11 @@ impl ScheduleStore {
         }
 
         let area = std::str::from_utf8(area)
-            .map_err(|e| format!("Invalid schedule area encoding: {}", e))?;
+            .map_err(|e| format!("Invalid schedule area encoding: {e}"))?;
         let resource = std::str::from_utf8(resource)
-            .map_err(|e| format!("Invalid schedule resource encoding: {}", e))?;
+            .map_err(|e| format!("Invalid schedule resource encoding: {e}"))?;
         let operation = std::str::from_utf8(operation)
-            .map_err(|e| format!("Invalid schedule operation encoding: {}", e))?;
+            .map_err(|e| format!("Invalid schedule operation encoding: {e}"))?;
 
         Ok(format!("schedule://{realm}/{area}/{resource}/{operation}"))
     }
@@ -134,7 +134,7 @@ impl ScheduleStore {
     ) -> Result<ScheduleRows, String> {
         let rows = tx
             .scan(&cntryl_midge::Query::new())
-            .map_err(|e| format!("scan schedule rows failed: {:?}", e))?
+            .map_err(|e| format!("scan schedule rows failed: {e:?}"))?
             .collect_all();
 
         Ok(rows
@@ -266,7 +266,7 @@ impl ScheduleStore {
         };
 
         let route = String::from_utf8(remaining[route_start..].to_vec())
-            .map_err(|e| format!("Invalid route encoding: {}", e))?;
+            .map_err(|e| format!("Invalid route encoding: {e}"))?;
 
         Ok(((minute_epoch * 60_000) + ms_offset, route))
     }
@@ -327,7 +327,7 @@ impl ScheduleStore {
                 }
 
                 let cron = String::from_utf8(value[cron_start..cron_end].to_vec())
-                    .map_err(|e| format!("Invalid cron encoding: {}", e))?;
+                    .map_err(|e| format!("Invalid cron encoding: {e}"))?;
                 let payload_len =
                     u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap()) as usize;
                 let payload_start = cron_end + 4;
@@ -360,7 +360,7 @@ impl ScheduleStore {
                 }
 
                 let cron = String::from_utf8(value[cron_start..cron_end].to_vec())
-                    .map_err(|e| format!("Invalid cron encoding: {}", e))?;
+                    .map_err(|e| format!("Invalid cron encoding: {e}"))?;
                 let payload_len =
                     u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap()) as usize;
                 let payload_start = cron_end + 4;
@@ -392,8 +392,7 @@ impl ScheduleStore {
                 })
             }
             other => Err(format!(
-                "Unsupported schedule definition value version: {}",
-                other
+                "Unsupported schedule definition value version: {other}"
             )),
         }
     }
@@ -417,7 +416,7 @@ impl ScheduleStore {
                 }
 
                 let cron = String::from_utf8(value[cron_start..cron_end].to_vec())
-                    .map_err(|e| format!("Invalid cron encoding: {}", e))?;
+                    .map_err(|e| format!("Invalid cron encoding: {e}"))?;
                 let payload_len =
                     u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap()) as usize;
                 let payload_start = cron_end + 4;
@@ -434,8 +433,7 @@ impl ScheduleStore {
                 ))
             }
             other => Err(format!(
-                "Unsupported schedule definition body value version: {}",
-                other
+                "Unsupported schedule definition body value version: {other}"
             )),
         }
     }
@@ -447,7 +445,7 @@ impl ScheduleStore {
             .ok_or_else(|| "Invalid legacy schedule value format".to_string())?;
 
         let cron = String::from_utf8(value[..sep_pos].to_vec())
-            .map_err(|e| format!("Invalid cron encoding: {}", e))?;
+            .map_err(|e| format!("Invalid cron encoding: {e}"))?;
         let payload = Bytes::copy_from_slice(&value[sep_pos + 1..]);
         Ok((cron, payload))
     }
@@ -478,8 +476,7 @@ impl ScheduleStore {
                 Ok((claimed_at_ms, Bytes::copy_from_slice(&value[9..])))
             }
             other => Err(format!(
-                "Unsupported schedule pending fire value version: {}",
-                other
+                "Unsupported schedule pending fire value version: {other}"
             )),
         }
     }
@@ -496,7 +493,7 @@ impl ScheduleStore {
             Self::encode_definition_metadata_value(next_fire_ms, last_fire_ms, executions_total),
             None,
         )
-        .map_err(|e| format!("put schedule definition failed: {:?}", e))
+        .map_err(|e| format!("put schedule definition failed: {e:?}"))
     }
 
     pub(super) fn put_definition_body(
@@ -510,7 +507,7 @@ impl ScheduleStore {
             Self::encode_definition_body_value(cron, payload),
             None,
         )
-        .map_err(|e| format!("put schedule body failed: {:?}", e))
+        .map_err(|e| format!("put schedule body failed: {e:?}"))
     }
 
     pub(super) fn put_schedule_definition(

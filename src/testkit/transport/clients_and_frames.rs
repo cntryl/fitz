@@ -206,6 +206,7 @@ pub struct TlvFrameBuilder {
 }
 
 impl TlvFrameBuilder {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             buf: BytesMut::new(),
@@ -238,6 +239,7 @@ impl TlvFrameBuilder {
     }
 
     /// Build the final frame
+    #[must_use]
     pub fn build(self) -> Vec<u8> {
         self.buf.to_vec()
     }
@@ -250,6 +252,7 @@ pub struct TlvFrameParser<'a> {
 }
 
 impl<'a> TlvFrameParser<'a> {
+    #[must_use]
     pub fn new(buf: &'a [u8]) -> Self {
         Self { buf, offset: 0 }
     }
@@ -317,6 +320,7 @@ impl Default for TlvFrameBuilder {
 
 /// Build CONNECT message (msg_type 1).
 /// The legacy route argument is ignored; CONNECT carries only the JWT payload.
+#[must_use]
 pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
     // CONNECT frame: [msg_type: 1][length: u16 BE][JWT string bytes]
     // Server expects JWT as plain UTF-8 string, no additional structure
@@ -329,10 +333,12 @@ pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
 /// Uses JWKS-mode token shape signed with the shared test issuer secret.
 /// Token is valid for 1 hour from now
 /// Emits `tid` plus top-level `permissions`
+#[must_use]
 pub fn generate_test_jwt(realm: &str) -> String {
     generate_test_jwt_for_family(realm, 1)
 }
 
+#[must_use]
 pub fn generate_test_jwt_for_family(realm: &str, _route_family: u32) -> String {
     init_test_runtime_jwks_cache();
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
@@ -384,6 +390,7 @@ pub fn generate_test_jwt_for_family(realm: &str, _route_family: u32) -> String {
 }
 
 /// Generate expired JWT (for testing rejection)
+#[must_use]
 pub fn generate_expired_jwt(realm: &str) -> String {
     init_test_runtime_jwks_cache();
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
@@ -426,6 +433,7 @@ pub fn generate_expired_jwt(realm: &str) -> String {
 }
 
 /// Generate JWT with invalid signature (for testing rejection)
+#[must_use]
 pub fn generate_invalid_signature_jwt(realm: &str) -> String {
     init_test_runtime_jwks_cache();
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};

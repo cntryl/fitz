@@ -120,8 +120,7 @@ impl<'a> AuthorizationTargets<'a> {
             Self::Multiple(routes) => (
                 routes
                     .first()
-                    .map(|route| route.as_ref())
-                    .unwrap_or("<session-owned>"),
+                    .map_or("<session-owned>", |route| route.as_ref()),
                 routes.len(),
             ),
         }
@@ -147,8 +146,7 @@ impl<'a> AuthorizationTargets<'a> {
                     authorized,
                     routes
                         .first()
-                        .map(|route| route.as_ref())
-                        .unwrap_or(wildcard_route),
+                        .map_or(wildcard_route, |route| route.as_ref()),
                     routes.len(),
                 )
             }

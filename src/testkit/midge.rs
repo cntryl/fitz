@@ -79,8 +79,7 @@ pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
     let unique_id = ENGINE_COUNTER.fetch_add(1, Ordering::SeqCst);
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |duration| duration.as_nanos());
     let db_path = PathBuf::from(format!(
         "target/tmp/fitz_test_engine_{}_{}_{}",
         std::process::id(),
@@ -101,10 +100,10 @@ pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
     // Midge assigns IDs sequentially starting from 1, so creating CFs in
     // order (1, 2, 3, ...) produces the expected CF IDs.
     for cf_id in &cf_ids {
-        let name = format!("cf_{}", cf_id);
+        let name = format!("cf_{cf_id}");
         let handle = engine
             .create_column_family(&name)
-            .unwrap_or_else(|e| panic!("Failed to create column family {}: {}", cf_id, e));
+            .unwrap_or_else(|e| panic!("Failed to create column family {cf_id}: {e}"));
         assert_eq!(
             handle.id(),
             *cf_id,
@@ -135,6 +134,7 @@ pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
     since = "0.1.0",
     note = "Use create_test_engine_with_cfs to explicitly configure column families"
 )]
+#[must_use]
 pub fn create_test_engine() -> Arc<Engine> {
     panic!(
         "CRITICAL TEST VIOLATION: create_test_engine() is FORBIDDEN. \

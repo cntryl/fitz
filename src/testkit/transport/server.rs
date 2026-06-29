@@ -344,14 +344,12 @@ impl TestServer {
         // This ensures tests don't connect before accept loops are ready
         tcp_ready_rx.await.map_err(|e| {
             Box::new(std::io::Error::other(format!(
-                "TCP readiness wait failed: {}",
-                e
+                "TCP readiness wait failed: {e}"
             ))) as Box<dyn std::error::Error>
         })?;
         ws_ready_rx.await.map_err(|e| {
             Box::new(std::io::Error::other(format!(
-                "WebSocket readiness wait failed: {}",
-                e
+                "WebSocket readiness wait failed: {e}"
             ))) as Box<dyn std::error::Error>
         })?;
 
@@ -463,7 +461,7 @@ impl TestServer {
         .map_err(|_| {
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
-                format!("timed out waiting for {}", description),
+                format!("timed out waiting for {description}"),
             )) as Box<dyn std::error::Error>
         })
     }
@@ -532,8 +530,8 @@ impl TestServer {
         let wait_for_listener = async |name, join: tokio::task::JoinHandle<()>| {
             timeout(Duration::from_secs(6), join)
                 .await
-                .map_err(|_| format!("{} listener shutdown timed out", name))?
-                .map_err(|error| format!("{} listener join failed: {}", name, error))
+                .map_err(|_| format!("{name} listener shutdown timed out"))?
+                .map_err(|error| format!("{name} listener join failed: {error}"))
         };
         let (tcp_result, ws_result) = tokio::join!(
             wait_for_listener("TCP", tcp_join),
@@ -566,7 +564,7 @@ impl TestServer {
         })?;
         store
             .shutdown()
-            .map_err(|error| format!("Midge shutdown failed: {}", error))?;
+            .map_err(|error| format!("Midge shutdown failed: {error}"))?;
         Ok(())
     }
 }

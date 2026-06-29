@@ -2284,8 +2284,7 @@ async fn should_reject_dead_letter_replay_given_missing_family_query_param() {
     let req = hyper::http::Request::builder()
         .method(Method::POST)
         .uri(format!(
-            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{}/replay",
-            message_id
+            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{message_id}/replay"
         ))
         .header(COOKIE, cookie)
         .header("host", "localhost")
@@ -2313,8 +2312,7 @@ async fn should_reject_unsafe_admin_request_given_cross_origin() {
     let req = hyper::http::Request::builder()
         .method(Method::POST)
         .uri(format!(
-            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{}/replay?family=1",
-            message_id
+            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{message_id}/replay?family=1"
         ))
         .header(COOKIE, cookie)
         .header("host", "localhost")
@@ -2342,8 +2340,7 @@ async fn should_replay_dead_letter_given_family_targeted_admin_request() {
     let replay_req = hyper::http::Request::builder()
         .method(Method::POST)
         .uri(format!(
-            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{}/replay?family=1",
-            message_id
+            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{message_id}/replay?family=1"
         ))
         .header(COOKIE, cookie.clone())
         .header("host", "localhost")
@@ -2402,8 +2399,7 @@ async fn should_purge_dead_letter_given_family_targeted_admin_request() {
     let purge_req = hyper::http::Request::builder()
         .method(Method::DELETE)
         .uri(format!(
-            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{}?family=1",
-            message_id
+            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{message_id}?family=1"
         ))
         .header(COOKIE, cookie.clone())
         .header("host", "localhost")

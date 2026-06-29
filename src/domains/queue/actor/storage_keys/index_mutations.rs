@@ -72,7 +72,7 @@ impl QueueActor {
         match mutation {
             PersistedReadyMutation::Delete { removed } => txn
                 .delete(self.ready_range_key(shard, removed.next))
-                .map_err(|e| format!("Failed to delete queue ready index: {:?}", e)),
+                .map_err(|e| format!("Failed to delete queue ready index: {e:?}")),
             PersistedReadyMutation::Replace { removed, inserted } => txn
                 .delete(self.ready_range_key(shard, removed.next))
                 .and_then(|_| {
@@ -82,7 +82,7 @@ impl QueueActor {
                         None,
                     )
                 })
-                .map_err(|e| format!("Failed to replace queue ready index: {:?}", e)),
+                .map_err(|e| format!("Failed to replace queue ready index: {e:?}")),
             PersistedReadyMutation::Split {
                 removed,
                 left,
@@ -103,7 +103,7 @@ impl QueueActor {
                         None,
                     )
                 })
-                .map_err(|e| format!("Failed to split queue ready index: {:?}", e)),
+                .map_err(|e| format!("Failed to split queue ready index: {e:?}")),
         }
     }
 
@@ -117,15 +117,13 @@ impl QueueActor {
         if let Some((shard, mutation)) = plan.ready_mutation {
             self.write_persisted_ready_mutation(txn, shard, mutation)
                 .map_err(|error| {
-                    format!("Failed to update ready index for message {}: {}", id, error)
+                    format!("Failed to update ready index for message {id}: {error}")
                 })?;
         }
 
         if let Some(visible_at_ms) = plan.delayed_index_delete {
             txn.delete(self.delayed_index_key(visible_at_ms, id))
-                .map_err(|e| {
-                    format!("Failed to update delayed index for message {}: {:?}", id, e)
-                })?;
+                .map_err(|e| format!("Failed to update delayed index for message {id}: {e:?}"))?;
         }
 
         if let Some(dead_lettered_at_ms) = dead_lettered_at_ms {
@@ -134,7 +132,7 @@ impl QueueActor {
                 Vec::new(),
                 None,
             )
-            .map_err(|e| format!("Failed to write DLQ index for message {}: {:?}", id, e))?;
+            .map_err(|e| format!("Failed to write DLQ index for message {id}: {e:?}"))?;
         }
 
         txn.put(
@@ -147,12 +145,7 @@ impl QueueActor {
             ),
             None,
         )
-        .map_err(|e| {
-            format!(
-                "Failed to update queue index meta for message {}: {:?}",
-                id, e
-            )
-        })
+        .map_err(|e| format!("Failed to update queue index meta for message {id}: {e:?}"))
     }
 
     pub(in crate::domains::queue::actor) fn apply_index_mutation_plan(

@@ -18,6 +18,7 @@ pub struct FrameLimits {
 }
 
 impl FrameLimits {
+    #[must_use]
     pub fn new(max_frame: usize, max_buffer: usize) -> Self {
         Self {
             max_frame_size: max_frame,
@@ -52,6 +53,7 @@ pub enum FrameValidation {
 }
 
 /// Validate frame before processing
+#[must_use]
 pub fn validate_frame(data: &[u8], limits: &FrameLimits) -> FrameValidation {
     // Check frame size
     if data.len() > limits.max_frame_size {

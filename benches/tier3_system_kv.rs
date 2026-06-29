@@ -59,8 +59,8 @@ fn should_complete_10_puts_same_family(ctx: &mut StressContext) {
                     tx_id,
                     route_family: RouteFamily::new(1),
                     resource: "intensive".to_string(),
-                    key: Bytes::from(format!("key{}", i).into_bytes()),
-                    value: Bytes::from(format!("value{}", i).into_bytes()),
+                    key: Bytes::from(format!("key{i}").into_bytes()),
+                    value: Bytes::from(format!("value{i}").into_bytes()),
                 });
             }
         },
@@ -96,7 +96,7 @@ fn should_complete_interleaved_puts_2_families(ctx: &mut StressContext) {
                     tx_id: tx_id1,
                     route_family: RouteFamily::new(1),
                     resource: "f1".to_string(),
-                    key: Bytes::from(format!("k1_{}", i).into_bytes()),
+                    key: Bytes::from(format!("k1_{i}").into_bytes()),
                     value: Bytes::from_static(b"v1"),
                 });
 
@@ -105,7 +105,7 @@ fn should_complete_interleaved_puts_2_families(ctx: &mut StressContext) {
                     tx_id: tx_id2,
                     route_family: RouteFamily::new(2),
                     resource: "f2".to_string(),
-                    key: Bytes::from(format!("k2_{}", i).into_bytes()),
+                    key: Bytes::from(format!("k2_{i}").into_bytes()),
                     value: Bytes::from_static(b"v2"),
                 });
             }
@@ -128,7 +128,7 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
     let mut actor = KvActor::new(store);
     let txs: Vec<(u64, u64, String)> = (1..=3)
         .map(|family_id| {
-            let resource = format!("f{}", family_id);
+            let resource = format!("f{family_id}");
             let tx_id = begin_transaction(&mut actor, family_id, &resource, TxMode::ReadWrite)
                 .expect("transaction begin should succeed during setup");
             (family_id, tx_id, resource)
@@ -144,7 +144,7 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
                         tx_id: *tx_id,
                         route_family: RouteFamily::new(*family_id),
                         resource: resource.clone(),
-                        key: Bytes::from(format!("k{}", i).into_bytes()),
+                        key: Bytes::from(format!("k{i}").into_bytes()),
                         value: Bytes::from_static(b"v"),
                     });
                 }
@@ -187,7 +187,7 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
             tx_id,
             route_family: RouteFamily::new(1),
             resource: "setup".to_string(),
-            key: Bytes::from(format!("setup_k{}", i).into_bytes()),
+            key: Bytes::from(format!("setup_k{i}").into_bytes()),
             value: Bytes::from_static(b"setup_v"),
         });
     }
@@ -211,7 +211,7 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
                     tx_id: read_tx_id,
                     route_family: RouteFamily::new(1),
                     resource: "setup".to_string(),
-                    key: Bytes::from(format!("setup_k{}", i).into_bytes()),
+                    key: Bytes::from(format!("setup_k{i}").into_bytes()),
                 });
             }
 
@@ -220,7 +220,7 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
                     tx_id: write_tx_id,
                     route_family: RouteFamily::new(2),
                     resource: "write_f2".to_string(),
-                    key: Bytes::from(format!("new_k{}", i).into_bytes()),
+                    key: Bytes::from(format!("new_k{i}").into_bytes()),
                     value: Bytes::from_static(b"new_v"),
                 });
             }

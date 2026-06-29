@@ -60,7 +60,7 @@ fn create_test_actor(clock: Arc<dyn Clock>) -> ScheduleActor {
 }
 
 fn build_route(index: usize) -> String {
-    let route = format!("schedule://acme/jobs/task{:06}/run", index);
+    let route = format!("schedule://acme/jobs/task{index:06}/run");
     validate_concrete_schedule_route(&route).expect("valid schedule benchmark route");
     route
 }
@@ -75,7 +75,7 @@ fn precompute_data(count: usize) -> ScheduleFixtures {
             })
             .collect(),
         payloads: (0..count)
-            .map(|index| Bytes::from(format!("payload-{:06}", index)))
+            .map(|index| Bytes::from(format!("payload-{index:06}")))
             .collect(),
     }
 }
@@ -184,7 +184,7 @@ fn bench_claim_due_persistence(c: &mut Criterion) {
 
         for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
             group.throughput(Throughput::Elements(ready_count as u64));
-            group.bench_function(format!("claim_due_{}_{}_mixed_crons", label, count), |b| {
+            group.bench_function(format!("claim_due_{label}_{count}_mixed_crons"), |b| {
                 let bench_clock = bench_clock.clone();
                 let fixtures = &fixtures;
                 b.iter_custom(|iters| {
@@ -218,7 +218,7 @@ fn bench_ack_persistence(c: &mut Criterion) {
 
         for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
             group.throughput(Throughput::Elements(ready_count as u64));
-            group.bench_function(format!("ack_claims_{}_{}_mixed_crons", label, count), |b| {
+            group.bench_function(format!("ack_claims_{label}_{count}_mixed_crons"), |b| {
                 let bench_clock = bench_clock.clone();
                 let fixtures = &fixtures;
                 b.iter_custom(|iters| {
@@ -252,7 +252,7 @@ fn bench_publish_fanout(c: &mut Criterion) {
     for subscriber_count in [1usize, 10usize, 100usize] {
         group.throughput(Throughput::Elements(subscriber_count as u64));
         group.bench_function(
-            format!("publish_exact_route_{}_subscribers", subscriber_count),
+            format!("publish_exact_route_{subscriber_count}_subscribers"),
             |b| {
                 let (sink, event) = create_publish_case(subscriber_count);
                 b.iter(|| {

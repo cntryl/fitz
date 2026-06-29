@@ -46,11 +46,7 @@ fn minimum_memory_limit_bytes_from_env() -> BootResult<u64> {
     };
 
     raw.parse::<u64>().map_err(|_| {
-        format!(
-            "{} must be an unsigned integer byte count, got '{}'",
-            ENV_MIN_MEMORY_BYTES, raw
-        )
-        .into()
+        format!("{ENV_MIN_MEMORY_BYTES} must be an unsigned integer byte count, got '{raw}'").into()
     })
 }
 

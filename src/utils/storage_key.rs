@@ -12,6 +12,7 @@ pub enum DomainKeyspace {
 }
 
 impl DomainKeyspace {
+    #[must_use]
     pub fn code(self) -> [u8; 2] {
         match self {
             Self::Kv => *b"kv",
@@ -25,6 +26,7 @@ impl DomainKeyspace {
     }
 }
 
+#[must_use]
 pub fn domain_prefix(realm: &str, domain: DomainKeyspace) -> Vec<u8> {
     let domain_code = domain.code();
     let mut encoder = Encoder::with_capacity(realm.len() + domain_code.len() + 2);
@@ -35,6 +37,7 @@ pub fn domain_prefix(realm: &str, domain: DomainKeyspace) -> Vec<u8> {
     encoder.into_vec()
 }
 
+#[must_use]
 pub fn realm_domain_prefix(realm: &str, domain: &str) -> Vec<u8> {
     let mut encoder = Encoder::with_capacity(realm.len() + domain.len() + 2);
     encoder.encode_string_into(realm);
@@ -44,16 +47,19 @@ pub fn realm_domain_prefix(realm: &str, domain: &str) -> Vec<u8> {
     encoder.into_vec()
 }
 
+#[must_use]
 pub fn prefix_range_end(prefix: &[u8]) -> Vec<u8> {
     LexKey::encode_range_upper(prefix, None).as_bytes().to_vec()
 }
 
+#[must_use]
 pub fn domain_range(realm: &str, domain: DomainKeyspace) -> (Vec<u8>, Vec<u8>) {
     let prefix = domain_prefix(realm, domain);
     let end = prefix_range_end(&prefix);
     (prefix, end)
 }
 
+#[must_use]
 pub fn realm_prefix(realm: &str) -> Vec<u8> {
     let mut encoder = Encoder::with_capacity(realm.len() + 1);
     encoder.encode_string_into(realm);
@@ -61,6 +67,7 @@ pub fn realm_prefix(realm: &str) -> Vec<u8> {
     encoder.into_vec()
 }
 
+#[must_use]
 pub fn domain_marker_encoder(
     realm: &str,
     domain: DomainKeyspace,
@@ -77,6 +84,7 @@ pub fn domain_marker_encoder(
     encoder
 }
 
+#[must_use]
 pub fn realm_range(realm: &str) -> (Vec<u8>, Vec<u8>) {
     let prefix = realm_prefix(realm);
     let end = prefix_range_end(&prefix);
@@ -103,6 +111,7 @@ pub fn encode_bytes_segment_into(encoder: &mut Encoder, segment: &[u8]) {
     encoder.push_separator();
 }
 
+#[must_use]
 pub fn prefixed_key(realm: &str, domain: DomainKeyspace, suffix: &[u8]) -> Vec<u8> {
     let mut key = domain_prefix(realm, domain);
     key.reserve(suffix.len());
@@ -110,6 +119,7 @@ pub fn prefixed_key(realm: &str, domain: DomainKeyspace, suffix: &[u8]) -> Vec<u
     key
 }
 
+#[must_use]
 pub fn split_domain_key(key: &[u8], domain: DomainKeyspace) -> Option<(&str, &[u8])> {
     let realm_end = key.iter().position(|byte| *byte == LexKey::SEPARATOR)?;
     let realm = std::str::from_utf8(&key[..realm_end]).ok()?;
@@ -117,6 +127,7 @@ pub fn split_domain_key(key: &[u8], domain: DomainKeyspace) -> Option<(&str, &[u
     Some((realm, suffix))
 }
 
+#[must_use]
 pub fn strip_realm_domain_prefix<'a>(key: &'a [u8], domain: &str) -> Option<&'a [u8]> {
     let realm_end = key.iter().position(|byte| *byte == LexKey::SEPARATOR)?;
     let domain_start = realm_end.saturating_add(1);
@@ -132,6 +143,7 @@ pub fn strip_realm_domain_prefix<'a>(key: &'a [u8], domain: &str) -> Option<&'a 
     Some(&key[domain_end + 1..])
 }
 
+#[must_use]
 pub fn strip_domain_prefix(key: &[u8], domain: DomainKeyspace) -> Option<&[u8]> {
     let domain_code = domain.code();
     let realm_end = key.iter().position(|byte| *byte == LexKey::SEPARATOR)?;

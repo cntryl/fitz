@@ -19,7 +19,7 @@ fn bench_envelope_creation(c: &mut Criterion) {
         .map(|i| {
             let dest = RouteAddress::new(
                 RouteFamily::new(1),
-                Route::new(format!("ftz://1/kv/acme/app/users{}", i)),
+                Route::new(format!("ftz://1/kv/acme/app/users{i}")),
             );
             (
                 dest,
@@ -52,11 +52,11 @@ fn bench_envelope_from_route(c: &mut Criterion) {
         .map(|i| {
             let src = RouteAddress::new(
                 RouteFamily::new(1),
-                Route::new(format!("ftz://1/rpc/acme/app/client{}", i)),
+                Route::new(format!("ftz://1/rpc/acme/app/client{i}")),
             );
             let dst = RouteAddress::new(
                 RouteFamily::new(1),
-                Route::new(format!("ftz://1/rpc/acme/app/server{}", i)),
+                Route::new(format!("ftz://1/rpc/acme/app/server{i}")),
             );
             (
                 src,
@@ -94,7 +94,7 @@ fn bench_envelope_with_deadline(c: &mut Criterion) {
         .map(|i| {
             let dest = RouteAddress::new(
                 RouteFamily::new(1),
-                Route::new(format!("ftz://1/lease/acme/app/resource{}", i)),
+                Route::new(format!("ftz://1/lease/acme/app/resource{i}")),
             );
             (
                 dest,
@@ -128,7 +128,7 @@ fn bench_envelope_with_causation(c: &mut Criterion) {
         .map(|i| {
             let dest = RouteAddress::new(
                 RouteFamily::new(1),
-                Route::new(format!("ftz://1/notice/acme/app/events{}", i)),
+                Route::new(format!("ftz://1/notice/acme/app/events{i}")),
             );
             (
                 dest,
@@ -161,7 +161,7 @@ fn bench_envelope_owning_heap_payload_sizes(c: &mut Criterion) {
         .map(|i| {
             let dest = RouteAddress::new(
                 RouteFamily::new(1),
-                Route::new(format!("ftz://1/stream/acme/app/logs{}", i)),
+                Route::new(format!("ftz://1/stream/acme/app/logs{i}")),
             );
             (dest, vec![1 + i as u64])
         })
@@ -171,7 +171,7 @@ fn bench_envelope_owning_heap_payload_sizes(c: &mut Criterion) {
         .map(|i| {
             let dest = RouteAddress::new(
                 RouteFamily::new(1),
-                Route::new(format!("ftz://1/stream/acme/app/logs_large{}", i)),
+                Route::new(format!("ftz://1/stream/acme/app/logs_large{i}")),
             );
             (dest, large_msg.clone())
         })

@@ -10,6 +10,7 @@ use std::sync::Arc;
 /// This eliminates disk I/O overhead and provides fast, deterministic
 /// storage for benchmark scenarios. All data is lost when the engine
 /// is dropped.
+#[must_use]
 pub fn create_bench_store() -> Arc<cntryl_midge::Engine> {
     crate::testkit::create_test_engine_with_cfs(vec![1])
 }
@@ -24,6 +25,7 @@ pub fn create_bench_store() -> Arc<cntryl_midge::Engine> {
 ///
 /// A tuple of (Engine, TempDir). The TempDir must be kept alive for the
 /// lifetime of the engine, otherwise the directory will be deleted.
+#[must_use]
 pub fn create_local_bench_store() -> (Arc<cntryl_midge::Engine>, tempfile::TempDir) {
     let temp_dir =
         tempfile::tempdir().expect("Failed to create temporary directory for local bench store");

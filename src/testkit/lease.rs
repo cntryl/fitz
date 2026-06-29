@@ -10,6 +10,7 @@ use std::sync::Arc;
 ///
 /// # Arguments
 /// * `route_str` - Optional custom route (defaults to standard lease route)
+#[must_use]
 pub fn create_test_lease_context(route_str: Option<&str>) -> Context<LeaseActor> {
     let router = Arc::new(Router::new());
     let route = route_str.unwrap_or("lease://realm/locks/test/acquire");

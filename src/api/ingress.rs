@@ -32,24 +32,28 @@ impl Default for IngressConfig {
 
 impl IngressConfig {
     /// Create a config with custom frame size
+    #[must_use]
     pub fn with_frame_size(mut self, size: usize) -> Self {
         self.max_frame_size = size;
         self
     }
 
     /// Create a config with custom connection limit
+    #[must_use]
     pub fn with_max_connections(mut self, max: usize) -> Self {
         self.max_connections = max;
         self
     }
 
     /// Create a config with custom channel capacity
+    #[must_use]
     pub fn with_channel_capacity(mut self, capacity: usize) -> Self {
         self.channel_capacity = capacity;
         self
     }
 
     /// Create a config with custom backpressure timeout
+    #[must_use]
     pub fn with_backpressure_timeout(mut self, timeout: Duration) -> Self {
         self.backpressure_timeout = timeout;
         self
@@ -77,13 +81,13 @@ impl std::fmt::Display for IngressError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::FrameTooLarge { size, max } => {
-                write!(f, "frame too large: {} > {}", size, max)
+                write!(f, "frame too large: {size} > {max}")
             }
             Self::TooManyConnections => write!(f, "too many connections"),
             Self::BackpressureFull => write!(f, "backpressure: channel full"),
-            Self::SessionNotFound(id) => write!(f, "session not found: {}", id),
-            Self::InvalidFrame(msg) => write!(f, "invalid frame: {}", msg),
-            Self::TransportError(msg) => write!(f, "transport error: {}", msg),
+            Self::SessionNotFound(id) => write!(f, "session not found: {id}"),
+            Self::InvalidFrame(msg) => write!(f, "invalid frame: {msg}"),
+            Self::TransportError(msg) => write!(f, "transport error: {msg}"),
         }
     }
 }
@@ -141,7 +145,7 @@ mod tests {
         // Act
         let mut outputs: Vec<String> = Vec::new();
         for error in errors {
-            outputs.push(format!("{}", error));
+            outputs.push(format!("{error}"));
         }
 
         // Assert

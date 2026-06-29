@@ -103,7 +103,7 @@ impl StreamStore {
         let families = self
             .db
             .list_column_families()
-            .map_err(|e| format!("list column families failed: {:?}", e))?;
+            .map_err(|e| format!("list column families failed: {e:?}"))?;
 
         for family in families {
             if family.id() == 0 {
@@ -120,7 +120,7 @@ impl StreamStore {
         let families = self
             .db
             .list_column_families()
-            .map_err(|e| format!("list stream column families failed: {:?}", e))?;
+            .map_err(|e| format!("list stream column families failed: {e:?}"))?;
 
         for family in families {
             if family.id() == 0 {
@@ -136,22 +136,16 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| {
-                format!(
-                    "stream validation failed: family={} begin_tx: {:?}",
-                    family, e
-                )
-            })?;
+            .map_err(|e| format!("stream validation failed: family={family} begin_tx: {e:?}"))?;
         let mut iter = txn
             .scan(&cntryl_midge::Query::new())
-            .map_err(|e| format!("stream validation failed: family={} scan: {:?}", family, e))?;
+            .map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?;
 
         for (key, value) in iter.collect_all() {
             let validation = Self::validate_persisted_row(&key, &value);
             if let Err((category, error)) = validation {
                 return Err(format!(
-                    "stream validation failed: family={} key_category={} error={}",
-                    family, category, error
+                    "stream validation failed: family={family} key_category={category} error={error}"
                 ));
             }
         }
@@ -266,11 +260,11 @@ impl StreamStore {
         let mut txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| LayoutActivationFailure::Other(format!("begin_tx failed: {:?}", e)))?;
+            .map_err(|e| LayoutActivationFailure::Other(format!("begin_tx failed: {e:?}")))?;
 
         if let Some(bytes) = txn
             .get(&marker_key)
-            .map_err(|e| LayoutActivationFailure::Other(format!("get error: {:?}", e)))?
+            .map_err(|e| LayoutActivationFailure::Other(format!("get error: {e:?}")))?
         {
             let marker =
                 StreamLayoutMarkerValue::decode(&bytes).map_err(LayoutActivationFailure::Other)?;
@@ -294,9 +288,9 @@ impl StreamStore {
             StreamLayoutMarkerValue::new(self.layout).encode(),
             None,
         )
-        .map_err(|e| LayoutActivationFailure::Other(format!("txn put failed: {:?}", e)))?;
+        .map_err(|e| LayoutActivationFailure::Other(format!("txn put failed: {e:?}")))?;
         txn.commit(cntryl_midge::WriteOptions::sync())
-            .map_err(|e| LayoutActivationFailure::Other(format!("midge commit error: {:?}", e)))?;
+            .map_err(|e| LayoutActivationFailure::Other(format!("midge commit error: {e:?}")))?;
 
         Ok(())
     }
@@ -321,15 +315,12 @@ impl StreamStore {
         ];
 
         let query = cntryl_midge::Query::new();
-        let mut iter = txn
-            .scan(&query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         while let Some((key, _value)) = iter.next() {
             let suffix = crate::domains::stream::storage::stream_key_suffix(&key);
             if suffix
                 .first()
-                .map(|prefix| stream_prefixes.contains(prefix))
-                .unwrap_or(false)
+                .is_some_and(|prefix| stream_prefixes.contains(prefix))
             {
                 return Ok(true);
             }
@@ -363,10 +354,7 @@ impl StreamStore {
     }
 
     pub(super) fn invalid_compact_realm_page_error(realm_offset: u64, error: String) -> String {
-        format!(
-            "ERR_INVALID_COMPACT_REALM_PAGE: realm_offset={} {}",
-            realm_offset, error
-        )
+        format!("ERR_INVALID_COMPACT_REALM_PAGE: realm_offset={realm_offset} {error}")
     }
 
     pub(super) fn invalid_compact_area_page_error(
@@ -376,8 +364,7 @@ impl StreamStore {
         error: String,
     ) -> String {
         format!(
-            "ERR_INVALID_COMPACT_AREA_PAGE: realm={} area={} area_offset={} {}",
-            realm, area, area_offset, error
+            "ERR_INVALID_COMPACT_AREA_PAGE: realm={realm} area={area} area_offset={area_offset} {error}"
         )
     }
 
@@ -389,8 +376,7 @@ impl StreamStore {
         error: String,
     ) -> String {
         format!(
-            "ERR_INVALID_COMPACT_RESOURCE_PAGE: realm={} area={} resource={} resource_offset={} {}",
-            realm, area, resource, resource_offset, error
+            "ERR_INVALID_COMPACT_RESOURCE_PAGE: realm={realm} area={area} resource={resource} resource_offset={resource_offset} {error}"
         )
     }
 

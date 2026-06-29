@@ -88,12 +88,12 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
         let resource_meta_query = cntryl_midge::Query::new();
         let mut resource_meta_iter = txn
             .scan(&resource_meta_query)
-            .map_err(|e| format!("scan error: {:?}", e))?;
+            .map_err(|e| format!("scan error: {e:?}"))?;
 
         let mut values = Vec::new();
         for (key, value) in resource_meta_iter.collect_all() {
@@ -178,7 +178,7 @@ impl StreamStore {
             ));
         }
 
-        let event_bytes = event.body.len() + event.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let event_bytes = event.body.len() + event.metadata.as_ref().map_or(0, |m| m.len());
         if session.total_bytes + event_bytes > self.limits.max_batch_bytes {
             return Err(format!(
                 "ERR_BATCH_TOO_LARGE: total {} + event {} exceeds max_batch_bytes {}",
@@ -396,11 +396,11 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
-            .map_err(|e| format!("failed to begin tx: {:?}", e))?;
+            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
         match txn
             .get(&page_key)
-            .map_err(|e| format!("get error: {:?}", e))?
+            .map_err(|e| format!("get error: {e:?}"))?
         {
             Some(value_bytes) => {
                 let page = CompactResourcePageValue::try_decode(&value_bytes).map_err(|error| {

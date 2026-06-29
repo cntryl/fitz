@@ -60,6 +60,7 @@ pub enum PatternSegment {
 impl Pattern {
     /// Create a new pattern from a route string
     #[inline]
+    #[must_use]
     pub fn new(route: &str) -> Self {
         let (scheme, segments) = parse_pattern(route);
         Self {
@@ -71,18 +72,21 @@ impl Pattern {
 
     /// Get the original route pattern
     #[inline]
+    #[must_use]
     pub fn route(&self) -> &str {
         &self.route
     }
 
     /// Check if this pattern matches a given route
     #[inline]
+    #[must_use]
     pub fn matches(&self, route: &Route) -> bool {
         self.matches_str(route.as_str())
     }
 
     /// Check if this pattern matches a raw route string.
     #[inline]
+    #[must_use]
     pub fn matches_str(&self, route: &str) -> bool {
         let (route_scheme, route_segments) = split_route(route);
 
@@ -97,6 +101,7 @@ impl Pattern {
 }
 
 /// Parse a route pattern into segments
+#[must_use]
 pub fn parse_pattern_segments(route: &str) -> Vec<PatternSegment> {
     split_route(route)
         .1
@@ -161,6 +166,7 @@ fn parse_pattern(route: &str) -> (Option<String>, Vec<PatternSegment>) {
 
 /// Extract path segments from a route string as Strings
 /// DEPRECATED: Use extract_route_segments_borrowed for zero-copy matching
+#[must_use]
 pub fn extract_route_segments(route: &str) -> Vec<String> {
     split_route(route)
         .1
@@ -172,12 +178,14 @@ pub fn extract_route_segments(route: &str) -> Vec<String> {
 /// Extract path segments from a route string as borrowed string slices
 /// Zero-copy variant for hot-path matching
 #[inline]
+#[must_use]
 pub fn extract_route_segments_borrowed(route: &str) -> RouteSegments<'_> {
     split_route(route).1
 }
 
 /// Match pattern segments against route segments using index-based recursion
 /// Used by both Pattern matching and SubscriptionIndex suffix matching
+#[must_use]
 pub fn match_pattern_segments(
     patterns: &[PatternSegment],
     pat_idx: usize,
@@ -228,6 +236,7 @@ pub fn match_pattern_segments(
 /// Match pattern segments against route segments with borrowed strings
 /// Zero-copy variant for hot-path matching
 #[inline]
+#[must_use]
 pub fn match_pattern_segments_borrowed(
     patterns: &[PatternSegment],
     pat_idx: usize,

@@ -7,6 +7,7 @@ use bytes::BufMut;
 use bytes::Bytes;
 
 /// Extract the single TLV field from a test frame for direct-to-sink delivery.
+#[must_use]
 pub fn extract_single_tlv_field(frame: &[u8]) -> (u16, Bytes) {
     let mut parser = TlvFrameParser::new(frame);
     let (msg_type, payload) = parser.next_field_ref().expect("single TLV field");
@@ -14,6 +15,7 @@ pub fn extract_single_tlv_field(frame: &[u8]) -> (u16, Bytes) {
 }
 
 /// Build KV BEGIN frame (msg_type 100)
+#[must_use]
 pub fn build_kv_begin(route: &str, mode: u8, durability: u8) -> Vec<u8> {
     let mut payload = Vec::new();
     // [u32 BE route_len][route][u8 mode][u8 durability]
@@ -28,6 +30,7 @@ pub fn build_kv_begin(route: &str, mode: u8, durability: u8) -> Vec<u8> {
 }
 
 /// Build KV PUT frame (msg_type 104)
+#[must_use]
 pub fn build_kv_put(tx_id: u64, route: &str, key: &[u8], value: &[u8]) -> Vec<u8> {
     let mut payload = Vec::new();
     // [u64 BE tx_id][u32 BE route_len][route][u32 BE key_len][key][u32 BE value_len][value]
@@ -45,6 +48,7 @@ pub fn build_kv_put(tx_id: u64, route: &str, key: &[u8], value: &[u8]) -> Vec<u8
 }
 
 /// Build KV COMMIT frame (msg_type 101)
+#[must_use]
 pub fn build_kv_commit(tx_id: u64, route: &str) -> Vec<u8> {
     let mut payload = Vec::new();
     // [u64 BE tx_id][u32 BE route_len][route]
@@ -58,6 +62,7 @@ pub fn build_kv_commit(tx_id: u64, route: &str) -> Vec<u8> {
 }
 
 /// Build KV ROLLBACK frame (msg_type 102)
+#[must_use]
 pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
     let mut payload = Vec::new();
     // [u64 BE tx_id][u32 BE route_len][route]
@@ -72,6 +77,7 @@ pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
 
 /// Parse KV response
 /// Format: [u8 status][optional data...]
+#[must_use]
 pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
 
@@ -101,6 +107,7 @@ pub fn parse_kv_tx_id(data: &[u8]) -> Result<u64, String> {
 }
 
 /// Build NOTICE PUBLISH frame (msg_type 500)
+#[must_use]
 pub fn build_notice_publish(route: &str, data: &[u8]) -> Vec<u8> {
     // Wire format: [string route][bytes payload]
     let mut buf = Vec::new();
@@ -116,6 +123,7 @@ pub fn build_notice_publish(route: &str, data: &[u8]) -> Vec<u8> {
 }
 
 /// Build NOTICE SUBSCRIBE frame (msg_type 501)
+#[must_use]
 pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
     // Wire format: [string pattern]
     let mut buf = Vec::new();
@@ -128,6 +136,7 @@ pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
 }
 
 /// Build NOTICE UNSUBSCRIBE frame (msg_type 502)
+#[must_use]
 pub fn build_notice_unsubscribe(subscription_id: u64) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u64(subscription_id);
@@ -138,6 +147,7 @@ pub fn build_notice_unsubscribe(subscription_id: u64) -> Vec<u8> {
 }
 
 /// Parse NOTICE response
+#[must_use]
 pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
 
@@ -181,7 +191,7 @@ pub fn parse_notice_delivery(frame: &[u8]) -> Result<NoticeDelivery, String> {
         .next_field_ref()
         .ok_or_else(|| "Missing notice delivery frame".to_string())?;
     if msg_type != 504 {
-        return Err(format!("Unexpected notice delivery msg_type: {}", msg_type));
+        return Err(format!("Unexpected notice delivery msg_type: {msg_type}"));
     }
 
     let mut dec = PayloadDecoder::new(payload);
@@ -201,6 +211,7 @@ pub fn parse_notice_delivery(frame: &[u8]) -> Result<NoticeDelivery, String> {
 }
 
 /// Build QUEUE ENQUEUE frame (msg_type 200)
+#[must_use]
 pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
     // Wire format: [u32 route_len][route][u32 body_len][body][u8 has_delay=0]
     let mut payload = Vec::new();
@@ -216,6 +227,7 @@ pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
 }
 
 /// Build QUEUE RESERVE frame (msg_type 202)
+#[must_use]
 pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
     // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=0]
     let mut payload = Vec::new();
@@ -230,6 +242,7 @@ pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
 }
 
 /// Build QUEUE WATCH frame (msg_type 207).
+#[must_use]
 pub fn build_queue_watch(queue_name: &str) -> Vec<u8> {
     let pattern = if queue_name.contains('*') || queue_name.ends_with("/ready") {
         queue_name.to_string()
@@ -246,6 +259,7 @@ pub fn build_queue_watch(queue_name: &str) -> Vec<u8> {
 }
 
 /// Build QUEUE RESERVE frame (msg_type 202) with an explicit batch size.
+#[must_use]
 pub fn build_queue_dequeue_batch(queue_name: &str, batch_size: u32) -> Vec<u8> {
     // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=1][u32 batch]
     let mut payload = Vec::new();
@@ -261,6 +275,7 @@ pub fn build_queue_dequeue_batch(queue_name: &str, batch_size: u32) -> Vec<u8> {
 }
 
 /// Build QUEUE COMPLETE frame (msg_type 204)
+#[must_use]
 pub fn build_queue_complete(queue_name: &str, message_id: u64, token: u64) -> Vec<u8> {
     // Wire format: [u32 route_len][route][u64 message_id][u64 inflight_token]
     let mut payload = Vec::new();
@@ -275,6 +290,7 @@ pub fn build_queue_complete(queue_name: &str, message_id: u64, token: u64) -> Ve
 }
 
 /// Parse QUEUE response
+#[must_use]
 pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
 
@@ -287,6 +303,7 @@ pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 }
 
 /// Build LEASE ACQUIRE frame (msg_type 400)
+#[must_use]
 pub fn build_lease_acquire_immediate(route: &str, owner_id: &str, ttl_secs: i32) -> Vec<u8> {
     let mut buf = Vec::new();
 
@@ -305,6 +322,7 @@ pub fn build_lease_acquire_immediate(route: &str, owner_id: &str, ttl_secs: i32)
 }
 
 /// Build LEASE RELEASE frame (msg_type 402)
+#[must_use]
 pub fn build_lease_release(route: &str, owner_id: &str, token: u64) -> Vec<u8> {
     let mut buf = Vec::new();
 
@@ -322,6 +340,7 @@ pub fn build_lease_release(route: &str, owner_id: &str, token: u64) -> Vec<u8> {
 }
 
 /// Build LEASE EXTEND frame (msg_type 401)
+#[must_use]
 pub fn build_lease_extend(route: &str, owner_id: &str, token: u64, ttl_secs: i32) -> Vec<u8> {
     let mut buf = Vec::new();
 
@@ -340,6 +359,7 @@ pub fn build_lease_extend(route: &str, owner_id: &str, token: u64, ttl_secs: i32
 }
 
 /// Build LEASE QUERY frame (msg_type 403)
+#[must_use]
 pub fn build_lease_query(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(route.len() as u32);
@@ -351,6 +371,7 @@ pub fn build_lease_query(route: &str) -> Vec<u8> {
 }
 
 /// Parse LEASE response: (msg_type, status, data)
+#[must_use]
 pub fn parse_lease_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
 
@@ -382,7 +403,7 @@ pub fn parse_lease_token_response(data: &[u8]) -> Result<u64, String> {
     // All of these include a fencing token
     let response_type = data[1];
     if response_type > 3 {
-        return Err(format!("Invalid response_type: {}", response_type));
+        return Err(format!("Invalid response_type: {response_type}"));
     }
 
     if data.len() < 10 {
@@ -417,6 +438,7 @@ pub fn parse_lease_extend_token_response(data: &[u8]) -> Result<u64, String> {
 }
 
 /// Build RPC SUBSCRIBE frame (msg_type 300)
+#[must_use]
 pub fn build_rpc_subscribe(worker_addr: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(worker_addr.len() as u32);
@@ -428,6 +450,7 @@ pub fn build_rpc_subscribe(worker_addr: &str) -> Vec<u8> {
 }
 
 /// Build RPC REQUEST frame (msg_type 302)
+#[must_use]
 pub fn build_rpc_request(route: &str, payload: &[u8]) -> Vec<u8> {
     use uuid::Uuid;
 
@@ -439,7 +462,7 @@ pub fn build_rpc_request(route: &str, payload: &[u8]) -> Vec<u8> {
     buf.put_u32(route.len() as u32);
     buf.put_slice(route.as_bytes());
 
-    let reply_route = format!("inbox://session/1/{}", uuid);
+    let reply_route = format!("inbox://session/1/{uuid}");
     buf.put_u32(reply_route.len() as u32);
     buf.put_slice(reply_route.as_bytes());
 
@@ -452,6 +475,7 @@ pub fn build_rpc_request(route: &str, payload: &[u8]) -> Vec<u8> {
 }
 
 /// Build RPC RESPONSE frame (msg_type 303) from worker to route
+#[must_use]
 pub fn build_rpc_response_frame(correlation_id: uuid::Uuid, body: &[u8]) -> Vec<u8> {
     let resp = crate::domains::rpc::protocol::RpcResponse::single(
         correlation_id,
@@ -464,6 +488,7 @@ pub fn build_rpc_response_frame(correlation_id: uuid::Uuid, body: &[u8]) -> Vec<
 }
 
 /// Build RPC ACK frame (msg_type 304) from worker to route
+#[must_use]
 pub fn build_rpc_ack_frame(correlation_id: uuid::Uuid) -> Vec<u8> {
     let payload = crate::protocol::rpc_codec::encode_ack(&correlation_id);
     let mut builder = TlvFrameBuilder::new();
@@ -472,6 +497,7 @@ pub fn build_rpc_ack_frame(correlation_id: uuid::Uuid) -> Vec<u8> {
 }
 
 /// Parse RPC response
+#[must_use]
 pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
 
@@ -484,6 +510,7 @@ pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 }
 
 /// Build STREAM BEGIN frame (msg_type 600)
+#[must_use]
 pub fn build_stream_begin(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(route.len() as u32);
@@ -496,11 +523,13 @@ pub fn build_stream_begin(route: &str) -> Vec<u8> {
 }
 
 /// Build STREAM APPEND frame (msg_type 601)
+#[must_use]
 pub fn build_stream_append(session_id: u64, expected_offset: u64, data: &[u8]) -> Vec<u8> {
     build_stream_append_with_metadata(session_id, expected_offset, data, None)
 }
 
 /// Build STREAM APPEND frame (msg_type 601) with optional metadata.
+#[must_use]
 pub fn build_stream_append_with_metadata(
     session_id: u64,
     expected_offset: u64,
@@ -527,6 +556,7 @@ pub fn build_stream_append_with_metadata(
 }
 
 /// Build STREAM COMMIT frame (msg_type 602)
+#[must_use]
 pub fn build_stream_commit(session_id: u64, mode: u8) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u64(session_id);
@@ -538,11 +568,13 @@ pub fn build_stream_commit(session_id: u64, mode: u8) -> Vec<u8> {
 }
 
 /// Build STREAM READ frame (msg_type 604)
+#[must_use]
 pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
     build_stream_read_with_limit(route, start_offset, 1000)
 }
 
 /// Build STREAM READ frame (msg_type 604) with a caller-provided limit.
+#[must_use]
 pub fn build_stream_read_with_limit(route: &str, start_offset: u64, limit: u64) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(route.len() as u32);
@@ -557,6 +589,7 @@ pub fn build_stream_read_with_limit(route: &str, start_offset: u64, limit: u64) 
 }
 
 /// Build STREAM LAST frame (msg_type 605)
+#[must_use]
 pub fn build_stream_last(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(route.len() as u32);
@@ -568,6 +601,7 @@ pub fn build_stream_last(route: &str) -> Vec<u8> {
 }
 
 /// Build STREAM GET_METADATA frame (msg_type 606)
+#[must_use]
 pub fn build_stream_get_metadata(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(route.len() as u32);
@@ -579,6 +613,7 @@ pub fn build_stream_get_metadata(route: &str) -> Vec<u8> {
 }
 
 /// Build STREAM SUBSCRIBE frame (msg_type 607)
+#[must_use]
 pub fn build_stream_subscribe(route_pattern: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(route_pattern.len() as u32);
@@ -590,6 +625,7 @@ pub fn build_stream_subscribe(route_pattern: &str) -> Vec<u8> {
 }
 
 /// Parse STREAM response
+#[must_use]
 pub fn parse_stream_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
 
@@ -633,7 +669,7 @@ fn decode_stream_ok_data(payload: &[u8]) -> Result<Bytes, String> {
     if status != 0 {
         let error = decoder
             .get_string()
-            .unwrap_or_else(|_| format!("stream response failed with status {}", status));
+            .unwrap_or_else(|_| format!("stream response failed with status {status}"));
         return Err(error);
     }
 
@@ -716,6 +752,7 @@ pub fn parse_stream_read_record_count(response: &[u8]) -> Result<usize, String> 
 }
 
 /// Build SCHEDULE CREATE frame (msg_type 700)
+#[must_use]
 pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(route.len() as u32);
@@ -733,6 +770,7 @@ pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8>
 }
 
 /// Build SCHEDULE CREATE BATCH frame (msg_type 706).
+#[must_use]
 pub fn build_schedule_create_batch(entries: &[(&str, &str, &[u8])]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(entries.len() as u32);
@@ -754,6 +792,7 @@ pub fn build_schedule_create_batch(entries: &[(&str, &str, &[u8])]) -> Vec<u8> {
 }
 
 /// Parse SCHEDULE response
+#[must_use]
 pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
 
@@ -775,8 +814,7 @@ pub fn ensure_schedule_ok(response: &[u8]) -> Result<(), String> {
 
     if status != 0 {
         return Err(format!(
-            "SCHEDULE operation failed (msg_type={}, status={})",
-            msg_type, status
+            "SCHEDULE operation failed (msg_type={msg_type}, status={status})"
         ));
     }
 

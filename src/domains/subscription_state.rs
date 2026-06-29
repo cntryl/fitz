@@ -130,8 +130,7 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
         let matches_session = self
             .subscriptions
             .get(&subscription_id)
-            .map(|subscription| subscription.session_id() == session_id)
-            .unwrap_or(false);
+            .is_some_and(|subscription| subscription.session_id() == session_id);
 
         if matches_session {
             self.remove_subscription(family_id, subscription_id);

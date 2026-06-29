@@ -20,6 +20,7 @@ impl LeaseDomainSink {
         }
     }
 
+    #[must_use]
     pub fn with_metrics(
         mut self,
         collector: crate::observability::metrics::MetricsCollector,

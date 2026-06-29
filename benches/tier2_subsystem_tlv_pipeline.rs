@@ -28,7 +28,7 @@ fn bench_pipeline_decode_only(c: &mut Criterion) {
         let mut refs = Vec::with_capacity(records);
 
         group.throughput(Throughput::Elements(records as u64));
-        group.bench_function(format!("decode_only_{}B", size), |b| {
+        group.bench_function(format!("decode_only_{size}B"), |b| {
             b.iter(|| {
                 refs.clear();
                 decoder
@@ -62,7 +62,7 @@ fn bench_pipeline_mux_route_ref_only(c: &mut Criterion) {
         }
 
         group.throughput(Throughput::Elements(records as u64));
-        group.bench_function(format!("mux_route_ref_only_{}B", size), |b| {
+        group.bench_function(format!("mux_route_ref_only_{size}B"), |b| {
             b.iter(|| {
                 for tlv_ref in &refs {
                     let cref = mux.route_ref(tlv_ref.ty, black_box(tlv_ref.value)).unwrap();
@@ -96,7 +96,7 @@ fn bench_pipeline_decode_then_mux_route_ref(c: &mut Criterion) {
         }
 
         group.throughput(Throughput::Elements(records as u64));
-        group.bench_function(format!("decode_then_mux_route_ref_{}B", size), |b| {
+        group.bench_function(format!("decode_then_mux_route_ref_{size}B"), |b| {
             b.iter(|| {
                 refs.clear();
                 decoder

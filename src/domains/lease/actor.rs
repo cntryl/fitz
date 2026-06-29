@@ -130,11 +130,13 @@ pub struct LeaseActor {
 
 impl LeaseActor {
     /// Create a new lease actor with system clock
+    #[must_use]
     pub fn new(family: crate::runtime::routing::RouteFamily) -> Self {
         Self::with_clock(family, Box::new(SystemClock))
     }
 
     /// Create a new lease actor with a custom clock (for testing)
+    #[must_use]
     pub fn with_clock(family: crate::runtime::routing::RouteFamily, clock: Box<dyn Clock>) -> Self {
         Self {
             family,
@@ -151,6 +153,7 @@ impl LeaseActor {
     }
 
     /// Create a new lease actor with custom configuration (for testing)
+    #[must_use]
     pub fn with_config(
         family: crate::runtime::routing::RouteFamily,
         clock: Box<dyn Clock>,
@@ -557,11 +560,7 @@ impl LeaseActor {
                     LeaseResponse::Expired
                 } else {
                     let expires_in = state.expiry.duration_since(now);
-                    let pending_waiters = self
-                        .pending_acquires
-                        .get(&key)
-                        .map(|q| q.len())
-                        .unwrap_or(0);
+                    let pending_waiters = self.pending_acquires.get(&key).map_or(0, |q| q.len());
 
                     LeaseResponse::Status {
                         owner_id: state.owner_id.clone(),
@@ -610,8 +609,7 @@ impl LeaseActor {
         let is_expired = self
             .leases
             .get(key)
-            .map(|state| state.is_expired(now))
-            .unwrap_or(false);
+            .is_some_and(|state| state.is_expired(now));
 
         if !is_expired {
             return;
@@ -725,6 +723,7 @@ impl LeaseActor {
     }
 
     /// Testing helper: get the number of active leases
+    #[must_use]
     pub fn lease_count(&self) -> usize {
         self.leases.len()
     }

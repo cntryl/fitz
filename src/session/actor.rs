@@ -25,6 +25,7 @@ pub struct SessionActor {
 
 impl SessionActor {
     /// Create a new unauthenticated session actor (pre-auth state)
+    #[must_use]
     pub fn new(session_id: SessionId, permissions: SessionPermissions) -> Self {
         Self {
             session_id,
@@ -52,18 +53,19 @@ impl SessionActor {
     ///
     /// Returns true if authenticated and token is expired, false otherwise.
     /// Unauthenticated sessions are never considered expired.
+    #[must_use]
     pub fn is_token_expired(&self) -> bool {
         if let Some(claims) = &self.claims {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+                .map_or(0, |d| d.as_secs());
             return claims.exp <= now;
         }
         false
     }
 
     /// Get the current token expiration time (unix epoch seconds)
+    #[must_use]
     pub fn token_expiration(&self) -> Option<u64> {
         self.claims.as_ref().map(|c| c.exp)
     }
@@ -77,11 +79,13 @@ impl SessionActor {
     ///
     /// **Security:** This check includes token expiration validation.
     /// Expired tokens are automatically rejected.
+    #[must_use]
     pub fn authorize(&self, route: &Route, access: Access) -> bool {
         self.authorize_route(route.as_str(), access)
     }
 
     /// String-based authorization variant for hot paths that already have a borrowed route.
+    #[must_use]
     pub fn authorize_route(&self, route: &str, access: Access) -> bool {
         // Reject if token is expired
         if self.is_token_expired() {
@@ -92,11 +96,13 @@ impl SessionActor {
 
     /// Session-owned domain state has already been bound to this session, but
     /// the session token must still be fresh before follow-up operations run.
+    #[must_use]
     pub fn authorize_session_owned(&self) -> bool {
         !self.is_token_expired()
     }
 
     /// Batch authorization check (useful for multi-operation requests)
+    #[must_use]
     pub fn authorize_all(&self, checks: &[(Route, Access)]) -> bool {
         checks
             .iter()
@@ -104,6 +110,7 @@ impl SessionActor {
     }
 
     /// Check if this session is authenticated
+    #[must_use]
     pub fn is_authenticated(&self) -> bool {
         self.claims.is_some()
     }
@@ -128,7 +135,7 @@ mod tests {
             identity_claim: Some("tid".to_string()),
             identity_value: Some("prod".to_string()),
             permissions: vec![p],
-            exp: 9999999999,
+            exp: 9_999_999_999,
         };
 
         let mut actor = SessionActor::new(crate::session::session::SessionId(1), perms.clone());

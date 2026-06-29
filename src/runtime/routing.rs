@@ -279,18 +279,21 @@ impl RouteFamily {
 
     /// Create a route family directly from a u32 value
     #[inline]
+    #[must_use]
     pub fn from_u32(id: u32) -> Self {
         Self { id }
     }
 
     /// Get the family ID as u32
     #[inline]
+    #[must_use]
     pub fn id(&self) -> u32 {
         self.id
     }
 
     /// Get the family ID as u64 (for APIs that expect u64)
     #[inline]
+    #[must_use]
     pub fn as_u64(&self) -> u64 {
         self.id as u64
     }
@@ -385,6 +388,7 @@ impl Route {
 
     /// Create a route directly from a borrowed string slice.
     #[inline]
+    #[must_use]
     pub fn from_ref(path: &str) -> Self {
         Self {
             path: Arc::from(path),
@@ -393,6 +397,7 @@ impl Route {
 
     /// Get the route path as a string slice
     #[inline]
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.path
     }
@@ -437,24 +442,28 @@ impl RouteAddress {
     /// let address = RouteAddress::new(family, route);
     /// ```
     #[inline]
+    #[must_use]
     pub fn new(family: RouteFamily, route: Route) -> Self {
         Self { family, route }
     }
 
     /// Get the route family
     #[inline]
+    #[must_use]
     pub fn family(&self) -> &RouteFamily {
         &self.family
     }
 
     /// Get the route
     #[inline]
+    #[must_use]
     pub fn route(&self) -> &Route {
         &self.route
     }
 
     /// Decompose into (family, route)
     #[inline]
+    #[must_use]
     pub fn into_parts(self) -> (RouteFamily, Route) {
         (self.family, self.route)
     }
@@ -462,11 +471,9 @@ impl RouteAddress {
 
 /// Build the canonical inbox address for a session within a route family.
 #[inline]
+#[must_use]
 pub fn session_inbox_address(family: RouteFamily, session_id: u64) -> RouteAddress {
-    RouteAddress::new(
-        family,
-        Route::new(format!("inbox://session/{}", session_id)),
-    )
+    RouteAddress::new(family, Route::new(format!("inbox://session/{session_id}")))
 }
 
 impl fmt::Debug for RouteAddress {

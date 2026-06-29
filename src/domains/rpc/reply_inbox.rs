@@ -59,6 +59,7 @@ pub struct ReplyInboxActor {
 
 impl ReplyInboxActor {
     /// Create new reply inbox actor
+    #[must_use]
     pub fn new(family: RouteFamily) -> Self {
         Self {
             _family: family,
@@ -68,6 +69,7 @@ impl ReplyInboxActor {
     }
 
     /// Create reply inbox with the same strict contiguous semantics.
+    #[must_use]
     pub fn with_buffer_size(family: RouteFamily, _max_buffer_size: usize) -> Self {
         Self::new(family)
     }
@@ -121,6 +123,7 @@ impl ReplyInboxActor {
     }
 
     /// Get number of active streams
+    #[must_use]
     pub fn active_streams(&self) -> usize {
         self.streams.len()
     }
@@ -128,12 +131,14 @@ impl ReplyInboxActor {
     /// Get buffered chunk count for a correlation ID.
     ///
     /// Strict contiguous delivery does not buffer chunks.
+    #[must_use]
     pub fn buffered_count(&self, correlation_id: &Uuid) -> usize {
         let _ = correlation_id;
         0
     }
 
     /// Get number of invalid sequence failures observed by this inbox.
+    #[must_use]
     pub fn invalid_sequence_failures(&self) -> usize {
         self.invalid_sequence_failures
     }

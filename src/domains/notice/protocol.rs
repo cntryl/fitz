@@ -65,6 +65,7 @@ pub struct SubscribeMessage {
 }
 
 impl SubscribeMessage {
+    #[must_use]
     pub fn new(
         family_id: RouteFamily,
         pattern: Route,
@@ -94,6 +95,7 @@ pub struct UnsubscribeMessage {
 }
 
 impl UnsubscribeMessage {
+    #[must_use]
     pub fn new(family_id: RouteFamily, subscription_id: u64, session_id: SessionId) -> Self {
         Self {
             family_id,
@@ -116,6 +118,7 @@ pub struct UnsubscribeAllMessage {
 }
 
 impl UnsubscribeAllMessage {
+    #[must_use]
     pub fn new(session_id: SessionId, subscriber: RouteAddress) -> Self {
         Self {
             session_id,
@@ -164,6 +167,7 @@ pub struct NoticeClientResponse {
 }
 
 impl NoticeClientResponse {
+    #[must_use]
     pub fn new(meta: ClientFrameMeta, response: NoticeResponse) -> Self {
         Self { meta, response }
     }
@@ -219,6 +223,7 @@ pub enum NoticeError {
 }
 
 impl NoticeError {
+    #[must_use]
     pub fn code(&self) -> u16 {
         match self {
             NoticeError::InvalidRealm => 3030,

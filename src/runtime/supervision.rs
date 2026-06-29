@@ -18,6 +18,7 @@ pub enum SupervisorStrategy {
 
 impl SupervisorStrategy {
     /// Create a restart strategy with max restarts and time window
+    #[must_use]
     pub fn restart(max_restarts: u32, within: Duration) -> Self {
         Self::Restart {
             max_restarts,
@@ -26,21 +27,25 @@ impl SupervisorStrategy {
     }
 
     /// Create a stop strategy
+    #[must_use]
     pub fn stop() -> Self {
         Self::Stop
     }
 
     /// Create an escalate strategy
+    #[must_use]
     pub fn escalate() -> Self {
         Self::Escalate
     }
 
     /// Create a resume strategy
+    #[must_use]
     pub fn resume() -> Self {
         Self::Resume
     }
 
     /// Determine what action to take for a given error
+    #[must_use]
     pub fn decide(&self, _error: &ActorError) -> SupervisionAction {
         match self {
             Self::Restart { .. } => SupervisionAction::Restart,
@@ -78,6 +83,7 @@ pub struct RestartTracker {
 }
 
 impl RestartTracker {
+    #[must_use]
     pub fn new(max_restarts: u32, within: Duration) -> Self {
         Self {
             restarts: Vec::new(),

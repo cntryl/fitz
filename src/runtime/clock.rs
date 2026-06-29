@@ -20,6 +20,7 @@ impl Clock for SystemClock {
     }
 }
 
+#[must_use]
 pub fn instant_to_epoch_ms_with_reference(
     instant: Instant,
     reference_instant: Instant,
@@ -34,6 +35,7 @@ pub fn instant_to_epoch_ms_with_reference(
     }
 }
 
+#[must_use]
 pub fn epoch_ms_to_instant_with_reference(
     timestamp_ms: u64,
     reference_instant: Instant,

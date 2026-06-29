@@ -144,7 +144,7 @@ impl AreaActor {
         };
 
         // Reply to StreamActor
-        let reply_route = Route::new(format!("stream://{}/{}/{}", realm, area, reply_to));
+        let reply_route = Route::new(format!("stream://{realm}/{area}/{reply_to}"));
         let reply_addr = RouteAddress::new(self.family_id, reply_route);
         let _ = ctx.send(
             reply_addr,

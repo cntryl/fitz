@@ -18,6 +18,7 @@ pub enum ChannelId {
 
 impl ChannelId {
     /// All supported channels in stable order
+    #[must_use]
     pub fn all() -> [Self; 6] {
         [
             ChannelId::Control,
@@ -30,6 +31,7 @@ impl ChannelId {
     }
 
     /// Try to convert a numeric value back to a channel
+    #[must_use]
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(ChannelId::Control),
@@ -66,7 +68,7 @@ pub enum FrameError {
 impl fmt::Display for FrameError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FrameError::InvalidChannel(value) => write!(f, "invalid channel id: {}", value),
+            FrameError::InvalidChannel(value) => write!(f, "invalid channel id: {value}"),
         }
     }
 }

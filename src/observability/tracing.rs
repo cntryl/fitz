@@ -22,6 +22,7 @@ pub struct LatencyGuard {
 impl LatencyGuard {
     /// Create a new latency guard.
     /// When dropped, records the duration to the span and optionally to a metric.
+    #[must_use]
     pub fn new(span: Span, metric_name: Option<String>) -> Self {
         Self {
             span,
@@ -31,17 +32,20 @@ impl LatencyGuard {
     }
 
     /// Get the elapsed time since guard creation (without consuming it).
+    #[must_use]
     pub fn elapsed_secs(&self) -> f64 {
         let elapsed = self.start.elapsed();
         elapsed.as_secs_f64()
     }
 
     /// Get the elapsed time in milliseconds.
+    #[must_use]
     pub fn elapsed_ms(&self) -> u64 {
         self.start.elapsed().as_millis() as u64
     }
 
     /// Get the elapsed time in microseconds.
+    #[must_use]
     pub fn elapsed_us(&self) -> u64 {
         self.start.elapsed().as_micros() as u64
     }

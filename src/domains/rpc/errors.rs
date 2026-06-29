@@ -28,6 +28,7 @@ pub enum RpcErrorCode {
 
 impl RpcErrorCode {
     /// Get string code for TLV encoding
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Timeout => "RPC_TIMEOUT",
@@ -60,6 +61,7 @@ pub struct RpcError {
 
 impl RpcError {
     /// Create new RPC error
+    #[must_use]
     pub fn new(correlation_id: Uuid, code: RpcErrorCode, message: String) -> Self {
         Self {
             correlation_id,
@@ -69,6 +71,7 @@ impl RpcError {
     }
 
     /// Create timeout error
+    #[must_use]
     pub fn timeout(correlation_id: Uuid) -> Self {
         Self::new(
             correlation_id,
@@ -78,6 +81,7 @@ impl RpcError {
     }
 
     /// Create backpressure error
+    #[must_use]
     pub fn backpressure(correlation_id: Uuid) -> Self {
         Self::new(
             correlation_id,
@@ -87,6 +91,7 @@ impl RpcError {
     }
 
     /// Create unauthorized error
+    #[must_use]
     pub fn unauthorized(correlation_id: Uuid) -> Self {
         Self::new(
             correlation_id,
@@ -96,6 +101,7 @@ impl RpcError {
     }
 
     /// Create invalid route error
+    #[must_use]
     pub fn invalid_route(correlation_id: Uuid) -> Self {
         Self::new(
             correlation_id,
@@ -105,18 +111,17 @@ impl RpcError {
     }
 
     /// Create stream gap error
+    #[must_use]
     pub fn stream_gap(correlation_id: Uuid, expected: u64, received: u64) -> Self {
         Self::new(
             correlation_id,
             RpcErrorCode::StreamGap,
-            format!(
-                "Out-of-order chunk: expected seq {}, received {}",
-                expected, received
-            ),
+            format!("Out-of-order chunk: expected seq {expected}, received {received}"),
         )
     }
 
     /// Create client disconnected error
+    #[must_use]
     pub fn client_disconnected(correlation_id: Uuid) -> Self {
         Self::new(
             correlation_id,
@@ -126,6 +131,7 @@ impl RpcError {
     }
 
     /// Create worker crashed error
+    #[must_use]
     pub fn worker_crashed(correlation_id: Uuid) -> Self {
         Self::new(
             correlation_id,

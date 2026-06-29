@@ -429,8 +429,7 @@ pub(crate) fn analyze_rpc(
         }
         if slowest_worker_average_latency_ms > 0.0 {
             hints.push(format!(
-                "slowest worker average latency is {:.1}ms",
-                slowest_worker_average_latency_ms
+                "slowest worker average latency is {slowest_worker_average_latency_ms:.1}ms"
             ));
         }
         if let Some(age) = age_seconds {
@@ -622,8 +621,7 @@ pub(crate) fn analyze_rpc(
                 hints.push(format!("{} registered worker(s)", workers.len()));
             }
             hints.push(format!(
-                "slowest worker average latency is {:.1}ms",
-                slowest_latency_ms
+                "slowest worker average latency is {slowest_latency_ms:.1}ms"
             ));
             hotspots.push(ScoredHotspot {
                 score: slowest_latency_ms / 10.0 + workers.len() as f64,

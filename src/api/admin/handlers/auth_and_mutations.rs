@@ -216,7 +216,7 @@ pub(super) fn parse_required_string_query_param(
         Some(value) => Ok(value),
         None => Err(Box::new(super::error_response(
             StatusCode::BAD_REQUEST,
-            &format!("Missing {} query parameter", key),
+            &format!("Missing {key} query parameter"),
         ))),
     }
 }

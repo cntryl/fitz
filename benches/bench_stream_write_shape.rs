@@ -171,8 +171,7 @@ impl CompactPagedRealmValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -187,8 +186,7 @@ impl CompactPagedRealmValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(u32::MAX)
+                    .map_or(u32::MAX, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -221,8 +219,7 @@ impl CompactAreaPageValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -236,8 +233,7 @@ impl CompactAreaPageValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(u32::MAX)
+                    .map_or(u32::MAX, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -309,8 +305,7 @@ impl CompactResourcePageValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
+                .map_or(0, |metadata| metadata.len());
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -325,8 +320,7 @@ impl CompactResourcePageValue {
                 &record
                     .metadata
                     .as_ref()
-                    .map(|metadata| metadata.len() as u32)
-                    .unwrap_or(u32::MAX)
+                    .map_or(u32::MAX, |metadata| metadata.len() as u32)
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);

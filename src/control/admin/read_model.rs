@@ -78,17 +78,15 @@ fn snapshot_session_info(session: &RuntimeSessionInfo, connected_at: String) -> 
 }
 
 fn matches_realm(realm: Option<&str>, value: &str) -> bool {
-    realm.map(|needle| value == needle).unwrap_or(true)
+    realm.is_none_or(|needle| value == needle)
 }
 
 fn matches_substring(filter: Option<&str>, value: &str) -> bool {
-    filter.map(|needle| value.contains(needle)).unwrap_or(true)
+    filter.is_none_or(|needle| value.contains(needle))
 }
 
 fn matches_route_realm(realm: Option<&str>, route: &str) -> bool {
-    realm
-        .map(|needle| route.contains(&format!("{needle}/")))
-        .unwrap_or(true)
+    realm.is_none_or(|needle| route.contains(&format!("{needle}/")))
 }
 
 fn collect_slice_matches<T: Clone>(items: &[T], include: impl Fn(&T) -> bool) -> Vec<T> {
@@ -394,12 +392,10 @@ impl AdminReadModel {
     }
 
     pub fn record_session_update(&self, session: &RuntimeSessionInfo) {
-        let connected_at = self
-            .sessions
-            .read()
-            .get(&session.session_id)
-            .map(|info| info.connected_at.clone())
-            .unwrap_or_else(|| DateTime::<Utc>::from(session.connected_at()).to_rfc3339());
+        let connected_at = self.sessions.read().get(&session.session_id).map_or_else(
+            || DateTime::<Utc>::from(session.connected_at()).to_rfc3339(),
+            |info| info.connected_at.clone(),
+        );
 
         self.sessions.write().insert(
             session.session_id,

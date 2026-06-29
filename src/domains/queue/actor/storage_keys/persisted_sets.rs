@@ -35,8 +35,7 @@ impl QueueActor {
         self.persisted_delayed.insert(id, visible_at_ms);
         self.persisted_next_delayed_visibility_ms = Some(
             self.persisted_next_delayed_visibility_ms
-                .map(|current| current.min(visible_at_ms))
-                .unwrap_or(visible_at_ms),
+                .map_or(visible_at_ms, |current| current.min(visible_at_ms)),
         );
     }
 

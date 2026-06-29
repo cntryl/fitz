@@ -25,6 +25,7 @@ pub struct SessionActor {
 }
 
 impl SessionActor {
+    #[must_use]
     pub fn new(session_id: SessionId, permissions: SessionPermissions) -> Self {
         Self {
             session_id,
@@ -40,7 +41,7 @@ impl SessionActor {
         {
             // Extract realm-based route for authorization check
             // Format: "kv://realm" for basic realm-level authorization
-            let route = Route::new(format!("kv://{}", realm));
+            let route = Route::new(format!("kv://{realm}"));
 
             // Authorization policy: **write implies readwrite**, **read implies readonly**.
             // Authorization depends on transaction mode:
@@ -51,14 +52,13 @@ impl SessionActor {
                     if !self.permissions.allows(&route, Access::Read)
                         && !self.permissions.allows(&route, Access::Write)
                     {
-                        return Err(format!("unauthorized: realm '{}'", realm));
+                        return Err(format!("unauthorized: realm '{realm}'"));
                     }
                 }
                 TxMode::ReadWrite => {
                     if !self.permissions.allows(&route, Access::Write) {
                         return Err(format!(
-                            "unauthorized: write access required for realm '{}'",
-                            realm
+                            "unauthorized: write access required for realm '{realm}'"
                         ));
                     }
                 }
@@ -68,7 +68,7 @@ impl SessionActor {
             let response = kv_actor.handle(msg);
             match response {
                 KvResponse::BeginOk { .. } => Ok(()),
-                KvResponse::Error { error } => Err(format!("kv error: {}", error)),
+                KvResponse::Error { error } => Err(format!("kv error: {error}")),
                 _ => Ok(()),
             }
         } else {

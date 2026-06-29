@@ -23,7 +23,7 @@ impl QueueActor {
             Ok(t) => t,
             Err(e) => {
                 return QueueResponse::Error {
-                    message: format!("Failed to begin transaction: {:?}", e),
+                    message: format!("Failed to begin transaction: {e:?}"),
                 };
             }
         };
@@ -48,8 +48,7 @@ impl QueueActor {
         let staged_next_delayed_visibility = if visible_at > now_instant {
             Some(
                 self.min_persisted_delayed_visibility_ms()
-                    .map(|current| current.min(visible_at_ms))
-                    .unwrap_or(visible_at_ms),
+                    .map_or(visible_at_ms, |current| current.min(visible_at_ms)),
             )
         } else {
             self.min_persisted_delayed_visibility_ms()
@@ -72,7 +71,7 @@ impl QueueActor {
         ));
         if let Err(e) = txn.put(header_key, header_value, None) {
             return QueueResponse::Error {
-                message: format!("Failed to add message header to transaction: {:?}", e),
+                message: format!("Failed to add message header to transaction: {e:?}"),
             };
         }
 
@@ -83,20 +82,20 @@ impl QueueActor {
                 None,
             ) {
                 return QueueResponse::Error {
-                    message: format!("Failed to update queue ready index: {:?}", e),
+                    message: format!("Failed to update queue ready index: {e:?}"),
                 };
             }
         } else if let Err(e) = txn.put(self.delayed_index_key(visible_at_ms, id), Vec::new(), None)
         {
             return QueueResponse::Error {
-                message: format!("Failed to update queue delayed index: {:?}", e),
+                message: format!("Failed to update queue delayed index: {e:?}"),
             };
         }
 
         if let Some(limit) = reserved_limit {
             if let Err(e) = txn.put(self.meta_key.clone(), limit.to_le_bytes().to_vec(), None) {
                 return QueueResponse::Error {
-                    message: format!("Failed to update queue meta: {:?}", e),
+                    message: format!("Failed to update queue meta: {e:?}"),
                 };
             }
         }
@@ -112,7 +111,7 @@ impl QueueActor {
             None,
         ) {
             return QueueResponse::Error {
-                message: format!("Failed to update queue index meta: {:?}", e),
+                message: format!("Failed to update queue index meta: {e:?}"),
             };
         }
 
@@ -121,7 +120,7 @@ impl QueueActor {
         let commit_start = Instant::now();
         if let Err(e) = txn.commit(self.commit_write_options) {
             return QueueResponse::Error {
-                message: format!("Failed to commit transaction: {:?}", e),
+                message: format!("Failed to commit transaction: {e:?}"),
             };
         }
         Self::observe_elapsed_us(obs::METRIC_QUEUE_ENQUEUE_COMMIT_LATENCY, commit_start);
@@ -183,7 +182,7 @@ impl QueueActor {
             Ok(t) => t,
             Err(e) => {
                 return QueueResponse::Error {
-                    message: format!("Failed to begin transaction: {:?}", e),
+                    message: format!("Failed to begin transaction: {e:?}"),
                 };
             }
         };
@@ -228,7 +227,7 @@ impl QueueActor {
             ));
             if let Err(e) = txn.put(header_key, header_value, None) {
                 return QueueResponse::Error {
-                    message: format!("Failed to add message header to transaction: {:?}", e),
+                    message: format!("Failed to add message header to transaction: {e:?}"),
                 };
             }
 
@@ -244,7 +243,7 @@ impl QueueActor {
                     None,
                 ) {
                     return QueueResponse::Error {
-                        message: format!("Failed to update queue ready index: {:?}", e),
+                        message: format!("Failed to update queue ready index: {e:?}"),
                     };
                 }
                 staged_ready_ids.push(id);
@@ -253,7 +252,7 @@ impl QueueActor {
                 txn.put(self.delayed_index_key(visible_at_ms, id), Vec::new(), None)
             {
                 return QueueResponse::Error {
-                    message: format!("Failed to update queue delayed index: {:?}", e),
+                    message: format!("Failed to update queue delayed index: {e:?}"),
                 };
             }
 
@@ -264,8 +263,7 @@ impl QueueActor {
                 staged_delayed_add += 1;
                 staged_next_delayed_visibility = Some(
                     staged_next_delayed_visibility
-                        .map(|current| current.min(visible_at_ms))
-                        .unwrap_or(visible_at_ms),
+                        .map_or(visible_at_ms, |current| current.min(visible_at_ms)),
                 );
             }
             next_id += 1;
@@ -274,7 +272,7 @@ impl QueueActor {
         if let Some(limit) = reserved_limit {
             if let Err(e) = txn.put(self.meta_key.clone(), limit.to_le_bytes().to_vec(), None) {
                 return QueueResponse::Error {
-                    message: format!("Failed to update queue meta: {:?}", e),
+                    message: format!("Failed to update queue meta: {e:?}"),
                 };
             }
         }
@@ -291,14 +289,14 @@ impl QueueActor {
             None,
         ) {
             return QueueResponse::Error {
-                message: format!("Failed to update queue index meta: {:?}", e),
+                message: format!("Failed to update queue index meta: {e:?}"),
             };
         }
 
         let commit_start = Instant::now();
         if let Err(e) = txn.commit(self.commit_write_options) {
             return QueueResponse::Error {
-                message: format!("Failed to commit transaction: {:?}", e),
+                message: format!("Failed to commit transaction: {e:?}"),
             };
         }
         Self::observe_elapsed_us(obs::METRIC_QUEUE_ENQUEUE_COMMIT_LATENCY, commit_start);

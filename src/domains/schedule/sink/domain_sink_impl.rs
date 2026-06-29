@@ -41,11 +41,13 @@ impl ScheduleDomainSink {
         }
     }
 
+    #[must_use]
     pub fn with_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
         self.write_options = write_options;
         self
     }
 
+    #[must_use]
     pub fn with_metrics(
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
@@ -63,7 +65,7 @@ impl ScheduleDomainSink {
         let column_families = self
             .store
             .list_column_families()
-            .map_err(|e| format!("list schedule column families failed: {}", e))?;
+            .map_err(|e| format!("list schedule column families failed: {e}"))?;
 
         let mut actors = self.actors.lock();
         for column_family in column_families {

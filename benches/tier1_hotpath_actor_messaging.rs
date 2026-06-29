@@ -58,7 +58,7 @@ fn make_router_with_registered_routes(
     let router = Arc::new(Router::new());
     let sink = Arc::new(CountingSink::new());
     let addresses: Vec<_> = (0..route_count)
-        .map(|i| test_address(1, &format!("/bench/send/{}", i)))
+        .map(|i| test_address(1, &format!("/bench/send/{i}")))
         .collect();
 
     for address in &addresses {
@@ -136,7 +136,7 @@ fn bench_context_send_scaling(c: &mut Criterion) {
         let ctx = Context::<BenchActor>::new(test_address(1, "/bench/source"), router);
         group.throughput(Throughput::Elements(1));
 
-        group.bench_function(format!("context_send_{}_routes", route_count), |b| {
+        group.bench_function(format!("context_send_{route_count}_routes"), |b| {
             let mut idx = 0usize;
             b.iter(|| {
                 ctx.send(addresses[idx % addresses.len()].clone(), black_box(42_u64))

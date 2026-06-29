@@ -35,8 +35,7 @@ impl SessionAuthenticator<'_> {
                 "Ingress: frame for unknown session"
             );
             return Err(IngressDecision::Close(format!(
-                "unknown session: {}",
-                session_id
+                "unknown session: {session_id}"
             )));
         };
 
@@ -80,8 +79,7 @@ impl SessionAuthenticator<'_> {
                     "Ingress: frame for unknown session"
                 );
                 Err(IngressDecision::Close(format!(
-                    "unknown session: {}",
-                    session_id
+                    "unknown session: {session_id}"
                 )))
             }
         }
@@ -133,19 +131,18 @@ impl SessionAuthenticator<'_> {
         .await
         {
             Ok(verified) => {
-                let route_family = match self
-                    .resolve_authenticated_route_family(&verified.raw_claims)
-                {
-                    Ok(route_family) => route_family,
-                    Err(error) => {
-                        error!(
-                            session_id = session_id,
-                            error = %error,
-                            "Ingress: CONNECT failed (route family resolution)"
-                        );
-                        return Err(IngressDecision::Close(format!("connect failed: {}", error)));
-                    }
-                };
+                let route_family =
+                    match self.resolve_authenticated_route_family(&verified.raw_claims) {
+                        Ok(route_family) => route_family,
+                        Err(error) => {
+                            error!(
+                                session_id = session_id,
+                                error = %error,
+                                "Ingress: CONNECT failed (route family resolution)"
+                            );
+                            return Err(IngressDecision::Close(format!("connect failed: {error}")));
+                        }
+                    };
                 Ok((verified.permissions, verified.claims, route_family))
             }
             Err(error) => {
@@ -154,7 +151,7 @@ impl SessionAuthenticator<'_> {
                     error = %error,
                     "Ingress: CONNECT failed (verification)"
                 );
-                Err(IngressDecision::Close(format!("connect failed: {}", error)))
+                Err(IngressDecision::Close(format!("connect failed: {error}")))
             }
         }
     }
@@ -166,8 +163,7 @@ impl SessionAuthenticator<'_> {
         let route_family = self.ingress.route_family_resolver.resolve(raw_claims)?;
         if !self.ingress.route_families.contains(&route_family) {
             return Err(format!(
-                "resolved route family {} is not provisioned",
-                route_family
+                "resolved route family {route_family} is not provisioned"
             ));
         }
         Ok(crate::runtime::routing::RouteFamily::new(

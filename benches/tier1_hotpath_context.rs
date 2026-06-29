@@ -106,7 +106,7 @@ fn bench_timer_manager_schedule_once_with_active_timers(c: &mut Criterion) {
 
     for count in ACTIVE_TIMER_COUNTS {
         group.throughput(Throughput::Elements(1));
-        group.bench_function(format!("schedule_once_with_{}_active", count), |b| {
+        group.bench_function(format!("schedule_once_with_{count}_active"), |b| {
             b.iter_batched(
                 || timer_manager_with_active_timers(count, FAR_FUTURE_DELAY),
                 |(mut tm, now)| {
@@ -183,7 +183,7 @@ fn bench_timer_manager_fired_timers_scaling(c: &mut Criterion) {
     for count in ACTIVE_TIMER_COUNTS {
         let (mut tm, now) = timer_manager_with_active_timers(count, FAR_FUTURE_DELAY);
         group.throughput(Throughput::Elements(count as u64));
-        group.bench_function(format!("fired_timers_none_ready_{}", count), |b| {
+        group.bench_function(format!("fired_timers_none_ready_{count}"), |b| {
             b.iter(|| {
                 black_box(tm.fired_timers_at(now));
             })

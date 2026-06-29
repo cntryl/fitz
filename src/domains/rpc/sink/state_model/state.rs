@@ -33,13 +33,9 @@ impl RpcState {
     }
 
     pub(in crate::domains::rpc::sink) fn prune_route_if_empty(&mut self, route: &Route) {
-        let should_remove = self
-            .routes
-            .get(route)
-            .map(|route_state| {
-                route_state.worker_count() == 0 && !route_state.has_queued_requests()
-            })
-            .unwrap_or(false);
+        let should_remove = self.routes.get(route).is_some_and(|route_state| {
+            route_state.worker_count() == 0 && !route_state.has_queued_requests()
+        });
 
         if should_remove {
             self.routes.remove(route);
@@ -113,8 +109,7 @@ impl RpcState {
     pub(in crate::domains::rpc::sink) fn has_registered_workers(&self, route: &Route) -> bool {
         self.routes
             .get(route)
-            .map(|route_state| route_state.worker_count() > 0)
-            .unwrap_or(false)
+            .is_some_and(|route_state| route_state.worker_count() > 0)
     }
 
     pub(in crate::domains::rpc::sink) fn contains_correlation(

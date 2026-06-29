@@ -74,6 +74,7 @@ impl MessageId {
 
     /// Get the underlying ID value
     #[inline]
+    #[must_use]
     pub fn as_u64(&self) -> u64 {
         self.0
     }
@@ -153,6 +154,7 @@ impl Envelope {
     /// Set a deadline for this message
     ///
     /// Messages past their deadline may be dropped or logged as warnings.
+    #[must_use]
     pub fn with_deadline(mut self, deadline: Instant) -> Self {
         self.deadline = Some(deadline);
         self
@@ -161,6 +163,7 @@ impl Envelope {
     /// Set the causation chain (parent message ID)
     ///
     /// Used for request/reply tracking and distributed tracing.
+    #[must_use]
     pub fn with_causation(mut self, parent: MessageId) -> Self {
         self.causation = Some(parent);
         self
@@ -176,6 +179,7 @@ impl Envelope {
     /// # Panics
     ///
     /// Panics if this envelope has no source (cannot reply to external messages)
+    #[must_use]
     pub fn reply_to<M: Any + Send + Sync>(&self, payload: M) -> Envelope {
         let source = self
             .source
@@ -213,36 +217,42 @@ impl Envelope {
 
     /// Get the message ID
     #[inline]
+    #[must_use]
     pub fn id(&self) -> MessageId {
         self.id
     }
 
     /// Get the source route address (if any)
     #[inline]
+    #[must_use]
     pub fn source(&self) -> Option<&RouteAddress> {
         self.source.as_ref()
     }
 
     /// Get the destination route address
     #[inline]
+    #[must_use]
     pub fn destination(&self) -> &RouteAddress {
         &self.destination
     }
 
     /// Get the causation ID (parent message)
     #[inline]
+    #[must_use]
     pub fn causation(&self) -> Option<MessageId> {
         self.causation
     }
 
     /// Get the deadline (if any)
     #[inline]
+    #[must_use]
     pub fn deadline(&self) -> Option<Instant> {
         self.deadline
     }
 
     /// Get the mailbox enqueue time, if this envelope has entered a mailbox.
     #[inline]
+    #[must_use]
     pub fn queued_at(&self) -> Option<Instant> {
         self.queued_at
     }
@@ -257,6 +267,7 @@ impl Envelope {
     ///
     /// Hot path: no deadline (None) returns false without calling `Instant::now()`.
     #[inline]
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         match self.deadline {
             None => false,
@@ -266,6 +277,7 @@ impl Envelope {
 
     /// Extract metadata without consuming the envelope
     #[inline]
+    #[must_use]
     pub fn metadata(&self) -> EnvelopeMetadata {
         EnvelopeMetadata {
             id: self.id,
@@ -278,6 +290,7 @@ impl Envelope {
     }
 
     /// Extract metadata and payload together (zero-copy for metadata)
+    #[must_use]
     pub fn into_parts<M: Any>(self) -> (EnvelopeMetadata, Option<M>) {
         let metadata = EnvelopeMetadata {
             id: self.id,
@@ -294,6 +307,7 @@ impl Envelope {
     /// Extract the payload, downcasting to the expected type
     ///
     /// Returns `None` if the type doesn't match.
+    #[must_use]
     pub fn into_payload<M: Any>(self) -> Option<M> {
         self.payload.downcast::<M>().ok().map(|b| *b)
     }
@@ -301,6 +315,7 @@ impl Envelope {
     /// Borrow the payload as the expected type
     ///
     /// Returns `None` if the type doesn't match.
+    #[must_use]
     pub fn payload<M: Any>(&self) -> Option<&M> {
         self.payload.downcast_ref::<M>()
     }
@@ -476,7 +491,7 @@ mod tests {
         let id = MessageId::new();
 
         // Act
-        let formatted = format!("{}", id);
+        let formatted = format!("{id}");
 
         // Assert
         assert!(formatted.starts_with("msg:"));

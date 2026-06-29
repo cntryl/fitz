@@ -53,7 +53,7 @@ impl fmt::Display for LeaseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LeaseError::HeldByOther { current_owner } => {
-                write!(f, "Lease held by: {}", current_owner)
+                write!(f, "Lease held by: {current_owner}")
             }
             LeaseError::NotHeld => write!(f, "Lease not held"),
             LeaseError::Fenced => write!(f, "Fencing token is stale"),
@@ -96,6 +96,7 @@ pub struct LeaseHandle {
 
 impl LeaseHandle {
     /// Create a lease handle from an Acquired response
+    #[must_use]
     pub fn from_acquired(
         family_id: RouteFamily,
         route: Route,
@@ -119,6 +120,7 @@ impl LeaseHandle {
     /// This is a local check based on TTL. Even if this returns true,
     /// the lease actor may have expired the lease via a Tick message.
     /// The only guarantee is: if this returns false, the lease is definitely expired.
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         Instant::now() < self.expires_at
     }
@@ -126,21 +128,25 @@ impl LeaseHandle {
     /// Get the fencing token
     ///
     /// Use this token for ordering guarantees when performing critical work.
+    #[must_use]
     pub fn fencing_token(&self) -> u64 {
         self.fencing_token
     }
 
     /// Get the route family ID
+    #[must_use]
     pub fn family_id(&self) -> RouteFamily {
         self.family_id
     }
 
     /// Get the route
+    #[must_use]
     pub fn route(&self) -> &Route {
         &self.route
     }
 
     /// Get the owner ID
+    #[must_use]
     pub fn owner_id(&self) -> &str {
         &self.owner_id
     }
@@ -170,6 +176,7 @@ pub struct LeaseGuard {
 
 impl LeaseGuard {
     /// Create a new lease guard
+    #[must_use]
     pub fn new(lease_actor: ActorRef<LeaseMessage>) -> Self {
         Self { lease_actor }
     }
@@ -205,6 +212,7 @@ impl LeaseGuard {
     }
 
     /// Get a reference to the lease actor
+    #[must_use]
     pub fn lease_actor(&self) -> &ActorRef<LeaseMessage> {
         &self.lease_actor
     }

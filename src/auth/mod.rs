@@ -54,7 +54,7 @@ impl FromStr for Access {
             "read" => Ok(Access::Read),
             "write" => Ok(Access::Write),
             "*" => Ok(Access::All),
-            _ => Err(format!("unknown access: {}", s)),
+            _ => Err(format!("unknown access: {s}")),
         }
     }
 }
@@ -118,6 +118,7 @@ const ENV_ALLOW_INSECURE_JWKS_HTTP: &str = "FITZ_JWT_ALLOW_INSECURE_HTTP";
 const ENV_JWT_HMAC_SECRET: &str = "FITZ_JWT_HMAC_SECRET";
 
 impl AuthConfig {
+    #[must_use]
     pub fn disabled() -> Self {
         Self::Disabled
     }
@@ -133,6 +134,7 @@ impl AuthConfig {
         })
     }
 
+    #[must_use]
     pub fn jwks(audiences: Vec<String>, issuers: Vec<JwksIssuerConfig>) -> Self {
         Self::Jwks(JwksAuthConfig { audiences, issuers })
     }
@@ -269,8 +271,7 @@ fn parse_jwks_issuers_from_env(
 
         let Some((issuer, jwks_url)) = trimmed_entry.split_once('=') else {
             return Err(format!(
-                "JWKS auth map entry '{}' must use issuer=jwks_url",
-                trimmed_entry
+                "JWKS auth map entry '{trimmed_entry}' must use issuer=jwks_url"
             ));
         };
 
@@ -282,13 +283,12 @@ fn parse_jwks_issuers_from_env(
         let jwks_url = jwks_url.trim();
         if jwks_url.is_empty() {
             return Err(format!(
-                "JWKS auth map entry for issuer {} must not use an empty JWKS URL",
-                issuer
+                "JWKS auth map entry for issuer {issuer} must not use an empty JWKS URL"
             ));
         }
 
         validate_jwks_url(jwks_url, allow_insecure_http)
-            .map_err(|error| format!("invalid JWKS URL for issuer {}: {}", issuer, error))?;
+            .map_err(|error| format!("invalid JWKS URL for issuer {issuer}: {error}"))?;
 
         issuers.push(JwksIssuerConfig {
             issuer: issuer.to_string(),
@@ -313,8 +313,7 @@ fn audiences_from_env() -> Vec<String> {
 fn now_epoch_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
 fn allow_insecure_jwks_http() -> bool {
@@ -352,6 +351,7 @@ fn verified_session_claims(
 
 /// Map coarse scope strings like `notice.read` into Fitz permission strings.
 /// This is a compatibility helper for OAuth2-style scope claims.
+#[must_use]
 pub fn map_coarse_scope(s: &str) -> Option<&'static str> {
     match s {
         "kv.read" => Some("kv://**#read"),
@@ -402,10 +402,10 @@ pub async fn verified_jwt_using_jwks_with_claims_config(
     // Ensure jwks present or fetched
     crate::auth::jwks::ensure_jwks_cached(&issuer.jwks_url)
         .await
-        .map_err(|e| format!("failed to ensure jwks: {}", e))?;
+        .map_err(|e| format!("failed to ensure jwks: {e}"))?;
     // Parse header to get kid and alg
     let header =
-        jsonwebtoken::decode_header(compact).map_err(|e| format!("invalid jwt header: {}", e))?;
+        jsonwebtoken::decode_header(compact).map_err(|e| format!("invalid jwt header: {e}"))?;
     let kid = header.kid.as_deref().unwrap_or("");
 
     // Try to get decoding key from cache; if missing, fetch and cache, then retry
@@ -413,7 +413,7 @@ pub async fn verified_jwt_using_jwks_with_claims_config(
         // Attempt network fetch & cache
         jwks::fetch_and_cache_jwks(&issuer.jwks_url)
             .await
-            .map_err(|e| format!("failed to fetch jwks: {}", e))?;
+            .map_err(|e| format!("failed to fetch jwks: {e}"))?;
     }
 
     let dk = jwks::get_decoding_key_from_cache(&issuer.jwks_url, kid)
@@ -428,10 +428,10 @@ pub async fn verified_jwt_using_jwks_with_claims_config(
 
     // Verify and extract claims as serde_json::Value
     let token_data = jsonwebtoken::decode::<serde_json::Value>(compact, &dk, &validation)
-        .map_err(|e| format!("signature verification failed: {}", e))?;
+        .map_err(|e| format!("signature verification failed: {e}"))?;
 
-    let raw_claims: RawClaims = serde_json::from_value(token_data.claims)
-        .map_err(|e| format!("json parse error: {}", e))?;
+    let raw_claims: RawClaims =
+        serde_json::from_value(token_data.claims).map_err(|e| format!("json parse error: {e}"))?;
 
     verified_session_claims(
         raw_claims,
@@ -479,7 +479,7 @@ pub async fn verified_jwt_with_claims_config(
             let claims_value =
                 token::verify_jwt_with_hmac_secret(compact, config.secret.as_bytes())?;
             let verified_raw: RawClaims = serde_json::from_value(claims_value)
-                .map_err(|e| format!("json parse error: {}", e))?;
+                .map_err(|e| format!("json parse error: {e}"))?;
             verified_session_claims(verified_raw, &[], auth_config.audiences(), claims_config)
         }
         AuthConfig::Jwks(_) => {
@@ -499,6 +499,7 @@ pub async fn verified_jwt_with_claims_config(
 
 /// Create default anonymous permissions with full access across all domains.
 /// Used when FITZ_AUTH_REQUIRED=false for development/testing.
+#[must_use]
 pub fn default_anonymous_permissions() -> crate::session::permissions::SessionPermissions {
     let perms = vec![
         Permission {

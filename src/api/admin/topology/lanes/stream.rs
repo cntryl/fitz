@@ -19,7 +19,7 @@ pub(in crate::api::admin::topology) fn stream_lane(
         || stats.events_total > 0
         || stats.subscriptions_active > 0
         || stats.append_sessions_active > 0;
-    let state = topology_state(&stats.diagnostics, pressure > 0, activity);
+    let lane_state = topology_state(&stats.diagnostics, pressure > 0, activity);
     let counters = vec![
         counter("streams", "Streams", stats.streams_active as f64),
         counter("events", "Events", stats.events_total as f64),
@@ -48,7 +48,7 @@ pub(in crate::api::admin::topology) fn stream_lane(
     add_broker_domain_flow(
         connections,
         "stream",
-        &state,
+        &lane_state,
         stats.operations_per_second,
         counters.clone(),
     );
@@ -80,7 +80,7 @@ pub(in crate::api::admin::topology) fn stream_lane(
 
     topology_lane(
         ("stream", "Stream"),
-        state,
+        lane_state,
         stats.operations_per_second,
         &stats.diagnostics,
         counters,

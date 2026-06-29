@@ -168,11 +168,13 @@ pub enum RpcMessage {
 
 impl RpcMessage {
     /// Create RegisterWorker message
+    #[must_use]
     pub fn register_worker(worker_addr: RouteAddress) -> Self {
         Self::RegisterWorker { worker_addr }
     }
 
     /// Create UnregisterWorker message
+    #[must_use]
     pub fn unregister_worker(worker_addr: RouteAddress) -> Self {
         Self::UnregisterWorker { worker_addr }
     }
@@ -188,6 +190,7 @@ impl RpcMessage {
     }
 
     /// Create Ack message
+    #[must_use]
     pub fn ack(correlation_id: Uuid) -> Self {
         Self::Ack { correlation_id }
     }
@@ -219,6 +222,7 @@ pub struct RpcClientResponse {
 }
 
 impl RpcClientResponse {
+    #[must_use]
     pub fn new(meta: ClientFrameMeta, response: RpcClientResponseBody) -> Self {
         Self { meta, response }
     }
@@ -292,6 +296,7 @@ pub struct RpcWorkerAck {
 }
 
 impl RpcWorkerAck {
+    #[must_use]
     pub fn new(session_id: u64, route_family: RouteFamily, correlation_id: Uuid) -> Self {
         Self {
             session_id,

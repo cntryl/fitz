@@ -183,8 +183,7 @@ pub(crate) fn summarize_comparison(
             .as_deref()
             .unwrap_or(dominant.diagnostics.current_stage.as_str());
         format!(
-            "{} side is under more pressure than {} side ({bottleneck})",
-            dominant_label, follower_label
+            "{dominant_label} side is under more pressure than {follower_label} side ({bottleneck})"
         )
     };
 
@@ -270,8 +269,9 @@ impl DomainAnalysis {
             .max();
         let diagnostics = hotspots
             .first()
-            .map(|candidate| DomainDiagnostics::from_snapshot(candidate.hotspot.snapshot.clone()))
-            .unwrap_or_else(DomainDiagnostics::healthy);
+            .map_or_else(DomainDiagnostics::healthy, |candidate| {
+                DomainDiagnostics::from_snapshot(candidate.hotspot.snapshot.clone())
+            });
 
         Self {
             diagnostics,

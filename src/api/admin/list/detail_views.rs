@@ -65,6 +65,7 @@ pub fn kv_detail(
     KvResourceDetail::from_inventory(path, inventory, transactions)
 }
 
+#[must_use]
 pub fn queue_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -75,7 +76,7 @@ pub fn queue_detail(
         .into_iter()
         .filter(|item| {
             path.matches(&item.realm, &item.area, &item.resource)
-                && family.map(|value| item.family == value).unwrap_or(true)
+                && family.is_none_or(|value| item.family == value)
         })
         .collect();
 
@@ -121,6 +122,7 @@ pub fn queue_detail(
     detail
 }
 
+#[must_use]
 pub fn stream_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -139,12 +141,14 @@ pub fn stream_detail(
     }
 }
 
+#[must_use]
 pub fn stream_realm_watermark_detail(runtime: &Runtime, realm: &str) -> StreamRealmWatermarkDetail {
     runtime
         .stream_realm_watermark_detail(realm)
         .unwrap_or_else(|| StreamRealmWatermarkDetail::snapshot(realm, 0, 0, Vec::new()))
 }
 
+#[must_use]
 pub fn stream_area_watermark_detail(
     runtime: &Runtime,
     realm: &str,
@@ -155,6 +159,7 @@ pub fn stream_area_watermark_detail(
         .unwrap_or_else(|| StreamAreaWatermarkDetail::snapshot(realm, area, 0, Vec::new()))
 }
 
+#[must_use]
 pub fn lease_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -187,6 +192,7 @@ pub fn lease_detail(
     )
 }
 
+#[must_use]
 pub fn schedule_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -212,6 +218,7 @@ pub fn schedule_detail(
     ScheduleResourceDetail::aggregate(path, &schedules)
 }
 
+#[must_use]
 pub fn notice_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -227,6 +234,7 @@ pub fn notice_detail(
     NoticeResourceDetail::from_count(path, subscriptions_active)
 }
 
+#[must_use]
 pub fn rpc_operation_detail(
     runtime: &Runtime,
     path: &RpcOperationPath<'_>,
@@ -440,6 +448,7 @@ pub(crate) fn rpc_resource_comparison_metrics(
     )
 }
 
+#[must_use]
 pub fn kv_compare_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -464,6 +473,7 @@ pub fn kv_compare_detail(
     )
 }
 
+#[must_use]
 pub fn queue_compare_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -488,6 +498,7 @@ pub fn queue_compare_detail(
     )
 }
 
+#[must_use]
 pub fn stream_compare_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -512,6 +523,7 @@ pub fn stream_compare_detail(
     )
 }
 
+#[must_use]
 pub fn lease_compare_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -536,6 +548,7 @@ pub fn lease_compare_detail(
     )
 }
 
+#[must_use]
 pub fn schedule_compare_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -560,6 +573,7 @@ pub fn schedule_compare_detail(
     )
 }
 
+#[must_use]
 pub fn notice_compare_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -584,6 +598,7 @@ pub fn notice_compare_detail(
     )
 }
 
+#[must_use]
 pub fn rpc_compare_detail(
     runtime: &Runtime,
     path: &ResourcePath<'_>,

@@ -22,6 +22,7 @@ pub struct Matcher {
 }
 
 impl Matcher {
+    #[must_use]
     pub fn new() -> Self {
         Self { subs: Vec::new() }
     }
@@ -37,6 +38,7 @@ impl Matcher {
     }
 
     /// Return a borrowed slice of subscriber ids for this message (zero-alloc)
+    #[must_use]
     pub fn matching_subscribers<'a>(
         &'a self,
         msg_type: MessageType,
@@ -75,6 +77,7 @@ pub struct Fanout {
 }
 
 impl Fanout {
+    #[must_use]
     pub fn new() -> Self {
         Self { deliveries: 0 }
     }
@@ -95,6 +98,7 @@ impl Fanout {
         subs.len()
     }
 
+    #[must_use]
     pub fn delivered_count(&self) -> usize {
         self.deliveries
     }
@@ -109,6 +113,7 @@ pub struct NotificationDomain {
 }
 
 impl NotificationDomain {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             matcher: Matcher::new(),
@@ -131,10 +136,12 @@ impl NotificationDomain {
         }
     }
 
+    #[must_use]
     pub fn fanout_delivered(&self) -> usize {
         self.fanout.delivered_count()
     }
 
+    #[must_use]
     pub fn matcher(&self) -> &Matcher {
         &self.matcher
     }

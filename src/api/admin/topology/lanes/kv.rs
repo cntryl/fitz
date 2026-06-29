@@ -19,7 +19,7 @@ pub(in crate::api::admin::topology) fn kv_lane(
     let pressure = stats.commits_failed_total + stats.invalid_transaction_rejects_total;
     let activity =
         stats.operations_per_second > 0.0 || stats.transactions_active > 0 || stats.keys_total > 0;
-    let state = topology_state(&stats.diagnostics, pressure > 0, activity);
+    let lane_state = topology_state(&stats.diagnostics, pressure > 0, activity);
     let counters = vec![
         counter("keys", "Keys", stats.keys_total as f64),
         counter(
@@ -42,17 +42,17 @@ pub(in crate::api::admin::topology) fn kv_lane(
     add_broker_domain_flow(
         connections,
         "kv",
-        &state,
+        &lane_state,
         stats.operations_per_second,
         counters.clone(),
     );
 
     for transaction in transactions {
         let session_id = session_id_from_transaction_mode(&transaction.mode);
-        let target = session_id
-            .as_deref()
-            .map(session_node_id)
-            .unwrap_or_else(|| format!("kv-transaction:{}", transaction.tx_id));
+        let target = session_id.as_deref().map_or_else(
+            || format!("kv-transaction:{}", transaction.tx_id),
+            session_node_id,
+        );
         let scope = if let Some(session_id) = session_id {
             scope_with_session(
                 scope_for_resource(
@@ -98,7 +98,7 @@ pub(in crate::api::admin::topology) fn kv_lane(
 
     topology_lane(
         ("kv", "KV"),
-        state,
+        lane_state,
         stats.operations_per_second,
         &stats.diagnostics,
         counters,

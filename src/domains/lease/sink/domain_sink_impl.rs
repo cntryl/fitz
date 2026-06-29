@@ -245,8 +245,7 @@ impl LeaseDomainSink {
         self.pending_acquires
             .lock()
             .get(key)
-            .map(VecDeque::len)
-            .unwrap_or(0)
+            .map_or(0, VecDeque::len)
     }
 
     pub(super) fn grant_next_waiter_if_available(

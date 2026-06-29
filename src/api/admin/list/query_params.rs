@@ -16,7 +16,7 @@ pub fn parse_optional_u64_query_param(uri: &hyper::Uri, key: &str) -> Result<Opt
         Some(value) => value
             .parse::<u64>()
             .map(Some)
-            .map_err(|_| format!("Invalid {} query parameter", key)),
+            .map_err(|_| format!("Invalid {key} query parameter")),
         None => Ok(None),
     }
 }
@@ -46,17 +46,14 @@ pub fn parse_kv_query_bytes(uri: &hyper::Uri, key: &str) -> Result<Vec<u8>, Stri
     let params = parse_query_params(uri);
     let value = params
         .get(key)
-        .ok_or_else(|| format!("Missing {} query parameter", key))?;
-    let encoding = params
-        .get("key_encoding")
-        .map(String::as_str)
-        .unwrap_or("utf8");
+        .ok_or_else(|| format!("Missing {key} query parameter"))?;
+    let encoding = params.get("key_encoding").map_or("utf8", String::as_str);
 
     match encoding {
         "utf8" => Ok(value.as_bytes().to_vec()),
         "base64" => base64::engine::general_purpose::STANDARD
             .decode(value)
-            .map_err(|_| format!("Invalid base64 {} query parameter", key)),
+            .map_err(|_| format!("Invalid base64 {key} query parameter")),
         _ => Err("Invalid key_encoding query parameter".to_string()),
     }
 }
@@ -69,17 +66,14 @@ pub fn parse_optional_kv_query_bytes(
     let Some(value) = params.get(key) else {
         return Ok(None);
     };
-    let encoding = params
-        .get("key_encoding")
-        .map(String::as_str)
-        .unwrap_or("utf8");
+    let encoding = params.get("key_encoding").map_or("utf8", String::as_str);
 
     match encoding {
         "utf8" => Ok(Some(value.as_bytes().to_vec())),
         "base64" => base64::engine::general_purpose::STANDARD
             .decode(value)
             .map(Some)
-            .map_err(|_| format!("Invalid base64 {} query parameter", key)),
+            .map_err(|_| format!("Invalid base64 {key} query parameter")),
         _ => Err("Invalid key_encoding query parameter".to_string()),
     }
 }

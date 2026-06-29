@@ -13,7 +13,7 @@ pub(crate) fn queue_resource_timeline(
         .iter()
         .filter(|queue| {
             matches_resource_path(path, &queue.realm, &queue.area, &queue.resource)
-                && family.map(|value| queue.family == value).unwrap_or(true)
+                && family.is_none_or(|value| queue.family == value)
         })
         .collect();
     if matching_queues.is_empty() {
@@ -31,14 +31,14 @@ pub(crate) fn queue_resource_timeline(
         .iter()
         .filter(|item| {
             matches_resource_path(path, &item.realm, &item.area, &item.resource)
-                && family.map(|value| item.family == value).unwrap_or(true)
+                && family.is_none_or(|value| item.family == value)
         })
         .collect();
     let matching_dead_letters: Vec<_> = dead_letters
         .iter()
         .filter(|item| {
             matches_resource_path(path, &item.realm, &item.area, &item.resource)
-                && family.map(|value| item.family == value).unwrap_or(true)
+                && family.is_none_or(|value| item.family == value)
         })
         .collect();
 
@@ -120,12 +120,9 @@ pub(crate) fn queue_resource_timeline(
                 ResourceTimelineKind::OwnershipChange,
                 now,
                 if let Some(owner_session) = owner_session.clone() {
-                    format!(
-                        "{} inflight message(s) owned by session {}",
-                        inflight_count, owner_session
-                    )
+                    format!("{inflight_count} inflight message(s) owned by session {owner_session}")
                 } else {
-                    format!("{} inflight message(s)", inflight_count)
+                    format!("{inflight_count} inflight message(s)")
                 },
                 path,
                 family,
@@ -149,12 +146,7 @@ pub(crate) fn queue_resource_timeline(
                 ResourceTimelineKind::Observation,
                 now,
                 format!(
-                    "{} ready, {} delayed, {} inflight, {} dead-lettered; oldest backlog message {}s old",
-                    messages_ready,
-                    messages_delayed,
-                    inflight_count,
-                    dead_letter_count,
-                    oldest_backlog_age_seconds
+                    "{messages_ready} ready, {messages_delayed} delayed, {inflight_count} inflight, {dead_letter_count} dead-lettered; oldest backlog message {oldest_backlog_age_seconds}s old"
                 ),
                 path,
                 family,

@@ -95,6 +95,7 @@ pub enum DeliveryError {
 
 impl DeliveryError {
     /// Get occupancy ratio (0.0 to 1.0) for backpressure decisions
+    #[must_use]
     pub fn occupancy(&self) -> f64 {
         match self {
             DeliveryError::MailboxFull {
@@ -117,7 +118,7 @@ impl std::fmt::Display for DeliveryError {
                 capacity,
                 current_len,
             } => {
-                write!(f, "Mailbox is full ({}/{} messages)", current_len, capacity)
+                write!(f, "Mailbox is full ({current_len}/{capacity} messages)")
             }
             DeliveryError::HighLaneFull {
                 capacity,
@@ -125,8 +126,7 @@ impl std::fmt::Display for DeliveryError {
             } => {
                 write!(
                     f,
-                    "High-priority lane is full ({}/{} messages)",
-                    current_len, capacity
+                    "High-priority lane is full ({current_len}/{capacity} messages)"
                 )
             }
             DeliveryError::ActorStopped => write!(f, "Actor has stopped"),
@@ -148,9 +148,9 @@ pub enum RouteError {
 impl std::fmt::Display for RouteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RouteError::RouteNotFound(addr) => write!(f, "Route not found: {}", addr),
+            RouteError::RouteNotFound(addr) => write!(f, "Route not found: {addr}"),
             RouteError::DeliveryFailed(addr, err) => {
-                write!(f, "Delivery failed for route {}: {}", addr, err)
+                write!(f, "Delivery failed for route {addr}: {err}")
             }
         }
     }
@@ -372,6 +372,7 @@ impl Router {
     }
 
     /// Create a new router with an empty registry
+    #[must_use]
     pub fn new() -> Self {
         Self {
             registry: Arc::new(RouteRegistry::new()),
@@ -400,6 +401,7 @@ impl Router {
     ///
     /// This is intended for domain-local fast paths that can safely bypass
     /// an extra registry lookup in `route()` while preserving delivery behavior.
+    #[must_use]
     pub fn resolve_sink(&self, address: &RouteAddress) -> Option<Arc<dyn MailboxSink>> {
         self.registry.get(address)
     }
@@ -409,6 +411,7 @@ impl Router {
     /// This is intended for hot paths that already know the destination domain
     /// and want to avoid an exact-route miss before falling back to domain
     /// pattern matching.
+    #[must_use]
     pub fn resolve_domain_sink(&self, domain: &str) -> Option<Arc<dyn MailboxSink>> {
         self.registry.get_by_domain(domain)
     }
@@ -533,16 +536,19 @@ impl Router {
     }
 
     /// Check if a route is registered
+    #[must_use]
     pub fn contains(&self, address: &RouteAddress) -> bool {
         self.registry.get(address).is_some()
     }
 
     /// Get the number of registered routes
+    #[must_use]
     pub fn len(&self) -> usize {
         self.registry.len()
     }
 
     /// Check if the registry is empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -559,8 +565,7 @@ impl Default for Router {
 fn should_sample_hot_path() -> bool {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| (d.as_nanos() as u64).is_multiple_of(1000))
-        .unwrap_or(false)
+        .is_ok_and(|d| (d.as_nanos() as u64).is_multiple_of(1000))
 }
 
 #[cfg(test)]

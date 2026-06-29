@@ -23,7 +23,7 @@ fn create_test_actor() -> ScheduleActor {
 }
 
 fn build_route(index: usize) -> String {
-    let route = format!("schedule://acme/jobs/task{:06}/run", index);
+    let route = format!("schedule://acme/jobs/task{index:06}/run");
     validate_concrete_schedule_route(&route).expect("valid schedule benchmark route");
     route
 }
@@ -37,7 +37,7 @@ fn precompute_data(count: usize) -> (Vec<String>, Vec<String>, Vec<Bytes>) {
         })
         .collect();
     let payloads = (0..count)
-        .map(|i| Bytes::from(format!("payload-{:06}", i)))
+        .map(|i| Bytes::from(format!("payload-{i:06}")))
         .collect();
     (routes, crons, payloads)
 }
@@ -72,7 +72,7 @@ fn bench_cancel_churn(c: &mut Criterion) {
         let victim_index = count / 2;
         group.throughput(Throughput::Elements(count as u64));
 
-        group.bench_function(format!("cancel_existing_{}_mixed_crons", count), |b| {
+        group.bench_function(format!("cancel_existing_{count}_mixed_crons"), |b| {
             b.iter_batched(
                 || {
                     let mut actor = create_test_actor();
@@ -102,7 +102,7 @@ fn bench_shared_full_list_cache(c: &mut Criterion) {
         group.throughput(Throughput::Elements(count as u64));
 
         group.bench_function(
-            format!("delete_then_full_list_shared_cache_{}_mixed_crons", count),
+            format!("delete_then_full_list_shared_cache_{count}_mixed_crons"),
             |b| {
                 b.iter_batched(
                     || {
@@ -124,7 +124,7 @@ fn bench_shared_full_list_cache(c: &mut Criterion) {
         );
 
         group.bench_function(
-            format!("upsert_then_full_list_shared_cache_{}_mixed_crons", count),
+            format!("upsert_then_full_list_shared_cache_{count}_mixed_crons"),
             |b| {
                 b.iter_batched(
                     || {

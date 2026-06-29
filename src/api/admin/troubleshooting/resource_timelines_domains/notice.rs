@@ -70,11 +70,10 @@ pub(crate) fn notice_resource_timeline(
     if subscriptions_active > 0 || publishes_total > 0 {
         let summary = if publishes_total > 0 {
             format!(
-                "{} subscriber(s); {:.1} publish(es)/min; {} total publish(es)",
-                subscriptions_active, publishes_per_minute, publishes_total
+                "{subscriptions_active} subscriber(s); {publishes_per_minute:.1} publish(es)/min; {publishes_total} total publish(es)"
             )
         } else {
-            format!("{} subscriber(s)", subscriptions_active)
+            format!("{subscriptions_active} subscriber(s)")
         };
         candidates.push(timeline_candidate(
             now,

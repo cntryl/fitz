@@ -118,15 +118,15 @@ fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
     ctx.tag("batch_size", "acquire_release");
 
     let (router, family, source, inbox) = setup_lease_sink();
-    let routes: Vec<String> = (0..100)
-        .map(|i| format!("lease://realm/area/lock{}/acquire", i))
+    let lease_routes: Vec<String> = (0..100)
+        .map(|i| format!("lease://realm/area/lock{i}/acquire"))
         .collect();
 
     let mut idx = 0usize;
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            let route = &routes[idx];
+            let route = &lease_routes[idx];
             let token = acquire_token(&router, family, &source, &inbox, route, "client-1");
             let _ = request(
                 &router,
@@ -137,7 +137,7 @@ fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
                 402,
                 build_release_payload(route, "client-1", token),
             );
-            idx = (idx + 1) % routes.len();
+            idx = (idx + 1) % lease_routes.len();
         },
     );
     ctx.set_elements(2 * iterations as u64);
@@ -150,10 +150,10 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
     ctx.tag("batch_size", "single_renew");
 
     let (router, family, source, inbox) = setup_lease_sink();
-    let route1 = "lease://realm/area1/lock1/renew";
-    let route2 = "lease://realm/area2/lock2/renew";
-    let mut token1 = acquire_token(&router, family, &source, &inbox, route1, "client-1");
-    let mut token2 = acquire_token(&router, family, &source, &inbox, route2, "client-2");
+    let renew_route_a = "lease://realm/area1/lock1/renew";
+    let renew_route_b = "lease://realm/area2/lock2/renew";
+    let mut token1 = acquire_token(&router, family, &source, &inbox, renew_route_a, "client-1");
+    let mut token2 = acquire_token(&router, family, &source, &inbox, renew_route_b, "client-2");
 
     let mut phase = 0usize;
     let iterations = ctx.measure_for(
@@ -165,9 +165,9 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
                     family,
                     &source,
                     &inbox,
-                    route1,
+                    renew_route_a,
                     401,
-                    build_extend_payload(route1, "client-1", token1, 30),
+                    build_extend_payload(renew_route_a, "client-1", token1, 30),
                 );
                 token1 = parse_lease_extend_token_response(response.as_ref())
                     .expect("extend token route1");
@@ -177,9 +177,9 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
                     family,
                     &source,
                     &inbox,
-                    route2,
+                    renew_route_b,
                     401,
-                    build_extend_payload(route2, "client-2", token2, 30),
+                    build_extend_payload(renew_route_b, "client-2", token2, 30),
                 );
                 token2 = parse_lease_extend_token_response(response.as_ref())
                     .expect("extend token route2");
@@ -197,17 +197,17 @@ fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
     ctx.tag("batch_size", "single_query");
 
     let (router, family, source, inbox) = setup_lease_sink();
-    let routes = [
+    let query_routes = [
         "lease://realm/area1/lock1/query",
         "lease://realm/area2/lock2/query",
         "lease://realm/area3/lock3/query",
     ];
     let owners = ["client-1", "client-2", "client-3"];
-    for (route, owner) in routes.iter().zip(owners.iter()) {
+    for (route, owner) in query_routes.iter().zip(owners.iter()) {
         let _ = acquire_token(&router, family, &source, &inbox, route, owner);
     }
 
-    let query_payloads: Vec<Bytes> = routes
+    let query_payloads: Vec<Bytes> = query_routes
         .iter()
         .map(|route| build_query_payload(route))
         .collect();

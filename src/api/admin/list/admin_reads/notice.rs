@@ -23,20 +23,15 @@ pub async fn notice_delivery_observations(
             let parsed = parse_flexible_route(&subscription.pattern);
             if area
                 .as_ref()
-                .map(|value| parsed.as_ref().map(|parts| &parts.area) == Some(value))
-                .unwrap_or(true)
+                .is_none_or(|value| parsed.as_ref().map(|parts| &parts.area) == Some(value))
                 && resource
                     .as_ref()
-                    .map(|value| parsed.as_ref().map(|parts| &parts.resource) == Some(value))
-                    .unwrap_or(true)
-                && query
-                    .as_ref()
-                    .map(|needle| {
-                        subscription.pattern.contains(needle)
-                            || subscription.session_id.contains(needle)
-                            || subscription.subscription_id.to_string().contains(needle)
-                    })
-                    .unwrap_or(true)
+                    .is_none_or(|value| parsed.as_ref().map(|parts| &parts.resource) == Some(value))
+                && query.as_ref().is_none_or(|needle| {
+                    subscription.pattern.contains(needle)
+                        || subscription.session_id.contains(needle)
+                        || subscription.subscription_id.to_string().contains(needle)
+                })
             {
                 let stats = route_stats.get(&(family, subscription.pattern.clone()));
                 Some(NoticeDeliveryObservation {
@@ -49,10 +44,8 @@ pub async fn notice_delivery_observations(
                     subscription_id: Some(subscription.subscription_id),
                     status: "active_subscription".to_string(),
                     notifications_received: subscription.notifications_received,
-                    publishes_total: stats.map(|item| item.publishes_total).unwrap_or(0),
-                    publishes_per_minute: stats
-                        .map(|item| item.publishes_per_minute)
-                        .unwrap_or(0.0),
+                    publishes_total: stats.map_or(0, |item| item.publishes_total),
+                    publishes_per_minute: stats.map_or(0.0, |item| item.publishes_per_minute),
                 })
             } else {
                 None

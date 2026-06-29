@@ -76,13 +76,12 @@ pub fn hot_path_metrics_enabled() -> bool {
     *HOT_PATH_METRICS_ENABLED.get_or_init(|| {
         std::env::var("FITZ_HOT_PATH_METRICS")
             .ok()
-            .map(|value| {
+            .is_some_and(|value| {
                 matches!(
                     value.trim().to_ascii_lowercase().as_str(),
                     "1" | "true" | "yes" | "on"
                 )
             })
-            .unwrap_or(false)
     })
 }
 
@@ -168,9 +167,9 @@ pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error:
     // Build env filter (RUST_LOG takes precedence)
     let env_filter = if let Ok(_rust_log) = std::env::var("RUST_LOG") {
         EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(format!("fitz={},warn", log_level)))
+            .unwrap_or_else(|_| EnvFilter::new(format!("fitz={log_level},warn")))
     } else {
-        EnvFilter::new(format!("fitz={},warn", log_level))
+        EnvFilter::new(format!("fitz={log_level},warn"))
     };
 
     // Derive service identity and environment metadata
@@ -230,7 +229,7 @@ pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error:
             .with_tonic()
             .with_endpoint(otel_endpoint.clone())
             .build()
-            .map_err(|e| format!("Failed to init OTEL exporter: {}", e))?;
+            .map_err(|e| format!("Failed to init OTEL exporter: {e}"))?;
 
         let tracer_provider = SdkTracerProvider::builder()
             .with_resource(resource)

@@ -87,14 +87,17 @@ pub enum AdminRouteFamilyAccess {
 }
 
 impl AdminRouteFamilyAccess {
+    #[must_use]
     pub fn wildcard() -> Self {
         Self::Wildcard("*".to_string())
     }
 
+    #[must_use]
     pub fn from_env() -> Self {
         parse_admin_route_family_access(env_non_empty(ADMIN_ROUTE_FAMILIES_ENV).as_deref())
     }
 
+    #[must_use]
     pub fn allows(&self, route_family: &str) -> bool {
         match self {
             Self::Wildcard(value) => value == "*",
@@ -102,6 +105,7 @@ impl AdminRouteFamilyAccess {
         }
     }
 
+    #[must_use]
     pub fn route_families(&self) -> Vec<String> {
         match self {
             Self::Wildcard(_) => Vec::new(),
@@ -109,6 +113,7 @@ impl AdminRouteFamilyAccess {
         }
     }
 
+    #[must_use]
     pub fn is_wildcard(&self) -> bool {
         matches!(self, Self::Wildcard(value) if value == "*")
     }
@@ -172,10 +177,12 @@ impl AdminAuth {
         }
     }
 
+    #[must_use]
     pub fn is_configured(&self) -> bool {
         self.settings.is_some()
     }
 
+    #[must_use]
     pub fn auth_mode(&self) -> &'static str {
         match self.mode {
             AdminAuthMode::Protected => "protected",
@@ -183,6 +190,7 @@ impl AdminAuth {
         }
     }
 
+    #[must_use]
     pub fn login_required(&self) -> bool {
         matches!(self.mode, AdminAuthMode::Protected)
     }
@@ -245,13 +253,13 @@ impl AdminAuth {
         ))
     }
 
+    #[must_use]
     pub fn clear_session_cookie(&self) -> String {
         let secure = self
             .settings
             .as_ref()
             .as_ref()
-            .map(|settings| settings.cookie_secure)
-            .unwrap_or(true);
+            .is_none_or(|settings| settings.cookie_secure);
         clear_cookie(secure)
     }
 
@@ -300,8 +308,9 @@ impl AdminAuth {
         self.settings
             .as_ref()
             .as_ref()
-            .map(|settings| settings.route_family_access.clone())
-            .unwrap_or_else(AdminRouteFamilyAccess::wildcard)
+            .map_or_else(AdminRouteFamilyAccess::wildcard, |settings| {
+                settings.route_family_access.clone()
+            })
     }
 
     pub fn validate_same_origin<B>(&self, req: &hyper::Request<B>) -> Result<(), AuthFailure> {
@@ -335,6 +344,7 @@ pub enum AuthFailure {
 }
 
 impl AuthFailure {
+    #[must_use]
     pub fn status_code(self) -> StatusCode {
         match self {
             AuthFailure::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
@@ -345,6 +355,7 @@ impl AuthFailure {
         }
     }
 
+    #[must_use]
     pub fn message(self) -> &'static str {
         match self {
             AuthFailure::Unavailable => "Admin authentication is not configured",

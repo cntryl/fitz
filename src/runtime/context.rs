@@ -9,11 +9,13 @@ pub struct TimerId(u64);
 
 impl TimerId {
     #[inline]
+    #[must_use]
     pub fn new(id: u64) -> Self {
         Self(id)
     }
 
     #[inline]
+    #[must_use]
     pub fn as_u64(&self) -> u64 {
         self.0
     }
@@ -27,6 +29,7 @@ pub struct Timer {
 }
 
 impl Timer {
+    #[must_use]
     pub fn new(id: TimerId, deadline: Instant, interval: Option<Duration>) -> Self {
         Self {
             id,
@@ -36,22 +39,26 @@ impl Timer {
     }
 
     #[inline]
+    #[must_use]
     pub fn id(&self) -> TimerId {
         self.id
     }
 
     #[inline]
+    #[must_use]
     pub fn deadline(&self) -> Instant {
         self.deadline
     }
 
     #[inline]
+    #[must_use]
     pub fn interval(&self) -> Option<Duration> {
         self.interval
     }
 
     /// Check if this timer has fired
     #[inline]
+    #[must_use]
     pub fn is_fired(&self, now: Instant) -> bool {
         now >= self.deadline
     }
@@ -127,11 +134,13 @@ pub struct TimerManager {
 }
 
 impl TimerManager {
+    #[must_use]
     pub fn new() -> Self {
         Self::new_at(Instant::now())
     }
 
     #[doc(hidden)]
+    #[must_use]
     pub fn new_at(start_instant: Instant) -> Self {
         Self {
             next_timer_id: 1,
@@ -385,6 +394,7 @@ impl TimerManager {
 
     /// Get the next timer deadline
     #[inline]
+    #[must_use]
     pub fn next_deadline(&self) -> Option<Instant> {
         let next_tick = self.min_deadline_tick?;
         let deadline = self

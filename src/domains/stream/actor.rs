@@ -132,11 +132,10 @@ impl StreamActor {
         };
 
         let event_size = body.len()
-            + metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+            + metadata.as_ref().map_or(0, |m| m.len())
             + discriminator
                 .as_ref()
-                .map(|value| value.as_str().len())
-                .unwrap_or(0);
+                .map_or(0, |value| value.as_str().len());
         if event_size > MAX_EVENT_SIZE {
             return Err("event too large".to_string());
         }

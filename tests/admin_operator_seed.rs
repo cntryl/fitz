@@ -271,8 +271,7 @@ fn assert_search_route_family(payload: &Value, route_family: u32) {
     assert!(results.iter().all(|result| {
         result["route_family"]
             .as_str()
-            .map(|value| value == expected)
-            .unwrap_or(false)
+            .is_some_and(|value| value == expected)
     }));
 }
 

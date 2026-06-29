@@ -63,7 +63,7 @@ impl RawClaims {
             return Ok(None);
         };
         let custom_claim: CustomPermissionsClaim = serde_json::from_value(value.clone())
-            .map_err(|e| format!("malformed custom claim {}: {}", claim_name, e))?;
+            .map_err(|e| format!("malformed custom claim {claim_name}: {e}"))?;
         Ok(Some(custom_claim.permissions.unwrap_or_default()))
     }
 
@@ -78,8 +78,7 @@ impl RawClaims {
 
         let Some(values) = value.as_array() else {
             return Err(format!(
-                "{} claim '{}' must be an array of strings",
-                source_kind, claim_name
+                "{source_kind} claim '{claim_name}' must be an array of strings"
             ));
         };
 
@@ -87,8 +86,7 @@ impl RawClaims {
         for value in values {
             let Some(value) = value.as_str() else {
                 return Err(format!(
-                    "{} claim '{}' must be an array of strings",
-                    source_kind, claim_name
+                    "{source_kind} claim '{claim_name}' must be an array of strings"
                 ));
             };
             out.push(value.to_string());
@@ -118,7 +116,7 @@ fn parse_permission_values(
     }
 
     if out.is_empty() {
-        return Err(format!("no permissions derived from {}", source));
+        return Err(format!("no permissions derived from {source}"));
     }
 
     Ok(out)
@@ -131,28 +129,28 @@ fn parse_permission_value(
 ) -> Result<Permission, String> {
     if is_fitz_permission(value) {
         return Permission::parse(value)
-            .map_err(|error| format!("malformed {}: {} ({})", error_kind, value, error));
+            .map_err(|error| format!("malformed {error_kind}: {value} ({error})"));
     }
 
     if let Some(mapped) = crate::auth::map_coarse_scope(value) {
         return Permission::parse(mapped)
-            .map_err(|error| format!("malformed {}: {} ({})", error_kind, value, error));
+            .map_err(|error| format!("malformed {error_kind}: {value} ({error})"));
     }
 
     if allow_resource_prefix {
         if let Some((_, suffix)) = value.rsplit_once('/') {
             if is_fitz_permission(suffix) {
                 return Permission::parse(suffix)
-                    .map_err(|error| format!("malformed {}: {} ({})", error_kind, value, error));
+                    .map_err(|error| format!("malformed {error_kind}: {value} ({error})"));
             }
             if let Some(mapped) = crate::auth::map_coarse_scope(suffix) {
                 return Permission::parse(mapped)
-                    .map_err(|error| format!("malformed {}: {} ({})", error_kind, value, error));
+                    .map_err(|error| format!("malformed {error_kind}: {value} ({error})"));
             }
         }
     }
 
-    Err(format!("malformed {}: {}", error_kind, value))
+    Err(format!("malformed {error_kind}: {value}"))
 }
 
 fn is_fitz_permission(value: &str) -> bool {

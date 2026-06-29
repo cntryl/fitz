@@ -10,7 +10,7 @@ pub async fn queue_inflight_for_resource(
         .into_iter()
         .filter(|entry| {
             path.matches(&entry.realm, &entry.area, &entry.resource)
-                && family.map(|value| entry.family == value).unwrap_or(true)
+                && family.is_none_or(|value| entry.family == value)
         })
         .collect();
     crate::api::admin::json_response(QueueInflightList { inflight })
@@ -26,7 +26,7 @@ pub async fn queue_dead_letters_for_resource(
         .into_iter()
         .filter(|message| {
             path.matches(&message.realm, &message.area, &message.resource)
-                && family.map(|value| message.family == value).unwrap_or(true)
+                && family.is_none_or(|value| message.family == value)
         })
         .collect();
     crate::api::admin::json_response(QueueDeadLettersList { messages })

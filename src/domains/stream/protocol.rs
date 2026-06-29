@@ -54,16 +54,19 @@ pub struct OffsetLease {
 
 impl OffsetLease {
     /// Create empty lease (no offsets available)
+    #[must_use]
     pub fn new() -> Self {
         Self { next: 0, end: 0 }
     }
 
     /// Check if lease has no remaining offsets
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.next >= self.end
     }
 
     /// Get number of remaining offsets
+    #[must_use]
     pub fn remaining(&self) -> u64 {
         self.end.saturating_sub(self.next)
     }
@@ -142,6 +145,7 @@ pub struct StreamRecord {
 pub struct StreamDiscriminator(pub String);
 
 impl StreamDiscriminator {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -206,7 +210,7 @@ impl StreamFilterClause {
                 }
                 Ok(Self::AnyOf(values))
             }
-            other => Err(format!("Unknown stream filter clause {}", other)),
+            other => Err(format!("Unknown stream filter clause {other}")),
         }
     }
 
@@ -229,6 +233,7 @@ pub struct StreamFilterSet {
 impl StreamFilterSet {
     const VERSION_MARKER: [u8; 2] = [0, 0xF1];
 
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut enc = PayloadEncoder::with_capacity(2 + 4 + self.clauses.len() * 8);
         enc.put_u8(Self::VERSION_MARKER[0]);
@@ -261,6 +266,7 @@ impl StreamFilterSet {
         Ok(Self { clauses })
     }
 
+    #[must_use]
     pub fn matches(&self, discriminator: Option<&str>) -> bool {
         let discriminator = discriminator.unwrap_or("");
         self.clauses
@@ -268,6 +274,7 @@ impl StreamFilterSet {
             .all(|clause| clause.matches(discriminator))
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.clauses.is_empty()
     }
@@ -423,6 +430,7 @@ pub struct StreamClientResponse {
 }
 
 impl StreamClientResponse {
+    #[must_use]
     pub fn new(meta: ClientFrameMeta, response: StreamClientResponseBody) -> Self {
         Self { meta, response }
     }
@@ -675,6 +683,7 @@ pub enum StreamError {
 }
 
 impl StreamError {
+    #[must_use]
     pub fn code(&self) -> u16 {
         match self {
             StreamError::InvalidRealm => 3000,

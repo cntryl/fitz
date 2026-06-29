@@ -10,13 +10,12 @@ async fn websocket_upgrade_status_for_addr(
     stream.set_nodelay(true)?;
     let request = format!(
         "GET / HTTP/1.1\r\n\
-             Host: {}\r\n\
+             Host: {addr}\r\n\
              Upgrade: websocket\r\n\
              Connection: Upgrade\r\n\
              Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
              Sec-WebSocket-Version: 13\r\n\
-             \r\n",
-        addr
+             \r\n"
     );
     stream.write_all(request.as_bytes()).await?;
     let mut response = [0_u8; 1024];

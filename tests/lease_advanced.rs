@@ -65,7 +65,7 @@ fn should_return_queued_when_wait_seconds_greater_than_zero_and_lease_held() {
         LeaseResponse::Queued { fencing_token } => {
             assert!(fencing_token > 0);
         }
-        _ => panic!("Expected Queued response, got {:?}", response_b),
+        _ => panic!("Expected Queued response, got {response_b:?}"),
     }
 }
 
@@ -101,7 +101,7 @@ fn should_return_held_by_other_when_wait_seconds_is_zero() {
         LeaseResponse::HeldByOther { current_owner } => {
             assert_eq!(current_owner, "client-a");
         }
-        _ => panic!("Expected HeldByOther response, got {:?}", response_b),
+        _ => panic!("Expected HeldByOther response, got {response_b:?}"),
     }
 }
 
@@ -147,7 +147,7 @@ fn should_return_already_queued_when_same_owner_acquires_twice() {
         LeaseResponse::AlreadyQueued { fencing_token } => {
             assert!(fencing_token > 0);
         }
-        _ => panic!("Expected AlreadyQueued response, got {:?}", response),
+        _ => panic!("Expected AlreadyQueued response, got {response:?}"),
     }
 }
 
@@ -186,7 +186,7 @@ fn should_return_already_held_when_current_holder_acquires_again() {
     // Assert
     match response {
         LeaseResponse::AlreadyHeld { fencing_token } => assert_eq!(fencing_token, token_a),
-        _ => panic!("Expected AlreadyHeld response, got {:?}", response),
+        _ => panic!("Expected AlreadyHeld response, got {response:?}"),
     }
 }
 
@@ -215,7 +215,7 @@ fn should_return_queue_full_when_exceeding_max_queue_depth() {
         let acquire = LeaseMessage::Acquire {
             family_id: fam,
             route: test_route.clone(),
-            owner_id: format!("client-{}", i),
+            owner_id: format!("client-{i}"),
             ttl_secs: 60,
             wait_seconds: 10,
         };
@@ -235,7 +235,7 @@ fn should_return_queue_full_when_exceeding_max_queue_depth() {
     // Assert
     match response {
         LeaseResponse::QueueFull { pending_count: _ } => (),
-        _ => panic!("Expected QueueFull, got {:?}", response),
+        _ => panic!("Expected QueueFull, got {response:?}"),
     }
 }
 
@@ -289,7 +289,7 @@ fn should_grant_fifo_order_verified_via_query() {
         } => {
             assert_eq!(pending_waiters, 2);
         }
-        _ => panic!("Expected Status, got {:?}", response),
+        _ => panic!("Expected Status, got {response:?}"),
     }
 }
 
@@ -328,7 +328,7 @@ fn should_allow_renew_with_valid_token() {
     // Assert
     match response {
         LeaseResponse::Extended { fencing_token } => assert!(fencing_token > token_a),
-        _ => panic!("Expected Extended, got {:?}", response),
+        _ => panic!("Expected Extended, got {response:?}"),
     }
 }
 
@@ -362,7 +362,7 @@ fn should_fail_renew_with_invalid_token() {
     // Assert
     match response {
         LeaseResponse::Fenced { current_token } => assert!(current_token > 0),
-        _ => panic!("Expected Fenced, got {:?}", response),
+        _ => panic!("Expected Fenced, got {response:?}"),
     }
 }
 
@@ -400,7 +400,7 @@ fn should_allow_release_with_valid_token() {
     // Assert
     match response {
         LeaseResponse::Released => (),
-        _ => panic!("Expected Released, got {:?}", response),
+        _ => panic!("Expected Released, got {response:?}"),
     }
 }
 
@@ -514,7 +514,7 @@ fn should_accept_wait_seconds_at_server_max() {
     // Assert
     match response {
         LeaseResponse::Queued { fencing_token } => assert!(fencing_token > 0),
-        _ => panic!("Expected Queued for wait_seconds=30, got {:?}", response),
+        _ => panic!("Expected Queued for wait_seconds=30, got {response:?}"),
     }
 }
 
@@ -547,7 +547,7 @@ fn should_preserve_fifo_order_through_single_waiter_lifecycle() {
 
     match response_queued {
         LeaseResponse::Queued { fencing_token } => assert!(fencing_token > 0),
-        _ => panic!("Expected Queued response, got {:?}", response_queued),
+        _ => panic!("Expected Queued response, got {response_queued:?}"),
     }
 
     // Act
@@ -564,7 +564,7 @@ fn should_preserve_fifo_order_through_single_waiter_lifecycle() {
         } => {
             assert_eq!(pending_waiters, 1);
         }
-        _ => panic!("Expected Status, got {:?}", status),
+        _ => panic!("Expected Status, got {status:?}"),
     }
 }
 
@@ -621,7 +621,7 @@ fn should_block_new_acquirers_while_waiter_is_being_granted() {
     // Assert
     match response {
         LeaseResponse::HeldByOther { .. } | LeaseResponse::Queued { .. } => (),
-        _ => panic!("Expected HeldByOther or Queued, got {:?}", response),
+        _ => panic!("Expected HeldByOther or Queued, got {response:?}"),
     }
 }
 
@@ -642,14 +642,14 @@ fn should_isolate_timers_across_separate_leases() {
     };
     let _ = actor.handle_message(acquire_a_holder, &mut ctx).unwrap();
 
-    let acquire_b_holder = LeaseMessage::Acquire {
+    let acquire_b_owner = LeaseMessage::Acquire {
         family_id: fam,
         route: route_b.clone(),
         owner_id: "holder-b".to_string(),
         ttl_secs: 60,
         wait_seconds: 0,
     };
-    let _ = actor.handle_message(acquire_b_holder, &mut ctx).unwrap();
+    let _ = actor.handle_message(acquire_b_owner, &mut ctx).unwrap();
 
     let acquire_a_waiter = LeaseMessage::Acquire {
         family_id: fam,
@@ -718,7 +718,7 @@ fn should_handle_release_on_non_existent_lease() {
     // Assert - Idempotent delete: releasing non-existent lease succeeds
     match response {
         LeaseResponse::Released => (),
-        _ => panic!("Expected Released (idempotent delete), got {:?}", response),
+        _ => panic!("Expected Released (idempotent delete), got {response:?}"),
     }
 }
 
@@ -752,6 +752,6 @@ fn should_handle_renew_on_expired_lease() {
     // Assert
     match response {
         LeaseResponse::Expired | LeaseResponse::NotHeld | LeaseResponse::Fenced { .. } => (),
-        _ => panic!("Expected Expired/NotHeld/Fenced, got {:?}", response),
+        _ => panic!("Expected Expired/NotHeld/Fenced, got {response:?}"),
     }
 }

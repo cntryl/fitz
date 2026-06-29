@@ -79,6 +79,7 @@ impl QueueDomainSink {
         }
     }
 
+    #[must_use]
     pub fn with_metrics(
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
@@ -88,6 +89,7 @@ impl QueueDomainSink {
         self
     }
 
+    #[must_use]
     pub fn with_fast_flush_interval(mut self, interval: Option<Duration>) -> Self {
         self.fast_flush_interval = interval;
         if let Some(interval) = interval {
@@ -526,12 +528,9 @@ impl QueueDomainSink {
             .map(|(key, warm_actor)| {
                 let actor = warm_actor.actor.lock();
                 let ready_route = Self::queue_ready_route(key);
-                let subscriptions_active = families
-                    .get(&key.family.as_u64())
-                    .map(|state| {
-                        state.for_each_matching_route(key.family, ready_route.as_str(), |_| {})
-                    })
-                    .unwrap_or(0);
+                let subscriptions_active = families.get(&key.family.as_u64()).map_or(0, |state| {
+                    state.for_each_matching_route(key.family, ready_route.as_str(), |_| {})
+                });
                 QueueProjectionEntry {
                     key: key.clone(),
                     snapshot: actor.admin_snapshot(),

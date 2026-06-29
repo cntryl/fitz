@@ -226,5 +226,5 @@ fn should_export_type_metadata_for_every_metric_family() {
         .filter(|family| !typed.contains(family))
         .collect::<BTreeSet<_>>();
 
-    assert!(untyped.is_empty(), "untyped metric families: {:?}", untyped);
+    assert!(untyped.is_empty(), "untyped metric families: {untyped:?}");
 }

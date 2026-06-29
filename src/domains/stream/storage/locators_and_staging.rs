@@ -4,10 +4,12 @@ use bytes::Bytes;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 
 impl CompressedCompactRealmPageValue {
+    #[must_use]
     pub fn is_encoded(bytes: &[u8]) -> bool {
         bytes.starts_with(&COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER)
     }
 
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let compact_page = CompactRealmPageValue {
             records: self.records.clone(),
@@ -20,10 +22,12 @@ impl CompressedCompactRealmPageValue {
         bytes
     }
 
+    #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize compressed compact realm page value")
     }
 
+    #[must_use]
     pub fn into_compact_realm_page(self) -> CompactRealmPageValue {
         CompactRealmPageValue {
             records: self.records,
@@ -50,6 +54,7 @@ impl CompressedCompactRealmPageValue {
 }
 
 impl WatermarkValue {
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         encode_single_u64_value(0x01, self.watermark)
     }
@@ -62,6 +67,7 @@ impl WatermarkValue {
 }
 
 impl OffsetCounterValue {
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         encode_single_u64_value(0x02, self.next_offset)
     }
@@ -74,6 +80,7 @@ impl OffsetCounterValue {
 }
 
 impl ResourceMetaValue {
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         encode_two_u64_value(0x03, self.next_offset, self.committed_size_bytes)
     }
@@ -89,6 +96,7 @@ impl ResourceMetaValue {
 }
 
 impl AreaCounterValue {
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         encode_single_u64_value(0x04, self.next_offset)
     }
@@ -101,6 +109,7 @@ impl AreaCounterValue {
 }
 
 impl RealmCounterValue {
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         encode_single_u64_value(0x05, self.next_offset)
     }
@@ -114,7 +123,7 @@ impl RealmCounterValue {
 
 impl CanonicalResourceValue {
     pub fn encode(&self) -> Vec<u8> {
-        let metadata_len = self.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let metadata_len = self.metadata.as_ref().map_or(0, |m| m.len());
         let mut buf = Vec::with_capacity(34 + self.body.len() + metadata_len);
         buf.extend_from_slice(&CANONICAL_RESOURCE_VALUE_V1_MARKER);
         buf.extend_from_slice(&self.area_offset.to_le_bytes());
@@ -125,8 +134,7 @@ impl CanonicalResourceValue {
             &self
                 .metadata
                 .as_ref()
-                .map(|m| m.len() as u32)
-                .unwrap_or(OPTIONAL_BYTES_ABSENT)
+                .map_or(OPTIONAL_BYTES_ABSENT, |m| m.len() as u32)
                 .to_le_bytes(),
         );
         buf.extend_from_slice(&self.body);
@@ -136,6 +144,7 @@ impl CanonicalResourceValue {
         buf
     }
 
+    #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize canonical resource value")
     }
@@ -198,6 +207,7 @@ impl CanonicalResourceValue {
 }
 
 impl AreaLocatorValue {
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(18);
         buf.extend_from_slice(&AREA_LOCATOR_VALUE_V1_MARKER);
@@ -206,6 +216,7 @@ impl AreaLocatorValue {
         buf
     }
 
+    #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize area locator value")
     }
@@ -230,6 +241,7 @@ impl AreaLocatorValue {
 }
 
 impl RealmLocatorValue {
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(26);
         buf.extend_from_slice(&REALM_LOCATOR_VALUE_V1_MARKER);
@@ -239,6 +251,7 @@ impl RealmLocatorValue {
         buf
     }
 
+    #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize realm locator value")
     }
@@ -265,6 +278,7 @@ impl RealmLocatorValue {
 
 /// Create an in-memory Midge database for tests
 #[cfg(test)]
+#[must_use]
 pub fn create_test_db() -> std::sync::Arc<cntryl_midge::Engine> {
     use cntryl_midge::testkit::MidgeOptions;
     use std::sync::Arc;
@@ -275,6 +289,7 @@ pub fn create_test_db() -> std::sync::Arc<cntryl_midge::Engine> {
 }
 
 /// Staging key/value encoding for Transaction
+#[must_use]
 pub fn encode_staging_key(session_id: u64, event_index: usize) -> Vec<u8> {
     let mut encoder = lexkey::Encoder::with_capacity(18);
     encoder.push_byte(KeyPrefix::Staging as u8);
@@ -285,15 +300,14 @@ pub fn encode_staging_key(session_id: u64, event_index: usize) -> Vec<u8> {
 }
 
 pub fn encode_staging_value(event: &EventPayload) -> Vec<u8> {
-    let metadata_len = event.metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+    let metadata_len = event.metadata.as_ref().map_or(0, |m| m.len());
     let mut buf = Vec::with_capacity(8 + event.body.len() + metadata_len);
     buf.extend_from_slice(&(event.body.len() as u32).to_le_bytes());
     buf.extend_from_slice(
         &event
             .metadata
             .as_ref()
-            .map(|m| m.len() as u32)
-            .unwrap_or(u32::MAX)
+            .map_or(u32::MAX, |m| m.len() as u32)
             .to_le_bytes(),
     );
     buf.extend_from_slice(&event.body);

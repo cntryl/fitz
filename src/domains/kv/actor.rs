@@ -531,13 +531,11 @@ impl KvActor {
         let start_key = query
             .start
             .as_ref()
-            .map(|k| Self::encode_scoped_key(&prefix, k))
-            .unwrap_or_else(|| prefix.clone());
-        let end_key = query
-            .end
-            .as_ref()
-            .map(|k| Self::encode_scoped_key(&prefix, k))
-            .unwrap_or_else(|| Self::prefix_range_end(&prefix));
+            .map_or_else(|| prefix.clone(), |k| Self::encode_scoped_key(&prefix, k));
+        let end_key = query.end.as_ref().map_or_else(
+            || Self::prefix_range_end(&prefix),
+            |k| Self::encode_scoped_key(&prefix, k),
+        );
 
         // Build Midge Query
         let mut midge_query = cntryl_midge::Query::new()
@@ -588,10 +586,12 @@ impl KvActor {
             })
     }
 
+    #[must_use]
     pub fn mutation_count_for_tx(&self, tx_id: u64) -> Option<u64> {
         self.transactions.get(&tx_id).map(|tx| tx.mutation_count)
     }
 
+    #[must_use]
     pub fn resource_scope_for_tx(&self, tx_id: u64) -> Option<(u64, String, String, String)> {
         self.transactions.get(&tx_id).map(|tx| {
             (

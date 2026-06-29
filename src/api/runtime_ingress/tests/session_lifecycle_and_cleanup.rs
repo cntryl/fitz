@@ -381,7 +381,7 @@ pub(super) fn should_process_frame() {
             "iss": "",
             "aud": "fitz-broker",
             "sub": "user:2",
-            "exp": 9999999999u64,
+            "exp": 9_999_999_999_u64,
             "tid": "acme-prod",
             "permissions": ["notice://prod/orders/**#read"]
         });
@@ -438,7 +438,7 @@ pub(super) fn should_call_event_handler() {
             "iss": "",
             "aud": "fitz-broker",
             "sub": "user:3",
-            "exp": 9999999999u64,
+            "exp": 9_999_999_999_u64,
             "tid": "acme-prod",
             "permissions": ["notice://prod/orders/**#read"]
         });

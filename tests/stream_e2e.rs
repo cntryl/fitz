@@ -251,7 +251,7 @@ fn parse_stream_read_response(frame: &[u8]) -> WireReadResponse {
                 let _to_offset = dec.get_u64().expect("stream filtered range to offset");
                 let _reason = dec.get_u8().expect("stream filtered range reason");
             }
-            other => panic!("unexpected stream read item tag: {}", other),
+            other => panic!("unexpected stream read item tag: {other}"),
         }
     }
 
@@ -821,7 +821,7 @@ where
 
     // Act - Append 5 events
     for i in 1..=5 {
-        let data = format!("event-{}", i).into_bytes();
+        let data = format!("event-{i}").into_bytes();
         commit_stream_record_with_offset(&mut client, route, (i - 1) as u64, &data).await;
     }
 

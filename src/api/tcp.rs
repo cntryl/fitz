@@ -86,7 +86,7 @@ impl TcpHandler {
                 Ok(n) => n,
                 Err(e) => {
                     error!(session_id = self.session_id, error = %e, "TCP read error");
-                    let reason = format!("read error: {}", e);
+                    let reason = format!("read error: {e}");
                     self.ingress
                         .on_close(self.session_id, CloseReason::Error(reason.clone()))
                         .await;
@@ -235,7 +235,7 @@ pub async fn create_session(
 ) -> Result<(TcpHandler, OwnedWriteHalf), String> {
     stream
         .set_nodelay(true)
-        .map_err(|e| format!("failed to enable TCP_NODELAY: {}", e))?;
+        .map_err(|e| format!("failed to enable TCP_NODELAY: {e}"))?;
 
     // Extract peer address before splitting
     let peer_addr = stream.peer_addr().ok();
@@ -270,7 +270,7 @@ pub async fn create_session(
 /// Helper: preview first N bytes as hex string for trace logging
 fn hex_preview(data: &[u8]) -> String {
     let limit = data.len().min(32);
-    let hex: Vec<String> = data[..limit].iter().map(|b| format!("{:02x}", b)).collect();
+    let hex: Vec<String> = data[..limit].iter().map(|b| format!("{b:02x}")).collect();
     if data.len() > limit {
         format!("{}... ({} bytes total)", hex.join(" "), data.len())
     } else {

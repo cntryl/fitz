@@ -54,9 +54,10 @@ pub(crate) fn collect_rpc_candidates(
                     }
                     .to_string(),
                 ),
-                href: parsed
-                    .map(|route| resource_href("rpc", route.realm, route.area, route.resource))
-                    .unwrap_or_else(|| "/rpc".to_string()),
+                href: parsed.map_or_else(
+                    || "/rpc".to_string(),
+                    |route| resource_href("rpc", route.realm, route.area, route.resource),
+                ),
                 matched_fields: Vec::new(),
                 metadata,
             },
@@ -107,9 +108,10 @@ pub(crate) fn collect_rpc_candidates(
                     }
                     .to_string(),
                 ),
-                href: parsed
-                    .map(|route| resource_href("rpc", route.realm, route.area, route.resource))
-                    .unwrap_or_else(|| "/rpc".to_string()),
+                href: parsed.map_or_else(
+                    || "/rpc".to_string(),
+                    |route| resource_href("rpc", route.realm, route.area, route.resource),
+                ),
                 matched_fields: Vec::new(),
                 metadata,
             },
@@ -231,13 +233,11 @@ pub(crate) fn normalize_route_family_filter(value: &str) -> String {
 }
 
 pub(crate) fn matches_optional_filter(filter: Option<&str>, value: Option<&str>) -> bool {
-    filter
-        .map(|filter| value.map(|value| value == filter).unwrap_or(false))
-        .unwrap_or(true)
+    filter.is_none_or(|filter| value.is_some_and(|value| value == filter))
 }
 
 pub(crate) fn scope_filter_matches(filter: Option<&str>, value: &str) -> bool {
-    filter.map(|filter| filter == value).unwrap_or(true)
+    filter.is_none_or(|filter| filter == value)
 }
 
 pub(crate) fn resource_href(domain: &str, realm: &str, area: &str, resource: &str) -> String {

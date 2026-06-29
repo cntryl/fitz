@@ -3,7 +3,6 @@ use hyper::header::{self, HeaderMap};
 use hyper::StatusCode;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -34,31 +33,21 @@ impl AssetServer {
         }
     }
 
-    pub(super) fn serve(&self, path: &str, headers: &HeaderMap) -> Result<Response, Infallible> {
+    pub(super) fn serve(&self, path: &str, headers: &HeaderMap) -> Response {
         let Some(resolved_asset) = self.resolve_path(path) else {
-            return Ok(super::super::not_found());
+            return super::super::not_found();
         };
 
         let Some(asset) = self.asset_entry(&resolved_asset) else {
-            return Ok(super::super::not_found());
+            return super::super::not_found();
         };
 
         let representation = asset.select_representation(headers);
         if if_none_match_matches(headers.get(header::IF_NONE_MATCH), &representation.etag) {
-            return Ok(response_for_asset(
-                StatusCode::NOT_MODIFIED,
-                &asset,
-                representation,
-                true,
-            ));
+            return response_for_asset(StatusCode::NOT_MODIFIED, &asset, representation, true);
         }
 
-        Ok(response_for_asset(
-            StatusCode::OK,
-            &asset,
-            representation,
-            false,
-        ))
+        response_for_asset(StatusCode::OK, &asset, representation, false)
     }
 
     fn resolve_path(&self, path: &str) -> Option<ResolvedAsset> {

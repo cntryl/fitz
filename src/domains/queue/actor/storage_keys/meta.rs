@@ -125,15 +125,14 @@ impl QueueActor {
                     next_delayed_visibility_ms,
                 }))
             }
-            other => Err(format!("Unsupported queue index meta version {}", other)),
+            other => Err(format!("Unsupported queue index meta version {other}")),
         }
     }
 
     pub(in crate::domains::queue::actor) fn decode_next_id(bytes: Option<&[u8]>) -> u64 {
         bytes
             .and_then(Self::decode_meta)
-            .map(|meta| meta.next_id)
-            .unwrap_or(1)
+            .map_or(1, |meta| meta.next_id)
     }
 
     #[allow(dead_code)]

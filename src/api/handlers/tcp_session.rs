@@ -29,7 +29,7 @@ async fn close_tcp_session_on_frame_error(
     ingress
         .on_close(
             session_id,
-            crate::session::CloseReason::Error(format!("{:?}", error)),
+            crate::session::CloseReason::Error(format!("{error:?}")),
         )
         .await;
     reason

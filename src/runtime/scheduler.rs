@@ -71,6 +71,7 @@ pub struct Scheduler {
 
 impl Scheduler {
     /// Create a new scheduler with the specified number of worker threads
+    #[must_use]
     pub fn new(worker_threads: usize) -> Self {
         Self {
             router: Arc::new(Router::new()),
@@ -80,6 +81,7 @@ impl Scheduler {
     }
 
     /// Create a scheduler with a shared router
+    #[must_use]
     pub fn with_router(router: Arc<Router>, worker_threads: usize) -> Self {
         Self {
             router,
@@ -89,6 +91,7 @@ impl Scheduler {
     }
 
     /// Get a reference to the router
+    #[must_use]
     pub fn router(&self) -> Arc<Router> {
         self.router.clone()
     }
@@ -213,10 +216,11 @@ impl Scheduler {
                     let envelope = if processed_high == 0 && processed_normal == 0 {
                         // First message overall: use blocking receive with timeout
                         let idle_start = Instant::now();
-                        let received = receiver.recv_timeout(Duration::from_millis(timeout_ms));
+                        let received_envelope =
+                            receiver.recv_timeout(Duration::from_millis(timeout_ms));
                         record_worker_idle_time(idle_start.elapsed());
 
-                        match received {
+                        match received_envelope {
                             Ok(env) => env,
                             Err(crossbeam_channel::RecvTimeoutError::Timeout) => break,
                             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -272,15 +276,14 @@ impl Scheduler {
                         );
 
                         ctx.metrics().record_panic();
-                        let error = ActorError::Panic(format!("timer panic: {:?}", e));
+                        let error = ActorError::Panic(format!("timer panic: {e:?}"));
                         actor.on_error(error, &mut ctx);
                         ctx.stop();
                         break;
-                    } else {
-                        let elapsed = timer_start.elapsed();
-                        record_worker_busy_time(elapsed);
-                        ctx.metrics().record_processed(elapsed.as_micros() as u64);
                     }
+                    let elapsed = timer_start.elapsed();
+                    record_worker_busy_time(elapsed);
+                    ctx.metrics().record_processed(elapsed.as_micros() as u64);
                 }
             }
 
@@ -302,6 +305,7 @@ impl Scheduler {
     }
 
     /// Check if the scheduler is running
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
@@ -365,7 +369,7 @@ fn process_envelope<A: Actor>(
         );
 
         ctx.metrics().record_panic();
-        let error = ActorError::Panic(format!("{:?}", e));
+        let error = ActorError::Panic(format!("{e:?}"));
 
         // Call error handler but actor is now stopped
         actor.on_error(error, ctx);

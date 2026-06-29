@@ -138,6 +138,7 @@ impl NoticeDomainSink {
         }
     }
 
+    #[must_use]
     pub fn with_metrics(
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
@@ -192,8 +193,9 @@ impl NoticeDomainSink {
                 .map(|((route_family, route), subscribers)| {
                     let (publishes_total, publishes_per_minute) = route_stats
                         .get_mut(&(route_family, route.clone()))
-                        .map(|stats| (stats.publishes_total(), stats.publishes_per_minute(now)))
-                        .unwrap_or((0, 0.0));
+                        .map_or((0, 0.0), |stats| {
+                            (stats.publishes_total(), stats.publishes_per_minute(now))
+                        });
                     let mut entry = crate::control::admin::NoticeRouteInfo::snapshot(
                         route_family,
                         route,

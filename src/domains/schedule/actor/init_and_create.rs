@@ -197,8 +197,7 @@ impl ScheduleActor {
                 }
                 Err(error) => {
                     return Err(format!(
-                        "parse persisted schedule cron failed for {}: {}",
-                        route, error
+                        "parse persisted schedule cron failed for {route}: {error}"
                     ));
                 }
             }
@@ -236,6 +235,7 @@ impl ScheduleActor {
         Ok(())
     }
 
+    #[must_use]
     pub fn admin_snapshot(&self) -> Vec<crate::control::admin::ScheduleInfo> {
         let mut snapshot: Vec<_> = self
             .schedules

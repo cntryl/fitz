@@ -16,6 +16,7 @@ pub struct SessionOutboundSink {
 }
 
 impl SessionOutboundSink {
+    #[must_use]
     pub fn new(tx: mpsc::Sender<Bytes>) -> Self {
         Self { tx }
     }

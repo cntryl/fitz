@@ -1,6 +1,7 @@
 use super::*;
 use crate::boot::runtime::StorageMemtableConfig;
 use cntryl_midge::{Goal, MemoryBudget, TransactionMode, WorkloadProfile, WriteOptions};
+use std::fmt::Write as _;
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -629,17 +630,15 @@ async fn signed_s3_request(method: &str, path: &str, body: &[u8]) -> Result<Vec<
     headers.sort_by(|left, right| left.0.cmp(&right.0));
     let canonical_headers = headers
         .iter()
-        .map(|(name, value)| format!("{}:{}\n", name, value))
+        .map(|(name, value)| format!("{name}:{value}\n"))
         .collect::<String>();
     let signed_headers = headers
         .iter()
         .map(|(name, _)| name.clone())
         .collect::<Vec<_>>()
         .join(";");
-    let canonical_request = format!(
-        "{}\n{}\n\n{}\n{}\n{}",
-        method, path, canonical_headers, signed_headers, payload_hash
-    );
+    let canonical_request =
+        format!("{method}\n{path}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}");
     let scope = format!("{date}/{region}/s3/aws4_request");
     let string_to_sign = format!(
         "AWS4-HMAC-SHA256\n{}\n{}\n{}",
@@ -806,7 +805,7 @@ async fn signed_azure_request(
             .collect::<Vec<_>>();
         query_pairs.sort();
         for (key, value) in query_pairs {
-            canonical_resource.push_str(&format!("\n{key}:{value}"));
+            let _ = write!(canonical_resource, "\n{key}:{value}");
         }
     }
     let string_to_sign = [
