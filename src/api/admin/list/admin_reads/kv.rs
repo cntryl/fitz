@@ -1,5 +1,12 @@
-use super::super::*;
+use super::super::{
+    matches_family, troubleshooting, Arc, Infallible, ResourcePath, Response, Runtime,
+};
 
+/// Returns recent KV timeline events for the given resource.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn kv_events_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,

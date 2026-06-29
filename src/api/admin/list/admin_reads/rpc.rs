@@ -1,4 +1,8 @@
-use super::super::*;
+use super::super::{
+    matches_family, matches_operation_route, parse_rpc_operation, troubleshooting, Arc, Infallible,
+    ResourcePath, Response, RpcCallObservation, RpcCallObservationList, RpcCallObservationRequest,
+    RpcOperationPath, RpcPendingList, RpcWorkersList, Runtime,
+};
 
 pub(crate) async fn rpc_call_observations(
     runtime: Arc<Runtime>,
@@ -102,6 +106,11 @@ pub(crate) async fn rpc_call_observations(
     })
 }
 
+/// Returns registered RPC workers for a specific operation route.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn rpc_workers_for_operation(
     runtime: Arc<Runtime>,
     path: &RpcOperationPath<'_>,
@@ -118,6 +127,11 @@ pub async fn rpc_workers_for_operation(
     crate::api::admin::json_response(RpcWorkersList { workers })
 }
 
+/// Returns currently pending RPC requests for the requested scope.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn rpc_pending(
     runtime: Arc<Runtime>,
     realm: Option<&str>,
@@ -131,6 +145,11 @@ pub async fn rpc_pending(
     crate::api::admin::json_response(RpcPendingList { requests })
 }
 
+/// Returns recent RPC timeline events for the given resource.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn rpc_events_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,

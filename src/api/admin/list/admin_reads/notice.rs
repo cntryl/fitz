@@ -1,5 +1,14 @@
-use super::super::*;
+use super::super::{
+    matches_family, matches_resource_route, parse_flexible_route, troubleshooting, Arc, HashMap,
+    Infallible, NoticeDeliveryObservation, NoticeDeliveryObservationList, NoticeSubscriptionsList,
+    ResourcePath, Response, Runtime,
+};
 
+/// Returns current notice delivery observations for the requested scope.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn notice_delivery_observations(
     runtime: Arc<Runtime>,
     family: u64,
@@ -61,6 +70,11 @@ pub async fn notice_delivery_observations(
     })
 }
 
+/// Returns active notice subscriptions for a specific resource.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn notice_subscriptions_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
@@ -77,6 +91,11 @@ pub async fn notice_subscriptions_for_resource(
     crate::api::admin::json_response(NoticeSubscriptionsList { subscriptions })
 }
 
+/// Returns recent notice timeline events for the given resource.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn notice_events_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,

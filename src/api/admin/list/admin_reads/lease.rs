@@ -1,5 +1,9 @@
-use super::super::*;
+use super::super::{
+    matches_family, troubleshooting, Arc, HashMap, Infallible, LeaseSearchItem, LeaseSearchRequest,
+    LeaseSearchResponse, ResourcePath, Response, Runtime,
+};
 
+/// Returns the current lease search view for the requested scope.
 pub(crate) async fn lease_search(
     runtime: Arc<Runtime>,
     request: LeaseSearchRequest,
@@ -130,6 +134,11 @@ pub(crate) async fn lease_search(
     })
 }
 
+/// Returns recent lease timeline events for the given resource.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn lease_events_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,

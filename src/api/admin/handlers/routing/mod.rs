@@ -11,14 +11,12 @@ use super::auth_and_mutations::{
     resource_family_filter,
 };
 use super::collections_and_details::{
-    handle_areas_collection, handle_current_session, handle_features, handle_login, handle_logout,
-    handle_realms_collection, handle_resource_detail, handle_resources_collection,
+    handle_current_session, handle_features, handle_login, handle_logout,
 };
 use super::{error_response, json_response, not_found};
-use crate::api::admin::auth::AdminPrincipal;
 use crate::api::http::Response;
 use crate::boot::Runtime;
-use hyper::{Method, StatusCode};
+use hyper::Method;
 use serde::Serialize;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -66,6 +64,12 @@ impl AdminFamilyScope {
     }
 }
 
+/// Handles admin HTTP requests and applies browser security headers.
+///
+/// # Errors
+///
+/// This function returns `Result` to satisfy the Hyper service boundary even
+/// though the current handler path is infallible.
 pub async fn handle_request<B>(
     req: hyper::Request<B>,
     runtime: Arc<Runtime>,

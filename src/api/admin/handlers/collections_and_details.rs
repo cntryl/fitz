@@ -145,7 +145,7 @@ where
         ));
     }
 
-    if let Err(response) = require_same_origin(&req, &runtime) {
+    if let Err(response) = require_same_origin(&req, runtime) {
         return Ok(*response);
     }
 
@@ -173,7 +173,7 @@ pub(super) async fn handle_current_session<B>(
     req: hyper::Request<B>,
     runtime: &Arc<Runtime>,
 ) -> Result<Response, Infallible> {
-    let principal = match require_admin(&req, &runtime) {
+    let principal = match require_admin(&req, runtime) {
         Ok(principal) => principal,
         Err(response) => return Ok(*response),
     };
@@ -190,7 +190,7 @@ pub(super) async fn handle_logout<B>(
     req: &hyper::Request<B>,
     runtime: &Arc<Runtime>,
 ) -> Result<Response, Infallible> {
-    if let Err(response) = require_same_origin(req, &runtime) {
+    if let Err(response) = require_same_origin(req, runtime) {
         return Ok(*response);
     }
     let admin_auth = runtime.admin_auth();

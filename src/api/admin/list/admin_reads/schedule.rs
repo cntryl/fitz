@@ -1,6 +1,15 @@
-use super::super::*;
+use super::super::{
+    matches_family, route_quad, troubleshooting, Arc, Infallible, ResourcePath, Response,
+    RouteFamily, Runtime, ScheduleExecutionObservation, ScheduleExecutionObservationList,
+    ScheduleMissedObservation, ScheduleMissedObservationList,
+};
 use super::timestamp_ms_to_rfc3339;
 
+/// Returns current schedule execution observations for the given resource.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn schedule_executions_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
@@ -43,6 +52,7 @@ pub async fn schedule_executions_for_resource(
     })
 }
 
+/// Returns pending schedule handoff observations for the requested scope.
 pub(crate) async fn schedule_missed_observations(
     runtime: Arc<Runtime>,
     family: u64,
@@ -51,10 +61,13 @@ pub(crate) async fn schedule_missed_observations(
     resource: Option<String>,
     limit: usize,
 ) -> Result<Response, Infallible> {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
+    let now_ms = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX);
     let observations = runtime
         .schedule_list_pending_claims(RouteFamily::new(family))
         .into_iter()
@@ -92,6 +105,11 @@ pub(crate) async fn schedule_missed_observations(
     })
 }
 
+/// Returns recent schedule timeline events for the given resource.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn schedule_events_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,

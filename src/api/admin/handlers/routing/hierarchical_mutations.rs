@@ -1,7 +1,8 @@
 use super::{
-    handle_queue_dead_letter_purge, handle_queue_dead_letter_replay, parse_domain_path,
-    AdminPrincipal, Infallible, Response, Runtime,
+    handle_queue_dead_letter_purge, handle_queue_dead_letter_replay, parse_domain_path, Infallible,
+    Response, Runtime,
 };
+use crate::api::admin::auth::AdminPrincipal;
 use std::sync::Arc;
 
 pub(super) async fn handle_hierarchical_post<B>(
