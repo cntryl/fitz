@@ -8,6 +8,7 @@
 //! - **Deliver**: Deliver published message to subscriber
 
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::ClientFrameMeta;
 use crate::session::session::SessionId;
 use bytes::Bytes;
 
@@ -140,6 +141,71 @@ impl DeliverMessage {
     pub fn new(route: Route, payload: Bytes) -> Self {
         Self { route, payload }
     }
+}
+
+/// Parsed client request delivered to the Notice domain sink.
+#[derive(Debug, Clone)]
+pub struct NoticeClientRequest {
+    pub meta: ClientFrameMeta,
+    pub message: Result<NotificationMessage, String>,
+}
+
+impl NoticeClientRequest {
+    pub fn new(meta: ClientFrameMeta, message: Result<NotificationMessage, String>) -> Self {
+        Self { meta, message }
+    }
+}
+
+/// Typed Notice response to be encoded at the transport edge.
+#[derive(Debug, Clone)]
+pub struct NoticeClientResponse {
+    pub meta: ClientFrameMeta,
+    pub response: NoticeResponse,
+}
+
+impl NoticeClientResponse {
+    pub fn new(meta: ClientFrameMeta, response: NoticeResponse) -> Self {
+        Self { meta, response }
+    }
+}
+
+/// Typed Notice delivery notification to be encoded at the transport edge.
+#[derive(Debug, Clone)]
+pub struct NoticeClientNotification {
+    pub session_id: u64,
+    pub route_family: RouteFamily,
+    pub subscription_id: u64,
+    pub route: Route,
+    pub payload: Bytes,
+}
+
+impl NoticeClientNotification {
+    pub fn new(
+        session_id: u64,
+        route_family: RouteFamily,
+        subscription_id: u64,
+        route: Route,
+        payload: Bytes,
+    ) -> Self {
+        Self {
+            session_id,
+            route_family,
+            subscription_id,
+            route,
+            payload,
+        }
+    }
+}
+
+/// Response from notice operations.
+#[derive(Debug, Clone)]
+pub enum NoticeResponse {
+    /// Operation succeeded with no response payload.
+    Ok,
+    /// Subscribe succeeded and returns a subscription ID.
+    SubscribeOk { subscription_id: u64 },
+    /// Operation failed with error message.
+    Error(String),
 }
 
 /// Notice errors

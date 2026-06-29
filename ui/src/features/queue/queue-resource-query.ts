@@ -1,6 +1,7 @@
 import { createQuery, queryScope } from "@askrjs/askr/data";
 import { queueResourceService } from "./queue-resource-service";
 import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
+import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 import type {
   QueueResourceComparison,
   QueueResourceComparisonSide,
@@ -19,6 +20,7 @@ const queueResourceComparisonFetches = new Map<string, QueryFetch<QueueResourceC
 export function queueResourceQueryKey(resourceRef: QueueResourceRef) {
   return queueResourceQueries.key(
     "resource",
+    currentRouteFamilySegment(),
     resourceRef.realm,
     resourceRef.area,
     resourceRef.resource,
@@ -28,6 +30,7 @@ export function queueResourceQueryKey(resourceRef: QueueResourceRef) {
 export function queueResourceTimelineQueryKey(resourceRef: QueueResourceRef) {
   return queueResourceQueries.key(
     "resource",
+    currentRouteFamilySegment(),
     resourceRef.realm,
     resourceRef.area,
     resourceRef.resource,
@@ -41,6 +44,7 @@ export function queueResourceComparisonQueryKey(
 ) {
   return queueResourceQueries.key(
     "resource",
+    currentRouteFamilySegment(),
     resourceRef.realm,
     resourceRef.area,
     resourceRef.resource,

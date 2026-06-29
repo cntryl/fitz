@@ -1,8 +1,8 @@
 import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { Flex, Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/components";
+import { Inline, Stack } from "@askrjs/themes/components";
 import {
   Badge,
   Card,
@@ -10,7 +10,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
 import { Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import type {
   NoticeDeliveryObservation,
@@ -408,12 +408,12 @@ const rpcObservationColumns: readonly VirtualTableColumn<RpcCallObservation>[] =
 function NoticeObservationPanel({ result }: { result: NoticeDeliveryObservationList }) {
   return (
     <div class="communication-search-result" aria-live="polite">
-      <Flex justify="between" align="center" gap="3" wrap="wrap">
+      <Inline justify="between" align="center" gap="3" wrap="wrap">
         <p class="domain-muted">
           {result.observations.length} notice observation
           {result.observations.length === 1 ? "" : "s"} in route family {result.route_family}
         </p>
-      </Flex>
+      </Inline>
 
       {result.observations.length === 0 ? (
         <QueryEmptyState
@@ -442,12 +442,12 @@ function NoticeObservationPanel({ result }: { result: NoticeDeliveryObservationL
 function RpcObservationPanel({ result }: { result: RpcCallObservationList }) {
   return (
     <div class="communication-search-result" aria-live="polite">
-      <Flex justify="between" align="center" gap="3" wrap="wrap">
+      <Inline justify="between" align="center" gap="3" wrap="wrap">
         <p class="domain-muted">
           {result.observations.length} RPC observation
           {result.observations.length === 1 ? "" : "s"} in route family {result.route_family}
         </p>
-      </Flex>
+      </Inline>
 
       {result.observations.length === 0 ? (
         <QueryEmptyState
@@ -605,7 +605,7 @@ export default function CommunicationFlowWorkspace({
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <Flex justify="between" align="start" gap="3" wrap="wrap">
+        <Inline justify="between" align="start" gap="3" wrap="wrap">
           <Stack gap="1">
             <CardTitle>Communication flow</CardTitle>
             <CardDescription>
@@ -614,7 +614,7 @@ export default function CommunicationFlowWorkspace({
             </CardDescription>
           </Stack>
           <Badge variant={badgeVariant}>{badgeLabel}</Badge>
-        </Flex>
+        </Inline>
       </CardHeader>
 
       <CardContent>
@@ -693,7 +693,7 @@ export default function CommunicationFlowWorkspace({
               </div>
             </div>
             {searchMode ? (
-              <Flex
+              <Inline
                 class="communication-query-actions"
                 justify="between"
                 align="center"
@@ -707,7 +707,7 @@ export default function CommunicationFlowWorkspace({
                 <Button type="submit" disabled={!canRunSearch}>
                   {searchLoadingValue ? "Running" : "Run search"}
                 </Button>
-              </Flex>
+              </Inline>
             ) : null}
           </form>
 
@@ -762,7 +762,7 @@ export default function CommunicationFlowWorkspace({
               />
             ) : (
               <Stack gap="3">
-                <Flex justify="between" align="center" gap="3" wrap="wrap">
+                <Inline justify="between" align="center" gap="3" wrap="wrap">
                   <p class="domain-muted">
                     {filteredRows.length} matching {resourceNoun(domain, filteredRows.length)}
                   </p>
@@ -778,7 +778,7 @@ export default function CommunicationFlowWorkspace({
                       {exactActionLabel(domain)}
                     </Link>
                   ) : null}
-                </Flex>
+                </Inline>
 
                 <VirtualTable<CommunicationResourceRow>
                   aria-label={`${domain} communication resources`}

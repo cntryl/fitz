@@ -48,6 +48,8 @@ Right:
 - Keep changes small and focused.
 - Do not overwrite unrelated user edits.
 - Prefer the nearest file that controls the behavior over broad refactors.
+- Keep files small. No file should exceed 1,000 lines, and files should be split or refactored before they approach that limit.
+- Optimize for simplicity. Complexity, DRY, and clarity are mandatory design constraints.
 - Avoid adding async constructs to core Rust code outside transport (`.await`, `tokio::spawn`, `tokio::sync`, async locks).
 - When editing UI tooling or scripts, prefer ESM and `.js` over `.mjs` for repo-owned files.
 - When `public/openapi.yml` or the UI client changes, regenerate adapters with `npm run gen:adapters` from `ui/`.

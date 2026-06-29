@@ -1,5 +1,5 @@
 import { currentRoute } from "@askrjs/askr/router";
-import { Stack } from "@askrjs/themes/layouts";
+import { Stack } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";

@@ -151,4 +151,7 @@ pub use actor::QueueActor;
 pub use core::{MessageId, QueueKey, ReservedMessage};
 pub use metrics::QueueMetrics;
 pub use projection::{QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueInflightSnapshot};
-pub use protocol::{QueueMessage, QueueNotification, QueueResponse, QueueSubscriptionMessage};
+pub use protocol::{
+    QueueClientFrame, QueueClientNotification, QueueClientRequest, QueueClientResponse,
+    QueueMessage, QueueNotification, QueueResponse, QueueSubscriptionMessage,
+};

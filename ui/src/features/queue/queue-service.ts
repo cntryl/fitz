@@ -1,11 +1,19 @@
 import { apiv1 } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
-import { mapQueueDeadLetter, mapQueueOverview } from "./queue-mappers";
+import { apiRouteFamilySegment } from "@/shared/navigation/domains";
+import {
+  mapQueueAreaDetail,
+  mapQueueDeadLetter,
+  mapQueueOverview,
+  mapQueueRealmDetail,
+} from "./queue-mappers";
 import type {
   DeadLetterFilters,
   DeadLetterMessage,
+  QueueAreaDetail,
   QueueInventory,
   QueueOverview,
+  QueueRealmDetail,
   QueueResourceRef,
 } from "./queue-models";
 
@@ -39,9 +47,10 @@ async function mapWithConcurrency<T, R>(
 }
 
 async function getOverview(options: ServiceRequestOptions = {}): Promise<QueueOverview> {
+  const family = apiRouteFamilySegment();
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listQueueRealms(options),
-    apiv1.getQueueStats(options),
+    apiv1.listQueueRealms(family, options),
+    apiv1.getQueueStats(family, options),
   ]);
 
   return mapQueueOverview(
@@ -50,16 +59,35 @@ async function getOverview(options: ServiceRequestOptions = {}): Promise<QueueOv
   );
 }
 
+async function getRealm(
+  realm: string,
+  options: ServiceRequestOptions = {},
+): Promise<QueueRealmDetail> {
+  const response = await apiv1.getQueueRealm(apiRouteFamilySegment(), realm, options);
+
+  return mapQueueRealmDetail(unwrapResponse(response, `Unable to load queue realm ${realm}`));
+}
+
+async function getArea(
+  realm: string,
+  area: string,
+  options: ServiceRequestOptions = {},
+): Promise<QueueAreaDetail> {
+  const response = await apiv1.getQueueArea(apiRouteFamilySegment(), realm, area, options);
+
+  return mapQueueAreaDetail(unwrapResponse(response, `Unable to load queue area ${realm}/${area}`));
+}
+
 async function listDeadLetters(
   resourceRef: QueueResourceRef,
   filters: DeadLetterFilters = {},
   options: ServiceRequestOptions = {},
 ): Promise<DeadLetterMessage[]> {
   const response = await apiv1.listQueueDeadLetters(
+    apiRouteFamilySegment(filters.family),
     resourceRef.realm,
     resourceRef.area,
     resourceRef.resource,
-    filters.family === undefined ? undefined : { family: filters.family },
     options,
   );
 
@@ -68,8 +96,9 @@ async function listDeadLetters(
 }
 
 async function listInventory(options: ServiceRequestOptions = {}): Promise<QueueInventory> {
+  const family = apiRouteFamilySegment();
   const realms = unwrapResponse(
-    await apiv1.listQueueRealms(options),
+    await apiv1.listQueueRealms(family, options),
     "Unable to load queue realms for inventory",
   ).realms;
 
@@ -77,7 +106,7 @@ async function listInventory(options: ServiceRequestOptions = {}): Promise<Queue
     realms,
     async ({ realm }) => {
       const areas = unwrapResponse(
-        await apiv1.listQueueAreas(realm, options),
+        await apiv1.listQueueAreas(family, realm, options),
         `Unable to load queue areas for ${realm}`,
       ).areas;
 
@@ -86,7 +115,7 @@ async function listInventory(options: ServiceRequestOptions = {}): Promise<Queue
         async ({ area }) => ({
           area,
           resources: unwrapResponse(
-            await apiv1.listQueueResources(realm, area, options),
+            await apiv1.listQueueResources(family, realm, area, options),
             `Unable to load queue resources for ${realm}/${area}`,
           ).resources.map((entry) => entry.resource),
         }),
@@ -109,11 +138,11 @@ async function replayDeadLetter(
 ): Promise<boolean> {
   return unwrapResponse(
     await apiv1.replayQueueDeadLetter(
+      apiRouteFamilySegment(family),
       resourceRef.realm,
       resourceRef.area,
       resourceRef.resource,
       messageId,
-      { family },
       options,
     ),
     "Unable to replay dead-letter message",
@@ -128,11 +157,11 @@ async function purgeDeadLetter(
 ): Promise<boolean> {
   return unwrapResponse(
     await apiv1.purgeQueueDeadLetter(
+      apiRouteFamilySegment(family),
       resourceRef.realm,
       resourceRef.area,
       resourceRef.resource,
       messageId,
-      { family },
       options,
     ),
     "Unable to purge dead-letter message",
@@ -141,7 +170,9 @@ async function purgeDeadLetter(
 
 // Services are the app contract boundary: no Askr resources and no FetchResponse leaks.
 export const queueService = {
+  getArea,
   getOverview,
+  getRealm,
   listInventory,
   purgeDeadLetter,
   listDeadLetters,

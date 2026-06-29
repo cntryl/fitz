@@ -1,6 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { CheckCircle2Icon, HelpCircleIcon, WrenchIcon } from "@askrjs/lucide";
+import { adminChildHref } from "@/shared/navigation/domains";
 
 export interface DomainWorkflowPanelProps {
   archetype: string;
@@ -39,7 +40,7 @@ export default function DomainWorkflowPanel({
           <h2>{archetype}</h2>
           <p>Operator paths, health questions, and escalation boundaries.</p>
         </div>
-        <Link class="text-link" href="/diagnostics">
+        <Link class="text-link" href={adminChildHref("diagnostics")}>
           Diagnostics
         </Link>
       </div>

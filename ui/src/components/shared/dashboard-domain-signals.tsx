@@ -1,7 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { ArrowUpRightIcon } from "@askrjs/lucide";
-import { Badge } from "@askrjs/themes/surfaces";
+import { Badge } from "@askrjs/themes/components";
 import { formatNumber } from "@/shared/format";
 import { domainLinks } from "@/shared/navigation/domains";
 import { topologyDomainDescriptions } from "@/features/topology/topology-mappers";

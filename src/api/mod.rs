@@ -16,6 +16,7 @@
 
 pub mod admin;
 pub mod background;
+pub(crate) mod frame_adapter;
 pub mod handlers;
 pub mod http;
 pub mod ingress;

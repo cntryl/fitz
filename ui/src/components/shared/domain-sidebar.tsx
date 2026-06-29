@@ -6,8 +6,8 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
-import { Stack } from "@askrjs/themes/layouts";
+} from "@askrjs/themes/components";
+import { Stack } from "@askrjs/themes/components";
 import { formatDisplayValue } from "@/shared/format";
 
 export interface DomainSidebarStat {

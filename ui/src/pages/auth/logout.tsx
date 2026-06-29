@@ -1,8 +1,8 @@
 import { state } from "@askrjs/askr";
 import { task } from "@askrjs/askr/resources";
 import { navigate } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { Spinner } from "@askrjs/themes/feedback";
+import { Button } from "@askrjs/themes/components";
+import { Spinner } from "@askrjs/themes/components";
 import {
   Alert,
   Card,
@@ -10,7 +10,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
 import { createSignOutMutation } from "@/features/session/session-mutation";
 import { formatUnknownError } from "@/shared/errors/format";
 

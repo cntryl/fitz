@@ -102,12 +102,79 @@ impl CaptureFrameSink {
     }
 }
 
+fn rpc_frame_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
+    if let Some(frame) = envelope.payload::<FrameContext>() {
+        return Some(frame.clone());
+    }
+
+    if let Some(response) = envelope.payload::<fitz::domains::rpc::RpcClientResponse>() {
+        let payload = fitz::protocol::rpc_codec::encode_response(&response.response);
+        return Some(FrameContext::new(
+            response.meta.session_id,
+            ChannelId::Rpc,
+            MessageType::new(response.meta.message_type),
+            Bytes::from(payload),
+            response.meta.route_family,
+        ));
+    }
+
+    if let Some(delivery) = envelope.payload::<fitz::domains::rpc::RpcWorkerRequestDelivery>() {
+        let mut payload_encoder = fitz::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        let payload =
+            fitz::protocol::rpc_codec::encode_request_into(&delivery.request, &mut payload_encoder);
+        return Some(FrameContext::new(
+            delivery.session_id,
+            ChannelId::Rpc,
+            MessageType::new(302),
+            Bytes::from(payload),
+            delivery.route_family,
+        ));
+    }
+
+    if let Some(forwarded) = envelope.payload::<fitz::domains::rpc::RpcClientForwardedResponse>() {
+        let payload = match &forwarded.body {
+            fitz::domains::rpc::RpcClientForwardedResponseBody::Response(response) => {
+                fitz::protocol::rpc_codec::encode_response_message(response)
+            }
+            fitz::domains::rpc::RpcClientForwardedResponseBody::TerminalError {
+                correlation_id,
+                code,
+                message,
+            } => {
+                let error_body = fitz::protocol::rpc_codec::encode_error_body(*code, message);
+                let response = fitz::domains::rpc::RpcResponse::single(
+                    *correlation_id,
+                    Bytes::from(error_body),
+                );
+                fitz::protocol::rpc_codec::encode_response_message(&response)
+            }
+        };
+        return Some(FrameContext::new(
+            forwarded.session_id,
+            ChannelId::Rpc,
+            MessageType::new(303),
+            Bytes::from(payload),
+            forwarded.route_family,
+        ));
+    }
+
+    if let Some(ack) = envelope.payload::<fitz::domains::rpc::RpcWorkerAck>() {
+        let payload = fitz::protocol::rpc_codec::encode_ack(&ack.correlation_id);
+        return Some(FrameContext::new(
+            ack.session_id,
+            ChannelId::Rpc,
+            MessageType::new(304),
+            Bytes::from(payload),
+            ack.route_family,
+        ));
+    }
+
+    None
+}
+
 impl MailboxSink for CaptureFrameSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        let frame = envelope
-            .payload::<FrameContext>()
-            .cloned()
-            .expect("frame context payload");
+        let frame = rpc_frame_from_envelope(&envelope).expect("rpc frame payload");
         self.frames.lock().push(frame);
         Ok(())
     }
@@ -130,9 +197,7 @@ impl CountingFrameSink {
 
 impl MailboxSink for CountingFrameSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        envelope
-            .payload::<FrameContext>()
-            .expect("frame context payload");
+        rpc_frame_from_envelope(&envelope).expect("rpc frame payload");
         self.deliveries.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
@@ -163,16 +228,24 @@ fn deliver_rpc_frame(
     frame: &[u8],
 ) {
     let (msg_type, payload) = extract_single_tlv_field(frame);
+    let frame_ctx = FrameContext::new(
+        session_id,
+        ChannelId::Rpc,
+        MessageType::new(msg_type),
+        payload,
+        family,
+    );
+    let parsed = fitz::protocol::rpc_codec::parse_request(&frame_ctx, &frame_ctx.payload, family);
+    let meta = fitz::runtime::ClientFrameMeta::new(
+        session_id,
+        fitz::runtime::ClientChannel::Rpc,
+        msg_type,
+        family,
+    );
     sink.deliver(Envelope::from_route(
         source,
         destination,
-        FrameContext::new(
-            session_id,
-            ChannelId::Rpc,
-            MessageType::new(msg_type),
-            payload,
-            family,
-        ),
+        fitz::domains::rpc::RpcClientRequest::new(meta, parsed),
     ))
     .expect("deliver rpc frame");
 }

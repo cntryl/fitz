@@ -22,6 +22,36 @@ export interface StreamOverview {
   stats: StreamStatsSummary;
 }
 
+export interface StreamRealmRollup {
+  areaCount: number;
+  areas: Array<{
+    area: string;
+    resources: string[];
+  }>;
+  familyWatermarks: Array<{
+    family: number;
+    watermark: number;
+  }>;
+  realm: string;
+  resourceCount: number;
+}
+
+export interface StreamAreaRollup {
+  area: string;
+  familyWatermarks: Array<{
+    family: number;
+    watermark: number;
+  }>;
+  realm: string;
+  resourceCount: number;
+  resources: string[];
+}
+
+export interface StreamResourceView {
+  detail: import("@/adapters").StreamResourceDetail;
+  records: import("@/adapters").StreamRecordsResponse;
+}
+
 export interface StreamRecordSearchRequest {
   area?: string;
   discriminator?: string;
@@ -29,5 +59,5 @@ export interface StreamRecordSearchRequest {
   limit?: number;
   realm?: string;
   resource?: string;
-  routeFamily: number;
+  routeFamily: number | string;
 }

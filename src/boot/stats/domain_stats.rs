@@ -189,9 +189,9 @@ impl Runtime {
             .unwrap_or(0)
     }
 
-    pub fn queue_backlog_age_buckets(&self) -> crate::api::admin::QueueAgeBuckets {
+    pub fn queue_backlog_age_buckets(&self) -> crate::control::admin::QueueAgeBuckets {
         self.admin_read_model.queues(None).into_iter().fold(
-            crate::api::admin::QueueAgeBuckets::default(),
+            crate::control::admin::QueueAgeBuckets::default(),
             |mut buckets, queue| {
                 buckets.merge(queue.backlog_age_buckets);
                 buckets
@@ -199,9 +199,9 @@ impl Runtime {
         )
     }
 
-    pub fn queue_delay_age_buckets(&self) -> crate::api::admin::QueueAgeBuckets {
+    pub fn queue_delay_age_buckets(&self) -> crate::control::admin::QueueAgeBuckets {
         self.admin_read_model.queues(None).into_iter().fold(
-            crate::api::admin::QueueAgeBuckets::default(),
+            crate::control::admin::QueueAgeBuckets::default(),
             |mut buckets, queue| {
                 buckets.merge(queue.delay_age_buckets);
                 buckets
@@ -249,7 +249,7 @@ impl Runtime {
             .len()
     }
 
-    pub fn rpc_worker_latency_buckets(&self) -> crate::api::admin::RpcLatencyBuckets {
+    pub fn rpc_worker_latency_buckets(&self) -> crate::control::admin::RpcLatencyBuckets {
         let workers = self.admin_read_model.rpc_workers(None);
         crate::api::admin::troubleshooting::summarize_rpc_worker_latency(workers.iter())
             .worker_latency_buckets
@@ -312,8 +312,8 @@ impl Runtime {
         metric_counter("fitz_stream_failure_total")
     }
 
-    pub fn stream_request_latency_buckets(&self) -> crate::api::admin::StreamLatencyBuckets {
-        crate::api::admin::StreamLatencyBuckets::from_histogram(
+    pub fn stream_request_latency_buckets(&self) -> crate::control::admin::StreamLatencyBuckets {
+        crate::control::admin::StreamLatencyBuckets::from_histogram(
             crate::observability::metrics()
                 .histogram_get_buckets("fitz_stream_latency_ms")
                 .unwrap_or([0; 9]),
@@ -355,12 +355,12 @@ impl Runtime {
             .unwrap_or(0)
     }
 
-    pub fn stream_watermark_lag_buckets(&self) -> crate::api::admin::StreamLagBuckets {
+    pub fn stream_watermark_lag_buckets(&self) -> crate::control::admin::StreamLagBuckets {
         self.admin_read_model
             .stream_area_watermarks()
             .into_iter()
             .fold(
-                crate::api::admin::StreamLagBuckets::default(),
+                crate::control::admin::StreamLagBuckets::default(),
                 |mut buckets, detail| {
                     let max_watermark = detail
                         .family_watermarks
@@ -368,7 +368,7 @@ impl Runtime {
                         .map(|watermark| watermark.watermark)
                         .max()
                         .unwrap_or(0);
-                    let mut area_buckets = crate::api::admin::StreamLagBuckets::default();
+                    let mut area_buckets = crate::control::admin::StreamLagBuckets::default();
                     for watermark in detail.family_watermarks {
                         area_buckets
                             .record_lag_events(max_watermark.saturating_sub(watermark.watermark));
@@ -576,8 +576,10 @@ impl Runtime {
             .unwrap_or(0)
     }
 
-    pub fn schedule_request_latency_buckets(&self) -> crate::api::admin::ScheduleLatencyBuckets {
-        crate::api::admin::ScheduleLatencyBuckets::from_histogram(
+    pub fn schedule_request_latency_buckets(
+        &self,
+    ) -> crate::control::admin::ScheduleLatencyBuckets {
+        crate::control::admin::ScheduleLatencyBuckets::from_histogram(
             crate::observability::metrics()
                 .histogram_get_buckets("fitz_schedule_latency_ms")
                 .unwrap_or([0; 9]),

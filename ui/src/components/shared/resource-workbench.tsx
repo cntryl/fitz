@@ -3,8 +3,8 @@ import { Timeline } from "@askrjs/charts/components";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
-import { Button } from "@askrjs/themes/controls";
-import { Flex, Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/components";
+import { Inline, Stack } from "@askrjs/themes/components";
 import {
   Badge,
   Card,
@@ -12,7 +12,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
 import { formatDurationSeconds } from "@/shared/format";
 import DomainMetricTable from "./domain-metric-table";
 import { QueryEmptyState } from "./query-state";
@@ -166,7 +166,7 @@ function ComparisonDetails({
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <Flex justify="between" gap="3" align="start" wrap="wrap">
+        <Inline justify="between" gap="3" align="start" wrap="wrap">
           <Stack gap="1">
             <CardTitle>Comparison summary</CardTitle>
             <CardDescription>
@@ -176,7 +176,7 @@ function ComparisonDetails({
           <Badge variant={comparison.derived ? "info" : "success"}>
             {comparison.derived ? "Derived" : "Live"}
           </Badge>
-        </Flex>
+        </Inline>
       </CardHeader>
       <CardContent>
         <DomainMetricTable
@@ -361,7 +361,7 @@ function ResourceTimelinePanel({ detail, title }: { detail: ResourceDetail; titl
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <Flex justify="between" gap="3" align="start" wrap="wrap">
+        <Inline justify="between" gap="3" align="start" wrap="wrap">
           <Stack gap="1">
             <CardTitle>{title}</CardTitle>
             <CardDescription>
@@ -372,7 +372,7 @@ function ResourceTimelinePanel({ detail, title }: { detail: ResourceDetail; titl
           <Badge variant={detail.timeline.derived ? "info" : "success"}>
             {detail.timeline.derived ? "Derived" : "Live"}
           </Badge>
-        </Flex>
+        </Inline>
       </CardHeader>
       <CardContent>
         {timelineData.length > 0 ? (

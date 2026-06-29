@@ -20,6 +20,18 @@ export interface ResourceScope {
   resource: string;
 }
 
+export interface ResourceInventoryResource {
+  estimateComplete?: boolean;
+  estimatedRecordCount?: number;
+  estimatedStorageBytes?: number;
+  readLatencyAvgMs?: number;
+  readLatencyP95Ms?: number;
+  resource: string;
+  transactionsActive?: number;
+  writeLatencyAvgMs?: number;
+  writeLatencyP95Ms?: number;
+}
+
 export interface ResourceTimelineEvent {
   ageSeconds?: number | null;
   attempts?: number | null;
@@ -73,6 +85,7 @@ export interface ResourceDetail {
 export interface ResourceInventoryArea {
   area: string;
   resources: string[];
+  resourceEntries: ResourceInventoryResource[];
 }
 
 export interface ResourceInventoryRealm {

@@ -2,7 +2,15 @@
   padding-block-start: var(--fitz-page-padding-block);
 }
 
+.page-frame-layout {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+
 .page-frame-main {
+  inline-size: 100%;
+  max-inline-size: 100%;
   min-width: 0;
   flex: 1 1 auto;
 }

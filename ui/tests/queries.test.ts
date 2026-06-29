@@ -3,10 +3,15 @@ import {
   createQueueDeadLettersQuery,
   createQueueOverviewQuery,
   createQueueInventoryQuery,
+  createQueueAreaQuery,
+  createQueueRealmQuery,
   QUEUE_OVERVIEW_KEY,
   QUEUE_INVENTORY_KEY,
+  queueOverviewQueryKey,
+  queueAreaQueryKey,
   queueDeadLettersQueryKey,
   queueDeadLettersQueryPrefix,
+  queueRealmQueryKey,
 } from "@/features/queue/queue-query";
 import {
   createQueueResourceQuery,
@@ -29,11 +34,60 @@ import {
   mapQueueResourceTimeline,
 } from "@/features/queue/queue-resource-mappers";
 import { createKvOverviewQuery } from "@/features/kv/kv-query";
-import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
-import { createNoticeOverviewQuery } from "@/features/notice/notice-query";
-import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
-import { createScheduleOverviewQuery } from "@/features/schedule/schedule-query";
-import { createStreamOverviewQuery } from "@/features/stream/stream-query";
+import {
+  createLeaseAreaQuery,
+  createLeaseOverviewQuery,
+  createLeaseRealmQuery,
+  createLeaseResourceRowsQuery,
+  leaseAreaQueryKey,
+  leaseOverviewQueryKey,
+  leaseRealmQueryKey,
+  leaseResourceRowsQueryKey,
+} from "@/features/lease/lease-query";
+import {
+  createNoticeAreaQuery,
+  createNoticeOverviewQuery,
+  createNoticeOperationRowsQuery,
+  createNoticeRealmQuery,
+  createNoticeResourceRowsQuery,
+  noticeAreaQueryKey,
+  noticeOperationRowsQueryKey,
+  noticeRealmQueryKey,
+  noticeResourceRowsQueryKey,
+} from "@/features/notice/notice-query";
+import {
+  createRpcAreaQuery,
+  createRpcOperationQuery,
+  createRpcOverviewQuery,
+  createRpcRealmQuery,
+  createRpcResourceQuery,
+  rpcAreaQueryKey,
+  rpcOperationQueryKey,
+  rpcRealmQueryKey,
+  rpcResourceQueryKey,
+} from "@/features/rpc/rpc-query";
+import {
+  createScheduleAreaQuery,
+  createScheduleExecutionObservationsQuery,
+  createScheduleMissedHandoffsQuery,
+  createScheduleOverviewQuery,
+  createScheduleRealmQuery,
+  createScheduleResourceQuery,
+  scheduleAreaQueryKey,
+  scheduleExecutionObservationsQueryKey,
+  scheduleMissedHandoffsQueryKey,
+  scheduleRealmQueryKey,
+  scheduleResourceQueryKey,
+} from "@/features/schedule/schedule-query";
+import {
+  createStreamAreaQuery,
+  createStreamOverviewQuery,
+  createStreamRealmQuery,
+  createStreamResourceQuery,
+  streamAreaQueryKey,
+  streamRealmQueryKey,
+  streamResourceQueryKey,
+} from "@/features/stream/stream-query";
 import {
   createResourceInventoryQuery,
   createResourceQuery,
@@ -97,6 +151,10 @@ describe("Data query layer", () => {
     expect(typeof createQueueOverviewQuery).toBe("function");
     expect(createQueueInventoryQuery).toBeDefined();
     expect(typeof createQueueInventoryQuery).toBe("function");
+    expect(createQueueRealmQuery).toBeDefined();
+    expect(typeof createQueueRealmQuery).toBe("function");
+    expect(createQueueAreaQuery).toBeDefined();
+    expect(typeof createQueueAreaQuery).toBe("function");
     expect(QUEUE_INVENTORY_KEY).toEqual(expect.any(String));
     expect(QUEUE_OVERVIEW_KEY).toEqual(expect.any(String));
     expect(createQueueResourceQuery).toBeDefined();
@@ -125,11 +183,78 @@ describe("Data query layer", () => {
       queueDeadLettersQueryKey(ref, { family: 4 }).startsWith(queueDeadLettersQueryPrefix(ref)),
     ).toBe(true);
     expect(affectedQueueKeys(ref)).toEqual([
-      QUEUE_OVERVIEW_KEY,
+      queueOverviewQueryKey(),
+      queueRealmQueryKey(ref.realm),
+      queueAreaQueryKey(ref.realm, ref.area),
       queueResourceQueryKey(ref),
       queueResourceTimelineQueryKey(ref),
       queueDeadLettersQueryPrefix(ref),
     ]);
+  });
+
+  it("builds hierarchical lease query keys", () => {
+    const ref = {
+      area: "ops",
+      realm: "default",
+      resource: "primary",
+    };
+
+    expect(leaseOverviewQueryKey()).toEqual(expect.any(String));
+    expect(leaseRealmQueryKey(ref.realm)).toEqual(expect.any(String));
+    expect(leaseAreaQueryKey(ref.realm, ref.area)).toEqual(expect.any(String));
+    expect(leaseResourceRowsQueryKey(ref.realm, ref.area, ref.resource)).toEqual(
+      expect.any(String),
+    );
+
+    expect(leaseRealmQueryKey("default", "1")).not.toBe(leaseRealmQueryKey("default", "2"));
+    expect(leaseRealmQueryKey(ref.realm)).not.toBe(leaseAreaQueryKey(ref.realm, ref.area));
+    expect(leaseAreaQueryKey(ref.realm, ref.area)).not.toBe(
+      leaseResourceRowsQueryKey(ref.realm, ref.area, ref.resource),
+    );
+    expect(leaseResourceRowsQueryKey(ref.realm, ref.area, ref.resource, 50)).toBe(
+      leaseResourceRowsQueryKey(ref.realm, ref.area, ref.resource, 50),
+    );
+    expect(leaseResourceRowsQueryKey(ref.realm, ref.area, ref.resource, 50)).not.toBe(
+      leaseResourceRowsQueryKey(ref.realm, ref.area, ref.resource, 51),
+    );
+  });
+
+  it("builds hierarchical notice query keys", () => {
+    const ref = {
+      area: "ops",
+      realm: "default",
+      operation: "GetStatus",
+      resource: "primary",
+    };
+
+    expect(noticeRealmQueryKey(ref.realm)).toEqual(expect.any(String));
+    expect(noticeAreaQueryKey(ref.realm, ref.area)).toEqual(expect.any(String));
+    expect(noticeResourceRowsQueryKey(ref.realm, ref.area, ref.resource)).toEqual(
+      expect.any(String),
+    );
+    expect(noticeOperationRowsQueryKey(ref.realm, ref.area, ref.resource, ref.operation)).toEqual(
+      expect.any(String),
+    );
+    expect(noticeRealmQueryKey(ref.realm, "1")).toBe(noticeRealmQueryKey(ref.realm, "1"));
+    expect(noticeRealmQueryKey(ref.realm, "1")).not.toBe(noticeRealmQueryKey(ref.realm, "2"));
+    expect(noticeRealmQueryKey(ref.realm)).not.toBe(noticeAreaQueryKey(ref.realm, ref.area));
+    expect(noticeAreaQueryKey(ref.realm, ref.area)).not.toBe(
+      noticeResourceRowsQueryKey(ref.realm, ref.area, ref.resource),
+    );
+    expect(
+      noticeOperationRowsQueryKey(ref.realm, ref.area, ref.resource, ref.operation, 50),
+    ).not.toBe(noticeOperationRowsQueryKey(ref.realm, ref.area, "secondary", ref.operation, 50));
+    expect(
+      noticeOperationRowsQueryKey(ref.realm, ref.area, ref.resource, ref.operation, 50),
+    ).not.toBe(noticeOperationRowsQueryKey(ref.realm, ref.area, ref.resource, "List", 50));
+    expect(
+      noticeOperationRowsQueryKey(ref.realm, ref.area, ref.resource, ref.operation, 50, "1"),
+    ).not.toBe(
+      noticeOperationRowsQueryKey(ref.realm, ref.area, ref.resource, ref.operation, 50, "2"),
+    );
+    expect(noticeResourceRowsQueryKey(ref.realm, ref.area, ref.resource, 50, "1")).not.toBe(
+      noticeResourceRowsQueryKey(ref.realm, ref.area, ref.resource, 51, "1"),
+    );
   });
 
   it("exports domain overview queries and service boundaries", () => {
@@ -137,14 +262,52 @@ describe("Data query layer", () => {
     expect(typeof createKvOverviewQuery).toBe("function");
     expect(createLeaseOverviewQuery).toBeDefined();
     expect(typeof createLeaseOverviewQuery).toBe("function");
+    expect(createLeaseRealmQuery).toBeDefined();
+    expect(typeof createLeaseRealmQuery).toBe("function");
+    expect(createLeaseAreaQuery).toBeDefined();
+    expect(typeof createLeaseAreaQuery).toBe("function");
+    expect(createLeaseResourceRowsQuery).toBeDefined();
+    expect(typeof createLeaseResourceRowsQuery).toBe("function");
     expect(createNoticeOverviewQuery).toBeDefined();
     expect(typeof createNoticeOverviewQuery).toBe("function");
+    expect(createNoticeRealmQuery).toBeDefined();
+    expect(typeof createNoticeRealmQuery).toBe("function");
+    expect(createNoticeAreaQuery).toBeDefined();
+    expect(typeof createNoticeAreaQuery).toBe("function");
+    expect(createNoticeResourceRowsQuery).toBeDefined();
+    expect(typeof createNoticeResourceRowsQuery).toBe("function");
+    expect(createNoticeOperationRowsQuery).toBeDefined();
+    expect(typeof createNoticeOperationRowsQuery).toBe("function");
     expect(createRpcOverviewQuery).toBeDefined();
     expect(typeof createRpcOverviewQuery).toBe("function");
+    expect(createRpcRealmQuery).toBeDefined();
+    expect(typeof createRpcRealmQuery).toBe("function");
+    expect(createRpcAreaQuery).toBeDefined();
+    expect(typeof createRpcAreaQuery).toBe("function");
+    expect(createRpcResourceQuery).toBeDefined();
+    expect(typeof createRpcResourceQuery).toBe("function");
+    expect(createRpcOperationQuery).toBeDefined();
+    expect(typeof createRpcOperationQuery).toBe("function");
     expect(createScheduleOverviewQuery).toBeDefined();
     expect(typeof createScheduleOverviewQuery).toBe("function");
+    expect(createScheduleRealmQuery).toBeDefined();
+    expect(typeof createScheduleRealmQuery).toBe("function");
+    expect(createScheduleAreaQuery).toBeDefined();
+    expect(typeof createScheduleAreaQuery).toBe("function");
+    expect(createScheduleResourceQuery).toBeDefined();
+    expect(typeof createScheduleResourceQuery).toBe("function");
+    expect(createScheduleExecutionObservationsQuery).toBeDefined();
+    expect(typeof createScheduleExecutionObservationsQuery).toBe("function");
+    expect(createScheduleMissedHandoffsQuery).toBeDefined();
+    expect(typeof createScheduleMissedHandoffsQuery).toBe("function");
     expect(createStreamOverviewQuery).toBeDefined();
     expect(typeof createStreamOverviewQuery).toBe("function");
+    expect(createStreamRealmQuery).toBeDefined();
+    expect(typeof createStreamRealmQuery).toBe("function");
+    expect(createStreamAreaQuery).toBeDefined();
+    expect(typeof createStreamAreaQuery).toBe("function");
+    expect(createStreamResourceQuery).toBeDefined();
+    expect(typeof createStreamResourceQuery).toBe("function");
     expect(createSystemOverviewQuery).toBeDefined();
     expect(typeof createSystemOverviewQuery).toBe("function");
     expect(createMessagingTopologyQuery).toBeDefined();
@@ -162,10 +325,28 @@ describe("Data query layer", () => {
     expect(typeof leaseService.getOverview).toBe("function");
     expect(noticeService.getOverview).toBeDefined();
     expect(typeof noticeService.getOverview).toBe("function");
+    expect(noticeService.listNoticeAreas).toBeDefined();
+    expect(typeof noticeService.listNoticeAreas).toBe("function");
+    expect(noticeService.listNoticeResources).toBeDefined();
+    expect(typeof noticeService.listNoticeResources).toBe("function");
+    expect(noticeService.searchResourceRows).toBeDefined();
+    expect(typeof noticeService.searchResourceRows).toBe("function");
+    expect(noticeService.searchOperationRows).toBeDefined();
+    expect(typeof noticeService.searchOperationRows).toBe("function");
     expect(rpcService.getOverview).toBeDefined();
     expect(typeof rpcService.getOverview).toBe("function");
     expect(scheduleService.getOverview).toBeDefined();
     expect(typeof scheduleService.getOverview).toBe("function");
+    expect(scheduleService.listScheduleAreas).toBeDefined();
+    expect(typeof scheduleService.listScheduleAreas).toBe("function");
+    expect(scheduleService.listScheduleResources).toBeDefined();
+    expect(typeof scheduleService.listScheduleResources).toBe("function");
+    expect(scheduleService.getScheduleResource).toBeDefined();
+    expect(typeof scheduleService.getScheduleResource).toBe("function");
+    expect(scheduleService.listExecutionObservations).toBeDefined();
+    expect(typeof scheduleService.listExecutionObservations).toBe("function");
+    expect(scheduleService.searchMissedHandoffs).toBeDefined();
+    expect(typeof scheduleService.searchMissedHandoffs).toBe("function");
     expect(streamService.getOverview).toBeDefined();
     expect(typeof streamService.getOverview).toBe("function");
     expect(queueService.getOverview).toBeDefined();
@@ -184,6 +365,92 @@ describe("Data query layer", () => {
     expect(typeof systemService.getOverview).toBe("function");
     expect(topologyService.getOverview).toBeDefined();
     expect(typeof topologyService.getOverview).toBe("function");
+  });
+
+  it("builds hierarchical RPC query keys", () => {
+    const ref = {
+      area: "ops",
+      operation: "GetStatus",
+      realm: "default",
+      resource: "primary",
+    };
+
+    expect(rpcRealmQueryKey(ref.realm)).toEqual(expect.any(String));
+    expect(rpcAreaQueryKey(ref.realm, ref.area)).toEqual(expect.any(String));
+    expect(rpcResourceQueryKey(ref.realm, ref.area, ref.resource)).toEqual(expect.any(String));
+    expect(rpcOperationQueryKey(ref.realm, ref.area, ref.resource, ref.operation)).toEqual(
+      expect.any(String),
+    );
+    expect(rpcRealmQueryKey(ref.realm, "1")).not.toBe(rpcRealmQueryKey(ref.realm, "2"));
+    expect(rpcRealmQueryKey(ref.realm)).not.toBe(rpcAreaQueryKey(ref.realm, ref.area));
+    expect(rpcAreaQueryKey(ref.realm, ref.area)).not.toBe(
+      rpcResourceQueryKey(ref.realm, ref.area, ref.resource),
+    );
+    expect(rpcResourceQueryKey(ref.realm, ref.area, ref.resource)).not.toBe(
+      rpcOperationQueryKey(ref.realm, ref.area, ref.resource, ref.operation),
+    );
+    expect(rpcOperationQueryKey(ref.realm, ref.area, ref.resource, ref.operation, 50)).not.toBe(
+      rpcOperationQueryKey(ref.realm, ref.area, ref.resource, ref.operation, 51),
+    );
+  });
+
+  it("builds hierarchical Stream query keys", () => {
+    const ref = {
+      area: "ops",
+      discriminator: "invoice",
+      realm: "default",
+      resource: "events",
+    };
+
+    expect(streamRealmQueryKey(ref.realm)).toEqual(expect.any(String));
+    expect(streamAreaQueryKey(ref.realm, ref.area)).toEqual(expect.any(String));
+    expect(streamResourceQueryKey({ ...ref, fromOffset: 0, limit: 50 })).toEqual(
+      expect.any(String),
+    );
+    expect(streamRealmQueryKey(ref.realm, "1")).not.toBe(streamRealmQueryKey(ref.realm, "2"));
+    expect(streamRealmQueryKey(ref.realm)).not.toBe(streamAreaQueryKey(ref.realm, ref.area));
+    expect(streamAreaQueryKey(ref.realm, ref.area)).not.toBe(
+      streamResourceQueryKey({ ...ref, fromOffset: 0, limit: 50 }),
+    );
+    expect(streamResourceQueryKey({ ...ref, fromOffset: 0, limit: 50 })).not.toBe(
+      streamResourceQueryKey({ ...ref, fromOffset: 1, limit: 50 }),
+    );
+    expect(
+      streamResourceQueryKey({ ...ref, discriminator: "a", fromOffset: 0, limit: 50 }),
+    ).not.toBe(streamResourceQueryKey({ ...ref, discriminator: "b", fromOffset: 0, limit: 50 }));
+    expect(streamResourceQueryKey({ ...ref, fromOffset: 0, limit: 50 })).not.toBe(
+      streamResourceQueryKey({ ...ref, fromOffset: 0, limit: 51 }),
+    );
+  });
+
+  it("builds hierarchical Schedule query keys", () => {
+    const ref = {
+      area: "ops",
+      realm: "default",
+      resource: "reconcile",
+    };
+
+    expect(scheduleRealmQueryKey(ref.realm)).toEqual(expect.any(String));
+    expect(scheduleAreaQueryKey(ref.realm, ref.area)).toEqual(expect.any(String));
+    expect(scheduleResourceQueryKey({ ...ref, limit: 20 })).toEqual(expect.any(String));
+    expect(scheduleExecutionObservationsQueryKey({ ...ref, limit: 20 })).toEqual(
+      expect.any(String),
+    );
+    expect(scheduleMissedHandoffsQueryKey({ ...ref, limit: 20 })).toEqual(expect.any(String));
+    expect(scheduleRealmQueryKey(ref.realm, "1")).not.toBe(scheduleRealmQueryKey(ref.realm, "2"));
+    expect(scheduleRealmQueryKey(ref.realm)).not.toBe(scheduleAreaQueryKey(ref.realm, ref.area));
+    expect(scheduleAreaQueryKey(ref.realm, ref.area)).not.toBe(
+      scheduleResourceQueryKey({ ...ref, limit: 20 }),
+    );
+    expect(scheduleResourceQueryKey({ ...ref, limit: 20 })).not.toBe(
+      scheduleResourceQueryKey({ ...ref, limit: 21 }),
+    );
+    expect(scheduleExecutionObservationsQueryKey({ ...ref, limit: 20 })).not.toBe(
+      scheduleMissedHandoffsQueryKey({ ...ref, limit: 20 }),
+    );
+    expect(scheduleMissedHandoffsQueryKey({ ...ref, limit: 20 })).not.toBe(
+      scheduleMissedHandoffsQueryKey({ ...ref, limit: 21 }),
+    );
   });
 
   it("parses Prometheus metrics into searchable families", () => {
@@ -322,7 +589,7 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
     expect(topology.sessionGroups[0].representativeSessions[0].routeFamily).toBe(4);
     expect(topology.connections.items[0].scope.routeFamily).toBe(4);
     expect(topologyScopeHref("queue", topology.connections.items[0].scope)).toBe(
-      "/queue/prod/jobs/worker",
+      "/admin/all/queue/prod/jobs/worker",
     );
     expect(defaultTopologySelectionId(topology)).toBe("lane:queue");
     expect(resolveTopologySelection(topology, "lane:queue").title).toBe("QUEUE");
@@ -424,7 +691,10 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
     expect(
       mapQueueResourceDetail({
         area: "a",
+        complete_success_total: 4,
         diagnostics: healthyDiagnostics,
+        enqueue_success_total: 9,
+        in_rate_per_second: 1.25,
         messages_dead_lettered: 2,
         messages_delayed: 3,
         messages_inflight: 4,
@@ -446,17 +716,27 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
         },
         realm: "r",
         resource: "q",
+        out_rate_per_second: 0.75,
+        status: "falling_behind",
+        subscriptions_active: 2,
       }),
     ).toEqual({
       area: "a",
       realm: "r",
       resource: "q",
+      completeSuccessTotal: 4,
+      enqueueSuccessTotal: 9,
+      inRatePerSecond: 1.25,
       messagesReady: 5,
       messagesInflight: 4,
       messagesDelayed: 3,
       messagesDeadLettered: 2,
       messagesTotal: 6,
+      oldestBacklogAgeSeconds: 8,
       oldestMessageAgeSeconds: 7,
+      outRatePerSecond: 0.75,
+      status: "falling_behind",
+      subscriptionsActive: 2,
     });
 
     expect(
@@ -649,7 +929,6 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
         invalid_transaction_rejects_total: 11,
         keys_total: 4,
         operations_per_second: 1.5,
-        rollbacks_total: 10,
         transactions_active: 2,
       }),
     ).toEqual({
@@ -657,7 +936,6 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
       invalidTransactionRejectsTotal: 11,
       keysTotal: 4,
       operationsPerSecond: 1.5,
-      rollbacksTotal: 10,
       transactionsActive: 2,
     });
 
@@ -909,7 +1187,6 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
             invalid_transaction_rejects_total: 43,
             keys_total: 6,
             operations_per_second: 7.5,
-            rollbacks_total: 42,
             transactions_active: 8,
           },
           lease: {
@@ -1083,7 +1360,6 @@ fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
           invalidTransactionRejectsTotal: 43,
           keysTotal: 6,
           operationsPerSecond: 7.5,
-          rollbacksTotal: 42,
           transactionsActive: 8,
         },
         lease: {

@@ -1,7 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { Flex, Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/components";
+import { Inline, Stack } from "@askrjs/themes/components";
 import {
   Badge,
   Card,
@@ -9,7 +9,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import type { DiagnosticHotspot, SuggestedQuery } from "@/adapters";
 import {
@@ -22,6 +22,7 @@ import type { SystemOverview } from "@/features/system/system-models";
 import type { MessagingTopologyOverview } from "@/features/topology/topology-models";
 import { hotspotHref, scopeText } from "@/features/topology/topology-view";
 import { formatDurationSeconds, formatNumber, formatTimestamp } from "@/shared/format";
+import { adminChildHref, domainHref } from "@/shared/navigation/domains";
 
 type DiagnosticsTone = "danger" | "warning" | "success" | "info";
 
@@ -145,7 +146,7 @@ function buildDomainRows(system: SystemOverview): DomainInternalRow[] {
     {
       domain: "Queue",
       failures: domains.queue.messagesDeadLettered,
-      href: "/queue",
+      href: domainHref("queue"),
       internals: `${formatNumber(domains.queue.messagesReady)} ready / ${formatNumber(
         domains.queue.inflightActive,
       )} inflight`,
@@ -165,7 +166,7 @@ function buildDomainRows(system: SystemOverview): DomainInternalRow[] {
         domains.rpc.invalidSequenceErrorsDroppedTotal +
         domains.rpc.invalidSequenceErrorsForwardedTotal +
         domains.rpc.invalidSequenceResponsesTotal,
-      href: "/rpc",
+      href: domainHref("rpc"),
       internals: `${formatNumber(domains.rpc.workersRegistered)} workers / ${formatNumber(
         domains.rpc.requestsPending,
       )} pending`,
@@ -177,7 +178,7 @@ function buildDomainRows(system: SystemOverview): DomainInternalRow[] {
         domains.notice.deliveryDropsTotal +
         domains.notice.failureTotal +
         domains.notice.wildcardLimitRejectsTotal,
-      href: "/notice",
+      href: domainHref("notice"),
       internals: `${formatNumber(domains.notice.subscriptionsActive)} subscriptions`,
       pressure: domains.notice.subscriptionsActive,
     },
@@ -190,7 +191,7 @@ function buildDomainRows(system: SystemOverview): DomainInternalRow[] {
         domains.schedule.notifyFailuresTotal +
         domains.schedule.overdueNormalizationsTotal +
         domains.schedule.upsertPersistenceFailuresTotal,
-      href: "/schedule",
+      href: domainHref("schedule"),
       internals: `${formatNumber(domains.schedule.schedulesActive)} schedules / ${domains.schedule.executionsPerMinute.toFixed(
         2,
       )} exec/min`,
@@ -202,7 +203,7 @@ function buildDomainRows(system: SystemOverview): DomainInternalRow[] {
         domains.stream.appendConflictsTotal +
         domains.stream.failureTotal +
         domains.stream.notifyDropsTotal,
-      href: "/stream",
+      href: domainHref("stream"),
       internals: `${formatNumber(domains.stream.streamsActive)} streams / ${formatNumber(
         domains.stream.eventsTotal,
       )} events`,
@@ -215,7 +216,7 @@ function buildDomainRows(system: SystemOverview): DomainInternalRow[] {
         domains.lease.failureTotal +
         domains.lease.forcedReleasesTotal +
         domains.lease.invalidTokenRejectsTotal,
-      href: "/lease",
+      href: domainHref("lease"),
       internals: `${formatNumber(domains.lease.leasesActive)} active / oldest ${formatDurationSeconds(
         domains.lease.oldestLeaseAgeSeconds,
       )}`,
@@ -223,11 +224,8 @@ function buildDomainRows(system: SystemOverview): DomainInternalRow[] {
     },
     {
       domain: "KV",
-      failures:
-        domains.kv.commitsFailedTotal +
-        domains.kv.invalidTransactionRejectsTotal +
-        domains.kv.rollbacksTotal,
-      href: "/kv",
+      failures: domains.kv.commitsFailedTotal + domains.kv.invalidTransactionRejectsTotal,
+      href: domainHref("kv"),
       internals: `${formatNumber(domains.kv.keysTotal)} keys / ${formatNumber(
         domains.kv.transactionsActive,
       )} tx`,
@@ -499,7 +497,10 @@ export default function DiagnosticsConsole({
       header: "Family",
       width: "34%",
       cellComponent: ({ row }) => (
-        <Link class="text-link" href={`/admin/metrics?q=${encodeURIComponent(row.name)}`}>
+        <Link
+          class="text-link"
+          href={`${adminChildHref("metrics")}?q=${encodeURIComponent(row.name)}`}
+        >
           {row.name}
         </Link>
       ),
@@ -532,7 +533,7 @@ export default function DiagnosticsConsole({
     <Stack gap="3">
       <Card padding="sm" variant="default">
         <CardHeader>
-          <Flex justify="between" align="start" gap="3" wrap="wrap">
+          <Inline justify="between" align="start" gap="3" wrap="wrap">
             <Stack gap="1">
               <CardTitle>Diagnostics console</CardTitle>
               <CardDescription>
@@ -541,7 +542,7 @@ export default function DiagnosticsConsole({
               </CardDescription>
             </Stack>
             <Badge variant={badgeVariantForTone(incidentTone)}>{incident.severity}</Badge>
-          </Flex>
+          </Inline>
         </CardHeader>
         <CardContent>
           <div class="diagnostics-summary-grid">
@@ -622,12 +623,12 @@ export default function DiagnosticsConsole({
           <For each={capabilityRows} by={(row) => row.capability}>
             {(row) => (
               <div class="diagnostics-contract-card">
-                <Flex justify="between" align="start" gap="2">
+                <Inline justify="between" align="start" gap="2">
                   <strong>{row.capability}</strong>
                   <Badge variant={row.status === "Existing API" ? "success" : "outline"}>
                     {row.status}
                   </Badge>
-                </Flex>
+                </Inline>
                 <p class="domain-muted">{row.owner}</p>
                 <p>{row.why}</p>
               </div>
@@ -705,7 +706,7 @@ export default function DiagnosticsConsole({
 
       <Card padding="sm" variant="default">
         <CardHeader>
-          <Flex justify="between" align="start" gap="3" wrap="wrap">
+          <Inline justify="between" align="start" gap="3" wrap="wrap">
             <Stack gap="1">
               <CardTitle>Metric families</CardTitle>
               <CardDescription>
@@ -714,9 +715,9 @@ export default function DiagnosticsConsole({
               </CardDescription>
             </Stack>
             <Button asChild size="sm" variant="outline">
-              <Link href="/admin/metrics">Open metrics explorer</Link>
+              <Link href={adminChildHref("metrics")}>Open metrics explorer</Link>
             </Button>
-          </Flex>
+          </Inline>
         </CardHeader>
         <CardContent>
           {metricsLoading ? <QueryLoadingState description="Loading metric families..." /> : null}

@@ -68,6 +68,10 @@ pub mod sink;
 pub use actor::RpcRouteActor;
 pub use errors::{RpcError, RpcErrorCode};
 pub use metrics::RpcMetrics;
-pub use protocol::{RpcMessage, RpcRequest, RpcResponse, RpcWorkItem};
+pub use protocol::{
+    RpcClientForwardedResponse, RpcClientForwardedResponseBody, RpcClientRequest,
+    RpcClientResponse, RpcClientResponseBody, RpcMessage, RpcRequest, RpcResponse, RpcWorkItem,
+    RpcWorkerAck, RpcWorkerRequestDelivery,
+};
 pub use reply_inbox::{InboxMessage, ReplyInboxActor};
 pub use session::SessionActor;

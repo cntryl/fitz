@@ -92,7 +92,7 @@ pub struct DomainSetupOptions {
 pub fn setup(
     router: &StdArc<Router>,
     store: &StdArc<cntryl_midge::Engine>,
-    admin_read_model: &Arc<crate::api::admin::read_model::AdminReadModel>,
+    admin_read_model: &Arc<crate::control::admin::read_model::AdminReadModel>,
     options: DomainSetupOptions,
 ) -> BootResult<DomainHandles> {
     let metrics = (*crate::observability::metrics()).clone();
@@ -286,7 +286,7 @@ mod tests {
         // Arrange
         let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
         let router = Arc::new(Router::new());
-        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
         // Act
         let result = setup(
@@ -312,7 +312,7 @@ mod tests {
         // Arrange
         let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
         let router = Arc::new(Router::new());
-        let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+        let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
         // Act
         setup(

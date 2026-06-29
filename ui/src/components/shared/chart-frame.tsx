@@ -5,8 +5,8 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
-import { Section, Stack } from "@askrjs/themes/layouts";
+} from "@askrjs/themes/components";
+import { Section, Stack } from "@askrjs/themes/components";
 
 export interface ChartShellProps {
   children?: unknown;

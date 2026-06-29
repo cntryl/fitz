@@ -24,12 +24,19 @@ export function mapQueueResourceDetail(dto: QueueResourceDetailDto): QueueResour
     area: dto.area,
     realm: dto.realm,
     resource: dto.resource,
+    completeSuccessTotal: dto.complete_success_total,
+    enqueueSuccessTotal: dto.enqueue_success_total,
+    inRatePerSecond: dto.in_rate_per_second,
     messagesReady: dto.messages_ready,
     messagesInflight: dto.messages_inflight,
     messagesDelayed: dto.messages_delayed,
     messagesDeadLettered: dto.messages_dead_lettered,
     messagesTotal: dto.messages_total,
+    oldestBacklogAgeSeconds: dto.oldest_backlog_age_seconds,
     oldestMessageAgeSeconds: dto.oldest_message_age_seconds,
+    outRatePerSecond: dto.out_rate_per_second,
+    status: dto.status,
+    subscriptionsActive: dto.subscriptions_active,
   };
 }
 

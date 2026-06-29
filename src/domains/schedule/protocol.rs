@@ -1,4 +1,5 @@
 use crate::runtime::routing::{route_exact_quad, route_scheme, Route, RouteAddress, RouteFamily};
+use crate::runtime::ClientFrameMeta;
 use bytes::Bytes;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -96,6 +97,57 @@ pub enum ScheduleMessage {
         session_id: u64,
         subscriber: RouteAddress,
     },
+}
+
+/// Parsed client request delivered to the Schedule domain sink.
+#[derive(Debug, Clone)]
+pub struct ScheduleClientRequest {
+    pub meta: ClientFrameMeta,
+    pub message: Result<ScheduleMessage, String>,
+}
+
+impl ScheduleClientRequest {
+    pub fn new(meta: ClientFrameMeta, message: Result<ScheduleMessage, String>) -> Self {
+        Self { meta, message }
+    }
+}
+
+/// Typed Schedule response to be encoded at the transport edge.
+#[derive(Debug, Clone)]
+pub struct ScheduleClientResponse {
+    pub meta: ClientFrameMeta,
+    pub response: ScheduleResponse,
+}
+
+impl ScheduleClientResponse {
+    pub fn new(meta: ClientFrameMeta, response: ScheduleResponse) -> Self {
+        Self { meta, response }
+    }
+}
+
+/// Typed live Schedule notification to be encoded at the transport edge.
+#[derive(Debug, Clone)]
+pub struct ScheduleClientNotification {
+    pub session_id: u64,
+    pub route_family: RouteFamily,
+    pub subscription_id: u64,
+    pub payload: Bytes,
+}
+
+impl ScheduleClientNotification {
+    pub fn new(
+        session_id: u64,
+        route_family: RouteFamily,
+        subscription_id: u64,
+        payload: Bytes,
+    ) -> Self {
+        Self {
+            session_id,
+            route_family,
+            subscription_id,
+            payload,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

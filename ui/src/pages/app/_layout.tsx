@@ -1,15 +1,16 @@
 import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
-import { Link, navigate } from "@askrjs/askr/router";
+import { currentRoute, Link, navigate } from "@askrjs/askr/router";
 import {
   ChevronDownIcon,
   LogOutIcon,
+  MenuIcon,
   MoonIcon,
   ShieldIcon,
   SunIcon,
   UserIcon,
 } from "@askrjs/lucide";
-import { Container } from "@askrjs/themes/layouts";
+import { Container } from "@askrjs/themes/components";
 import {
   Dropdown,
   DropdownContent,
@@ -17,41 +18,71 @@ import {
   DropdownLabel,
   DropdownPortal,
   DropdownTrigger,
-} from "@askrjs/themes/overlays";
-import { Header, NavBrand, NavGroup, NavLink, Navbar, Sidebar } from "@askrjs/themes/shells";
-import { Badge } from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
+import { Header, NavBrand, NavGroup, NavLink, Navbar, Sidebar } from "@askrjs/themes/components";
+import { Badge } from "@askrjs/themes/components";
 import { ThemeToggle } from "@askrjs/themes/theme";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createMessagingTopologyQuery } from "@/features/topology/topology-query";
 import { appConfig } from "@/shared/config";
-import { domainLinks, shellLinks } from "@/shared/navigation/domains";
+import {
+  adminChildHref,
+  adminHref,
+  domainLinks,
+  pathWithRouteFamily,
+  routeFamilyFromPath,
+  shellLinks,
+} from "@/shared/navigation/domains";
 import {
   createOperatorContextSnapshot,
   OperatorContext,
   readInitialRouteFamily,
 } from "@/shared/operator-context";
 
-const overviewLinks = shellLinks.filter((link) => link.href === "/");
-const utilityLinks = shellLinks.filter((link) => link.href !== "/");
+const overviewLinks = shellLinks.filter((link) => link.title === "Overview");
+const utilityLinks = shellLinks.filter((link) => link.title !== "Overview");
 const sidebarDomainLinks = [...domainLinks].sort((first, second) =>
   first.title.localeCompare(second.title),
 );
 
 export default function Layout({ children }: { children?: unknown }) {
+  const route = currentRoute();
   const currentSession = createCurrentSessionQuery();
   const topology = createMessagingTopologyQuery();
-  const [selectedRouteFamilyId, setSelectedRouteFamilyId] = state(readInitialRouteFamily());
+  const [selectedRouteFamilyId, setSelectedRouteFamilyId] = state(
+    routeFamilyFromPath(route.path) ?? readInitialRouteFamily(),
+  );
+  const [mobileNavOpen, setMobileNavOpen] = state(false);
+  const activeRouteFamilyId = routeFamilyFromPath(route.path) ?? selectedRouteFamilyId();
   const operator = createOperatorContextSnapshot(
     topology.data,
     currentSession.data,
-    selectedRouteFamilyId(),
+    activeRouteFamilyId,
     setSelectedRouteFamilyId,
   );
+  const scopedFamily = operator.selectedRouteFamilyId;
   const username = currentSession.data?.username ?? "admin";
   const showUserBadge = currentSession.data?.authenticated === true;
+  const isMobileNavOpen = mobileNavOpen();
 
   function onLogout() {
     navigate("/logout");
+  }
+
+  function selectRouteFamily(routeFamilyId: string) {
+    const pathname = typeof window === "undefined" ? route.path : window.location.pathname;
+    const search = typeof window === "undefined" ? "" : window.location.search;
+
+    operator.setRouteFamily(routeFamilyId);
+    navigate(`${pathWithRouteFamily(pathname, routeFamilyId)}${search}`);
+  }
+
+  function toggleMobileNavigation() {
+    setMobileNavOpen(!mobileNavOpen());
+  }
+
+  function closeMobileNavigation() {
+    setMobileNavOpen(false);
   }
 
   return (
@@ -65,7 +96,7 @@ export default function Layout({ children }: { children?: unknown }) {
           <Container size="xl" class="operator-shell-container">
             <Navbar class="operator-topbar" aria-label="Operator context">
               <NavBrand class="operator-shell-brand">
-                <Link href="/" aria-label="Fitz admin home">
+                <Link href={adminHref(scopedFamily)} aria-label="Fitz admin home">
                   <ShieldIcon size={18} />
                   <span>Fitz Admin</span>
                 </Link>
@@ -83,7 +114,7 @@ export default function Layout({ children }: { children?: unknown }) {
                       <DropdownContent align="start" sideOffset={8}>
                         <For each={operator.routeFamilies} by={(family) => family.id}>
                           {(family) => (
-                            <DropdownItem onSelect={() => operator.setRouteFamily(family.id)}>
+                            <DropdownItem onSelect={() => selectRouteFamily(family.id)}>
                               {family.label}
                             </DropdownItem>
                           )}
@@ -115,10 +146,10 @@ export default function Layout({ children }: { children?: unknown }) {
                       <DropdownContent align="end" sideOffset={8}>
                         <DropdownLabel>Signed in as {username}</DropdownLabel>
                         <DropdownItem asChild>
-                          <Link href="/settings">Settings</Link>
+                          <Link href={adminChildHref("settings", scopedFamily)}>Settings</Link>
                         </DropdownItem>
                         <DropdownItem asChild>
-                          <Link href="/sessions">Sessions</Link>
+                          <Link href={adminChildHref("sessions", scopedFamily)}>Sessions</Link>
                         </DropdownItem>
                         <DropdownItem onSelect={onLogout}>
                           <LogOutIcon size={16} />
@@ -136,50 +167,86 @@ export default function Layout({ children }: { children?: unknown }) {
         <Container size="xl" class="operator-shell-workspace">
           <div class="operator-shell-layout">
             <Sidebar
-              breakpoint="lg"
               class="operator-sidebar"
-              collapseLabel="Navigation"
+              collapsible="none"
+              data-mobile-open={isMobileNavOpen ? "true" : undefined}
+              onKeyDown={(event: KeyboardEvent) => {
+                if (event.key === "Escape") {
+                  closeMobileNavigation();
+                }
+              }}
               aria-label="Primary navigation"
+              role="navigation"
             >
-              <NavBrand class="operator-sidebar-brand">
-                <Link href="/" aria-label="Fitz admin home">
-                  <ShieldIcon size={18} />
-                  <span>Fitz Admin</span>
-                </Link>
-              </NavBrand>
+              <button
+                type="button"
+                class="operator-sidebar-toggle"
+                aria-controls="operator-sidebar-panel"
+                aria-expanded={isMobileNavOpen}
+                aria-label="Navigation menu"
+                onClick={toggleMobileNavigation}
+              >
+                <MenuIcon size={16} />
+                <span>Navigation</span>
+              </button>
 
-              <NavGroup label="Workspace">
-                <For each={overviewLinks} by={(link) => link.href}>
-                  {(link) => (
-                    <NavLink href={link.href} match={link.href === "/" ? "exact" : "prefix"}>
-                      <link.icon size={16} />
-                      {link.title}
-                    </NavLink>
-                  )}
-                </For>
-              </NavGroup>
+              <div class="operator-sidebar-panel" id="operator-sidebar-panel">
+                <NavBrand class="operator-sidebar-brand">
+                  <Link
+                    href={adminHref(scopedFamily)}
+                    aria-label="Fitz admin home"
+                    onClick={closeMobileNavigation}
+                  >
+                    <ShieldIcon size={18} />
+                    <span>Fitz Admin</span>
+                  </Link>
+                </NavBrand>
 
-              <NavGroup label="Domains">
-                <For each={sidebarDomainLinks} by={(link) => link.href}>
-                  {(link) => (
-                    <NavLink href={link.href} match="prefix">
-                      <link.icon size={16} />
-                      {link.title}
-                    </NavLink>
-                  )}
-                </For>
-              </NavGroup>
+                <NavGroup label="Workspace">
+                  <For each={overviewLinks} by={(link) => link.href}>
+                    {(link) => (
+                      <NavLink
+                        href={pathWithRouteFamily(link.href, scopedFamily)}
+                        match="exact"
+                        onClick={closeMobileNavigation}
+                      >
+                        <link.icon size={16} />
+                        {link.title}
+                      </NavLink>
+                    )}
+                  </For>
+                </NavGroup>
 
-              <NavGroup label="Operate">
-                <For each={utilityLinks} by={(link) => link.href}>
-                  {(link) => (
-                    <NavLink href={link.href} match="prefix">
-                      <link.icon size={16} />
-                      {link.title}
-                    </NavLink>
-                  )}
-                </For>
-              </NavGroup>
+                <NavGroup label="Domains">
+                  <For each={sidebarDomainLinks} by={(link) => link.href}>
+                    {(link) => (
+                      <NavLink
+                        href={pathWithRouteFamily(link.href, scopedFamily)}
+                        match="prefix"
+                        onClick={closeMobileNavigation}
+                      >
+                        <link.icon size={16} />
+                        {link.title}
+                      </NavLink>
+                    )}
+                  </For>
+                </NavGroup>
+
+                <NavGroup label="Operate">
+                  <For each={utilityLinks} by={(link) => link.href}>
+                    {(link) => (
+                      <NavLink
+                        href={pathWithRouteFamily(link.href, scopedFamily)}
+                        match="prefix"
+                        onClick={closeMobileNavigation}
+                      >
+                        <link.icon size={16} />
+                        {link.title}
+                      </NavLink>
+                    )}
+                  </For>
+                </NavGroup>
+              </div>
             </Sidebar>
 
             <Container size="xl" class="route-transition-surface">

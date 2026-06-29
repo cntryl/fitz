@@ -1,8 +1,8 @@
 import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { Flex, Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/components";
+import { Inline, Stack } from "@askrjs/themes/components";
 import {
   Badge,
   Card,
@@ -10,7 +10,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
 import { Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import {
   QueryEmptyState,
@@ -233,14 +233,14 @@ function KvLookupResultPanel({ result }: { result: KvLookupResult }) {
 
   return (
     <div class="kv-query-result" aria-live="polite">
-      <Flex justify="between" align="center" gap="3" wrap="wrap">
+      <Inline justify="between" align="center" gap="3" wrap="wrap">
         <p class="domain-muted">
           {result.data.items.length} committed pair
           {result.data.items.length === 1 ? "" : "s"} for prefix{" "}
           <strong>{displayKvBytes(result.data.prefix)}</strong>
         </p>
         {result.data.hasMore ? <Badge variant="warning">More available</Badge> : null}
-      </Flex>
+      </Inline>
       {result.data.items.length === 0 ? (
         <QueryEmptyState
           title="No committed keys"
@@ -364,7 +364,7 @@ export default function KvStateExplorer({
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <Flex justify="between" align="start" gap="3" wrap="wrap">
+        <Inline justify="between" align="start" gap="3" wrap="wrap">
           <Stack gap="1">
             <CardTitle>Query workspace</CardTitle>
             <CardDescription>
@@ -373,7 +373,7 @@ export default function KvStateExplorer({
             </CardDescription>
           </Stack>
           <Badge variant={queryBadgeVariant}>{queryBadgeLabel}</Badge>
-        </Flex>
+        </Inline>
       </CardHeader>
 
       <CardContent>
@@ -467,7 +467,7 @@ export default function KvStateExplorer({
               </div>
             </div>
             {committedMode ? (
-              <Flex class="kv-query-actions" justify="between" align="center" gap="3" wrap="wrap">
+              <Inline class="kv-query-actions" justify="between" align="center" gap="3" wrap="wrap">
                 <p class="domain-muted">
                   Querying {selectedRouteFamily.label}. Exact KV reads require a concrete numeric
                   Route Family.
@@ -475,7 +475,7 @@ export default function KvStateExplorer({
                 <Button type="submit" disabled={!canRunStateQuery}>
                   {lookupLoadingValue ? "Running" : "Run query"}
                 </Button>
-              </Flex>
+              </Inline>
             ) : null}
           </form>
 
@@ -511,7 +511,7 @@ export default function KvStateExplorer({
               />
             ) : (
               <Stack gap="3">
-                <Flex justify="between" align="center" gap="3" wrap="wrap">
+                <Inline justify="between" align="center" gap="3" wrap="wrap">
                   <p class="domain-muted">
                     {filteredRows.length} matching resource{filteredRows.length === 1 ? "" : "s"}
                   </p>
@@ -527,7 +527,7 @@ export default function KvStateExplorer({
                       Open exact resource
                     </Link>
                   ) : null}
-                </Flex>
+                </Inline>
 
                 <VirtualTable<KvResourceRow>
                   aria-label="Matching KV resources"

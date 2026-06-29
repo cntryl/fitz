@@ -1,6 +1,6 @@
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import { RefreshCwIcon, Trash2Icon } from "@askrjs/lucide";
-import { Button } from "@askrjs/themes/controls";
+import { Button } from "@askrjs/themes/components";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
 import { formatTimestamp } from "@/shared/format";
 

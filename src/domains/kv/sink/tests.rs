@@ -1,0 +1,629 @@
+use super::*;
+use crate::protocol::frame::ChannelId;
+use crate::protocol::tlv::MessageType;
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::Mailbox;
+use bytes::{BufMut, Bytes};
+use std::sync::Arc;
+
+fn encode_kv_begin(route: &str, mode: u8, durability: u8) -> Bytes {
+    let mut payload = Vec::new();
+    payload.put_u32(route.len() as u32);
+    payload.put_slice(route.as_bytes());
+    payload.put_u8(mode);
+    payload.put_u8(durability);
+    Bytes::from(payload)
+}
+
+fn encode_kv_put(tx_id: u64, route: &str, key: &[u8], value: &[u8]) -> Bytes {
+    let mut payload = Vec::new();
+    payload.put_u64(tx_id);
+    payload.put_u32(route.len() as u32);
+    payload.put_slice(route.as_bytes());
+    payload.put_u32(key.len() as u32);
+    payload.put_slice(key);
+    payload.put_u32(value.len() as u32);
+    payload.put_slice(value);
+    Bytes::from(payload)
+}
+
+fn encode_kv_commit(tx_id: u64, route: &str) -> Bytes {
+    let mut payload = Vec::new();
+    payload.put_u64(tx_id);
+    payload.put_u32(route.len() as u32);
+    payload.put_slice(route.as_bytes());
+    Bytes::from(payload)
+}
+
+fn encode_kv_subscribe(pattern: &str) -> Bytes {
+    let mut payload = Vec::new();
+    payload.put_u32(pattern.len() as u32);
+    payload.put_slice(pattern.as_bytes());
+    Bytes::from(payload)
+}
+
+fn encode_kv_unsubscribe(pattern: &str) -> Bytes {
+    let mut payload = Vec::new();
+    payload.put_u32(pattern.len() as u32);
+    payload.put_slice(pattern.as_bytes());
+    Bytes::from(payload)
+}
+
+fn decode_kv_begin_tx_id(payload: &[u8]) -> u64 {
+    let tx_id_bytes: [u8; 8] = payload[1..9]
+        .try_into()
+        .expect("begin response tx_id bytes");
+    u64::from_be_bytes(tx_id_bytes)
+}
+
+fn decode_kv_subscription_id(payload: &[u8]) -> u64 {
+    let subscription_id_bytes: [u8; 8] = payload[1..9]
+        .try_into()
+        .expect("subscribe response subscription_id bytes");
+    u64::from_be_bytes(subscription_id_bytes)
+}
+
+fn decode_kv_watch_delivery(frame: &FrameContext) -> (u64, String, u64) {
+    let subscription_id = u64::from_be_bytes(frame.payload[0..8].try_into().unwrap());
+    let route_len = u32::from_be_bytes(frame.payload[8..12].try_into().unwrap()) as usize;
+    let route = String::from_utf8(frame.payload[12..12 + route_len].to_vec())
+        .expect("KV watch route should be utf-8");
+    let mutation_offset = 12 + route_len;
+    let mutation_count = u64::from_be_bytes(
+        frame.payload[mutation_offset..mutation_offset + 8]
+            .try_into()
+            .unwrap(),
+    );
+    (subscription_id, route, mutation_count)
+}
+
+fn drain_mailbox(mailbox: &Mailbox) {
+    while mailbox.receiver().try_recv().is_ok() {}
+}
+
+#[test]
+fn should_create_kv_domain_sink() {
+    // Arrange
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+
+    // Act
+    let sink = KvDomainSink::new(store, router, admin_read_model);
+
+    // Assert
+    assert!(sink.active.load(Ordering::Relaxed));
+}
+
+#[test]
+fn should_record_kv_latency_samples_by_operation_kind() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let source_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let mailbox = Arc::new(Mailbox::new(16));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(source_address.clone(), mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model);
+
+    sink.deliver(Envelope::from_route(
+        source_address.clone(),
+        kv_address.clone(),
+        FrameContext::new(
+            session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin KV transaction");
+    let begin_frame = mailbox
+        .receiver()
+        .try_recv()
+        .expect("begin ack envelope")
+        .into_payload::<FrameContext>()
+        .expect("begin ack frame");
+    let tx_id = decode_kv_begin_tx_id(&begin_frame.payload);
+
+    sink.deliver(Envelope::from_route(
+        source_address.clone(),
+        kv_address.clone(),
+        FrameContext::new(
+            session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::PUT),
+            encode_kv_put(tx_id, kv_route, b"user:1", b"alice"),
+            family,
+        ),
+    ))
+    .expect("put KV value");
+    let _ = mailbox.receiver().try_recv().expect("put ack envelope");
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        source_address,
+        kv_address,
+        FrameContext::new(
+            session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::COMMIT),
+            encode_kv_commit(tx_id, kv_route),
+            family,
+        ),
+    ))
+    .expect("commit KV transaction");
+    let _ = mailbox.receiver().try_recv().expect("commit ack envelope");
+    let resource_key = KvResourceLockKey::new(1, "acme", "app", "users");
+    {
+        let latencies = sink.latencies.lock();
+        let latency = latencies
+            .get(&resource_key)
+            .expect("write latency bucket should exist");
+        assert_eq!(latency.reads.samples.len(), 0);
+        assert_eq!(latency.writes.samples.len(), 1);
+    }
+    let value = sink
+        .admin_get_committed_value(family, "acme", "app", "users", b"user:1")
+        .expect("read committed KV value");
+
+    // Assert
+    assert_eq!(value.as_deref(), Some(&b"alice"[..]));
+    let latencies = sink.latencies.lock();
+    let latency = latencies
+        .get(&resource_key)
+        .expect("read latency bucket should exist");
+    assert_eq!(latency.reads.samples.len(), 1);
+    assert_eq!(latency.writes.samples.len(), 1);
+}
+
+#[test]
+fn should_map_sync_begin_to_cloud_strict_given_strict_cloud_sync_policy() {
+    // Arrange
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model)
+        .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
+    let message = crate::domains::kv::KvMessage::Begin {
+        route_family: RouteFamily::new(1),
+        realm: "acme".to_string(),
+        area: "app".to_string(),
+        resource: "users".to_string(),
+        mode: crate::domains::kv::TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::sync(),
+    };
+
+    // Act
+    let mapped = sink.apply_sync_write_options(message);
+
+    // Assert
+    match mapped {
+        crate::domains::kv::KvMessage::Begin { write_options, .. } => {
+            assert!(write_options.is_cloud_strict());
+        }
+        _ => panic!("expected KV begin message"),
+    }
+}
+
+#[test]
+fn should_preserve_buffered_begin_given_strict_cloud_sync_policy() {
+    // Arrange
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model)
+        .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
+    let message = crate::domains::kv::KvMessage::Begin {
+        route_family: RouteFamily::new(1),
+        realm: "acme".to_string(),
+        area: "app".to_string(),
+        resource: "users".to_string(),
+        mode: crate::domains::kv::TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    };
+
+    // Act
+    let mapped = sink.apply_sync_write_options(message);
+
+    // Assert
+    match mapped {
+        crate::domains::kv::KvMessage::Begin { write_options, .. } => {
+            assert!(!write_options.is_cloud_strict());
+            assert!(!write_options.is_sync());
+        }
+        _ => panic!("expected KV begin message"),
+    }
+}
+
+#[test]
+fn should_release_resource_lock_given_session_cleanup() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let first_session_id = 7;
+    let second_session_id = 8;
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let first_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let second_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let first_mailbox = Arc::new(Mailbox::new(8));
+    let second_mailbox = Arc::new(Mailbox::new(8));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(first_address.clone(), first_mailbox.clone());
+    router.register(second_address.clone(), second_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model);
+
+    sink.deliver(Envelope::from_route(
+        first_address,
+        kv_address.clone(),
+        FrameContext::new(
+            first_session_id,
+            ChannelId::Sub,
+            MessageType::new(100),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin first KV transaction");
+    let first_begin_envelope = first_mailbox
+        .receiver()
+        .try_recv()
+        .expect("first begin ack envelope");
+    let first_begin_frame = first_begin_envelope
+        .into_payload::<FrameContext>()
+        .expect("first begin ack frame");
+    let first_tx_id = decode_kv_begin_tx_id(&first_begin_frame.payload);
+    assert_eq!(first_begin_frame.payload[0], 0);
+    assert!(first_tx_id > 0);
+    assert_eq!(sink.active_transaction_count(), 1);
+    assert_eq!(sink.resource_locks.lock().len(), 1);
+    drain_mailbox(&first_mailbox);
+
+    // Act
+    sink.deliver(Envelope::new(
+        RouteAddress::new(family, Route::new("kv://cleanup")),
+        crate::runtime::SessionCleanup {
+            session_id: first_session_id,
+        },
+    ))
+    .expect("cleanup first KV session");
+    assert_eq!(sink.active_transaction_count(), 0);
+    assert!(sink.resource_locks.lock().is_empty());
+
+    sink.deliver(Envelope::from_route(
+        second_address,
+        kv_address,
+        FrameContext::new(
+            second_session_id,
+            ChannelId::Sub,
+            MessageType::new(100),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin second KV transaction");
+
+    // Assert
+    let second_begin_envelope = second_mailbox
+        .receiver()
+        .try_recv()
+        .expect("second begin ack envelope");
+    let second_begin_frame = second_begin_envelope
+        .into_payload::<FrameContext>()
+        .expect("second begin ack frame");
+    let second_tx_id = decode_kv_begin_tx_id(&second_begin_frame.payload);
+    assert_eq!(second_begin_frame.payload[0], 0);
+    assert!(second_tx_id > 0);
+    assert_eq!(sink.active_transaction_count(), 1);
+    assert_eq!(sink.resource_locks.lock().len(), 1);
+    assert!(first_mailbox.receiver().try_recv().is_err());
+}
+
+#[test]
+fn should_notify_kv_subscriber_given_committed_put() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let watch_session_id = 7;
+    let writer_session_id = 8;
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let watcher_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let writer_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let watcher_mailbox = Arc::new(Mailbox::new(16));
+    let writer_mailbox = Arc::new(Mailbox::new(16));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(watcher_address.clone(), watcher_mailbox.clone());
+    router.register(writer_address.clone(), writer_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model);
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        watcher_address,
+        kv_address.clone(),
+        FrameContext::new(
+            watch_session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::SUBSCRIBE),
+            encode_kv_subscribe(kv_route),
+            family,
+        ),
+    ))
+    .expect("subscribe to KV route");
+    let subscribe_frame = watcher_mailbox
+        .receiver()
+        .try_recv()
+        .expect("subscribe ack envelope")
+        .into_payload::<FrameContext>()
+        .expect("subscribe ack frame");
+    let subscription_id = decode_kv_subscription_id(&subscribe_frame.payload);
+
+    sink.deliver(Envelope::from_route(
+        writer_address.clone(),
+        kv_address.clone(),
+        FrameContext::new(
+            writer_session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin KV transaction");
+    let begin_frame = writer_mailbox
+        .receiver()
+        .try_recv()
+        .expect("begin ack envelope")
+        .into_payload::<FrameContext>()
+        .expect("begin ack frame");
+    let tx_id = decode_kv_begin_tx_id(&begin_frame.payload);
+
+    sink.deliver(Envelope::from_route(
+        writer_address.clone(),
+        kv_address.clone(),
+        FrameContext::new(
+            writer_session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::PUT),
+            encode_kv_put(tx_id, kv_route, b"user:1", b"alice"),
+            family,
+        ),
+    ))
+    .expect("put KV value");
+    let _ = writer_mailbox
+        .receiver()
+        .try_recv()
+        .expect("put ack envelope");
+
+    sink.deliver(Envelope::from_route(
+        writer_address,
+        kv_address,
+        FrameContext::new(
+            writer_session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::COMMIT),
+            encode_kv_commit(tx_id, kv_route),
+            family,
+        ),
+    ))
+    .expect("commit KV transaction");
+    let _ = writer_mailbox
+        .receiver()
+        .try_recv()
+        .expect("commit ack envelope");
+
+    // Assert
+    let notify_frame = watcher_mailbox
+        .receiver()
+        .try_recv()
+        .expect("KV notify envelope")
+        .into_payload::<FrameContext>()
+        .expect("KV notify frame");
+    assert_eq!(
+        notify_frame.msg_type.as_u16(),
+        crate::protocol::kv::msg_type::NOTIFY
+    );
+    let (delivered_subscription_id, delivered_route, mutation_count) =
+        decode_kv_watch_delivery(&notify_frame);
+    assert_eq!(delivered_subscription_id, subscription_id);
+    assert_eq!(delivered_route, kv_route);
+    assert_eq!(mutation_count, 1);
+}
+
+#[test]
+fn should_not_notify_kv_subscriber_given_empty_commit() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let watch_session_id = 7;
+    let writer_session_id = 8;
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let watcher_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let writer_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let watcher_mailbox = Arc::new(Mailbox::new(16));
+    let writer_mailbox = Arc::new(Mailbox::new(16));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(watcher_address.clone(), watcher_mailbox.clone());
+    router.register(writer_address.clone(), writer_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model);
+
+    sink.deliver(Envelope::from_route(
+        watcher_address,
+        kv_address.clone(),
+        FrameContext::new(
+            watch_session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::SUBSCRIBE),
+            encode_kv_subscribe(kv_route),
+            family,
+        ),
+    ))
+    .expect("subscribe to KV route");
+    let _ = watcher_mailbox
+        .receiver()
+        .try_recv()
+        .expect("subscribe ack envelope");
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        writer_address.clone(),
+        kv_address.clone(),
+        FrameContext::new(
+            writer_session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin KV transaction");
+    let begin_frame = writer_mailbox
+        .receiver()
+        .try_recv()
+        .expect("begin ack envelope")
+        .into_payload::<FrameContext>()
+        .expect("begin ack frame");
+    let tx_id = decode_kv_begin_tx_id(&begin_frame.payload);
+
+    sink.deliver(Envelope::from_route(
+        writer_address,
+        kv_address,
+        FrameContext::new(
+            writer_session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::COMMIT),
+            encode_kv_commit(tx_id, kv_route),
+            family,
+        ),
+    ))
+    .expect("commit empty KV transaction");
+    let _ = writer_mailbox
+        .receiver()
+        .try_recv()
+        .expect("commit ack envelope");
+
+    // Assert
+    assert!(watcher_mailbox.receiver().try_recv().is_err());
+}
+
+#[test]
+fn should_remove_kv_subscription_given_unsubscribe() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let watch_session_id = 7;
+    let writer_session_id = 8;
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let watcher_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let writer_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let watcher_mailbox = Arc::new(Mailbox::new(16));
+    let writer_mailbox = Arc::new(Mailbox::new(16));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(watcher_address.clone(), watcher_mailbox.clone());
+    router.register(writer_address.clone(), writer_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model);
+
+    sink.deliver(Envelope::from_route(
+        watcher_address.clone(),
+        kv_address.clone(),
+        FrameContext::new(
+            watch_session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::SUBSCRIBE),
+            encode_kv_subscribe(kv_route),
+            family,
+        ),
+    ))
+    .expect("subscribe to KV route");
+    let _ = watcher_mailbox
+        .receiver()
+        .try_recv()
+        .expect("subscribe ack envelope");
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        watcher_address,
+        kv_address.clone(),
+        FrameContext::new(
+            watch_session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::UNSUBSCRIBE),
+            encode_kv_unsubscribe(kv_route),
+            family,
+        ),
+    ))
+    .expect("unsubscribe from KV route");
+    let _ = watcher_mailbox
+        .receiver()
+        .try_recv()
+        .expect("unsubscribe ack envelope");
+
+    sink.deliver(Envelope::from_route(
+        writer_address.clone(),
+        kv_address.clone(),
+        FrameContext::new(
+            writer_session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin KV transaction");
+    let begin_frame = writer_mailbox
+        .receiver()
+        .try_recv()
+        .expect("begin ack envelope")
+        .into_payload::<FrameContext>()
+        .expect("begin ack frame");
+    let tx_id = decode_kv_begin_tx_id(&begin_frame.payload);
+
+    sink.deliver(Envelope::from_route(
+        writer_address.clone(),
+        kv_address.clone(),
+        FrameContext::new(
+            writer_session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::PUT),
+            encode_kv_put(tx_id, kv_route, b"user:1", b"alice"),
+            family,
+        ),
+    ))
+    .expect("put KV value");
+    let _ = writer_mailbox
+        .receiver()
+        .try_recv()
+        .expect("put ack envelope");
+
+    sink.deliver(Envelope::from_route(
+        writer_address,
+        kv_address,
+        FrameContext::new(
+            writer_session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::COMMIT),
+            encode_kv_commit(tx_id, kv_route),
+            family,
+        ),
+    ))
+    .expect("commit KV transaction");
+    let _ = writer_mailbox
+        .receiver()
+        .try_recv()
+        .expect("commit ack envelope");
+
+    // Assert
+    assert!(watcher_mailbox.receiver().try_recv().is_err());
+    assert!(sink.families.lock().is_empty());
+}

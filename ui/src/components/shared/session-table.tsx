@@ -1,6 +1,12 @@
 import { For } from "@askrjs/askr/control";
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@askrjs/themes/components";
 import type { ActiveSession } from "@/features/session/session-models";
 import { formatTimestamp } from "@/shared/format";
 import { QueryEmptyState } from "./query-state";

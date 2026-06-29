@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp, createSPA } from "@askrjs/askr/boot";
 import type { RouteHandler } from "@askrjs/askr/router";
-import { Card, CardContent } from "@askrjs/themes/surfaces";
+import { Card, CardContent } from "@askrjs/themes/components";
 import { ThemeProvider } from "@askrjs/themes/theme";
 import AppLayout from "@/pages/app/_layout";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -92,9 +92,7 @@ describe("shared UI polish contracts", () => {
     expect(main?.getAttribute("tabindex")).toBe("-1");
     expect(root.querySelectorAll("main")).toHaveLength(1);
     expect(root.querySelectorAll('[data-slot="container"]')).toHaveLength(4);
-    expect(root.querySelectorAll('[data-slot="container"][data-size="initial:xl"]')).toHaveLength(
-      4,
-    );
+    expect(root.querySelectorAll('[data-slot="container"][data-ak-layout="true"]')).toHaveLength(4);
     expect(themeToggle).toBeTruthy();
     expect(themeToggle?.getAttribute("data-size")).toBe("icon");
     expect(themeToggle?.getAttribute("data-variant")).toBe("ghost");
@@ -128,7 +126,7 @@ describe("shared UI polish contracts", () => {
     expect(contentBeforeOpen).toBeNull();
     expect(containers.length).toBe(4);
     expect(
-      document.querySelectorAll('[data-slot="container"][data-size="initial:xl"]'),
+      document.querySelectorAll('[data-slot="container"][data-ak-layout="true"]'),
     ).toHaveLength(4);
 
     for (const link of domainLinks) {
@@ -151,9 +149,7 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
     expect(root.querySelectorAll(".page-frame-main")).toHaveLength(1);
     expect(root.querySelectorAll(".page-frame-sidebar")).toHaveLength(1);
-    expect(root.querySelectorAll('[data-slot="container"][data-size="initial:xl"]')).toHaveLength(
-      4,
-    );
+    expect(root.querySelectorAll('[data-slot="container"][data-ak-layout="true"]')).toHaveLength(4);
     expect(root.textContent).toContain("Workspace");
     expect(root.textContent).toContain("Sidebar");
   });

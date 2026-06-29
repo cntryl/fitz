@@ -21,7 +21,11 @@ const config = {
       typeCheck: true,
     },
   },
-  plugins: [askr()],
+  plugins: [
+    askr({
+      optimizeTemplates: true,
+    }),
+  ],
   css: {
     transformer: "postcss",
     postcss: {
@@ -52,6 +56,7 @@ const config = {
     },
   },
   resolve: {
+    dedupe: ["@askrjs/askr", "@askrjs/ui"],
     alias: [
       {
         find: "@",

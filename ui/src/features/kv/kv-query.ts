@@ -1,14 +1,15 @@
 import { createQuery, queryScope } from "@askrjs/askr/data";
 import { kvService } from "./kv-service";
 import type { KvOverview } from "./kv-models";
+import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 
 const kvQueries = queryScope("kv");
 
-const KV_OVERVIEW_KEY = kvQueries.key("overview");
-
 export function createKvOverviewQuery() {
+  const key = kvQueries.key("overview", currentRouteFamilySegment());
+
   return createQuery<KvOverview>({
-    key: KV_OVERVIEW_KEY,
+    key,
     fetch: kvService.getOverview,
   });
 }

@@ -1,7 +1,9 @@
 import { For } from "@askrjs/askr/control";
+import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/components";
 import { QueryEmptyState } from "./query-state";
+import { domainScopeHref, type DomainSegment } from "@/shared/navigation/domains";
 
 export interface DomainRealm {
   realm: string;
@@ -9,12 +11,18 @@ export interface DomainRealm {
 }
 
 export interface DomainRealmTableProps {
+  domain?: DomainSegment;
   title: string;
   realms: DomainRealm[];
   emptyMessage: string;
 }
 
-export default function DomainRealmTable({ title, realms, emptyMessage }: DomainRealmTableProps) {
+export default function DomainRealmTable({
+  domain,
+  title,
+  realms,
+  emptyMessage,
+}: DomainRealmTableProps) {
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
@@ -39,7 +47,16 @@ export default function DomainRealmTable({ title, realms, emptyMessage }: Domain
                   {(realm) => (
                     <TableRow>
                       <TableCell>
-                        <span class="domain-table-cell-truncate">{realm.realm}</span>
+                        {domain ? (
+                          <Link
+                            class="domain-link-cell"
+                            href={domainScopeHref(domain, { realm: realm.realm })}
+                          >
+                            {realm.realm}
+                          </Link>
+                        ) : (
+                          <span class="domain-table-cell-truncate">{realm.realm}</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <span class="domain-table-cell-truncate">{realm.note ?? "Active"}</span>

@@ -37,10 +37,10 @@ async function openDashboard(page: Page, theme: "light" | "dark" = "light", setu
 }
 
 type DomainOverviewFixture = {
-  realms: {
+  realms: (Record<string, unknown> & {
     realm: string;
-  }[];
-  stats: Record<string, number | Record<string, number>>;
+  })[];
+  stats: Record<string, unknown>;
 };
 
 const adminFeatures = {
@@ -54,6 +54,31 @@ async function mockAdminFeatures(page: Page) {
       json: adminFeatures,
     });
   });
+
+  await page.route("**/api/v1/stats", async (route) => {
+    await route.fulfill({
+      json: makeGlobalStatsPayload(),
+    });
+  });
+
+  await page.route("**/api/v1/topology", async (route) => {
+    await route.fulfill({
+      json: topologyApiPayload,
+    });
+  });
+
+  await page.route(
+    (url) => {
+      const parsedUrl = new URL(url);
+      return parsedUrl.pathname === "/metrics";
+    },
+    async (route) => {
+      await route.fulfill({
+        body: metricsPayload,
+        contentType: "text/plain; charset=utf-8",
+      });
+    },
+  );
 }
 
 const topologyApiPayload: MessagingTopology = {
@@ -151,6 +176,64 @@ const domainOverviewPages = [
   },
 ];
 
+const queueOperationalFixture = {
+  complete_success_total: 12,
+  enqueue_success_total: 24,
+  in_rate_per_second: 1.5,
+  messages_dead_lettered: 0,
+  messages_delayed: 6,
+  messages_inflight: 3,
+  messages_ready: 7,
+  messages_total: 16,
+  oldest_backlog_age_seconds: 28,
+  out_rate_per_second: 0.75,
+  status: "falling_behind",
+  subscriptions_active: 2,
+};
+
+function queueAreaFixture(realm = "default", area = "ops") {
+  return {
+    ...queueOperationalFixture,
+    area,
+    queue_count: 1,
+    realm,
+  };
+}
+
+function queueResourceFixture(realm = "default", area = "ops", resource = "primary") {
+  return {
+    ...queueOperationalFixture,
+    area,
+    family_count: 1,
+    realm,
+    resource,
+  };
+}
+
+function queueRealmFixture(realm = "default") {
+  return {
+    ...queueOperationalFixture,
+    area_count: 1,
+    queue_count: 1,
+    realm,
+  };
+}
+
+function queueRealmDetailFixture(realm = "default") {
+  return {
+    ...queueRealmFixture(realm),
+    areas: [queueAreaFixture(realm)],
+    queues: [queueResourceFixture(realm)],
+  };
+}
+
+function queueAreaDetailFixture(realm = "default", area = "ops") {
+  return {
+    ...queueAreaFixture(realm, area),
+    queues: [queueResourceFixture(realm, area)],
+  };
+}
+
 const domainOverviewData: Record<string, DomainOverviewFixture> = {
   kv: {
     realms: [
@@ -166,7 +249,6 @@ const domainOverviewData: Record<string, DomainOverviewFixture> = {
       invalid_transaction_rejects_total: 0,
       keys_total: 1280,
       operations_per_second: 2.75,
-      rollbacks_total: 0,
       transactions_active: 22,
     },
   },
@@ -210,13 +292,14 @@ const domainOverviewData: Record<string, DomainOverviewFixture> = {
     },
   },
   queue: {
-    realms: [{ realm: "default" }],
+    realms: [queueRealmFixture()],
     stats: {
       inflight_active: 3,
       messages_dead_lettered: 0,
       messages_delayed: 6,
       messages_pending: 12,
       messages_ready: 7,
+      oldest_backlog_age_seconds: 28,
       operations_per_second: 14.8,
     },
   },
@@ -254,6 +337,18 @@ const domainOverviewData: Record<string, DomainOverviewFixture> = {
 
 type DomainOverviewOverride = Partial<DomainOverviewFixture>;
 
+const domainApiSegments = new Set(["kv", "queue", "stream", "lease", "schedule", "notice", "rpc"]);
+
+function normalizedAdminApiSegments(pathname: string) {
+  const segments = pathname.split("/").filter(Boolean);
+
+  if (segments[0] === "api" && segments[1] === "v1" && domainApiSegments.has(segments[3] ?? "")) {
+    return [segments[0], segments[1], segments[3], ...segments.slice(4)];
+  }
+
+  return segments;
+}
+
 function applyLeaseOverride(overrides?: DomainOverviewOverride) {
   const base = domainOverviewData.lease;
   return {
@@ -283,6 +378,53 @@ function domainResourcesByArea(domain: string, realm: string, area: string) {
   );
 }
 
+function noticeDeliveriesFixture(options: {
+  area?: string;
+  limit?: number;
+  operation?: string | null;
+  realm?: string;
+  resource?: string;
+}) {
+  const rows = [
+    {
+      area: options.area ?? "ops",
+      notifications_received: 12,
+      publishes_per_minute: 30,
+      publishes_total: 120,
+      realm: options.realm ?? "default",
+      resource: options.resource ?? "primary",
+      route: "GetStatus",
+      session_id: "session-1",
+      status: "open",
+      subscription_id: 11,
+    },
+    {
+      area: options.area ?? "ops",
+      notifications_received: 8,
+      publishes_per_minute: 11,
+      publishes_total: 45,
+      realm: options.realm ?? "default",
+      resource: options.resource ?? "primary",
+      route: "Stream",
+      session_id: "session-2",
+      status: "open",
+      subscription_id: 12,
+    },
+  ];
+
+  const observations = options.operation
+    ? rows.filter((row) => row.route === options.operation)
+    : rows;
+
+  return {
+    area: options.area ?? "ops",
+    limit: options.limit ?? 50,
+    observations,
+    realm: options.realm ?? "default",
+    route_family: 7,
+  };
+}
+
 async function mockDomainOverviewApis(
   page: Page,
   overrides: Partial<Record<string, DomainOverviewOverride>> = {},
@@ -291,7 +433,14 @@ async function mockDomainOverviewApis(
 
   await page.route("**/api/v1/**", async (route) => {
     const parsed = new URL(route.request().url());
-    const segments = parsed.pathname.split("/").filter(Boolean);
+    const segments = normalizedAdminApiSegments(parsed.pathname);
+    if (segments.length === 3 && segments[2] === "topology") {
+      await route.fulfill({
+        json: topologyApiPayload,
+      });
+      return;
+    }
+
     if (segments.length < 3) {
       await route.continue();
       return;
@@ -336,6 +485,63 @@ async function mockDomainOverviewApis(
         json: { realms: domainFixture.realms },
       });
       return;
+    }
+
+    if (segments.length === 4 && detail === "deliveries") {
+      const realm = parsed.searchParams.get("realm") ?? "";
+      const area = parsed.searchParams.get("area") ?? "";
+      const resource = parsed.searchParams.get("resource") ?? "";
+      const operation = parsed.searchParams.get("q");
+      const limit = Number(parsed.searchParams.get("limit") || 50);
+
+      await route.fulfill({
+        json: noticeDeliveriesFixture({
+          area,
+          limit,
+          operation,
+          realm,
+          resource,
+        }),
+      });
+      return;
+    }
+
+    if (domain === "queue" && segments[3] === "realms") {
+      const realm = decodeURIComponent(segments[4] ?? "default");
+
+      if (segments.length === 5) {
+        await route.fulfill({
+          json: queueRealmDetailFixture(realm),
+        });
+        return;
+      }
+
+      if (segments.length === 6 && detail === "areas") {
+        await route.fulfill({
+          json: { areas: [queueAreaFixture(realm)], realm },
+        });
+        return;
+      }
+
+      if (segments.length === 7 && segments[5] === "areas") {
+        const area = decodeURIComponent(segments[6] ?? "ops");
+        await route.fulfill({
+          json: queueAreaDetailFixture(realm, area),
+        });
+        return;
+      }
+
+      if (segments.length === 8 && detail === "resources") {
+        const area = decodeURIComponent(segments[6] ?? "ops");
+        await route.fulfill({
+          json: {
+            area,
+            realm,
+            resources: [queueResourceFixture(realm, area)],
+          },
+        });
+        return;
+      }
     }
 
     if (segments.length === 6 && detail === "areas") {
@@ -719,6 +925,30 @@ function parseRouteResourceScope(path: string): ResourceScope {
   };
 }
 
+function leaseSearchRowsFixture(scope: ResourceScope, expiresOffsetSeconds = 120) {
+  return {
+    area: scope.area,
+    items: [
+      {
+        acquired_at: "2026-05-21T13:00:00.000Z",
+        area: scope.area,
+        expires_at: new Date(Date.now() + expiresOffsetSeconds * 1000).toISOString(),
+        owner_id: "owner-lease-primary",
+        owner_session_id: "session-lease-primary",
+        pending_waiters: 2,
+        queued_token: 8,
+        realm: scope.realm,
+        resource: scope.resource,
+        state: "owned",
+      },
+    ],
+    limit: 50,
+    realm: scope.realm,
+    resource: scope.resource,
+    route_family: 7,
+  };
+}
+
 async function mockHomeRouteApis(page: Page) {
   await mockAdminFeatures(page);
 
@@ -830,6 +1060,127 @@ function resourceTimelineFixture(domain: string, scope: ResourceScope) {
   };
 }
 
+function scheduleExecutionObservationsFixture(scope: ResourceScope) {
+  return {
+    area: scope.area,
+    limit: 20,
+    observations: [
+      {
+        area: scope.area,
+        cron: "*/5 * * * *",
+        executions_total: 42,
+        last_run: "2026-05-21T13:00:00.000Z",
+        next_run: "2026-05-21T13:05:00.000Z",
+        operation: "handoff",
+        realm: scope.realm,
+        resource: scope.resource,
+        route_family: 7,
+        status: "observed",
+      },
+    ],
+    realm: scope.realm,
+    resource: scope.resource,
+    route_family: 7,
+  };
+}
+
+function scheduleMissedHandoffsFixture(scope: ResourceScope) {
+  return {
+    limit: 20,
+    observations: [
+      {
+        age_seconds: 90,
+        area: scope.area,
+        claimed_at: "2026-05-21T12:59:30.000Z",
+        fire_at: "2026-05-21T12:59:00.000Z",
+        fire_ms: 1780001940000,
+        operation: "handoff",
+        realm: scope.realm,
+        resource: scope.resource,
+        route_family: 7,
+        status: "pending",
+      },
+    ],
+    route_family: 7,
+  };
+}
+
+function rpcCallsFixture(options: {
+  area: string;
+  limit: number;
+  operation?: string | null;
+  realm: string;
+  resource: string;
+}) {
+  const operation = options.operation ?? "GetStatus";
+
+  return {
+    limit: options.limit,
+    observations: [
+      {
+        area: options.area,
+        average_latency_ms: 12,
+        correlation_id: "corr-rpc-1",
+        operation,
+        realm: options.realm,
+        request_submitted_at: "2026-05-21T13:00:00.000Z",
+        requests_handled: 7,
+        resource: options.resource,
+        route_family: 7,
+        state: "worker_registered",
+        worker_registered_at: "2026-05-21T12:59:00.000Z",
+        worker_session_id: "worker-1",
+      },
+      {
+        area: options.area,
+        average_latency_ms: null,
+        correlation_id: "corr-rpc-2",
+        operation,
+        realm: options.realm,
+        request_submitted_at: "2026-05-21T13:00:10.000Z",
+        requests_handled: null,
+        resource: options.resource,
+        route_family: 7,
+        state: "pending",
+        worker_registered_at: null,
+        worker_session_id: null,
+      },
+    ],
+    route_family: 7,
+  };
+}
+
+function streamRecordsFixture(options: {
+  area: string;
+  limit: number;
+  realm: string;
+  resource: string;
+}) {
+  return {
+    area: options.area,
+    has_more: false,
+    limit: options.limit,
+    records: [
+      {
+        area: options.area,
+        body: { base64: "eyJvayI6dHJ1ZX0=", len_bytes: 11, utf8: '{"ok":true}' },
+        created_at_ms: 1780000000000,
+        discriminator: null,
+        metadata: null,
+        realm: options.realm,
+        realm_offset: 0,
+        resource: options.resource,
+        resource_offset: 0,
+        route_family: 7,
+      },
+    ],
+    realm: options.realm,
+    resource: options.resource,
+    route_family: 7,
+    from_offset: 0,
+  };
+}
+
 async function mockResourceDetailApis(
   page: Page,
   domain: ResourceDomain,
@@ -841,7 +1192,13 @@ async function mockResourceDetailApis(
 
   await page.route("**/api/v1/**", async (route) => {
     const parsed = new URL(route.request().url());
-    const segments = parsed.pathname.split("/").filter(Boolean);
+    const segments = normalizedAdminApiSegments(parsed.pathname);
+    if (segments.length === 3 && segments[2] === "topology") {
+      await route.fulfill({
+        json: topologyApiPayload,
+      });
+      return;
+    }
 
     if (segments[2] === "features") {
       await route.fulfill({
@@ -852,6 +1209,45 @@ async function mockResourceDetailApis(
 
     if (segments.length < 3 || segments[2] !== domain) {
       await route.continue();
+      return;
+    }
+
+    const baseFixture = domainOverviewData[domain as keyof typeof domainOverviewData];
+    if (segments.length === 4 && segments[3] === "stats") {
+      await route.fulfill({
+        json: baseFixture.stats,
+      });
+      return;
+    }
+
+    if (segments.length === 4 && segments[3] === "realms") {
+      await route.fulfill({
+        json: { realms: baseFixture.realms },
+      });
+      return;
+    }
+
+    if (segments.length === 6 && segments[3] === "realms" && segments[5] === "areas") {
+      const realm = decodeURIComponent(segments[4] ?? routeScope.realm);
+      await route.fulfill({
+        json: {
+          areas: domainAreasByRealm(domain, realm).map((area) => ({ area })),
+          realm,
+        },
+      });
+      return;
+    }
+
+    if (segments.length === 8 && segments[3] === "realms" && segments[5] === "areas") {
+      const realm = decodeURIComponent(segments[4] ?? routeScope.realm);
+      const area = decodeURIComponent(segments[6] ?? routeScope.area);
+      await route.fulfill({
+        json: {
+          area,
+          realm,
+          resources: domainResourcesByArea(domain, realm, area),
+        },
+      });
       return;
     }
 
@@ -891,6 +1287,26 @@ async function mockResourceDetailApis(
       return;
     }
 
+    if (domain === "rpc" && segments.length === 4 && segments[3] === "calls") {
+      await route.fulfill({
+        json: rpcCallsFixture({
+          area: parsed.searchParams.get("area") ?? routeScope.area,
+          limit: Number(parsed.searchParams.get("limit") || 200),
+          operation: parsed.searchParams.get("operation"),
+          realm: parsed.searchParams.get("realm") ?? routeScope.realm,
+          resource: parsed.searchParams.get("resource") ?? routeScope.resource,
+        }),
+      });
+      return;
+    }
+
+    if (domain === "lease" && segments.length === 4 && segments[3] === "search") {
+      await route.fulfill({
+        json: leaseSearchRowsFixture(routeScope),
+      });
+      return;
+    }
+
     const scope = parseResourceScope(segments);
 
     if (!scope) {
@@ -917,6 +1333,18 @@ async function mockResourceDetailApis(
     if (segments.length === 10 && segments[9] === "events") {
       await route.fulfill({
         json: resourceTimelineFixture(domain, scope),
+      });
+      return;
+    }
+
+    if (segments.length === 10 && segments[9] === "records" && domain === "stream") {
+      await route.fulfill({
+        json: streamRecordsFixture({
+          area: scope.area,
+          limit: Number(parsed.searchParams.get("limit") || 50),
+          realm: scope.realm,
+          resource: scope.resource,
+        }),
       });
       return;
     }
@@ -990,6 +1418,116 @@ async function mockResourceDetailApis(
   });
 }
 
+async function mockScheduleResourceApis(page: Page, routeScope: ResourceScope) {
+  const diagnostics = makeDiagnosticSnapshot();
+
+  await mockAdminFeatures(page);
+
+  await page.route("**/api/v1/**", async (route) => {
+    const parsed = new URL(route.request().url());
+    const segments = normalizedAdminApiSegments(parsed.pathname);
+    if (segments.length === 3 && segments[2] === "topology") {
+      await route.fulfill({
+        json: topologyApiPayload,
+      });
+      return;
+    }
+
+    if (segments[2] === "features") {
+      await route.fulfill({
+        json: adminFeatures,
+      });
+      return;
+    }
+
+    if (segments.length < 3 || segments[2] !== "schedule") {
+      await route.continue();
+      return;
+    }
+
+    if (segments.length === 4 && segments[3] === "stats") {
+      await route.fulfill({
+        json: domainOverviewData.schedule.stats,
+      });
+      return;
+    }
+
+    if (segments.length === 4 && segments[3] === "realms") {
+      await route.fulfill({
+        json: { realms: domainOverviewData.schedule.realms },
+      });
+      return;
+    }
+
+    if (segments.length === 4 && segments[3] === "missed") {
+      await route.fulfill({
+        json: scheduleMissedHandoffsFixture({
+          area: parsed.searchParams.get("area") ?? routeScope.area,
+          realm: parsed.searchParams.get("realm") ?? routeScope.realm,
+          resource: parsed.searchParams.get("resource") ?? routeScope.resource,
+        }),
+      });
+      return;
+    }
+
+    if (segments.length === 6 && segments[3] === "realms" && segments[5] === "areas") {
+      const realm = decodeURIComponent(segments[4] ?? routeScope.realm);
+      await route.fulfill({
+        json: {
+          areas: domainAreasByRealm("schedule", realm).map((area) => ({ area })),
+          realm,
+        },
+      });
+      return;
+    }
+
+    if (segments.length === 8 && segments[3] === "realms" && segments[5] === "areas") {
+      const realm = decodeURIComponent(segments[4] ?? routeScope.realm);
+      const area = decodeURIComponent(segments[6] ?? routeScope.area);
+      await route.fulfill({
+        json: {
+          area,
+          realm,
+          resources: domainResourcesByArea("schedule", realm, area),
+        },
+      });
+      return;
+    }
+
+    const scope = parseResourceScope(segments);
+
+    if (!scope) {
+      await route.continue();
+      return;
+    }
+
+    if (
+      scope.area !== routeScope.area ||
+      scope.realm !== routeScope.realm ||
+      scope.resource !== routeScope.resource
+    ) {
+      await route.continue();
+      return;
+    }
+
+    if (segments.length === 9) {
+      await route.fulfill({
+        json: resourceDetailFixture("schedule", scope, diagnostics),
+      });
+      return;
+    }
+
+    if (segments.length === 10 && segments[9] === "executions") {
+      await route.fulfill({
+        json: scheduleExecutionObservationsFixture(scope),
+      });
+      return;
+    }
+
+    await route.continue();
+  });
+}
+
 function queueTimelineFixture(scope: ResourceScope) {
   return {
     area: scope.area,
@@ -1027,7 +1565,13 @@ async function mockQueueResourceApis(page: Page, routeScope: ResourceScope) {
 
   await page.route("**/api/v1/**", async (route) => {
     const parsed = new URL(route.request().url());
-    const segments = parsed.pathname.split("/").filter(Boolean);
+    const segments = normalizedAdminApiSegments(parsed.pathname);
+    if (segments.length === 3 && segments[2] === "topology") {
+      await route.fulfill({
+        json: topologyApiPayload,
+      });
+      return;
+    }
 
     if (segments[2] === "features") {
       await route.fulfill({
@@ -1067,6 +1611,7 @@ async function mockQueueResourceApis(page: Page, routeScope: ResourceScope) {
             under_5m: 1,
             under_15m: 0,
           },
+          complete_success_total: 12,
           delay_age_buckets: {
             over_15m: 0,
             under_1m: 0,
@@ -1074,6 +1619,8 @@ async function mockQueueResourceApis(page: Page, routeScope: ResourceScope) {
             under_15m: 0,
           },
           diagnostics,
+          enqueue_success_total: 24,
+          in_rate_per_second: 1.5,
           messages_dead_lettered: 0,
           messages_delayed: 1,
           messages_inflight: 2,
@@ -1081,8 +1628,11 @@ async function mockQueueResourceApis(page: Page, routeScope: ResourceScope) {
           messages_total: 9,
           oldest_backlog_age_seconds: 28,
           oldest_message_age_seconds: 42,
+          out_rate_per_second: 0.75,
           realm: scope.realm,
           resource: scope.resource,
+          status: "falling_behind",
+          subscriptions_active: 2,
         },
       });
       return;
@@ -1213,9 +1763,13 @@ async function expectRouteChrome(page: Page, route: RouteScenario) {
   const isMobile = (viewport?.width ?? 0) < 768;
   const primaryNav = page.getByRole("navigation", { name: "Primary navigation" });
   const contextNav = page.getByRole("navigation", { name: "Operator context" });
+  const headingOptions =
+    route.shell === "app"
+      ? { level: 1, name: exactHeadingMatcher(route.title) }
+      : { name: exactHeadingMatcher(route.title) };
 
   await expect(page.locator("main#main-content")).toHaveCount(1);
-  await expect(page.getByRole("heading", { name: exactHeadingMatcher(route.title) })).toBeVisible();
+  await expect(page.getByRole("heading", headingOptions)).toBeVisible();
 
   await expectNoHorizontalOverflow(page);
 
@@ -1298,10 +1852,46 @@ const sprint16Routes: RouteScenario[] = [
     title: "Lease overview",
   },
   {
+    path: "/lease/default",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "default",
+  },
+  {
+    path: "/lease/default/ops",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "ops",
+  },
+  {
     path: "/notice",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
     title: "Notice overview",
+  },
+  {
+    path: "/notice/default",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "default",
+  },
+  {
+    path: "/notice/default/ops",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "ops",
+  },
+  {
+    path: "/notice/default/ops/primary",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "Notice operations",
+  },
+  {
+    path: "/notice/default/ops/primary/GetStatus",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "GetStatus",
   },
   {
     path: "/rpc",
@@ -1316,10 +1906,34 @@ const sprint16Routes: RouteScenario[] = [
     title: "Schedule overview",
   },
   {
+    path: "/schedule/default",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "default",
+  },
+  {
+    path: "/schedule/default/ops",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "ops",
+  },
+  {
     path: "/queue",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
     title: "Queue overview",
+  },
+  {
+    path: "/queue/default",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "default",
+  },
+  {
+    path: "/queue/default/ops",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "ops",
   },
   {
     path: "/stream",
@@ -1345,42 +1959,38 @@ const sprint16Routes: RouteScenario[] = [
     shell: "app",
     setup: (page) =>
       mockResourceDetailApis(page, "kv", parseRouteResourceScope("/kv/default/ops/primary")),
-    title: "KV resource inspection",
+    title: "primary",
   },
   {
     path: "/lease/default/ops/primary",
     shell: "app",
     setup: (page) =>
       mockResourceDetailApis(page, "lease", parseRouteResourceScope("/lease/default/ops/primary")),
-    title: "Lease resource inspection",
+    title: "primary",
   },
   {
-    path: "/notice/default/ops/primary",
+    path: "/admin/7/lease/default/ops/primary",
     shell: "app",
     setup: (page) =>
-      mockResourceDetailApis(
-        page,
-        "notice",
-        parseRouteResourceScope("/notice/default/ops/primary"),
-      ),
-    title: "Notice resource inspection",
+      mockResourceDetailApis(page, "lease", {
+        area: "ops",
+        realm: "default",
+        resource: "primary",
+      }),
+    title: "primary",
   },
   {
     path: "/rpc/default/ops/primary",
     shell: "app",
     setup: (page) =>
       mockResourceDetailApis(page, "rpc", parseRouteResourceScope("/rpc/default/ops/primary")),
-    title: "RPC resource inspection",
+    title: "primary",
   },
   {
     path: "/schedule/default/ops/primary",
     shell: "app",
     setup: (page) =>
-      mockResourceDetailApis(
-        page,
-        "schedule",
-        parseRouteResourceScope("/schedule/default/ops/primary"),
-      ),
+      mockScheduleResourceApis(page, parseRouteResourceScope("/schedule/default/ops/primary")),
     title: "Schedule resource inspection",
   },
   {
@@ -1392,7 +2002,7 @@ const sprint16Routes: RouteScenario[] = [
         "stream",
         parseRouteResourceScope("/stream/default/ops/primary"),
       ),
-    title: "Stream resource inspection",
+    title: "primary",
   },
   {
     path: "/login",
@@ -1571,6 +2181,96 @@ test("captures lease overview empty state", async ({ page }, testInfo) => {
   });
 });
 
+test("navigates lease scope drill-down links and shows ownership countdown updates", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  const leaseScope = {
+    area: "default",
+    realm: "default",
+    resource: "primary",
+  };
+
+  await mockDomainOverviewApis(page);
+  await mockResourceDetailApis(page, "lease", leaseScope);
+
+  await page.goto("/lease");
+  await page.locator('a[href="/admin/all/lease/default"]').click();
+  await expect(page).toHaveURL("/admin/all/lease/default");
+  await expect(page.getByRole("link", { name: "Back to overview" })).toHaveAttribute(
+    "href",
+    "/admin/all/lease",
+  );
+
+  await page.locator('a[href="/admin/all/lease/default/default"]').click();
+  await expect(page).toHaveURL("/admin/all/lease/default/default");
+
+  await page.locator('a[href="/admin/all/lease/default/default/primary"]').click();
+  await expect(page).toHaveURL("/admin/all/lease/default/default/primary");
+  await expect(page.getByRole("heading", { name: "primary" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to area" })).toHaveAttribute(
+    "href",
+    "/admin/all/lease/default/default",
+  );
+
+  const remainingCell = page.locator("table tbody tr td").nth(5);
+  const initialRemaining = (await remainingCell.textContent())?.trim();
+  await page.waitForTimeout(1200);
+  const updatedRemaining = (await remainingCell.textContent())?.trim();
+
+  expect(initialRemaining).toBeTruthy();
+  expect(updatedRemaining).toBeTruthy();
+  expect(updatedRemaining).not.toBe(initialRemaining);
+});
+
+test("navigates notice scope drill-down links to operation detail", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+
+  await mockDomainOverviewApis(page);
+
+  await page.goto("/notice");
+  await page.locator('a[href="/admin/all/notice/default"]').click();
+  await expect(page).toHaveURL("/admin/all/notice/default");
+  await page.locator('a[href="/admin/all/notice/default/default"]').click();
+  await expect(page).toHaveURL("/admin/all/notice/default/default");
+  await page.locator('a[href="/admin/all/notice/default/default/primary"]').click();
+  await expect(page).toHaveURL("/admin/all/notice/default/default/primary");
+  await expect(page.getByRole("heading", { level: 1, name: "Notice operations" })).toBeVisible();
+  await page.locator('a[href="/admin/all/notice/default/default/primary/GetStatus"]').click();
+  await expect(page).toHaveURL("/admin/all/notice/default/default/primary/GetStatus");
+  await expect(page.getByRole("heading", { level: 1, name: "GetStatus" })).toBeVisible();
+  await expect(page.getByText("Latency unavailable via current API")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to resource" })).toHaveAttribute(
+    "href",
+    "/admin/all/notice/default/default/primary",
+  );
+});
+
+test("navigates schedule scope drill-down links to resource detail", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  const scheduleScope = {
+    area: "default",
+    realm: "default",
+    resource: "primary",
+  };
+
+  await mockDomainOverviewApis(page);
+  await mockScheduleResourceApis(page, scheduleScope);
+
+  await page.goto("/schedule");
+  await expect(page.getByRole("cell", { name: "Is anyone listening?" })).toBeVisible();
+  await page.locator('a[href="/admin/all/schedule/default"]').click();
+  await expect(page).toHaveURL("/admin/all/schedule/default");
+  await page.locator('a[href="/admin/all/schedule/default/default"]').click();
+  await expect(page).toHaveURL("/admin/all/schedule/default/default");
+  await page.locator('a[href="/admin/all/schedule/default/default/primary"]').click();
+  await expect(page).toHaveURL("/admin/all/schedule/default/default/primary");
+  await expect(page.getByRole("heading", { name: "Schedule resource inspection" })).toBeVisible();
+  await expect(page.getByText("Broker-observed, non-authoritative counter")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Execution observations" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pending and missed handoffs" })).toBeVisible();
+});
+
 test("captures kv overview empty state", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await mockDomainOverviewApis(page, {
@@ -1581,7 +2281,6 @@ test("captures kv overview empty state", async ({ page }, testInfo) => {
         invalid_transaction_rejects_total: 0,
         keys_total: 0,
         operations_per_second: 0,
-        rollbacks_total: 0,
         transactions_active: 0,
       },
     },
@@ -1589,7 +2288,7 @@ test("captures kv overview empty state", async ({ page }, testInfo) => {
 
   await page.goto("/kv");
   await expect(page.getByRole("heading", { name: "KV overview" })).toBeVisible();
-  await expect(page.getByText("No KV realms are currently visible.")).toBeVisible();
+  await expect(page.getByText("No visible KV resources at the current level.")).toBeVisible();
 
   await page.screenshot({
     fullPage: true,

@@ -1,7 +1,7 @@
-import { EmptyState, Spinner } from "@askrjs/themes/feedback";
-import { Badge } from "@askrjs/themes/surfaces";
-import { Stack } from "@askrjs/themes/layouts";
-import { Button } from "@askrjs/themes/controls";
+import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { Badge } from "@askrjs/themes/components";
+import { Stack } from "@askrjs/themes/components";
+import { Button } from "@askrjs/themes/components";
 import { formatUnknownError } from "@/shared/errors/format";
 
 export interface QueryStateProps {

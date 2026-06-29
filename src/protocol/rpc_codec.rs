@@ -6,22 +6,11 @@
 //! `route_family` is a server-internal concept supplied by the session layer
 //! — it never appears on the wire.
 
-use crate::domains::rpc::protocol::{RpcMessage, RpcRequest, RpcResponse};
+use crate::domains::rpc::protocol::{RpcClientResponseBody, RpcMessage, RpcRequest, RpcResponse};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use uuid::Uuid;
-
-/// Response from RPC operations
-#[derive(Debug, Clone)]
-pub enum RpcResponseMsg {
-    /// Operation succeeded with optional data
-    Ok { data: Vec<u8> },
-    /// Operation failed with a numeric protocol error code and message
-    CodeError { code: u16, message: String },
-    /// Operation failed with error message
-    Error(String),
-}
 
 /// Parse incoming message from TLV-encoded bytes.
 ///
@@ -72,24 +61,24 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
 }
 
 /// Encode domain response to TLV-encoded bytes
-pub fn encode_response(response: &RpcResponseMsg) -> Vec<u8> {
+pub fn encode_response(response: &RpcClientResponseBody) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_response_into(response, &mut enc)
 }
 
 /// Encode domain response into a reusable payload encoder.
-pub fn encode_response_into(response: &RpcResponseMsg, enc: &mut PayloadEncoder) -> Vec<u8> {
+pub fn encode_response_into(response: &RpcClientResponseBody, enc: &mut PayloadEncoder) -> Vec<u8> {
     enc.clear();
 
     match response {
-        RpcResponseMsg::Ok { data } => {
+        RpcClientResponseBody::Ok { data } => {
             enc.put_u8(0); // success flag
             enc.put_bytes(data);
         }
-        RpcResponseMsg::CodeError { code, message } => {
+        RpcClientResponseBody::CodeError { code, message } => {
             return encode_error_body_into(*code, message, enc);
         }
-        RpcResponseMsg::Error(e) => {
+        RpcClientResponseBody::Error(e) => {
             return encode_error_body_into(
                 crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
                 e,

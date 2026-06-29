@@ -43,5 +43,8 @@ pub use crate::runtime::clock::{Clock, SystemClock};
 pub use actor::LeaseActor;
 pub use guard::{LeaseError, LeaseGuard, LeaseHandle};
 pub use metrics::LeaseMetrics;
-pub use protocol::{LeaseMessage, LeaseResponse, LeaseSubscriptionMessage};
+pub use protocol::{
+    LeaseClientFrame, LeaseClientNotification, LeaseClientRequest, LeaseClientResponse,
+    LeaseMessage, LeaseResponse, LeaseSubscriptionMessage,
+};
 pub use session::SessionActor;

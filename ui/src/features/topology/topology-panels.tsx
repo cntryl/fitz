@@ -1,7 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
-import { Alert, Badge, Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Alert, Badge, Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/components";
 import { formatNumber, formatTimestamp } from "@/shared/format";
 import { topologyTrendDirection } from "./topology-mappers";
 import type { MessagingTopologyOverview, TopologyTrendPoint } from "./topology-models";

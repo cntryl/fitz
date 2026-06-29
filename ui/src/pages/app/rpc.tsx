@@ -1,9 +1,20 @@
-import { Stack } from "@askrjs/themes/layouts";
+import { For } from "@askrjs/askr/control";
+import { currentRoute, Link } from "@askrjs/askr/router";
+import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Stack,
+} from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
 import {
+  QueryEmptyState,
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
@@ -11,8 +22,24 @@ import {
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import CommunicationFlowWorkspace from "@/features/communication/communication-flow-workspace";
-import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
+import {
+  createRpcAreaQuery,
+  createRpcOverviewQuery,
+  createRpcRealmQuery,
+} from "@/features/rpc/rpc-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
+import { formatNumber } from "@/shared/format";
+import { domainResourceHref, domainScopeHref } from "@/shared/navigation/domains";
+
+function decodeParam(value: string | undefined) {
+  if (!value) return undefined;
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
 
 function summarizeRpcHealth(stats: {
   failureTotal: number;
@@ -38,7 +65,7 @@ function summarizeRpcHealth(stats: {
       detail: `${stats.requestsPending} pending request(s), ${stats.workersRegistered} registered worker(s). ${pressureSignals.join(", ")}. ${
         stats.requestsPending > 0
           ? "Response reliability deserves immediate attention."
-          : "No pending requests are queued."
+          : "No pending requests are visible."
       }`,
       label: "Attention" as const,
       tone: "danger" as const,
@@ -68,7 +95,7 @@ function metricWithRisk(value: number, label: string) {
   };
 }
 
-export default function RpcPage() {
+function RpcOverviewPage() {
   const overview = createRpcOverviewQuery();
   const inventory = createResourceInventoryQuery("rpc");
   const data = overview.data;
@@ -123,7 +150,7 @@ export default function RpcPage() {
         <DomainHeader
           eyebrow="Live request/response"
           title="RPC overview"
-          description="Live request/response throughput, pending work, and worker availability."
+          description="Live request/response throughput, pending requests, and worker availability."
           primaryAction={{
             label: "Refresh RPC",
             onPress: () => overview.refresh(),
@@ -197,6 +224,7 @@ export default function RpcPage() {
             />
 
             <DomainRealmTable
+              domain="rpc"
               title="RPC realms"
               realms={data.realms}
               emptyMessage="No RPC realms are currently visible."
@@ -226,4 +254,158 @@ export default function RpcPage() {
       </Stack>
     </DomainPageFrame>
   );
+}
+
+function RpcRealmPage(props: { realm: string }) {
+  const query = createRpcRealmQuery(props.realm);
+  const data = query.data;
+  const resourceCount = data?.areas.reduce((sum, area) => sum + area.resources.length, 0) ?? 0;
+
+  return (
+    <DomainPageFrame>
+      <Stack gap="3">
+        <DomainHeader
+          eyebrow="RPC realm"
+          title={props.realm}
+          description={`Area inventory for ${props.realm}.`}
+          primaryAction={{ label: "Refresh realm", onPress: () => query.refresh() }}
+          status={{
+            detail: data
+              ? `${data.areas.length} area(s), ${resourceCount} resource(s).`
+              : "Loading RPC realm.",
+            label: query.refreshing ? "Refreshing" : query.stale ? "Stale" : "Live",
+            tone: query.refreshing ? "info" : query.stale ? "warning" : "success",
+          }}
+        />
+        {!data && query.loading ? <QueryLoadingState description="Loading RPC realm..." /> : null}
+        {!data && query.error ? (
+          <QueryErrorState
+            title="Unable to load RPC realm"
+            error={query.error}
+            onRetry={() => query.refresh()}
+          />
+        ) : null}
+        {data ? (
+          <Card padding="sm" variant="default">
+            <CardHeader>
+              <CardTitle>RPC areas</CardTitle>
+              <CardDescription>{data.areas.length} area(s)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {data.areas.length === 0 ? (
+                <QueryEmptyState description="No visible RPC areas at the current level." />
+              ) : (
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableHeaderCell>Area</TableHeaderCell>
+                      <TableHeaderCell>Resources</TableHeaderCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    <For each={data.areas} by={(area) => `${area.realm}:${area.area}`}>
+                      {(area) => (
+                        <TableRow>
+                          <TableCell>
+                            <Link
+                              href={domainScopeHref("rpc", { area: area.area, realm: area.realm })}
+                            >
+                              {area.area}
+                            </Link>
+                          </TableCell>
+                          <TableCell>{formatNumber(area.resources.length)}</TableCell>
+                        </TableRow>
+                      )}
+                    </For>
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        ) : null}
+      </Stack>
+    </DomainPageFrame>
+  );
+}
+
+function RpcAreaPage(props: { realm: string; area: string }) {
+  const query = createRpcAreaQuery(props.realm, props.area);
+  const data = query.data;
+
+  return (
+    <DomainPageFrame>
+      <Stack gap="3">
+        <DomainHeader
+          eyebrow="RPC area"
+          title={props.area}
+          description={`Resources in ${props.realm}/${props.area}.`}
+          primaryAction={{ label: "Refresh area", onPress: () => query.refresh() }}
+          status={{
+            detail: data ? `${data.resources.length} resource(s).` : "Loading RPC area.",
+            label: query.refreshing ? "Refreshing" : query.stale ? "Stale" : "Live",
+            tone: query.refreshing ? "info" : query.stale ? "warning" : "success",
+          }}
+        />
+        {!data && query.loading ? <QueryLoadingState description="Loading RPC area..." /> : null}
+        {!data && query.error ? (
+          <QueryErrorState
+            title="Unable to load RPC area"
+            error={query.error}
+            onRetry={() => query.refresh()}
+          />
+        ) : null}
+        {data ? (
+          <Card padding="sm" variant="default">
+            <CardHeader>
+              <CardTitle>RPC resources</CardTitle>
+              <CardDescription>{data.resources.length} resource(s)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {data.resources.length === 0 ? (
+                <QueryEmptyState description="No visible RPC resources at the current level." />
+              ) : (
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableHeaderCell>Resource</TableHeaderCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    <For each={data.resources} by={(resource) => resource}>
+                      {(resource) => (
+                        <TableRow>
+                          <TableCell>
+                            <Link
+                              href={domainResourceHref("rpc", {
+                                area: props.area,
+                                realm: props.realm,
+                                resource,
+                              })}
+                            >
+                              {resource}
+                            </Link>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </For>
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        ) : null}
+      </Stack>
+    </DomainPageFrame>
+  );
+}
+
+export default function RpcPage() {
+  const route = currentRoute();
+  const realm = decodeParam(route.params.realm);
+  const area = decodeParam(route.params.area);
+
+  if (realm && area) return <RpcAreaPage area={area} realm={realm} />;
+  if (realm) return <RpcRealmPage realm={realm} />;
+
+  return <RpcOverviewPage />;
 }

@@ -1,6 +1,12 @@
 import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@askrjs/themes/components";
 import { formatDisplayValue } from "@/shared/format";
 
 export interface DomainMetric {

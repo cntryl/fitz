@@ -1,7 +1,7 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { Flex, Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/components";
+import { Inline, Stack } from "@askrjs/themes/components";
 import {
   Badge,
   Card,
@@ -9,7 +9,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import {
   QueryEmptyState,
@@ -105,18 +105,18 @@ export default function SearchResultsPanel({
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <Flex justify="between" align="start" gap="3" wrap="wrap">
+        <Inline justify="between" align="start" gap="3" wrap="wrap">
           <Stack gap="1">
             <CardTitle>Search results</CardTitle>
             <CardDescription>{description}</CardDescription>
           </Stack>
-          <Flex gap="2" align="center" wrap="wrap">
+          <Inline gap="2" align="center" wrap="wrap">
             {search?.truncated ? <Badge variant="warning">Truncated</Badge> : null}
             <Button type="button" variant="outline" size="sm" onPress={onRetry}>
               Refresh
             </Button>
-          </Flex>
-        </Flex>
+          </Inline>
+        </Inline>
       </CardHeader>
       <CardContent>
         {loading && !search ? <QueryLoadingState description="Searching admin state..." /> : null}

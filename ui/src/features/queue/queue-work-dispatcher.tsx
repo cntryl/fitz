@@ -1,8 +1,8 @@
 import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { Flex, Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/components";
+import { Inline, Stack } from "@askrjs/themes/components";
 import {
   Badge,
   Card,
@@ -10,7 +10,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
 import { Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import {
   QueryEmptyState,
@@ -207,13 +207,13 @@ function modeDetailDescription(mode: QueueDispatcherMode) {
 function QueueSearchPanel({ result }: { result: AdminSearchResults }) {
   return (
     <div class="queue-search-result" aria-live="polite">
-      <Flex justify="between" align="center" gap="3" wrap="wrap">
+      <Inline justify="between" align="center" gap="3" wrap="wrap">
         <p class="domain-muted">
           {result.total} queue result{result.total === 1 ? "" : "s"}
           {result.routeFamily ? ` in route family ${result.routeFamily}` : ""}
         </p>
         {result.truncated ? <Badge variant="warning">Truncated</Badge> : null}
-      </Flex>
+      </Inline>
 
       {result.results.length === 0 ? (
         <QueryEmptyState
@@ -309,7 +309,7 @@ export default function QueueWorkDispatcher({
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <Flex justify="between" align="start" gap="3" wrap="wrap">
+        <Inline justify="between" align="start" gap="3" wrap="wrap">
           <Stack gap="1">
             <CardTitle>Work dispatcher</CardTitle>
             <CardDescription>
@@ -318,7 +318,7 @@ export default function QueueWorkDispatcher({
             </CardDescription>
           </Stack>
           <Badge variant={badgeVariant}>{badgeLabel}</Badge>
-        </Flex>
+        </Inline>
       </CardHeader>
 
       <CardContent>
@@ -386,7 +386,7 @@ export default function QueueWorkDispatcher({
               </div>
             </div>
             {searchMode ? (
-              <Flex
+              <Inline
                 class="queue-query-actions"
                 justify="between"
                 align="center"
@@ -400,7 +400,7 @@ export default function QueueWorkDispatcher({
                 <Button type="submit" disabled={!canRunSearch}>
                   {searchLoadingValue ? "Running" : "Run search"}
                 </Button>
-              </Flex>
+              </Inline>
             ) : null}
           </form>
 
@@ -450,7 +450,7 @@ export default function QueueWorkDispatcher({
               />
             ) : (
               <Stack gap="3">
-                <Flex justify="between" align="center" gap="3" wrap="wrap">
+                <Inline justify="between" align="center" gap="3" wrap="wrap">
                   <p class="domain-muted">
                     {filteredRows.length} matching queue{filteredRows.length === 1 ? "" : "s"}
                   </p>
@@ -466,7 +466,7 @@ export default function QueueWorkDispatcher({
                       Open exact queue
                     </Link>
                   ) : null}
-                </Flex>
+                </Inline>
 
                 <VirtualTable<QueueResourceRow>
                   aria-label="Matching queue resources"

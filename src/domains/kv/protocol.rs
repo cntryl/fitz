@@ -6,6 +6,7 @@
 //! - Explicit RouteFamily → ColumnFamily mapping
 
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::ClientFrameMeta;
 use bytes::Bytes;
 use cntryl_midge::WriteOptions;
 use serde::{Deserialize, Serialize};
@@ -96,6 +97,67 @@ pub enum KvSubscriptionMessage {
         session_id: u64,
         subscriber: RouteAddress,
     },
+}
+
+/// Parsed client request delivered to the KV domain sink.
+#[derive(Debug, Clone)]
+pub struct KvClientRequest {
+    pub meta: ClientFrameMeta,
+    pub frame: Result<KvClientFrame, String>,
+}
+
+impl KvClientRequest {
+    pub fn new(meta: ClientFrameMeta, frame: Result<KvClientFrame, String>) -> Self {
+        Self { meta, frame }
+    }
+}
+
+/// KV request classified after wire parsing.
+#[derive(Debug, Clone)]
+pub enum KvClientFrame {
+    Op(KvMessage),
+    Sub(KvSubscriptionMessage),
+}
+
+/// Typed KV response to be encoded at the transport edge.
+#[derive(Debug, Clone)]
+pub struct KvClientResponse {
+    pub meta: ClientFrameMeta,
+    pub response: KvResponse,
+}
+
+impl KvClientResponse {
+    pub fn new(meta: ClientFrameMeta, response: KvResponse) -> Self {
+        Self { meta, response }
+    }
+}
+
+/// Typed KV watch notification to be encoded at the transport edge.
+#[derive(Debug, Clone)]
+pub struct KvClientNotification {
+    pub session_id: u64,
+    pub route_family: RouteFamily,
+    pub subscription_id: u64,
+    pub route: Route,
+    pub notification: KvNotification,
+}
+
+impl KvClientNotification {
+    pub fn new(
+        session_id: u64,
+        route_family: RouteFamily,
+        subscription_id: u64,
+        route: Route,
+        notification: KvNotification,
+    ) -> Self {
+        Self {
+            session_id,
+            route_family,
+            subscription_id,
+            route,
+            notification,
+        }
+    }
 }
 
 /// Lightweight change notification for committed KV mutations.

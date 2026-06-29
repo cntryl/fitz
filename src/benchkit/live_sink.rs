@@ -143,7 +143,7 @@ pub fn route_frame(
 pub fn create_bench_notice_sink(router: Arc<Router>) -> Arc<NoticeDomainSink> {
     Arc::new(NoticeDomainSink::new(
         router,
-        crate::api::admin::read_model::AdminReadModel::new(),
+        crate::control::admin::read_model::AdminReadModel::new(),
     ))
 }
 
@@ -151,7 +151,7 @@ pub fn create_bench_queue_sink(router: Arc<Router>) -> Arc<QueueDomainSink> {
     Arc::new(QueueDomainSink::new(
         create_bench_store(),
         router,
-        crate::api::admin::read_model::AdminReadModel::new(),
+        crate::control::admin::read_model::AdminReadModel::new(),
         cntryl_midge::WriteOptions::best_effort(),
         crate::utils::idempotency::default_dedup_store(),
     ))
@@ -160,7 +160,7 @@ pub fn create_bench_queue_sink(router: Arc<Router>) -> Arc<QueueDomainSink> {
 pub fn create_bench_lease_sink(router: Arc<Router>) -> Arc<LeaseDomainSink> {
     Arc::new(LeaseDomainSink::new(
         router,
-        crate::api::admin::read_model::AdminReadModel::new(),
+        crate::control::admin::read_model::AdminReadModel::new(),
     ))
 }
 
@@ -179,7 +179,7 @@ pub fn create_bench_stream_sink_with_layout(
         StreamDomainSink::new_with_layout(
             create_bench_store(),
             router,
-            crate::api::admin::read_model::AdminReadModel::new(),
+            crate::control::admin::read_model::AdminReadModel::new(),
             stream_storage_layout,
         )
         .expect("create bench stream sink"),
@@ -189,7 +189,7 @@ pub fn create_bench_stream_sink_with_layout(
 pub fn create_bench_rpc_sink(router: Arc<Router>) -> Arc<RpcDomainSink> {
     Arc::new(RpcDomainSink::new(
         router,
-        crate::api::admin::read_model::AdminReadModel::new(),
+        crate::control::admin::read_model::AdminReadModel::new(),
     ))
 }
 
@@ -198,8 +198,11 @@ pub fn create_bench_rpc_sink_with_timeout(
     request_timeout: Duration,
 ) -> Arc<RpcDomainSink> {
     Arc::new(
-        RpcDomainSink::new(router, crate::api::admin::read_model::AdminReadModel::new())
-            .with_request_timeout(request_timeout),
+        RpcDomainSink::new(
+            router,
+            crate::control::admin::read_model::AdminReadModel::new(),
+        )
+        .with_request_timeout(request_timeout),
     )
 }
 
@@ -208,8 +211,11 @@ pub fn create_bench_rpc_sink_with_route_pending_capacity(
     route_pending_capacity: usize,
 ) -> Arc<RpcDomainSink> {
     Arc::new(
-        RpcDomainSink::new(router, crate::api::admin::read_model::AdminReadModel::new())
-            .with_route_pending_capacity(route_pending_capacity),
+        RpcDomainSink::new(
+            router,
+            crate::control::admin::read_model::AdminReadModel::new(),
+        )
+        .with_route_pending_capacity(route_pending_capacity),
     )
 }
 
@@ -218,8 +224,11 @@ pub fn create_bench_rpc_sink_with_metrics(
     metrics: MetricsCollector,
 ) -> Arc<RpcDomainSink> {
     Arc::new(
-        RpcDomainSink::new(router, crate::api::admin::read_model::AdminReadModel::new())
-            .with_metrics(metrics),
+        RpcDomainSink::new(
+            router,
+            crate::control::admin::read_model::AdminReadModel::new(),
+        )
+        .with_metrics(metrics),
     )
 }
 
@@ -227,6 +236,6 @@ pub fn create_bench_schedule_sink(router: Arc<Router>) -> Arc<ScheduleDomainSink
     Arc::new(ScheduleDomainSink::new(
         create_bench_store(),
         router,
-        crate::api::admin::read_model::AdminReadModel::new(),
+        crate::control::admin::read_model::AdminReadModel::new(),
     ))
 }

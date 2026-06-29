@@ -1,18 +1,22 @@
 import { apiv1 } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
-import { mapKvCommittedValue, mapKvOverview, mapKvPrefixScan } from "./kv-mappers";
+import { apiRouteFamilySegment } from "@/shared/navigation/domains";
+import { mapKvCommittedValue, mapKvOverview, mapKvPrefixScan, mapKvRows } from "./kv-mappers";
 import type {
   KvCommittedResourceScope,
   KvCommittedValueResult,
   KvKeyEncoding,
   KvOverview,
   KvPrefixScanResult,
+  KvResourceScope,
+  KvRowsResult,
 } from "./kv-models";
 
 async function getOverview(options: ServiceRequestOptions = {}): Promise<KvOverview> {
+  const family = apiRouteFamilySegment();
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listKvRealms(options),
-    apiv1.getKvStats(options),
+    apiv1.listKvRealms(family, options),
+    apiv1.getKvStats(family, options),
   ]);
 
   return mapKvOverview(
@@ -30,13 +34,13 @@ async function getCommittedValue(
   return mapKvCommittedValue(
     unwrapResponse(
       await apiv1.getKvCommittedValue(
+        apiRouteFamilySegment(scope.routeFamily),
         scope.realm,
         scope.area,
         scope.resource,
         {
           key,
           key_encoding: keyEncoding,
-          route_family: scope.routeFamily,
         },
         options,
       ),
@@ -55,6 +59,7 @@ async function scanCommittedPrefix(
   return mapKvPrefixScan(
     unwrapResponse(
       await apiv1.scanKvCommittedPrefix(
+        apiRouteFamilySegment(scope.routeFamily),
         scope.realm,
         scope.area,
         scope.resource,
@@ -62,7 +67,6 @@ async function scanCommittedPrefix(
           key_encoding: keyEncoding,
           limit,
           prefix,
-          route_family: scope.routeFamily,
         },
         options,
       ),
@@ -71,7 +75,37 @@ async function scanCommittedPrefix(
   );
 }
 
+async function browseCommittedRows(
+  scope: KvResourceScope,
+  request: {
+    cursor?: string | null;
+    limit?: number;
+    startsWith?: string;
+  },
+  options: ServiceRequestOptions = {},
+): Promise<KvRowsResult> {
+  return mapKvRows(
+    unwrapResponse(
+      await apiv1.browseKvCommittedRows(
+        apiRouteFamilySegment(),
+        scope.realm,
+        scope.area,
+        scope.resource,
+        {
+          cursor: request.cursor ?? undefined,
+          key_encoding: "utf8",
+          limit: request.limit,
+          starts_with: request.startsWith,
+        },
+        options,
+      ),
+      "Unable to browse committed KV rows",
+    ),
+  );
+}
+
 export const kvService = {
+  browseCommittedRows,
   getCommittedValue,
   getOverview,
   scanCommittedPrefix,

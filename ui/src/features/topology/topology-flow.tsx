@@ -1,6 +1,6 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Card, CardContent, CardHeader, CardTitle, Badge } from "@askrjs/themes/surfaces";
+import { Card, CardContent, CardHeader, CardTitle, Badge } from "@askrjs/themes/components";
 import { formatNumber } from "@/shared/format";
 import {
   laneTrendDirection,

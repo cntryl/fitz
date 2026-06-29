@@ -8,7 +8,7 @@ import type {
 } from "@/features/topology/topology-models";
 import { hotspotHref, humanizeSeconds, scopeText } from "@/features/topology/topology-view";
 import { formatNumber } from "@/shared/format";
-import { domainLinks, type DomainSegment } from "@/shared/navigation/domains";
+import { adminChildHref, domainLinks, type DomainSegment } from "@/shared/navigation/domains";
 
 export type OverviewTone = "danger" | "info" | "success" | "warning";
 
@@ -109,7 +109,7 @@ function incidentIssue(summary: IncidentSummary | undefined): OverviewIssue | nu
   return {
     action: "Open diagnostics",
     description: summary.explanation,
-    href: "/diagnostics",
+    href: adminChildHref("diagnostics"),
     id: "incident-summary",
     scope: "Broker",
     severity: summary.severity,

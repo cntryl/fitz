@@ -7,8 +7,8 @@
 //! — it never appears on the wire.
 
 use crate::domains::stream::protocol::{
-    IngestMetadata, StreamDiscriminator, StreamFilterSet, StreamMessage, StreamSubscriptionMessage,
-    StreamWriteMode,
+    IngestMetadata, StreamClientFrame, StreamClientResponseBody, StreamDiscriminator,
+    StreamFilterSet, StreamMessage, StreamSubscriptionMessage, StreamWriteMode,
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
@@ -26,28 +26,6 @@ fn map_stream_filter_decode_error(error: String) -> String {
     format!("{}: {}", ERR_STREAM_FILTER_INVALID_PAYLOAD, error)
 }
 
-/// A parsed frame from the stream domain wire protocol.
-///
-/// Client operation frames (600-606) produce `Op`. Subscription frames (607-608)
-/// produce `Sub` and are handled by the sink without reaching `StreamActor`.
-#[derive(Debug, Clone)]
-pub enum ParsedStreamFrame {
-    Op(StreamMessage),
-    Sub(StreamSubscriptionMessage),
-}
-
-/// Response from stream operations
-#[derive(Debug, Clone)]
-pub enum StreamResponse {
-    /// Operation succeeded with optional session ID and data
-    Ok {
-        session_id: Option<u64>,
-        data: Vec<u8>,
-    },
-    /// Operation failed with error message
-    Error(String),
-}
-
 /// Parse incoming message from TLV-encoded bytes.
 ///
 /// `route_family`, `session_id`, and `subscriber` are injected by the
@@ -58,21 +36,21 @@ pub fn parse_request(
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
-) -> Result<ParsedStreamFrame, String> {
+) -> Result<StreamClientFrame, String> {
     let mut dec = PayloadDecoder::new(payload);
 
     match ctx.msg_type.0 {
-        600 => parse_begin(&mut dec, route_family).map(ParsedStreamFrame::Op),
-        601 => parse_append(&mut dec).map(ParsedStreamFrame::Op),
-        602 => parse_commit(&mut dec).map(ParsedStreamFrame::Op),
-        603 => parse_rollback(&mut dec).map(ParsedStreamFrame::Op),
-        604 => parse_read(&mut dec, route_family).map(ParsedStreamFrame::Op),
-        605 => parse_last(&mut dec, route_family).map(ParsedStreamFrame::Op),
-        606 => parse_get_metadata(&mut dec, route_family).map(ParsedStreamFrame::Op),
+        600 => parse_begin(&mut dec, route_family).map(StreamClientFrame::Op),
+        601 => parse_append(&mut dec).map(StreamClientFrame::Op),
+        602 => parse_commit(&mut dec).map(StreamClientFrame::Op),
+        603 => parse_rollback(&mut dec).map(StreamClientFrame::Op),
+        604 => parse_read(&mut dec, route_family).map(StreamClientFrame::Op),
+        605 => parse_last(&mut dec, route_family).map(StreamClientFrame::Op),
+        606 => parse_get_metadata(&mut dec, route_family).map(StreamClientFrame::Op),
         607 => parse_subscribe(&mut dec, route_family, session_id, subscriber)
-            .map(ParsedStreamFrame::Sub),
+            .map(StreamClientFrame::Sub),
         608 => parse_unsubscribe(&mut dec, route_family, session_id, subscriber)
-            .map(ParsedStreamFrame::Sub),
+            .map(StreamClientFrame::Sub),
         _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
     }
 }
@@ -138,21 +116,24 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
 }
 
 /// Encode domain response to TLV-encoded bytes
-pub fn encode_response(response: &StreamResponse) -> Vec<u8> {
+pub fn encode_response(response: &StreamClientResponseBody) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_response_into(&mut enc, response)
 }
 
-pub fn encode_response_into(enc: &mut PayloadEncoder, response: &StreamResponse) -> Vec<u8> {
+pub fn encode_response_into(
+    enc: &mut PayloadEncoder,
+    response: &StreamClientResponseBody,
+) -> Vec<u8> {
     enc.clear();
 
     match response {
-        StreamResponse::Ok { session_id, data } => {
+        StreamClientResponseBody::Ok { session_id, data } => {
             enc.put_u8(0); // success flag
             enc.put_optional_u64(*session_id);
             enc.put_bytes(data);
         }
-        StreamResponse::Error(e) => {
+        StreamClientResponseBody::Error(e) => {
             return crate::protocol::error_codes::encode_error_body_into(
                 stream_error_code_for_message(e),
                 e,

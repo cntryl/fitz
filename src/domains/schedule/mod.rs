@@ -27,8 +27,9 @@ pub mod store;
 pub use actor::ScheduleActor;
 pub use metrics::ScheduleMetrics;
 pub use protocol::{
-    CronSchedule, ScheduleCreateEntry, ScheduleDef, ScheduleError, ScheduleListEntry,
-    ScheduleMessage, ScheduleResponse,
+    CronSchedule, ScheduleClientNotification, ScheduleClientRequest, ScheduleClientResponse,
+    ScheduleCreateEntry, ScheduleDef, ScheduleError, ScheduleListEntry, ScheduleMessage,
+    ScheduleResponse,
 };
 pub use session::SessionActor;
 pub use store::ScheduleStore;

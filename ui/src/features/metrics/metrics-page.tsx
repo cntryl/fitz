@@ -1,9 +1,15 @@
 import { For } from "@askrjs/askr/control";
 import { state } from "@askrjs/askr";
 import { Input, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
-import { Button } from "@askrjs/themes/controls";
-import { Stack } from "@askrjs/themes/layouts";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Button } from "@askrjs/themes/components";
+import { Stack } from "@askrjs/themes/components";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -148,7 +154,6 @@ function summarizeSnapshot(index: Map<string, PrometheusMetricFamily>): MetricsP
       label: "KV failures",
       value: signalValue(index, [
         "fitz_kv_commits_failed_total",
-        "fitz_kv_rollbacks_total",
         "fitz_kv_invalid_transaction_rejects_total",
       ]),
     },
@@ -457,11 +462,6 @@ function familyCardMetrics(index: Map<string, PrometheusMetricFamily>) {
         label: "KV commit failures",
         value: familyValue(index, "fitz_kv_commits_failed_total"),
         caption: "failures",
-      },
-      {
-        label: "KV rollbacks",
-        value: familyValue(index, "fitz_kv_rollbacks_total"),
-        caption: "rollbacks",
       },
     ],
   };

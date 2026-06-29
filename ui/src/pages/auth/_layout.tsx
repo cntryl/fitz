@@ -1,8 +1,8 @@
 import { Link } from "@askrjs/askr/router";
 import { MoonIcon, ShieldIcon, SunIcon } from "@askrjs/lucide";
-import { Badge } from "@askrjs/themes/surfaces";
-import { Container } from "@askrjs/themes/layouts";
-import { Header, Navbar, NavBrand, NavGroup } from "@askrjs/themes/shells";
+import { Badge } from "@askrjs/themes/components";
+import { Container } from "@askrjs/themes/components";
+import { Header, Navbar, NavBrand, NavGroup } from "@askrjs/themes/components";
 import { ThemeToggle } from "@askrjs/themes/theme";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 

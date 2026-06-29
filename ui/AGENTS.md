@@ -23,6 +23,8 @@
 - Keep changes UI-local unless the task explicitly crosses into the broker or shared docs.
 - Use the narrowest applicable skill from `skills/` for the slice you are changing.
 - Prefer `@askrjs/askr`, `@askrjs/ui`, and `@askrjs/themes` before inventing app-local primitives.
+- Keep files small. No file should exceed 1,000 lines, and files should be split or refactored before they approach that limit.
+- Optimize for simplicity. Complexity, DRY, and clarity are mandatory design constraints.
 - Regenerate adapters with `npm run gen:adapters` from `ui/` when `../public/openapi.yml` or the client surface changes.
 - If a change touches shared repo behavior, consult the root guide and shared skills before editing.
 

@@ -1,8 +1,8 @@
 import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { Flex, Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/components";
+import { Inline, Stack } from "@askrjs/themes/components";
 import {
   Badge,
   Card,
@@ -10,7 +10,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
 import { Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import type { KvByteValue, StreamAdminRecord, StreamRecordsResponse } from "@/adapters";
 import {
@@ -232,13 +232,13 @@ function recordQueryPlaceholder(mode: StreamHistoryMode) {
 function StreamRecordsPanel({ result }: { result: StreamRecordsResponse }) {
   return (
     <div class="stream-record-result" aria-live="polite">
-      <Flex justify="between" align="center" gap="3" wrap="wrap">
+      <Inline justify="between" align="center" gap="3" wrap="wrap">
         <p class="domain-muted">
           {result.records.length} committed record
           {result.records.length === 1 ? "" : "s"} in route family {result.route_family}
         </p>
         {result.has_more ? <Badge variant="warning">More available</Badge> : null}
-      </Flex>
+      </Inline>
 
       {result.records.length === 0 ? (
         <QueryEmptyState
@@ -362,7 +362,7 @@ export default function StreamHistoryExplorer({
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <Flex justify="between" align="start" gap="3" wrap="wrap">
+        <Inline justify="between" align="start" gap="3" wrap="wrap">
           <Stack gap="1">
             <CardTitle>History workspace</CardTitle>
             <CardDescription>
@@ -371,7 +371,7 @@ export default function StreamHistoryExplorer({
             </CardDescription>
           </Stack>
           <Badge variant={badgeVariant}>{badgeLabel}</Badge>
-        </Flex>
+        </Inline>
       </CardHeader>
 
       <CardContent>
@@ -439,7 +439,7 @@ export default function StreamHistoryExplorer({
               </div>
             </div>
             {recordMode ? (
-              <Flex
+              <Inline
                 class="stream-query-actions"
                 justify="between"
                 align="center"
@@ -453,7 +453,7 @@ export default function StreamHistoryExplorer({
                 <Button type="submit" disabled={!canRunRecordQuery}>
                   {recordLoadingValue ? "Running" : "Run read"}
                 </Button>
-              </Flex>
+              </Inline>
             ) : null}
           </form>
 
@@ -489,7 +489,7 @@ export default function StreamHistoryExplorer({
               />
             ) : (
               <Stack gap="3">
-                <Flex justify="between" align="center" gap="3" wrap="wrap">
+                <Inline justify="between" align="center" gap="3" wrap="wrap">
                   <p class="domain-muted">
                     {filteredRows.length} matching stream{filteredRows.length === 1 ? "" : "s"}
                   </p>
@@ -505,7 +505,7 @@ export default function StreamHistoryExplorer({
                       Open exact stream
                     </Link>
                   ) : null}
-                </Flex>
+                </Inline>
 
                 <VirtualTable<StreamResourceRow>
                   aria-label="Matching stream resources"

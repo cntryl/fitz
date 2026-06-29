@@ -1,4 +1,4 @@
-import { Stack } from "@askrjs/themes/layouts";
+import { Stack } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";

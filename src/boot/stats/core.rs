@@ -19,12 +19,15 @@ fn current_epoch_ms() -> u64 {
 impl Runtime {
     /// Create a new runtime statistics tracker.
     pub fn new(router: Arc<Router>) -> Self {
-        Self::with_admin_read_model(router, crate::api::admin::read_model::AdminReadModel::new())
+        Self::with_admin_read_model(
+            router,
+            crate::control::admin::read_model::AdminReadModel::new(),
+        )
     }
 
     pub fn with_admin_read_model(
         router: Arc<Router>,
-        admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
         let now = std::time::Instant::now();
         Self {
@@ -60,7 +63,7 @@ impl Runtime {
         self.admin_auth.clone()
     }
 
-    pub fn admin_read_model(&self) -> Arc<crate::api::admin::read_model::AdminReadModel> {
+    pub fn admin_read_model(&self) -> Arc<crate::control::admin::read_model::AdminReadModel> {
         self.admin_read_model.clone()
     }
 

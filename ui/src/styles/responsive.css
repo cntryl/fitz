@@ -1,26 +1,20 @@
 @media (max-width: 48rem) {
-  :where(.navbar-panel, [data-slot="navbar-panel"]) {
+  :where([data-slot="navbar"][data-collapse-at] [data-slot="navbar-content"]) {
     gap: var(--fitz-control-gap);
     padding: var(--ak-space-sm, 0.625rem);
-  }
-
-  :where([data-slot="navbar"][data-responsive-collapsed="true"])
-    > :where(.navbar-panel, [data-slot="navbar-panel"]) {
-    inset-inline: max(var(--ak-space-2, 0.5rem), env(safe-area-inset-left))
-      max(var(--ak-space-2, 0.5rem), env(safe-area-inset-right));
     max-block-size: calc(
       100dvh - var(--ak-layout-navbar-height) - var(--ak-space-sm) - env(safe-area-inset-bottom)
     );
+    overflow-y: auto;
   }
 
-  :where(.navbar-panel-header, [data-slot="navbar-panel-header"]) {
+  :where([data-slot="navbar"][data-collapse-at] [data-slot="navbar-toggle"]) {
     gap: var(--fitz-control-gap);
-    padding-block-end: var(--ak-space-xs, 0.25rem);
   }
 
-  :where(.navbar-panel)
-    > :where(.navbar-group, [data-slot="navbar-group"])
-    > :where(.navbar-group-body, [data-slot="navbar-group-body"]) {
+  :where(
+    [data-slot="navbar"][data-collapse-at] [data-slot="navbar-content"] [data-slot="nav-group-body"]
+  ) {
     gap: var(--fitz-control-gap);
   }
 

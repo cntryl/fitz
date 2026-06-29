@@ -1,5 +1,5 @@
-use crate::api::admin::read_model::AdminReadModel;
-use crate::api::admin::LeaseInfo;
+use crate::control::admin::read_model::AdminReadModel;
+use crate::control::admin::LeaseInfo;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 

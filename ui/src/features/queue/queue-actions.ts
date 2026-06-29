@@ -1,12 +1,19 @@
 import { createMutation } from "@askrjs/askr/data";
 import { queueService } from "./queue-service";
 import type { DeadLetterMessage, QueueResourceRef } from "./queue-models";
-import { QUEUE_OVERVIEW_KEY, queueDeadLettersQueryPrefix } from "./queue-query";
+import {
+  queueAreaQueryKey,
+  queueDeadLettersQueryPrefix,
+  queueOverviewQueryKey,
+  queueRealmQueryKey,
+} from "./queue-query";
 import { queueResourceQueryKey, queueResourceTimelineQueryKey } from "./queue-resource-query";
 
 export function affectedQueueKeys(resourceRef: QueueResourceRef) {
   return [
-    QUEUE_OVERVIEW_KEY,
+    queueOverviewQueryKey(),
+    queueRealmQueryKey(resourceRef.realm),
+    queueAreaQueryKey(resourceRef.realm, resourceRef.area),
     queueResourceQueryKey(resourceRef),
     queueResourceTimelineQueryKey(resourceRef),
     queueDeadLettersQueryPrefix(resourceRef),

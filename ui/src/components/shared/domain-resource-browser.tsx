@@ -1,6 +1,6 @@
 import { Link } from "@askrjs/askr/router";
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
-import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/components";
 import { QueryEmptyState, QueryErrorState } from "./query-state";
 import type { QueueInventory } from "@/features/queue/queue-models";
 import type { ResourceInventory } from "@/features/resource/resource-models";

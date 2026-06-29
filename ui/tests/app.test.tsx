@@ -20,17 +20,22 @@ import ResourceDetailPage from "@/pages/app/resource-detail";
 import KvPage from "@/pages/app/kv";
 import LeasePage from "@/pages/app/lease";
 import NoticePage from "@/pages/app/notice";
+import NoticeOperationPage from "@/pages/app/notice-operation";
 import RpcPage from "@/pages/app/rpc";
+import RpcOperationPage from "@/pages/app/rpc-operation";
+import RpcResourcePage from "@/pages/app/rpc-resource";
 import SchedulePage from "@/pages/app/schedule";
+import ScheduleResourcePage from "@/pages/app/schedule-resource";
 import SessionsPage from "@/pages/app/sessions";
 import StreamPage from "@/pages/app/stream";
+import StreamResourcePage from "@/pages/app/stream-resource";
 import Logout from "@/pages/auth/logout";
 import Login from "@/pages/auth/login";
 import { getRoutes } from "@askrjs/askr/router";
-import { EmptyState } from "@askrjs/themes/feedback";
-import { NavBrand, NavGroup, NavItem, NavLink, Navbar } from "@askrjs/themes/navs";
-import { Section } from "@askrjs/themes/layouts";
-import { Card } from "@askrjs/themes/surfaces";
+import { EmptyState } from "@askrjs/themes/components";
+import { NavBrand, NavGroup, NavItem, NavLink, Navbar } from "@askrjs/themes/components";
+import { Section } from "@askrjs/themes/components";
+import { Card } from "@askrjs/themes/components";
 import { domainLinks, shellLinks } from "@/shared/navigation/domains";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -77,14 +82,24 @@ describe("Admin UI", () => {
     expect(typeof LeasePage).toBe("function");
     expect(NoticePage).toBeDefined();
     expect(typeof NoticePage).toBe("function");
+    expect(NoticeOperationPage).toBeDefined();
+    expect(typeof NoticeOperationPage).toBe("function");
     expect(RpcPage).toBeDefined();
     expect(typeof RpcPage).toBe("function");
+    expect(RpcResourcePage).toBeDefined();
+    expect(typeof RpcResourcePage).toBe("function");
+    expect(RpcOperationPage).toBeDefined();
+    expect(typeof RpcOperationPage).toBe("function");
     expect(SchedulePage).toBeDefined();
     expect(typeof SchedulePage).toBe("function");
+    expect(ScheduleResourcePage).toBeDefined();
+    expect(typeof ScheduleResourcePage).toBe("function");
     expect(SessionsPage).toBeDefined();
     expect(typeof SessionsPage).toBe("function");
     expect(StreamPage).toBeDefined();
     expect(typeof StreamPage).toBe("function");
+    expect(StreamResourcePage).toBeDefined();
+    expect(typeof StreamResourcePage).toBe("function");
     expect(DiagnosticsPage).toBeDefined();
     expect(typeof DiagnosticsPage).toBe("function");
     expect(MetricsPage).toBeDefined();
@@ -144,26 +159,77 @@ describe("Admin UI", () => {
       expect.arrayContaining([
         "/",
         "/admin",
+        "/admin/{family}",
         "/logout",
         "/login",
         "/sessions",
+        "/admin/{family}/sessions",
         "/diagnostics",
+        "/admin/{family}/diagnostics",
         "/settings",
+        "/admin/{family}/settings",
         "/admin/metrics",
+        "/admin/{family}/metrics",
         "/queue",
+        "/admin/{family}/queue",
+        "/queue/{realm}",
+        "/admin/{family}/queue/{realm}",
+        "/queue/{realm}/{area}",
+        "/admin/{family}/queue/{realm}/{area}",
         "/queue/{realm}/{area}/{resource}",
+        "/admin/{family}/queue/{realm}/{area}/{resource}",
         "/kv",
+        "/admin/{family}/kv",
+        "/kv/{realm}",
+        "/admin/{family}/kv/{realm}",
+        "/kv/{realm}/{area}",
+        "/admin/{family}/kv/{realm}/{area}",
         "/kv/{realm}/{area}/{resource}",
+        "/admin/{family}/kv/{realm}/{area}/{resource}",
         "/lease",
+        "/admin/{family}/lease",
+        "/lease/{realm}",
+        "/admin/{family}/lease/{realm}",
+        "/lease/{realm}/{area}",
+        "/admin/{family}/lease/{realm}/{area}",
         "/lease/{realm}/{area}/{resource}",
+        "/admin/{family}/lease/{realm}/{area}/{resource}",
         "/notice",
+        "/admin/{family}/notice",
+        "/notice/{realm}",
+        "/admin/{family}/notice/{realm}",
+        "/notice/{realm}/{area}",
+        "/admin/{family}/notice/{realm}/{area}",
         "/notice/{realm}/{area}/{resource}",
+        "/admin/{family}/notice/{realm}/{area}/{resource}",
+        "/notice/{realm}/{area}/{resource}/{operation}",
+        "/admin/{family}/notice/{realm}/{area}/{resource}/{operation}",
         "/rpc",
+        "/admin/{family}/rpc",
+        "/rpc/{realm}",
+        "/admin/{family}/rpc/{realm}",
+        "/rpc/{realm}/{area}",
+        "/admin/{family}/rpc/{realm}/{area}",
         "/rpc/{realm}/{area}/{resource}",
+        "/admin/{family}/rpc/{realm}/{area}/{resource}",
+        "/rpc/{realm}/{area}/{resource}/{operation}",
+        "/admin/{family}/rpc/{realm}/{area}/{resource}/{operation}",
         "/schedule",
+        "/admin/{family}/schedule",
+        "/schedule/{realm}",
+        "/admin/{family}/schedule/{realm}",
+        "/schedule/{realm}/{area}",
+        "/admin/{family}/schedule/{realm}/{area}",
         "/schedule/{realm}/{area}/{resource}",
+        "/admin/{family}/schedule/{realm}/{area}/{resource}",
         "/stream",
+        "/admin/{family}/stream",
+        "/stream/{realm}",
+        "/admin/{family}/stream/{realm}",
+        "/stream/{realm}/{area}",
+        "/admin/{family}/stream/{realm}/{area}",
         "/stream/{realm}/{area}/{resource}",
+        "/admin/{family}/stream/{realm}/{area}/{resource}",
       ]),
     );
   });

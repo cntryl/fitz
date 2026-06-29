@@ -67,7 +67,9 @@ vi.mock("@/features/metrics/metrics-query", () => ({
 
 vi.mock("@/features/queue/queue-query", () => ({
   createQueueDeadLettersQuery: () => mocks.queryStates.queueDeadLetters,
+  createQueueAreaQuery: () => mocks.queryStates.queueArea,
   createQueueOverviewQuery: () => mocks.queryStates.queue,
+  createQueueRealmQuery: () => mocks.queryStates.queueRealm,
   createQueueInventoryQuery: () => mocks.queryStates.queueInventory,
 }));
 
@@ -86,24 +88,47 @@ vi.mock("@/features/kv/kv-query", () => ({
   createKvOverviewQuery: () => mocks.queryStates.kv,
 }));
 
+vi.mock("@/features/kv/kv-rows-query", () => ({
+  createKvRowsQuery: () => mocks.queryStates.kvRows,
+}));
+
 vi.mock("@/features/lease/lease-query", () => ({
   createLeaseOverviewQuery: () => mocks.queryStates.lease,
+  createLeaseRealmQuery: () => mocks.queryStates.leaseRealm,
+  createLeaseAreaQuery: () => mocks.queryStates.leaseArea,
+  createLeaseResourceRowsQuery: () => mocks.queryStates.leaseResourceRows,
 }));
 
 vi.mock("@/features/notice/notice-query", () => ({
   createNoticeOverviewQuery: () => mocks.queryStates.notice,
+  createNoticeRealmQuery: () => mocks.queryStates.noticeRealm,
+  createNoticeAreaQuery: () => mocks.queryStates.noticeArea,
+  createNoticeResourceRowsQuery: () => mocks.queryStates.noticeResourceRows,
+  createNoticeOperationRowsQuery: () => mocks.queryStates.noticeOperationRows,
 }));
 
 vi.mock("@/features/rpc/rpc-query", () => ({
+  createRpcAreaQuery: () => mocks.queryStates.rpcArea,
   createRpcOverviewQuery: () => mocks.queryStates.rpc,
+  createRpcOperationQuery: () => mocks.queryStates.rpcOperation,
+  createRpcRealmQuery: () => mocks.queryStates.rpcRealm,
+  createRpcResourceQuery: () => mocks.queryStates.rpcResource,
 }));
 
 vi.mock("@/features/schedule/schedule-query", () => ({
+  createScheduleAreaQuery: () => mocks.queryStates.scheduleArea,
+  createScheduleExecutionObservationsQuery: () => mocks.queryStates.scheduleExecutionObservations,
+  createScheduleMissedHandoffsQuery: () => mocks.queryStates.scheduleMissedHandoffs,
   createScheduleOverviewQuery: () => mocks.queryStates.schedule,
+  createScheduleRealmQuery: () => mocks.queryStates.scheduleRealm,
+  createScheduleResourceQuery: () => mocks.queryStates.scheduleResource,
 }));
 
 vi.mock("@/features/stream/stream-query", () => ({
+  createStreamAreaQuery: () => mocks.queryStates.streamArea,
   createStreamOverviewQuery: () => mocks.queryStates.stream,
+  createStreamRealmQuery: () => mocks.queryStates.streamRealm,
+  createStreamResourceQuery: () => mocks.queryStates.streamResource,
 }));
 
 vi.mock("@/features/resource/resource-query", () => ({
@@ -128,8 +153,55 @@ const inventory = {
   ],
 };
 
+const kvRows = {
+  area: "ops",
+  hasMore: false,
+  items: [
+    {
+      key: {
+        base64: "dXNlcjox",
+        lenBytes: 6,
+        utf8: "user:1",
+      },
+      value: {
+        base64: "YWxpY2U=",
+        lenBytes: 5,
+        utf8: "alice",
+      },
+    },
+  ],
+  limit: 50,
+  nextCursor: null,
+  realm: "default",
+  resource: "primary",
+  routeFamily: 1,
+  startsWith: {
+    base64: "",
+    lenBytes: 0,
+    utf8: "",
+  },
+};
+
 const queueOverview = {
-  realms: [realm],
+  realms: [
+    {
+      areaCount: 1,
+      completeSuccessTotal: 3,
+      enqueueSuccessTotal: 8,
+      inRatePerSecond: 1.5,
+      messagesDeadLettered: 0,
+      messagesDelayed: 1,
+      messagesInflight: 2,
+      messagesReady: 4,
+      messagesTotal: 7,
+      oldestBacklogAgeSeconds: 17,
+      outRatePerSecond: 0.5,
+      queueCount: 1,
+      realm: "default",
+      status: "falling_behind",
+      subscriptionsActive: 2,
+    },
+  ],
   stats: {
     inflightActive: 2,
     messagesDeadLettered: 0,
@@ -156,6 +228,54 @@ const queueInventory = {
   ],
 };
 
+const queueAreaRow = {
+  area: "ops",
+  completeSuccessTotal: 3,
+  enqueueSuccessTotal: 8,
+  inRatePerSecond: 1.5,
+  messagesDeadLettered: 0,
+  messagesDelayed: 1,
+  messagesInflight: 2,
+  messagesReady: 4,
+  messagesTotal: 7,
+  oldestBacklogAgeSeconds: 17,
+  outRatePerSecond: 0.5,
+  queueCount: 1,
+  realm: "default",
+  status: "falling_behind",
+  subscriptionsActive: 2,
+};
+
+const queueResourceRow = {
+  area: "ops",
+  completeSuccessTotal: 3,
+  enqueueSuccessTotal: 8,
+  familyCount: 1,
+  inRatePerSecond: 1.5,
+  messagesDeadLettered: 0,
+  messagesDelayed: 1,
+  messagesInflight: 2,
+  messagesReady: 4,
+  messagesTotal: 7,
+  oldestBacklogAgeSeconds: 17,
+  outRatePerSecond: 0.5,
+  realm: "default",
+  resource: "primary",
+  status: "falling_behind",
+  subscriptionsActive: 2,
+};
+
+const queueRealmDetail = {
+  ...queueOverview.realms[0],
+  areas: [queueAreaRow],
+  queues: [queueResourceRow],
+};
+
+const queueAreaDetail = {
+  ...queueAreaRow,
+  queues: [queueResourceRow],
+};
+
 const kvOverview = {
   realms: [realm],
   stats: {
@@ -163,7 +283,6 @@ const kvOverview = {
     invalidTransactionRejectsTotal: 0,
     keysTotal: 12,
     operationsPerSecond: 2.5,
-    rollbacksTotal: 0,
     transactionsActive: 1,
   },
 };
@@ -193,6 +312,72 @@ const noticeOverview = {
   },
 };
 
+const noticeRealmInventory = {
+  areas: [
+    {
+      area: "ops",
+      realm: "default",
+      resources: ["primary"],
+    },
+  ],
+  realm: "default",
+};
+
+const noticeAreaInventory = {
+  area: "ops",
+  realm: "default",
+  resources: ["primary"],
+};
+
+const noticeResourceRows = {
+  area: "ops",
+  limit: 50,
+  operations: [
+    {
+      operation: "GetStatus",
+      activeSubscribers: 2,
+      rollingMessageCount: 18,
+      latencyMs: null,
+    },
+  ],
+  realm: "default",
+  resource: "primary",
+  routeFamily: 7,
+};
+
+const noticeOperationRows = {
+  area: "ops",
+  limit: 50,
+  observations: [
+    {
+      area: "ops",
+      notificationsReceived: 12,
+      publishesPerMinute: 30,
+      publishesTotal: 120,
+      realm: "default",
+      resource: "primary",
+      route: "GetStatus",
+      sessionId: "session-1",
+      status: "open",
+      subscriptionId: 11,
+    },
+    {
+      area: "ops",
+      notificationsReceived: 8,
+      publishesPerMinute: 11,
+      publishesTotal: 45,
+      realm: "default",
+      resource: "primary",
+      route: "GetStatus",
+      sessionId: "session-2",
+      status: "open",
+      subscriptionId: 12,
+    },
+  ],
+  realm: "default",
+  routeFamily: 7,
+};
+
 const rpcOverview = {
   realms: [realm],
   stats: {
@@ -207,6 +392,73 @@ const rpcOverview = {
     responsesDroppedClosedCallerTotal: 0,
     responsesMissingPendingTotal: 0,
     workersRegistered: 4,
+  },
+};
+
+const rpcRealm = {
+  areas: [{ area: "ops", realm: "default", resources: ["primary"] }],
+  realm: "default",
+};
+
+const rpcArea = {
+  area: "ops",
+  realm: "default",
+  resources: ["primary"],
+};
+
+const rpcResource = {
+  area: "ops",
+  operations: [
+    {
+      averageLatencyMs: 12,
+      operation: "GetStatus",
+      pendingRequests: 1,
+      requestsHandled: 9,
+      workers: 2,
+    },
+  ],
+  realm: "default",
+  resource: "primary",
+};
+
+const rpcOperation = {
+  calls: {
+    limit: 50,
+    observations: [
+      {
+        age_seconds: null,
+        area: "ops",
+        average_latency_ms: 12,
+        correlation_id: null,
+        operation: "GetStatus",
+        realm: "default",
+        registered_at: "2026-05-21T13:00:00.000Z",
+        requests_handled: 9,
+        resource: "primary",
+        route: "rpc://default/ops/primary/GetStatus",
+        route_family: 7,
+        state: "worker_registered",
+        submitted_at: null,
+        worker_session_id: "worker-1",
+      },
+    ],
+    route_family: 7,
+  },
+  detail: {
+    area: "ops",
+    diagnostics: healthyGlobalDiagnostics,
+    operation: "GetStatus",
+    realm: "default",
+    requests_pending: 1,
+    resource: "primary",
+    slowest_worker_average_latency_ms: 12,
+    worker_latency_buckets: {
+      over_100ms: 0,
+      under_100ms: 1,
+      under_25ms: 1,
+      under_5ms: 0,
+    },
+    workers_registered: 2,
   },
 };
 
@@ -226,6 +478,71 @@ const scheduleOverview = {
   },
 };
 
+const scheduleRealm = {
+  areas: [{ area: "ops", resources: ["primary"] }],
+  realm: "default",
+  resourceCount: 1,
+};
+
+const scheduleArea = {
+  area: "ops",
+  realm: "default",
+  resourceCount: 1,
+  resources: ["primary"],
+};
+
+const scheduleResource = {
+  detail: {
+    area: "ops",
+    cron: "*/5 * * * *",
+    diagnostics: healthyGlobalDiagnostics,
+    enabled: true,
+    executions_total: 42,
+    next_run: "2026-05-21T13:05:00.000Z",
+    realm: "default",
+    resource: "primary",
+  },
+  executionObservations: {
+    area: "ops",
+    limit: 20,
+    observations: [
+      {
+        area: "ops",
+        cron: "*/5 * * * *",
+        executions_total: 42,
+        last_run: "2026-05-21T13:00:00.000Z",
+        next_run: "2026-05-21T13:05:00.000Z",
+        operation: "handoff",
+        realm: "default",
+        resource: "primary",
+        route_family: 7,
+        status: "observed",
+      },
+    ],
+    realm: "default",
+    resource: "primary",
+    route_family: 7,
+  },
+  missedHandoffs: {
+    limit: 20,
+    observations: [
+      {
+        age_seconds: 90,
+        area: "ops",
+        claimed_at: "2026-05-21T12:59:30.000Z",
+        fire_at: "2026-05-21T12:59:00.000Z",
+        fire_ms: 1780001940000,
+        operation: "handoff",
+        realm: "default",
+        resource: "primary",
+        route_family: 7,
+        status: "pending",
+      },
+    ],
+    route_family: 7,
+  },
+};
+
 const streamOverview = {
   realms: [realm],
   stats: {
@@ -242,6 +559,58 @@ const streamOverview = {
   },
 };
 
+const streamRealm = {
+  areaCount: 1,
+  areas: [{ area: "ops", resources: ["events"] }],
+  familyWatermarks: [{ family: 7, watermark: 10 }],
+  realm: "default",
+  resourceCount: 1,
+};
+
+const streamArea = {
+  area: "ops",
+  familyWatermarks: [{ family: 7, watermark: 10 }],
+  realm: "default",
+  resourceCount: 1,
+  resources: ["events"],
+};
+
+const streamResource = {
+  detail: {
+    area: "ops",
+    diagnostics: healthyGlobalDiagnostics,
+    offset: 0,
+    realm: "default",
+    resource: "events",
+    sessions_active: 1,
+    size_bytes: 128,
+    watermark: 10,
+  },
+  records: {
+    area: "ops",
+    from_offset: 0,
+    has_more: false,
+    limit: 50,
+    realm: "default",
+    records: [
+      {
+        area: "ops",
+        area_offset: 0,
+        body: { base64: "eyJvayI6dHJ1ZX0=", len_bytes: 11, utf8: '{"ok":true}' },
+        created_at_ms: 1780000000000,
+        metadata: null,
+        realm: "default",
+        realm_offset: 0,
+        resource: "events",
+        resource_offset: 0,
+        route_family: 7,
+      },
+    ],
+    resource: "events",
+    route_family: 7,
+  },
+};
+
 const domainOverviews = [
   {
     assertText: "KV overview",
@@ -249,7 +618,7 @@ const domainOverviews = [
     module: () => import("@/pages/app/kv"),
     path: "/kv",
     routePath: "/kv",
-    emptyText: "No KV realms are currently visible.",
+    emptyText: "No visible KV resources at the current level.",
     errorText: "KV overview unavailable",
     loadingText: "Loading KV overview",
   },
@@ -313,7 +682,7 @@ const domainOverviews = [
     module: () => import("@/pages/app/queue"),
     path: "/queue",
     routePath: "/queue",
-    emptyText: "No queue realms are currently visible.",
+    emptyText: "No visible queues at the current level.",
     errorText: "Queue overview unavailable",
     loadingText: "Loading queue overview",
   },
@@ -451,14 +820,21 @@ const queueResource = {
   deadLetters: [],
   detail: {
     area: "ops",
+    completeSuccessTotal: 3,
+    enqueueSuccessTotal: 8,
+    inRatePerSecond: 1.5,
     messagesDeadLettered: 0,
     messagesDelayed: 1,
     messagesInflight: 2,
     messagesReady: 3,
     messagesTotal: 6,
+    oldestBacklogAgeSeconds: 30,
     oldestMessageAgeSeconds: 30,
+    outRatePerSecond: 0.5,
     realm: "default",
     resource: "primary",
+    status: "falling_behind",
+    subscriptionsActive: 2,
   },
   inflight: [],
   timeline: {
@@ -521,6 +897,48 @@ const queueComparison = {
   summary: "Snapshots match",
 };
 
+const leaseRealm = {
+  areas: [
+    {
+      area: "ops",
+      realm: "default",
+      resources: ["primary"],
+    },
+  ],
+  realm: "default",
+};
+
+const leaseArea = {
+  area: "ops",
+  realm: "default",
+  resources: ["primary"],
+};
+
+function leaseResourceRowsFixture(expiresOffsetSeconds = 120) {
+  const expiresAt = new Date(Date.now() + expiresOffsetSeconds * 1000).toISOString();
+
+  return {
+    items: [
+      {
+        acquiredAt: "2026-05-21T13:00:00.000Z",
+        ageSeconds: 12,
+        area: "ops",
+        expiresAt,
+        ownerId: "owner-lease-primary",
+        ownerSessionId: "session-lease-primary",
+        pendingWaiters: 4,
+        queuedToken: 12,
+        realm: "default",
+        resource: "primary",
+        routeFamily: 7,
+        state: "owned",
+      },
+    ],
+    limit: 50,
+    routeFamily: 7,
+  };
+}
+
 const resourceDetail = {
   comparison: null,
   detailMetrics: [
@@ -549,38 +967,10 @@ const resourceDetail = {
 
 const genericResourceRoutes = [
   {
-    assertText: "KV resource inspection",
-    domain: "kv",
-    path: "/kv/default/ops/primary",
-    routePath: "/kv/{realm}/{area}/{resource}",
-    module: () => import("@/pages/app/resource-detail"),
-  },
-  {
-    assertText: "Lease resource inspection",
-    domain: "lease",
-    path: "/lease/default/ops/primary",
-    routePath: "/lease/{realm}/{area}/{resource}",
-    module: () => import("@/pages/app/resource-detail"),
-  },
-  {
-    assertText: "Notice resource inspection",
-    domain: "notice",
-    path: "/notice/default/ops/primary",
-    routePath: "/notice/{realm}/{area}/{resource}",
-    module: () => import("@/pages/app/resource-detail"),
-  },
-  {
     assertText: "RPC resource inspection",
     domain: "rpc",
     path: "/rpc/default/ops/primary",
     routePath: "/rpc/{realm}/{area}/{resource}",
-    module: () => import("@/pages/app/resource-detail"),
-  },
-  {
-    assertText: "Schedule resource inspection",
-    domain: "schedule",
-    path: "/schedule/default/ops/primary",
-    routePath: "/schedule/{realm}/{area}/{resource}",
     module: () => import("@/pages/app/resource-detail"),
   },
   {
@@ -589,6 +979,44 @@ const genericResourceRoutes = [
     path: "/stream/default/ops/primary",
     routePath: "/stream/{realm}/{area}/{resource}",
     module: () => import("@/pages/app/resource-detail"),
+  },
+];
+
+const scheduleHierarchyRoutes = [
+  {
+    assertText: "default",
+    path: "/schedule/default",
+    routePath: "/schedule/{realm}",
+    module: () => import("@/pages/app/schedule"),
+  },
+  {
+    assertText: "ops",
+    path: "/schedule/default/ops",
+    routePath: "/schedule/{realm}/{area}",
+    module: () => import("@/pages/app/schedule"),
+  },
+  {
+    assertText: "Schedule resource inspection",
+    path: "/schedule/default/ops/primary",
+    routePath: "/schedule/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/schedule-resource"),
+  },
+];
+
+const noticeHierarchyRoutes = [
+  {
+    assertText: "Notice operations",
+    domain: "notice",
+    path: "/notice/default/ops/primary",
+    routePath: "/notice/{realm}/{area}/{resource}",
+    module: () => import("@/pages/app/notice"),
+  },
+  {
+    assertText: "GetStatus",
+    domain: "notice",
+    path: "/notice/default/ops/primary/GetStatus",
+    routePath: "/notice/{realm}/{area}/{resource}/{operation}",
+    module: () => import("@/pages/app/notice-operation"),
   },
 ];
 
@@ -616,19 +1044,50 @@ function resetQueries() {
   mocks.queryStates.topology = queryState.fresh(topologyOverview, queryOptions());
   mocks.queryStates.metrics = queryState.fresh(metricsOverview, queryOptions());
   mocks.queryStates.queue = queryState.fresh(queueOverview, queryOptions());
+  mocks.queryStates.queueArea = queryState.fresh(queueAreaDetail, queryOptions());
   mocks.queryStates.queueDeadLetters = queryState.fresh([], queryOptions());
   mocks.queryStates.queueInventory = queryState.fresh(queueInventory, queryOptions());
+  mocks.queryStates.queueRealm = queryState.fresh(queueRealmDetail, queryOptions());
   mocks.queryStates.queueResource = queryState.fresh(queueResource, queryOptions());
   mocks.queryStates.queueTimeline = queryState.fresh(queueResource.timeline, queryOptions());
   mocks.queryStates.queueComparison = queryState.fresh(queueComparison, queryOptions());
   mocks.queryStates.kv = queryState.fresh(kvOverview, queryOptions());
   mocks.queryStates.lease = queryState.fresh(leaseOverview, queryOptions());
+  mocks.queryStates.leaseRealm = queryState.fresh(leaseRealm, queryOptions());
+  mocks.queryStates.leaseArea = queryState.fresh(leaseArea, queryOptions());
+  mocks.queryStates.leaseResourceRows = queryState.fresh(
+    leaseResourceRowsFixture(),
+    queryOptions(),
+  );
   mocks.queryStates.notice = queryState.fresh(noticeOverview, queryOptions());
+  mocks.queryStates.noticeRealm = queryState.fresh(noticeRealmInventory, queryOptions());
+  mocks.queryStates.noticeArea = queryState.fresh(noticeAreaInventory, queryOptions());
+  mocks.queryStates.noticeResourceRows = queryState.fresh(noticeResourceRows, queryOptions());
+  mocks.queryStates.noticeOperationRows = queryState.fresh(noticeOperationRows, queryOptions());
   mocks.queryStates.rpc = queryState.fresh(rpcOverview, queryOptions());
+  mocks.queryStates.rpcRealm = queryState.fresh(rpcRealm, queryOptions());
+  mocks.queryStates.rpcArea = queryState.fresh(rpcArea, queryOptions());
+  mocks.queryStates.rpcResource = queryState.fresh(rpcResource, queryOptions());
+  mocks.queryStates.rpcOperation = queryState.fresh(rpcOperation, queryOptions());
   mocks.queryStates.schedule = queryState.fresh(scheduleOverview, queryOptions());
+  mocks.queryStates.scheduleRealm = queryState.fresh(scheduleRealm, queryOptions());
+  mocks.queryStates.scheduleArea = queryState.fresh(scheduleArea, queryOptions());
+  mocks.queryStates.scheduleResource = queryState.fresh(scheduleResource, queryOptions());
+  mocks.queryStates.scheduleExecutionObservations = queryState.fresh(
+    scheduleResource.executionObservations,
+    queryOptions(),
+  );
+  mocks.queryStates.scheduleMissedHandoffs = queryState.fresh(
+    scheduleResource.missedHandoffs,
+    queryOptions(),
+  );
   mocks.queryStates.stream = queryState.fresh(streamOverview, queryOptions());
+  mocks.queryStates.streamRealm = queryState.fresh(streamRealm, queryOptions());
+  mocks.queryStates.streamArea = queryState.fresh(streamArea, queryOptions());
+  mocks.queryStates.streamResource = queryState.fresh(streamResource, queryOptions());
   mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
   mocks.queryStates.resource = queryState.fresh(resourceDetail, queryOptions());
+  mocks.queryStates.kvRows = queryState.fresh(kvRows, queryOptions());
   mocks.mutation.error = null;
   mocks.mutation.pending = false;
   mocks.mutation.result = null;
@@ -697,6 +1156,18 @@ describe("admin page smoke tests", () => {
         routePath: "/queue",
       },
       {
+        assertText: "Realm totals",
+        module: () => import("@/pages/app/queue"),
+        path: "/queue/default",
+        routePath: "/queue/{realm}",
+      },
+      {
+        assertText: "Area totals",
+        module: () => import("@/pages/app/queue"),
+        path: "/queue/default/ops",
+        routePath: "/queue/{realm}/{area}",
+      },
+      {
         assertText: "Queue resource inspection",
         module: () => import("@/pages/app/queue-resource"),
         path: "/queue/default/ops/primary",
@@ -709,16 +1180,64 @@ describe("admin page smoke tests", () => {
         routePath: "/kv",
       },
       {
+        assertText: "KV realm default",
+        module: () => import("@/pages/app/kv"),
+        path: "/kv/default",
+        routePath: "/kv/{realm}",
+      },
+      {
+        assertText: "KV area ops",
+        module: () => import("@/pages/app/kv"),
+        path: "/kv/default/ops",
+        routePath: "/kv/{realm}/{area}",
+      },
+      {
+        assertText: "KV resource",
+        module: () => import("@/pages/app/kv-resource"),
+        path: "/admin/1/kv/default/ops/primary",
+        routePath: "/admin/{family}/kv/{realm}/{area}/{resource}",
+      },
+      {
         assertText: "Lease overview",
         module: () => import("@/pages/app/lease"),
         path: "/lease",
         routePath: "/lease",
       },
       {
+        assertText: "default",
+        module: () => import("@/pages/app/lease"),
+        path: "/lease/default",
+        routePath: "/lease/{realm}",
+      },
+      {
+        assertText: "ops",
+        module: () => import("@/pages/app/lease"),
+        path: "/lease/default/ops",
+        routePath: "/lease/{realm}/{area}",
+      },
+      {
+        assertText: "primary",
+        module: () => import("@/pages/app/lease-resource"),
+        path: "/lease/default/ops/primary",
+        routePath: "/lease/{realm}/{area}/{resource}",
+      },
+      {
         assertText: "Notice overview",
         module: () => import("@/pages/app/notice"),
         path: "/notice",
         routePath: "/notice",
+      },
+      {
+        assertText: "default",
+        module: () => import("@/pages/app/notice"),
+        path: "/notice/default",
+        routePath: "/notice/{realm}",
+      },
+      {
+        assertText: "ops",
+        module: () => import("@/pages/app/notice"),
+        path: "/notice/default/ops",
+        routePath: "/notice/{realm}/{area}",
       },
       {
         assertText: "RPC overview",
@@ -746,6 +1265,28 @@ describe("admin page smoke tests", () => {
 
       expect(root.textContent).toContain(page.assertText);
       expect(root.textContent).toContain(`Scope: default / ops / primary`);
+      expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
+
+    for (const page of noticeHierarchyRoutes) {
+      const { default: Component } = await page.module();
+      const root = await mountRoute(page.path, page.routePath, Component);
+
+      expect(root.textContent).toContain(page.assertText);
+      expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
+
+      cleanupApp(root);
+      document.body.innerHTML = "";
+    }
+
+    for (const page of scheduleHierarchyRoutes) {
+      const { default: Component } = await page.module();
+      const root = await mountRoute(page.path, page.routePath, Component);
+
+      expect(root.textContent).toContain(page.assertText);
       expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
 
       cleanupApp(root);
@@ -814,6 +1355,73 @@ describe("admin page smoke tests", () => {
     }
 
     mocks.queryStates.resource = queryState.fresh(resourceDetail, queryOptions());
+  });
+
+  it("covers notice drill-down loading and error states", async () => {
+    const { default: NoticePage } = await import("@/pages/app/notice");
+    const { default: NoticeOperationPage } = await import("@/pages/app/notice-operation");
+
+    mocks.queryStates.notice = queryState.loading(queryOptions());
+    const noticeOverviewRoot = await mountRoute("/notice", "/notice", NoticePage);
+    expect(noticeOverviewRoot.textContent).toContain("Loading notice overview snapshot...");
+    cleanupApp(noticeOverviewRoot);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.notice = queryState.error(
+      new Error("Notice unavailable"),
+      undefined,
+      queryOptions(),
+    );
+    const noticeOverviewError = await mountRoute("/notice", "/notice", NoticePage);
+    expect(noticeOverviewError.textContent).toContain("Notice overview loading failure");
+    cleanupApp(noticeOverviewError);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.notice = queryState.fresh(noticeOverview, queryOptions());
+    mocks.queryStates.noticeRealm = queryState.loading(queryOptions());
+    const noticeRealmRoot = await mountRoute("/notice/default", "/notice/{realm}", NoticePage);
+    expect(noticeRealmRoot.textContent).toContain("Loading notice realm...");
+    cleanupApp(noticeRealmRoot);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.noticeRealm = queryState.fresh(noticeRealmInventory, queryOptions());
+    mocks.queryStates.noticeArea = queryState.loading(queryOptions());
+    const noticeAreaRoot = await mountRoute(
+      "/notice/default/ops",
+      "/notice/{realm}/{area}",
+      NoticePage,
+    );
+    expect(noticeAreaRoot.textContent).toContain("Loading notice area...");
+    cleanupApp(noticeAreaRoot);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.noticeArea = queryState.fresh(noticeAreaInventory, queryOptions());
+    mocks.queryStates.noticeResourceRows = queryState.loading(queryOptions());
+    const noticeResourceRoot = await mountRoute(
+      "/notice/default/ops/primary",
+      "/notice/{realm}/{area}/{resource}",
+      NoticePage,
+    );
+    expect(noticeResourceRoot.textContent).toContain("Loading notice operation rows...");
+    cleanupApp(noticeResourceRoot);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.noticeResourceRows = queryState.fresh(noticeResourceRows, queryOptions());
+    mocks.queryStates.noticeOperationRows = queryState.loading(queryOptions());
+    const noticeOperationRoot = await mountRoute(
+      "/notice/default/ops/primary/GetStatus",
+      "/notice/{realm}/{area}/{resource}/{operation}",
+      NoticeOperationPage,
+    );
+    expect(noticeOperationRoot.textContent).toContain("Loading notice operation deliveries...");
+    cleanupApp(noticeOperationRoot);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.notice = queryState.fresh(noticeOverview, queryOptions());
+    mocks.queryStates.noticeRealm = queryState.fresh(noticeRealmInventory, queryOptions());
+    mocks.queryStates.noticeArea = queryState.fresh(noticeAreaInventory, queryOptions());
+    mocks.queryStates.noticeResourceRows = queryState.fresh(noticeResourceRows, queryOptions());
+    mocks.queryStates.noticeOperationRows = queryState.fresh(noticeOperationRows, queryOptions());
   });
 
   it("renders domain overview loading states consistently", async () => {
@@ -890,10 +1498,9 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("1h");
     expect(text).toContain("Attention");
     expect(text).toContain("acquire timeout");
-    expect(text).toContain("Ownership console");
-    expect(text).toContain("Existing API");
-    expect(text).toContain("1 matching lease");
-    expect(text).toContain("Open lease");
+    expect(text).toContain("Ephemeral ownership");
+    expect(text).toContain("Broker-local owners");
+    expect(text).toContain("explicit reacquire");
   });
 
   it("renders kv state and transactional-pressure priority metrics", async () => {
@@ -906,7 +1513,6 @@ describe("admin page smoke tests", () => {
           transactionsActive: 4,
           operationsPerSecond: 4.25,
           commitsFailedTotal: 2,
-          rollbacksTotal: 1,
           invalidTransactionRejectsTotal: 3,
         },
       },
@@ -921,7 +1527,6 @@ describe("admin page smoke tests", () => {
       "Active transactions",
       "Ops / sec",
       "Commit failures",
-      "Rollbacks",
       "Invalid transaction rejects",
     ];
 
@@ -938,10 +1543,9 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Attention");
     expect(text).toContain("authoritative");
     expect(text).toContain("broker-local");
-    expect(text).toContain("Query workspace");
-    expect(text).toContain("Inventory API");
-    expect(text).toContain("1 matching resource");
-    expect(text).toContain("primary");
+    expect(text).toContain("KV Resources");
+    expect(text).toContain("Realm");
+    expect(text).toContain("Resources");
   });
 
   it("renders domain overviews with empty realm tables", async () => {
@@ -958,6 +1562,15 @@ describe("admin page smoke tests", () => {
         },
         queryOptions(),
       );
+      if (page.queryKey === "kv") {
+        mocks.queryStates.inventory = queryState.fresh(
+          {
+            ...inventory,
+            realms: [],
+          },
+          queryOptions(),
+        );
+      }
 
       const { default: Component } = await page.module();
       const root = await mountRoute(page.path, page.routePath, Component);
@@ -967,6 +1580,164 @@ describe("admin page smoke tests", () => {
       cleanupApp(root);
       document.body.innerHTML = "";
     }
+  });
+
+  it("renders lease empty states at each hierarchy scope", async () => {
+    const { default: LeasePage } = await import("@/pages/app/lease");
+    const { default: LeaseResourcePage } = await import("@/pages/app/lease-resource");
+
+    mocks.queryStates.lease = queryState.fresh(
+      {
+        ...leaseOverview,
+        realms: [],
+      },
+      queryOptions(),
+    );
+    let root = await mountRoute("/lease", "/lease", LeasePage);
+    expect(root.textContent).toContain("No lease realms are currently visible.");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.leaseRealm = queryState.fresh({ ...leaseRealm, areas: [] }, queryOptions());
+    root = await mountRoute("/lease/default", "/lease/{realm}", LeasePage);
+    expect(root.textContent).toContain("No visible lease areas at the current level.");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.leaseArea = queryState.fresh({ ...leaseArea, resources: [] }, queryOptions());
+    root = await mountRoute("/lease/default/ops", "/lease/{realm}/{area}", LeasePage);
+    expect(root.textContent).toContain("No visible lease resources at the current level.");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.leaseResourceRows = queryState.fresh(
+      {
+        items: [],
+        limit: 50,
+        routeFamily: 7,
+      },
+      queryOptions(),
+    );
+    root = await mountRoute(
+      "/lease/default/ops/primary",
+      "/lease/{realm}/{area}/{resource}",
+      LeaseResourcePage,
+    );
+    expect(root.textContent).toContain("No visible lease ownership rows at the current level.");
+  });
+
+  it("renders notice empty states at each hierarchy scope", async () => {
+    const { default: NoticePage } = await import("@/pages/app/notice");
+    const { default: NoticeOperationPage } = await import("@/pages/app/notice-operation");
+
+    mocks.queryStates.notice = queryState.fresh({ ...noticeOverview, realms: [] }, queryOptions());
+    let root = await mountRoute("/notice", "/notice", NoticePage);
+    expect(root.textContent).toContain("No notice realms are currently visible.");
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.noticeRealm = queryState.fresh(
+      { ...noticeRealmInventory, areas: [] },
+      queryOptions(),
+    );
+    root = await mountRoute("/notice/default", "/notice/{realm}", NoticePage);
+    expect(root.textContent).toContain("No visible notice areas at the current level.");
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.noticeArea = queryState.fresh(
+      { ...noticeAreaInventory, resources: [] },
+      queryOptions(),
+    );
+    root = await mountRoute("/notice/default/ops", "/notice/{realm}/{area}", NoticePage);
+    expect(root.textContent).toContain("No visible notice resources at the current level.");
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.noticeResourceRows = queryState.fresh(
+      {
+        ...noticeResourceRows,
+        operations: [],
+      },
+      queryOptions(),
+    );
+    root = await mountRoute(
+      "/notice/default/ops/primary",
+      "/notice/{realm}/{area}/{resource}",
+      NoticePage,
+    );
+    expect(root.textContent).toContain("No matching notice operations are currently visible.");
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.noticeOperationRows = queryState.fresh(
+      {
+        ...noticeOperationRows,
+        observations: [],
+      },
+      queryOptions(),
+    );
+    root = await mountRoute(
+      "/notice/default/ops/primary/GetStatus",
+      "/notice/{realm}/{area}/{resource}/{operation}",
+      NoticeOperationPage,
+    );
+    expect(root.textContent).toContain("No matching notice deliveries are currently visible.");
+    cleanupApp(root);
+    document.body.innerHTML = "";
+  });
+
+  it("updates lease ownership remaining time on the lease resource page", async () => {
+    const leaseExpiresAt = new Date(Date.now() + 3000).toISOString();
+    mocks.queryStates.leaseResourceRows = queryState.fresh(
+      {
+        items: [
+          {
+            acquiredAt: "2026-05-21T13:00:00.000Z",
+            ageSeconds: 1,
+            area: "ops",
+            expiresAt: leaseExpiresAt,
+            ownerId: "owner-lease-primary",
+            ownerSessionId: "session-lease-primary",
+            pendingWaiters: 0,
+            queuedToken: 12,
+            realm: "default",
+            resource: "primary",
+            routeFamily: 7,
+            state: "owned",
+          },
+        ],
+        limit: 50,
+        routeFamily: 7,
+      },
+      queryOptions(),
+    );
+
+    const { default: LeaseResourcePage } = await import("@/pages/app/lease-resource");
+    const root = await mountRoute(
+      "/lease/default/ops/primary",
+      "/lease/{realm}/{area}/{resource}",
+      LeaseResourcePage,
+    );
+    const initialRemaining = root
+      .querySelector("tbody tr")
+      ?.querySelectorAll("td")[5]
+      ?.textContent?.trim();
+    await new Promise<void>((resolve) => setTimeout(resolve, 1200));
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
+    const updatedRemaining = root
+      .querySelector("tbody tr")
+      ?.querySelectorAll("td")[5]
+      ?.textContent?.trim();
+
+    expect(initialRemaining).toBeTruthy();
+    expect(updatedRemaining).toBeTruthy();
+    expect(updatedRemaining).not.toBe(initialRemaining);
+    expect(root.textContent).toContain("not crash-safe continuity");
   });
 
   it("renders notice risk and fanout-priority metrics", async () => {
@@ -1010,8 +1781,30 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Communication flow");
     expect(text).toContain("Existing API");
     expect(text).toContain("Failure signals");
-    expect(text).toContain("1 matching notice route");
-    expect(text).toContain("Open subscriptions");
+    expect(text).toContain("No matching notice routes");
+  });
+
+  it("renders notice operation metrics and delivery evidence", async () => {
+    const { default: NoticeOperationPage } = await import("@/pages/app/notice-operation");
+
+    const root = await mountRoute(
+      "/notice/default/ops/primary/GetStatus",
+      "/notice/{realm}/{area}/{resource}/{operation}",
+      NoticeOperationPage,
+    );
+    const text = root.textContent ?? "";
+
+    expect(text).toContain("Notice operation");
+    expect(text).toContain("GetStatus");
+    expect(text).toContain("Latency unavailable via current API");
+    expect(text).toContain("Active subscribers");
+    expect(text).toContain("Rolling messages / min");
+    expect(text).toContain("Status");
+    expect(text).toContain("Notifications received");
+    expect(text).toContain("Publishes / min");
+    expect(text).toContain("Publishes total");
+    expect(text).toContain("session-1");
+    expect(text).toContain("session-2");
   });
 
   it("renders schedule pressure-first health and failure metrics", async () => {
@@ -1038,13 +1831,12 @@ describe("admin page smoke tests", () => {
     const root = await mountRoute("/schedule", "/schedule", SchedulePage);
     const text = root.textContent ?? "";
     const labels = [
-      "Active schedules",
+      "Is anyone listening?",
+      "When is the next run?",
       "Pending fire claims",
-      "Executions / min",
-      "Ack failures",
-      "Notify failures",
-      "Create persistence failures",
-      "Upsert persistence failures",
+      "Oldest pending claim age",
+      "Persistence failures",
+      "Handoff failures",
     ];
 
     let cursor = -1;
@@ -1055,12 +1847,48 @@ describe("admin page smoke tests", () => {
     }
 
     expect(text).toContain("Attention");
-    expect(text).toContain("Timing intent is durable");
-    expect(text).toContain("pending fire claim(s)");
-    expect(text).toContain("Time planner");
-    expect(text).toContain("Existing API");
-    expect(text).toContain("1 matching schedule");
-    expect(text).toContain("Open plan");
+    expect(text).toContain("Schedule does not imply durable downstream delivery.");
+    expect(text).toContain("Persisted timing claims awaiting live handoff");
+    expect(text).toContain("9 live subscription(s)");
+    expect(text).toContain("Open a schedule resource");
+    expect(text).toContain("Schedule realms");
+  });
+
+  it("renders schedule realm, area, and resource drill-down pages", async () => {
+    const { default: SchedulePage } = await import("@/pages/app/schedule");
+    const realmRoot = await mountRoute("/schedule/default", "/schedule/{realm}", SchedulePage);
+    expect(realmRoot.textContent).toContain("Schedule realm");
+    expect(realmRoot.textContent).toContain("Schedule areas");
+    expect(realmRoot.textContent).toContain("ops");
+    cleanupApp(realmRoot);
+    document.body.innerHTML = "";
+
+    const areaRoot = await mountRoute(
+      "/schedule/default/ops",
+      "/schedule/{realm}/{area}",
+      SchedulePage,
+    );
+    expect(areaRoot.textContent).toContain("Schedule area");
+    expect(areaRoot.textContent).toContain("Schedule resources");
+    expect(areaRoot.textContent).toContain("primary");
+    cleanupApp(areaRoot);
+    document.body.innerHTML = "";
+
+    const { default: ScheduleResourcePage } = await import("@/pages/app/schedule-resource");
+    const resourceRoot = await mountRoute(
+      "/schedule/default/ops/primary",
+      "/schedule/{realm}/{area}/{resource}",
+      ScheduleResourcePage,
+    );
+    const text = resourceRoot.textContent ?? "";
+
+    expect(text).toContain("Schedule resource inspection");
+    expect(text).toContain("Is anyone listening?");
+    expect(text).toContain("Next run");
+    expect(text).toContain("Broker-observed, non-authoritative counter");
+    expect(text).toContain("Execution observations");
+    expect(text).toContain("Pending and missed handoffs");
+    expect(text).toContain("handoff");
   });
 
   it("renders stream replay-priority metrics and readable lag buckets", async () => {
@@ -1105,10 +1933,36 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Attention");
     expect(text).toContain("Durable stream history");
     expect(text).toContain("live subscriptions");
-    expect(text).toContain("History workspace");
-    expect(text).toContain("Existing API");
-    expect(text).toContain("1 matching stream");
-    expect(text).toContain("Open events");
+    expect(text).toContain("Stream metrics");
+    expect(text).toContain("Stream realms");
+  });
+
+  it("renders Stream drill-down rollups and committed resource records", async () => {
+    const { default: StreamPage } = await import("@/pages/app/stream");
+    const { default: StreamResourcePage } = await import("@/pages/app/stream-resource");
+
+    let root = await mountRoute("/stream/default", "/stream/{realm}", StreamPage);
+    let text = root.textContent ?? "";
+    expect(text).toContain("Stream realm");
+    expect(text).toContain("Stream areas");
+    expect(text).toContain("Family watermarks");
+
+    root = await mountRoute("/stream/default/ops", "/stream/{realm}/{area}", StreamPage);
+    text = root.textContent ?? "";
+    expect(text).toContain("Stream area");
+    expect(text).toContain("Stream resources");
+    expect(text).toContain("events");
+
+    root = await mountRoute(
+      "/stream/default/ops/events",
+      "/stream/{realm}/{area}/{resource}",
+      StreamResourcePage,
+    );
+    text = root.textContent ?? "";
+    expect(text).toContain("Stream resource");
+    expect(text).toContain("From offset");
+    expect(text).toContain("Stream resource metrics");
+    expect(text).toContain('{"ok":true}');
   });
 
   it("renders rpc pressure-first health and risk signals", async () => {
@@ -1148,11 +2002,56 @@ describe("admin page smoke tests", () => {
 
     expect(text).toContain("Attention");
     expect(text).toContain("Response reliability");
+    expect(text).toContain("Pending work is in-memory");
+    expect(text).toContain("pending requests");
     expect(text).toContain("Communication flow");
     expect(text).toContain("Existing API");
     expect(text).toContain("Failure signals");
     expect(text).toContain("1 matching RPC route");
     expect(text).toContain("Open operations");
+  });
+
+  it("renders RPC drill-down resource and operation pages", async () => {
+    const { default: RpcPage } = await import("@/pages/app/rpc");
+    const { default: RpcResourcePage } = await import("@/pages/app/rpc-resource");
+    const { default: RpcOperationPage } = await import("@/pages/app/rpc-operation");
+
+    let root = await mountRoute("/rpc/default", "/rpc/{realm}", RpcPage);
+    let text = root.textContent ?? "";
+    expect(text).toContain("RPC realm");
+    expect(text).toContain("RPC areas");
+    expect(text).toContain("ops");
+
+    root = await mountRoute("/rpc/default/ops", "/rpc/{realm}/{area}", RpcPage);
+    text = root.textContent ?? "";
+    expect(text).toContain("RPC area");
+    expect(text).toContain("RPC resources");
+    expect(text).toContain("primary");
+
+    root = await mountRoute(
+      "/rpc/default/ops/primary",
+      "/rpc/{realm}/{area}/{resource}",
+      RpcResourcePage,
+    );
+    text = root.textContent ?? "";
+    expect(text).toContain("RPC resource");
+    expect(text).toContain("Workers");
+    expect(text).toContain("Pending requests");
+    expect(text).toContain("Requests handled");
+    expect(text).toContain("in-memory pending request evidence");
+    expect(text).toContain("GetStatus");
+
+    root = await mountRoute(
+      "/rpc/default/ops/primary/GetStatus",
+      "/rpc/{realm}/{area}/{resource}/{operation}",
+      RpcOperationPage,
+    );
+    text = root.textContent ?? "";
+    expect(text).toContain("RPC operation");
+    expect(text).toContain("Slowest average latency");
+    expect(text).toContain("Latency <25ms");
+    expect(text).toContain("Live call evidence");
+    expect(text).toContain("worker-1");
   });
 
   it("renders the status-first dashboard sections", async () => {
@@ -1264,7 +2163,7 @@ describe("admin page smoke tests", () => {
     expect(text).not.toContain("Domain workspaces");
   });
 
-  it("does not promote benign KV rollback and caught-up Stream signals to issues", async () => {
+  it("does not promote caught-up Stream signals to issues", async () => {
     const { default: Home } = await import("@/pages/app/home");
     const healthySystem = {
       ...systemOverview,
@@ -1275,7 +2174,6 @@ describe("admin page smoke tests", () => {
           ...systemOverview.domains.kv,
           commitsFailedTotal: 0,
           invalidTransactionRejectsTotal: 0,
-          rollbacksTotal: 4,
         },
         schedule: {
           ...systemOverview.domains.schedule,
@@ -1293,9 +2191,7 @@ describe("admin page smoke tests", () => {
       ...topologyOverview,
       diagnostics: healthyGlobalDiagnostics,
       lanes: [
-        topologyAppLane("kv", "KV", "pressure", [
-          { key: "rollbacks", label: "Rollbacks", value: 4 },
-        ]),
+        topologyAppLane("kv", "KV", "quiet", []),
         topologyAppLane("stream", "Stream", "pressure", [
           { key: "events", label: "Events", value: 1224 },
         ]),
@@ -1309,7 +2205,6 @@ describe("admin page smoke tests", () => {
     const text = root.textContent ?? "";
 
     expect(text).toContain("No active issues");
-    expect(text).toContain("Rollbacks 4");
     expect(text).toContain("Events 1,224");
     expect(text).not.toContain("KV write pressure");
     expect(text).not.toContain("Stream pressure");
@@ -1476,7 +2371,7 @@ describe("admin page smoke tests", () => {
       queryOptions(),
     );
     root = await mountRoute("/queue", "/queue", QueuePage);
-    expect(root.textContent).toContain("No queue realms are currently visible");
+    expect(root.textContent).toContain("No visible queues at the current level");
   });
 
   it("keeps queue overview content visible while refresh is in flight", async () => {
@@ -1488,11 +2383,45 @@ describe("admin page smoke tests", () => {
 
     expect(root.textContent).toContain("Refreshing");
     expect(root.textContent).toContain("Scope summary");
-    expect(root.textContent).toContain("Work dispatcher");
-    expect(root.textContent).toContain("Existing API");
-    expect(root.textContent).toContain("1 matching queue");
-    expect(root.textContent).toContain("Open work");
-    expect(root.textContent).toContain("Queue metrics");
+    expect(root.textContent).toContain("Queue realms");
+    expect(root.textContent).toContain("Queue totals");
+    expect(root.textContent).toContain("Durable work posture");
+    expect(root.textContent).toContain("Subscriptions");
+    expect(root.textContent).toContain("Falling behind");
+  });
+
+  it("renders queue hierarchy links for realm, area, and queue rows", async () => {
+    const { default: QueuePage } = await import("@/pages/app/queue");
+
+    let root = await mountRoute("/admin/1/queue", "/admin/{family}/queue", QueuePage);
+    expect(root.querySelector('a[href="/admin/1/queue/default"]')?.textContent).toContain(
+      "default",
+    );
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    root = await mountRoute("/admin/1/queue/default", "/admin/{family}/queue/{realm}", QueuePage);
+    expect(root.textContent).toContain("Realm totals");
+    expect(root.querySelector('a[href="/admin/1/queue/default/ops"]')?.textContent).toContain(
+      "ops",
+    );
+    expect(
+      root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
+    ).toContain("primary");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    root = await mountRoute(
+      "/admin/1/queue/default/ops",
+      "/admin/{family}/queue/{realm}/{area}",
+      QueuePage,
+    );
+    expect(root.textContent).toContain("Area totals");
+    expect(
+      root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
+    ).toContain("primary");
   });
 
   it("mounts queue comparison and generic resource comparison flows", async () => {
@@ -1507,6 +2436,7 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Current scope");
     expect(root.textContent).toContain("Target scope");
     expect(root.textContent).toContain("Difference");
+    expect(root.textContent).toContain("Point-in-time durable backlog");
     expect(root.textContent).toContain("Snapshots match");
 
     cleanupApp(root);
@@ -1535,16 +2465,16 @@ describe("admin page smoke tests", () => {
       queryOptions(),
     );
 
-    const { default: ResourceDetailPage } = await import("@/pages/app/resource-detail");
+    const { default: KvResourcePage } = await import("@/pages/app/kv-resource");
     root = await mountRoute(
-      "/kv/default/ops/primary?againstRealm=default&againstArea=ops&againstResource=secondary",
-      "/kv/{realm}/{area}/{resource}",
-      ResourceDetailPage,
+      "/admin/1/kv/default/ops/primary?startsWith=user%3A",
+      "/admin/{family}/kv/{realm}/{area}/{resource}",
+      KvResourcePage,
     );
 
-    expect(root.textContent).toContain("Comparison summary");
-    expect(root.textContent).toContain("Matched");
-    expect(root.textContent).toContain("No material difference");
+    expect(root.textContent).toContain("Key preview");
+    expect(root.textContent).toContain("user:1");
+    expect(root.textContent).toContain("alice");
   });
 
   it("opens an accessible queue dead-letter confirmation dialog", async () => {

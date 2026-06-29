@@ -1,21 +1,46 @@
+import { For } from "@askrjs/askr/control";
+import { currentRoute, Link } from "@askrjs/askr/router";
+import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainRealmTable from "@/components/shared/domain-realm-table";
 import DomainWorkflowPanel from "@/components/shared/domain-workflow-panel";
-import { Stack } from "@askrjs/themes/layouts";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Stack,
+} from "@askrjs/themes/components";
 import {
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
+  QueryEmptyState,
 } from "@/components/shared/query-state";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import StreamHistoryExplorer from "@/features/stream/stream-history-explorer";
-import { createStreamOverviewQuery } from "@/features/stream/stream-query";
+import {
+  createStreamAreaQuery,
+  createStreamOverviewQuery,
+  createStreamRealmQuery,
+} from "@/features/stream/stream-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatNumber } from "@/shared/format";
+import { domainResourceHref, domainScopeHref } from "@/shared/navigation/domains";
 import type { StreamLagBucketsSummary } from "@/features/stream/stream-models";
+
+function decodeParam(value: string | undefined) {
+  if (!value) return undefined;
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
 
 type StreamPostureTone = "success" | "warning" | "danger" | "info";
 
@@ -86,7 +111,7 @@ function summarizeStreamHealth(stats: {
   };
 }
 
-export default function StreamPage() {
+function StreamOverviewPage() {
   const overview = createStreamOverviewQuery();
   const inventory = createResourceInventoryQuery("stream");
   const data = overview.data;
@@ -165,12 +190,6 @@ export default function StreamPage() {
               <QueryRefreshingState description="Refreshing stream overview..." />
             ) : null}
 
-            <StreamHistoryExplorer
-              error={inventory.error}
-              inventory={inventory.data}
-              loading={inventory.loading}
-            />
-
             <DomainMetricTable
               title="Stream metrics"
               description="Durable history, live readers, and replay lag."
@@ -191,6 +210,7 @@ export default function StreamPage() {
             />
 
             <DomainRealmTable
+              domain="stream"
               title="Stream realms"
               realms={data.realms}
               emptyMessage="No stream realms are currently visible."
@@ -206,7 +226,7 @@ export default function StreamPage() {
             <DomainWorkflowPanel
               archetype="Stream History Explorer"
               workflows={["Explore", "Trace", "Replay"]}
-              questions={["What happened?", "Who consumed it?", "Can I replay it?"]}
+              questions={["What happened?", "Which readers are behind?", "Can I replay it?"]}
               diagnostics={["Watermarks", "Replay lag", "Storage internals"]}
             />
           </Stack>
@@ -214,4 +234,211 @@ export default function StreamPage() {
       </Stack>
     </DomainPageFrame>
   );
+}
+
+function StreamWatermarkTable(props: { rows: Array<{ family: number; watermark: number }> }) {
+  if (props.rows.length === 0) {
+    return <QueryEmptyState description="No stream family watermarks are currently visible." />;
+  }
+
+  return (
+    <Table>
+      <TableHead>
+        <TableRow>
+          <TableHeaderCell>Route Family</TableHeaderCell>
+          <TableHeaderCell>Watermark</TableHeaderCell>
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        <For each={props.rows} by={(row) => row.family.toString()}>
+          {(row) => (
+            <TableRow>
+              <TableCell>{formatNumber(row.family)}</TableCell>
+              <TableCell>{formatNumber(row.watermark)}</TableCell>
+            </TableRow>
+          )}
+        </For>
+      </TableBody>
+    </Table>
+  );
+}
+
+function StreamRealmPage(props: { realm: string }) {
+  const query = createStreamRealmQuery(props.realm);
+  const data = query.data;
+
+  return (
+    <DomainPageFrame>
+      <Stack gap="3">
+        <DomainHeader
+          eyebrow="Stream realm"
+          title={props.realm}
+          description={`Area and watermark rollup for ${props.realm}.`}
+          primaryAction={{ label: "Refresh realm", onPress: () => query.refresh() }}
+          status={{
+            detail: data
+              ? `${data.areaCount} area(s), ${data.resourceCount} resource(s).`
+              : "Loading stream realm.",
+            label: query.refreshing ? "Refreshing" : query.stale ? "Stale" : "Live",
+            tone: query.refreshing ? "info" : query.stale ? "warning" : "success",
+          }}
+        />
+        {!data && query.loading ? (
+          <QueryLoadingState description="Loading stream realm..." />
+        ) : null}
+        {!data && query.error ? (
+          <QueryErrorState
+            title="Unable to load stream realm"
+            error={query.error}
+            onRetry={() => query.refresh()}
+          />
+        ) : null}
+        {data ? (
+          <Stack gap="3">
+            <Card padding="sm" variant="default">
+              <CardHeader>
+                <CardTitle>Stream areas</CardTitle>
+                <CardDescription>{data.areas.length} area(s)</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {data.areas.length === 0 ? (
+                  <QueryEmptyState description="No visible stream areas at the current level." />
+                ) : (
+                  <Table>
+                    <TableHead>
+                      <TableRow>
+                        <TableHeaderCell>Area</TableHeaderCell>
+                        <TableHeaderCell>Resources</TableHeaderCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      <For each={data.areas} by={(area) => area.area}>
+                        {(area) => (
+                          <TableRow>
+                            <TableCell>
+                              <Link
+                                href={domainScopeHref("stream", {
+                                  area: area.area,
+                                  realm: data.realm,
+                                })}
+                              >
+                                {area.area}
+                              </Link>
+                            </TableCell>
+                            <TableCell>{formatNumber(area.resources.length)}</TableCell>
+                          </TableRow>
+                        )}
+                      </For>
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+            <Card padding="sm" variant="default">
+              <CardHeader>
+                <CardTitle>Family watermarks</CardTitle>
+                <CardDescription>Durable committed offsets by Route Family.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <StreamWatermarkTable rows={data.familyWatermarks} />
+              </CardContent>
+            </Card>
+          </Stack>
+        ) : null}
+      </Stack>
+    </DomainPageFrame>
+  );
+}
+
+function StreamAreaPage(props: { realm: string; area: string }) {
+  const query = createStreamAreaQuery(props.realm, props.area);
+  const data = query.data;
+
+  return (
+    <DomainPageFrame>
+      <Stack gap="3">
+        <DomainHeader
+          eyebrow="Stream area"
+          title={props.area}
+          description={`Resource and watermark rollup for ${props.realm}/${props.area}.`}
+          primaryAction={{ label: "Refresh area", onPress: () => query.refresh() }}
+          status={{
+            detail: data ? `${data.resourceCount} resource(s).` : "Loading stream area.",
+            label: query.refreshing ? "Refreshing" : query.stale ? "Stale" : "Live",
+            tone: query.refreshing ? "info" : query.stale ? "warning" : "success",
+          }}
+        />
+        {!data && query.loading ? <QueryLoadingState description="Loading stream area..." /> : null}
+        {!data && query.error ? (
+          <QueryErrorState
+            title="Unable to load stream area"
+            error={query.error}
+            onRetry={() => query.refresh()}
+          />
+        ) : null}
+        {data ? (
+          <Stack gap="3">
+            <Card padding="sm" variant="default">
+              <CardHeader>
+                <CardTitle>Stream resources</CardTitle>
+                <CardDescription>{data.resources.length} resource(s)</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {data.resources.length === 0 ? (
+                  <QueryEmptyState description="No visible stream resources at the current level." />
+                ) : (
+                  <Table>
+                    <TableHead>
+                      <TableRow>
+                        <TableHeaderCell>Resource</TableHeaderCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      <For each={data.resources} by={(resource) => resource}>
+                        {(resource) => (
+                          <TableRow>
+                            <TableCell>
+                              <Link
+                                href={domainResourceHref("stream", {
+                                  area: props.area,
+                                  realm: props.realm,
+                                  resource,
+                                })}
+                              >
+                                {resource}
+                              </Link>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </For>
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+            <Card padding="sm" variant="default">
+              <CardHeader>
+                <CardTitle>Family watermarks</CardTitle>
+                <CardDescription>Durable committed offsets by Route Family.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <StreamWatermarkTable rows={data.familyWatermarks} />
+              </CardContent>
+            </Card>
+          </Stack>
+        ) : null}
+      </Stack>
+    </DomainPageFrame>
+  );
+}
+
+export default function StreamPage() {
+  const route = currentRoute();
+  const realm = decodeParam(route.params.realm);
+  const area = decodeParam(route.params.area);
+
+  if (realm && area) return <StreamAreaPage area={area} realm={realm} />;
+  if (realm) return <StreamRealmPage realm={realm} />;
+
+  return <StreamOverviewPage />;
 }

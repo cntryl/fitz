@@ -219,6 +219,7 @@ async fn should_preserve_durable_backlog_label_given_queue_pressure() {
         realm: "acme".to_string(),
         area: "app".to_string(),
         resource: "jobs".to_string(),
+        subscriptions_active: 0,
         messages_ready: 4,
         messages_delayed: 2,
         messages_inflight: 1,
@@ -228,6 +229,11 @@ async fn should_preserve_durable_backlog_label_given_queue_pressure() {
         oldest_backlog_age_seconds: 45,
         backlog_age_buckets: QueueAgeBuckets::default(),
         delay_age_buckets: QueueAgeBuckets::default(),
+        enqueue_success_total: 0,
+        complete_success_total: 0,
+        in_rate_per_second: 0.0,
+        out_rate_per_second: 0.0,
+        status: "backlogged".to_string(),
     }]);
     let registry = McpToolRegistry::read_only();
     let policy = McpCapabilityPolicy::read_only();

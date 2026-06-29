@@ -1,8 +1,8 @@
 import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { Flex, Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/components";
+import { Inline, Stack } from "@askrjs/themes/components";
 import {
   Badge,
   Card,
@@ -10,7 +10,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
 import { Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import type { LeaseSearchItem, LeaseSearchResponse } from "@/adapters";
 import {
@@ -48,7 +48,7 @@ const consoleModes: Array<{
     value: "resource",
   },
   {
-    description: "Use existing resource-level ownership-change timeline evidence.",
+    description: "Use bounded broker-local ownership-change evidence, not durable continuity.",
     label: "History",
     value: "history",
   },
@@ -215,12 +215,12 @@ function searchStateForMode(mode: LeaseConsoleMode) {
 function LeaseSearchPanel({ result }: { result: LeaseSearchResponse }) {
   return (
     <div class="lease-search-result" aria-live="polite">
-      <Flex justify="between" align="center" gap="3" wrap="wrap">
+      <Inline justify="between" align="center" gap="3" wrap="wrap">
         <p class="domain-muted">
           {result.items.length} lease row{result.items.length === 1 ? "" : "s"} in route family{" "}
           {result.route_family}
         </p>
-      </Flex>
+      </Inline>
 
       {result.items.length === 0 ? (
         <QueryEmptyState
@@ -328,7 +328,7 @@ export default function LeaseOwnershipConsole({
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <Flex justify="between" align="start" gap="3" wrap="wrap">
+        <Inline justify="between" align="start" gap="3" wrap="wrap">
           <Stack gap="1">
             <CardTitle>Ownership console</CardTitle>
             <CardDescription>
@@ -337,7 +337,7 @@ export default function LeaseOwnershipConsole({
             </CardDescription>
           </Stack>
           <Badge variant={badgeVariant}>{badgeLabel}</Badge>
-        </Flex>
+        </Inline>
       </CardHeader>
 
       <CardContent>
@@ -405,7 +405,7 @@ export default function LeaseOwnershipConsole({
               </div>
             </div>
             {searchMode ? (
-              <Flex
+              <Inline
                 class="lease-query-actions"
                 justify="between"
                 align="center"
@@ -419,7 +419,7 @@ export default function LeaseOwnershipConsole({
                 <Button type="submit" disabled={!canRunSearch}>
                   {searchLoadingValue ? "Running" : "Run search"}
                 </Button>
-              </Flex>
+              </Inline>
             ) : null}
           </form>
 
@@ -467,7 +467,7 @@ export default function LeaseOwnershipConsole({
               />
             ) : (
               <Stack gap="3">
-                <Flex justify="between" align="center" gap="3" wrap="wrap">
+                <Inline justify="between" align="center" gap="3" wrap="wrap">
                   <p class="domain-muted">
                     {filteredRows.length} matching lease{filteredRows.length === 1 ? "" : "s"}
                   </p>
@@ -483,7 +483,7 @@ export default function LeaseOwnershipConsole({
                       Open exact lease
                     </Link>
                   ) : null}
-                </Flex>
+                </Inline>
 
                 <VirtualTable<LeaseResourceRow>
                   aria-label="Matching lease resources"

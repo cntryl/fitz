@@ -10,6 +10,8 @@
 //! - **Tick**: Runtime-driven expiration (scheduler)
 
 use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
+use crate::runtime::ClientFrameMeta;
+use bytes::Bytes;
 
 /// Parsed lease identity
 ///
@@ -222,6 +224,67 @@ pub enum LeaseSubscriptionMessage {
         session_id: u64,
         subscriber: RouteAddress,
     },
+}
+
+/// Parsed client request delivered to the Lease domain sink.
+#[derive(Debug, Clone)]
+pub struct LeaseClientRequest {
+    pub meta: ClientFrameMeta,
+    pub frame: Result<LeaseClientFrame, String>,
+}
+
+impl LeaseClientRequest {
+    pub fn new(meta: ClientFrameMeta, frame: Result<LeaseClientFrame, String>) -> Self {
+        Self { meta, frame }
+    }
+}
+
+/// Lease request classified after wire parsing.
+#[derive(Debug, Clone)]
+pub enum LeaseClientFrame {
+    Op(LeaseMessage),
+    Sub(LeaseSubscriptionMessage),
+}
+
+/// Typed Lease response to be encoded at the transport edge.
+#[derive(Debug, Clone)]
+pub struct LeaseClientResponse {
+    pub meta: ClientFrameMeta,
+    pub response: LeaseResponse,
+}
+
+impl LeaseClientResponse {
+    pub fn new(meta: ClientFrameMeta, response: LeaseResponse) -> Self {
+        Self { meta, response }
+    }
+}
+
+/// Typed Lease watch notification to be encoded at the transport edge.
+#[derive(Debug, Clone)]
+pub struct LeaseClientNotification {
+    pub session_id: u64,
+    pub route_family: RouteFamily,
+    pub subscription_id: u64,
+    pub route: Route,
+    pub payload: Bytes,
+}
+
+impl LeaseClientNotification {
+    pub fn new(
+        session_id: u64,
+        route_family: RouteFamily,
+        subscription_id: u64,
+        route: Route,
+        payload: Bytes,
+    ) -> Self {
+        Self {
+            session_id,
+            route_family,
+            subscription_id,
+            route,
+            payload,
+        }
+    }
 }
 
 /// Lease operation responses

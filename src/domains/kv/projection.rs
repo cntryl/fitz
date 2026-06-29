@@ -1,5 +1,5 @@
-use crate::api::admin::read_model::AdminReadModel;
-use crate::api::admin::KvTransaction;
+use crate::control::admin::read_model::AdminReadModel;
+use crate::control::admin::KvTransaction;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 

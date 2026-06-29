@@ -22,6 +22,7 @@
 
 pub mod actor;
 pub mod cf_validation;
+pub mod client_frame;
 pub mod clock;
 pub mod context;
 pub mod domain_event;
@@ -37,6 +38,7 @@ pub mod supervision;
 
 // Re-export commonly used types
 pub use actor::{Actor, ActorError, ActorId, ActorRef, ActorState, Context, SendError};
+pub use client_frame::{ClientChannel, ClientFrameMeta, EncodedClientFrame};
 pub use clock::{
     epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference, Clock, SystemClock,
 };

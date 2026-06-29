@@ -1,5 +1,5 @@
-use crate::api::admin::read_model::AdminReadModel;
-use crate::api::admin::{
+use crate::control::admin::read_model::AdminReadModel;
+use crate::control::admin::{
     QueueAgeBuckets, QueueDeadLetter, QueueDeadLetterSnapshot as AdminQueueDeadLetterSnapshot,
     QueueInflight, QueueInflightSnapshot as AdminQueueInflightSnapshot, QueueInfo,
     QueueInfoSnapshot as AdminQueueInfoSnapshot,
@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// Point-in-time warm-actor queue counts for admin diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QueueAdminSnapshot {
     pub messages_ready: usize,
     pub messages_delayed: usize,
@@ -21,6 +21,10 @@ pub struct QueueAdminSnapshot {
     pub oldest_backlog_age_seconds: u64,
     pub backlog_age_buckets: QueueAgeBuckets,
     pub delay_age_buckets: QueueAgeBuckets,
+    pub enqueue_success_total: u64,
+    pub complete_success_total: u64,
+    pub in_rate_per_second: f64,
+    pub out_rate_per_second: f64,
 }
 
 /// Point-in-time live inflight snapshot for admin diagnostics.
@@ -45,6 +49,7 @@ pub struct QueueDeadLetterSnapshot {
 pub(crate) struct QueueProjectionEntry {
     pub key: QueueKey,
     pub snapshot: QueueAdminSnapshot,
+    pub subscriptions_active: usize,
     pub inflight: Vec<QueueInflightSnapshot>,
     pub dead_letters: Vec<QueueDeadLetterSnapshot>,
 }
@@ -76,6 +81,11 @@ impl QueueProjectionState {
                 oldest_backlog_age_seconds: entry.snapshot.oldest_backlog_age_seconds,
                 backlog_age_buckets: entry.snapshot.backlog_age_buckets,
                 delay_age_buckets: entry.snapshot.delay_age_buckets,
+                subscriptions_active: entry.subscriptions_active,
+                enqueue_success_total: entry.snapshot.enqueue_success_total,
+                complete_success_total: entry.snapshot.complete_success_total,
+                in_rate_per_second: entry.snapshot.in_rate_per_second,
+                out_rate_per_second: entry.snapshot.out_rate_per_second,
             }));
 
             for inflight_entry in entry.inflight {
@@ -225,7 +235,12 @@ mod tests {
                 oldest_backlog_age_seconds: 6,
                 backlog_age_buckets: QueueAgeBuckets::default(),
                 delay_age_buckets: QueueAgeBuckets::default(),
+                enqueue_success_total: 7,
+                complete_success_total: 8,
+                in_rate_per_second: 1.5,
+                out_rate_per_second: 0.75,
             },
+            subscriptions_active: 9,
             inflight: vec![QueueInflightSnapshot {
                 message_id: 22,
                 inflight_token: 33,
@@ -280,6 +295,9 @@ mod tests {
         let dead_letters = read_model.queue_dead_letters(None);
         assert_eq!(queues.len(), 1);
         assert_eq!(queues[0].realm, "acme");
+        assert_eq!(queues[0].subscriptions_active, 9);
+        assert_eq!(queues[0].in_rate_per_second, 1.5);
+        assert_eq!(queues[0].out_rate_per_second, 0.75);
         assert_eq!(inflight.len(), 1);
         assert_eq!(inflight[0].resource, "emails");
         assert_eq!(dead_letters.len(), 1);

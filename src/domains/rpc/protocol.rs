@@ -25,6 +25,7 @@
 //! not buffer or reorder RPC responses on the broker side.
 
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::ClientFrameMeta;
 use bytes::Bytes;
 use uuid::Uuid;
 
@@ -194,6 +195,109 @@ impl RpcMessage {
     /// Create Deliver message
     pub fn deliver(work_item: RpcWorkItem) -> Self {
         Self::Deliver(work_item)
+    }
+}
+
+/// Parsed client request delivered to the RPC domain sink.
+#[derive(Debug, Clone)]
+pub struct RpcClientRequest {
+    pub meta: ClientFrameMeta,
+    pub message: Result<RpcMessage, String>,
+}
+
+impl RpcClientRequest {
+    pub fn new(meta: ClientFrameMeta, message: Result<RpcMessage, String>) -> Self {
+        Self { meta, message }
+    }
+}
+
+/// Immediate response routed from the RPC domain sink back to a client session.
+#[derive(Debug, Clone)]
+pub struct RpcClientResponse {
+    pub meta: ClientFrameMeta,
+    pub response: RpcClientResponseBody,
+}
+
+impl RpcClientResponse {
+    pub fn new(meta: ClientFrameMeta, response: RpcClientResponseBody) -> Self {
+        Self { meta, response }
+    }
+}
+
+/// Response from RPC control operations before transport encoding.
+#[derive(Debug, Clone)]
+pub enum RpcClientResponseBody {
+    Ok { data: Vec<u8> },
+    CodeError { code: u16, message: String },
+    Error(String),
+}
+
+/// RPC request delivery routed from the domain sink to a worker session.
+#[derive(Debug, Clone)]
+pub struct RpcWorkerRequestDelivery {
+    pub session_id: u64,
+    pub route_family: RouteFamily,
+    pub request: RpcRequest,
+}
+
+impl RpcWorkerRequestDelivery {
+    pub fn new(session_id: u64, route_family: RouteFamily, request: RpcRequest) -> Self {
+        Self {
+            session_id,
+            route_family,
+            request,
+        }
+    }
+}
+
+/// RPC response forwarded from a worker to a caller session.
+#[derive(Debug, Clone)]
+pub struct RpcClientForwardedResponse {
+    pub session_id: u64,
+    pub route_family: RouteFamily,
+    pub body: RpcClientForwardedResponseBody,
+}
+
+impl RpcClientForwardedResponse {
+    pub fn new(
+        session_id: u64,
+        route_family: RouteFamily,
+        body: RpcClientForwardedResponseBody,
+    ) -> Self {
+        Self {
+            session_id,
+            route_family,
+            body,
+        }
+    }
+}
+
+/// Forwarded RPC response before transport encoding.
+#[derive(Debug, Clone)]
+pub enum RpcClientForwardedResponseBody {
+    Response(RpcResponse),
+    TerminalError {
+        correlation_id: Uuid,
+        code: u16,
+        message: &'static str,
+    },
+}
+
+/// ACK routed from the domain sink to a worker after receiving a response.
+#[derive(Debug, Clone)]
+pub struct RpcWorkerAck {
+    pub session_id: u64,
+    pub route_family: RouteFamily,
+    pub correlation_id: Uuid,
+}
+
+impl RpcWorkerAck {
+    pub fn new(session_id: u64, route_family: RouteFamily, correlation_id: Uuid) -> Self {
+        Self {
+            session_id,
+            route_family,
+            correlation_id,
+        }
     }
 }
 

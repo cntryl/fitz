@@ -7,6 +7,7 @@
 //! concepts supplied by the session/transport layer — they never appear
 //! on the wire.
 
+pub use crate::domains::notice::protocol::NoticeResponse;
 use crate::domains::notice::protocol::{
     DeliverMessage, NotificationMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
     UnsubscribeMessage,
@@ -16,17 +17,6 @@ use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
 use bytes::{BufMut, Bytes, BytesMut};
-
-/// Response from notice operations
-#[derive(Debug, Clone)]
-pub enum NoticeResponse {
-    /// Operation succeeded with no response payload
-    Ok,
-    /// Subscribe succeeded and returns a subscription ID
-    SubscribeOk { subscription_id: u64 },
-    /// Operation failed with error message
-    Error(String),
-}
 
 /// Parse incoming message from TLV-encoded bytes.
 ///

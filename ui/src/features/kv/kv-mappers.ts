@@ -3,6 +3,7 @@ import type {
   KvCommittedPair as KvCommittedPairDto,
   KvCommittedValueResponse,
   KvPrefixScanResponse,
+  KvRowsResponse,
   KvStats,
   RealmEntry,
 } from "@/adapters";
@@ -13,6 +14,7 @@ import type {
   KvOverview,
   KvPrefixScanResult,
   KvRealmSummary,
+  KvRowsResult,
   KvStatsSummary,
 } from "./kv-models";
 
@@ -28,7 +30,6 @@ export function mapKvStats(dto: KvStats): KvStatsSummary {
     invalidTransactionRejectsTotal: dto.invalid_transaction_rejects_total,
     keysTotal: dto.keys_total,
     operationsPerSecond: dto.operations_per_second,
-    rollbacksTotal: dto.rollbacks_total,
     transactionsActive: dto.transactions_active,
   };
 }
@@ -77,5 +78,19 @@ export function mapKvPrefixScan(dto: KvPrefixScanResponse): KvPrefixScanResult {
     realm: dto.realm,
     resource: dto.resource,
     routeFamily: dto.route_family,
+  };
+}
+
+export function mapKvRows(dto: KvRowsResponse): KvRowsResult {
+  return {
+    area: dto.area,
+    hasMore: dto.has_more,
+    items: dto.items.map(mapKvCommittedPair),
+    limit: dto.limit,
+    nextCursor: dto.next_cursor ?? null,
+    realm: dto.realm,
+    resource: dto.resource,
+    routeFamily: dto.route_family,
+    startsWith: mapKvByteValue(dto.starts_with),
   };
 }

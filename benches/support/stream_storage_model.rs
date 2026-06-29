@@ -1195,24 +1195,25 @@ impl MailboxSink for PrototypeStreamReadSink {
         )
         .map_err(|_| DeliveryError::ActorStopped)?;
 
-        use fitz::domains::stream::protocol::StreamMessage;
-        use fitz::protocol::stream_codec::{ParsedStreamFrame, StreamResponse};
+        use fitz::domains::stream::protocol::{
+            StreamClientFrame, StreamClientResponseBody, StreamMessage,
+        };
 
         let response = match parsed {
-            ParsedStreamFrame::Op(StreamMessage::Read {
+            StreamClientFrame::Op(StreamMessage::Read {
                 route,
                 from_offset,
                 limit,
                 max_bytes,
                 ..
             }) => match self.encode_read_response_data(&route, from_offset, limit, max_bytes) {
-                Ok(data) => StreamResponse::Ok {
+                Ok(data) => StreamClientResponseBody::Ok {
                     session_id: None,
                     data,
                 },
-                Err(error) => StreamResponse::Error(error),
+                Err(error) => StreamClientResponseBody::Error(error),
             },
-            _ => StreamResponse::Error(
+            _ => StreamClientResponseBody::Error(
                 "prototype routed stream sink currently supports only READ operations".to_string(),
             ),
         };

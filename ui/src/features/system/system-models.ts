@@ -14,7 +14,6 @@ export interface SystemDomainStatsSummary {
     invalidTransactionRejectsTotal: number;
     keysTotal: number;
     operationsPerSecond: number;
-    rollbacksTotal: number;
     transactionsActive: number;
   };
   lease: {

@@ -43,7 +43,6 @@ export function mapSystemOverview(stats: GlobalStats, metricsValue: unknown): Sy
         invalidTransactionRejectsTotal: stats.domains.kv.invalid_transaction_rejects_total,
         keysTotal: stats.domains.kv.keys_total,
         operationsPerSecond: stats.domains.kv.operations_per_second,
-        rollbacksTotal: stats.domains.kv.rollbacks_total,
         transactionsActive: stats.domains.kv.transactions_active,
       },
       lease: {

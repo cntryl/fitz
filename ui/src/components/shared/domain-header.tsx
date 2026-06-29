@@ -1,7 +1,7 @@
 import { RefreshCwIcon } from "@askrjs/lucide";
-import { Button } from "@askrjs/themes/controls";
-import { Badge } from "@askrjs/themes/surfaces";
-import { Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/components";
+import { Badge } from "@askrjs/themes/components";
+import { Stack } from "@askrjs/themes/components";
 
 export interface DomainHeaderProps {
   eyebrow?: string;

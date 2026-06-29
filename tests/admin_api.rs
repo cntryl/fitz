@@ -282,6 +282,7 @@ fn seed_dead_lettered_queue_message(store: Arc<cntryl_midge::Engine>) -> u64 {
 fn seed_snapshot_data(runtime: &Arc<Runtime>) {
     let read_model = runtime.admin_read_model();
     read_model.replace_kv_transactions(vec![KvTransaction {
+        route_family: 1,
         tx_id: 41,
         realm: "prod".to_string(),
         area: "app".to_string(),
@@ -362,6 +363,7 @@ fn seed_queue_snapshot_data(runtime: &Arc<Runtime>) {
         realm: "prod".to_string(),
         area: "jobs".to_string(),
         resource: "worker".to_string(),
+        subscriptions_active: 0,
         messages_ready: 1,
         messages_delayed: 2,
         messages_inflight: 3,
@@ -381,6 +383,11 @@ fn seed_queue_snapshot_data(runtime: &Arc<Runtime>) {
             under_15m: 0,
             over_15m: 1,
         },
+        enqueue_success_total: 0,
+        complete_success_total: 0,
+        in_rate_per_second: 0.0,
+        out_rate_per_second: 0.0,
+        status: "backlogged".to_string(),
     }]);
     read_model.replace_queue_dead_letters(vec![QueueDeadLetter {
         message_id: 42,
@@ -402,6 +409,7 @@ fn seed_queue_compare_snapshot_data(runtime: &Arc<Runtime>) {
             realm: "prod".to_string(),
             area: "jobs".to_string(),
             resource: "worker".to_string(),
+            subscriptions_active: 0,
             messages_ready: 1,
             messages_delayed: 2,
             messages_inflight: 3,
@@ -421,12 +429,18 @@ fn seed_queue_compare_snapshot_data(runtime: &Arc<Runtime>) {
                 under_15m: 0,
                 over_15m: 1,
             },
+            enqueue_success_total: 0,
+            complete_success_total: 0,
+            in_rate_per_second: 0.0,
+            out_rate_per_second: 0.0,
+            status: "backlogged".to_string(),
         },
         QueueInfo {
             family: 2,
             realm: "prod".to_string(),
             area: "jobs".to_string(),
             resource: "backup".to_string(),
+            subscriptions_active: 0,
             messages_ready: 0,
             messages_delayed: 0,
             messages_inflight: 0,
@@ -436,6 +450,11 @@ fn seed_queue_compare_snapshot_data(runtime: &Arc<Runtime>) {
             oldest_backlog_age_seconds: 0,
             backlog_age_buckets: QueueAgeBuckets::default(),
             delay_age_buckets: QueueAgeBuckets::default(),
+            enqueue_success_total: 0,
+            complete_success_total: 0,
+            in_rate_per_second: 0.0,
+            out_rate_per_second: 0.0,
+            status: "idle".to_string(),
         },
     ]);
     read_model.replace_queue_dead_letters(vec![QueueDeadLetter {
@@ -663,6 +682,46 @@ fn seed_committed_kv_values(
             KvResponse::PutOk => {}
             other => panic!("Expected PutOk response, found {other:?}"),
         }
+    }
+
+    match actor.handle(KvMessage::Commit { tx_id }) {
+        KvResponse::CommitOk => {}
+        other => panic!("Expected CommitOk response, found {other:?}"),
+    }
+}
+
+fn delete_committed_kv_range(
+    store: Arc<cntryl_midge::Engine>,
+    family: u64,
+    realm: &str,
+    area: &str,
+    resource: &str,
+    start: &[u8],
+    end: &[u8],
+) {
+    let route_family = RouteFamily::new(family);
+    let mut actor = KvActor::new(store);
+    let tx_id = match actor.handle(KvMessage::Begin {
+        route_family,
+        realm: realm.to_string(),
+        area: area.to_string(),
+        resource: resource.to_string(),
+        mode: TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    }) {
+        KvResponse::BeginOk { tx_id } => tx_id,
+        other => panic!("Expected BeginOk response, found {other:?}"),
+    };
+
+    match actor.handle(KvMessage::DeleteRange {
+        tx_id,
+        route_family,
+        resource: resource.to_string(),
+        start: Bytes::copy_from_slice(start),
+        end: Bytes::copy_from_slice(end),
+    }) {
+        KvResponse::DeleteRangeOk => {}
+        other => panic!("Expected DeleteRangeOk response, found {other:?}"),
     }
 
     match actor.handle(KvMessage::Commit { tx_id }) {
@@ -1589,6 +1648,209 @@ async fn should_scan_committed_kv_prefix_given_authorized_route_family() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["key"]["utf8"], "user:1");
     assert_eq!(items[0]["value"]["utf8"], "alice");
+}
+
+#[tokio::test]
+#[serial]
+async fn should_scope_kv_inventory_given_route_family_path_segment() {
+    // Arrange
+    let runtime = test_runtime();
+    runtime.admin_read_model().replace_kv_transactions(vec![
+        KvTransaction {
+            route_family: 1,
+            tx_id: 41,
+            realm: "prod".to_string(),
+            area: "app".to_string(),
+            resource: "users".to_string(),
+            mode: "readwrite".to_string(),
+            started_at: "2026-03-14T12:00:00Z".to_string(),
+            operations_count: 3,
+            idle_seconds: 1,
+        },
+        KvTransaction {
+            route_family: 2,
+            tx_id: 42,
+            realm: "stage".to_string(),
+            area: "app".to_string(),
+            resource: "users".to_string(),
+            mode: "readwrite".to_string(),
+            started_at: "2026-03-14T12:00:00Z".to_string(),
+            operations_count: 3,
+            idle_seconds: 1,
+        },
+    ]);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/1/kv/realms")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let realms = payload["realms"].as_array().unwrap();
+    assert_eq!(realms.len(), 1);
+    assert_eq!(realms[0]["realm"], "prod");
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_kv_inventory_metrics_given_committed_writes() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    seed_committed_kv_values(
+        store,
+        1,
+        "prod",
+        "app",
+        "users",
+        &[(b"user:1", b"alice"), (b"user:2", b"bob")],
+    );
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/1/kv/realms/prod/areas/app/resources")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let resources = payload["resources"].as_array().unwrap();
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0]["resource"], "users");
+    assert_eq!(resources[0]["estimated_record_count"], 2);
+    assert_eq!(resources[0]["estimated_storage_bytes"], 20);
+    assert_eq!(resources[0]["estimate_complete"], true);
+    assert_eq!(resources[0]["transactions_active"], 0);
+    assert!(resources[0]["read_latency_avg_ms"].as_f64().is_some());
+    assert!(resources[0]["write_latency_avg_ms"].as_f64().is_some());
+}
+
+#[tokio::test]
+#[serial]
+async fn should_refresh_kv_inventory_estimate_after_delete_range() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    seed_committed_kv_values(
+        store.clone(),
+        1,
+        "prod",
+        "app",
+        "users",
+        &[(b"user:1", b"alice"), (b"user:2", b"bob")],
+    );
+    delete_committed_kv_range(store, 1, "prod", "app", "users", b"user:", b"user;");
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/1/kv/realms/prod/areas/app/resources/users")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["estimated_record_count"], 0);
+    assert_eq!(payload["estimated_storage_bytes"], 0);
+    assert_eq!(payload["estimate_complete"], true);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_page_committed_kv_rows_given_route_family_path_segment() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    seed_committed_kv_values(
+        store,
+        1,
+        "prod",
+        "app",
+        "users",
+        &[
+            (b"user:1", b"alice"),
+            (b"user:2", b"bob"),
+            (b"order:1", b"ignored"),
+        ],
+    );
+    let cookie = login_cookie(runtime.clone()).await;
+
+    let first_req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/1/kv/realms/prod/areas/app/resources/users/rows?starts_with=user%3A&limit=1")
+        .header(COOKIE, cookie.clone())
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let first_response = fitz::api::admin::handlers::handle_request(first_req, runtime.clone())
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(first_response.status(), StatusCode::OK);
+    let first_body = body::to_bytes(first_response.into_body()).await.unwrap();
+    let first_payload: serde_json::Value = serde_json::from_slice(&first_body).unwrap();
+    let first_items = first_payload["items"].as_array().unwrap();
+    assert_eq!(first_payload["route_family"], 1);
+    assert_eq!(first_payload["starts_with"]["utf8"], "user:");
+    assert_eq!(first_payload["limit"], 1);
+    assert_eq!(first_payload["has_more"], true);
+    assert_eq!(first_items.len(), 1);
+    assert_eq!(first_items[0]["key"]["utf8"], "user:1");
+    assert_eq!(first_items[0]["value"]["utf8"], "alice");
+
+    // Arrange
+    let next_cursor = first_payload["next_cursor"].as_str().unwrap();
+    let second_uri = format!(
+        "/api/v1/1/kv/realms/prod/areas/app/resources/users/rows?starts_with=user%3A&limit=1&cursor={next_cursor}"
+    );
+    let second_req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri(second_uri)
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let second_response = fitz::api::admin::handlers::handle_request(second_req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(second_response.status(), StatusCode::OK);
+    let second_body = body::to_bytes(second_response.into_body()).await.unwrap();
+    let second_payload: serde_json::Value = serde_json::from_slice(&second_body).unwrap();
+    let second_items = second_payload["items"].as_array().unwrap();
+    assert_eq!(second_payload["has_more"], false);
+    assert_eq!(second_items.len(), 1);
+    assert_eq!(second_items[0]["key"]["utf8"], "user:2");
+    assert_eq!(second_items[0]["value"]["utf8"], "bob");
 }
 
 #[tokio::test]
@@ -2522,7 +2784,7 @@ async fn should_return_kv_failure_stats_given_recorded_metrics() {
         kv_payload["commits_failed_total"],
         commits_failed_before + 3
     );
-    assert_eq!(kv_payload["rollbacks_total"], rollbacks_before + 5);
+    assert!(kv_payload.get("rollbacks_total").is_none());
     assert_eq!(
         kv_payload["invalid_transaction_rejects_total"],
         invalid_transaction_rejects_before + 7
@@ -2535,10 +2797,9 @@ async fn should_return_kv_failure_stats_given_recorded_metrics() {
         global_payload["domains"]["kv"]["commits_failed_total"],
         commits_failed_before + 3
     );
-    assert_eq!(
-        global_payload["domains"]["kv"]["rollbacks_total"],
-        rollbacks_before + 5
-    );
+    assert!(global_payload["domains"]["kv"]
+        .get("rollbacks_total")
+        .is_none());
     assert_eq!(
         global_payload["domains"]["kv"]["invalid_transaction_rejects_total"],
         invalid_transaction_rejects_before + 7
@@ -3386,6 +3647,7 @@ async fn should_return_global_stats() {
         realm: "prod".to_string(),
         area: "jobs".to_string(),
         resource: "worker".to_string(),
+        subscriptions_active: 0,
         messages_ready: 1,
         messages_delayed: 2,
         messages_inflight: 3,
@@ -3405,6 +3667,11 @@ async fn should_return_global_stats() {
             under_15m: 0,
             over_15m: 1,
         },
+        enqueue_success_total: 0,
+        complete_success_total: 0,
+        in_rate_per_second: 0.0,
+        out_rate_per_second: 0.0,
+        status: "backlogged".to_string(),
     }]);
     let cookie = login_cookie(runtime.clone()).await;
 
@@ -3550,6 +3817,7 @@ async fn should_return_messaging_topology_given_live_admin_snapshots() {
         realm: "prod".to_string(),
         area: "jobs".to_string(),
         resource: "worker".to_string(),
+        subscriptions_active: 0,
         messages_ready: 10,
         messages_delayed: 0,
         messages_inflight: 1,
@@ -3569,6 +3837,11 @@ async fn should_return_messaging_topology_given_live_admin_snapshots() {
             under_15m: 0,
             over_15m: 0,
         },
+        enqueue_success_total: 0,
+        complete_success_total: 0,
+        in_rate_per_second: 0.0,
+        out_rate_per_second: 0.0,
+        status: "backlogged".to_string(),
     }]);
     read_model.replace_queue_inflight(vec![QueueInflight {
         message_id: 99,
@@ -3641,6 +3914,7 @@ async fn should_return_messaging_topology_given_live_admin_snapshots() {
         enabled: true,
     }]);
     read_model.replace_kv_transactions(vec![KvTransaction {
+        route_family: 1,
         tx_id: 501,
         realm: "prod".to_string(),
         area: "state".to_string(),
@@ -3887,6 +4161,7 @@ async fn should_return_global_troubleshooting_guidance() {
         realm: "prod".to_string(),
         area: "jobs".to_string(),
         resource: "worker".to_string(),
+        subscriptions_active: 0,
         messages_ready: 1,
         messages_delayed: 2,
         messages_inflight: 3,
@@ -3906,6 +4181,11 @@ async fn should_return_global_troubleshooting_guidance() {
             under_15m: 0,
             over_15m: 1,
         },
+        enqueue_success_total: 0,
+        complete_success_total: 0,
+        in_rate_per_second: 0.0,
+        out_rate_per_second: 0.0,
+        status: "backlogged".to_string(),
     }]);
     let cookie = login_cookie(runtime.clone()).await;
 

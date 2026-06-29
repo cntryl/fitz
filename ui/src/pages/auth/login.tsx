@@ -1,7 +1,7 @@
 import { state } from "@askrjs/askr";
 import { currentRoute, navigate } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
-import { Button, Field } from "@askrjs/themes/controls";
+import { Button, Field } from "@askrjs/themes/components";
 import {
   Alert,
   Card,
@@ -9,7 +9,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
 import { createSignInMutation } from "@/features/session/session-mutation";
 import { formatUnknownError } from "@/shared/errors/format";
 

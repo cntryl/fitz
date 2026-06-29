@@ -1,8 +1,8 @@
 import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { Flex, Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/components";
+import { Inline, Stack } from "@askrjs/themes/components";
 import {
   Badge,
   Card,
@@ -10,7 +10,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
 import { Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import type {
   ScheduleExecutionObservation,
@@ -250,13 +250,13 @@ function modeQueryPlaceholder(mode: SchedulePlannerMode) {
 function ScheduleExecutionPanel({ result }: { result: ScheduleExecutionObservationList }) {
   return (
     <div class="schedule-observation-result" aria-live="polite">
-      <Flex justify="between" align="center" gap="3" wrap="wrap">
+      <Inline justify="between" align="center" gap="3" wrap="wrap">
         <p class="domain-muted">
           {result.observations.length} handoff observation
           {result.observations.length === 1 ? "" : "s"} for {result.realm}/{result.area}/
           {result.resource}
         </p>
-      </Flex>
+      </Inline>
 
       {result.observations.length === 0 ? (
         <QueryEmptyState
@@ -285,12 +285,12 @@ function ScheduleExecutionPanel({ result }: { result: ScheduleExecutionObservati
 function ScheduleMissedPanel({ result }: { result: ScheduleMissedObservationList }) {
   return (
     <div class="schedule-observation-result" aria-live="polite">
-      <Flex justify="between" align="center" gap="3" wrap="wrap">
+      <Inline justify="between" align="center" gap="3" wrap="wrap">
         <p class="domain-muted">
           {result.observations.length} pending handoff claim
           {result.observations.length === 1 ? "" : "s"} in route family {result.route_family}
         </p>
-      </Flex>
+      </Inline>
 
       {result.observations.length === 0 ? (
         <QueryEmptyState
@@ -416,7 +416,7 @@ export default function ScheduleTimePlanner({
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <Flex justify="between" align="start" gap="3" wrap="wrap">
+        <Inline justify="between" align="start" gap="3" wrap="wrap">
           <Stack gap="1">
             <CardTitle>Time planner</CardTitle>
             <CardDescription>
@@ -425,7 +425,7 @@ export default function ScheduleTimePlanner({
             </CardDescription>
           </Stack>
           <Badge variant={badgeVariant}>{badgeLabel}</Badge>
-        </Flex>
+        </Inline>
       </CardHeader>
 
       <CardContent>
@@ -494,7 +494,7 @@ export default function ScheduleTimePlanner({
               </div>
             </div>
             {observationMode ? (
-              <Flex
+              <Inline
                 class="schedule-query-actions"
                 justify="between"
                 align="center"
@@ -508,7 +508,7 @@ export default function ScheduleTimePlanner({
                 <Button type="submit" disabled={!canRunObservationQuery}>
                   {observationLoadingValue ? "Running" : "Run query"}
                 </Button>
-              </Flex>
+              </Inline>
             ) : null}
           </form>
 
@@ -570,7 +570,7 @@ export default function ScheduleTimePlanner({
               />
             ) : (
               <Stack gap="3">
-                <Flex justify="between" align="center" gap="3" wrap="wrap">
+                <Inline justify="between" align="center" gap="3" wrap="wrap">
                   <p class="domain-muted">
                     {filteredRows.length} matching schedule
                     {filteredRows.length === 1 ? "" : "s"}
@@ -587,7 +587,7 @@ export default function ScheduleTimePlanner({
                       Open exact schedule
                     </Link>
                   ) : null}
-                </Flex>
+                </Inline>
 
                 <VirtualTable<ScheduleResourceRow>
                   aria-label="Matching schedule resources"

@@ -17,6 +17,23 @@ export interface LeaseOverview {
   stats: LeaseStatsSummary;
 }
 
+export interface LeaseAreaSummary {
+  area: string;
+  realm: string;
+  resources: string[];
+}
+
+export interface LeaseRealmInventory {
+  realm: string;
+  areas: LeaseAreaSummary[];
+}
+
+export interface LeaseAreaResourceRows {
+  area: string;
+  realm: string;
+  resources: string[];
+}
+
 export type LeaseSearchState = "owned" | "waiting" | "contention";
 
 export interface LeaseSearchRequest {
@@ -25,6 +42,41 @@ export interface LeaseSearchRequest {
   owner?: string;
   realm?: string;
   resource?: string;
-  routeFamily: number;
   state?: LeaseSearchState;
+  routeFamily?: number | string;
+}
+
+export type LeaseOwnershipSearchRequest = LeaseSearchRequest;
+
+export interface LeaseOwnershipSearchRow {
+  acquiredAt: string | null;
+  ageSeconds: number | null;
+  area: string;
+  expiresAt: string | null;
+  ownerId: string | null;
+  ownerSessionId: string | null;
+  pendingWaiters: number;
+  queuedToken: number | null;
+  realm: string;
+  resource: string;
+  routeFamily: number;
+  state: LeaseSearchState;
+}
+
+export interface LeaseRemainingLifetime {
+  label: string;
+  remainingSeconds: number | null;
+  status: "active" | "expired" | "missing";
+}
+
+export interface LeaseOwnershipSearchResult {
+  items: LeaseOwnershipSearchRow[];
+  limit: number;
+  routeFamily: number;
+}
+
+export interface LeaseOwnershipSearchScope {
+  area: string;
+  realm: string;
+  resource: string;
 }

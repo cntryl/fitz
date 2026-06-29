@@ -58,7 +58,7 @@ pub mod sink;
 pub use actor::KvActor;
 pub use metrics::KvMetrics;
 pub use protocol::{
-    KvError, KvMessage, KvNotification, KvPair, KvResponse, KvSubscriptionMessage, ScanQuery,
-    TxMode,
+    KvClientFrame, KvClientNotification, KvClientRequest, KvClientResponse, KvError, KvMessage,
+    KvNotification, KvPair, KvResponse, KvSubscriptionMessage, ScanQuery, TxMode,
 };
 pub use session::SessionActor;

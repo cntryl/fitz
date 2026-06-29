@@ -279,8 +279,10 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/kv/stats:
+  /api/v1/{family}/kv/stats:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [Stats, KV]
       summary: Get KV domain statistics
       operationId: getKvStats
@@ -298,8 +300,10 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/stream/stats:
+  /api/v1/{family}/stream/stats:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [Stats, Stream]
       summary: Get Stream domain statistics
       operationId: getStreamStats
@@ -317,8 +321,10 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/notice/stats:
+  /api/v1/{family}/notice/stats:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [Stats, Notice]
       summary: Get Notice domain statistics
       operationId: getNoticeStats
@@ -336,8 +342,10 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/queue/stats:
+  /api/v1/{family}/queue/stats:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [Stats, Queue]
       summary: Get Queue domain statistics
       operationId: getQueueStats
@@ -355,8 +363,10 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/rpc/stats:
+  /api/v1/{family}/rpc/stats:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [Stats, RPC]
       summary: Get RPC domain statistics
       operationId: getRpcStats
@@ -374,8 +384,10 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/lease/stats:
+  /api/v1/{family}/lease/stats:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [Stats, Lease]
       summary: Get Lease domain statistics
       operationId: getLeaseStats
@@ -393,8 +405,10 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/schedule/stats:
+  /api/v1/{family}/schedule/stats:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [Stats, Schedule]
       summary: Get Schedule domain statistics
       operationId: getScheduleStats
@@ -412,8 +426,10 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/kv/realms:
+  /api/v1/{family}/kv/realms:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [KV]
       summary: List KV realms
       operationId: listKvRealms
@@ -425,13 +441,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RealmCollection"
-  /api/v1/kv/realms/{realm}:
+  /api/v1/{family}/kv/realms/{realm}:
     get:
       tags: [KV]
       summary: Get KV realm
       operationId: getKvRealm
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -444,13 +461,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RealmDetail"
-  /api/v1/kv/realms/{realm}/areas:
+  /api/v1/{family}/kv/realms/{realm}/areas:
     get:
       tags: [KV]
       summary: List KV areas in a realm
       operationId: listKvAreas
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -463,13 +481,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaCollection"
-  /api/v1/kv/realms/{realm}/areas/{area}:
+  /api/v1/{family}/kv/realms/{realm}/areas/{area}:
     get:
       tags: [KV]
       summary: Get KV area
       operationId: getKvArea
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -487,13 +506,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaDetail"
-  /api/v1/kv/realms/{realm}/areas/{area}/resources:
+  /api/v1/{family}/kv/realms/{realm}/areas/{area}/resources:
     get:
       tags: [KV]
       summary: List KV resources in an area
       operationId: listKvResources
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -511,7 +531,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ResourceCollection"
-  /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}:
+  /api/v1/{family}/kv/realms/{realm}/areas/{area}/resources/{resource}:
     get:
       tags: [KV]
       summary: Get KV resource
@@ -519,6 +539,7 @@ paths:
       description: Live broker-local KV resource detail. `transactions_active` counts only the current in-memory session-scoped transactions for this resource and resets on disconnect cleanup or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -541,7 +562,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/KvResourceDetail"
-  /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/value:
+  /api/v1/{family}/kv/realms/{realm}/areas/{area}/resources/{resource}/value:
     get:
       tags: [KV]
       summary: Get committed KV value
@@ -549,6 +570,7 @@ paths:
       description: Admin-only exact-key read of durable committed KV state for one explicit Route Family, realm, area, and resource. This does not expose uncommitted session transactions or historical versions.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -564,12 +586,6 @@ paths:
           required: true
           schema:
             type: string
-        - name: route_family
-          in: query
-          required: true
-          schema:
-            type: integer
-            format: int64
         - name: key
           in: query
           required: true
@@ -597,7 +613,7 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/prefix:
+  /api/v1/{family}/kv/realms/{realm}/areas/{area}/resources/{resource}/prefix:
     get:
       tags: [KV]
       summary: Scan committed KV prefix
@@ -605,6 +621,7 @@ paths:
       description: Admin-only prefix scan of durable committed KV state for one explicit Route Family, realm, area, and resource. Results are current committed key/value pairs, not a replay log or version history.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -620,12 +637,6 @@ paths:
           required: true
           schema:
             type: string
-        - name: route_family
-          in: query
-          required: true
-          schema:
-            type: integer
-            format: int64
         - name: prefix
           in: query
           required: true
@@ -662,7 +673,72 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/transactions:
+  /api/v1/{family}/kv/realms/{realm}/areas/{area}/resources/{resource}/rows:
+    get:
+      tags: [KV]
+      summary: Browse committed KV rows
+      operationId: browseKvCommittedRows
+      description: Admin-only cursor page of durable committed KV rows for one explicit Route Family, realm, area, and resource. Results are current committed key/value pairs, not a replay log or version history. The `cursor` parameter is the opaque base64 `next_cursor` from the previous response.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
+        - name: realm
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: starts_with
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: key_encoding
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [utf8, base64]
+            default: utf8
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 50
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Committed KV row page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KvRowsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/{family}/kv/realms/{realm}/areas/{area}/resources/{resource}/transactions:
     get:
       tags: [KV]
       summary: List KV transactions for a resource
@@ -670,6 +746,7 @@ paths:
       description: Live in-memory KV transaction snapshots for the current broker process. Transactions are session-scoped, disappear on disconnect or broker restart, and do not represent a durable recovery log.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -693,8 +770,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/KvTransactionsList"
 
-  /api/v1/queue/realms:
+  /api/v1/{family}/queue/realms:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [Queue]
       summary: List queue realms
       operationId: listQueueRealms
@@ -705,14 +784,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RealmCollection"
-  /api/v1/queue/realms/{realm}:
+                $ref: "#/components/schemas/QueueRealmCollection"
+  /api/v1/{family}/queue/realms/{realm}:
     get:
       tags: [Queue]
       summary: Get queue realm
       operationId: getQueueRealm
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -724,14 +804,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RealmDetail"
-  /api/v1/queue/realms/{realm}/areas:
+                $ref: "#/components/schemas/QueueRealmDetail"
+  /api/v1/{family}/queue/realms/{realm}/areas:
     get:
       tags: [Queue]
       summary: List queue areas
       operationId: listQueueAreas
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -743,14 +824,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AreaCollection"
-  /api/v1/queue/realms/{realm}/areas/{area}:
+                $ref: "#/components/schemas/QueueAreaCollection"
+  /api/v1/{family}/queue/realms/{realm}/areas/{area}:
     get:
       tags: [Queue]
       summary: Get queue area
       operationId: getQueueArea
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -767,14 +849,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AreaDetail"
-  /api/v1/queue/realms/{realm}/areas/{area}/resources:
+                $ref: "#/components/schemas/QueueAreaDetail"
+  /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources:
     get:
       tags: [Queue]
       summary: List queues in an area
       operationId: listQueueResources
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -791,8 +874,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ResourceCollection"
-  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}:
+                $ref: "#/components/schemas/QueueResourceCollection"
+  /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}:
     get:
       tags: [Queue]
       summary: Get queue resource
@@ -800,6 +883,7 @@ paths:
       description: Point-in-time warm-actor Queue detail for the current broker process. Counts are refreshed from live in-memory queue actors only and can disappear after idle eviction or broker restart until traffic rehydrates that queue.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -822,7 +906,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QueueResourceDetail"
-  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/inflight:
+  /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/inflight:
     get:
       tags: [Queue]
       summary: List queue inflight entries for a resource
@@ -830,6 +914,7 @@ paths:
       description: Live in-memory queue inflight entries for the current broker process only. Inflight ownership, tokens, and session IDs disappear on disconnect cleanup, idle actor eviction, or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -853,7 +938,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/QueueInflightList"
 
-  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters:
+  /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters:
     get:
       tags: [Queue]
       summary: List queue dead-letter entries for a resource
@@ -861,6 +946,7 @@ paths:
       description: Live in-memory dead-letter rows for the current broker process. Rows remain durably stored, but this view only reflects queue actors currently warm on this broker.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -876,12 +962,6 @@ paths:
           required: true
           schema:
             type: string
-        - name: family
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
       responses:
         "200":
           description: Queue dead-letter entries
@@ -894,7 +974,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}/replay:
+  /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}/replay:
     post:
       tags: [Queue]
       summary: Replay a queue dead-letter entry
@@ -902,6 +982,7 @@ paths:
       description: Replays a retained dead-letter row using the current broker-local queue family.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -919,12 +1000,6 @@ paths:
             type: string
         - name: message_id
           in: path
-          required: true
-          schema:
-            type: integer
-            format: int64
-        - name: family
-          in: query
           required: true
           schema:
             type: integer
@@ -941,7 +1016,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}:
+  /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-letters/{message_id}:
     delete:
       tags: [Queue]
       summary: Purge a queue dead-letter entry
@@ -949,6 +1024,7 @@ paths:
       description: Deletes a retained dead-letter row using the current broker-local queue family.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -970,12 +1046,6 @@ paths:
           schema:
             type: integer
             format: int64
-        - name: family
-          in: query
-          required: true
-          schema:
-            type: integer
-            format: int64
       responses:
         "204":
           description: Dead-letter row purged
@@ -988,8 +1058,10 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/stream/realms:
+  /api/v1/{family}/stream/realms:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [Stream]
       summary: List stream realms
       operationId: listStreamRealms
@@ -1001,13 +1073,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RealmCollection"
-  /api/v1/stream/realms/{realm}:
+  /api/v1/{family}/stream/realms/{realm}:
     get:
       tags: [Stream]
       summary: Get stream realm
       operationId: getStreamRealm
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1020,13 +1093,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RealmDetail"
-  /api/v1/stream/realms/{realm}/areas:
+  /api/v1/{family}/stream/realms/{realm}/areas:
     get:
       tags: [Stream]
       summary: List stream areas
       operationId: listStreamAreas
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1039,13 +1113,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaCollection"
-  /api/v1/stream/realms/{realm}/areas/{area}:
+  /api/v1/{family}/stream/realms/{realm}/areas/{area}:
     get:
       tags: [Stream]
       summary: Get stream area
       operationId: getStreamArea
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1063,7 +1138,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaDetail"
-  /api/v1/stream/realms/{realm}/areas/{area}/resources:
+  /api/v1/{family}/stream/realms/{realm}/areas/{area}/resources:
     get:
       tags: [Stream]
       summary: List streams in an area
@@ -1071,6 +1146,7 @@ paths:
       description: Lists committed stream resources known from durable stream metadata for the selected area. Resources remain visible after broker restart even when no append session is currently active.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1088,7 +1164,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ResourceCollection"
-  /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}:
+  /api/v1/{family}/stream/realms/{realm}/areas/{area}/resources/{resource}:
     get:
       tags: [Stream]
       summary: Get stream resource
@@ -1096,6 +1172,7 @@ paths:
       description: Returns durable committed stream metadata for this resource plus the current broker process's live append-session count. `sessions_active` resets on disconnect cleanup or broker restart; consumer cursors are client-managed and not stored here.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1119,7 +1196,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/StreamResourceDetail"
 
-  /api/v1/stream/search:
+  /api/v1/{family}/stream/search:
     get:
       tags: [Stream]
       summary: Search committed stream records
@@ -1127,7 +1204,7 @@ paths:
       description: Route-family scoped read-only search over committed stream records. A discriminator or q value is treated as an exact stream discriminator filter; this does not re-deliver events.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RouteFamilyQuery"
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: query
           required: false
@@ -1185,7 +1262,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}/records:
+  /api/v1/{family}/stream/realms/{realm}/areas/{area}/resources/{resource}/records:
     get:
       tags: [Stream]
       summary: Read committed stream records
@@ -1193,10 +1270,10 @@ paths:
       description: Route-family scoped read-only range over committed stream records for replay preview/export. This endpoint does not re-publish or re-enqueue events.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - $ref: "#/components/parameters/RealmPath"
         - $ref: "#/components/parameters/AreaPath"
         - $ref: "#/components/parameters/ResourcePath"
-        - $ref: "#/components/parameters/RouteFamilyQuery"
         - name: from_offset
           in: query
           required: false
@@ -1239,13 +1316,14 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/stream/realms/{realm}/watermarks:
+  /api/v1/{family}/stream/realms/{realm}/watermarks:
     get:
       tags: [Stream]
       summary: Get stream realm watermarks
       operationId: getStreamRealmWatermarks
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1263,13 +1341,14 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/stream/realms/{realm}/areas/{area}/watermarks:
+  /api/v1/{family}/stream/realms/{realm}/areas/{area}/watermarks:
     get:
       tags: [Stream]
       summary: Get stream area watermarks
       operationId: getStreamAreaWatermarks
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1292,8 +1371,10 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/lease/realms:
+  /api/v1/{family}/lease/realms:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [Lease]
       summary: List lease realms
       operationId: listLeaseRealms
@@ -1305,13 +1386,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RealmCollection"
-  /api/v1/lease/realms/{realm}:
+  /api/v1/{family}/lease/realms/{realm}:
     get:
       tags: [Lease]
       summary: Get lease realm
       operationId: getLeaseRealm
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1324,13 +1406,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RealmDetail"
-  /api/v1/lease/realms/{realm}/areas:
+  /api/v1/{family}/lease/realms/{realm}/areas:
     get:
       tags: [Lease]
       summary: List lease areas
       operationId: listLeaseAreas
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1343,13 +1426,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaCollection"
-  /api/v1/lease/realms/{realm}/areas/{area}:
+  /api/v1/{family}/lease/realms/{realm}/areas/{area}:
     get:
       tags: [Lease]
       summary: Get lease area
       operationId: getLeaseArea
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1367,13 +1451,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaDetail"
-  /api/v1/lease/realms/{realm}/areas/{area}/resources:
+  /api/v1/{family}/lease/realms/{realm}/areas/{area}/resources:
     get:
       tags: [Lease]
       summary: List lease resources
       operationId: listLeaseResources
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1391,7 +1476,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ResourceCollection"
-  /api/v1/lease/realms/{realm}/areas/{area}/resources/{resource}:
+  /api/v1/{family}/lease/realms/{realm}/areas/{area}/resources/{resource}:
     get:
       tags: [Lease]
       summary: Get lease resource
@@ -1399,6 +1484,7 @@ paths:
       description: Live broker-local lease resource detail. `active_leases` counts only the current in-memory leases for this resource on the running broker process and resets on disconnect cleanup or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1422,7 +1508,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/LeaseResourceDetail"
 
-  /api/v1/lease/search:
+  /api/v1/{family}/lease/search:
     get:
       tags: [Lease]
       summary: Search live lease ownership and waiters
@@ -1430,7 +1516,7 @@ paths:
       description: Route-family scoped broker-local search over current lease owners and waiting acquires. Results are ephemeral and reset on disconnect cleanup or broker restart.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RouteFamilyQuery"
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: query
           required: false
@@ -1482,8 +1568,10 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/schedule/realms:
+  /api/v1/{family}/schedule/realms:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [Schedule]
       summary: List schedule realms
       operationId: listScheduleRealms
@@ -1496,13 +1584,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RealmCollection"
-  /api/v1/schedule/realms/{realm}:
+  /api/v1/{family}/schedule/realms/{realm}:
     get:
       tags: [Schedule]
       summary: Get schedule realm
       operationId: getScheduleRealm
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1515,13 +1604,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RealmDetail"
-  /api/v1/schedule/realms/{realm}/areas:
+  /api/v1/{family}/schedule/realms/{realm}/areas:
     get:
       tags: [Schedule]
       summary: List schedule areas
       operationId: listScheduleAreas
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1534,13 +1624,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaCollection"
-  /api/v1/schedule/realms/{realm}/areas/{area}:
+  /api/v1/{family}/schedule/realms/{realm}/areas/{area}:
     get:
       tags: [Schedule]
       summary: Get schedule area
       operationId: getScheduleArea
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1558,13 +1649,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaDetail"
-  /api/v1/schedule/realms/{realm}/areas/{area}/resources:
+  /api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources:
     get:
       tags: [Schedule]
       summary: List schedule resources
       operationId: listScheduleResources
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1582,7 +1674,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ResourceCollection"
-  /api/v1/schedule/realms/{realm}/areas/{area}/resources/{resource}:
+  /api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources/{resource}:
     get:
       tags: [Schedule]
       summary: Get schedule resource
@@ -1590,6 +1682,7 @@ paths:
       description: Returns durable schedule definitions for this resource as seen by the current broker after boot preload. Schedule notifications remain live, session-scoped delivery only.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1613,7 +1706,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScheduleResourceDetail"
 
-  /api/v1/schedule/missed:
+  /api/v1/{family}/schedule/missed:
     get:
       tags: [Schedule]
       summary: Search pending schedule handoffs
@@ -1621,7 +1714,7 @@ paths:
       description: Route-family scoped view of persisted pending fire claims that have been claimed for live handoff but not yet acknowledged. This is schedule handoff evidence, not downstream execution success history.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RouteFamilyQuery"
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: query
           required: false
@@ -1662,7 +1755,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/schedule/realms/{realm}/areas/{area}/resources/{resource}/executions:
+  /api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources/{resource}/executions:
     get:
       tags: [Schedule]
       summary: List schedule execution observations
@@ -1670,10 +1763,10 @@ paths:
       description: Route-family scoped observations from persisted schedule definitions and acknowledged live handoffs. This is not a downstream job execution log.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - $ref: "#/components/parameters/RealmPath"
         - $ref: "#/components/parameters/AreaPath"
         - $ref: "#/components/parameters/ResourcePath"
-        - $ref: "#/components/parameters/RouteFamilyQuery"
         - name: limit
           in: query
           required: false
@@ -1699,8 +1792,10 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/notice/realms:
+  /api/v1/{family}/notice/realms:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [Notice]
       summary: List notice realms
       operationId: listNoticeRealms
@@ -1713,7 +1808,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/RealmCollection"
 
-  /api/v1/notice/deliveries:
+  /api/v1/{family}/notice/deliveries:
     get:
       tags: [Notice]
       summary: Search live notice delivery evidence
@@ -1721,7 +1816,7 @@ paths:
       description: Route-family scoped broker-local view of active subscriptions, delivered notification counters, and publish counters. Notice remains ephemeral fanout with no replayable delivery history.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RouteFamilyQuery"
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: query
           required: false
@@ -1766,13 +1861,14 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /api/v1/notice/realms/{realm}:
+  /api/v1/{family}/notice/realms/{realm}:
     get:
       tags: [Notice]
       summary: Get notice realm
       operationId: getNoticeRealm
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1785,13 +1881,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RealmDetail"
-  /api/v1/notice/realms/{realm}/areas:
+  /api/v1/{family}/notice/realms/{realm}/areas:
     get:
       tags: [Notice]
       summary: List notice areas
       operationId: listNoticeAreas
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1804,13 +1901,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaCollection"
-  /api/v1/notice/realms/{realm}/areas/{area}:
+  /api/v1/{family}/notice/realms/{realm}/areas/{area}:
     get:
       tags: [Notice]
       summary: Get notice area
       operationId: getNoticeArea
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1828,13 +1926,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaDetail"
-  /api/v1/notice/realms/{realm}/areas/{area}/resources:
+  /api/v1/{family}/notice/realms/{realm}/areas/{area}/resources:
     get:
       tags: [Notice]
       summary: List notice resources
       operationId: listNoticeResources
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1852,13 +1951,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ResourceCollection"
-  /api/v1/notice/realms/{realm}/areas/{area}/resources/{resource}:
+  /api/v1/{family}/notice/realms/{realm}/areas/{area}/resources/{resource}:
     get:
       tags: [Notice]
       summary: Get notice resource
       operationId: getNoticeResource
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1881,13 +1981,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NoticeResourceDetail"
-  /api/v1/notice/realms/{realm}/areas/{area}/resources/{resource}/subscriptions:
+  /api/v1/{family}/notice/realms/{realm}/areas/{area}/resources/{resource}/subscriptions:
     get:
       tags: [Notice]
       summary: List notice subscriptions for a resource
       operationId: listNoticeSubscriptions
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1911,8 +2012,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/NoticeSubscriptionsList"
 
-  /api/v1/rpc/realms:
+  /api/v1/{family}/rpc/realms:
     get:
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
       tags: [RPC]
       summary: List RPC realms
       operationId: listRpcRealms
@@ -1924,13 +2027,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RealmCollection"
-  /api/v1/rpc/realms/{realm}:
+  /api/v1/{family}/rpc/realms/{realm}:
     get:
       tags: [RPC]
       summary: Get RPC realm
       operationId: getRpcRealm
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1943,13 +2047,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RealmDetail"
-  /api/v1/rpc/realms/{realm}/areas:
+  /api/v1/{family}/rpc/realms/{realm}/areas:
     get:
       tags: [RPC]
       summary: List RPC areas
       operationId: listRpcAreas
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1962,13 +2067,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaCollection"
-  /api/v1/rpc/realms/{realm}/areas/{area}:
+  /api/v1/{family}/rpc/realms/{realm}/areas/{area}:
     get:
       tags: [RPC]
       summary: Get RPC area
       operationId: getRpcArea
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -1986,13 +2092,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AreaDetail"
-  /api/v1/rpc/realms/{realm}/areas/{area}/resources:
+  /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources:
     get:
       tags: [RPC]
       summary: List RPC resources
       operationId: listRpcResources
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2010,13 +2117,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ResourceCollection"
-  /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}:
+  /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}:
     get:
       tags: [RPC]
       summary: Get RPC resource
       operationId: getRpcResource
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2039,13 +2147,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OperationCollection"
-  /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations:
+  /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations:
     get:
       tags: [RPC]
       summary: List RPC operations
       operationId: listRpcOperations
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2068,13 +2177,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OperationCollection"
-  /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}:
+  /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}:
     get:
       tags: [RPC]
       summary: Get RPC operation
       operationId: getRpcOperation
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2102,13 +2212,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RpcOperationDetail"
-  /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}/workers:
+  /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}/workers:
     get:
       tags: [RPC]
       summary: List RPC workers for an operation
       operationId: listRpcOperationWorkers
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2140,7 +2251,7 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /api/v1/rpc/calls:
+  /api/v1/{family}/rpc/calls:
     get:
       tags: [RPC]
       summary: Search live RPC call evidence
@@ -2148,7 +2259,7 @@ paths:
       description: Route-family scoped broker-local view of pending requests and live worker registrations. RPC remains live request/response state, not a durable call history.
       security: [{ sessionCookie: [] }]
       parameters:
-        - $ref: "#/components/parameters/RouteFamilyQuery"
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: query
           required: false
@@ -2203,13 +2314,14 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /api/v1/rpc/pending:
+  /api/v1/{family}/rpc/pending:
     get:
       tags: [RPC]
       summary: List pending RPC requests
       operationId: listRpcPendingRequests
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: query
           required: false
@@ -2227,7 +2339,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/events:
+  /api/v1/{family}/kv/realms/{realm}/areas/{area}/resources/{resource}/events:
     get:
       tags: [KV]
       summary: Get KV resource events
@@ -2235,6 +2347,7 @@ paths:
       description: Bounded recent KV transitions and observations for a single resource on the current broker process.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2273,7 +2386,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/kv/realms/{realm}/areas/{area}/resources/{resource}/compare:
+  /api/v1/{family}/kv/realms/{realm}/areas/{area}/resources/{resource}/compare:
     get:
       tags: [KV]
       summary: Compare KV resource snapshots
@@ -2281,6 +2394,7 @@ paths:
       description: Compare the current KV resource against another scoped KV resource snapshot.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2325,7 +2439,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/events:
+  /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/events:
     get:
       tags: [Queue]
       summary: Get queue resource events
@@ -2333,6 +2447,7 @@ paths:
       description: Bounded recent queue transitions, failures, retries, and ownership changes for a single resource on the current broker process.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2348,12 +2463,6 @@ paths:
           required: true
           schema:
             type: string
-        - name: family
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
         - name: limit
           in: query
           required: false
@@ -2377,7 +2486,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/compare:
+  /api/v1/{family}/queue/realms/{realm}/areas/{area}/resources/{resource}/compare:
     get:
       tags: [Queue]
       summary: Compare queue resource snapshots
@@ -2385,6 +2494,7 @@ paths:
       description: Compare the current queue resource against another scoped queue resource snapshot.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2400,12 +2510,6 @@ paths:
           required: true
           schema:
             type: string
-        - name: family
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
         - name: against_realm
           in: query
           required: true
@@ -2441,7 +2545,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}/events:
+  /api/v1/{family}/stream/realms/{realm}/areas/{area}/resources/{resource}/events:
     get:
       tags: [Stream]
       summary: Get stream resource events
@@ -2449,6 +2553,7 @@ paths:
       description: Bounded recent stream observations and transitions for a single resource on the current broker process.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2487,7 +2592,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}/compare:
+  /api/v1/{family}/stream/realms/{realm}/areas/{area}/resources/{resource}/compare:
     get:
       tags: [Stream]
       summary: Compare stream resource snapshots
@@ -2495,6 +2600,7 @@ paths:
       description: Compare the current stream resource against another scoped stream resource snapshot.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2539,7 +2645,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/lease/realms/{realm}/areas/{area}/resources/{resource}/events:
+  /api/v1/{family}/lease/realms/{realm}/areas/{area}/resources/{resource}/events:
     get:
       tags: [Lease]
       summary: Get lease resource events
@@ -2547,6 +2653,7 @@ paths:
       description: Bounded recent lease observations and ownership changes for a single resource on the current broker process.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2585,7 +2692,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/lease/realms/{realm}/areas/{area}/resources/{resource}/compare:
+  /api/v1/{family}/lease/realms/{realm}/areas/{area}/resources/{resource}/compare:
     get:
       tags: [Lease]
       summary: Compare lease resource snapshots
@@ -2593,6 +2700,7 @@ paths:
       description: Compare the current lease resource against another scoped lease resource snapshot.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2637,7 +2745,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/schedule/realms/{realm}/areas/{area}/resources/{resource}/events:
+  /api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources/{resource}/events:
     get:
       tags: [Schedule]
       summary: Get schedule resource events
@@ -2645,6 +2753,7 @@ paths:
       description: Bounded recent schedule observations and state flips for a single resource on the current broker process.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2683,7 +2792,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/schedule/realms/{realm}/areas/{area}/resources/{resource}/compare:
+  /api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources/{resource}/compare:
     get:
       tags: [Schedule]
       summary: Compare schedule resource snapshots
@@ -2691,6 +2800,7 @@ paths:
       description: Compare the current schedule resource against another scoped schedule resource snapshot.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2735,7 +2845,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/notice/realms/{realm}/areas/{area}/resources/{resource}/events:
+  /api/v1/{family}/notice/realms/{realm}/areas/{area}/resources/{resource}/events:
     get:
       tags: [Notice]
       summary: Get notice resource events
@@ -2743,6 +2853,7 @@ paths:
       description: Bounded recent notice registrations, observations, and delivery-related transitions for a single resource on the current broker process.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2781,7 +2892,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/notice/realms/{realm}/areas/{area}/resources/{resource}/compare:
+  /api/v1/{family}/notice/realms/{realm}/areas/{area}/resources/{resource}/compare:
     get:
       tags: [Notice]
       summary: Compare notice resource snapshots
@@ -2789,6 +2900,7 @@ paths:
       description: Compare the current notice resource against another scoped notice resource snapshot.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2833,7 +2945,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/events:
+  /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}/events:
     get:
       tags: [RPC]
       summary: Get RPC resource events
@@ -2841,6 +2953,7 @@ paths:
       description: Bounded recent RPC registrations, pending-request transitions, and worker observations for a single resource on the current broker process.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2879,7 +2992,7 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
-  /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/compare:
+  /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}/compare:
     get:
       tags: [RPC]
       summary: Compare RPC resource snapshots
@@ -2887,6 +3000,7 @@ paths:
       description: Compare the current RPC resource against another scoped RPC resource snapshot.
       security: [{ sessionCookie: [] }]
       parameters:
+        - $ref: "#/components/parameters/FamilyPath"
         - name: realm
           in: path
           required: true
@@ -2940,6 +3054,13 @@ components:
       description: Admin session JWT cookie issued by `POST /api/v1/session`.
 
   parameters:
+    FamilyPath:
+      name: family
+      in: path
+      required: true
+      description: Route family id, or `all` for endpoints that support cross-family admin views.
+      schema:
+        type: string
     RealmPath:
       name: realm
       in: path
@@ -3842,7 +3963,6 @@ components:
           transactions_active,
           keys_total,
           commits_failed_total,
-          rollbacks_total,
           invalid_transaction_rejects_total,
           operations_per_second,
           diagnostics,
@@ -3853,9 +3973,6 @@ components:
         keys_total:
           type: integer
         commits_failed_total:
-          type: integer
-          format: int64
-        rollbacks_total:
           type: integer
           format: int64
         invalid_transaction_rejects_total:
@@ -4462,6 +4579,24 @@ components:
       properties:
         resource:
           type: string
+        estimated_record_count:
+          type: integer
+          format: int64
+        estimated_storage_bytes:
+          type: integer
+          format: int64
+        estimate_complete:
+          type: boolean
+        read_latency_avg_ms:
+          type: number
+        read_latency_p95_ms:
+          type: number
+        write_latency_avg_ms:
+          type: number
+        write_latency_p95_ms:
+          type: number
+        transactions_active:
+          type: integer
     ResourceCollection:
       type: object
       required: [realm, area, resources]
@@ -4475,14 +4610,288 @@ components:
           items:
             $ref: "#/components/schemas/ResourceEntry"
 
-    KvResourceDetail:
+    QueueRealmCollection:
       type: object
-      description: Durable KV committed data exists separately from this admin view. This resource detail describes only the current broker process's live in-memory transaction activity for the resource. `transactions_active` counts active session-scoped transactions and resets after disconnect cleanup or broker restart.
-      required: [realm, area, resource, transactions_active, diagnostics]
+      description: Point-in-time warm-actor Queue realm rollups for the current broker process.
+      required: [realms]
+      properties:
+        realms:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueueRealmEntry"
+    QueueRealmEntry:
+      type: object
+      required:
+        [
+          realm,
+          area_count,
+          queue_count,
+          subscriptions_active,
+          messages_ready,
+          messages_delayed,
+          messages_inflight,
+          messages_dead_lettered,
+          messages_total,
+          oldest_backlog_age_seconds,
+          enqueue_success_total,
+          complete_success_total,
+          in_rate_per_second,
+          out_rate_per_second,
+          status,
+        ]
+      properties:
+        realm: { type: string }
+        area_count: { type: integer }
+        queue_count: { type: integer }
+        subscriptions_active:
+          type: integer
+          description: Active queue watch subscriptions matching queues in this rollup.
+        messages_ready: { type: integer }
+        messages_delayed: { type: integer }
+        messages_inflight: { type: integer }
+        messages_dead_lettered: { type: integer }
+        messages_total: { type: integer }
+        oldest_backlog_age_seconds: { type: integer }
+        enqueue_success_total: { type: integer, format: int64 }
+        complete_success_total: { type: integer, format: int64 }
+        in_rate_per_second: { type: number }
+        out_rate_per_second: { type: number }
+        status:
+          type: string
+          enum: [idle, draining, backlogged, falling_behind]
+    QueueRealmDetail:
+      type: object
+      required:
+        [
+          realm,
+          area_count,
+          queue_count,
+          subscriptions_active,
+          messages_ready,
+          messages_delayed,
+          messages_inflight,
+          messages_dead_lettered,
+          messages_total,
+          oldest_backlog_age_seconds,
+          enqueue_success_total,
+          complete_success_total,
+          in_rate_per_second,
+          out_rate_per_second,
+          status,
+          areas,
+          queues,
+        ]
+      properties:
+        realm: { type: string }
+        area_count: { type: integer }
+        queue_count: { type: integer }
+        subscriptions_active: { type: integer }
+        messages_ready: { type: integer }
+        messages_delayed: { type: integer }
+        messages_inflight: { type: integer }
+        messages_dead_lettered: { type: integer }
+        messages_total: { type: integer }
+        oldest_backlog_age_seconds: { type: integer }
+        enqueue_success_total: { type: integer, format: int64 }
+        complete_success_total: { type: integer, format: int64 }
+        in_rate_per_second: { type: number }
+        out_rate_per_second: { type: number }
+        status:
+          type: string
+          enum: [idle, draining, backlogged, falling_behind]
+        areas:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueueAreaEntry"
+        queues:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueueResourceEntry"
+    QueueAreaCollection:
+      type: object
+      required: [realm, areas]
+      properties:
+        realm: { type: string }
+        areas:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueueAreaEntry"
+    QueueAreaEntry:
+      type: object
+      required:
+        [
+          realm,
+          area,
+          queue_count,
+          subscriptions_active,
+          messages_ready,
+          messages_delayed,
+          messages_inflight,
+          messages_dead_lettered,
+          messages_total,
+          oldest_backlog_age_seconds,
+          enqueue_success_total,
+          complete_success_total,
+          in_rate_per_second,
+          out_rate_per_second,
+          status,
+        ]
+      properties:
+        realm: { type: string }
+        area: { type: string }
+        queue_count: { type: integer }
+        subscriptions_active: { type: integer }
+        messages_ready: { type: integer }
+        messages_delayed: { type: integer }
+        messages_inflight: { type: integer }
+        messages_dead_lettered: { type: integer }
+        messages_total: { type: integer }
+        oldest_backlog_age_seconds: { type: integer }
+        enqueue_success_total: { type: integer, format: int64 }
+        complete_success_total: { type: integer, format: int64 }
+        in_rate_per_second: { type: number }
+        out_rate_per_second: { type: number }
+        status:
+          type: string
+          enum: [idle, draining, backlogged, falling_behind]
+    QueueAreaDetail:
+      type: object
+      required:
+        [
+          realm,
+          area,
+          queue_count,
+          subscriptions_active,
+          messages_ready,
+          messages_delayed,
+          messages_inflight,
+          messages_dead_lettered,
+          messages_total,
+          oldest_backlog_age_seconds,
+          enqueue_success_total,
+          complete_success_total,
+          in_rate_per_second,
+          out_rate_per_second,
+          status,
+          queues,
+        ]
+      properties:
+        realm: { type: string }
+        area: { type: string }
+        queue_count: { type: integer }
+        subscriptions_active: { type: integer }
+        messages_ready: { type: integer }
+        messages_delayed: { type: integer }
+        messages_inflight: { type: integer }
+        messages_dead_lettered: { type: integer }
+        messages_total: { type: integer }
+        oldest_backlog_age_seconds: { type: integer }
+        enqueue_success_total: { type: integer, format: int64 }
+        complete_success_total: { type: integer, format: int64 }
+        in_rate_per_second: { type: number }
+        out_rate_per_second: { type: number }
+        status:
+          type: string
+          enum: [idle, draining, backlogged, falling_behind]
+        queues:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueueResourceEntry"
+    QueueResourceCollection:
+      type: object
+      required: [realm, area, resources]
+      properties:
+        realm: { type: string }
+        area: { type: string }
+        resources:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueueResourceEntry"
+    QueueResourceEntry:
+      type: object
+      description: Queue row rollup for one realm/area/resource path. Fields are warm-actor current-process admin visibility, not a durable queue inventory guarantee.
+      required:
+        [
+          realm,
+          area,
+          resource,
+          family_count,
+          subscriptions_active,
+          messages_ready,
+          messages_delayed,
+          messages_inflight,
+          messages_dead_lettered,
+          messages_total,
+          oldest_backlog_age_seconds,
+          enqueue_success_total,
+          complete_success_total,
+          in_rate_per_second,
+          out_rate_per_second,
+          status,
+        ]
       properties:
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
+        family_count:
+          type: integer
+          description: Number of route-family rows currently warm for this queue path.
+        subscriptions_active: { type: integer }
+        messages_ready: { type: integer }
+        messages_delayed: { type: integer }
+        messages_inflight: { type: integer }
+        messages_dead_lettered: { type: integer }
+        messages_total: { type: integer }
+        oldest_backlog_age_seconds: { type: integer }
+        enqueue_success_total: { type: integer, format: int64 }
+        complete_success_total: { type: integer, format: int64 }
+        in_rate_per_second: { type: number }
+        out_rate_per_second: { type: number }
+        status:
+          type: string
+          enum: [idle, draining, backlogged, falling_behind]
+
+    KvResourceDetail:
+      type: object
+      description: KV resource inventory and live broker-local transaction activity for one resource scope.
+      required:
+        [
+          realm,
+          area,
+          resource,
+          estimated_record_count,
+          estimated_storage_bytes,
+          estimate_complete,
+          read_latency_avg_ms,
+          read_latency_p95_ms,
+          write_latency_avg_ms,
+          write_latency_p95_ms,
+          transactions_active,
+          diagnostics,
+        ]
+      properties:
+        route_family:
+          type: [integer, "null"]
+          format: int64
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        estimated_record_count:
+          type: integer
+          format: int64
+        estimated_storage_bytes:
+          type: integer
+          format: int64
+        estimate_complete:
+          type: boolean
+        read_latency_avg_ms:
+          type: number
+        read_latency_p95_ms:
+          type: number
+        write_latency_avg_ms:
+          type: number
+        write_latency_p95_ms:
+          type: number
         transactions_active:
           type: integer
           description: Broker-local count of active in-memory KV transactions for this resource. This is not a durable recovery handle and resets on disconnect cleanup or broker restart.
@@ -4545,6 +4954,31 @@ components:
           $ref: "#/components/schemas/KvByteValue"
         limit:
           type: integer
+        has_more:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/KvCommittedPair"
+
+    KvRowsResponse:
+      type: object
+      description: Cursor page of durable committed KV rows for one explicit Route Family and resource scope.
+      required: [route_family, realm, area, resource, starts_with, limit, next_cursor, has_more, items]
+      properties:
+        route_family:
+          type: integer
+          format: int64
+        realm: { type: string }
+        area: { type: string }
+        resource: { type: string }
+        starts_with:
+          $ref: "#/components/schemas/KvByteValue"
+        limit:
+          type: integer
+        next_cursor:
+          type: [string, "null"]
+          description: Opaque base64 cursor for the next page.
         has_more:
           type: boolean
         items:
@@ -4895,6 +5329,7 @@ components:
           realm,
           area,
           resource,
+          subscriptions_active,
           messages_ready,
           messages_delayed,
           messages_inflight,
@@ -4904,12 +5339,20 @@ components:
           oldest_backlog_age_seconds,
           backlog_age_buckets,
           delay_age_buckets,
+          enqueue_success_total,
+          complete_success_total,
+          in_rate_per_second,
+          out_rate_per_second,
+          status,
           diagnostics,
         ]
       properties:
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
+        subscriptions_active:
+          type: integer
+          description: Active queue watch subscriptions matching this queue.
         messages_ready: { type: integer }
         messages_delayed: { type: integer }
         messages_inflight: { type: integer }
@@ -4923,6 +5366,21 @@ components:
           $ref: "#/components/schemas/QueueAgeBuckets"
         delay_age_buckets:
           $ref: "#/components/schemas/QueueAgeBuckets"
+        enqueue_success_total:
+          type: integer
+          format: int64
+        complete_success_total:
+          type: integer
+          format: int64
+        in_rate_per_second:
+          type: number
+          description: Successful enqueues per second observed in the current warm actor window.
+        out_rate_per_second:
+          type: number
+          description: Successful completes per second observed in the current warm actor window.
+        status:
+          type: string
+          enum: [idle, draining, backlogged, falling_behind]
         diagnostics:
           $ref: "#/components/schemas/DiagnosticSnapshot"
 

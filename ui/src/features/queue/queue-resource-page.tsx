@@ -14,8 +14,8 @@ import {
   VirtualTable,
   type VirtualTableColumn,
 } from "@askrjs/ui";
-import { Button } from "@askrjs/themes/controls";
-import { Flex, Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/components";
+import { Inline, Stack } from "@askrjs/themes/components";
 import {
   Badge,
   Card,
@@ -23,7 +23,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@askrjs/themes/surfaces";
+} from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -50,7 +50,7 @@ import type {
   QueueResourceRef,
   QueueResourceTimelineEvent,
 } from "@/features/queue/queue-resource-models";
-import { domainResourceHref } from "@/shared/navigation/domains";
+import { domainHref, domainResourceHref } from "@/shared/navigation/domains";
 
 interface QueueComparisonTarget {
   area: string;
@@ -104,6 +104,23 @@ function humanizeSeconds(seconds: number) {
 
   const hours = Math.floor(minutes / 60);
   return `${hours}h`;
+}
+
+function formatRate(value: number) {
+  return value.toFixed(2);
+}
+
+function formatStatus(status: QueueResourceDetail["status"]) {
+  switch (status) {
+    case "falling_behind":
+      return "Falling behind";
+    case "backlogged":
+      return "Backlogged";
+    case "draining":
+      return "Draining";
+    case "idle":
+      return "Idle";
+  }
 }
 
 function formatTimelineKind(kind: string) {
@@ -494,7 +511,7 @@ export default function QueueResourcePage() {
     ],
     footer: (
       <Stack gap="3">
-        <Link href="/queue">Back to Queue</Link>
+        <Link href={domainHref("queue")}>Back to Queue</Link>
         <Button onPress={() => resourceQuery.refresh()}>Refresh</Button>
       </Stack>
     ),
@@ -596,7 +613,7 @@ export default function QueueResourcePage() {
         <DomainHeader
           eyebrow="Queue resource"
           title="Queue resource inspection"
-          description={`${scopeLabel}. Inspect live and historical signals for this queue resource.`}
+          description={`${scopeLabel}. Inspect current backlog, inflight ownership, dead-letter actions, and broker-observed transitions for this queue resource.`}
           primaryAction={{
             label: "Refresh resource",
             onPress: () => resourceQuery.refresh(),
@@ -621,7 +638,7 @@ export default function QueueResourcePage() {
         <Stack gap="3">
           <DomainMetricTable
             title="Current values"
-            description="Point-in-time queue counters for this scope."
+            description="Point-in-time durable backlog and live reservation counters for this scope."
             metrics={[
               { label: "Ready", value: current.detail.messagesReady },
               {
@@ -631,6 +648,7 @@ export default function QueueResourcePage() {
                   current.detail.messagesDelayed > 0 ? "Delayed messages visible" : undefined,
               },
               { label: "Inflight", value: current.detail.messagesInflight },
+              { label: "Subscriptions", value: current.detail.subscriptionsActive },
               {
                 label: "Dead letters",
                 value: current.detail.messagesDeadLettered,
@@ -640,6 +658,14 @@ export default function QueueResourcePage() {
                     : undefined,
               },
               { label: "Total messages", value: current.detail.messagesTotal },
+              { label: "In / sec", value: formatRate(current.detail.inRatePerSecond) },
+              { label: "Out / sec", value: formatRate(current.detail.outRatePerSecond) },
+              { label: "Status", value: formatStatus(current.detail.status) },
+              {
+                label: "Oldest backlog",
+                value: humanizeSeconds(current.detail.oldestBacklogAgeSeconds),
+                caption: "Ready and delayed messages",
+              },
               {
                 label: "Oldest age",
                 value: humanizeSeconds(current.detail.oldestMessageAgeSeconds),
@@ -710,7 +736,7 @@ export default function QueueResourcePage() {
 
                   {compareHint ? <p class="domain-muted">{compareHint}</p> : null}
 
-                  <Flex gap="2" wrap="wrap">
+                  <Inline gap="2" wrap="wrap">
                     <Button type="submit" disabled={!compareTargetReady}>
                       Compare scope
                     </Button>
@@ -727,7 +753,7 @@ export default function QueueResourcePage() {
                     >
                       Clear comparison
                     </Button>
-                  </Flex>
+                  </Inline>
                 </form>
 
                 {compareTarget ? (
@@ -747,7 +773,7 @@ export default function QueueResourcePage() {
 
           <Card variant="raised">
             <CardHeader>
-              <Flex justify="between" gap="3" align="start" wrap="wrap">
+              <Inline justify="between" gap="3" align="start" wrap="wrap">
                 <Stack gap="1">
                   <CardTitle>Inflight</CardTitle>
                   <CardDescription>
@@ -755,7 +781,7 @@ export default function QueueResourcePage() {
                   </CardDescription>
                 </Stack>
                 <Badge variant="info">{current.inflight.length} entries</Badge>
-              </Flex>
+              </Inline>
             </CardHeader>
 
             <CardContent>
@@ -769,7 +795,7 @@ export default function QueueResourcePage() {
 
           <Card variant="raised">
             <CardHeader>
-              <Flex justify="between" gap="3" align="start" wrap="wrap">
+              <Inline justify="between" gap="3" align="start" wrap="wrap">
                 <Stack gap="1">
                   <CardTitle>Dead letters</CardTitle>
                   <CardDescription>
@@ -779,7 +805,7 @@ export default function QueueResourcePage() {
                 <Badge variant={current.deadLetters.length > 0 ? "warning" : "success"}>
                   {current.deadLetters.length} messages
                 </Badge>
-              </Flex>
+              </Inline>
             </CardHeader>
 
             <CardContent>
@@ -799,19 +825,19 @@ export default function QueueResourcePage() {
 
           <Card variant="raised">
             <CardHeader>
-              <Flex justify="between" gap="3" align="start" wrap="wrap">
+              <Inline justify="between" gap="3" align="start" wrap="wrap">
                 <Stack gap="1">
                   <CardTitle>Timeline</CardTitle>
                   <CardDescription>
                     {current.timeline.derived
                       ? "Derived timeline built from surrounding evidence."
-                      : "Live queue transitions observed for this resource."}
+                      : "Broker-observed queue transitions for this resource."}
                   </CardDescription>
                 </Stack>
                 <Badge variant={current.timeline.derived ? "info" : "success"}>
                   {current.timeline.derived ? "Derived" : "Live"}
                 </Badge>
-              </Flex>
+              </Inline>
             </CardHeader>
 
             <CardContent>
@@ -865,7 +891,7 @@ export default function QueueResourcePage() {
                     : `Purge message ${confirmationMessage.messageId} from ${scopeLabel}. This is permanent.`}
                 </DialogDescription>
 
-                <Flex gap="2" justify="end" wrap="wrap">
+                <Inline gap="2" justify="end" wrap="wrap">
                   <DialogClose asChild>
                     <Button variant="secondary" type="button" disabled={actionPending}>
                       Cancel
@@ -887,7 +913,7 @@ export default function QueueResourcePage() {
                         ? "Replay message"
                         : "Purge message"}
                   </Button>
-                </Flex>
+                </Inline>
               </DialogContent>
             ) : null}
           </DialogPortal>

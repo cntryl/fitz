@@ -3,8 +3,8 @@ import {
   type DeadLetterFilters,
   type QueueResourceRef,
 } from "@/features/queue/queue-query";
-import { EmptyState, Spinner } from "@askrjs/themes/feedback";
-import { Section } from "@askrjs/themes/layouts";
+import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { Section } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";

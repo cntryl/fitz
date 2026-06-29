@@ -2,6 +2,7 @@ import { createQuery, queryScope } from "@askrjs/askr/data";
 import { resourceService } from "./resource-service";
 import type { DomainId, ResourceDetail, ResourceInventory, ResourceRef } from "./resource-models";
 import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
+import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 
 const resourceQueries = queryScope("resource");
 const resourceInventoryFetches = new Map<string, QueryFetch<ResourceInventory>>();
@@ -11,6 +12,7 @@ function resourceKey(domain: DomainId, ref: ResourceRef, against: ResourceRef | 
   return resourceQueries.key(
     "detail",
     domain,
+    currentRouteFamilySegment(),
     ref.realm,
     ref.area,
     ref.resource,
@@ -22,7 +24,7 @@ function resourceKey(domain: DomainId, ref: ResourceRef, against: ResourceRef | 
 }
 
 export function createResourceInventoryQuery(domain: DomainId) {
-  const key = resourceQueries.key("inventory", domain);
+  const key = resourceQueries.key("inventory", domain, currentRouteFamilySegment());
 
   return createQuery<ResourceInventory>({
     key,

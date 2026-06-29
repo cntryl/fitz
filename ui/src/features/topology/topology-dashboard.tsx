@@ -1,9 +1,9 @@
-import { EmptyState } from "@askrjs/themes/feedback";
+import { EmptyState } from "@askrjs/themes/components";
 import { Rows3Icon } from "@askrjs/lucide";
 import DashboardDomainSignals from "@/components/shared/dashboard-domain-signals";
 import DomainIndex from "@/components/shared/domain-index";
 import { domainLinks } from "@/shared/navigation/domains";
-import { Stack } from "@askrjs/themes/layouts";
+import { Stack } from "@askrjs/themes/components";
 import type {
   MessagingTopologyOverview,
   TopologySelection,

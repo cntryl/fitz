@@ -1,8 +1,8 @@
 import { state } from "@askrjs/askr";
 import { Show } from "@askrjs/askr/control";
 import { currentRoute, navigate } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/controls";
-import { Flex, Stack } from "@askrjs/themes/layouts";
+import { Button } from "@askrjs/themes/components";
+import { Inline, Stack } from "@askrjs/themes/components";
 import { Input, Label } from "@askrjs/ui";
 import DomainHeader from "@/components/shared/domain-header";
 import ResourceWorkbench, { describeResourceDetail } from "@/components/shared/resource-workbench";
@@ -203,7 +203,7 @@ export default function ResourceDetailPage() {
 
           {compareHint ? <p class="domain-muted">{compareHint}</p> : null}
 
-          <Flex gap="2" wrap="wrap">
+          <Inline gap="2" wrap="wrap">
             <Button type="submit" disabled={!compareReady}>
               Compare scope
             </Button>
@@ -219,7 +219,7 @@ export default function ResourceDetailPage() {
             >
               Clear comparison
             </Button>
-          </Flex>
+          </Inline>
         </form>
       </Stack>
     ),

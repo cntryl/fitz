@@ -1,11 +1,18 @@
 import { Link } from "@askrjs/askr/router";
-import { Stack } from "@askrjs/themes/layouts";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@askrjs/themes/surfaces";
+import { Stack } from "@askrjs/themes/components";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { appConfig } from "@/shared/config";
+import { adminChildHref } from "@/shared/navigation/domains";
 import { useOperatorContext } from "@/shared/operator-context";
 
 export default function SettingsPage() {
@@ -46,10 +53,10 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent>
             <div class="diagnostics-link-grid">
-              <Link class="text-link" href="/sessions">
+              <Link class="text-link" href={adminChildHref("sessions")}>
                 Active sessions
               </Link>
-              <Link class="text-link" href="/diagnostics">
+              <Link class="text-link" href={adminChildHref("diagnostics")}>
                 Diagnostics
               </Link>
               <Link class="text-link" href="/logout">

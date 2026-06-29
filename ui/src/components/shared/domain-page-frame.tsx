@@ -1,4 +1,4 @@
-import { Container, Flex, Stack } from "@askrjs/themes/layouts";
+import { Container, Inline, Stack } from "@askrjs/themes/components";
 import OperatorBreadcrumbs from "./operator-breadcrumbs";
 
 export interface DomainPageFrameProps {
@@ -11,7 +11,13 @@ export default function DomainPageFrame({ children, sidebar }: DomainPageFramePr
 
   return (
     <Container class="domain-page-frame" size="xl">
-      <Flex direction={{ initial: "column", md: "row" }} gap="3" align="start" wrap="nowrap">
+      <Inline
+        class="page-frame-layout"
+        direction={{ base: "column", md: "row" }}
+        gap="3"
+        align={{ base: "stretch", md: "start" }}
+        wrap="nowrap"
+      >
         <main id="main-content" class="page-frame-main" tabIndex={-1}>
           <Stack gap="3">
             <OperatorBreadcrumbs />
@@ -20,7 +26,7 @@ export default function DomainPageFrame({ children, sidebar }: DomainPageFramePr
         </main>
 
         {hasSidebar ? <aside class="page-frame-sidebar">{sidebar}</aside> : null}
-      </Flex>
+      </Inline>
     </Container>
   );
 }

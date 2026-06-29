@@ -55,8 +55,9 @@ pub use constants::{
 };
 pub use metrics::StreamMetrics;
 pub use protocol::{
-    AppendResponse, GetMetadataResponse, ReadResponse, StreamDiscriminator, StreamError,
-    StreamFilterClause, StreamFilterSet, StreamFilteredReason, StreamMessage, StreamMetadata,
-    StreamReadItem, StreamRecord,
+    AppendResponse, GetMetadataResponse, ReadResponse, StreamClientFrame, StreamClientNotification,
+    StreamClientRequest, StreamClientResponse, StreamClientResponseBody, StreamDiscriminator,
+    StreamError, StreamFilterClause, StreamFilterSet, StreamFilteredReason, StreamMessage,
+    StreamMetadata, StreamReadItem, StreamRecord,
 };
 pub use store::{StreamStorageLayout, StreamStore};

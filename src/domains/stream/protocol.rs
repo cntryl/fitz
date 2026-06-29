@@ -4,7 +4,8 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use crate::runtime::routing::{route_exact_quad, Route, RouteFamily};
+use crate::runtime::routing::{route_exact_quad, Route, RouteAddress, RouteFamily};
+use crate::runtime::ClientFrameMeta;
 
 /// Parse a stream route into (realm, area, resource, operation).
 ///
@@ -373,15 +374,86 @@ pub enum StreamSubscriptionMessage {
         family_id: RouteFamily,
         pattern: Route,
         session_id: u64,
-        subscriber: crate::runtime::routing::RouteAddress,
+        subscriber: RouteAddress,
     },
     /// Unsubscribe from a specific stream pattern (client -> server)
     Unsubscribe {
         family_id: RouteFamily,
         pattern: Route,
         session_id: u64,
-        subscriber: crate::runtime::routing::RouteAddress,
+        subscriber: RouteAddress,
     },
+}
+
+/// Parsed client request delivered to the Stream domain sink.
+#[derive(Debug, Clone)]
+pub struct StreamClientRequest {
+    pub meta: ClientFrameMeta,
+    pub frame: Result<StreamClientFrame, String>,
+}
+
+impl StreamClientRequest {
+    pub fn new(meta: ClientFrameMeta, frame: Result<StreamClientFrame, String>) -> Self {
+        Self { meta, frame }
+    }
+}
+
+/// Stream request classified after wire parsing.
+#[derive(Debug, Clone)]
+pub enum StreamClientFrame {
+    Op(StreamMessage),
+    Sub(StreamSubscriptionMessage),
+}
+
+/// Client-facing stream response body before transport encoding.
+#[derive(Debug, Clone)]
+pub enum StreamClientResponseBody {
+    Ok {
+        session_id: Option<u64>,
+        data: Vec<u8>,
+    },
+    Error(String),
+}
+
+/// Stream response routed from the domain sink back to a client session.
+#[derive(Debug, Clone)]
+pub struct StreamClientResponse {
+    pub meta: ClientFrameMeta,
+    pub response: StreamClientResponseBody,
+}
+
+impl StreamClientResponse {
+    pub fn new(meta: ClientFrameMeta, response: StreamClientResponseBody) -> Self {
+        Self { meta, response }
+    }
+}
+
+/// Stream notification routed from the domain sink back to a subscribed session.
+#[derive(Debug, Clone)]
+pub struct StreamClientNotification {
+    pub session_id: u64,
+    pub route_family: RouteFamily,
+    pub subscription_id: u64,
+    pub route: Route,
+    pub payload: Bytes,
+}
+
+impl StreamClientNotification {
+    pub fn new(
+        session_id: u64,
+        route_family: RouteFamily,
+        subscription_id: u64,
+        route: Route,
+        payload: Bytes,
+    ) -> Self {
+        Self {
+            session_id,
+            route_family,
+            subscription_id,
+            route,
+            payload,
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

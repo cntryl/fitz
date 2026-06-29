@@ -7,7 +7,6 @@ export interface KvStatsSummary {
   invalidTransactionRejectsTotal: number;
   keysTotal: number;
   operationsPerSecond: number;
-  rollbacksTotal: number;
   transactionsActive: number;
 }
 
@@ -50,9 +49,27 @@ export interface KvPrefixScanResult {
   routeFamily: number;
 }
 
+export interface KvRowsResult {
+  area: string;
+  hasMore: boolean;
+  items: KvCommittedPair[];
+  limit: number;
+  nextCursor: string | null;
+  realm: string;
+  resource: string;
+  routeFamily: number;
+  startsWith: KvByteValue;
+}
+
 export interface KvCommittedResourceScope {
   area: string;
   realm: string;
   resource: string;
   routeFamily: number;
+}
+
+export interface KvResourceScope {
+  area: string;
+  realm: string;
+  resource: string;
 }

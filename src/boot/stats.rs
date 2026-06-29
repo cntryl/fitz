@@ -100,7 +100,7 @@ pub struct Runtime {
     pub(crate) admin_auth: Arc<crate::api::admin::auth::AdminAuth>,
 
     /// Passive admin read model used by REST handlers
-    pub(crate) admin_read_model: Arc<crate::api::admin::read_model::AdminReadModel>,
+    pub(crate) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
 
     /// Live ingress handle for session visibility
     pub(crate) ingress: Arc<RwLock<Option<Arc<RuntimeIngress>>>>,

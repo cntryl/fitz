@@ -20,12 +20,34 @@ export interface ScheduleOverview {
   stats: ScheduleStatsSummary;
 }
 
+export interface ScheduleRealmInventory {
+  areas: Array<{
+    area: string;
+    resources: string[];
+  }>;
+  realm: string;
+  resourceCount: number;
+}
+
+export interface ScheduleAreaInventory {
+  area: string;
+  realm: string;
+  resources: string[];
+  resourceCount: number;
+}
+
+export interface ScheduleResourceView {
+  detail: import("@/adapters").ScheduleResourceDetail;
+  executionObservations: import("@/adapters").ScheduleExecutionObservationList;
+  missedHandoffs: import("@/adapters").ScheduleMissedObservationList;
+}
+
 export interface ScheduleExecutionObservationRequest {
   area: string;
   limit?: number;
   realm: string;
   resource: string;
-  routeFamily: number;
+  routeFamily: number | string;
 }
 
 export interface ScheduleMissedObservationRequest {
@@ -33,5 +55,5 @@ export interface ScheduleMissedObservationRequest {
   limit?: number;
   realm?: string;
   resource?: string;
-  routeFamily: number;
+  routeFamily: number | string;
 }

@@ -1,8 +1,8 @@
 import { For } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { ArrowUpRightIcon, CheckCircle2Icon, CircleAlertIcon } from "@askrjs/lucide";
-import { Stack } from "@askrjs/themes/layouts";
-import { Alert, Badge } from "@askrjs/themes/surfaces";
+import { Stack } from "@askrjs/themes/components";
+import { Alert, Badge } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";

@@ -41,6 +41,10 @@ function metric(label: string, value: unknown, caption?: string): ResourceMetric
   return { label, value: formatMaybe(value), caption };
 }
 
+function formatMilliseconds(value: number | undefined) {
+  return `${(value ?? 0).toFixed(1)}ms`;
+}
+
 function mapTimelineEvent(event: ResourceTimelineEventDto): ResourceTimelineEvent {
   return {
     ageSeconds: event.age_seconds ?? null,
@@ -108,6 +112,37 @@ function metricsForDetail(
     case "kv": {
       const dto = detail as KvResourceDetail;
       return [
+        metric("Estimated records", dto.estimated_record_count, "Committed KV inventory"),
+        metric(
+          "Logical storage bytes",
+          dto.estimated_storage_bytes,
+          "User key bytes + value bytes",
+        ),
+        metric(
+          "Estimate complete",
+          dto.estimate_complete,
+          "False after bounded range-delete refresh",
+        ),
+        metric(
+          "Read latency avg",
+          formatMilliseconds(dto.read_latency_avg_ms),
+          "Rolling read samples",
+        ),
+        metric(
+          "Read latency p95",
+          formatMilliseconds(dto.read_latency_p95_ms),
+          "Rolling read samples",
+        ),
+        metric(
+          "Write latency avg",
+          formatMilliseconds(dto.write_latency_avg_ms),
+          "Rolling write commit samples",
+        ),
+        metric(
+          "Write latency p95",
+          formatMilliseconds(dto.write_latency_p95_ms),
+          "Rolling write commit samples",
+        ),
         metric(
           "Active transactions (broker-local/session-scoped)",
           dto.transactions_active,

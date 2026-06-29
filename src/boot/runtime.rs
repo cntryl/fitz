@@ -36,7 +36,7 @@ pub fn init(config: &BootConfig) -> BootResult<RuntimeComponents> {
 
     // Create runtime components
     let router = Arc::new(Router::new());
-    let admin_read_model = crate::api::admin::read_model::AdminReadModel::new();
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     // Attach router to ingress so frames can be dispatched into domains
     let ingress = Arc::new(
         RuntimeIngress::new(config.auth_required)

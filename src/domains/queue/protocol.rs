@@ -35,6 +35,7 @@
 //! - Notifications are readiness signals only; they never carry queue message bodies
 
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::ClientFrameMeta;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
@@ -129,6 +130,67 @@ pub enum QueueSubscriptionMessage {
         session_id: u64,
         subscriber: RouteAddress,
     },
+}
+
+/// Parsed client request delivered to the Queue domain sink.
+#[derive(Debug, Clone)]
+pub struct QueueClientRequest {
+    pub meta: ClientFrameMeta,
+    pub frame: Result<QueueClientFrame, String>,
+}
+
+impl QueueClientRequest {
+    pub fn new(meta: ClientFrameMeta, frame: Result<QueueClientFrame, String>) -> Self {
+        Self { meta, frame }
+    }
+}
+
+/// Queue request classified after wire parsing.
+#[derive(Debug, Clone)]
+pub enum QueueClientFrame {
+    Op(QueueMessage),
+    Sub(QueueSubscriptionMessage),
+}
+
+/// Typed Queue response to be encoded at the transport edge.
+#[derive(Debug, Clone)]
+pub struct QueueClientResponse {
+    pub meta: ClientFrameMeta,
+    pub response: QueueResponse,
+}
+
+impl QueueClientResponse {
+    pub fn new(meta: ClientFrameMeta, response: QueueResponse) -> Self {
+        Self { meta, response }
+    }
+}
+
+/// Typed Queue watch notification to be encoded at the transport edge.
+#[derive(Debug, Clone)]
+pub struct QueueClientNotification {
+    pub session_id: u64,
+    pub route_family: RouteFamily,
+    pub subscription_id: u64,
+    pub route: Route,
+    pub notification: QueueNotification,
+}
+
+impl QueueClientNotification {
+    pub fn new(
+        session_id: u64,
+        route_family: RouteFamily,
+        subscription_id: u64,
+        route: Route,
+        notification: QueueNotification,
+    ) -> Self {
+        Self {
+            session_id,
+            route_family,
+            subscription_id,
+            route,
+            notification,
+        }
+    }
 }
 
 /// Lightweight readiness notification payload for queue watchers.
