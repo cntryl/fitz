@@ -135,7 +135,7 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
         .chain(_consumer_c_msgs.iter())
         .map(|m| m.id)
         .collect();
-    all_ids.sort_by_key(|id| id.as_u64());
+    all_ids.sort_by_key(fitz::domains::queue::MessageId::as_u64);
     all_ids.dedup();
     assert_eq!(all_ids.len(), 30, "Should have 30 unique message IDs");
 }

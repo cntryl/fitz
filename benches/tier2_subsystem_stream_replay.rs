@@ -270,7 +270,7 @@ impl PagedRealmValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map_or(0, |metadata| metadata.len());
+                .map_or(0, bytes::Bytes::len);
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -416,7 +416,7 @@ impl CompactPagedRealmValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map_or(0, |metadata| metadata.len());
+                .map_or(0, bytes::Bytes::len);
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -553,7 +553,7 @@ impl CompactAreaPageValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map_or(0, |metadata| metadata.len());
+                .map_or(0, bytes::Bytes::len);
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -814,7 +814,7 @@ impl CompactResourcePageValue {
             total_len += record
                 .metadata
                 .as_ref()
-                .map_or(0, |metadata| metadata.len());
+                .map_or(0, bytes::Bytes::len);
         }
 
         let mut bytes = Vec::with_capacity(total_len);
@@ -1348,7 +1348,7 @@ fn seed_replay_case(
         for (stream_index, stream) in streams.iter().enumerate() {
             let event = build_event_payload(stream_index, record_index, profile);
             expected_payload_bytes +=
-                event.body.len() + event.metadata.as_ref().map_or(0, |meta| meta.len());
+                event.body.len() + event.metadata.as_ref().map_or(0, bytes::Bytes::len);
             let commit = store
                 .commit_records(CommitRecordsParams {
                     family: FAMILY,
@@ -2851,7 +2851,7 @@ fn assert_matching_records(left: &[StreamRecord], right: &[StreamRecord]) {
 fn assert_total_payload_bytes(records: &[StreamRecord], expected_payload_bytes: usize) {
     let observed = records
         .iter()
-        .map(|record| record.body.len() + record.metadata.as_ref().map_or(0, |meta| meta.len()))
+        .map(|record| record.body.len() + record.metadata.as_ref().map_or(0, bytes::Bytes::len))
         .sum::<usize>();
 
     assert_eq!(observed, expected_payload_bytes);

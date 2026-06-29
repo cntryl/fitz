@@ -316,10 +316,11 @@ fn bench_queue_enqueue_primary(c: &mut Criterion) {
                                 extract_single_tlv_field(&frame)
                             })
                             .collect();
-                        (router, family, source, inbox, routes, enqueue_frames)
+                        (router, family, source, inbox, queue_routes, enqueue_frames)
                     },
-                    |(router, family, source, inbox, routes, enqueue_frames)| {
-                        for (route, (msg_type, payload)) in routes.iter().zip(enqueue_frames.iter())
+                    |(router, family, source, inbox, queue_routes, enqueue_frames)| {
+                        for (route, (msg_type, payload)) in
+                            queue_routes.iter().zip(enqueue_frames.iter())
                         {
                             let response = request_queue_response(
                                 &router,

@@ -215,7 +215,7 @@ fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            let route = routes[phase % routes.len()];
+            let route = query_routes[phase % query_routes.len()];
             let payload = query_payloads[phase % query_payloads.len()].clone();
             let _ = request(&router, family, &source, &inbox, route, 403, payload);
             phase += 1;

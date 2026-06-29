@@ -574,7 +574,7 @@ fn should_complete_routed_enqueue_sustained(ctx: &mut StressContext) {
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            let route = &routes[route_index];
+            let route = &queue_routes[route_index];
             let (msg_type, payload) = &enqueue_frames[route_index];
             let response = request_queue_response(
                 &router,
@@ -586,7 +586,7 @@ fn should_complete_routed_enqueue_sustained(ctx: &mut StressContext) {
                 payload.clone(),
             );
             assert_queue_success(&response);
-            route_index = (route_index + 1) % routes.len();
+            route_index = (route_index + 1) % queue_routes.len();
         },
     );
     ctx.set_elements(iterations as u64);
