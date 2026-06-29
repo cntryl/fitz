@@ -8,8 +8,26 @@ impl QueueDomainSink {
         queue_write_options: cntryl_midge::WriteOptions,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Result<Self, String> {
-        crate::domains::queue::QueueActor::validate_persisted_state_for_existing_families(&store)?;
-        Ok(Self::new(
+        Self::try_new_with_storage(
+            crate::storage::FitzStorageEngine::new(store),
+            router,
+            admin_read_model,
+            queue_write_options,
+            dedup_store,
+        )
+    }
+
+    pub(crate) fn try_new_with_storage(
+        store: crate::storage::FitzStorageEngine,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+        queue_write_options: cntryl_midge::WriteOptions,
+        dedup_store: Arc<crate::utils::idempotency::DedupStore>,
+    ) -> Result<Self, String> {
+        crate::domains::queue::QueueActor::validate_persisted_state_for_existing_families(
+            store.inner(),
+        )?;
+        Ok(Self::new_with_storage(
             store,
             router,
             admin_read_model,
@@ -20,6 +38,22 @@ impl QueueDomainSink {
 
     pub fn new(
         store: Arc<cntryl_midge::Engine>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+        queue_write_options: cntryl_midge::WriteOptions,
+        dedup_store: Arc<crate::utils::idempotency::DedupStore>,
+    ) -> Self {
+        Self::new_with_storage(
+            crate::storage::FitzStorageEngine::new(store),
+            router,
+            admin_read_model,
+            queue_write_options,
+            dedup_store,
+        )
+    }
+
+    pub(crate) fn new_with_storage(
+        store: crate::storage::FitzStorageEngine,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
         queue_write_options: cntryl_midge::WriteOptions,
@@ -428,7 +462,7 @@ impl QueueDomainSink {
                     crate::domains::queue::QueueActor::try_new_with_write_options(
                         key.family,
                         key,
-                        self.store.clone(),
+                        self.store.clone_inner(),
                         None,
                         self.dedup_store.clone(),
                         self.queue_write_options,

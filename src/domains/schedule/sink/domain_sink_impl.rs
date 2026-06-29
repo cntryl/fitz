@@ -6,6 +6,18 @@ impl ScheduleDomainSink {
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
+        Self::new_with_storage(
+            crate::storage::FitzStorageEngine::new(store),
+            router,
+            admin_read_model,
+        )
+    }
+
+    pub(crate) fn new_with_storage(
+        store: crate::storage::FitzStorageEngine,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    ) -> Self {
         Self {
             store,
             actors: Mutex::new(HashMap::new()),
@@ -64,7 +76,7 @@ impl ScheduleDomainSink {
                 continue;
             }
 
-            let actor = crate::domains::schedule::ScheduleActor::try_new(
+            let actor = crate::domains::schedule::ScheduleActor::try_new_with_storage(
                 family,
                 self.store.clone(),
                 self.write_options,
@@ -287,7 +299,7 @@ impl ScheduleDomainSink {
         match actors.entry(route_family) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let actor = crate::domains::schedule::ScheduleActor::try_new(
+                let actor = crate::domains::schedule::ScheduleActor::try_new_with_storage(
                     route_family,
                     self.store.clone(),
                     self.write_options,

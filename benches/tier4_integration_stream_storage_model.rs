@@ -15,7 +15,7 @@ use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_stream_read_with_limit, count_stream_read_records_from_payload, extract_single_tlv_field,
-    register_session_queue_sink, route_frame, shared_bench_runtime, FrameQueueSink,
+    register_session_queue_sink, route_raw_frame, shared_bench_runtime, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::Router;
@@ -64,7 +64,7 @@ fn direct_request(
     msg_type: u16,
     payload: Bytes,
 ) -> Bytes {
-    route_frame(
+    route_raw_frame(
         context.router.as_ref(),
         &context.source,
         destination,

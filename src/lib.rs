@@ -14,6 +14,7 @@ pub mod prelude;
 pub mod protocol;
 pub mod runtime;
 pub mod session;
+pub(crate) mod storage;
 pub mod utils;
 
 // Test utilities for integration tests

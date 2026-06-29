@@ -161,7 +161,7 @@ impl ScheduleSubscriptionSet {
 }
 
 pub struct ScheduleDomainSink {
-    pub(super) store: Arc<cntryl_midge::Engine>,
+    pub(super) store: crate::storage::FitzStorageEngine,
     pub(super) actors: Mutex<
         HashMap<crate::runtime::routing::RouteFamily, crate::domains::schedule::ScheduleActor>,
     >,

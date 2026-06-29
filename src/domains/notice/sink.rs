@@ -426,161 +426,144 @@ impl NoticeDomainSink {
 
 impl MailboxSink for NoticeDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.unsubscribe_all_for_session(cleanup.session_id);
+        if self.handle_cleanup_envelope(&envelope) {
             return Ok(());
         }
+        self.ensure_active()?;
+
+        if self.handle_domain_publish_envelope(&envelope)? {
+            return Ok(());
+        }
+
+        self.log_delivery(&envelope);
+
+        let Some(request) = self.extract_request(&envelope)? else {
+            return Ok(());
+        };
+        let meta = request.meta;
+        let request_started = self.record_request_start();
+
+        self.log_parse_start(meta);
+
+        let notice_msg = self.parse_notice_message(request.message, request_started)?;
+
+        let (response_opt, should_sync_admin_snapshot) = self.dispatch_notice_message(notice_msg);
+        if should_sync_admin_snapshot {
+            self.mark_admin_snapshot_dirty();
+        }
+
+        if let Some(response) = response_opt {
+            self.route_notice_response(&envelope, meta, &response, request_started);
+        } else if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            metrics.record_success(started_at);
+        }
+
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+impl NoticeDomainSink {
+    fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.unsubscribe_all_for_session(cleanup.session_id);
+            return true;
+        }
+
+        false
+    }
+
+    fn ensure_active(&self) -> Result<(), DeliveryError> {
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
         }
 
+        Ok(())
+    }
+
+    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> Result<bool, DeliveryError> {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
-            return self.handle_domain_publish(event);
+            self.handle_domain_publish(event)?;
+            return Ok(true);
         }
 
+        Ok(false)
+    }
+
+    fn log_delivery(&self, envelope: &Envelope) {
         tracing::debug!(
             domain = "notice",
             destination = %envelope.destination(),
             source = ?envelope.source(),
             "Notice domain sink: received envelope"
         );
+    }
 
-        let request = match Self::request_from_envelope(&envelope) {
-            Some(request) => request,
+    fn extract_request(
+        &self,
+        envelope: &Envelope,
+    ) -> Result<Option<crate::domains::notice::NoticeClientRequest>, DeliveryError> {
+        match Self::request_from_envelope(envelope) {
+            Some(request) => Ok(Some(request)),
             None => {
                 tracing::warn!(
                     domain = "notice",
                     "Envelope payload was not NoticeClientRequest"
                 );
-                return Err(DeliveryError::ActorStopped);
+                Err(DeliveryError::ActorStopped)
             }
-        };
-        let meta = request.meta;
-        let request_started = self
-            .metrics
-            .as_ref()
-            .map(|metrics| metrics.record_request_start());
+        }
+    }
 
+    fn record_request_start(&self) -> Option<Instant> {
+        self.metrics
+            .as_ref()
+            .map(|metrics| metrics.record_request_start())
+    }
+
+    fn log_parse_start(&self, meta: crate::runtime::ClientFrameMeta) {
         tracing::debug!(
             domain = "notice",
             session = meta.session_id,
             msg_type = meta.message_type,
             "Notice: parsing request"
         );
+    }
 
-        let notice_msg = match request.message {
-            Ok(msg) => msg,
-            Err(e) => {
+    fn parse_notice_message(
+        &self,
+        message: Result<crate::domains::notice::protocol::NotificationMessage, String>,
+        request_started: Option<Instant>,
+    ) -> Result<crate::domains::notice::protocol::NotificationMessage, DeliveryError> {
+        match message {
+            Ok(message) => Ok(message),
+            Err(error) => {
                 if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
                 {
                     metrics.record_failure(started_at);
                 }
-                tracing::warn!(domain = "notice", error = %e, "Failed to parse notice message");
-                return Err(DeliveryError::ActorStopped);
+                tracing::warn!(domain = "notice", error = %error, "Failed to parse notice message");
+                Err(DeliveryError::ActorStopped)
             }
-        };
+        }
+    }
 
+    fn dispatch_notice_message(
+        &self,
+        notice_msg: crate::domains::notice::protocol::NotificationMessage,
+    ) -> (Option<crate::domains::notice::NoticeResponse>, bool) {
         use crate::domains::notice::protocol::NotificationMessage;
         use crate::domains::notice::NoticeResponse;
-        #[cfg(test)]
-        let mut payload_encoder =
-            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
 
-        let (response_opt, should_sync_admin_snapshot) = match notice_msg {
+        match notice_msg {
             NotificationMessage::Publish(pub_msg) => {
                 self.publish_route_payload(pub_msg.family_id, &pub_msg.route, &pub_msg.payload);
                 (None, false)
             }
-            NotificationMessage::Subscribe(sub_msg) => {
-                let family_id = sub_msg.family_id.as_u64();
-
-                let mut families = self.families.lock();
-                let state = families
-                    .entry(family_id)
-                    .or_insert_with(RoutedSubscriptionSet::new);
-
-                if sub_msg.pattern.as_str().is_empty() {
-                    tracing::warn!(
-                        domain = "notice",
-                        session = sub_msg.session_id.0,
-                        "Rejected empty subscription pattern"
-                    );
-                    (
-                        Some(NoticeResponse::Error("empty pattern".to_string())),
-                        false,
-                    )
-                } else {
-                    let existing_sub_id =
-                        state.find_existing_id(sub_msg.session_id.0, sub_msg.pattern.as_str());
-                    let (response, state_changed) = if let Some(id) = existing_sub_id {
-                        tracing::debug!(
-                            domain = "notice",
-                            session = sub_msg.session_id.0,
-                            subscription_id = id,
-                            pattern = sub_msg.pattern.as_str(),
-                            "Notice subscription already exists (idempotent)"
-                        );
-                        (
-                            NoticeResponse::SubscribeOk {
-                                subscription_id: id,
-                            },
-                            false,
-                        )
-                    } else if self.wildcard_subscription_limit_reached(
-                        state,
-                        sub_msg.session_id.0,
-                        sub_msg.pattern.as_str(),
-                    ) {
-                        tracing::warn!(
-                            domain = "notice",
-                            session = sub_msg.session_id.0,
-                            pattern = sub_msg.pattern.as_str(),
-                            limit = MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION,
-                            "Rejected wildcard notice subscription because session limit was exceeded"
-                        );
-                        crate::observability::counter_inc(
-                            "fitz_notice_wildcard_limit_rejects_total",
-                        );
-                        (
-                            NoticeResponse::Error(format!(
-                                "wildcard subscription limit exceeded ({MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION} per session)"
-                            )),
-                            false,
-                        )
-                    } else {
-                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                        state.insert(
-                            sub_msg.family_id,
-                            NoticeSubscription {
-                                pattern: crate::runtime::matcher::Pattern::new(
-                                    sub_msg.pattern.as_str(),
-                                ),
-                                session_id: sub_msg.session_id.0,
-                                subscription_id: new_id,
-                                subscriber: sub_msg.subscriber.clone(),
-                            },
-                        );
-
-                        tracing::debug!(
-                            domain = "notice",
-                            session = sub_msg.session_id.0,
-                            subscription_id = new_id,
-                            pattern = sub_msg.pattern.as_str(),
-                            "Notice subscription added"
-                        );
-                        (
-                            NoticeResponse::SubscribeOk {
-                                subscription_id: new_id,
-                            },
-                            true,
-                        )
-                    };
-
-                    let should_sync_admin_snapshot = state_changed;
-
-                    (Some(response), should_sync_admin_snapshot)
-                }
-            }
+            NotificationMessage::Subscribe(sub_msg) => self.handle_subscribe_message(sub_msg),
             NotificationMessage::Unsubscribe(unsub_msg) => {
                 let family_id = unsub_msg.family_id.as_u64();
                 let mut families = self.families.lock();
@@ -613,55 +596,137 @@ impl MailboxSink for NoticeDomainSink {
                 (Some(NoticeResponse::Ok), removed > 0)
             }
             NotificationMessage::Deliver(_) => (Some(NoticeResponse::Ok), false),
+        }
+    }
+
+    fn handle_subscribe_message(
+        &self,
+        sub_msg: crate::domains::notice::protocol::SubscribeMessage,
+    ) -> (Option<crate::domains::notice::NoticeResponse>, bool) {
+        use crate::domains::notice::NoticeResponse;
+
+        let family_id = sub_msg.family_id.as_u64();
+        let mut families = self.families.lock();
+        let state = families
+            .entry(family_id)
+            .or_insert_with(RoutedSubscriptionSet::new);
+
+        if sub_msg.pattern.as_str().is_empty() {
+            tracing::warn!(
+                domain = "notice",
+                session = sub_msg.session_id.0,
+                "Rejected empty subscription pattern"
+            );
+            return (
+                Some(NoticeResponse::Error("empty pattern".to_string())),
+                false,
+            );
+        }
+
+        let existing_sub_id =
+            state.find_existing_id(sub_msg.session_id.0, sub_msg.pattern.as_str());
+        let (response, state_changed) = if let Some(id) = existing_sub_id {
+            tracing::debug!(
+                domain = "notice",
+                session = sub_msg.session_id.0,
+                subscription_id = id,
+                pattern = sub_msg.pattern.as_str(),
+                "Notice subscription already exists (idempotent)"
+            );
+            (
+                NoticeResponse::SubscribeOk {
+                    subscription_id: id,
+                },
+                false,
+            )
+        } else if self.wildcard_subscription_limit_reached(
+            state,
+            sub_msg.session_id.0,
+            sub_msg.pattern.as_str(),
+        ) {
+            tracing::warn!(
+                domain = "notice",
+                session = sub_msg.session_id.0,
+                pattern = sub_msg.pattern.as_str(),
+                limit = MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION,
+                "Rejected wildcard notice subscription because session limit was exceeded"
+            );
+            crate::observability::counter_inc("fitz_notice_wildcard_limit_rejects_total");
+            (
+                NoticeResponse::Error(format!(
+                    "wildcard subscription limit exceeded ({MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION} per session)"
+                )),
+                false,
+            )
+        } else {
+            let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+            state.insert(
+                sub_msg.family_id,
+                NoticeSubscription {
+                    pattern: crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str()),
+                    session_id: sub_msg.session_id.0,
+                    subscription_id: new_id,
+                    subscriber: sub_msg.subscriber.clone(),
+                },
+            );
+
+            tracing::debug!(
+                domain = "notice",
+                session = sub_msg.session_id.0,
+                subscription_id = new_id,
+                pattern = sub_msg.pattern.as_str(),
+                "Notice subscription added"
+            );
+            (
+                NoticeResponse::SubscribeOk {
+                    subscription_id: new_id,
+                },
+                true,
+            )
         };
-        if should_sync_admin_snapshot {
-            self.mark_admin_snapshot_dirty();
-        }
 
-        if let Some(response) = response_opt {
-            #[cfg(test)]
-            let response_ctx = {
-                let response_bytes = crate::protocol::notice_codec::encode_response_into(
-                    &response,
-                    &mut payload_encoder,
-                );
-                FrameContext::new(
-                    meta.session_id,
-                    test_protocol_channel_from_client(meta.channel),
-                    crate::protocol::tlv::MessageType::new(meta.message_type),
-                    bytes::Bytes::from(response_bytes),
-                    meta.route_family,
-                )
-            };
-
-            #[cfg(not(test))]
-            let response_ctx =
-                crate::domains::notice::NoticeClientResponse::new(meta, response.clone());
-
-            if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-                let _ = self.router.route(response_envelope);
-            }
-
-            if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
-                if Self::notice_response_is_failure(&response) {
-                    metrics.record_failure(started_at);
-                } else {
-                    metrics.record_success(started_at);
-                }
-            }
-        } else if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
-            metrics.record_success(started_at);
-        }
-
-        Ok(())
+        (Some(response), state_changed)
     }
 
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
+    fn route_notice_response(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        response: &crate::domains::notice::NoticeResponse,
+        request_started: Option<Instant>,
+    ) {
+        #[cfg(test)]
+        let response_ctx = {
+            let mut payload_encoder =
+                crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+            let response_bytes =
+                crate::protocol::notice_codec::encode_response_into(response, &mut payload_encoder);
+            FrameContext::new(
+                meta.session_id,
+                test_protocol_channel_from_client(meta.channel),
+                crate::protocol::tlv::MessageType::new(meta.message_type),
+                bytes::Bytes::from(response_bytes),
+                meta.route_family,
+            )
+        };
 
-impl NoticeDomainSink {
+        #[cfg(not(test))]
+        let response_ctx =
+            crate::domains::notice::NoticeClientResponse::new(meta, response.clone());
+
+        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+            let _ = self.router.route(response_envelope);
+        }
+
+        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            if Self::notice_response_is_failure(response) {
+                metrics.record_failure(started_at);
+            } else {
+                metrics.record_success(started_at);
+            }
+        }
+    }
+
     fn request_from_envelope(
         envelope: &Envelope,
     ) -> Option<crate::domains::notice::NoticeClientRequest> {

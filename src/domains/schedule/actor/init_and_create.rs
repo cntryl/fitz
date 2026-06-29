@@ -8,7 +8,19 @@ impl ScheduleActor {
         db: Arc<cntryl_midge::Engine>,
         write_options: cntryl_midge::WriteOptions,
     ) -> Result<Self, String> {
-        Self::try_new_with_clock(family, db, write_options, Arc::new(SystemClock))
+        Self::try_new_with_storage(
+            family,
+            crate::storage::FitzStorageEngine::new(db),
+            write_options,
+        )
+    }
+
+    pub(crate) fn try_new_with_storage(
+        family: RouteFamily,
+        db: crate::storage::FitzStorageEngine,
+        write_options: cntryl_midge::WriteOptions,
+    ) -> Result<Self, String> {
+        Self::try_new_with_storage_clock(family, db, write_options, Arc::new(SystemClock))
     }
 
     pub fn try_new_with_clock(
@@ -17,8 +29,22 @@ impl ScheduleActor {
         write_options: cntryl_midge::WriteOptions,
         clock: Arc<dyn Clock>,
     ) -> Result<Self, String> {
+        Self::try_new_with_storage_clock(
+            family,
+            crate::storage::FitzStorageEngine::new(db),
+            write_options,
+            clock,
+        )
+    }
+
+    pub(crate) fn try_new_with_storage_clock(
+        family: RouteFamily,
+        db: crate::storage::FitzStorageEngine,
+        write_options: cntryl_midge::WriteOptions,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, String> {
         let now = clock.now_instant();
-        Self::try_new_at_with_clock(family, db, write_options, clock, now)
+        Self::try_new_at_with_storage_clock(family, db, write_options, clock, now)
     }
 
     pub fn new(
@@ -49,6 +75,7 @@ impl ScheduleActor {
         Self::try_new_at_with_clock(family, db, write_options, Arc::new(SystemClock), now)
     }
 
+    #[cfg(test)]
     pub(super) fn try_new_at_with_clock(
         family: RouteFamily,
         db: Arc<cntryl_midge::Engine>,
@@ -56,7 +83,23 @@ impl ScheduleActor {
         clock: Arc<dyn Clock>,
         now: Instant,
     ) -> Result<Self, String> {
-        let store = ScheduleStore::new(db);
+        Self::try_new_at_with_storage_clock(
+            family,
+            crate::storage::FitzStorageEngine::new(db),
+            write_options,
+            clock,
+            now,
+        )
+    }
+
+    pub(super) fn try_new_at_with_storage_clock(
+        family: RouteFamily,
+        db: crate::storage::FitzStorageEngine,
+        write_options: cntryl_midge::WriteOptions,
+        clock: Arc<dyn Clock>,
+        now: Instant,
+    ) -> Result<Self, String> {
+        let store = ScheduleStore::new_with_storage(db);
         let mut actor = Self {
             family,
             store,

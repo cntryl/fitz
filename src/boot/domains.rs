@@ -96,21 +96,21 @@ pub fn setup(
     options: DomainSetupOptions,
 ) -> BootResult<DomainHandles> {
     let metrics = (*crate::observability::metrics()).clone();
+    let storage = crate::storage::FitzStorageEngine::new(store.clone());
 
     let kv_sink = Arc::new(
         KvDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
             .with_sync_write_options(options.request_sync_write_options)
             .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern(
-        DomainKind::Kv.as_str(),
-        kv_sink.clone() as Arc<dyn MailboxSink>,
-    );
+    DomainKind::Kv
+        .descriptor()
+        .register_sink(router, kv_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered KV domain (handles kv://* across all route families)");
 
     let queue_sink = Arc::new(
-        QueueDomainSink::try_new(
-            store.clone(),
+        QueueDomainSink::try_new_with_storage(
+            storage.clone(),
             router.clone(),
             admin_read_model.clone(),
             options.queue_write_options,
@@ -119,25 +119,23 @@ pub fn setup(
         .with_fast_flush_interval(options.queue_fast_flush_interval)
         .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern(
-        DomainKind::Queue.as_str(),
-        queue_sink.clone() as Arc<dyn MailboxSink>,
-    );
+    DomainKind::Queue
+        .descriptor()
+        .register_sink(router, queue_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Queue domain (handles queue://* across all route families)");
 
     let notice_sink = Arc::new(
         NoticeDomainSink::new(router.clone(), admin_read_model.clone())
             .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern(
-        DomainKind::Notice.as_str(),
-        notice_sink.clone() as Arc<dyn MailboxSink>,
-    );
+    DomainKind::Notice
+        .descriptor()
+        .register_sink(router, notice_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Notice domain (handles notice://* across all route families)");
 
     let stream_sink = Arc::new(
-        StreamDomainSink::new_with_layout(
-            store.clone(),
+        StreamDomainSink::new_with_storage_layout(
+            storage.clone(),
             router.clone(),
             admin_read_model.clone(),
             options.stream_storage_layout,
@@ -145,10 +143,9 @@ pub fn setup(
         .with_sync_write_options(options.request_sync_write_options)
         .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern(
-        DomainKind::Stream.as_str(),
-        stream_sink.clone() as Arc<dyn MailboxSink>,
-    );
+    DomainKind::Stream
+        .descriptor()
+        .register_sink(router, stream_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Stream domain (handles stream://* across all route families)");
 
     let rpc_sink = Arc::new(
@@ -160,33 +157,30 @@ pub fn setup(
             )
             .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern(
-        DomainKind::Rpc.as_str(),
-        rpc_sink.clone() as Arc<dyn MailboxSink>,
-    );
+    DomainKind::Rpc
+        .descriptor()
+        .register_sink(router, rpc_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered RPC domain (handles rpc://* across all route families)");
 
     let lease_sink = Arc::new(
         LeaseDomainSink::new(router.clone(), admin_read_model.clone())
             .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern(
-        DomainKind::Lease.as_str(),
-        lease_sink.clone() as Arc<dyn MailboxSink>,
-    );
+    DomainKind::Lease
+        .descriptor()
+        .register_sink(router, lease_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!(
         "Registered Lease domain (ephemeral, in-memory lease://* across all route families)"
     );
 
     let schedule_sink = Arc::new(
-        ScheduleDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
+        ScheduleDomainSink::new_with_storage(storage, router.clone(), admin_read_model.clone())
             .with_write_options(options.server_write_options)
             .with_metrics(metrics.clone()),
     );
-    router.register_domain_pattern(
-        DomainKind::Schedule.as_str(),
-        schedule_sink.clone() as Arc<dyn MailboxSink>,
-    );
+    DomainKind::Schedule
+        .descriptor()
+        .register_sink(router, schedule_sink.clone() as Arc<dyn MailboxSink>);
     schedule_sink
         .preload_persisted_families()
         .map_err(|error| format!("schedule preload failed: {}", error))?;

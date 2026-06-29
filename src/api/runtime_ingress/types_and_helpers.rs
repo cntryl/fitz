@@ -24,7 +24,7 @@ pub(super) fn dispatch_session_cleanup(
     let cleanup = crate::runtime::SessionCleanup { session_id };
     let mut failed_domains = Vec::new();
 
-    for domain in DispatchDomain::SESSION_CLEANUP_ORDER {
+    for &domain in crate::runtime::DomainRegistry::cleanup_order() {
         let cleanup_addr =
             crate::runtime::routing::RouteAddress::new(route_family, domain.cleanup_route());
         let cleanup_envelope = crate::runtime::Envelope::new(cleanup_addr, cleanup.clone());
@@ -56,56 +56,17 @@ pub(super) fn extract_auth_route_for_domain<'a>(
     msg_type: u16,
     payload: &'a [u8],
 ) -> Result<Option<Cow<'a, str>>, String> {
-    match domain {
-        DispatchDomain::Kv => crate::protocol::kv_codec::extract_auth_route(msg_type, payload)
-            .and_then(|route| {
-                route
-                    .map(|route| canonicalize_dispatch_route_str(domain, route))
-                    .transpose()
-            }),
-        DispatchDomain::Queue => {
-            crate::protocol::queue_codec::extract_auth_route(msg_type, payload).and_then(|route| {
-                route
-                    .map(|route| canonicalize_dispatch_route_str(domain, route))
-                    .transpose()
-            })
-        }
-        DispatchDomain::Rpc => crate::protocol::rpc_codec::extract_auth_route(msg_type, payload)
-            .and_then(|route| {
-                route
-                    .map(|route| canonicalize_dispatch_route_str(domain, route))
-                    .transpose()
-            }),
-        DispatchDomain::Lease => {
-            crate::protocol::lease_codec::extract_auth_route(msg_type, payload).and_then(|route| {
-                route
-                    .map(|route| canonicalize_dispatch_route_str(domain, route))
-                    .transpose()
-            })
-        }
-        DispatchDomain::Notice => {
-            crate::protocol::notice_codec::extract_auth_route(msg_type, payload).and_then(|route| {
-                route
-                    .map(|route| canonicalize_dispatch_route_str(domain, route))
-                    .transpose()
-            })
-        }
-        DispatchDomain::Stream => {
-            crate::protocol::stream_codec::extract_auth_route(msg_type, payload).and_then(|route| {
-                route
-                    .map(|route| canonicalize_dispatch_route_str(domain, route))
-                    .transpose()
-            })
-        }
-        DispatchDomain::Schedule => crate::protocol::schedule_codec::extract_auth_route(
-            msg_type, payload,
-        )
+    let descriptor =
+        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+            domain,
+        );
+    descriptor
+        .extract_auth_route(msg_type, payload)
         .and_then(|route| {
             route
                 .map(|route| canonicalize_dispatch_route_str(domain, route))
                 .transpose()
-        }),
-    }
+        })
 }
 
 pub(super) enum AuthorizationTargets<'a> {

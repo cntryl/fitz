@@ -2,53 +2,18 @@ use super::state_model::*;
 
 impl MailboxSink for RpcDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            let cleanup_result = self.apply_session_cleanup(cleanup.session_id);
-            self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
+        if self.handle_cleanup_envelope(&envelope) {
             return Ok(());
         }
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
+        self.ensure_active()?;
+        self.log_delivery(&envelope);
 
-        tracing::debug!(
-            domain = "rpc",
-            destination = %envelope.destination(),
-            source = ?envelope.source(),
-            "RPC domain sink: received envelope"
-        );
-
-        let request = match Self::request_from_envelope(&envelope) {
-            Some(request) => request,
-            None => {
-                tracing::warn!(domain = "rpc", "Envelope payload was not RpcClientRequest");
-                return Err(DeliveryError::ActorStopped);
-            }
-        };
+        let request = self.extract_request(&envelope)?;
         let meta = request.meta;
-        let request_started = self
-            .metrics
-            .as_ref()
-            .map(|metrics| metrics.record_request_start());
+        let request_started = self.record_request_start();
+        self.log_parse_start(meta);
 
-        tracing::debug!(
-            domain = "rpc",
-            session = meta.session_id,
-            msg_type = meta.message_type,
-            "RPC: parsing request"
-        );
-
-        let rpc_msg = match request.message {
-            Ok(msg) => msg,
-            Err(e) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
-                {
-                    metrics.record_failure(started_at);
-                }
-                tracing::warn!(domain = "rpc", error = %e, "Failed to parse RPC message");
-                return Err(DeliveryError::ActorStopped);
-            }
-        };
+        let rpc_msg = self.parse_request_message(request.message, request_started)?;
 
         use crate::domains::rpc::protocol::RpcMessage;
 
@@ -856,12 +821,106 @@ impl MailboxSink for RpcDomainSink {
             ),
         };
 
+        self.complete_request(
+            &envelope,
+            meta,
+            response,
+            snapshot_policy,
+            request_failed,
+            request_started,
+        );
+
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+impl RpcDomainSink {
+    fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            let cleanup_result = self.apply_session_cleanup(cleanup.session_id);
+            self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
+            return true;
+        }
+
+        false
+    }
+
+    fn ensure_active(&self) -> Result<(), DeliveryError> {
+        if !self.active.load(Ordering::Relaxed) {
+            return Err(DeliveryError::ActorStopped);
+        }
+
+        Ok(())
+    }
+
+    fn log_delivery(&self, envelope: &Envelope) {
+        tracing::debug!(
+            domain = "rpc",
+            destination = %envelope.destination(),
+            source = ?envelope.source(),
+            "RPC domain sink: received envelope"
+        );
+    }
+
+    fn extract_request(&self, envelope: &Envelope) -> Result<RpcClientRequest, DeliveryError> {
+        Self::request_from_envelope(envelope).ok_or_else(|| {
+            tracing::warn!(domain = "rpc", "Envelope payload was not RpcClientRequest");
+            DeliveryError::ActorStopped
+        })
+    }
+
+    fn record_request_start(&self) -> Option<Instant> {
+        self.metrics
+            .as_ref()
+            .map(|metrics| metrics.record_request_start())
+    }
+
+    fn log_parse_start(&self, meta: crate::runtime::ClientFrameMeta) {
+        tracing::debug!(
+            domain = "rpc",
+            session = meta.session_id,
+            msg_type = meta.message_type,
+            "RPC: parsing request"
+        );
+    }
+
+    fn parse_request_message(
+        &self,
+        message: Result<crate::domains::rpc::protocol::RpcMessage, String>,
+        request_started: Option<Instant>,
+    ) -> Result<crate::domains::rpc::protocol::RpcMessage, DeliveryError> {
+        match message {
+            Ok(msg) => Ok(msg),
+            Err(e) => {
+                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                {
+                    metrics.record_failure(started_at);
+                }
+                tracing::warn!(domain = "rpc", error = %e, "Failed to parse RPC message");
+                Err(DeliveryError::ActorStopped)
+            }
+        }
+    }
+
+    fn complete_request(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        response: Option<RpcClientResponseBody>,
+        snapshot_policy: Option<bool>,
+        request_failed: bool,
+        request_started: Option<Instant>,
+    ) {
         if let Some(force_snapshot) = snapshot_policy {
             self.schedule_admin_snapshot(force_snapshot);
         }
 
         if let Some(response) = response {
-            self.route_rpc_client_response(&envelope, meta, &response);
+            self.route_rpc_client_response(envelope, meta, &response);
         }
 
         if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
@@ -871,11 +930,5 @@ impl MailboxSink for RpcDomainSink {
                 metrics.record_success(started_at);
             }
         }
-
-        Ok(())
-    }
-
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
     }
 }

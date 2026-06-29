@@ -86,7 +86,7 @@ pub(super) struct StreamSessionOwner {
 }
 
 pub struct StreamDomainSink {
-    pub(super) store: Arc<cntryl_midge::Engine>,
+    pub(super) store: crate::storage::FitzStorageEngine,
     pub(super) stream_store: Arc<StreamStore>,
     pub(super) actors: Mutex<HashMap<StreamActorKey, Arc<Mutex<StreamActor>>>>,
     pub(super) session_owners: Mutex<HashMap<u64, StreamSessionOwner>>,

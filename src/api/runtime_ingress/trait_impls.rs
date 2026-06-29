@@ -9,53 +9,8 @@ impl Default for RuntimeIngress {
 #[async_trait::async_trait]
 impl Ingress for RuntimeIngress {
     async fn on_open(&self, session: SessionInfo) -> Result<u64, String> {
-        self.retry_pending_session_cleanups().await;
-
-        let session_id = session.session_id;
-
-        // Record session opened counter
-        if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
-            collector.counter_inc(obs::METRIC_SESSIONS_CREATED);
-        }
-
-        info!(
-            session_id = session_id,
-            transport = %session.transport_kind,
-            peer_addr = ?session.peer_addr,
-            authenticated = session.authenticated,
-            "Ingress: session opened"
-        );
-
-        self.sessions.insert(session_id, session.clone());
-        self.session_inbox_routes.insert(
-            session_id,
-            crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
-        );
-        if let Some(admin_read_model) = &self.admin_read_model {
-            admin_read_model.record_session_open(&session);
-        }
-
-        // Create a per-session SessionActor with permissions
-        // When auth is not required, grant all permissions to unauthenticated sessions
-        let permissions = if self.auth_required {
-            session.permissions_snapshot.clone()
-        } else {
-            SessionPermissions::all()
-        };
-
-        self.session_actors.insert(
-            session_id,
-            crate::session::actor::SessionActor::new(
-                crate::session::session::SessionId(session_id),
-                permissions,
-            ),
-        );
-
-        if let Some(handler) = &self.event_handler {
-            handler(SessionEvent::Open(session_id, session));
-        }
-
-        Ok(session_id)
+        self.session_cleanup_coordinator().retry_pending().await;
+        Ok(self.session_registry().open_session(session))
     }
 
     async fn on_frame(
@@ -65,7 +20,7 @@ impl Ingress for RuntimeIngress {
         msg_type: crate::protocol::tlv::MessageType,
         message_payload: Bytes,
     ) -> IngressDecision {
-        self.retry_pending_session_cleanups().await;
+        self.session_cleanup_coordinator().retry_pending().await;
 
         let _ingress_latency =
             crate::observability::ScopedHistogramUs::new(obs::METRIC_INGRESS_FRAME_TOTAL_LATENCY);
@@ -85,130 +40,22 @@ impl Ingress for RuntimeIngress {
         let should_notify_handler = self.event_handler.is_some();
         let mut message_payload = Some(message_payload);
 
-        // Auth gating: if session is not authenticated, only allow CONNECT control messages
-        // and verify JWTs before taking the map write guard.
-        let mut notify_frame: Option<SessionFrame> = None;
-        let needs_authentication = match self.sessions.get(&session_id) {
-            Some(entry) => !entry.authenticated,
-            None => {
-                warn!(
-                    session_id = session_id,
-                    "Ingress: frame for unknown session"
-                );
-                return IngressDecision::Close(format!("unknown session: {}", session_id));
-            }
-        };
-        let verified_auth = if needs_authentication && self.auth_required {
-            if channel_id != ChannelId::Control
-                || msg_type != crate::protocol::tlv::MessageType::CONNECT
+        let (route_family, notify_frame) = {
+            let payload = message_payload.as_ref().unwrap();
+            match self
+                .session_authenticator()
+                .authenticate_frame(
+                    session_id,
+                    channel_id,
+                    msg_type,
+                    payload,
+                    should_notify_handler,
+                )
+                .await
             {
-                warn!(session_id = session_id, channel = ?channel_id, msg_type = msg_type.as_u16(), "Ingress: unauthenticated, CONNECT required");
-                return IngressDecision::Close("unauthenticated: connect required".to_string());
+                Ok(authenticated) => authenticated,
+                Err(decision) => return decision,
             }
-
-            let compact = std::str::from_utf8(message_payload.as_ref().unwrap())
-                .unwrap_or("")
-                .to_string();
-            debug!(
-                session_id = session_id,
-                jwt_len = compact.len(),
-                "Ingress: verifying CONNECT JWT"
-            );
-
-            let auth_config = self
-                .auth_config
-                .clone()
-                .unwrap_or_else(|| crate::auth::AuthConfig::from_env(true));
-
-            match crate::auth::verified_jwt_with_claims_config(
-                &compact,
-                &auth_config,
-                &self.auth_claims_config,
-            )
-            .await
-            {
-                Ok(verified) => {
-                    let route_family =
-                        match self.resolve_authenticated_route_family(&verified.raw_claims) {
-                            Ok(route_family) => route_family,
-                            Err(e) => {
-                                error!(
-                                    session_id = session_id,
-                                    error = %e,
-                                    "Ingress: CONNECT failed (route family resolution)"
-                                );
-                                return IngressDecision::Close(format!("connect failed: {}", e));
-                            }
-                        };
-                    Some((verified.permissions, verified.claims, route_family))
-                }
-                Err(e) => {
-                    error!(
-                        session_id = session_id,
-                        error = %e,
-                        "Ingress: CONNECT failed (verification)"
-                    );
-                    return IngressDecision::Close(format!("connect failed: {}", e));
-                }
-            }
-        } else {
-            None
-        };
-
-        let route_family = {
-            let Some(mut entry) = self.sessions.get_mut(&session_id) else {
-                warn!(
-                    session_id = session_id,
-                    "Ingress: frame for unknown session"
-                );
-                return IngressDecision::Close(format!("unknown session: {}", session_id));
-            };
-            if !entry.authenticated {
-                if self.auth_required {
-                    let Some((snapshot, claims, route_family)) = verified_auth else {
-                        return IngressDecision::Close(
-                            "connect failed: session authentication state changed".to_string(),
-                        );
-                    };
-                    self.apply_authenticated_session(
-                        session_id,
-                        &mut entry,
-                        claims,
-                        snapshot,
-                        route_family,
-                    );
-                    if should_notify_handler {
-                        notify_frame = Some(SessionFrame {
-                            session_id,
-                            channel_id,
-                            payload: message_payload.as_ref().unwrap().clone(),
-                        });
-                    }
-                } else {
-                    // If auth is not required, grant full anonymous access
-                    let snapshot = crate::auth::default_anonymous_permissions();
-                    entry.permissions_snapshot = snapshot.clone();
-                    entry.authenticated = true;
-                    entry.route_family = crate::runtime::routing::RouteFamily::new(1);
-
-                    self.session_actors.insert(
-                        session_id,
-                        crate::session::actor::SessionActor::new(
-                            crate::session::session::SessionId(session_id),
-                            snapshot,
-                        ),
-                    );
-
-                    if should_notify_handler {
-                        notify_frame = Some(SessionFrame {
-                            session_id,
-                            channel_id,
-                            payload: message_payload.as_ref().unwrap().clone(),
-                        });
-                    }
-                } // Close else block for auth_required check
-            }
-            entry.route_family
         };
 
         if let Some(frame) = &notify_frame {
@@ -223,38 +70,15 @@ impl Ingress for RuntimeIngress {
             // and should continue processing the current message.
         }
 
-        // Dispatch to router if configured (domain dispatch)
-        if let Some(router) = &self.router {
-            match Self::domain_dispatch_for_msg_type(msg_type) {
-                Err(reason) => {
-                    warn!(
-                        session_id = session_id,
-                        msg_type = msg_type.as_u16(),
-                        reason = reason,
-                        "Ingress: client sent server-to-client-only message type"
-                    );
-                    return IngressDecision::Close(reason.to_string());
-                }
-                Ok(Some(spec)) => {
-                    let dispatch = DomainDispatchRequest {
-                        router,
-                        session_id,
-                        channel_id,
-                        route_family,
-                        domain: spec.domain,
-                        policy: spec.policy,
-                        msg_type,
-                        preserve_payload_for_handler: should_notify_handler
-                            && notify_frame.is_none(),
-                    };
-                    if let Err(decision) =
-                        self.authorize_and_dispatch_domain_frame(dispatch, &mut message_payload)
-                    {
-                        return decision;
-                    }
-                }
-                Ok(None) => {}
-            }
+        if let Err(decision) = self.domain_frame_dispatcher().dispatch_if_domain(
+            session_id,
+            channel_id,
+            route_family,
+            msg_type,
+            should_notify_handler && notify_frame.is_none(),
+            &mut message_payload,
+        ) {
+            return decision;
         }
 
         // Notify handler if present (if we haven't already notified via `notify_frame`)
@@ -281,25 +105,19 @@ impl Ingress for RuntimeIngress {
     }
 
     fn get_route_family(&self, session_id: u64) -> Option<crate::runtime::routing::RouteFamily> {
-        self.sessions
-            .get(&session_id)
-            .map(|session| session.route_family)
+        self.session_registry().route_family(session_id)
     }
 
     fn record_frame_received(&self, session_id: u64) {
-        if let Some(session) = self.sessions.get(&session_id) {
-            session.record_frame_received();
-        }
+        self.session_registry().record_frame_received(session_id);
     }
 
     fn record_frame_sent(&self, session_id: u64) {
-        if let Some(session) = self.sessions.get(&session_id) {
-            session.record_frame_sent();
-        }
+        self.session_registry().record_frame_sent(session_id);
     }
 
     async fn on_close(&self, session_id: u64, reason: CloseReason) {
-        self.retry_pending_session_cleanups().await;
+        self.session_cleanup_coordinator().retry_pending().await;
 
         // Record session closed counter
         if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
@@ -308,49 +126,12 @@ impl Ingress for RuntimeIngress {
 
         info!(session_id = session_id, reason = %reason, "Ingress: session closing");
 
-        let route_family = self.sessions.get(&session_id).map(|s| s.route_family);
+        let route_family = self.session_registry().route_family(session_id);
+        self.session_cleanup_coordinator()
+            .cleanup_on_close(session_id, route_family)
+            .await;
 
-        // Dispatch cleanup to all subscribable domains before removing session state.
-        // This ensures lock/subscription cleanup has completed before tests or callers
-        // observe a decreased session count.
-        if let (Some(router), Some(route_family)) = (&self.router, route_family) {
-            let router = router.clone();
-            match tokio::task::spawn_blocking(move || {
-                dispatch_session_cleanup(router.as_ref(), route_family, session_id)
-            })
-            .await
-            {
-                Ok(failed_domains) => {
-                    if failed_domains.is_empty() {
-                        tracing::debug!(
-                            session_id = session_id,
-                            route_family = route_family.id(),
-                            "Ingress: dispatched cleanup to KV, Notice, RPC, Stream, Schedule, Lease, and Queue domains"
-                        );
-                    } else {
-                        self.record_cleanup_failure(
-                            session_id,
-                            route_family,
-                            &failed_domains,
-                            true,
-                        );
-                    }
-                }
-                Err(e) => {
-                    self.pending_session_cleanups
-                        .insert(session_id, PendingSessionCleanup { route_family });
-                    tracing::warn!(
-                        session_id = session_id,
-                        route_family = route_family.id(),
-                        error = %e,
-                        "Ingress: cleanup worker task failed"
-                    );
-                }
-            }
-        }
-
-        // Remove session state after domain cleanup completes.
-        self.finalize_session_close(session_id);
+        self.session_registry().finalize_close(session_id);
 
         // Notify handler if present
         if let Some(handler) = &self.event_handler {

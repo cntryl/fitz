@@ -2,7 +2,11 @@ use super::*;
 
 impl StreamStore {
     pub fn new(db: Arc<cntryl_midge::Engine>) -> Self {
-        Self::with_config_and_layout(
+        Self::new_with_storage(crate::storage::FitzStorageEngine::new(db))
+    }
+
+    pub(crate) fn new_with_storage(db: crate::storage::FitzStorageEngine) -> Self {
+        Self::with_storage_config_and_layout(
             db,
             BatchLimits::default(),
             StreamTTL::default(),
@@ -11,11 +15,30 @@ impl StreamStore {
     }
 
     pub fn with_layout(db: Arc<cntryl_midge::Engine>, layout: StreamStorageLayout) -> Self {
-        Self::with_config_and_layout(db, BatchLimits::default(), StreamTTL::default(), layout)
+        Self::with_storage_layout(crate::storage::FitzStorageEngine::new(db), layout)
+    }
+
+    pub(crate) fn with_storage_layout(
+        db: crate::storage::FitzStorageEngine,
+        layout: StreamStorageLayout,
+    ) -> Self {
+        Self::with_storage_config_and_layout(
+            db,
+            BatchLimits::default(),
+            StreamTTL::default(),
+            layout,
+        )
     }
 
     pub fn with_limits(db: Arc<cntryl_midge::Engine>, limits: BatchLimits) -> Self {
-        Self::with_config_and_layout(
+        Self::with_storage_limits(crate::storage::FitzStorageEngine::new(db), limits)
+    }
+
+    pub(crate) fn with_storage_limits(
+        db: crate::storage::FitzStorageEngine,
+        limits: BatchLimits,
+    ) -> Self {
+        Self::with_storage_config_and_layout(
             db,
             limits,
             StreamTTL::default(),
@@ -24,11 +47,33 @@ impl StreamStore {
     }
 
     pub fn with_config(db: Arc<cntryl_midge::Engine>, limits: BatchLimits, ttl: StreamTTL) -> Self {
-        Self::with_config_and_layout(db, limits, ttl, StreamStorageLayout::default())
+        Self::with_storage_config(crate::storage::FitzStorageEngine::new(db), limits, ttl)
+    }
+
+    pub(crate) fn with_storage_config(
+        db: crate::storage::FitzStorageEngine,
+        limits: BatchLimits,
+        ttl: StreamTTL,
+    ) -> Self {
+        Self::with_storage_config_and_layout(db, limits, ttl, StreamStorageLayout::default())
     }
 
     pub fn with_config_and_layout(
         db: Arc<cntryl_midge::Engine>,
+        limits: BatchLimits,
+        ttl: StreamTTL,
+        layout: StreamStorageLayout,
+    ) -> Self {
+        Self::with_storage_config_and_layout(
+            crate::storage::FitzStorageEngine::new(db),
+            limits,
+            ttl,
+            layout,
+        )
+    }
+
+    pub(crate) fn with_storage_config_and_layout(
+        db: crate::storage::FitzStorageEngine,
         limits: BatchLimits,
         ttl: StreamTTL,
         layout: StreamStorageLayout,

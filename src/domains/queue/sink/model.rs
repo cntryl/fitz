@@ -60,8 +60,8 @@ pub(super) const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 /// - Tracks queue-local watch subscriptions for the current broker process
 /// - Exposes only warm in-memory queue/admin state for the current broker process
 pub struct QueueDomainSink {
-    /// Midge storage engine
-    pub(super) store: Arc<cntryl_midge::Engine>,
+    /// Fitz storage facade over the current Midge engine.
+    pub(super) store: crate::storage::FitzStorageEngine,
     /// Commit policy for queue persistence on this runtime.
     pub(super) queue_write_options: cntryl_midge::WriteOptions,
     /// Deduplication store shared by warm actors created through this sink.

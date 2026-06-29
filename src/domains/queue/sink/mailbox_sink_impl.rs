@@ -2,50 +2,112 @@ use super::model::*;
 
 impl MailboxSink for QueueDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.cleanup_session(cleanup.session_id);
+        if self.handle_cleanup_envelope(&envelope) {
             return Ok(());
         }
+        self.ensure_active()?;
+        self.log_delivery(&envelope);
+
+        let Some(request) = self.extract_request(&envelope)? else {
+            return Ok(());
+        };
+        let meta = request.meta;
+        let route_family = *envelope.destination().family();
+        let request_started = self.record_request_start();
+
+        let Some(parsed_frame) =
+            self.parse_request_frame(&envelope, meta, request.frame, request_started)?
+        else {
+            return Ok(());
+        };
+
+        self.maybe_sweep_idle_actors();
+
+        match parsed_frame {
+            QueueClientFrame::Sub(sub_msg) => {
+                self.handle_subscription_frame(&envelope, meta, request_started, sub_msg)
+            }
+            QueueClientFrame::Op(queue_msg) => self.handle_actor_operation_frame(
+                &envelope,
+                meta,
+                request_started,
+                route_family,
+                queue_msg,
+            ),
+        }
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+impl QueueDomainSink {
+    fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.cleanup_session(cleanup.session_id);
+            return true;
+        }
+
+        false
+    }
+
+    fn ensure_active(&self) -> Result<(), DeliveryError> {
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
         }
 
+        Ok(())
+    }
+
+    fn log_delivery(&self, envelope: &Envelope) {
         tracing::debug!(
             domain = "queue",
             destination = %envelope.destination(),
             source = ?envelope.source(),
             "Queue domain sink: received envelope"
         );
+    }
 
-        let request = match Self::request_from_envelope(&envelope) {
-            Some(request) => request,
+    fn extract_request(
+        &self,
+        envelope: &Envelope,
+    ) -> Result<Option<QueueClientRequest>, DeliveryError> {
+        match Self::request_from_envelope(envelope) {
+            Some(request) => Ok(Some(request)),
             None => {
                 tracing::warn!(
                     domain = "queue",
                     "Envelope payload was not QueueClientRequest"
                 );
-                return Err(DeliveryError::ActorStopped);
+                Err(DeliveryError::ActorStopped)
             }
-        };
+        }
+    }
 
-        let meta = request.meta;
-        let route_addr = envelope.destination();
-        let route_family = *route_addr.family();
-        let request_started = self
-            .metrics
+    fn record_request_start(&self) -> Option<Instant> {
+        self.metrics
             .as_ref()
-            .map(|metrics| metrics.record_request_start());
+            .map(|metrics| metrics.record_request_start())
+    }
 
-        let parsed_frame = match request.frame {
-            Ok(msg) => msg,
+    fn parse_request_frame(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        frame: Result<QueueClientFrame, String>,
+        request_started: Option<Instant>,
+    ) -> Result<Option<QueueClientFrame>, DeliveryError> {
+        let parsed_frame = match frame {
+            Ok(frame) => frame,
             Err(reason) => {
                 let response = crate::domains::queue::QueueResponse::BadRequest { reason };
-                self.route_queue_response(&envelope, meta, &response);
+                self.route_queue_response(envelope, meta, &response);
                 if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
                 {
                     metrics.record_failure(started_at);
                 }
-                return Ok(());
+                return Ok(None);
             }
         };
 
@@ -56,102 +118,112 @@ impl MailboxSink for QueueDomainSink {
             "Parsed Queue message successfully"
         );
 
-        self.maybe_sweep_idle_actors();
+        Ok(Some(parsed_frame))
+    }
 
-        if let QueueClientFrame::Sub(sub_msg) = parsed_frame {
-            let (response, initial_watch_snapshot) = match sub_msg {
-                QueueSubscriptionMessage::Watch {
-                    family_id,
-                    pattern,
-                    session_id,
-                    subscriber,
-                } => {
-                    let pattern_str = pattern.as_str();
-                    let parsed_pattern = crate::runtime::matcher::Pattern::new(pattern_str);
-                    let subscription_id = {
-                        let mut families = self.families.lock();
-                        let state = families
-                            .entry(family_id.as_u64())
-                            .or_insert_with(RoutedSubscriptionSet::new);
-
-                        if let Some(id) = state.find_existing_id(session_id, pattern_str) {
-                            id
-                        } else {
-                            let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                            state.insert(
-                                family_id,
-                                QueueSubscription {
-                                    pattern: parsed_pattern.clone(),
-                                    session_id,
-                                    subscription_id: id,
-                                    subscriber: subscriber.clone(),
-                                },
-                            );
-                            id
-                        }
-                    };
-
-                    (
-                        crate::domains::queue::QueueResponse::WatchOk { subscription_id },
-                        Some((
-                            family_id,
-                            parsed_pattern,
-                            session_id,
-                            subscription_id,
-                            subscriber,
-                        )),
-                    )
-                }
-                QueueSubscriptionMessage::Unwatch {
-                    family_id,
-                    pattern,
-                    session_id,
-                    ..
-                } => {
+    fn handle_subscription_frame(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        request_started: Option<Instant>,
+        sub_msg: QueueSubscriptionMessage,
+    ) -> Result<(), DeliveryError> {
+        let (response, initial_watch_snapshot) = match sub_msg {
+            QueueSubscriptionMessage::Watch {
+                family_id,
+                pattern,
+                session_id,
+                subscriber,
+            } => {
+                let pattern_str = pattern.as_str();
+                let parsed_pattern = crate::runtime::matcher::Pattern::new(pattern_str);
+                let subscription_id = {
                     let mut families = self.families.lock();
-                    let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
-                        state.remove_session_pattern(family_id, session_id, pattern.as_str());
-                        state.is_empty()
+                    let state = families
+                        .entry(family_id.as_u64())
+                        .or_insert_with(RoutedSubscriptionSet::new);
+
+                    if let Some(id) = state.find_existing_id(session_id, pattern_str) {
+                        id
                     } else {
-                        false
-                    };
-                    if remove_family {
-                        families.remove(&family_id.as_u64());
+                        let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                        state.insert(
+                            family_id,
+                            QueueSubscription {
+                                pattern: parsed_pattern.clone(),
+                                session_id,
+                                subscription_id: id,
+                                subscriber: subscriber.clone(),
+                            },
+                        );
+                        id
                     }
-                    (crate::domains::queue::QueueResponse::UnwatchOk, None)
-                }
-            };
+                };
 
-            self.route_queue_response(&envelope, meta, &response);
-            self.mark_admin_snapshot_dirty();
-            if let Some((family_id, pattern, session_id, subscription_id, subscriber)) =
-                initial_watch_snapshot
-            {
-                self.emit_current_ready_notifications_for_watch(
-                    family_id,
-                    &pattern,
-                    session_id,
-                    subscription_id,
-                    &subscriber,
-                );
+                (
+                    crate::domains::queue::QueueResponse::WatchOk { subscription_id },
+                    Some((
+                        family_id,
+                        parsed_pattern,
+                        session_id,
+                        subscription_id,
+                        subscriber,
+                    )),
+                )
             }
-
-            if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
-                if Self::queue_response_is_failure(&response) {
-                    metrics.record_failure(started_at);
+            QueueSubscriptionMessage::Unwatch {
+                family_id,
+                pattern,
+                session_id,
+                ..
+            } => {
+                let mut families = self.families.lock();
+                let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                    state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                    state.is_empty()
                 } else {
-                    metrics.record_success(started_at);
+                    false
+                };
+                if remove_family {
+                    families.remove(&family_id.as_u64());
                 }
+                (crate::domains::queue::QueueResponse::UnwatchOk, None)
             }
-            return Ok(());
+        };
+
+        self.route_queue_response(envelope, meta, &response);
+        self.mark_admin_snapshot_dirty();
+        if let Some((family_id, pattern, session_id, subscription_id, subscriber)) =
+            initial_watch_snapshot
+        {
+            self.emit_current_ready_notifications_for_watch(
+                family_id,
+                &pattern,
+                session_id,
+                subscription_id,
+                &subscriber,
+            );
         }
 
-        use crate::domains::queue::protocol::QueueMessage;
+        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            if Self::queue_response_is_failure(&response) {
+                metrics.record_failure(started_at);
+            } else {
+                metrics.record_success(started_at);
+            }
+        }
+        Ok(())
+    }
 
-        let queue_msg = match parsed_frame {
-            QueueClientFrame::Op(msg) => msg,
-            QueueClientFrame::Sub(_) => unreachable!(),
-        };
+    fn handle_actor_operation_frame(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        request_started: Option<Instant>,
+        route_family: crate::runtime::routing::RouteFamily,
+        queue_msg: crate::domains::queue::protocol::QueueMessage,
+    ) -> Result<(), DeliveryError> {
+        use crate::domains::queue::protocol::QueueMessage;
 
         // Capture the operation kind before the consuming match for operation-specific metrics.
         #[derive(Clone, Copy)]
@@ -184,7 +256,7 @@ impl MailboxSink for QueueDomainSink {
                         Ok(actor) => actor,
                         Err(message) => {
                             return self.route_queue_recovery_error(
-                                &envelope,
+                                envelope,
                                 meta,
                                 request_started,
                                 message,
@@ -227,7 +299,7 @@ impl MailboxSink for QueueDomainSink {
                         Ok(actor) => actor,
                         Err(message) => {
                             return self.route_queue_recovery_error(
-                                &envelope,
+                                envelope,
                                 meta,
                                 request_started,
                                 message,
@@ -276,7 +348,7 @@ impl MailboxSink for QueueDomainSink {
                         Ok(actor) => actor,
                         Err(message) => {
                             return self.route_queue_recovery_error(
-                                &envelope,
+                                envelope,
                                 meta,
                                 request_started,
                                 message,
@@ -324,7 +396,7 @@ impl MailboxSink for QueueDomainSink {
                         Ok(actor) => actor,
                         Err(message) => {
                             return self.route_queue_recovery_error(
-                                &envelope,
+                                envelope,
                                 meta,
                                 request_started,
                                 message,
@@ -371,7 +443,7 @@ impl MailboxSink for QueueDomainSink {
             self.route_queue_ready_notification(&key, notification);
         }
 
-        self.route_queue_response(&envelope, meta, &response);
+        self.route_queue_response(envelope, meta, &response);
 
         if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
             if Self::queue_response_is_failure(&response) {
@@ -390,13 +462,6 @@ impl MailboxSink for QueueDomainSink {
 
         Ok(())
     }
-
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
-
-impl QueueDomainSink {
     fn request_from_envelope(envelope: &Envelope) -> Option<QueueClientRequest> {
         if let Some(request) = envelope.payload::<QueueClientRequest>() {
             return Some(request.clone());

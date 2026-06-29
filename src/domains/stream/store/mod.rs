@@ -260,7 +260,7 @@ pub struct StreamAdminRecord {
 }
 
 pub struct StreamStore {
-    db: Arc<cntryl_midge::Engine>,
+    db: crate::storage::FitzStorageEngine,
     limits: BatchLimits,
     layout: StreamStorageLayout,
     sessions: Arc<Mutex<HashMap<SessionId, AppendSession>>>,

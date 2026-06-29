@@ -2,42 +2,105 @@ use super::model::*;
 
 impl MailboxSink for LeaseDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.cleanup_session(cleanup.session_id);
+        if self.handle_cleanup_envelope(&envelope) {
             return Ok(());
         }
+        self.ensure_active()?;
+
+        if self.handle_domain_publish_envelope(&envelope)? {
+            return Ok(());
+        }
+
+        self.log_delivery(&envelope);
+
+        let Some(request) = self.extract_request(&envelope)? else {
+            return Ok(());
+        };
+        let meta = request.meta;
+        let request_started = self.record_request_start();
+
+        let parsed_frame = self.parse_request_frame(meta, request.frame, request_started)?;
+
+        match parsed_frame {
+            crate::domains::lease::protocol::LeaseClientFrame::Sub(sub_msg) => {
+                self.handle_subscription_frame(&envelope, meta, request_started, sub_msg)
+            }
+            crate::domains::lease::protocol::LeaseClientFrame::Op(lease_msg) => {
+                self.handle_actor_operation_frame(&envelope, meta, request_started, lease_msg)
+            }
+        }
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+impl LeaseDomainSink {
+    fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.cleanup_session(cleanup.session_id);
+            return true;
+        }
+
+        false
+    }
+
+    fn ensure_active(&self) -> Result<(), DeliveryError> {
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
         }
 
+        Ok(())
+    }
+
+    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> Result<bool, DeliveryError> {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
-            return self.handle_domain_publish(event);
+            self.handle_domain_publish(event)?;
+            return Ok(true);
         }
 
+        Ok(false)
+    }
+
+    fn log_delivery(&self, envelope: &Envelope) {
         tracing::debug!(
             domain = "lease",
             destination = %envelope.destination(),
             source = ?envelope.source(),
             "Lease domain sink: received envelope"
         );
+    }
 
-        let request = match Self::request_from_envelope(&envelope) {
-            Some(request) => request,
+    fn extract_request(
+        &self,
+        envelope: &Envelope,
+    ) -> Result<Option<crate::domains::lease::LeaseClientRequest>, DeliveryError> {
+        match Self::request_from_envelope(envelope) {
+            Some(request) => Ok(Some(request)),
             None => {
                 tracing::warn!(
                     domain = "lease",
                     "Envelope payload was not LeaseClientRequest"
                 );
-                return Err(DeliveryError::ActorStopped);
+                Err(DeliveryError::ActorStopped)
             }
-        };
-        let meta = request.meta;
-        let request_started = self
-            .metrics
-            .as_ref()
-            .map(|metrics| metrics.record_request_start());
+        }
+    }
 
-        let parsed_frame = match request.frame {
+    fn record_request_start(&self) -> Option<std::time::Instant> {
+        self.metrics
+            .as_ref()
+            .map(|metrics| metrics.record_request_start())
+    }
+
+    fn parse_request_frame(
+        &self,
+        meta: crate::runtime::ClientFrameMeta,
+        frame: Result<crate::domains::lease::protocol::LeaseClientFrame, String>,
+        request_started: Option<std::time::Instant>,
+    ) -> Result<crate::domains::lease::protocol::LeaseClientFrame, DeliveryError> {
+        match frame {
             Ok(msg) => {
                 tracing::debug!(
                     domain = "lease",
@@ -45,87 +108,96 @@ impl MailboxSink for LeaseDomainSink {
                     msg_type = meta.message_type,
                     "Lease: parsed message successfully"
                 );
-                msg
+                Ok(msg)
             }
-            Err(e) => {
+            Err(error) => {
                 if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
                 {
                     metrics.record_failure(started_at);
                 }
-                tracing::warn!(domain = "lease", error = %e, "Failed to parse lease message");
-                return Err(DeliveryError::ActorStopped);
+                tracing::warn!(domain = "lease", error = %error, "Failed to parse lease message");
+                Err(DeliveryError::ActorStopped)
+            }
+        }
+    }
+
+    fn handle_subscription_frame(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        request_started: Option<std::time::Instant>,
+        sub_msg: crate::domains::lease::protocol::LeaseSubscriptionMessage,
+    ) -> Result<(), DeliveryError> {
+        use crate::domains::lease::protocol::{LeaseResponse, LeaseSubscriptionMessage};
+
+        let response = match sub_msg {
+            LeaseSubscriptionMessage::Subscribe {
+                family_id,
+                pattern,
+                session_id,
+                subscriber,
+            } => {
+                let pattern_str = pattern.as_str().to_string();
+                let subscription_id = {
+                    let mut families = self.families.lock();
+                    let state = families
+                        .entry(family_id.as_u64())
+                        .or_insert_with(RoutedSubscriptionSet::new);
+
+                    if let Some(existing_id) =
+                        state.find_existing_id(session_id, pattern_str.as_str())
+                    {
+                        existing_id
+                    } else {
+                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                        state.insert(
+                            family_id,
+                            LeaseSubscription {
+                                pattern: crate::runtime::matcher::Pattern::new(
+                                    pattern_str.as_str(),
+                                ),
+                                session_id,
+                                route_address: subscriber,
+                                subscription_id: new_id,
+                            },
+                        );
+                        new_id
+                    }
+                };
+                LeaseResponse::SubscribeOk { subscription_id }
+            }
+            LeaseSubscriptionMessage::Unsubscribe {
+                family_id,
+                pattern,
+                session_id,
+                ..
+            } => {
+                let mut families = self.families.lock();
+                let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                    state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                    state.is_empty()
+                } else {
+                    false
+                };
+                if remove_family {
+                    families.remove(&family_id.as_u64());
+                }
+                LeaseResponse::UnsubscribeOk
             }
         };
 
-        use crate::domains::lease::protocol::{
-            LeaseClientFrame, LeaseKey, LeaseMessage, LeaseResponse, LeaseSubscriptionMessage,
-        };
+        self.refresh_metrics_gauges();
+        self.route_lease_response(envelope, meta, &response, request_started)
+    }
 
-        if let LeaseClientFrame::Sub(sub_msg) = parsed_frame {
-            let response = match sub_msg {
-                LeaseSubscriptionMessage::Subscribe {
-                    family_id,
-                    pattern,
-                    session_id,
-                    subscriber,
-                } => {
-                    let pattern_str = pattern.as_str().to_string();
-                    let subscription_id = {
-                        let mut families = self.families.lock();
-                        let state = families
-                            .entry(family_id.as_u64())
-                            .or_insert_with(RoutedSubscriptionSet::new);
-
-                        if let Some(existing_id) =
-                            state.find_existing_id(session_id, pattern_str.as_str())
-                        {
-                            existing_id
-                        } else {
-                            let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                            state.insert(
-                                family_id,
-                                LeaseSubscription {
-                                    pattern: crate::runtime::matcher::Pattern::new(
-                                        pattern_str.as_str(),
-                                    ),
-                                    session_id,
-                                    route_address: subscriber,
-                                    subscription_id: new_id,
-                                },
-                            );
-                            new_id
-                        }
-                    };
-                    LeaseResponse::SubscribeOk { subscription_id }
-                }
-                LeaseSubscriptionMessage::Unsubscribe {
-                    family_id,
-                    pattern,
-                    session_id,
-                    ..
-                } => {
-                    let mut families = self.families.lock();
-                    let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
-                        state.remove_session_pattern(family_id, session_id, pattern.as_str());
-                        state.is_empty()
-                    } else {
-                        false
-                    };
-                    if remove_family {
-                        families.remove(&family_id.as_u64());
-                    }
-                    LeaseResponse::UnsubscribeOk
-                }
-            };
-
-            self.refresh_metrics_gauges();
-            return self.route_lease_response(&envelope, meta, &response, request_started);
-        }
-
-        let lease_msg = match parsed_frame {
-            LeaseClientFrame::Op(msg) => msg,
-            LeaseClientFrame::Sub(_) => unreachable!(),
-        };
+    fn handle_actor_operation_frame(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        request_started: Option<std::time::Instant>,
+        lease_msg: crate::domains::lease::protocol::LeaseMessage,
+    ) -> Result<(), DeliveryError> {
+        use crate::domains::lease::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
 
         let session_prefix = meta.session_id.to_string();
         let effective_owner = |owner_id: String| {
@@ -204,15 +276,9 @@ impl MailboxSink for LeaseDomainSink {
             }
         };
 
-        self.route_lease_response(&envelope, meta, &domain_response, request_started)
+        self.route_lease_response(envelope, meta, &domain_response, request_started)
     }
 
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
-
-impl LeaseDomainSink {
     fn request_from_envelope(
         envelope: &Envelope,
     ) -> Option<crate::domains::lease::LeaseClientRequest> {

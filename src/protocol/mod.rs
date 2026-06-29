@@ -10,7 +10,6 @@
 //!
 //! This layer is transport-agnostic and contains no Tokio, no routing, no domain logic.
 
-pub mod codec_trait;
 pub mod error_codes;
 pub mod frame;
 pub mod frame_context;
@@ -25,7 +24,6 @@ pub mod schedule_codec;
 pub mod stream_codec;
 pub mod tlv;
 
-pub use codec_trait::{CodecBuilder, DomainCodec, DomainResponse};
 pub use error_codes::{
     kv as error_kv, lease as error_lease, notice as error_notice, queue as error_queue,
     rpc as error_rpc, schedule as error_schedule, stream as error_stream,

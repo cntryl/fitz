@@ -17,8 +17,8 @@ pub use live_sink::{
     create_bench_rpc_sink, create_bench_rpc_sink_with_metrics,
     create_bench_rpc_sink_with_route_pending_capacity, create_bench_rpc_sink_with_timeout,
     create_bench_schedule_sink, create_bench_stream_sink, create_bench_stream_sink_with_layout,
-    register_session_counting_sink, register_session_queue_sink, route_frame, session_inbox_route,
-    CountingSink, FrameQueueSink,
+    register_session_counting_sink, register_session_queue_sink, route_frame, route_raw_frame,
+    session_inbox_route, CountingSink, FrameQueueSink,
 };
 pub use queue::{create_bench_queue_actor, create_local_bench_queue_actor};
 pub use rpc::create_bench_rpc_context;

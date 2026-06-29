@@ -87,40 +87,30 @@ impl RuntimeIngress {
         &self,
         session_id: u64,
     ) -> Option<crate::session::actor::SessionActor> {
-        self.session_actors
-            .get(&session_id)
-            .map(|entry| entry.value().clone())
+        self.session_registry().session_actor(session_id)
     }
 
     /// Get a session by ID
     pub fn get_session(&self, session_id: u64) -> Option<SessionInfo> {
-        self.sessions
-            .get(&session_id)
-            .map(|entry| entry.value().clone())
+        self.session_registry().session(session_id)
     }
 
     /// Get all active sessions
     pub fn active_sessions(&self) -> Vec<SessionInfo> {
-        self.sessions
-            .iter()
-            .map(|entry| entry.value().clone())
-            .collect()
+        self.session_registry().active_sessions()
     }
 
     /// Get session count
     pub fn session_count(&self) -> usize {
-        self.sessions.len()
+        self.session_registry().session_count()
     }
 
+    #[allow(dead_code)]
     pub(super) fn finalize_session_close(&self, session_id: u64) {
-        self.sessions.remove(&session_id);
-        self.session_actors.remove(&session_id);
-        self.session_inbox_routes.remove(&session_id);
-        if let Some(admin_read_model) = &self.admin_read_model {
-            admin_read_model.record_session_close(session_id);
-        }
+        self.session_registry().finalize_close(session_id);
     }
 
+    #[allow(dead_code)]
     pub(super) fn record_cleanup_failure(
         &self,
         session_id: u64,
@@ -128,96 +118,16 @@ impl RuntimeIngress {
         failed_domains: &[DispatchDomain],
         store_retry_ticket: bool,
     ) {
-        if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
-            collector.counter_add(
-                obs::METRIC_SESSION_CLEANUP_FAILURES,
-                failed_domains.len() as u64,
-            );
-        }
-
-        if store_retry_ticket {
-            self.pending_session_cleanups
-                .insert(session_id, PendingSessionCleanup { route_family });
-        }
-
-        tracing::warn!(
-            session_id = session_id,
-            route_family = route_family.id(),
-            failed_domains = ?failed_domains,
-            retry_pending = store_retry_ticket,
-            "Ingress: session cleanup incomplete"
+        self.session_cleanup_coordinator().record_failure(
+            session_id,
+            route_family,
+            failed_domains,
+            store_retry_ticket,
         );
     }
 
+    #[allow(dead_code)]
     pub(super) async fn retry_pending_session_cleanups(&self) {
-        if self.pending_session_cleanups.is_empty() {
-            return;
-        }
-
-        let Some(router) = &self.router else {
-            return;
-        };
-
-        if self
-            .cleanup_retry_in_progress
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return;
-        }
-
-        let pending = self
-            .pending_session_cleanups
-            .iter()
-            .map(|entry| (*entry.key(), *entry.value()))
-            .collect::<Vec<_>>();
-        let pending_len = pending.len();
-        let router = router.clone();
-
-        let retry_result = tokio::task::spawn_blocking(move || {
-            pending
-                .into_iter()
-                .map(|(session_id, cleanup)| {
-                    (
-                        session_id,
-                        cleanup.route_family,
-                        dispatch_session_cleanup(router.as_ref(), cleanup.route_family, session_id),
-                    )
-                })
-                .collect::<Vec<_>>()
-        })
-        .await;
-
-        self.cleanup_retry_in_progress
-            .store(false, Ordering::SeqCst);
-
-        match retry_result {
-            Ok(retry_outcomes) => {
-                for (session_id, route_family, failed_domains) in retry_outcomes {
-                    if failed_domains.is_empty() {
-                        self.pending_session_cleanups.remove(&session_id);
-                        tracing::debug!(
-                            session_id = session_id,
-                            route_family = route_family.id(),
-                            "Ingress: pending session cleanup retry succeeded"
-                        );
-                    } else {
-                        self.record_cleanup_failure(
-                            session_id,
-                            route_family,
-                            &failed_domains,
-                            true,
-                        );
-                    }
-                }
-            }
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    pending_sessions = pending_len,
-                    "Ingress: pending cleanup retry worker task failed"
-                );
-            }
-        }
+        self.session_cleanup_coordinator().retry_pending().await;
     }
 }

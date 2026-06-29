@@ -1176,27 +1176,12 @@ impl MailboxSink for PrototypeStreamReadSink {
             return Ok(());
         }
 
-        let frame_ctx = match envelope.payload::<fitz::protocol::frame_context::FrameContext>() {
-            Some(ctx) => ctx.clone(),
-            None => return Err(DeliveryError::ActorStopped),
-        };
-
-        let parsed = fitz::protocol::stream_codec::parse_request(
-            &frame_ctx,
-            &frame_ctx.payload,
-            *envelope.destination().family(),
-            SessionId(frame_ctx.session_id),
-            envelope.source().cloned().unwrap_or_else(|| {
-                RouteAddress::new(
-                    *envelope.destination().family(),
-                    Route::new(format!("inbox://session/{}", frame_ctx.session_id)),
-                )
-            }),
-        )
-        .map_err(|_| DeliveryError::ActorStopped)?;
+        let request = self.request_from_envelope(&envelope)?;
+        let meta = request.meta;
+        let parsed = request.frame.map_err(|_| DeliveryError::ActorStopped)?;
 
         use fitz::domains::stream::protocol::{
-            StreamClientFrame, StreamClientResponseBody, StreamMessage,
+            StreamClientFrame, StreamClientResponse, StreamClientResponseBody, StreamMessage,
         };
 
         let response = match parsed {
@@ -1218,16 +1203,9 @@ impl MailboxSink for PrototypeStreamReadSink {
             ),
         };
 
-        let response_bytes = fitz::protocol::stream_codec::encode_response(&response);
-        let response_ctx = fitz::protocol::frame_context::FrameContext::new(
-            frame_ctx.session_id,
-            frame_ctx.channel_id,
-            fitz::protocol::tlv::MessageType::new(frame_ctx.msg_type.as_u16()),
-            Bytes::from(response_bytes),
-            frame_ctx.route_family,
-        );
-
-        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+        if let Some(response_envelope) =
+            envelope.try_reply_to(StreamClientResponse::new(meta, response))
+        {
             let _ = self.router.route(response_envelope);
         }
 
@@ -1236,6 +1214,60 @@ impl MailboxSink for PrototypeStreamReadSink {
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         self.deliver(envelope)
+    }
+}
+
+impl PrototypeStreamReadSink {
+    fn request_from_envelope(
+        &self,
+        envelope: &Envelope,
+    ) -> Result<fitz::domains::stream::protocol::StreamClientRequest, DeliveryError> {
+        if let Some(request) =
+            envelope.payload::<fitz::domains::stream::protocol::StreamClientRequest>()
+        {
+            return Ok(request.clone());
+        }
+
+        let frame_ctx = envelope
+            .payload::<fitz::protocol::frame_context::FrameContext>()
+            .cloned()
+            .ok_or(DeliveryError::ActorStopped)?;
+        let subscriber = envelope.source().cloned().unwrap_or_else(|| {
+            RouteAddress::new(
+                *envelope.destination().family(),
+                Route::new(format!("inbox://session/{}", frame_ctx.session_id)),
+            )
+        });
+        let meta = fitz::runtime::ClientFrameMeta::new(
+            frame_ctx.session_id,
+            client_channel_from_protocol(frame_ctx.channel_id),
+            frame_ctx.msg_type.as_u16(),
+            frame_ctx.route_family,
+        );
+        let parsed = fitz::protocol::stream_codec::parse_request(
+            &frame_ctx,
+            &frame_ctx.payload,
+            *envelope.destination().family(),
+            SessionId(frame_ctx.session_id),
+            subscriber,
+        );
+
+        Ok(fitz::domains::stream::protocol::StreamClientRequest::new(
+            meta, parsed,
+        ))
+    }
+}
+
+fn client_channel_from_protocol(
+    channel: fitz::protocol::frame::ChannelId,
+) -> fitz::runtime::ClientChannel {
+    match channel {
+        fitz::protocol::frame::ChannelId::Control => fitz::runtime::ClientChannel::Control,
+        fitz::protocol::frame::ChannelId::Pub => fitz::runtime::ClientChannel::Pub,
+        fitz::protocol::frame::ChannelId::Sub => fitz::runtime::ClientChannel::Sub,
+        fitz::protocol::frame::ChannelId::Rpc => fitz::runtime::ClientChannel::Rpc,
+        fitz::protocol::frame::ChannelId::Lease => fitz::runtime::ClientChannel::Lease,
+        fitz::protocol::frame::ChannelId::Internal => fitz::runtime::ClientChannel::Internal,
     }
 }
 

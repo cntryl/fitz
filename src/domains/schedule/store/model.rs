@@ -94,7 +94,7 @@ pub struct PersistedPendingFireClaim {
 }
 
 pub struct ScheduleStore {
-    pub(super) db: Arc<cntryl_midge::Engine>,
+    pub(super) db: crate::storage::FitzStorageEngine,
     #[cfg(test)]
     pub(super) fail_next_commit: Arc<std::sync::atomic::AtomicBool>,
 }

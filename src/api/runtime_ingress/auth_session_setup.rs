@@ -3,53 +3,13 @@ use super::*;
 impl RuntimeIngress {
     pub async fn close_all_sessions(&self, reason: CloseReason) {
         let session_ids = self
-            .sessions
-            .iter()
-            .map(|session| *session.key())
+            .session_registry()
+            .active_sessions()
+            .into_iter()
+            .map(|session| session.session_id)
             .collect::<Vec<_>>();
         for session_id in session_ids {
             self.on_close(session_id, reason.clone()).await;
-        }
-    }
-
-    pub(super) fn resolve_authenticated_route_family(
-        &self,
-        raw_claims: &crate::auth::RawClaims,
-    ) -> Result<crate::runtime::routing::RouteFamily, String> {
-        let route_family = self.route_family_resolver.resolve(raw_claims)?;
-        if !self.route_families.contains(&route_family) {
-            return Err(format!(
-                "resolved route family {} is not provisioned",
-                route_family
-            ));
-        }
-        Ok(crate::runtime::routing::RouteFamily::new(
-            route_family.into(),
-        ))
-    }
-
-    pub(super) fn apply_authenticated_session(
-        &self,
-        session_id: u64,
-        entry: &mut SessionInfo,
-        claims: crate::auth::Claims,
-        snapshot: SessionPermissions,
-        route_family: crate::runtime::routing::RouteFamily,
-    ) {
-        entry.permissions_snapshot = snapshot.clone();
-        entry.authenticated = true;
-        entry.claims = Some(Arc::new(claims.clone()));
-        entry.route_family = route_family;
-
-        let mut actor = crate::session::actor::SessionActor::new(
-            crate::session::session::SessionId(session_id),
-            snapshot.clone(),
-        );
-        actor.authenticate(claims, snapshot);
-        self.session_actors.insert(session_id, actor);
-
-        if let Some(admin_read_model) = &self.admin_read_model {
-            admin_read_model.record_session_update(entry);
         }
     }
 

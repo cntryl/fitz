@@ -1,24 +1,83 @@
 use super::*;
 
+pub(super) struct DomainFrameDispatcher<'a> {
+    ingress: &'a RuntimeIngress,
+}
+
 impl RuntimeIngress {
-    pub(super) fn unauthorized_error_code(domain: DispatchDomain) -> u16 {
-        match domain {
-            DispatchDomain::Kv => crate::protocol::error_codes::kv::ERR_UNAUTHORIZED,
-            DispatchDomain::Queue => crate::protocol::error_codes::queue::ERR_UNAUTHORIZED,
-            DispatchDomain::Rpc => crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
-            DispatchDomain::Lease => crate::protocol::error_codes::lease::ERR_UNAUTHORIZED,
-            DispatchDomain::Notice => crate::protocol::error_codes::notice::ERR_UNAUTHORIZED,
-            DispatchDomain::Stream => crate::protocol::error_codes::stream::ERR_UNAUTHORIZED,
-            DispatchDomain::Schedule => crate::protocol::error_codes::schedule::ERR_UNAUTHORIZED,
+    pub(super) fn domain_frame_dispatcher(&self) -> DomainFrameDispatcher<'_> {
+        DomainFrameDispatcher { ingress: self }
+    }
+}
+
+impl DomainFrameDispatcher<'_> {
+    pub(super) fn dispatch_if_domain(
+        &self,
+        session_id: u64,
+        channel_id: ChannelId,
+        route_family: crate::runtime::routing::RouteFamily,
+        msg_type: crate::protocol::tlv::MessageType,
+        should_preserve_payload: bool,
+        message_payload: &mut Option<Bytes>,
+    ) -> Result<(), IngressDecision> {
+        let Some(router) = &self.ingress.router else {
+            return Ok(());
+        };
+
+        match Self::domain_dispatch_for_msg_type(msg_type) {
+            Err(reason) => {
+                warn!(
+                    session_id = session_id,
+                    msg_type = msg_type.as_u16(),
+                    reason = reason,
+                    "Ingress: client sent server-to-client-only message type"
+                );
+                Err(IngressDecision::Close(reason.to_string()))
+            }
+            Ok(Some(spec)) => {
+                let dispatch = DomainDispatchRequest {
+                    router,
+                    session_id,
+                    channel_id,
+                    route_family,
+                    domain: spec.domain,
+                    policy: spec.policy,
+                    msg_type,
+                    preserve_payload_for_handler: should_preserve_payload,
+                };
+                self.authorize_and_dispatch_domain_frame(dispatch, message_payload)
+            }
+            Ok(None) => Ok(()),
         }
     }
 
-    pub(super) fn encode_domain_error_body(code: u16, message: &str) -> Bytes {
+    pub(super) fn domain_dispatch_for_msg_type(
+        msg_type: crate::protocol::tlv::MessageType,
+    ) -> Result<Option<DomainAuthorizationSpec>, &'static str> {
+        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::dispatch_spec_for_msg_type(
+            msg_type,
+        )
+    }
+
+    fn cached_session_inbox_route(&self, session_id: u64) -> crate::runtime::routing::Route {
+        self.ingress
+            .session_registry()
+            .cached_inbox_route(session_id)
+    }
+
+    fn unauthorized_error_code(domain: DispatchDomain) -> u16 {
+        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+            domain,
+        )
+        .unauthorized_error_code
+    }
+
+    fn encode_domain_error_body(code: u16, message: &str) -> Bytes {
         let body = crate::protocol::error_codes::encode_error_body(code, message);
         Bytes::from(body)
     }
 
-    pub(super) fn route_error_response_delivery_failure(
+    fn route_error_response_delivery_failure(
         &self,
         session_id: u64,
         domain: DispatchDomain,
@@ -49,7 +108,7 @@ impl RuntimeIngress {
         }
     }
 
-    pub(super) fn send_unauthorized_domain_response(
+    fn send_unauthorized_domain_response(
         &self,
         dispatch: &DomainDispatchRequest<'_>,
     ) -> Result<(), IngressDecision> {
@@ -80,7 +139,7 @@ impl RuntimeIngress {
         })
     }
 
-    pub(super) fn derive_auth_route_for_frame<'a>(
+    fn derive_auth_route_for_frame<'a>(
         domain: DispatchDomain,
         msg_type: crate::protocol::tlv::MessageType,
         payload: &'a [u8],
@@ -88,7 +147,7 @@ impl RuntimeIngress {
         extract_auth_route_for_domain(domain, msg_type.as_u16(), payload)
     }
 
-    pub(super) fn authorize_domain_targets(
+    fn authorize_domain_targets(
         &self,
         session_id: u64,
         msg_type: crate::protocol::tlv::MessageType,
@@ -96,7 +155,7 @@ impl RuntimeIngress {
         access: crate::auth::Access,
         targets: &AuthorizationTargets<'_>,
     ) -> Result<(), AuthorizationFailure> {
-        let Some(actor_ref) = self.get_session_actor(session_id) else {
+        let Some(actor_ref) = self.ingress.session_registry().session_actor(session_id) else {
             warn!(
                 session_id = session_id,
                 "Ingress: missing session actor for authorization"
@@ -144,7 +203,7 @@ impl RuntimeIngress {
         Ok(())
     }
 
-    pub(super) fn dispatch_domain_frame(
+    fn dispatch_domain_frame(
         &self,
         dispatch: DomainDispatchRequest<'_>,
         message_payload: &mut Option<Bytes>,
@@ -156,160 +215,25 @@ impl RuntimeIngress {
         } else {
             message_payload.take().unwrap()
         };
-        let ctx = crate::protocol::frame_context::FrameContext::new(
-            dispatch.session_id,
-            dispatch.channel_id,
-            dispatch.msg_type,
-            dispatch_payload,
-            dispatch.route_family,
-        );
         let source = crate::runtime::routing::RouteAddress::new(
             dispatch.route_family,
             self.cached_session_inbox_route(dispatch.session_id),
         );
-        let envelope = match dispatch.domain {
-            DispatchDomain::Kv => {
-                let meta = crate::runtime::ClientFrameMeta::new(
-                    dispatch.session_id,
-                    crate::api::frame_adapter::client_channel_from_protocol(dispatch.channel_id),
-                    dispatch.msg_type.as_u16(),
-                    dispatch.route_family,
-                );
-                let parsed = crate::protocol::kv::parse_frame(
-                    &ctx,
-                    &ctx.payload,
-                    dispatch.route_family,
-                    dispatch.session_id,
-                    source.clone(),
-                )
-                .map(|frame| match frame {
-                    crate::protocol::kv::ParsedKvFrame::Op(message) => {
-                        crate::domains::kv::KvClientFrame::Op(message)
-                    }
-                    crate::protocol::kv::ParsedKvFrame::Sub(message) => {
-                        crate::domains::kv::KvClientFrame::Sub(message)
-                    }
-                });
-                let request = crate::domains::kv::KvClientRequest::new(meta, parsed);
-                crate::runtime::envelope::Envelope::from_route(source, addr, request)
-            }
-            DispatchDomain::Lease => {
-                let meta = crate::runtime::ClientFrameMeta::new(
-                    dispatch.session_id,
-                    crate::api::frame_adapter::client_channel_from_protocol(dispatch.channel_id),
-                    dispatch.msg_type.as_u16(),
-                    dispatch.route_family,
-                );
-                let parsed = crate::protocol::lease_codec::parse_frame(
-                    &ctx,
-                    &ctx.payload,
-                    dispatch.route_family,
-                    dispatch.session_id,
-                    source.clone(),
-                )
-                .map(|frame| match frame {
-                    crate::protocol::lease_codec::ParsedLeaseFrame::Op(message) => {
-                        crate::domains::lease::LeaseClientFrame::Op(message)
-                    }
-                    crate::protocol::lease_codec::ParsedLeaseFrame::Sub(message) => {
-                        crate::domains::lease::LeaseClientFrame::Sub(message)
-                    }
-                });
-                let request = crate::domains::lease::LeaseClientRequest::new(meta, parsed);
-                crate::runtime::envelope::Envelope::from_route(source, addr, request)
-            }
-            DispatchDomain::Notice => {
-                let meta = crate::runtime::ClientFrameMeta::new(
-                    dispatch.session_id,
-                    crate::api::frame_adapter::client_channel_from_protocol(dispatch.channel_id),
-                    dispatch.msg_type.as_u16(),
-                    dispatch.route_family,
-                );
-                let parsed = crate::protocol::notice_codec::parse_request(
-                    &ctx,
-                    &ctx.payload,
-                    dispatch.route_family,
-                    crate::session::SessionId(dispatch.session_id),
-                    source.clone(),
-                );
-                let request = crate::domains::notice::NoticeClientRequest::new(meta, parsed);
-                crate::runtime::envelope::Envelope::from_route(source, addr, request)
-            }
-            DispatchDomain::Schedule => {
-                let meta = crate::runtime::ClientFrameMeta::new(
-                    dispatch.session_id,
-                    crate::api::frame_adapter::client_channel_from_protocol(dispatch.channel_id),
-                    dispatch.msg_type.as_u16(),
-                    dispatch.route_family,
-                );
-                let parsed = crate::protocol::schedule_codec::parse_request(
-                    &ctx,
-                    &ctx.payload,
-                    dispatch.route_family,
-                    crate::session::SessionId(dispatch.session_id),
-                    source.clone(),
-                );
-                let request = crate::domains::schedule::ScheduleClientRequest::new(meta, parsed);
-                crate::runtime::envelope::Envelope::from_route(source, addr, request)
-            }
-            DispatchDomain::Stream => {
-                let meta = crate::runtime::ClientFrameMeta::new(
-                    dispatch.session_id,
-                    crate::api::frame_adapter::client_channel_from_protocol(dispatch.channel_id),
-                    dispatch.msg_type.as_u16(),
-                    dispatch.route_family,
-                );
-                let parsed = crate::protocol::stream_codec::parse_request(
-                    &ctx,
-                    &ctx.payload,
-                    dispatch.route_family,
-                    crate::session::SessionId(dispatch.session_id),
-                    source.clone(),
-                );
-                let request = crate::domains::stream::StreamClientRequest::new(meta, parsed);
-                crate::runtime::envelope::Envelope::from_route(source, addr, request)
-            }
-            DispatchDomain::Queue => {
-                let meta = crate::runtime::ClientFrameMeta::new(
-                    dispatch.session_id,
-                    crate::api::frame_adapter::client_channel_from_protocol(dispatch.channel_id),
-                    dispatch.msg_type.as_u16(),
-                    dispatch.route_family,
-                );
-                let parsed = crate::protocol::queue_codec::parse_frame(
-                    &ctx,
-                    &ctx.payload,
-                    dispatch.route_family,
-                    dispatch.session_id,
-                    source.clone(),
-                )
-                .map(|frame| match frame {
-                    crate::protocol::queue_codec::ParsedQueueFrame::Op(message) => {
-                        crate::domains::queue::QueueClientFrame::Op(message)
-                    }
-                    crate::protocol::queue_codec::ParsedQueueFrame::Sub(message) => {
-                        crate::domains::queue::QueueClientFrame::Sub(message)
-                    }
-                });
-                let request = crate::domains::queue::QueueClientRequest::new(meta, parsed);
-                crate::runtime::envelope::Envelope::from_route(source, addr, request)
-            }
-            DispatchDomain::Rpc => {
-                let meta = crate::runtime::ClientFrameMeta::new(
-                    dispatch.session_id,
-                    crate::api::frame_adapter::client_channel_from_protocol(dispatch.channel_id),
-                    dispatch.msg_type.as_u16(),
-                    dispatch.route_family,
-                );
-                let parsed = crate::protocol::rpc_codec::parse_request(
-                    &ctx,
-                    &ctx.payload,
-                    dispatch.route_family,
-                );
-                let request = crate::domains::rpc::RpcClientRequest::new(meta, parsed);
-                crate::runtime::envelope::Envelope::from_route(source, addr, request)
-            }
-        };
+        let descriptor =
+            crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+                dispatch.domain,
+            );
+        let envelope = descriptor.build_request_envelope(
+            crate::api::runtime_ingress::domain_registry::DomainEnvelopeBuildRequest {
+                session_id: dispatch.session_id,
+                channel_id: dispatch.channel_id,
+                route_family: dispatch.route_family,
+                msg_type: dispatch.msg_type,
+                payload: dispatch_payload,
+                source,
+                destination: addr,
+            },
+        );
         debug!(
             session_id = dispatch.session_id,
             domain = dispatch.domain.as_str(),
@@ -344,22 +268,22 @@ impl RuntimeIngress {
                 );
                 Err(IngressDecision::Backpressure)
             }
-            Err(e) => {
+            Err(error) => {
                 error!(
                     session_id = dispatch.session_id,
                     domain = dispatch.domain.as_str(),
-                    error = %e,
+                    error = %error,
                     "Ingress: router.route failed for domain dispatch"
                 );
                 Err(IngressDecision::Close(format!(
                     "route delivery failed: {}",
-                    e
+                    error
                 )))
             }
         }
     }
 
-    pub(super) fn authorize_and_dispatch_domain_frame(
+    fn authorize_and_dispatch_domain_frame(
         &self,
         dispatch: DomainDispatchRequest<'_>,
         message_payload: &mut Option<Bytes>,
@@ -419,5 +343,88 @@ impl RuntimeIngress {
                 .unwrap_or_else(|decision| decision),
         })?;
         self.dispatch_domain_frame(dispatch, message_payload)
+    }
+
+    pub(super) fn resolve_authorization_targets<'a>(
+        domain: DispatchDomain,
+        msg_type: crate::protocol::tlv::MessageType,
+        payload: &'a [u8],
+        policy: AuthorizationPolicy,
+    ) -> Result<(AuthorizationTargets<'a>, crate::auth::Access), String> {
+        match policy {
+            AuthorizationPolicy::SessionOwned => Ok((
+                AuthorizationTargets::SessionOwned,
+                crate::auth::Access::Read,
+            )),
+            AuthorizationPolicy::WildcardScoped(access) => Ok((
+                AuthorizationTargets::Single(Cow::Borrowed(domain.wildcard_route())),
+                access,
+            )),
+            AuthorizationPolicy::KvBeginModeScoped => {
+                let access = Self::kv_begin_access(payload)?;
+                let route = Self::derive_auth_route_for_frame(domain, msg_type, payload)?
+                    .ok_or_else(|| "KV BEGIN authorization route missing".to_string())?;
+                Ok((AuthorizationTargets::Single(route), access))
+            }
+            AuthorizationPolicy::MultiRouteScoped(access) => {
+                if domain != DispatchDomain::Schedule || msg_type.as_u16() != 706 {
+                    return Err(
+                        "multi-route authorization is only supported for schedule batch create"
+                            .to_string(),
+                    );
+                }
+
+                let routes = crate::protocol::schedule_codec::extract_batch_auth_routes(payload)?
+                    .into_iter()
+                    .map(|route| canonicalize_dispatch_route_str(domain, route))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok((AuthorizationTargets::Multiple(routes), access))
+            }
+            AuthorizationPolicy::RouteScoped(access) => {
+                let target = Self::derive_auth_route_for_frame(domain, msg_type, payload)?
+                    .map(AuthorizationTargets::Single)
+                    .ok_or_else(|| {
+                        format!(
+                            "{} route-scoped authorization route missing",
+                            domain.as_str()
+                        )
+                    })?;
+                Ok((target, access))
+            }
+        }
+    }
+
+    pub(super) fn kv_begin_access(payload: &[u8]) -> Result<crate::auth::Access, String> {
+        if payload.len() < 6 {
+            return Err("BEGIN payload too short".to_string());
+        }
+
+        let route_len =
+            u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+        let mode_offset = 4 + route_len;
+
+        if mode_offset > payload.len() {
+            return Err("BEGIN route overflow".to_string());
+        }
+
+        if mode_offset >= payload.len() {
+            return Err("BEGIN mode byte missing".to_string());
+        }
+
+        let access = match payload[mode_offset] {
+            0 => crate::auth::Access::Read,
+            1 => crate::auth::Access::Write,
+            _ => return Err("Invalid transaction mode".to_string()),
+        };
+
+        let durability_offset = mode_offset + 1;
+        if durability_offset >= payload.len() {
+            return Err("BEGIN durability byte missing".to_string());
+        }
+
+        match payload[durability_offset] {
+            0 | 1 => Ok(access),
+            value => Err(format!("Invalid durability mode: {}", value)),
+        }
     }
 }

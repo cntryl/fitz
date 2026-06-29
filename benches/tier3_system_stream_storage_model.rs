@@ -14,7 +14,7 @@ use bytes::{BufMut, Bytes};
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     count_stream_read_records_from_payload, create_local_bench_store, extract_single_tlv_field,
-    register_session_queue_sink, route_frame, FrameQueueSink,
+    register_session_queue_sink, route_raw_frame, FrameQueueSink,
 };
 use fitz::domains::stream::protocol::{StreamRecord, StreamWriteMode};
 use fitz::domains::stream::storage::{decode_area_offset_from_key, decode_realm_offset_from_key};
@@ -25,7 +25,6 @@ use fitz::domains::stream::{StreamReadItem, StreamRecord as DomainStreamRecord};
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::frame_context::FrameContext;
 use fitz::protocol::payload_codec::PayloadEncoder;
-use fitz::protocol::tlv::MessageType;
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{DeliveryError, MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -1213,27 +1212,12 @@ impl PrototypeStreamReadSink {
 
 impl MailboxSink for PrototypeStreamReadSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        let frame_ctx = match envelope.payload::<FrameContext>() {
-            Some(ctx) => ctx.clone(),
-            None => return Err(DeliveryError::ActorStopped),
-        };
-
-        let parsed = fitz::protocol::stream_codec::parse_request(
-            &frame_ctx,
-            &frame_ctx.payload,
-            *envelope.destination().family(),
-            SessionId(frame_ctx.session_id),
-            envelope.source().cloned().unwrap_or_else(|| {
-                RouteAddress::new(
-                    *envelope.destination().family(),
-                    Route::new(format!("inbox://session/{}", frame_ctx.session_id)),
-                )
-            }),
-        )
-        .map_err(|_| DeliveryError::ActorStopped)?;
+        let request = self.request_from_envelope(&envelope)?;
+        let meta = request.meta;
+        let parsed = request.frame.map_err(|_| DeliveryError::ActorStopped)?;
 
         use fitz::domains::stream::protocol::{
-            StreamClientFrame, StreamClientResponseBody, StreamMessage,
+            StreamClientFrame, StreamClientResponse, StreamClientResponseBody, StreamMessage,
         };
 
         let response = match parsed {
@@ -1255,16 +1239,9 @@ impl MailboxSink for PrototypeStreamReadSink {
             ),
         };
 
-        let response_bytes = fitz::protocol::stream_codec::encode_response(&response);
-        let response_ctx = FrameContext::new(
-            frame_ctx.session_id,
-            frame_ctx.channel_id,
-            MessageType::new(frame_ctx.msg_type.as_u16()),
-            Bytes::from(response_bytes),
-            frame_ctx.route_family,
-        );
-
-        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+        if let Some(response_envelope) =
+            envelope.try_reply_to(StreamClientResponse::new(meta, response))
+        {
             let _ = self.router.route(response_envelope);
         }
 
@@ -1273,6 +1250,58 @@ impl MailboxSink for PrototypeStreamReadSink {
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         self.deliver(envelope)
+    }
+}
+
+impl PrototypeStreamReadSink {
+    fn request_from_envelope(
+        &self,
+        envelope: &Envelope,
+    ) -> Result<fitz::domains::stream::protocol::StreamClientRequest, DeliveryError> {
+        if let Some(request) =
+            envelope.payload::<fitz::domains::stream::protocol::StreamClientRequest>()
+        {
+            return Ok(request.clone());
+        }
+
+        let frame_ctx = envelope
+            .payload::<FrameContext>()
+            .cloned()
+            .ok_or(DeliveryError::ActorStopped)?;
+        let subscriber = envelope.source().cloned().unwrap_or_else(|| {
+            RouteAddress::new(
+                *envelope.destination().family(),
+                Route::new(format!("inbox://session/{}", frame_ctx.session_id)),
+            )
+        });
+        let meta = fitz::runtime::ClientFrameMeta::new(
+            frame_ctx.session_id,
+            client_channel_from_protocol(frame_ctx.channel_id),
+            frame_ctx.msg_type.as_u16(),
+            frame_ctx.route_family,
+        );
+        let parsed = fitz::protocol::stream_codec::parse_request(
+            &frame_ctx,
+            &frame_ctx.payload,
+            *envelope.destination().family(),
+            SessionId(frame_ctx.session_id),
+            subscriber,
+        );
+
+        Ok(fitz::domains::stream::protocol::StreamClientRequest::new(
+            meta, parsed,
+        ))
+    }
+}
+
+fn client_channel_from_protocol(channel: ChannelId) -> fitz::runtime::ClientChannel {
+    match channel {
+        ChannelId::Control => fitz::runtime::ClientChannel::Control,
+        ChannelId::Pub => fitz::runtime::ClientChannel::Pub,
+        ChannelId::Sub => fitz::runtime::ClientChannel::Sub,
+        ChannelId::Rpc => fitz::runtime::ClientChannel::Rpc,
+        ChannelId::Lease => fitz::runtime::ClientChannel::Lease,
+        ChannelId::Internal => fitz::runtime::ClientChannel::Internal,
     }
 }
 
@@ -1309,7 +1338,7 @@ fn routed_request(
     msg_type: u16,
     payload: Bytes,
 ) -> Bytes {
-    route_frame(
+    route_raw_frame(
         context.router.as_ref(),
         &context.source,
         destination,

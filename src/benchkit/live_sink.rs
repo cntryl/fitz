@@ -47,7 +47,7 @@ impl FrameQueueSink {
 
 impl MailboxSink for FrameQueueSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(frame) = envelope.into_payload::<FrameContext>() {
+        if let Some(frame) = frame_context_from_envelope(&envelope) {
             self.frames.lock().push(frame);
         }
         Ok(())
@@ -130,6 +130,42 @@ pub fn route_frame(
     family: RouteFamily,
 ) -> Result<(), RouteError> {
     let destination = RouteAddress::new(family, Route::new(destination));
+    let msg_type = MessageType::new(msg_type);
+    let envelope = crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_msg_type(msg_type)
+        .ok()
+        .flatten()
+        .map(|descriptor| {
+            descriptor.build_request_envelope(
+                crate::api::runtime_ingress::domain_registry::DomainEnvelopeBuildRequest {
+                    session_id,
+                    channel_id,
+                    route_family: family,
+                    msg_type,
+                    payload: payload.clone(),
+                    source: source.clone(),
+                    destination: destination.clone(),
+                },
+            )
+        })
+        .unwrap_or_else(|| {
+            let frame = FrameContext::new(session_id, channel_id, msg_type, payload, family);
+            Envelope::from_route(source.clone(), destination, frame)
+        });
+    router.route(envelope)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn route_raw_frame(
+    router: &Router,
+    source: &RouteAddress,
+    destination: &str,
+    session_id: u64,
+    channel_id: ChannelId,
+    msg_type: u16,
+    payload: Bytes,
+    family: RouteFamily,
+) -> Result<(), RouteError> {
+    let destination = RouteAddress::new(family, Route::new(destination));
     let frame = FrameContext::new(
         session_id,
         channel_id,
@@ -138,6 +174,263 @@ pub fn route_frame(
         family,
     );
     router.route(Envelope::from_route(source.clone(), destination, frame))
+}
+
+fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
+    if let Some(frame) = envelope.payload::<FrameContext>() {
+        return Some(frame.clone());
+    }
+
+    if let Some(response) = envelope.payload::<crate::domains::kv::KvClientResponse>() {
+        return Some(client_response_frame(
+            response.meta,
+            Bytes::from(crate::protocol::kv::encode_response(&response.response)),
+        ));
+    }
+
+    if let Some(notification) = envelope.payload::<crate::domains::kv::KvClientNotification>() {
+        return Some(FrameContext::new(
+            notification.session_id,
+            ChannelId::Sub,
+            MessageType::new(crate::protocol::kv::msg_type::NOTIFY),
+            Bytes::from(crate::protocol::kv::encode_notify(
+                notification.subscription_id,
+                &notification.route,
+                notification.notification,
+            )),
+            notification.route_family,
+        ));
+    }
+
+    if let Some(response) = envelope.payload::<crate::domains::queue::QueueClientResponse>() {
+        return Some(client_response_frame(
+            response.meta,
+            Bytes::from(crate::protocol::queue_codec::encode_response(
+                &response.response,
+            )),
+        ));
+    }
+
+    if let Some(notification) = envelope.payload::<crate::domains::queue::QueueClientNotification>()
+    {
+        return Some(FrameContext::new(
+            notification.session_id,
+            ChannelId::Sub,
+            MessageType::new(crate::protocol::queue_codec::msg_type::NOTIFY),
+            Bytes::from(crate::protocol::queue_codec::encode_notify(
+                notification.subscription_id,
+                &notification.route,
+                notification.notification.clone(),
+            )),
+            notification.route_family,
+        ));
+    }
+
+    if let Some(response) = envelope.payload::<crate::domains::notice::NoticeClientResponse>() {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        return Some(client_response_frame(
+            response.meta,
+            Bytes::from(crate::protocol::notice_codec::encode_response_into(
+                &response.response,
+                &mut encoder,
+            )),
+        ));
+    }
+
+    if let Some(notification) =
+        envelope.payload::<crate::domains::notice::NoticeClientNotification>()
+    {
+        return Some(FrameContext::new(
+            notification.session_id,
+            ChannelId::Sub,
+            MessageType::new(504),
+            Bytes::from(crate::protocol::notice_codec::encode_notify(
+                notification.subscription_id,
+                &notification.route,
+                notification.payload.as_ref(),
+            )),
+            notification.route_family,
+        ));
+    }
+
+    if let Some(response) = envelope.payload::<crate::domains::stream::StreamClientResponse>() {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        return Some(client_response_frame(
+            response.meta,
+            Bytes::from(crate::protocol::stream_codec::encode_response_into(
+                &mut encoder,
+                &response.response,
+            )),
+        ));
+    }
+
+    if let Some(notification) =
+        envelope.payload::<crate::domains::stream::StreamClientNotification>()
+    {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        return Some(FrameContext::new(
+            notification.session_id,
+            ChannelId::Sub,
+            MessageType::new(609),
+            Bytes::from(crate::protocol::stream_codec::encode_notify_into(
+                &mut encoder,
+                notification.subscription_id,
+                &notification.route,
+                notification.payload.as_ref(),
+            )),
+            notification.route_family,
+        ));
+    }
+
+    if let Some(response) = envelope.payload::<crate::domains::rpc::RpcClientResponse>() {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        return Some(client_response_frame(
+            response.meta,
+            Bytes::from(crate::protocol::rpc_codec::encode_response_into(
+                &response.response,
+                &mut encoder,
+            )),
+        ));
+    }
+
+    if let Some(delivery) = envelope.payload::<crate::domains::rpc::RpcWorkerRequestDelivery>() {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        return Some(FrameContext::new(
+            delivery.session_id,
+            ChannelId::Rpc,
+            MessageType::new(302),
+            Bytes::from(crate::protocol::rpc_codec::encode_request_into(
+                &delivery.request,
+                &mut encoder,
+            )),
+            delivery.route_family,
+        ));
+    }
+
+    if let Some(response) = envelope.payload::<crate::domains::rpc::RpcClientForwardedResponse>() {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        let response_payload = match &response.body {
+            crate::domains::rpc::RpcClientForwardedResponseBody::Response(response) => {
+                crate::protocol::rpc_codec::encode_response_message_into(response, &mut encoder)
+            }
+            crate::domains::rpc::RpcClientForwardedResponseBody::TerminalError {
+                correlation_id,
+                code,
+                message,
+            } => {
+                let mut error_encoder =
+                    crate::protocol::payload_codec::PayloadEncoder::with_capacity(96);
+                let error_body = crate::protocol::rpc_codec::encode_error_body_into(
+                    *code,
+                    message,
+                    &mut error_encoder,
+                );
+                let response = crate::domains::rpc::RpcResponse::single(
+                    *correlation_id,
+                    Bytes::from(error_body),
+                );
+                crate::protocol::rpc_codec::encode_response_message_into(&response, &mut encoder)
+            }
+        };
+        return Some(FrameContext::new(
+            response.session_id,
+            ChannelId::Rpc,
+            MessageType::new(303),
+            Bytes::from(response_payload),
+            response.route_family,
+        ));
+    }
+
+    if let Some(ack) = envelope.payload::<crate::domains::rpc::RpcWorkerAck>() {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(64);
+        return Some(FrameContext::new(
+            ack.session_id,
+            ChannelId::Rpc,
+            MessageType::new(304),
+            Bytes::from(crate::protocol::rpc_codec::encode_ack_into(
+                &ack.correlation_id,
+                &mut encoder,
+            )),
+            ack.route_family,
+        ));
+    }
+
+    if let Some(response) = envelope.payload::<crate::domains::lease::LeaseClientResponse>() {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        return Some(client_response_frame(
+            response.meta,
+            Bytes::from(crate::protocol::lease_codec::encode_domain_response_into(
+                &mut encoder,
+                &response.response,
+            )),
+        ));
+    }
+
+    if let Some(notification) = envelope.payload::<crate::domains::lease::LeaseClientNotification>()
+    {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        return Some(FrameContext::new(
+            notification.session_id,
+            ChannelId::Sub,
+            MessageType::new(crate::protocol::lease_codec::msg_type::NOTIFY),
+            Bytes::from(crate::protocol::lease_codec::encode_notify_into(
+                &mut encoder,
+                notification.subscription_id,
+                notification.route.as_str(),
+                notification.payload.as_ref(),
+            )),
+            notification.route_family,
+        ));
+    }
+
+    if let Some(response) = envelope.payload::<crate::domains::schedule::ScheduleClientResponse>() {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        return Some(client_response_frame(
+            response.meta,
+            Bytes::from(crate::protocol::schedule_codec::encode_response_into(
+                &mut encoder,
+                &response.response,
+            )),
+        ));
+    }
+
+    if let Some(notification) =
+        envelope.payload::<crate::domains::schedule::ScheduleClientNotification>()
+    {
+        return Some(FrameContext::new(
+            notification.session_id,
+            ChannelId::Sub,
+            MessageType::new(705),
+            Bytes::from(crate::protocol::schedule_codec::encode_notify(
+                notification.subscription_id,
+                notification.payload.as_ref(),
+            )),
+            notification.route_family,
+        ));
+    }
+
+    None
+}
+
+fn client_response_frame(meta: crate::runtime::ClientFrameMeta, payload: Bytes) -> FrameContext {
+    FrameContext::new(
+        meta.session_id,
+        protocol_channel_from_client(meta.channel),
+        MessageType::new(meta.message_type),
+        payload,
+        meta.route_family,
+    )
+}
+
+fn protocol_channel_from_client(channel: crate::runtime::ClientChannel) -> ChannelId {
+    match channel {
+        crate::runtime::ClientChannel::Control => ChannelId::Control,
+        crate::runtime::ClientChannel::Pub => ChannelId::Pub,
+        crate::runtime::ClientChannel::Sub => ChannelId::Sub,
+        crate::runtime::ClientChannel::Rpc => ChannelId::Rpc,
+        crate::runtime::ClientChannel::Lease => ChannelId::Lease,
+        crate::runtime::ClientChannel::Internal => ChannelId::Internal,
+    }
 }
 
 pub fn create_bench_notice_sink(router: Arc<Router>) -> Arc<NoticeDomainSink> {

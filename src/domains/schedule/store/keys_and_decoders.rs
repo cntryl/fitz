@@ -2,6 +2,10 @@ use super::model::*;
 
 impl ScheduleStore {
     pub fn new(db: Arc<cntryl_midge::Engine>) -> Self {
+        Self::new_with_storage(crate::storage::FitzStorageEngine::new(db))
+    }
+
+    pub(crate) fn new_with_storage(db: crate::storage::FitzStorageEngine) -> Self {
         Self {
             db,
             #[cfg(test)]

@@ -1,7 +1,11 @@
 mod auth_session_setup;
-mod authorization_dispatch;
 mod builder_and_sessions;
 mod dispatch_policy;
+mod domain_frame_dispatcher;
+pub(crate) mod domain_registry;
+mod session_authenticator;
+mod session_cleanup_coordinator;
+mod session_registry;
 mod trait_impls;
 mod types_and_helpers;
 

@@ -44,7 +44,7 @@ pub use clock::{
 };
 pub use context::{Timer, TimerId, TimerManager};
 pub use domain_event::{DomainPublishEvent, SessionCleanup};
-pub use domain_manifest::DomainKind;
+pub use domain_manifest::{DomainDescriptor, DomainKind, DomainRegistry};
 pub use envelope::{Envelope, MessageId};
 pub use mailbox::Mailbox;
 pub use matcher::{Pattern, PatternSegment};

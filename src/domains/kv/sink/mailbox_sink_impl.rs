@@ -2,41 +2,92 @@ use super::model::*;
 
 impl MailboxSink for KvDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.cleanup_session(cleanup.session_id);
+        if self.handle_cleanup_envelope(&envelope) {
             return Ok(());
         }
+        self.ensure_active()?;
+        self.log_delivery(&envelope);
+
+        let request = self.extract_request(&envelope)?;
+        let meta = request.meta;
+        let operation_started = self.record_operation_start();
+        let request_started = self.record_request_start();
+        let parsed_frame = self.parse_request_frame(meta, request.frame, request_started)?;
+
+        match parsed_frame {
+            KvClientFrame::Sub(sub_msg) => {
+                self.handle_subscription_frame(&envelope, meta, request_started, sub_msg)
+            }
+            KvClientFrame::Op(kv_message) => self.handle_actor_operation_frame(
+                &envelope,
+                meta,
+                request_started,
+                operation_started,
+                kv_message,
+            ),
+        }
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+impl KvDomainSink {
+    fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.cleanup_session(cleanup.session_id);
+            return true;
+        }
+
+        false
+    }
+
+    fn ensure_active(&self) -> Result<(), DeliveryError> {
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
         }
 
+        Ok(())
+    }
+
+    fn log_delivery(&self, envelope: &Envelope) {
         tracing::debug!(
             domain = "kv",
             destination = %envelope.destination(),
             source = ?envelope.source(),
             "KV domain sink: received envelope"
         );
+    }
 
-        let request = match Self::request_from_envelope(&envelope) {
-            Some(request) => request,
-            None => {
-                tracing::warn!(
-                    domain = "kv",
-                    destination = ?envelope.destination(),
-                    "Envelope payload was not KvClientRequest"
-                );
-                return Err(DeliveryError::ActorStopped);
-            }
-        };
+    fn extract_request(&self, envelope: &Envelope) -> Result<KvClientRequest, DeliveryError> {
+        Self::request_from_envelope(envelope).ok_or_else(|| {
+            tracing::warn!(
+                domain = "kv",
+                destination = ?envelope.destination(),
+                "Envelope payload was not KvClientRequest"
+            );
+            DeliveryError::ActorStopped
+        })
+    }
 
-        let meta = request.meta;
-        let operation_started = std::time::Instant::now();
-        let request_started = self
-            .metrics
+    fn record_operation_start(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
+    fn record_request_start(&self) -> Option<std::time::Instant> {
+        self.metrics
             .as_ref()
-            .map(|metrics| metrics.record_request_start());
+            .map(|metrics| metrics.record_request_start())
+    }
 
-        let parsed_frame = match request.frame {
+    fn parse_request_frame(
+        &self,
+        meta: crate::runtime::ClientFrameMeta,
+        frame: Result<KvClientFrame, String>,
+        request_started: Option<std::time::Instant>,
+    ) -> Result<KvClientFrame, DeliveryError> {
+        let parsed_frame = match frame {
             Ok(msg) => msg,
             Err(e) => {
                 if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
@@ -62,72 +113,85 @@ impl MailboxSink for KvDomainSink {
             "Parsed KV message successfully"
         );
 
-        if let KvClientFrame::Sub(sub_msg) = parsed_frame {
-            let response = match sub_msg {
-                crate::domains::kv::KvSubscriptionMessage::Subscribe {
-                    family_id,
-                    pattern,
-                    session_id,
-                    subscriber,
-                } => {
-                    let pattern_str = pattern.as_str().to_string();
-                    let subscription_id = {
-                        let mut families = self.families.lock();
-                        let state = families
-                            .entry(family_id.as_u64())
-                            .or_insert_with(RoutedSubscriptionSet::new);
+        Ok(parsed_frame)
+    }
 
-                        if let Some(existing_id) =
-                            state.find_existing_id(session_id, pattern_str.as_str())
-                        {
-                            existing_id
-                        } else {
-                            let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                            state.insert(
-                                family_id,
-                                KvSubscription {
-                                    pattern: crate::runtime::matcher::Pattern::new(
-                                        pattern_str.as_str(),
-                                    ),
-                                    session_id,
-                                    subscription_id: new_id,
-                                    subscriber,
-                                },
-                            );
-                            new_id
-                        }
-                    };
-                    crate::domains::kv::KvResponse::SubscribeOk { subscription_id }
-                }
-                crate::domains::kv::KvSubscriptionMessage::Unsubscribe {
-                    family_id,
-                    pattern,
-                    session_id,
-                    ..
-                } => {
+    fn handle_subscription_frame(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        request_started: Option<std::time::Instant>,
+        sub_msg: crate::domains::kv::KvSubscriptionMessage,
+    ) -> Result<(), DeliveryError> {
+        let response = match sub_msg {
+            crate::domains::kv::KvSubscriptionMessage::Subscribe {
+                family_id,
+                pattern,
+                session_id,
+                subscriber,
+            } => {
+                let pattern_str = pattern.as_str().to_string();
+                let subscription_id = {
                     let mut families = self.families.lock();
-                    let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
-                        state.remove_session_pattern(family_id, session_id, pattern.as_str());
-                        state.is_empty()
+                    let state = families
+                        .entry(family_id.as_u64())
+                        .or_insert_with(RoutedSubscriptionSet::new);
+
+                    if let Some(existing_id) =
+                        state.find_existing_id(session_id, pattern_str.as_str())
+                    {
+                        existing_id
                     } else {
-                        false
-                    };
-                    if remove_family {
-                        families.remove(&family_id.as_u64());
+                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                        state.insert(
+                            family_id,
+                            KvSubscription {
+                                pattern: crate::runtime::matcher::Pattern::new(
+                                    pattern_str.as_str(),
+                                ),
+                                session_id,
+                                subscription_id: new_id,
+                                subscriber,
+                            },
+                        );
+                        new_id
                     }
-                    crate::domains::kv::KvResponse::UnsubscribeOk
+                };
+                crate::domains::kv::KvResponse::SubscribeOk { subscription_id }
+            }
+            crate::domains::kv::KvSubscriptionMessage::Unsubscribe {
+                family_id,
+                pattern,
+                session_id,
+                ..
+            } => {
+                let mut families = self.families.lock();
+                let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                    state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                    state.is_empty()
+                } else {
+                    false
+                };
+                if remove_family {
+                    families.remove(&family_id.as_u64());
                 }
-            };
-
-            self.refresh_metrics_gauges();
-            return self.route_kv_response(&envelope, meta, &response, request_started);
-        }
-
-        use crate::domains::kv::{KvError, KvMessage, KvResponse, TxMode};
-        let kv_message = match parsed_frame {
-            KvClientFrame::Op(msg) => msg,
-            KvClientFrame::Sub(_) => unreachable!(),
+                crate::domains::kv::KvResponse::UnsubscribeOk
+            }
         };
+
+        self.refresh_metrics_gauges();
+        self.route_kv_response(envelope, meta, &response, request_started)
+    }
+
+    fn handle_actor_operation_frame(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        request_started: Option<std::time::Instant>,
+        operation_started: std::time::Instant,
+        kv_message: crate::domains::kv::KvMessage,
+    ) -> Result<(), DeliveryError> {
+        use crate::domains::kv::{KvError, KvMessage, KvResponse, TxMode};
         let kv_message = self.apply_sync_write_options(kv_message);
         let session_id = meta.session_id;
 
@@ -350,15 +414,9 @@ impl MailboxSink for KvDomainSink {
             "KV actor returned response"
         );
 
-        self.route_kv_response(&envelope, meta, &response, request_started)
+        self.route_kv_response(envelope, meta, &response, request_started)
     }
 
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
-
-impl KvDomainSink {
     fn request_from_envelope(envelope: &Envelope) -> Option<KvClientRequest> {
         if let Some(request) = envelope.payload::<KvClientRequest>() {
             return Some(request.clone());

@@ -6,14 +6,11 @@ use criterion::{
 use fitz::benchkit::{
     build_rpc_ack_frame, build_rpc_request, build_rpc_response_frame, build_rpc_subscribe,
     create_bench_rpc_sink, create_bench_rpc_sink_with_timeout, extract_single_tlv_field,
-    register_session_queue_sink, FrameQueueSink,
+    register_session_queue_sink, route_frame, FrameQueueSink,
 };
 use fitz::domains::rpc::protocol::{RpcMessage, RpcResponse};
 use fitz::protocol::frame::ChannelId;
-use fitz::protocol::frame_context::FrameContext;
 use fitz::protocol::rpc_codec::{encode_response_message, parse_request};
-use fitz::protocol::tlv::MessageType;
-use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
@@ -150,21 +147,17 @@ fn route_frame_to_address(
     payload: Bytes,
     family: RouteFamily,
 ) {
-    let frame = FrameContext::new(
+    route_frame(
+        router,
+        source,
+        destination.route().as_str(),
         session_id,
         ChannelId::Rpc,
-        MessageType::new(msg_type),
+        msg_type,
         payload,
         family,
-    );
-
-    router
-        .route(Envelope::from_route(
-            source.clone(),
-            destination.clone(),
-            frame,
-        ))
-        .expect("rpc route should succeed");
+    )
+    .expect("rpc route should succeed");
 }
 
 fn setup_rpc_sink(

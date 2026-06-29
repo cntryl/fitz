@@ -2,66 +2,134 @@ use super::model::*;
 
 impl MailboxSink for StreamDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.cleanup_session(cleanup.session_id);
+        if self.handle_cleanup_envelope(&envelope) {
             return Ok(());
         }
+        self.ensure_active()?;
+
+        if self.handle_domain_publish_envelope(&envelope)? {
+            return Ok(());
+        }
+
+        let Some(request) = self.extract_request(&envelope)? else {
+            return Ok(());
+        };
+        let meta = request.meta;
+        let request_started = self.record_request_start();
+
+        let Some(parsed_frame) =
+            self.parse_request_frame(&envelope, meta, request.frame, request_started)?
+        else {
+            return Ok(());
+        };
+
+        self.record_operation();
+
+        match parsed_frame {
+            StreamClientFrame::Sub(sub_msg) => {
+                self.handle_subscription_frame(&envelope, meta, request_started, sub_msg)
+            }
+            StreamClientFrame::Op(stream_msg) => {
+                self.handle_actor_operation_frame(&envelope, meta, request_started, stream_msg)
+            }
+        }
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+impl StreamDomainSink {
+    fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            self.cleanup_session(cleanup.session_id);
+            return true;
+        }
+
+        false
+    }
+
+    fn ensure_active(&self) -> Result<(), DeliveryError> {
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
         }
 
+        Ok(())
+    }
+
+    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> Result<bool, DeliveryError> {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
-            return self.handle_domain_publish(event);
+            self.handle_domain_publish(event)?;
+            return Ok(true);
         }
 
-        let request = match Self::request_from_envelope(&envelope) {
-            Some(request) => request,
-            None => return Err(DeliveryError::ActorStopped),
-        };
-        let meta = request.meta;
-        let request_started = self
-            .metrics
-            .as_ref()
-            .map(|metrics| metrics.record_request_start());
+        Ok(false)
+    }
 
-        let parsed_frame = match request.frame {
-            Ok(frame) => frame,
+    fn extract_request(
+        &self,
+        envelope: &Envelope,
+    ) -> Result<Option<StreamClientRequest>, DeliveryError> {
+        Ok(Some(
+            Self::request_from_envelope(envelope).ok_or(DeliveryError::ActorStopped)?,
+        ))
+    }
+
+    fn record_request_start(&self) -> Option<std::time::Instant> {
+        self.metrics
+            .as_ref()
+            .map(|metrics| metrics.record_request_start())
+    }
+
+    fn parse_request_frame(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        frame: Result<StreamClientFrame, String>,
+        request_started: Option<std::time::Instant>,
+    ) -> Result<Option<StreamClientFrame>, DeliveryError> {
+        match frame {
+            Ok(frame) => Ok(Some(frame)),
             Err(error) => {
                 let response = Self::stream_error_response(error);
-                self.route_stream_response(&envelope, meta, &response, request_started);
-                return Ok(());
+                self.route_stream_response(envelope, meta, &response, request_started);
+                Ok(None)
             }
-        };
+        }
+    }
 
-        use crate::domains::stream::protocol::{StreamMessage, StreamSubscriptionMessage};
-
+    fn record_operation(&self) {
         if let Some(metrics) = &self.metrics {
             metrics.counter_inc(STREAM_OPERATIONS_TOTAL);
         } else {
             crate::observability::counter_inc(STREAM_OPERATIONS_TOTAL);
         }
+    }
 
-        // Subscription messages are handled entirely by the sink without touching StreamActor.
-        if let StreamClientFrame::Sub(sub_msg) = parsed_frame {
-            let (response, _commit_notify, _should_refresh_admin_snapshot): (
-                StreamClientResponseBody,
-                Option<(Route, bytes::Bytes)>,
-                bool,
-            ) = match sub_msg {
-                StreamSubscriptionMessage::Subscribe {
-                    family_id,
-                    pattern,
-                    session_id,
-                    subscriber,
-                } => {
-                    let mut families = self.families.lock();
-                    let state = families
-                        .entry(family_id.as_u64())
-                        .or_insert_with(RoutedSubscriptionSet::new);
+    fn handle_subscription_frame(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        request_started: Option<std::time::Instant>,
+        sub_msg: crate::domains::stream::protocol::StreamSubscriptionMessage,
+    ) -> Result<(), DeliveryError> {
+        use crate::domains::stream::protocol::StreamSubscriptionMessage;
 
-                    let subscription_id = if let Some(id) =
-                        state.find_existing_id(session_id, pattern.as_str())
-                    {
+        let response = match sub_msg {
+            StreamSubscriptionMessage::Subscribe {
+                family_id,
+                pattern,
+                session_id,
+                subscriber,
+            } => {
+                let mut families = self.families.lock();
+                let state = families
+                    .entry(family_id.as_u64())
+                    .or_insert_with(RoutedSubscriptionSet::new);
+
+                let subscription_id =
+                    if let Some(id) = state.find_existing_id(session_id, pattern.as_str()) {
                         id
                     } else {
                         let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
@@ -77,51 +145,47 @@ impl MailboxSink for StreamDomainSink {
                         new_id
                     };
 
-                    (
-                        StreamClientResponseBody::Ok {
-                            session_id: Some(subscription_id),
-                            data: vec![],
-                        },
-                        None,
-                        false,
-                    )
+                StreamClientResponseBody::Ok {
+                    session_id: Some(subscription_id),
+                    data: vec![],
                 }
-                StreamSubscriptionMessage::Unsubscribe {
-                    family_id,
-                    pattern,
-                    session_id,
-                    ..
-                } => {
-                    let mut families = self.families.lock();
-                    let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
-                        state.remove_session_pattern(family_id, session_id, pattern.as_str());
-                        state.is_empty()
-                    } else {
-                        false
-                    };
-                    if remove_family {
-                        families.remove(&family_id.as_u64());
-                    }
-                    (
-                        StreamClientResponseBody::Ok {
-                            session_id: None,
-                            data: vec![],
-                        },
-                        None,
-                        false,
-                    )
+            }
+            StreamSubscriptionMessage::Unsubscribe {
+                family_id,
+                pattern,
+                session_id,
+                ..
+            } => {
+                let mut families = self.families.lock();
+                let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                    state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                    state.is_empty()
+                } else {
+                    false
+                };
+                if remove_family {
+                    families.remove(&family_id.as_u64());
                 }
-            };
-
-            self.refresh_metrics_gauges();
-            self.route_stream_response(&envelope, meta, &response, request_started);
-            return Ok(());
-        }
-
-        let stream_msg = match parsed_frame {
-            StreamClientFrame::Op(msg) => msg,
-            StreamClientFrame::Sub(_) => unreachable!(),
+                StreamClientResponseBody::Ok {
+                    session_id: None,
+                    data: vec![],
+                }
+            }
         };
+
+        self.refresh_metrics_gauges();
+        self.route_stream_response(envelope, meta, &response, request_started);
+        Ok(())
+    }
+
+    fn handle_actor_operation_frame(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        request_started: Option<std::time::Instant>,
+        stream_msg: crate::domains::stream::protocol::StreamMessage,
+    ) -> Result<(), DeliveryError> {
+        use crate::domains::stream::protocol::StreamMessage;
 
         let (response, commit_notify, should_refresh_admin_snapshot) = match stream_msg {
             StreamMessage::Begin {
@@ -358,17 +422,10 @@ impl MailboxSink for StreamDomainSink {
             let _ = self.handle_domain_publish(&event);
         }
 
-        self.route_stream_response(&envelope, meta, &response, request_started);
+        self.route_stream_response(envelope, meta, &response, request_started);
 
         Ok(())
     }
-
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
-
-impl StreamDomainSink {
     fn request_from_envelope(envelope: &Envelope) -> Option<StreamClientRequest> {
         if let Some(request) = envelope.payload::<StreamClientRequest>() {
             return Some(request.clone());

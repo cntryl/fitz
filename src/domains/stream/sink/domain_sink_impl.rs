@@ -6,7 +6,19 @@ impl StreamDomainSink {
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
-        Self::new_with_layout(
+        Self::new_with_storage(
+            crate::storage::FitzStorageEngine::new(store),
+            router,
+            admin_read_model,
+        )
+    }
+
+    pub(crate) fn new_with_storage(
+        store: crate::storage::FitzStorageEngine,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    ) -> Self {
+        Self::new_with_storage_layout(
             store,
             router,
             admin_read_model,
@@ -21,7 +33,21 @@ impl StreamDomainSink {
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
         stream_storage_layout: StreamStorageLayout,
     ) -> Result<Self, String> {
-        let stream_store = Arc::new(StreamStore::with_layout(
+        Self::new_with_storage_layout(
+            crate::storage::FitzStorageEngine::new(store),
+            router,
+            admin_read_model,
+            stream_storage_layout,
+        )
+    }
+
+    pub(crate) fn new_with_storage_layout(
+        store: crate::storage::FitzStorageEngine,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+        stream_storage_layout: StreamStorageLayout,
+    ) -> Result<Self, String> {
+        let stream_store = Arc::new(StreamStore::with_storage_layout(
             store.clone(),
             stream_storage_layout,
         ));
