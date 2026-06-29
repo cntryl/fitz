@@ -19,7 +19,7 @@ import {
   QueryLoadingState,
 } from "@/components/shared/query-state";
 import type { ResourceInventory } from "@/features/resource/resource-models";
-import { domainResourceHref } from "@/shared/navigation/domains";
+import { domainResourceHref, formatFitzRoute } from "@/shared/navigation/domains";
 import { parseConcreteRouteFamilyId, useOperatorContext } from "@/shared/operator-context";
 import { streamService } from "./stream-service";
 
@@ -61,22 +61,18 @@ const historyModes: Array<{
 
 const streamColumns: readonly VirtualTableColumn<StreamResourceRow>[] = [
   {
-    id: "realm",
-    header: "Realm",
-    width: "22%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
-  },
-  {
-    id: "area",
-    header: "Area",
-    width: "22%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
-  },
-  {
-    id: "resource",
-    header: "Stream",
-    width: "34%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.resource}</span>,
+    id: "route",
+    header: "Route",
+    width: "78%",
+    cellComponent: ({ row }) => {
+      const route = formatFitzRoute("stream", row);
+
+      return (
+        <span class="domain-table-cell-truncate" title={route}>
+          {route}
+        </span>
+      );
+    },
   },
   {
     id: "history",
@@ -92,14 +88,18 @@ const streamColumns: readonly VirtualTableColumn<StreamResourceRow>[] = [
 
 const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
   {
-    id: "scope",
-    header: "Scope",
+    id: "route",
+    header: "Route",
     width: "28%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={`${row.realm}/${row.area}/${row.resource}`}>
-        {row.realm}/{row.area}/{row.resource}
-      </span>
-    ),
+    cellComponent: ({ row }) => {
+      const route = formatFitzRoute("stream", row);
+
+      return (
+        <span class="domain-table-cell-truncate" title={route}>
+          {route}
+        </span>
+      );
+    },
   },
   {
     id: "offset",

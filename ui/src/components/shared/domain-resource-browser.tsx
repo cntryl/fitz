@@ -4,7 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/compone
 import { QueryEmptyState, QueryErrorState } from "./query-state";
 import type { QueueInventory } from "@/features/queue/queue-models";
 import type { ResourceInventory } from "@/features/resource/resource-models";
-import { domainResourceHref, type DomainSegment } from "@/shared/navigation/domains";
+import {
+  domainResourceHref,
+  formatFitzRoute,
+  type DomainSegment,
+} from "@/shared/navigation/domains";
 
 export interface DomainResourceBrowserProps {
   domain: DomainSegment;
@@ -37,31 +41,41 @@ export default function DomainResourceBrowser({
     ) ?? [];
   const columns: readonly VirtualTableColumn<ResourceBrowserRow>[] = [
     {
-      id: "realm",
-      header: "Realm",
-      width: "28%",
-      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
+      id: "route",
+      header: "Route",
+      width: "76%",
+      cellComponent: ({ row }) => {
+        const route = formatFitzRoute(domain, row);
+
+        return (
+          <Link
+            class="domain-link-cell"
+            href={domainResourceHref(domain, {
+              area: row.area,
+              realm: row.realm,
+              resource: row.resource,
+            })}
+            title={route}
+          >
+            {route}
+          </Link>
+        );
+      },
     },
     {
-      id: "area",
-      header: "Area",
-      width: "28%",
-      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
-    },
-    {
-      id: "resource",
-      header: "Resource",
-      width: "44%",
+      id: "action",
+      header: "Action",
+      width: "24%",
       cellComponent: ({ row }) => (
         <Link
-          class="domain-link-cell"
+          class="text-link"
           href={domainResourceHref(domain, {
             area: row.area,
             realm: row.realm,
             resource: row.resource,
           })}
         >
-          {row.resource}
+          Open
         </Link>
       ),
     },

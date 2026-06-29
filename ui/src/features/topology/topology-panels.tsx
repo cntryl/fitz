@@ -133,7 +133,7 @@ export function DiagnosticsPanel({ topology }: { topology: MessagingTopologyOver
   const hotspotColumns: readonly VirtualTableColumn<(typeof hotspots)[number]>[] = [
     {
       id: "scope",
-      header: "Scope",
+      header: "Route",
       width: "32%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={scopeText(row) || "Broker"}>

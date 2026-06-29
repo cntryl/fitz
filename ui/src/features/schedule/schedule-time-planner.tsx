@@ -24,7 +24,7 @@ import {
   QueryLoadingState,
 } from "@/components/shared/query-state";
 import type { ResourceInventory } from "@/features/resource/resource-models";
-import { domainResourceHref } from "@/shared/navigation/domains";
+import { domainResourceHref, formatFitzRoute } from "@/shared/navigation/domains";
 import { parseConcreteRouteFamilyId, useOperatorContext } from "@/shared/operator-context";
 import { scheduleService } from "./schedule-service";
 
@@ -71,22 +71,18 @@ const plannerModes: Array<{
 
 const scheduleColumns: readonly VirtualTableColumn<ScheduleResourceRow>[] = [
   {
-    id: "realm",
-    header: "Realm",
-    width: "22%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
-  },
-  {
-    id: "area",
-    header: "Area",
-    width: "22%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
-  },
-  {
-    id: "resource",
-    header: "Schedule",
-    width: "34%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.resource}</span>,
+    id: "route",
+    header: "Route",
+    width: "78%",
+    cellComponent: ({ row }) => {
+      const route = formatFitzRoute("schedule", row);
+
+      return (
+        <span class="domain-table-cell-truncate" title={route}>
+          {route}
+        </span>
+      );
+    },
   },
   {
     id: "action",
@@ -102,10 +98,18 @@ const scheduleColumns: readonly VirtualTableColumn<ScheduleResourceRow>[] = [
 
 const executionColumns: readonly VirtualTableColumn<ScheduleExecutionObservation>[] = [
   {
-    id: "operation",
-    header: "Operation",
+    id: "route",
+    header: "Route",
     width: "22%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.operation}</span>,
+    cellComponent: ({ row }) => {
+      const route = formatFitzRoute("schedule", row);
+
+      return (
+        <span class="domain-table-cell-truncate" title={route}>
+          {route}
+        </span>
+      );
+    },
   },
   {
     id: "status",
@@ -143,23 +147,18 @@ const executionColumns: readonly VirtualTableColumn<ScheduleExecutionObservation
 
 const missedColumns: readonly VirtualTableColumn<ScheduleMissedObservation>[] = [
   {
-    id: "scope",
-    header: "Scope",
-    width: "28%",
-    cellComponent: ({ row }) => (
-      <span
-        class="domain-table-cell-truncate"
-        title={`${row.realm}/${row.area}/${row.resource}/${row.operation}`}
-      >
-        {row.realm}/{row.area}/{row.resource}
-      </span>
-    ),
-  },
-  {
-    id: "operation",
-    header: "Operation",
-    width: "20%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.operation}</span>,
+    id: "route",
+    header: "Route",
+    width: "48%",
+    cellComponent: ({ row }) => {
+      const route = formatFitzRoute("schedule", row);
+
+      return (
+        <span class="domain-table-cell-truncate" title={route}>
+          {route}
+        </span>
+      );
+    },
   },
   {
     id: "fire",

@@ -1330,12 +1330,8 @@ describe("admin page smoke tests", () => {
       expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
       expect(text).toContain(page.assertText);
       expect(text).toContain("Resource inventory");
-      expect(text).toContain("Realm");
-      expect(text).toContain("Area");
-      expect(text).toContain("Resource");
-      expect(text).toContain("default");
-      expect(text).toContain("ops");
-      expect(text).toContain("primary");
+      expect(text).toContain("Route");
+      expect(text).toContain(`${page.path.slice(1)}://default/ops/primary`);
       for (const statLabel of page.statLabels) {
         expect(text).toContain(statLabel);
       }
@@ -1365,12 +1361,8 @@ describe("admin page smoke tests", () => {
 
         expect(text).toContain(page.assertText);
         expect(text).toContain("Resource inventory");
-        expect(text).toContain("Realm");
-        expect(text).toContain("Area");
-        expect(text).toContain("Resource");
-        expect(text).toContain("default");
-        expect(text).toContain("ops");
-        expect(text).toContain("primary");
+        expect(text).toContain("Route");
+        expect(text).toContain(`${page.path.slice(1)}://default/ops/primary`);
         for (const statLabel of page.statLabels) {
           expect(text).toContain(statLabel);
         }
@@ -1438,7 +1430,7 @@ describe("admin page smoke tests", () => {
     const noticeRealmRoot = await mountRoute("/notice/default", "/notice/{realm}", NoticePage);
     expect(noticeRealmRoot.textContent).toContain("Notice inventory");
     expect(noticeRealmRoot.textContent).toContain("Resource inventory");
-    expect(noticeRealmRoot.textContent).toContain("primary");
+    expect(noticeRealmRoot.textContent).toContain("notice://default/ops/primary");
     cleanupApp(noticeRealmRoot);
     document.body.innerHTML = "";
 
@@ -1449,7 +1441,7 @@ describe("admin page smoke tests", () => {
     );
     expect(noticeAreaRoot.textContent).toContain("Notice inventory");
     expect(noticeAreaRoot.textContent).toContain("Resource inventory");
-    expect(noticeAreaRoot.textContent).toContain("primary");
+    expect(noticeAreaRoot.textContent).toContain("notice://default/ops/primary");
     cleanupApp(noticeAreaRoot);
     document.body.innerHTML = "";
 
@@ -1540,7 +1532,7 @@ describe("admin page smoke tests", () => {
 
     expect(text).toContain("Lease inventory");
     expect(text).toContain("Resource inventory");
-    expect(text).toContain("primary");
+    expect(text).toContain("lease://default/ops/primary");
     expect(text).toContain("1h");
     expect(text).toContain("Attention");
     expect(text).toContain("acquire timeout");
@@ -1554,9 +1546,7 @@ describe("admin page smoke tests", () => {
     const root = await mountRoute("/kv", "/kv", KvPage);
     const text = root.textContent ?? "";
     const labels = [
-      "Realm",
-      "Area",
-      "Resource",
+      "Route",
       "Records",
       "Storage",
       "Txns",
@@ -1576,9 +1566,7 @@ describe("admin page smoke tests", () => {
     }
 
     expect(text).toContain("KV tables");
-    expect(text).toContain("default");
-    expect(text).toContain("ops");
-    expect(text).toContain("primary");
+    expect(text).toContain("kv://default/ops/primary");
     expect(text).toContain("300");
     expect(text).toContain("16.0 KiB");
     expect(text).toContain("12.5");
@@ -1797,7 +1785,7 @@ describe("admin page smoke tests", () => {
 
     expect(text).toContain("Notice inventory");
     expect(text).toContain("Resource inventory");
-    expect(text).toContain("primary");
+    expect(text).toContain("notice://default/ops/primary");
     expect(text).toContain("Attention");
     expect(text).toContain("2 delivery drop");
     expect(text).toContain("1 wildcard reject");
@@ -1855,7 +1843,7 @@ describe("admin page smoke tests", () => {
 
     expect(text).toContain("Schedule inventory");
     expect(text).toContain("Resource inventory");
-    expect(text).toContain("primary");
+    expect(text).toContain("schedule://default/ops/primary");
     expect(text).toContain("Attention");
     expect(text).toContain("Schedule does not imply durable downstream delivery.");
     expect(text).toContain("Persistence and handoff failure counters need attention.");
@@ -1868,7 +1856,7 @@ describe("admin page smoke tests", () => {
     const realmRoot = await mountRoute("/schedule/default", "/schedule/{realm}", SchedulePage);
     expect(realmRoot.textContent).toContain("Schedule inventory");
     expect(realmRoot.textContent).toContain("Resource inventory");
-    expect(realmRoot.textContent).toContain("ops");
+    expect(realmRoot.textContent).toContain("schedule://default/ops/primary");
     cleanupApp(realmRoot);
     document.body.innerHTML = "";
 
@@ -1879,7 +1867,7 @@ describe("admin page smoke tests", () => {
     );
     expect(areaRoot.textContent).toContain("Schedule inventory");
     expect(areaRoot.textContent).toContain("Resource inventory");
-    expect(areaRoot.textContent).toContain("primary");
+    expect(areaRoot.textContent).toContain("schedule://default/ops/primary");
     cleanupApp(areaRoot);
     document.body.innerHTML = "";
 
@@ -1926,7 +1914,7 @@ describe("admin page smoke tests", () => {
 
     expect(text).toContain("Stream inventory");
     expect(text).toContain("Resource inventory");
-    expect(text).toContain("primary");
+    expect(text).toContain("stream://default/ops/primary");
     expect(text).toContain("100+ behind");
     expect(text).toContain("Attention");
     expect(text).toContain("live subscriptions");
@@ -1942,13 +1930,13 @@ describe("admin page smoke tests", () => {
     let text = root.textContent ?? "";
     expect(text).toContain("Stream inventory");
     expect(text).toContain("Resource inventory");
-    expect(text).toContain("primary");
+    expect(text).toContain("stream://default/ops/primary");
 
     root = await mountRoute("/stream/default/ops", "/stream/{realm}/{area}", StreamPage);
     text = root.textContent ?? "";
     expect(text).toContain("Stream inventory");
     expect(text).toContain("Resource inventory");
-    expect(text).toContain("primary");
+    expect(text).toContain("stream://default/ops/primary");
 
     root = await mountRoute(
       "/stream/default/ops/events",
@@ -1959,6 +1947,7 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Stream resource");
     expect(text).toContain("From offset");
     expect(text).toContain("Stream resource metrics");
+    expect(text).toContain("stream://default/ops/events");
     expect(text).toContain('{"ok":true}');
   });
 
@@ -1984,7 +1973,7 @@ describe("admin page smoke tests", () => {
 
     expect(text).toContain("RPC inventory");
     expect(text).toContain("Resource inventory");
-    expect(text).toContain("primary");
+    expect(text).toContain("rpc://default/ops/primary");
     expect(text).toContain("Attention");
     expect(text).toContain("Response reliability");
     expect(text).toContain("Pending work is in-memory");
@@ -2002,13 +1991,13 @@ describe("admin page smoke tests", () => {
     let text = root.textContent ?? "";
     expect(text).toContain("RPC inventory");
     expect(text).toContain("Resource inventory");
-    expect(text).toContain("ops");
+    expect(text).toContain("rpc://default/ops/primary");
 
     root = await mountRoute("/rpc/default/ops", "/rpc/{realm}/{area}", RpcPage);
     text = root.textContent ?? "";
     expect(text).toContain("RPC inventory");
     expect(text).toContain("Resource inventory");
-    expect(text).toContain("primary");
+    expect(text).toContain("rpc://default/ops/primary");
 
     root = await mountRoute(
       "/rpc/default/ops/primary",
@@ -2366,7 +2355,7 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Refreshing");
     expect(root.textContent).toContain("Queue inventory");
     expect(root.textContent).toContain("Resource inventory");
-    expect(root.textContent).toContain("primary");
+    expect(root.textContent).toContain("queue://default/ops/primary");
     expect(root.textContent).toContain("message(s) are visible");
     expect(root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')).toBeTruthy();
   });
@@ -2379,7 +2368,7 @@ describe("admin page smoke tests", () => {
     expect(root.querySelector('a[href="/admin/1/queue/default"]')).toBeNull();
     expect(
       root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
-    ).toContain("primary");
+    ).toContain("queue://default/ops/primary");
 
     cleanupApp(root);
     document.body.innerHTML = "";
@@ -2389,7 +2378,7 @@ describe("admin page smoke tests", () => {
     expect(root.querySelector('a[href="/admin/1/queue/default/ops"]')).toBeNull();
     expect(
       root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
-    ).toContain("primary");
+    ).toContain("queue://default/ops/primary");
 
     cleanupApp(root);
     document.body.innerHTML = "";
@@ -2402,7 +2391,7 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Queue inventory");
     expect(
       root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
-    ).toContain("primary");
+    ).toContain("queue://default/ops/primary");
   });
 
   it("mounts queue comparison and generic resource comparison flows", async () => {

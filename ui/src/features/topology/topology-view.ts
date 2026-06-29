@@ -6,6 +6,7 @@ import type {
   TrendDirection,
 } from "./topology-models";
 import { formatNumber } from "@/shared/format";
+import { formatFitzRoute } from "@/shared/navigation/domains";
 import { isTopologyDomain, topologyScopeHref } from "./topology-mappers";
 
 export interface BehaviorRow {
@@ -162,11 +163,12 @@ export function topologyBehaviorGroups(topology: MessagingTopologyOverview): Beh
 
 export function scopeText(scope: {
   domain?: string;
+  operation?: string | null;
   realm?: string | null;
   area?: string | null;
   resource?: string | null;
 }) {
-  return [scope.domain, scope.realm, scope.area, scope.resource].filter(Boolean).join(" / ");
+  return scope.domain ? formatFitzRoute(scope.domain, scope) : "";
 }
 
 export function hotspotHref(hotspot: MessagingTopologyOverview["diagnostics"]["hotspots"][number]) {

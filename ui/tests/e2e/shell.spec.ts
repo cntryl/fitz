@@ -2169,7 +2169,7 @@ test("captures a domain inventory page", async ({ page }, testInfo) => {
   await expect(page.locator(".page-frame-sidebar")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: /Queue inventory/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Resource inventory" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "primary" })).toHaveAttribute(
+  await expect(page.getByRole("link", { name: "queue://default/ops/primary" })).toHaveAttribute(
     "href",
     "/admin/1/queue/default/ops/primary",
   );

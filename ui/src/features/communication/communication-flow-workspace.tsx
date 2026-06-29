@@ -26,7 +26,7 @@ import {
 import type { ResourceInventory } from "@/features/resource/resource-models";
 import { noticeService } from "@/features/notice/notice-service";
 import { rpcService } from "@/features/rpc/rpc-service";
-import { domainResourceHref } from "@/shared/navigation/domains";
+import { domainResourceHref, formatFitzRoute } from "@/shared/navigation/domains";
 import { parseConcreteRouteFamilyId, useOperatorContext } from "@/shared/operator-context";
 
 type CommunicationDomain = "notice" | "rpc";
@@ -358,7 +358,7 @@ const rpcObservationColumns: readonly VirtualTableColumn<RpcCallObservation>[] =
   {
     id: "route",
     header: "Route",
-    width: "30%",
+    width: "40%",
     cellComponent: ({ row }) => (
       <span class="domain-table-cell-truncate" title={row.route}>
         {row.route}
@@ -374,19 +374,9 @@ const rpcObservationColumns: readonly VirtualTableColumn<RpcCallObservation>[] =
     ),
   },
   {
-    id: "operation",
-    header: "Operation",
-    width: "18%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={row.operation ?? "Unknown"}>
-        {row.operation ?? "Unknown"}
-      </span>
-    ),
-  },
-  {
     id: "correlation",
     header: "Correlation",
-    width: "20%",
+    width: "24%",
     cellComponent: ({ row }) => (
       <span class="domain-table-cell-truncate" title={row.correlation_id ?? "None"}>
         {row.correlation_id ?? "None"}
@@ -396,7 +386,7 @@ const rpcObservationColumns: readonly VirtualTableColumn<RpcCallObservation>[] =
   {
     id: "worker",
     header: "Worker",
-    width: "16%",
+    width: "20%",
     cellComponent: ({ row }) => (
       <span class="domain-table-cell-truncate" title={row.worker_session_id ?? "None"}>
         {row.worker_session_id ?? "None"}
@@ -526,22 +516,18 @@ export default function CommunicationFlowWorkspace({
   const badgeVariant = searchMode ? (routeFamilyReady ? "success" : "warning") : "success";
   const columns: readonly VirtualTableColumn<CommunicationResourceRow>[] = [
     {
-      id: "realm",
-      header: "Realm",
-      width: "21%",
-      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
-    },
-    {
-      id: "area",
-      header: "Area",
-      width: "21%",
-      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
-    },
-    {
-      id: "resource",
-      header: domain === "notice" ? "Notice route" : "RPC route",
-      width: "34%",
-      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.resource}</span>,
+      id: "route",
+      header: "Route",
+      width: "76%",
+      cellComponent: ({ row }) => {
+        const route = formatFitzRoute(domain, row);
+
+        return (
+          <span class="domain-table-cell-truncate" title={route}>
+            {route}
+          </span>
+        );
+      },
     },
     {
       id: "action",

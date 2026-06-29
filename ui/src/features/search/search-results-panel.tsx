@@ -16,6 +16,7 @@ import {
   QueryErrorState,
   QueryLoadingState,
 } from "@/components/shared/query-state";
+import { formatFitzRoute } from "@/shared/navigation/domains";
 import type { AdminSearchResult, AdminSearchResults } from "./search-models";
 
 export interface SearchResultsPanelProps {
@@ -34,8 +35,8 @@ function titleCase(value: string) {
     .join(" ");
 }
 
-function hierarchyText(result: AdminSearchResult) {
-  return [result.realm, result.area, result.resource, result.operation].filter(Boolean).join(" / ");
+function routeText(result: AdminSearchResult) {
+  return formatFitzRoute(result.domain, result);
 }
 
 const searchColumns: readonly VirtualTableColumn<AdminSearchResult>[] = [
@@ -53,12 +54,12 @@ const searchColumns: readonly VirtualTableColumn<AdminSearchResult>[] = [
     ),
   },
   {
-    id: "hierarchy",
-    header: "Hierarchy",
+    id: "route",
+    header: "Route",
     width: "27%",
     cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate">
-        {hierarchyText(row) || row.routeFamily || "Broker"}
+      <span class="domain-table-cell-truncate" title={routeText(row)}>
+        {routeText(row) || row.routeFamily || "Broker"}
       </span>
     ),
   },

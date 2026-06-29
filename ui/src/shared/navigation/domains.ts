@@ -22,6 +22,13 @@ export interface ResourceRouteScope {
   operation?: string;
 }
 
+export interface FitzRouteDisplayScope {
+  area?: string | null;
+  operation?: string | null;
+  realm?: string | null;
+  resource?: string | null;
+}
+
 export interface DomainLink {
   href: string;
   segment: DomainSegment;
@@ -113,6 +120,14 @@ export function domainResourceHref(
   return `${domainHref(segment, family)}/${encodeURIComponent(scope.realm)}/${encodeURIComponent(
     scope.area,
   )}/${encodeURIComponent(scope.resource)}`;
+}
+
+export function formatFitzRoute(domain: string, scope: FitzRouteDisplayScope) {
+  const routeParts = [scope.realm, scope.area, scope.resource, scope.operation].filter(
+    (part): part is string => typeof part === "string" && part.length > 0,
+  );
+
+  return `${domain}://${routeParts.join("/")}`;
 }
 
 export function domainScopeHref(

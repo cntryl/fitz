@@ -18,7 +18,7 @@ import {
   QueryLoadingState,
 } from "@/components/shared/query-state";
 import type { ResourceInventory } from "@/features/resource/resource-models";
-import { domainResourceHref } from "@/shared/navigation/domains";
+import { domainResourceHref, formatFitzRoute } from "@/shared/navigation/domains";
 import { parseConcreteRouteFamilyId, useOperatorContext } from "@/shared/operator-context";
 import type {
   KvByteValue,
@@ -105,22 +105,18 @@ function describeKvBytes(value: KvByteValue) {
 
 const resourceColumns: readonly VirtualTableColumn<KvResourceRow>[] = [
   {
-    id: "realm",
-    header: "Realm",
-    width: "24%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
-  },
-  {
-    id: "area",
-    header: "Area",
-    width: "24%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
-  },
-  {
-    id: "resource",
-    header: "Resource",
-    width: "34%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.resource}</span>,
+    id: "route",
+    header: "Route",
+    width: "82%",
+    cellComponent: ({ row }) => {
+      const route = formatFitzRoute("kv", row);
+
+      return (
+        <span class="domain-table-cell-truncate" title={route}>
+          {route}
+        </span>
+      );
+    },
   },
   {
     id: "action",

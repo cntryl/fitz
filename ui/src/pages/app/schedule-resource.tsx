@@ -28,7 +28,7 @@ import {
   formatRelativeTime,
   formatTimestamp,
 } from "@/shared/format";
-import { domainScopeHref } from "@/shared/navigation/domains";
+import { domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
 
 function decodeParam(value: string | undefined) {
   if (!value) return "";
@@ -107,7 +107,7 @@ function ExecutionRows(props: { rows: ScheduleExecutionObservation[] }) {
       <Table>
         <TableHead>
           <TableRow>
-            <TableHeaderCell>Operation</TableHeaderCell>
+            <TableHeaderCell>Route</TableHeaderCell>
             <TableHeaderCell>Status</TableHeaderCell>
             <TableHeaderCell>Next run</TableHeaderCell>
             <TableHeaderCell>Last run</TableHeaderCell>
@@ -118,7 +118,11 @@ function ExecutionRows(props: { rows: ScheduleExecutionObservation[] }) {
           <For each={props.rows} by={(row) => `${row.operation}:${row.next_run}`}>
             {(row) => (
               <TableRow>
-                <TableCell>{row.operation}</TableCell>
+                <TableCell>
+                  <span class="domain-table-cell-truncate" title={formatFitzRoute("schedule", row)}>
+                    {formatFitzRoute("schedule", row)}
+                  </span>
+                </TableCell>
                 <TableCell>{row.status}</TableCell>
                 <TableCell>{formatMaybeTimestamp(row.next_run)}</TableCell>
                 <TableCell>{formatMaybeTimestamp(row.last_run)}</TableCell>
@@ -144,7 +148,7 @@ function MissedRows(props: { rows: ScheduleMissedObservation[] }) {
       <Table>
         <TableHead>
           <TableRow>
-            <TableHeaderCell>Operation</TableHeaderCell>
+            <TableHeaderCell>Route</TableHeaderCell>
             <TableHeaderCell>Status</TableHeaderCell>
             <TableHeaderCell>Fire at</TableHeaderCell>
             <TableHeaderCell>Claimed at</TableHeaderCell>
@@ -155,7 +159,11 @@ function MissedRows(props: { rows: ScheduleMissedObservation[] }) {
           <For each={props.rows} by={(row) => `${row.operation}:${row.fire_ms}`}>
             {(row) => (
               <TableRow>
-                <TableCell>{row.operation}</TableCell>
+                <TableCell>
+                  <span class="domain-table-cell-truncate" title={formatFitzRoute("schedule", row)}>
+                    {formatFitzRoute("schedule", row)}
+                  </span>
+                </TableCell>
                 <TableCell>{row.status}</TableCell>
                 <TableCell>{formatTimestamp(row.fire_at)}</TableCell>
                 <TableCell>{formatTimestamp(row.claimed_at)}</TableCell>

@@ -4,7 +4,11 @@ import { Text } from "@askrjs/themes/components";
 import { QueryEmptyState } from "./query-state";
 import type { ResourceInventoryResource } from "@/features/resource/resource-models";
 import { formatNumber } from "@/shared/format";
-import { domainResourceHref, type DomainSegment } from "@/shared/navigation/domains";
+import {
+  domainResourceHref,
+  formatFitzRoute,
+  type DomainSegment,
+} from "@/shared/navigation/domains";
 
 export interface DomainResourceInventoryArea {
   area: string;
@@ -105,34 +109,18 @@ export default function DomainResourceInventoryTable({
   const hasMetrics = metricColumns.length > 0;
   const columns: readonly VirtualTableColumn<DomainResourceInventoryRow>[] = [
     {
-      id: "realm",
-      header: "Realm",
-      width: hasMetrics ? "15%" : "28%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={row.realm}>
-          {row.realm}
-        </span>
-      ),
-    },
-    {
-      id: "area",
-      header: "Area",
-      width: hasMetrics ? "15%" : "28%",
-      cellComponent: ({ row }) => (
-        <span class="domain-table-cell-truncate" title={row.area}>
-          {row.area}
-        </span>
-      ),
-    },
-    {
-      id: "resource",
-      header: "Resource",
-      width: hasMetrics ? "20%" : "44%",
-      cellComponent: ({ row }) => (
-        <Link class="domain-link-cell" href={domainResourceHref(domain, row)}>
-          {row.resource}
-        </Link>
-      ),
+      id: "route",
+      header: "Route",
+      width: hasMetrics ? "22%" : "100%",
+      cellComponent: ({ row }) => {
+        const route = formatFitzRoute(domain, row);
+
+        return (
+          <Link class="domain-link-cell" href={domainResourceHref(domain, row)} title={route}>
+            {route}
+          </Link>
+        );
+      },
     },
     ...metricColumns.map(
       (column): VirtualTableColumn<DomainResourceInventoryRow> => ({

@@ -27,7 +27,7 @@ import {
 import type { NoticeResourceOperationRows } from "@/features/notice/notice-models";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatNumber } from "@/shared/format";
-import { domainScopeHref } from "@/shared/navigation/domains";
+import { domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
 import NoticeOperationPage from "./notice-operation";
 
 function decodeParam(value: string | undefined) {
@@ -192,25 +192,38 @@ function NoticeLandingPage() {
 function NoticeOperationTableRows(props: { data: NoticeResourceOperationRows }) {
   return (
     <For each={props.data.operations} by={(row) => row.operation}>
-      {(row) => (
-        <TableRow>
-          <TableCell>
-            <Link
-              href={domainScopeHref("notice", {
-                area: props.data.area,
-                realm: props.data.realm,
-                resource: props.data.resource,
-                operation: row.operation,
-              })}
-            >
-              {row.operation}
-            </Link>
-          </TableCell>
-          <TableCell>{formatNumber(row.activeSubscribers)}</TableCell>
-          <TableCell>{formatNumber(row.rollingMessageCount)}</TableCell>
-          <TableCell>{formatLatency(row.latencyMs)}</TableCell>
-        </TableRow>
-      )}
+      {(row) => {
+        const route = row.operation.startsWith("notice://")
+          ? row.operation
+          : formatFitzRoute("notice", {
+              area: props.data.area,
+              operation: row.operation,
+              realm: props.data.realm,
+              resource: props.data.resource,
+            });
+
+        return (
+          <TableRow>
+            <TableCell>
+              <Link
+                class="domain-link-cell"
+                href={domainScopeHref("notice", {
+                  area: props.data.area,
+                  realm: props.data.realm,
+                  resource: props.data.resource,
+                  operation: row.operation,
+                })}
+                title={route}
+              >
+                {route}
+              </Link>
+            </TableCell>
+            <TableCell>{formatNumber(row.activeSubscribers)}</TableCell>
+            <TableCell>{formatNumber(row.rollingMessageCount)}</TableCell>
+            <TableCell>{formatLatency(row.latencyMs)}</TableCell>
+          </TableRow>
+        );
+      }}
     </For>
   );
 }
@@ -299,7 +312,7 @@ function NoticeResourcePage(props: { realm: string; area: string; resource: stri
                   <Table>
                     <TableHead>
                       <TableRow>
-                        <TableHeaderCell>Operation</TableHeaderCell>
+                        <TableHeaderCell>Route</TableHeaderCell>
                         <TableHeaderCell>Active subscribers</TableHeaderCell>
                         <TableHeaderCell>Rolling messages / min</TableHeaderCell>
                         <TableHeaderCell>Latency</TableHeaderCell>

@@ -1,18 +1,9 @@
 import { state } from "@askrjs/askr";
-import { For, Show } from "@askrjs/askr/control";
+import { Show } from "@askrjs/askr/control";
 import { currentRoute, Link, navigate } from "@askrjs/askr/router";
 import { Button, Inline, Stack } from "@askrjs/themes/components";
-import {
-  Form,
-  Input,
-  Label,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeaderCell,
-  TableRow,
-} from "@askrjs/ui";
+import { Form, Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
+import type { StreamAdminRecord } from "@/adapters";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -24,7 +15,7 @@ import {
 } from "@/components/shared/query-state";
 import { createStreamResourceQuery } from "@/features/stream/stream-query";
 import { formatNumber } from "@/shared/format";
-import { domainResourceHref, domainScopeHref } from "@/shared/navigation/domains";
+import { domainResourceHref, domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
 
 const DEFAULT_LIMIT = 50;
 
@@ -61,6 +52,55 @@ function recordsHref(
   const href = domainResourceHref("stream", scope);
 
   return queryString ? `${href}?${queryString}` : href;
+}
+
+const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
+  {
+    id: "route",
+    header: "Route",
+    width: "32%",
+    cellComponent: ({ row }) => {
+      const route = formatFitzRoute("stream", row);
+
+      return (
+        <span class="domain-table-cell-truncate" title={route}>
+          {route}
+        </span>
+      );
+    },
+  },
+  {
+    id: "offset",
+    header: "Offset",
+    width: "10%",
+    cellComponent: ({ row }) => <span>{formatNumber(row.resource_offset)}</span>,
+  },
+  {
+    id: "family",
+    header: "Family",
+    width: "10%",
+    cellComponent: ({ row }) => <span>{formatNumber(row.route_family)}</span>,
+  },
+  {
+    id: "created",
+    header: "Created",
+    width: "18%",
+    cellComponent: ({ row }) => <span>{formatNumber(row.created_at_ms)}</span>,
+  },
+  {
+    id: "body",
+    header: "Body",
+    width: "30%",
+    cellComponent: ({ row }) => (
+      <span class="domain-table-cell-truncate" title={row.body.base64}>
+        {row.body.utf8 ?? row.body.base64}
+      </span>
+    ),
+  },
+];
+
+function recordTableHeight(rowCount: number) {
+  return `${Math.min(432, Math.max(144, 44 + rowCount * 48))}px`;
 }
 
 export default function StreamResourcePage() {
@@ -173,35 +213,17 @@ export default function StreamResourcePage() {
           <QueryEmptyState description="No committed stream records matched this offset." />
         </Show>
         <Show when={records.length > 0}>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableHeaderCell>Offset</TableHeaderCell>
-                <TableHeaderCell>Family</TableHeaderCell>
-                <TableHeaderCell>Created</TableHeaderCell>
-                <TableHeaderCell>Body</TableHeaderCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              <For
-                each={records}
-                by={(record) => `${record.route_family}:${record.resource_offset}`}
-              >
-                {(record) => (
-                  <TableRow>
-                    <TableCell>{formatNumber(record.resource_offset)}</TableCell>
-                    <TableCell>{formatNumber(record.route_family)}</TableCell>
-                    <TableCell>{formatNumber(record.created_at_ms)}</TableCell>
-                    <TableCell>
-                      <span class="domain-table-cell-truncate" title={record.body.base64}>
-                        {record.body.utf8 ?? record.body.base64}
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                )}
-              </For>
-            </TableBody>
-          </Table>
+          <VirtualTable<StreamAdminRecord>
+            aria-label="Stream records"
+            class="stream-record-virtual-table"
+            columns={recordColumns}
+            getKey={(record) => `${record.route_family}:${record.resource_offset}`}
+            headerHeight={44}
+            overscan={8}
+            rowHeight={48}
+            rows={records}
+            style={{ height: recordTableHeight(records.length) }}
+          />
         </Show>
         <Inline gap="2" wrap="wrap">
           <Button asChild variant="outline">

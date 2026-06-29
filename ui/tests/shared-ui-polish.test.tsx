@@ -278,13 +278,9 @@ describe("shared UI polish contracts", () => {
     ));
 
     expect(root.textContent).toContain("Resource inventory");
-    expect(root.textContent).toContain("Realm");
-    expect(root.textContent).toContain("Area");
-    expect(root.textContent).toContain("Resource");
+    expect(root.textContent).toContain("Route");
     expect(root.textContent).toContain("Records");
-    expect(root.textContent).toContain("default");
-    expect(root.textContent).toContain("ops");
-    expect(root.textContent).toContain("primary");
+    expect(root.textContent).toContain("kv://default/ops/primary");
     expect(root.querySelector('[data-slot="virtual-table"]')).toBeTruthy();
     expect(root.querySelector(".domain-resource-virtual-table")).toBeTruthy();
     expect(root.querySelector(".domain-resource-metric")?.getAttribute("data-font")).toBe("mono");

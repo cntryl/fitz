@@ -406,7 +406,7 @@ export default function DiagnosticsConsole({
   const hotspotColumns: readonly VirtualTableColumn<DiagnosticHotspot>[] = [
     {
       id: "scope",
-      header: "Scope",
+      header: "Route",
       width: "28%",
       cellComponent: ({ row }) => {
         const href = hotspotHref(row);

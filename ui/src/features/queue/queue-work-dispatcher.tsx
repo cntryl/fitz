@@ -20,7 +20,7 @@ import {
 import type { QueueInventory } from "@/features/queue/queue-models";
 import { searchService } from "@/features/search/search-service";
 import type { AdminSearchResult, AdminSearchResults } from "@/features/search/search-models";
-import { domainResourceHref } from "@/shared/navigation/domains";
+import { domainResourceHref, formatFitzRoute } from "@/shared/navigation/domains";
 import { useOperatorContext } from "@/shared/operator-context";
 
 type QueueDispatcherMode = "resource" | "message" | "worker" | "dlq";
@@ -67,22 +67,18 @@ const dispatcherModes: Array<{
 
 const queueColumns: readonly VirtualTableColumn<QueueResourceRow>[] = [
   {
-    id: "realm",
-    header: "Realm",
-    width: "21%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.realm}</span>,
-  },
-  {
-    id: "area",
-    header: "Area",
-    width: "21%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.area}</span>,
-  },
-  {
-    id: "resource",
-    header: "Queue",
-    width: "34%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.resource}</span>,
+    id: "route",
+    header: "Route",
+    width: "76%",
+    cellComponent: ({ row }) => {
+      const route = formatFitzRoute("queue", row);
+
+      return (
+        <span class="domain-table-cell-truncate" title={route}>
+          {route}
+        </span>
+      );
+    },
   },
   {
     id: "action",
@@ -114,17 +110,18 @@ const searchColumns: readonly VirtualTableColumn<AdminSearchResult>[] = [
     cellComponent: ({ row }) => <Badge variant="outline">{row.kind}</Badge>,
   },
   {
-    id: "scope",
-    header: "Scope",
+    id: "route",
+    header: "Route",
     width: "28%",
-    cellComponent: ({ row }) => (
-      <span
-        class="domain-table-cell-truncate"
-        title={[row.realm, row.area, row.resource].filter(Boolean).join("/")}
-      >
-        {[row.realm, row.area, row.resource].filter(Boolean).join("/") || "Broker"}
-      </span>
-    ),
+    cellComponent: ({ row }) => {
+      const route = formatFitzRoute(row.domain, row);
+
+      return (
+        <span class="domain-table-cell-truncate" title={route}>
+          {route}
+        </span>
+      );
+    },
   },
   {
     id: "summary",

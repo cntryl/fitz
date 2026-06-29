@@ -23,8 +23,6 @@
 
 @media (min-width: 48rem) {
   .page-frame-sidebar {
-    flex: 0 0 min(21rem, 31%);
-    width: min(21rem, 31%);
     position: sticky;
     top: calc(var(--ak-layout-navbar-height, 3.5rem) + var(--fitz-page-padding-block));
   }

@@ -1,6 +1,5 @@
-import { For } from "@askrjs/askr/control";
 import { currentRoute, Link } from "@askrjs/askr/router";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import {
   Card,
   CardContent,
@@ -21,7 +20,9 @@ import {
 import { createRpcResourceQuery } from "@/features/rpc/rpc-query";
 import type { RpcResourceOperationRows } from "@/features/rpc/rpc-models";
 import { formatNumber } from "@/shared/format";
-import { domainScopeHref } from "@/shared/navigation/domains";
+import { domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
+
+type RpcResourceOperationRow = RpcResourceOperationRows["operations"][number];
 
 function decodeParam(value: string | undefined) {
   if (!value) return "";
@@ -37,31 +38,67 @@ function formatLatency(value: number | null) {
   return value == null ? "--" : `${formatNumber(value)} ms`;
 }
 
-function RpcOperationTableRows(props: { data: RpcResourceOperationRows }) {
-  return (
-    <For each={props.data.operations} by={(row) => row.operation}>
-      {(row) => (
-        <TableRow>
-          <TableCell>
-            <Link
-              href={domainScopeHref("rpc", {
-                area: props.data.area,
-                operation: row.operation,
-                realm: props.data.realm,
-                resource: props.data.resource,
-              })}
-            >
-              {row.operation}
-            </Link>
-          </TableCell>
-          <TableCell>{formatNumber(row.workers)}</TableCell>
-          <TableCell>{formatNumber(row.pendingRequests)}</TableCell>
-          <TableCell>{formatNumber(row.requestsHandled)}</TableCell>
-          <TableCell>{formatLatency(row.averageLatencyMs)}</TableCell>
-        </TableRow>
-      )}
-    </For>
-  );
+function rpcOperationColumns(
+  data: RpcResourceOperationRows,
+): readonly VirtualTableColumn<RpcResourceOperationRow>[] {
+  return [
+    {
+      id: "route",
+      header: "Route",
+      width: "44%",
+      cellComponent: ({ row }) => {
+        const route = formatFitzRoute("rpc", {
+          area: data.area,
+          operation: row.operation,
+          realm: data.realm,
+          resource: data.resource,
+        });
+
+        return (
+          <Link
+            class="domain-link-cell"
+            href={domainScopeHref("rpc", {
+              area: data.area,
+              operation: row.operation,
+              realm: data.realm,
+              resource: data.resource,
+            })}
+            title={route}
+          >
+            {route}
+          </Link>
+        );
+      },
+    },
+    {
+      id: "workers",
+      header: "Workers",
+      width: "12%",
+      cellComponent: ({ row }) => <span>{formatNumber(row.workers)}</span>,
+    },
+    {
+      id: "pending",
+      header: "Pending requests",
+      width: "16%",
+      cellComponent: ({ row }) => <span>{formatNumber(row.pendingRequests)}</span>,
+    },
+    {
+      id: "handled",
+      header: "Requests handled",
+      width: "16%",
+      cellComponent: ({ row }) => <span>{formatNumber(row.requestsHandled)}</span>,
+    },
+    {
+      id: "latency",
+      header: "Latency",
+      width: "12%",
+      cellComponent: ({ row }) => <span>{formatLatency(row.averageLatencyMs)}</span>,
+    },
+  ];
+}
+
+function rpcOperationTableHeight(rowCount: number) {
+  return `${Math.min(240, Math.max(144, 44 + rowCount * 48))}px`;
 }
 
 export default function RpcResourcePage() {
@@ -129,20 +166,17 @@ export default function RpcResourcePage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableHeaderCell>Operation</TableHeaderCell>
-                        <TableHeaderCell>Workers</TableHeaderCell>
-                        <TableHeaderCell>Pending requests</TableHeaderCell>
-                        <TableHeaderCell>Requests handled</TableHeaderCell>
-                        <TableHeaderCell>Latency</TableHeaderCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      <RpcOperationTableRows data={data} />
-                    </TableBody>
-                  </Table>
+                  <VirtualTable<RpcResourceOperationRow>
+                    aria-label="RPC operations"
+                    class="rpc-operation-virtual-table"
+                    columns={rpcOperationColumns(data)}
+                    getKey={(row) => row.operation}
+                    headerHeight={44}
+                    overscan={4}
+                    rowHeight={48}
+                    rows={data.operations}
+                    style={{ height: rpcOperationTableHeight(data.operations.length) }}
+                  />
                 </CardContent>
               </Card>
             )}

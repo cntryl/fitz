@@ -149,7 +149,7 @@ a {
 [data-slot="table"] a,
 .flow-inspector-link,
 .resource-workbench-summary-actions a {
-  color: var(--ak-color-accent, CanvasText);
+  color: var(--ak-color-link, var(--ak-color-text, CanvasText));
   font-weight: 650;
   text-decoration-color: color-mix(in srgb, currentColor 34%, transparent);
   text-decoration-line: underline;

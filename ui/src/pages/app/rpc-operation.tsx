@@ -18,6 +18,7 @@ import {
   QueryLoadingState,
   QueryRefreshingState,
 } from "@/components/shared/query-state";
+import type { RpcCallObservation } from "@/adapters";
 import { createRpcOperationQuery } from "@/features/rpc/rpc-query";
 import { formatNumber } from "@/shared/format";
 import { domainScopeHref } from "@/shared/navigation/domains";
@@ -39,6 +40,25 @@ function parseLimit(value: string | null) {
 
 function formatLatency(value: number | null | undefined) {
   return value == null ? "--" : `${formatNumber(value)} ms`;
+}
+
+function RpcCallEvidenceRows(props: { rows: RpcCallObservation[] }) {
+  return (
+    <For
+      each={props.rows}
+      by={(row, index) => row.correlation_id ?? `${row.worker_session_id}:${index}`}
+    >
+      {(row) => (
+        <TableRow>
+          <TableCell>{row.state}</TableCell>
+          <TableCell>{row.worker_session_id ?? "--"}</TableCell>
+          <TableCell>{row.correlation_id ?? "--"}</TableCell>
+          <TableCell>{formatNumber(row.requests_handled ?? 0)}</TableCell>
+          <TableCell>{formatLatency(row.average_latency_ms)}</TableCell>
+        </TableRow>
+      )}
+    </For>
+  );
 }
 
 export default function RpcOperationPage() {
@@ -122,22 +142,7 @@ export default function RpcOperationPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      <For
-                        each={rows}
-                        by={(row, index) =>
-                          row.correlation_id ?? `${row.worker_session_id}:${index}`
-                        }
-                      >
-                        {(row) => (
-                          <TableRow>
-                            <TableCell>{row.state}</TableCell>
-                            <TableCell>{row.worker_session_id ?? "--"}</TableCell>
-                            <TableCell>{row.correlation_id ?? "--"}</TableCell>
-                            <TableCell>{formatNumber(row.requests_handled ?? 0)}</TableCell>
-                            <TableCell>{formatLatency(row.average_latency_ms)}</TableCell>
-                          </TableRow>
-                        )}
-                      </For>
+                      <RpcCallEvidenceRows rows={rows} />
                     </TableBody>
                   </Table>
                 )}
