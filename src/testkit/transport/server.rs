@@ -61,6 +61,10 @@ pub struct TestServer {
 }
 impl TestServer {
     /// Start a test server with auth disabled (backward compatible)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the runtime or listeners cannot be initialized.
     pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
         Self::start_with_options(
             false,
@@ -74,6 +78,9 @@ impl TestServer {
         .await
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the runtime or listeners cannot be initialized.
     pub async fn start_with_rpc_timeout(
         rpc_request_timeout: Duration,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -90,6 +97,10 @@ impl TestServer {
     }
 
     /// Start a test server with configurable auth mode
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the runtime or listeners cannot be initialized.
     pub async fn start_with_auth(auth_required: bool) -> Result<Self, Box<dyn std::error::Error>> {
         Self::start_with_options(
             auth_required,
@@ -103,6 +114,9 @@ impl TestServer {
         .await
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the runtime or listeners cannot be initialized.
     pub async fn start_with_auth_route_families<I, S>(
         route_families: Vec<u32>,
         route_family_mappings: I,
@@ -126,6 +140,9 @@ impl TestServer {
         .await
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if any origin is invalid or the runtime cannot be initialized.
     pub async fn start_with_ws_allowed_origins(
         origins: &[&str],
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -150,6 +167,9 @@ impl TestServer {
         .await
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the runtime or listeners cannot be initialized.
     pub async fn start_with_stream_storage_layout(
         stream_storage_layout: crate::domains::stream::StreamStorageLayout,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -165,6 +185,9 @@ impl TestServer {
         .await
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the runtime or listeners cannot be initialized.
     pub async fn start_with_local_storage(
         db_path: impl Into<String>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -182,6 +205,9 @@ impl TestServer {
         .await
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the runtime or listeners cannot be initialized.
     pub async fn start_with_local_storage_and_stream_layout(
         db_path: impl Into<String>,
         stream_storage_layout: crate::domains::stream::StreamStorageLayout,

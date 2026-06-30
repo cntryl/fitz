@@ -1,6 +1,7 @@
 use bytes::{BufMut, BytesMut};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::VecDeque;
+use std::convert::TryFrom;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -35,7 +36,7 @@ impl TestClient {
     /// Send a length-prefixed frame (TCP protocol)
     pub async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         // Write length prefix (u32 BE)
-        let len = frame.len() as u32;
+        let len = u32::try_from(frame.len())?;
         self.stream.write_all(&len.to_be_bytes()).await?;
         self.stream.write_all(frame).await?;
         self.stream.flush().await?;
@@ -51,7 +52,9 @@ impl TestClient {
             // Read length prefix
             let mut len_buf = [0u8; 4];
             self.stream.read_exact(&mut len_buf).await?;
-            let len = u32::from_be_bytes(len_buf) as usize;
+            let len = usize::try_from(u32::from_be_bytes(len_buf)).map_err(|error| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, error)
+            })?;
 
             // Read frame
             let mut frame = vec![0u8; len];
@@ -214,6 +217,10 @@ impl TlvFrameBuilder {
     }
 
     /// Encode a TLV field: [message_type: u8 or ESCAPE+u16 BE][length: u16 BE][value: bytes]
+    ///
+    /// # Panics
+    ///
+    /// Panics if the TLV value exceeds 65535 bytes.
     pub fn encode_field(&mut self, msg_type: u16, value: &[u8]) {
         // MessageType encoding:
         // - If msg_type <= 254: single byte
@@ -232,7 +239,8 @@ impl TlvFrameBuilder {
         if value.len() > 65535 {
             panic!("TLV value too large: {} bytes", value.len());
         }
-        self.buf.put_slice(&(value.len() as u16).to_be_bytes());
+        self.buf
+            .put_slice(&u16::try_from(value.len()).expect("TLV value length checked above").to_be_bytes());
 
         // Value
         self.buf.put_slice(value);

@@ -38,6 +38,11 @@ impl ExactOrigin {
     }
 }
 
+/// Parse an exact browser origin.
+///
+/// # Errors
+///
+/// Returns an error when the value is empty, malformed, or not an exact http/https origin.
 pub fn parse_exact_origin(value: &str) -> Result<ExactOrigin, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -71,6 +76,11 @@ fn origin_has_explicit_suffix(value: &str) -> bool {
         })
 }
 
+/// Parse an origin from a full URL.
+///
+/// # Errors
+///
+/// Returns an error when the URL is empty, malformed, or not an http/https origin.
 pub fn parse_url_origin(value: &str) -> Result<ExactOrigin, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -121,6 +131,11 @@ fn origin_from_url(url: &url::Url) -> Result<ExactOrigin, String> {
     })
 }
 
+/// Parse a comma-separated list of exact browser origins.
+///
+/// # Errors
+///
+/// Returns an error when any entry is empty or invalid.
 pub fn parse_exact_origin_list(value: &str) -> Result<Vec<ExactOrigin>, String> {
     let mut origins = Vec::new();
     for entry in value.split(',') {

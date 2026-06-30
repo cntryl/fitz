@@ -250,7 +250,7 @@ impl DiagnosticSnapshot {
 }
 
 pub(crate) fn calculate_confidence(input: ConfidenceInput<'_>) -> (f64, ConfidenceJustification) {
-    let signals = gather_confidence_signals(ConfidenceSignalInput {
+    let signals = gather_confidence_signals(&ConfidenceSignalInput {
         failure_count: input.failure_count,
         contention_count: input.contention_count,
         waiter_count: input.waiter_count,
@@ -358,6 +358,7 @@ struct ConfidenceSignals {
     last_failure_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Clone, Copy)]
 struct ConfidenceSignalInput<'a> {
     failure_count: u64,
     contention_count: u64,
@@ -370,7 +371,7 @@ struct ConfidenceSignalInput<'a> {
     last_failure_at: Option<DateTime<Utc>>,
 }
 
-fn gather_confidence_signals(input: ConfidenceSignalInput<'_>) -> ConfidenceSignals {
+fn gather_confidence_signals(input: &ConfidenceSignalInput<'_>) -> ConfidenceSignals {
     let mut signal_bits = 0u8;
     if input.failure_count > 0 || input.last_failure_at.is_some() {
         signal_bits |= 0b0001;

@@ -18,7 +18,7 @@ fn start_queue_runtime_sweep(sink: &Arc<QueueDomainSink>) {
         tracing::debug!("Queue runtime sweep not started: no Tokio runtime available");
         return;
     };
-    let weak = Arc::downgrade(&sink);
+    let weak = Arc::downgrade(sink);
     handle.spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(50));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -40,7 +40,7 @@ pub fn start_rpc_timeout_loop(sink: &Arc<RpcDomainSink>) {
         tracing::debug!("RPC timeout loop not started: no Tokio runtime available");
         return;
     };
-    let weak = Arc::downgrade(&sink);
+    let weak = Arc::downgrade(sink);
     handle.spawn(async move {
         loop {
             let Some(sink) = weak.upgrade() else {
@@ -66,7 +66,7 @@ fn start_lease_timeout_loop(sink: &Arc<LeaseDomainSink>) {
         tracing::debug!("Lease timeout loop not started: no Tokio runtime available");
         return;
     };
-    let weak = Arc::downgrade(&sink);
+    let weak = Arc::downgrade(sink);
     handle.spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(50));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -88,7 +88,7 @@ fn start_schedule_tick_loop(sink: &Arc<ScheduleDomainSink>) {
         tracing::debug!("Schedule tick loop not started: no Tokio runtime available");
         return;
     };
-    let weak = Arc::downgrade(&sink);
+    let weak = Arc::downgrade(sink);
     handle.spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(250));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

@@ -10,7 +10,7 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
-/// MailboxSink that forwards domain responses to a session's outbound channel
+/// `MailboxSink` that forwards domain responses to a session's outbound channel
 pub struct SessionOutboundSink {
     tx: mpsc::Sender<Bytes>,
 }
@@ -38,7 +38,8 @@ impl MailboxSink for SessionOutboundSink {
             let bytes = encode_single_tlv_frame(ctx.msg_type, &ctx.payload);
             crate::observability::hot_path_histogram_observe_us(
                 obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
+                    .unwrap_or(u64::MAX),
             );
 
             return self.send_encoded_frame(ctx.session_id, bytes);
@@ -59,7 +60,8 @@ impl MailboxSink for SessionOutboundSink {
             );
             crate::observability::hot_path_histogram_observe_us(
                 obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
+                    .unwrap_or(u64::MAX),
             );
 
             return self.send_encoded_frame(frame.meta.session_id, bytes);
@@ -80,7 +82,8 @@ impl MailboxSink for SessionOutboundSink {
             );
             crate::observability::hot_path_histogram_observe_us(
                 obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
+                    .unwrap_or(u64::MAX),
             );
 
             return self.send_encoded_frame(response.meta.session_id, bytes);
@@ -104,7 +107,8 @@ impl MailboxSink for SessionOutboundSink {
                 encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(302), &payload);
             crate::observability::hot_path_histogram_observe_us(
                 obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
+                    .unwrap_or(u64::MAX),
             );
 
             return self.send_encoded_frame(delivery.session_id, bytes);
@@ -139,7 +143,8 @@ impl MailboxSink for SessionOutboundSink {
                 encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(303), &payload);
             crate::observability::hot_path_histogram_observe_us(
                 obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
+                    .unwrap_or(u64::MAX),
             );
 
             return self.send_encoded_frame(forwarded.session_id, bytes);
@@ -157,7 +162,8 @@ impl MailboxSink for SessionOutboundSink {
                 encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(304), &payload);
             crate::observability::hot_path_histogram_observe_us(
                 obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
+                    .unwrap_or(u64::MAX),
             );
 
             return self.send_encoded_frame(ack.session_id, bytes);
@@ -178,7 +184,8 @@ impl MailboxSink for SessionOutboundSink {
             );
             crate::observability::hot_path_histogram_observe_us(
                 obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
+                    .unwrap_or(u64::MAX),
             );
 
             return self.send_encoded_frame(response.meta.session_id, bytes);
@@ -202,7 +209,8 @@ impl MailboxSink for SessionOutboundSink {
             );
             crate::observability::hot_path_histogram_observe_us(
                 obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
+                    .unwrap_or(u64::MAX),
             );
 
             return self.send_encoded_frame(notification.session_id, bytes);
