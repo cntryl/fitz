@@ -2,7 +2,7 @@
 //! Actor runtime and execution model
 //!
 //! This is the authoritative layer. It contains:
-//! - `routing`: Universal addressing model (RouteFamily, Route, RouteAddress)
+//! - `routing`: Universal addressing model (`RouteFamily`, Route, `RouteAddress`)
 //! - `actor`: Actor trait and lifecycle
 //! - `mailbox`: Message queuing
 //! - `scheduler`: Actor scheduling

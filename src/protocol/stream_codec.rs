@@ -1,7 +1,7 @@
 //! Stream domain codec - append-only streaming
 //!
 //! Encodes/decodes TLV messages for the stream domain.
-//! Supports Begin, Append, Commit, Rollback, Read, Last, GetMetadata operations.
+//! Supports Begin, Append, Commit, Rollback, Read, Last, `GetMetadata` operations.
 //!
 //! `route_family` is a server-internal concept supplied by the session layer
 //! — it never appears on the wire.
@@ -18,7 +18,11 @@ use crate::session::SessionId;
 const ERR_STREAM_FILTER_UNSUPPORTED_VERSION: &str = "ERR_STREAM_FILTER_UNSUPPORTED_VERSION";
 const ERR_STREAM_FILTER_INVALID_PAYLOAD: &str = "ERR_STREAM_FILTER_INVALID_PAYLOAD";
 
-fn map_stream_filter_decode_error(error: String) -> String {
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+fn map_stream_filter_decode_error(error: &str) -> String {
     if error.contains("missing marker") {
         return format!("{ERR_STREAM_FILTER_UNSUPPORTED_VERSION}: {error}");
     }
@@ -30,6 +34,11 @@ fn map_stream_filter_decode_error(error: String) -> String {
 ///
 /// `route_family`, `session_id`, and `subscriber` are injected by the
 /// session layer — they are never read from the wire payload.
+///
+/// # Errors
+///
+/// Returns an error when the stream message type is unsupported or the payload
+/// cannot be decoded as the requested stream operation.
 pub fn parse_request(
     ctx: &FrameContext,
     payload: &[u8],
@@ -56,6 +65,11 @@ pub fn parse_request(
 }
 
 /// Extract the stream route or pattern needed for authorization.
+///
+/// # Errors
+///
+/// Returns an error when the payload is malformed, has trailing data, or the
+/// message type is unsupported for stream authorization extraction.
 pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
     let mut dec = PayloadDecoder::new(payload);
 
@@ -257,12 +271,12 @@ fn parse_read(
     let route = Route::new(route_str);
     let from_offset = dec.get_u64()?;
     let limit = dec.get_u64()?;
-    let max_bytes = dec.get_optional_u64()?.map(|u| u as usize);
+    let max_bytes = dec.get_optional_u64()?.map(u64_to_usize_saturating);
     let filter = if dec.remaining() > 0 {
         match dec.get_optional_bytes()? {
             Some(bytes) => Some(
                 StreamFilterSet::try_decode(bytes.as_ref())
-                    .map_err(map_stream_filter_decode_error)?,
+                    .map_err(|error| map_stream_filter_decode_error(&error))?,
             ),
             None => None,
         }
@@ -364,7 +378,7 @@ fn parse_unsubscribe(
     })
 }
 
-/// Encode a STREAM_NOTIFY (609) payload.
+/// Encode a `STREAM_NOTIFY` (609) payload.
 ///
 /// Wire format: `[u64 subscription_id][string route][bytes payload]`
 #[must_use]

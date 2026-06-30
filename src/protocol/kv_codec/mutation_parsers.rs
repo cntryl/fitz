@@ -4,13 +4,52 @@ use crate::domains::kv::{KvMessage, KvNotification, ScanQuery};
 use crate::protocol::kv_codec::frame_and_routes::{decode_route_str, parse_route_resource};
 use crate::runtime::routing::{Route, RouteFamily};
 
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn read_optional_scan_key(
+    payload: &[u8],
+    offset: &mut usize,
+    missing_message: &str,
+    length_message: &str,
+    overflow_message: &str,
+) -> Result<Option<Bytes>, String> {
+    if *offset >= payload.len() {
+        return Err(missing_message.to_string());
+    }
+
+    if payload[*offset] == 1 {
+        *offset += 1;
+        if *offset + 4 > payload.len() {
+            return Err(length_message.to_string());
+        }
+        let len = u32::from_be_bytes([
+            payload[*offset],
+            payload[*offset + 1],
+            payload[*offset + 2],
+            payload[*offset + 3],
+        ]) as usize;
+        *offset += 4;
+        if *offset + len > payload.len() {
+            return Err(overflow_message.to_string());
+        }
+        let key = Bytes::copy_from_slice(&payload[*offset..*offset + len]);
+        *offset += len;
+        Ok(Some(key))
+    } else {
+        *offset += 1;
+        Ok(None)
+    }
+}
+
 #[must_use]
 pub fn encode_notify(subscription_id: u64, route: &Route, notification: KvNotification) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
     buf.put_u64(subscription_id);
-    buf.put_u32(route.as_str().len() as u32);
+    buf.put_u32(usize_to_u32_saturating(route.as_str().len()));
     buf.put_slice(route.as_str().as_bytes());
     buf.put_u64(notification.mutation_count);
     buf
@@ -467,63 +506,21 @@ pub(super) fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<Kv
     // Parse route into realm/area/resource (only resource used in KvMessage)
     let resource = parse_route_resource(route_str)?;
 
-    // Read start key option (u8): 0=None, 1=Some
-    if offset >= payload.len() {
-        return Err("SCAN start key option byte missing".to_string());
-    }
-    let start = if payload[offset] == 1 {
-        offset += 1;
-        // Read start key length (u32)
-        if offset + 4 > payload.len() {
-            return Err("SCAN start key length overflow".to_string());
-        }
-        let len = u32::from_be_bytes([
-            payload[offset],
-            payload[offset + 1],
-            payload[offset + 2],
-            payload[offset + 3],
-        ]) as usize;
-        offset += 4;
-        // Read start key
-        if offset + len > payload.len() {
-            return Err("SCAN start key overflow".to_string());
-        }
-        let key = Bytes::copy_from_slice(&payload[offset..offset + len]);
-        offset += len;
-        Some(key)
-    } else {
-        offset += 1;
-        None
-    };
+    let start = read_optional_scan_key(
+        payload,
+        &mut offset,
+        "SCAN start key option byte missing",
+        "SCAN start key length overflow",
+        "SCAN start key overflow",
+    )?;
 
-    // Read end key option (u8): 0=None, 1=Some
-    if offset >= payload.len() {
-        return Err("SCAN end key option byte missing".to_string());
-    }
-    let end = if payload[offset] == 1 {
-        offset += 1;
-        // Read end key length (u32)
-        if offset + 4 > payload.len() {
-            return Err("SCAN end key length overflow".to_string());
-        }
-        let len = u32::from_be_bytes([
-            payload[offset],
-            payload[offset + 1],
-            payload[offset + 2],
-            payload[offset + 3],
-        ]) as usize;
-        offset += 4;
-        // Read end key
-        if offset + len > payload.len() {
-            return Err("SCAN end key overflow".to_string());
-        }
-        let key = Bytes::copy_from_slice(&payload[offset..offset + len]);
-        offset += len;
-        Some(key)
-    } else {
-        offset += 1;
-        None
-    };
+    let end = read_optional_scan_key(
+        payload,
+        &mut offset,
+        "SCAN end key option byte missing",
+        "SCAN end key length overflow",
+        "SCAN end key overflow",
+    )?;
 
     // Read limit option (u8): 0=None, 1=Some
     let limit = if payload.len() > offset && payload[offset] == 1 {

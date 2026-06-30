@@ -92,7 +92,7 @@ impl TypeMapping {
         self.overrides = Arc::new(vec);
     }
 
-    /// Get channel for msg_type. Fast path: if no overrides, do only a range check.
+    /// Get channel for `msg_type`. Fast path: if no overrides, do only a range check.
     #[inline]
     #[must_use]
     pub fn get_channel(&self, msg_type: u16) -> Option<ChannelId> {
@@ -107,13 +107,11 @@ impl TypeMapping {
 
         match msg_type {
             0..=99 => Some(ChannelId::Control),
-            100..=199 => Some(ChannelId::Pub),      // KV
-            200..=299 => Some(ChannelId::Sub),      // Queue
-            300..=399 => Some(ChannelId::Rpc),      // RPC
-            400..=499 => Some(ChannelId::Lease),    // Lease
-            500..=504 => Some(ChannelId::Pub),      // Notice (use Pub channel)
-            600..=699 => Some(ChannelId::Sub),      // Stream (use Sub channel)
-            700..=799 => Some(ChannelId::Internal), // Schedule
+            100..=199 | 500..=504 => Some(ChannelId::Pub), // KV, Notice
+            200..=299 | 600..=699 => Some(ChannelId::Sub), // Queue, Stream
+            300..=399 => Some(ChannelId::Rpc),             // RPC
+            400..=499 => Some(ChannelId::Lease),           // Lease
+            700..=799 => Some(ChannelId::Internal),        // Schedule
             _ => None,
         }
     }
@@ -145,7 +143,7 @@ pub struct ChannelGrant<'a> {
     released: bool,
 }
 
-impl<'a> ChannelGrant<'a> {
+impl ChannelGrant<'_> {
     /// Explicitly consume the grant and release capacity early.
     pub fn release(mut self) {
         if !self.released {
@@ -157,7 +155,7 @@ impl<'a> ChannelGrant<'a> {
     }
 }
 
-impl<'a> Drop for ChannelGrant<'a> {
+impl Drop for ChannelGrant<'_> {
     fn drop(&mut self) {
         if !self.released {
             // Release capacity back to mux on drop.
@@ -193,6 +191,12 @@ impl Mux {
     }
 
     /// Zero-copy hot path: route a msg by type and payload slice. No allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MuxError::UnknownMessageType`] when no channel mapping exists
+    /// for `msg_type`, or [`MuxError::ChannelFull`] when the target channel is
+    /// already at capacity.
     #[inline]
     pub fn route_ref<'a>(
         &mut self,
@@ -221,6 +225,12 @@ impl Mux {
     }
 
     /// Route and return an RAII grant that will release capacity when dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MuxError::UnknownMessageType`] when no channel mapping exists
+    /// for `msg_type`, or [`MuxError::ChannelFull`] when the target channel is
+    /// already at capacity.
     pub fn route_grant<'a>(
         &'a mut self,
         msg_type: MessageType,
@@ -236,6 +246,12 @@ impl Mux {
     }
 
     /// Convenience owning API: consumes a `TlvRecord` and returns an owned `ChannelMessage`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MuxError::UnknownMessageType`] when no channel mapping exists
+    /// for the record message type, or [`MuxError::ChannelFull`] when the
+    /// target channel is already at capacity.
     pub fn route(&mut self, record: TlvRecord) -> Result<ChannelMessage, MuxError> {
         // extract msg_type first to avoid partial moves
         let mt = record.msg_type();

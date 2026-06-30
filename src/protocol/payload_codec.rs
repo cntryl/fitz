@@ -8,6 +8,10 @@
 use bytes::BufMut;
 use std::ops::Range;
 
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
 /// Encoder for sequential typed fields in message payloads.
 pub struct PayloadEncoder {
     buf: Vec<u8>,
@@ -35,7 +39,7 @@ impl PayloadEncoder {
     }
 
     /// Clear the buffer for reuse. Use after `finish()` or when discarding content.
-    /// Call sites can hold one encoder and call clear() then encode again to avoid allocating a new encoder.
+    /// Call sites can hold one encoder and call `clear()` then encode again to avoid allocating a new encoder.
     pub fn clear(&mut self) {
         self.buf.clear();
     }
@@ -68,13 +72,13 @@ impl PayloadEncoder {
 
     /// Encode a string with length prefix
     pub fn put_string(&mut self, val: &str) {
-        self.buf.put_u32(val.len() as u32);
+        self.buf.put_u32(usize_to_u32_saturating(val.len()));
         self.buf.put_slice(val.as_bytes());
     }
 
     /// Encode bytes with length prefix
     pub fn put_bytes(&mut self, val: &[u8]) {
-        self.buf.put_u32(val.len() as u32);
+        self.buf.put_u32(usize_to_u32_saturating(val.len()));
         self.buf.put_slice(val);
     }
 
@@ -96,7 +100,7 @@ impl PayloadEncoder {
         match val {
             Some(s) => {
                 self.buf.put_u8(1);
-                self.buf.put_u32(s.len() as u32);
+                self.buf.put_u32(usize_to_u32_saturating(s.len()));
                 self.buf.put_slice(s.as_bytes());
             }
             None => {
@@ -132,6 +136,10 @@ impl<'a> PayloadDecoder<'a> {
     }
 
     /// Peek the next u8 without advancing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the payload does not contain another byte.
     pub fn peek_u8(&self) -> Result<u8, String> {
         if self.offset + 1 > self.payload.len() {
             return Err("Incomplete u8".to_string());
@@ -140,6 +148,10 @@ impl<'a> PayloadDecoder<'a> {
     }
 
     /// Decode a u8 scalar
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the payload does not contain a full `u8`.
     pub fn get_u8(&mut self) -> Result<u8, String> {
         if self.offset + 1 > self.payload.len() {
             return Err("Incomplete u8".to_string());
@@ -150,6 +162,10 @@ impl<'a> PayloadDecoder<'a> {
     }
 
     /// Decode a u16 scalar
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the payload does not contain a full `u16`.
     pub fn get_u16(&mut self) -> Result<u16, String> {
         if self.offset + 2 > self.payload.len() {
             return Err("Incomplete u16".to_string());
@@ -160,6 +176,10 @@ impl<'a> PayloadDecoder<'a> {
     }
 
     /// Decode a u32 scalar
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the payload does not contain a full `u32`.
     pub fn get_u32(&mut self) -> Result<u32, String> {
         if self.offset + 4 > self.payload.len() {
             return Err("Incomplete u32".to_string());
@@ -175,6 +195,10 @@ impl<'a> PayloadDecoder<'a> {
     }
 
     /// Decode a u64 scalar
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the payload does not contain a full `u64`.
     pub fn get_u64(&mut self) -> Result<u64, String> {
         if self.offset + 8 > self.payload.len() {
             return Err("Incomplete u64".to_string());
@@ -195,6 +219,11 @@ impl<'a> PayloadDecoder<'a> {
 
     /// Decode a string with length prefix (borrowed; no allocation).
     /// Use when the caller can use `&str` or will do a single `.to_string()` for owned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the string length is incomplete, the string data
+    /// overruns the payload, or the bytes are not valid UTF-8.
     pub fn get_string_ref(&mut self) -> Result<&'a str, String> {
         let len = self.get_u32()? as usize;
         if self.offset + len > self.payload.len() {
@@ -207,11 +236,20 @@ impl<'a> PayloadDecoder<'a> {
     }
 
     /// Decode a string with length prefix (owned; one allocation).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying borrowed string decode fails.
     pub fn get_string(&mut self) -> Result<String, String> {
-        self.get_string_ref().map(|s| s.to_string())
+        self.get_string_ref().map(std::string::ToString::to_string)
     }
 
     /// Decode bytes with length prefix
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the byte length is incomplete or the requested
+    /// byte range overruns the payload.
     pub fn get_bytes(&mut self) -> Result<bytes::Bytes, String> {
         let len = self.get_u32()? as usize;
         if self.offset + len > self.payload.len() {
@@ -225,6 +263,11 @@ impl<'a> PayloadDecoder<'a> {
     /// Decode a byte range with length prefix without allocating.
     ///
     /// Returns the range within the original payload slice that contains the bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the byte length is incomplete or the requested
+    /// byte range overruns the payload.
     pub fn get_bytes_range(&mut self) -> Result<Range<usize>, String> {
         let len = self.get_u32()? as usize;
         if self.offset + len > self.payload.len() {
@@ -237,6 +280,11 @@ impl<'a> PayloadDecoder<'a> {
     }
 
     /// Skip bytes with length prefix without allocating.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the byte length is incomplete or the skipped
+    /// byte range overruns the payload.
     pub fn skip_bytes(&mut self) -> Result<(), String> {
         let len = self.get_u32()? as usize;
         if self.offset + len > self.payload.len() {
@@ -247,6 +295,10 @@ impl<'a> PayloadDecoder<'a> {
     }
 
     /// Decode an optional u64
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the optional flag or the contained `u64` is incomplete.
     pub fn get_optional_u64(&mut self) -> Result<Option<u64>, String> {
         let flag = self.get_u8()?;
         if flag == 1 {
@@ -257,6 +309,11 @@ impl<'a> PayloadDecoder<'a> {
     }
 
     /// Decode an optional string
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the optional flag is incomplete or the contained
+    /// string cannot be decoded.
     pub fn get_optional_string(&mut self) -> Result<Option<String>, String> {
         let flag = self.get_u8()?;
         if flag == 1 {
@@ -267,6 +324,11 @@ impl<'a> PayloadDecoder<'a> {
     }
 
     /// Decode optional bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the optional flag is incomplete or the contained
+    /// byte payload overruns the input.
     pub fn get_optional_bytes(&mut self) -> Result<Option<bytes::Bytes>, String> {
         let flag = self.get_u8()?;
         if flag == 1 {
@@ -277,6 +339,11 @@ impl<'a> PayloadDecoder<'a> {
     }
 
     /// Skip optional bytes without allocating.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the optional flag is incomplete or the contained
+    /// byte payload overruns the input.
     pub fn skip_optional_bytes(&mut self) -> Result<(), String> {
         let flag = self.get_u8()?;
         if flag == 1 {

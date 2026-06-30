@@ -16,6 +16,11 @@ use uuid::Uuid;
 ///
 /// `route_family` is injected by the session layer — it is never read
 /// from the wire payload.
+///
+/// # Errors
+///
+/// Returns an error when the RPC message type is unsupported or the payload
+/// cannot be decoded as the requested RPC operation.
 pub fn parse_request(
     ctx: &FrameContext,
     payload: &[u8],
@@ -34,6 +39,11 @@ pub fn parse_request(
 }
 
 /// Extract the request route or worker address needed for authorization.
+///
+/// # Errors
+///
+/// Returns an error when the payload is malformed, has trailing data, or the
+/// message type is unsupported for RPC authorization extraction.
 pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
     let mut dec = PayloadDecoder::new(payload);
 
@@ -103,6 +113,10 @@ pub fn encode_error_body_into(code: u16, message: &str, enc: &mut PayloadEncoder
 }
 
 /// Decode a standard RPC error body with numeric code and message.
+///
+/// # Errors
+///
+/// Returns an error when the error payload is truncated or malformed.
 pub fn decode_error_body(payload: &[u8]) -> Result<(u16, String), String> {
     crate::protocol::error_codes::decode_error_body(payload)
 }
@@ -215,13 +229,13 @@ fn parse_ack(dec: &mut PayloadDecoder) -> Result<RpcMessage, String> {
 ///
 /// Wire format: `[bytes correlation_id][string route][string reply_route][bytes body]`
 ///
-/// This encodes the RpcWorkItem to be sent from route actor to worker session actor.
+/// This encodes the `RpcWorkItem` to be sent from route actor to worker session actor.
 pub fn encode_request_delivery(work_item: &crate::domains::rpc::protocol::RpcWorkItem) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
     encode_request_delivery_into(work_item, &mut enc)
 }
 
-/// Encode an RPC request payload directly from RpcRequest for dispatch to a worker.
+/// Encode an RPC request payload directly from `RpcRequest` for dispatch to a worker.
 pub fn encode_request_into(request: &RpcRequest, enc: &mut PayloadEncoder) -> Vec<u8> {
     encode_request_fields_into(
         &request.correlation_id,
@@ -275,7 +289,7 @@ pub fn encode_response_message_into(response: &RpcResponse, enc: &mut PayloadEnc
     enc.put_bytes(response.correlation_id.as_bytes());
     enc.put_u64(response.seq);
     enc.put_bytes(&response.body);
-    enc.put_u8(if response.stream_end { 1 } else { 0 });
+    enc.put_u8(u8::from(response.stream_end));
     enc.finish()
 }
 

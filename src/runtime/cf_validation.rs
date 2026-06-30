@@ -3,22 +3,22 @@
 //! # Purpose
 //!
 //! Enforces the critical architectural invariant:
-//! **All persisted Fitz domains MUST map RouteFamily → ColumnFamily explicitly.**
+//! **All persisted Fitz domains MUST map `RouteFamily` → `ColumnFamily` explicitly.**
 //! **The default column family MUST NEVER be used.**
 //!
 //! # Rules
 //!
-//! 1. **RouteFamily mapping**: Every persisted write MUST resolve to an explicit ColumnFamily
+//! 1. **`RouteFamily` mapping**: Every persisted write MUST resolve to an explicit `ColumnFamily`
 //! 2. **Default CF prohibition**: The Midge default column family is FORBIDDEN
-//! 3. **Domain responsibility**: Domains define and register their ColumnFamily at startup
-//! 4. **API invariants**: Writer APIs MUST require a RouteFamily (or resolved handle)
+//! 3. **Domain responsibility**: Domains define and register their `ColumnFamily` at startup
+//! 4. **API invariants**: Writer APIs MUST require a `RouteFamily` (or resolved handle)
 //! 5. **Validation**: On startup, validate all persisted domains have registered CFs
 //!
 //! # Design
 //!
-//! RouteFamily → ColumnFamily mapping is 1:1 by value:
-//! - RouteFamily with id=1 maps to ColumnFamilyId(1)
-//! - RouteFamily with id=2 maps to ColumnFamilyId(2)
+//! `RouteFamily` → `ColumnFamily` mapping is 1:1 by value:
+//! - `RouteFamily` with `id=1` maps to `ColumnFamilyId(1)`
+//! - `RouteFamily` with `id=2` maps to `ColumnFamilyId(2)`
 //! - etc.
 //!
 //! This ensures:
@@ -27,7 +27,7 @@
 //! - Auditable persistence layout
 //! - Zero-overhead mapping (simple cast)
 
-/// Validate that a ColumnFamilyId is not the default CF (0)
+/// Validate that a `ColumnFamilyId` is not the default CF (0)
 ///
 /// # Errors
 ///
@@ -42,7 +42,7 @@ pub fn validate_cf_not_default(cf_id: cntryl_midge::ColumnFamilyId) -> Result<()
     }
 }
 
-/// Validate that a RouteFamily maps to a valid (non-default) ColumnFamilyId
+/// Validate that a `RouteFamily` maps to a valid (non-default) `ColumnFamilyId`
 ///
 /// # Errors
 ///
@@ -57,9 +57,9 @@ pub fn validate_route_family(family: crate::runtime::routing::RouteFamily) -> Re
     }
 }
 
-/// Convert RouteFamily to ColumnFamilyId with validation
+/// Convert `RouteFamily` to `ColumnFamilyId` with validation
 ///
-/// This is the canonical way to convert RouteFamily → ColumnFamilyId.
+/// This is the canonical way to convert `RouteFamily` → `ColumnFamilyId`.
 /// It ensures the mapping is explicit and validates that the default CF is not used.
 ///
 /// # Errors

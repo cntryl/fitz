@@ -14,6 +14,11 @@ use crate::session::SessionId;
 ///
 /// `route_family`, `session_id`, and `subscriber` are injected by the
 /// session layer — they are never read from the wire payload.
+///
+/// # Errors
+///
+/// Returns an error when the schedule message type is unsupported or the
+/// payload cannot be decoded as the requested schedule operation.
 pub fn parse_request(
     ctx: &FrameContext,
     payload: &[u8],
@@ -35,6 +40,11 @@ pub fn parse_request(
 }
 
 /// Extract the schedule route or pattern needed for authorization.
+///
+/// # Errors
+///
+/// Returns an error when the payload is malformed, has trailing data, or the
+/// message type is unsupported for schedule authorization extraction.
 pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
     let mut dec = PayloadDecoder::new(payload);
 
@@ -72,6 +82,9 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
     }
 }
 
+/// # Errors
+///
+/// Returns an error when the batch payload is malformed or contains trailing data.
 pub fn extract_batch_auth_routes(payload: &[u8]) -> Result<Vec<&str>, String> {
     let mut dec = PayloadDecoder::new(payload);
     let entry_count = dec.get_u32()? as usize;
@@ -139,12 +152,10 @@ fn schedule_error_code_for_message(message: &str) -> u16 {
     match message {
         "schedule not found" => schedule_error_codes::ERR_SCHEDULE_NOT_FOUND,
         "Cron expression must have exactly 5 fields" => schedule_error_codes::ERR_INVALID_CRON,
-        "schedule route must be schedule://{realm}/{area}/{resource}/{operation}" => {
-            schedule_error_codes::ERR_INVALID_TARGET
-        }
-        "schedule route scheme must be schedule" => schedule_error_codes::ERR_INVALID_TARGET,
-        "schedule route must not contain wildcards" => schedule_error_codes::ERR_INVALID_TARGET,
-        "schedule subscription state is owned by the schedule domain sink" => {
+        "schedule route must be schedule://{realm}/{area}/{resource}/{operation}"
+        | "schedule route scheme must be schedule"
+        | "schedule route must not contain wildcards"
+        | "schedule subscription state is owned by the schedule domain sink" => {
             schedule_error_codes::ERR_INVALID_TARGET
         }
         _ => schedule_error_codes::ERR_PARSE_ERROR,
@@ -224,7 +235,7 @@ fn parse_list(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
 }
 
 /// Parse SUBSCRIBE message.
-/// Wire format: [string exact_route]
+/// Wire format: [string `exact_route`]
 fn parse_subscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
@@ -247,7 +258,7 @@ fn parse_subscribe(
 }
 
 /// Parse UNSUBSCRIBE message.
-/// Wire format: [string exact_route]
+/// Wire format: [string `exact_route`]
 fn parse_unsubscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
@@ -269,9 +280,9 @@ fn parse_unsubscribe(
     })
 }
 
-/// Encode an ephemeral SCHEDULE_NOTIFY (705) payload.
+/// Encode an ephemeral `SCHEDULE_NOTIFY` (705) payload.
 ///
-/// Wire format: [u64 subscription_id][bytes payload]
+/// Wire format: [u64 `subscription_id`][bytes payload]
 /// Payload is the stored schedule payload handed to the live notify path. The
 /// notification itself is not durably replayed as a delivery artifact.
 #[must_use]
@@ -338,7 +349,7 @@ mod tests {
         assert_eq!(payload[0], 1);
         assert_eq!(
             &payload[1..5],
-            &(schedule_error_codes::ERR_SCHEDULE_NOT_FOUND as u32).to_be_bytes()
+            &u32::from(schedule_error_codes::ERR_SCHEDULE_NOT_FOUND).to_be_bytes()
         );
     }
 

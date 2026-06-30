@@ -7,6 +7,10 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use std::fmt;
 
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
 /// Message type identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MessageType(pub u16);
@@ -87,7 +91,7 @@ impl TlvRecord {
         &self.value
     }
 
-    /// Convert to a zero-copy tuple (msg_type, &[u8]). This copies no data but borrows the inner bytes.
+    /// Convert to a zero-copy tuple (`msg_type`, &[u8]). This copies no data but borrows the inner bytes.
     pub fn as_ref(&self) -> (MessageType, &[u8]) {
         (self.msg_type, &self.value)
     }
@@ -166,7 +170,7 @@ impl TlvDecoder {
     pub fn new() -> Self {
         Self {
             // Default to u16 maximum to match TLV value size invariant (<= 65535 bytes)
-            max_value_len: u16::MAX as u32,
+            max_value_len: u32::from(u16::MAX),
         }
     }
 
@@ -175,8 +179,13 @@ impl TlvDecoder {
         Self { max_value_len }
     }
 
-    /// Zero-copy decode: returns (MessageType, value_slice, consumed_bytes)
+    /// Zero-copy decode: returns (`MessageType`, `value_slice`, `consumed_bytes`)
     /// No allocations, suitable for hot-path routing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the frame is empty, truncated, has invalid type
+    /// encoding, or its value length exceeds the configured decoder limit.
     #[inline]
     pub fn decode_one_ref<'a>(
         &self,
@@ -205,7 +214,7 @@ impl TlvDecoder {
             offset += 3;
             MessageType(value)
         } else {
-            let value = input[offset] as u16;
+            let value = u16::from(input[offset]);
             offset += 1;
             MessageType(value)
         };
@@ -216,8 +225,9 @@ impl TlvDecoder {
         }
         let value_len = u16::from_be_bytes([input[offset], input[offset + 1]]) as usize;
 
-        if (value_len as u32) > self.max_value_len {
-            return Err(TlvError::LengthTooLarge(value_len as u32));
+        let value_len_u32 = usize_to_u32_saturating(value_len);
+        if value_len_u32 > self.max_value_len {
+            return Err(TlvError::LengthTooLarge(value_len_u32));
         }
 
         offset += 2;
@@ -236,6 +246,10 @@ impl TlvDecoder {
     }
 
     /// Owned decode convenience wrapper that copies value bytes into a `Bytes`.
+    ///
+    /// # Errors
+    ///
+    /// Returns any error produced by [`Self::decode_one_ref`].
     #[inline]
     pub fn decode_one(&self, input: &[u8]) -> Result<(TlvRecord, usize), TlvError> {
         let (msg_type, slice, consumed) = self.decode_one_ref(input)?;
@@ -246,6 +260,11 @@ impl TlvDecoder {
     }
 
     /// Decode all into a provided vector to reuse allocation. Returns number of records appended.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any contained frame is malformed or a duplicate
+    /// message type appears within the input frame set.
     pub fn decode_into(&self, input: &[u8], out: &mut Vec<TlvRecord>) -> Result<usize, TlvError> {
         let mut offset = 0usize;
         let mut count = 0usize;
@@ -264,6 +283,11 @@ impl TlvDecoder {
     }
 
     /// Collect zero-copy refs into user-provided vector. No allocations beyond the Vec buffer itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any contained frame is malformed or a duplicate
+    /// message type appears within the input frame set.
     pub fn decode_refs_into<'a>(
         &self,
         input: &'a [u8],
@@ -289,6 +313,10 @@ impl TlvDecoder {
     }
 
     /// Decode all convenience API (allocating)
+    ///
+    /// # Errors
+    ///
+    /// Returns any error produced by [`Self::decode_into`].
     pub fn decode_all(&self, input: &[u8]) -> Result<Vec<TlvRecord>, TlvError> {
         let mut vec = Vec::with_capacity(input.len() / 3);
         self.decode_into(input, &mut vec)?;
@@ -368,11 +396,17 @@ impl TlvEncoder {
     }
 
     /// Encode a record. Inline for hot-path performance.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `value.len()` exceeds `u16::MAX`, because the wire format
+    /// only supports 2-byte value lengths.
     #[inline]
     pub fn encode(&mut self, msg_type: MessageType, value: &[u8]) {
         // If msg_type is in single-byte range, write a single u8; otherwise write escape marker + BE u16
         if msg_type.is_single_byte() {
-            self.buffer.put_u8(msg_type.0 as u8);
+            self.buffer
+                .put_u8(u8::try_from(msg_type.0).unwrap_or(u8::MAX));
         } else {
             // Validate that encoded two-byte forms are actually > MAX_SINGLE_BYTE
             if msg_type.0 <= MessageType::MAX_SINGLE_BYTE {
@@ -385,11 +419,14 @@ impl TlvEncoder {
 
         let len = value.len();
         // enforce u16 limit at encode time for safety
-        if len > u16::MAX as usize {
-            // For encoder (tests/debug), panic; production callers should chunk before encoding
-            panic!("TLV value too large: {} bytes (max {})", len, u16::MAX);
-        }
-        let len_bytes = (len as u16).to_be_bytes();
+        // For encoder (tests/debug), panic; production callers should chunk before encoding.
+        assert!(
+            u16::try_from(len).is_ok(),
+            "TLV value too large: {} bytes (max {})",
+            len,
+            u16::MAX
+        );
+        let len_bytes = u16::try_from(len).unwrap_or(u16::MAX).to_be_bytes();
         self.buffer.extend_from_slice(&len_bytes);
         self.buffer.extend_from_slice(value);
     }

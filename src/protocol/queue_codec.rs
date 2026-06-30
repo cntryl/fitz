@@ -7,6 +7,10 @@ use crate::protocol::frame_context::FrameContext;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
 /// Queue domain message type IDs
 pub mod msg_type {
     pub const ENQUEUE: u16 = 200;
@@ -24,6 +28,10 @@ pub enum ParsedQueueFrame {
     Sub(QueueSubscriptionMessage),
 }
 
+/// # Errors
+///
+/// Returns an error when the queue message type is unsupported, server-only, or
+/// the payload cannot be decoded as the expected queue frame.
 pub fn parse_frame(
     ctx: &FrameContext,
     payload: &[u8],
@@ -48,7 +56,12 @@ pub fn parse_frame(
 }
 
 /// Parse Queue request from bytes
-/// Per CLIENT_SPEC: All operations now include full route on wire
+/// Per `CLIENT_SPEC`: all operations now include full route on wire.
+///
+/// # Errors
+///
+/// Returns an error when the queue message type is unsupported or the payload
+/// cannot be decoded as the requested queue operation.
 pub fn parse_request(
     msg_type: u16,
     route_family: RouteFamily,
@@ -83,26 +96,22 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
         }
         QueueResponse::SentBatch { ids } => {
             buf.put_u8(0); // status: success
-            buf.put_u32(ids.len() as u32);
+            buf.put_u32(usize_to_u32_saturating(ids.len()));
             for id in ids {
                 buf.put_u64(id.as_u64());
             }
         }
         QueueResponse::Received { messages } => {
             buf.put_u8(0); // status: success
-            buf.put_u32(messages.len() as u32);
+            buf.put_u32(usize_to_u32_saturating(messages.len()));
             for msg in messages {
                 buf.put_u64(msg.id.as_u64());
                 buf.put_u64(msg.token);
-                buf.put_u32(msg.body.len() as u32);
+                buf.put_u32(usize_to_u32_saturating(msg.body.len()));
                 buf.put_slice(&msg.body);
             }
         }
-        QueueResponse::Extended => {
-            buf.put_u8(0); // status: success
-                           // Empty response
-        }
-        QueueResponse::Acked => {
+        QueueResponse::Extended | QueueResponse::Acked => {
             buf.put_u8(0); // status: success
                            // Empty response
         }
@@ -162,6 +171,11 @@ fn parse_route_str_ref<'a>(payload: &'a [u8], offset: &mut usize) -> Result<&'a 
 }
 
 /// Extract the queue route or pattern used for authorization without constructing a full message.
+///
+/// # Errors
+///
+/// Returns an error when the message type is unsupported, server-only, or the
+/// route/pattern prefix cannot be decoded from the payload.
 pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
     match msg_type {
         msg_type::ENQUEUE
@@ -355,7 +369,7 @@ pub fn encode_notify(
 
     let mut buf = Vec::new();
     buf.put_u64(subscription_id);
-    buf.put_u32(route.as_str().len() as u32);
+    buf.put_u32(usize_to_u32_saturating(route.as_str().len()));
     buf.put_slice(route.as_str().as_bytes());
     buf.put_u64(notification.ready_messages);
     buf.put_u64(notification.delayed_messages);
@@ -487,15 +501,19 @@ mod tests {
     use super::*;
     use bytes::Bytes;
 
+    fn len_to_u32(len: usize) -> u32 {
+        u32::try_from(len).expect("test payload length should fit in u32")
+    }
+
     #[test]
     fn should_parse_enqueue_message() {
         // Arrange
         let route = "queue://realm/area/test";
         let body = b"test message";
         let mut payload = Vec::new();
-        payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+        payload.extend_from_slice(&len_to_u32(route.len()).to_be_bytes());
         payload.extend_from_slice(route.as_bytes());
-        payload.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        payload.extend_from_slice(&len_to_u32(body.len()).to_be_bytes());
         payload.extend_from_slice(body);
         payload.push(0); // No delay
 
@@ -511,7 +529,7 @@ mod tests {
         // Arrange
         let route = "queue://realm/area/test";
         let mut payload = Vec::new();
-        payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+        payload.extend_from_slice(&len_to_u32(route.len()).to_be_bytes());
         payload.extend_from_slice(route.as_bytes());
         payload.extend_from_slice(&30u64.to_be_bytes()); // inflight_seconds
         payload.push(1); // batch_size present
@@ -529,7 +547,7 @@ mod tests {
         // Arrange
         let route = "queue://realm/area/test";
         let mut payload = Vec::new();
-        payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+        payload.extend_from_slice(&len_to_u32(route.len()).to_be_bytes());
         payload.extend_from_slice(route.as_bytes());
         payload.extend_from_slice(&30u64.to_be_bytes());
         payload.push(1);
@@ -552,7 +570,7 @@ mod tests {
         // Arrange
         let route = "queue://realm/area/test";
         let mut payload = Vec::new();
-        payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+        payload.extend_from_slice(&len_to_u32(route.len()).to_be_bytes());
         payload.extend_from_slice(route.as_bytes());
         payload.extend_from_slice(&123u64.to_be_bytes()); // id
         payload.extend_from_slice(&456u64.to_be_bytes()); // token

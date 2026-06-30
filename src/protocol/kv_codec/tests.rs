@@ -3,12 +3,16 @@ use crate::domains::kv::{KvMessage, KvResponse};
 use crate::runtime::routing::RouteFamily;
 use bytes::{BufMut, Bytes};
 
+fn len_to_u32(len: usize) -> u32 {
+    u32::try_from(len).expect("test payload length should fit in u32")
+}
+
 #[test]
 fn should_parse_begin_read_write_buffered() {
     // Arrange
     let route = "kv://acme/kv/users";
     let mut payload = Vec::new();
-    payload.put_u32(route.len() as u32);
+    payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u8(1); // ReadWrite
     payload.put_u8(0); // buffered (per CLIENT_SPEC: 0=buffered, 1=sync)
@@ -27,9 +31,9 @@ fn should_parse_get_with_key() {
     let key = b"user:1001";
     let mut payload = Vec::new();
     payload.put_u64(1); // tx_id
-    payload.put_u32(route.len() as u32);
+    payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
-    payload.put_u32(key.len() as u32);
+    payload.put_u32(len_to_u32(key.len()));
     payload.put_slice(key);
 
     // Act
@@ -78,7 +82,7 @@ fn should_parse_begin_with_sync_durability() {
     // Arrange - Per CLIENT_SPEC, durability byte: 0=buffered, 1=sync
     let route = "kv://acme/kv/users";
     let mut payload = Vec::new();
-    payload.put_u32(route.len() as u32);
+    payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u8(1); // ReadWrite
     payload.put_u8(1); // sync durability (per CLIENT_SPEC: 1=sync)
@@ -104,7 +108,7 @@ fn should_parse_begin_with_buffered_durability() {
     // Arrange - Per CLIENT_SPEC, durability byte: 0=buffered, 1=sync
     let route = "kv://acme/kv/users";
     let mut payload = Vec::new();
-    payload.put_u32(route.len() as u32);
+    payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u8(1); // ReadWrite
     payload.put_u8(0); // buffered durability (per CLIENT_SPEC: 0=buffered)
@@ -130,7 +134,7 @@ fn should_reject_begin_with_invalid_durability() {
     // Arrange
     let route = "kv://acme/kv/users";
     let mut base_payload = Vec::new();
-    base_payload.put_u32(route.len() as u32);
+    base_payload.put_u32(len_to_u32(route.len()));
     base_payload.put_slice(route.as_bytes());
     base_payload.put_u8(1); // ReadWrite
 
@@ -157,7 +161,7 @@ fn should_reject_begin_with_too_few_route_segments() {
     // Arrange
     let route = "kv://acme/kv";
     let mut payload = Vec::new();
-    payload.put_u32(route.len() as u32);
+    payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u8(1); // ReadWrite
     payload.put_u8(0); // buffered
@@ -174,7 +178,7 @@ fn should_reject_begin_given_nested_resource_path() {
     // Arrange
     let route = "kv://acme/kv/users/by/id";
     let mut payload = Vec::new();
-    payload.put_u32(route.len() as u32);
+    payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u8(1);
     payload.put_u8(0);

@@ -18,10 +18,19 @@ use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
 use bytes::{BufMut, Bytes, BytesMut};
 
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
 /// Parse incoming message from TLV-encoded bytes.
 ///
 /// `route_family`, `session_id`, and `subscriber` are injected by the
 /// session layer — they are never read from the wire payload.
+///
+/// # Errors
+///
+/// Returns an error when the notice message type is unsupported or the
+/// payload is malformed for the requested operation.
 pub fn parse_request(
     ctx: &FrameContext,
     payload: &[u8],
@@ -45,6 +54,11 @@ pub fn parse_request(
 }
 
 /// Extract the publish route or subscription pattern needed for authorization.
+///
+/// # Errors
+///
+/// Returns an error when the payload is malformed, has trailing data, or the
+/// message type is unsupported for notice authorization extraction.
 pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
     let mut dec = PayloadDecoder::new(payload);
 
@@ -216,7 +230,7 @@ fn parse_unsubscribe_all(
 ///
 /// Wire format: `[u64 subscription_id][string route][bytes payload]`
 ///
-/// The subscription_id allows client-side demultiplexing to the correct handler.
+/// The `subscription_id` allows client-side demultiplexing to the correct handler.
 /// The route and payload carry the actual delivery content.
 #[must_use]
 pub fn encode_notify(subscription_id: u64, route: &Route, payload: &[u8]) -> Vec<u8> {
@@ -254,9 +268,9 @@ pub fn encode_notify_route_into(
 #[must_use]
 pub fn encode_notify_shared_suffix(route: &str, payload: &[u8]) -> Bytes {
     let mut suffix = BytesMut::with_capacity(4 + route.len() + 4 + payload.len());
-    suffix.put_u32(route.len() as u32);
+    suffix.put_u32(usize_to_u32_saturating(route.len()));
     suffix.extend_from_slice(route.as_bytes());
-    suffix.put_u32(payload.len() as u32);
+    suffix.put_u32(usize_to_u32_saturating(payload.len()));
     suffix.extend_from_slice(payload);
     suffix.freeze()
 }

@@ -9,8 +9,12 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+fn usize_to_f64_saturating(value: usize) -> f64 {
+    f64::from(u32::try_from(value).unwrap_or(u32::MAX))
+}
+
 #[inline]
-fn delivery_error_to_send_error(target: RouteAddress, error: DeliveryError) -> SendError {
+fn delivery_error_to_send_error(target: RouteAddress, error: &DeliveryError) -> SendError {
     match error {
         DeliveryError::MailboxFull {
             capacity,
@@ -21,7 +25,7 @@ fn delivery_error_to_send_error(target: RouteAddress, error: DeliveryError) -> S
             current_len,
         } => SendError::MailboxFull {
             target,
-            occupancy: current_len as f64 / capacity as f64,
+            occupancy: usize_to_f64_saturating(*current_len) / usize_to_f64_saturating(*capacity),
         },
         DeliveryError::ActorStopped => SendError::ActorStopped { target },
     }
@@ -31,7 +35,7 @@ fn delivery_error_to_send_error(target: RouteAddress, error: DeliveryError) -> S
 fn route_error_to_send_error(error: RouteError) -> SendError {
     match error {
         RouteError::RouteNotFound(target) => SendError::RouteNotFound { target },
-        RouteError::DeliveryFailed(target, error) => delivery_error_to_send_error(target, error),
+        RouteError::DeliveryFailed(target, error) => delivery_error_to_send_error(target, &error),
     }
 }
 
@@ -243,6 +247,11 @@ impl<A: Actor + ?Sized> Context<A> {
     ///
     /// **WARNING**: Sending to self during `receive()` can deadlock if the mailbox is full.
     /// Consider using deferred sends or checking mailbox capacity first.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SendError` when the route is unknown, the destination actor has
+    /// stopped, or backpressure prevents mailbox delivery.
     pub fn send<M>(&self, dest: RouteAddress, msg: M) -> Result<(), SendError>
     where
         M: Send + Sync + 'static,
@@ -275,6 +284,11 @@ impl<A: Actor + ?Sized> Context<A> {
     ///
     /// This is intended for internal fire-and-forget fanout where the receiver
     /// does not rely on reply routing or trace ancestry.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SendError` when the route is unknown, the destination actor has
+    /// stopped, or backpressure prevents mailbox delivery.
     pub fn send_untracked<M>(&self, dest: RouteAddress, msg: M) -> Result<(), SendError>
     where
         M: Send + Sync + 'static,
@@ -294,6 +308,11 @@ impl<A: Actor + ?Sized> Context<A> {
     ///
     /// Same as `send()`: synchronous best-effort with no retries.
     /// The route in the event determines which domain sink receives it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SendError` when routing the event fails for the same reasons as
+    /// [`Self::send`].
     pub fn publish_event(
         &self,
         event: crate::runtime::domain_event::DomainPublishEvent,
@@ -314,6 +333,11 @@ impl<A: Actor + ?Sized> Context<A> {
     /// Returns `Err(SendError::ActorNotFound)` if:
     /// - There is no current envelope (called outside message processing)
     /// - The current envelope has no source (external message)
+    ///
+    /// # Errors
+    ///
+    /// Returns `SendError` when no reply target is available or when routing the
+    /// reply fails.
     pub fn reply<M>(&self, msg: M) -> Result<(), SendError>
     where
         M: Send + Sync + 'static,
@@ -391,7 +415,7 @@ impl fmt::Display for ActorId {
 
 /// Reference to an actor for sending messages
 ///
-/// ActorRef maintains type safety at the API level while using the
+/// `ActorRef` maintains type safety at the API level while using the
 /// untyped router internally. Messages are wrapped in Envelopes before routing.
 #[derive(Clone)]
 pub struct ActorRef<M: Send + 'static> {
@@ -419,6 +443,11 @@ impl<M: Send + 'static> ActorRef<M> {
     ///
     /// This is a **synchronous best-effort** send with **no retries**.
     /// Returns detailed error information for adaptive backpressure.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SendError` when the route is unknown, the actor has stopped,
+    /// or backpressure prevents mailbox delivery.
     pub fn send(&self, msg: M) -> Result<(), SendError>
     where
         M: Send + Sync + 'static,
@@ -440,7 +469,7 @@ impl<M: Send + 'static> fmt::Debug for ActorRef<M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ActorRef")
             .field("address", &self.address)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -503,9 +532,9 @@ impl SendError {
     #[must_use]
     pub fn target(&self) -> &RouteAddress {
         match self {
-            SendError::MailboxFull { target, .. } => target,
-            SendError::ActorStopped { target } => target,
-            SendError::RouteNotFound { target } => target,
+            SendError::MailboxFull { target, .. }
+            | SendError::ActorStopped { target }
+            | SendError::RouteNotFound { target } => target,
         }
     }
 }

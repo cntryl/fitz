@@ -3,10 +3,10 @@
 //! Encodes/decodes TLV messages for the lease domain inside one running broker.
 //! Supports Acquire, Extend, Release, Query, Subscribe, and Unsubscribe operations.
 //!
-//! Wire format follows CLIENT_SPEC: ACQUIRE success includes response_type
-//! (0=Acquired, 1=AlreadyHeld, 2=Queued, 3=AlreadyQueued) + fencing_token;
-//! EXTEND success is new_fencing_token; RELEASE success is status only;
-//! QUERY success is has_holder + optional holder details.
+//! Wire format follows `CLIENT_SPEC`: ACQUIRE success includes `response_type`
+//! (0=Acquired, 1=AlreadyHeld, 2=Queued, 3=AlreadyQueued) + `fencing_token`;
+//! EXTEND success is `new_fencing_token`; RELEASE success is status only;
+//! QUERY success is `has_holder` + optional holder details.
 //!
 //! `route_family` is a server-internal concept supplied by the session layer
 //! — it never appears on the wire.
@@ -20,7 +20,11 @@ use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
-/// ACQUIRE success response_type (CLIENT_SPEC)
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+/// ACQUIRE success `response_type` (`CLIENT_SPEC`)
 pub mod acquire_response_type {
     pub const ACQUIRED: u8 = 0;
     pub const ALREADY_HELD: u8 = 1;
@@ -46,6 +50,11 @@ pub enum ParsedLeaseFrame {
 }
 
 /// Parse an incoming lease frame.
+///
+/// # Errors
+///
+/// Returns an error when the message type is unknown, server-only, or the
+/// payload cannot be decoded as the expected lease frame.
 pub fn parse_frame(
     ctx: &FrameContext,
     payload: &[u8],
@@ -80,6 +89,11 @@ pub fn parse_frame(
 ///
 /// `route_family` is injected by the session layer — it is never read
 /// from the wire payload.
+///
+/// # Errors
+///
+/// Returns an error when the payload is malformed for the requested lease
+/// operation or the message type is unsupported.
 pub fn parse_request(
     msg_type: u16,
     route_family: RouteFamily,
@@ -97,6 +111,11 @@ pub fn parse_request(
 }
 
 /// Extract the lease route or pattern needed for authorization.
+///
+/// # Errors
+///
+/// Returns an error when the payload is malformed, has trailing data, or the
+/// message type is unsupported for lease authorization extraction.
 pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
     let mut dec = PayloadDecoder::new(payload);
 
@@ -144,14 +163,14 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
     }
 }
 
-/// Encode domain LeaseResponse to wire bytes (CLIENT_SPEC).
+/// Encode domain `LeaseResponse` to wire bytes (`CLIENT_SPEC`).
 ///
-/// - ACQUIRE success: status=0, response_type (0–3), fencing_token
-/// - EXTEND success: status=0, new_fencing_token
+/// - ACQUIRE success: status=0, `response_type` (0–3), `fencing_token`
+/// - EXTEND success: status=0, `new_fencing_token`
 /// - RELEASE success: status=0
-/// - QUERY success (free): status=0, has_holder=0, pending_waiters=0
-/// - QUERY success (held): status=0, has_holder=1, owner_id, ttl_remaining_secs, pending_waiters
-/// - All errors: status=1, error_len, error_msg
+/// - QUERY success (free): status=0, `has_holder=0`, `pending_waiters=0`
+/// - QUERY success (held): status=0, `has_holder=1`, `owner_id`, `ttl_remaining_secs`, `pending_waiters`
+/// - All errors: status=1, `error_len`, `error_msg`
 #[must_use]
 pub fn encode_domain_response(response: &DomainLeaseResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
@@ -196,7 +215,7 @@ pub fn encode_domain_response_into(
             enc.put_u64(*fencing_token);
             enc.finish()
         }
-        DomainLeaseResponse::Released => {
+        DomainLeaseResponse::Released | DomainLeaseResponse::UnsubscribeOk => {
             enc.put_u8(0);
             enc.finish()
         }
@@ -210,7 +229,7 @@ pub fn encode_domain_response_into(
             enc.put_u8(1); // has_holder=true
             enc.put_string(owner_id);
             enc.put_u64(*expires_in_secs);
-            enc.put_u32(*pending_waiters as u32);
+            enc.put_u32(usize_to_u32_saturating(*pending_waiters));
             enc.finish()
         }
         DomainLeaseResponse::NotFound => {
@@ -252,10 +271,6 @@ pub fn encode_domain_response_into(
         DomainLeaseResponse::SubscribeOk { subscription_id } => {
             enc.put_u8(0);
             enc.put_u64(*subscription_id);
-            enc.finish()
-        }
-        DomainLeaseResponse::UnsubscribeOk => {
-            enc.put_u8(0);
             enc.finish()
         }
     }
@@ -408,7 +423,7 @@ fn parse_unsubscribe(
 #[must_use]
 pub fn encode_notify(subscription_id: u64, route: &str, _payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
-    encode_notify_into(&mut enc, subscription_id, route, _payload)
+    encode_notify_into(&mut enc, subscription_id, route, &[])
 }
 
 pub fn encode_notify_into(
