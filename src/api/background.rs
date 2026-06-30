@@ -7,13 +7,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub fn start_domain_background_tasks(domains: &DomainHandles) {
-    start_queue_runtime_sweep(domains.queue.clone());
-    start_rpc_timeout_loop(domains.rpc.clone());
-    start_lease_timeout_loop(domains.lease.clone());
-    start_schedule_tick_loop(domains.schedule.clone());
+    start_queue_runtime_sweep(&domains.queue);
+    start_rpc_timeout_loop(&domains.rpc);
+    start_lease_timeout_loop(&domains.lease);
+    start_schedule_tick_loop(&domains.schedule);
 }
 
-fn start_queue_runtime_sweep(sink: Arc<QueueDomainSink>) {
+fn start_queue_runtime_sweep(sink: &Arc<QueueDomainSink>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("Queue runtime sweep not started: no Tokio runtime available");
         return;
@@ -35,7 +35,7 @@ fn start_queue_runtime_sweep(sink: Arc<QueueDomainSink>) {
     });
 }
 
-pub fn start_rpc_timeout_loop(sink: Arc<RpcDomainSink>) {
+pub fn start_rpc_timeout_loop(sink: &Arc<RpcDomainSink>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("RPC timeout loop not started: no Tokio runtime available");
         return;
@@ -61,7 +61,7 @@ pub fn start_rpc_timeout_loop(sink: Arc<RpcDomainSink>) {
     });
 }
 
-fn start_lease_timeout_loop(sink: Arc<LeaseDomainSink>) {
+fn start_lease_timeout_loop(sink: &Arc<LeaseDomainSink>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("Lease timeout loop not started: no Tokio runtime available");
         return;
@@ -83,7 +83,7 @@ fn start_lease_timeout_loop(sink: Arc<LeaseDomainSink>) {
     });
 }
 
-fn start_schedule_tick_loop(sink: Arc<ScheduleDomainSink>) {
+fn start_schedule_tick_loop(sink: &Arc<ScheduleDomainSink>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("Schedule tick loop not started: no Tokio runtime available");
         return;

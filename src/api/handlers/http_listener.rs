@@ -13,7 +13,11 @@ use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tracing::info;
 
-/// Spawn HTTP/WebSocket listener on configured port (binds internally)
+/// Spawn HTTP/WebSocket listener on configured port.
+///
+/// # Errors
+///
+/// Returns an error if the socket cannot be bound or the listener task fails to start.
 pub async fn spawn_http_listener(
     config: &BootConfig,
     ingress: Arc<dyn Ingress>,
@@ -27,17 +31,21 @@ pub async fn spawn_http_listener(
     spawn_http_listener_with_bound_socket(
         http_listener,
         ingress,
-        ingress_config,
+        &ingress_config,
         runtime,
         config.ws_allowed_origins.clone(),
     )
 }
 
-/// Spawn HTTP/WebSocket listener with pre-bound socket (eliminates port reallocation race)
+/// Spawn HTTP/WebSocket listener with a pre-bound socket.
+///
+/// # Errors
+///
+/// Returns an error if the listener task cannot be started.
 pub fn spawn_http_listener_with_bound_socket(
     http_listener: TcpListener,
     ingress: Arc<dyn Ingress>,
-    ingress_config: IngressConfig,
+    ingress_config: &IngressConfig,
     runtime: crate::boot::Runtime,
     ws_allowed_origins: Vec<crate::api::origin::ExactOrigin>,
 ) -> BootResult<ListenerHandle> {

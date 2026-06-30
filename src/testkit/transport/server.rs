@@ -316,7 +316,7 @@ impl TestServer {
         let tcp_handle = crate::api::handlers::spawn_tcp_listener_with_bound_socket(
             tcp_socket,
             ingress.clone(),
-            ingress_config.clone(),
+            &ingress_config,
             runtime.clone(),
         )?;
 
@@ -324,7 +324,7 @@ impl TestServer {
         let ws_handle = crate::api::handlers::spawn_http_listener_with_bound_socket(
             ws_socket,
             ingress.clone(),
-            ingress_config.clone(),
+            &ingress_config,
             runtime.clone(),
             boot_config.ws_allowed_origins.clone(),
         )?;

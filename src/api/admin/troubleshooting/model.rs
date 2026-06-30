@@ -302,7 +302,7 @@ pub(crate) fn calculate_confidence(input: ConfidenceInput<'_>) -> (f64, Confiden
         primary_signal,
         coverage_ratio,
         freshness_score,
-        signals.bottleneck_signal,
+        signals.bottleneck_signal(),
     );
     let matched_summary = summarize_signal_names(&signals_matched);
     let missing_summary = summarize_signal_names(&signals_missing);
@@ -352,14 +352,10 @@ pub(crate) struct DiagnosticSnapshotInput {
 }
 
 struct ConfidenceSignals {
-    failure_signal: bool,
-    contention_signal: bool,
-    age_signal: bool,
-    transition_signal: bool,
+    signal_bits: u8,
     last_changed_at: Option<DateTime<Utc>>,
     last_success_at: Option<DateTime<Utc>>,
     last_failure_at: Option<DateTime<Utc>>,
-    bottleneck_signal: bool,
 }
 
 struct ConfidenceSignalInput<'a> {
@@ -375,15 +371,49 @@ struct ConfidenceSignalInput<'a> {
 }
 
 fn gather_confidence_signals(input: ConfidenceSignalInput<'_>) -> ConfidenceSignals {
+    let mut signal_bits = 0u8;
+    if input.failure_count > 0 || input.last_failure_at.is_some() {
+        signal_bits |= 0b0001;
+    }
+    if input.contention_count > 0 || input.waiter_count > 0 {
+        signal_bits |= 0b0010;
+    }
+    if input.age_seconds.unwrap_or(0) > 0 {
+        signal_bits |= 0b0100;
+    }
+    if input.recent_transition_count > 0 || input.last_changed_at.is_some() {
+        signal_bits |= 0b1000;
+    }
+    if input.likely_bottleneck.is_some() {
+        signal_bits |= 0b1_0000;
+    }
     ConfidenceSignals {
-        failure_signal: input.failure_count > 0 || input.last_failure_at.is_some(),
-        contention_signal: input.contention_count > 0 || input.waiter_count > 0,
-        age_signal: input.age_seconds.unwrap_or(0) > 0,
-        transition_signal: input.recent_transition_count > 0 || input.last_changed_at.is_some(),
+        signal_bits,
         last_changed_at: input.last_changed_at,
         last_success_at: input.last_success_at,
         last_failure_at: input.last_failure_at,
-        bottleneck_signal: input.likely_bottleneck.is_some(),
+    }
+}
+
+impl ConfidenceSignals {
+    fn failure_signal(&self) -> bool {
+        self.signal_bits & 0b0001 != 0
+    }
+
+    fn contention_signal(&self) -> bool {
+        self.signal_bits & 0b0010 != 0
+    }
+
+    fn age_signal(&self) -> bool {
+        self.signal_bits & 0b0100 != 0
+    }
+
+    fn transition_signal(&self) -> bool {
+        self.signal_bits & 0b1000 != 0
+    }
+
+    fn bottleneck_signal(&self) -> bool {
+        self.signal_bits & 0b1_0000 != 0
     }
 }
 
@@ -411,38 +441,38 @@ fn primary_signal_for_stage(
     match current_stage {
         DiagnosisLabel::Healthy => (
             "no_active_pressure",
-            !signals.failure_signal && !signals.contention_signal && !signals.bottleneck_signal,
+            !signals.failure_signal() && !signals.contention_signal() && !signals.bottleneck_signal(),
             0,
         ),
         DiagnosisLabel::Contention => (
             "contention_or_waiters_present",
-            signals.contention_signal,
+            signals.contention_signal(),
             2,
         ),
         DiagnosisLabel::WorkerStarvation => (
             "waiters_without_capacity",
-            signals.contention_signal || signals.age_signal,
+            signals.contention_signal() || signals.age_signal(),
             2,
         ),
         DiagnosisLabel::BacklogGrowth => (
             "backlog_age_or_waiters_present",
-            signals.contention_signal || signals.age_signal,
+            signals.contention_signal() || signals.age_signal(),
             2,
         ),
         DiagnosisLabel::DeadLetterPressure | DiagnosisLabel::DataLossRisk => {
-            ("failure_signal_present", signals.failure_signal, 2)
+            ("failure_signal_present", signals.failure_signal(), 2)
         }
         DiagnosisLabel::StaleHandoff => (
             "staleness_signal_present",
-            signals.age_signal || signals.transition_signal,
+            signals.age_signal() || signals.transition_signal(),
             2,
         ),
         DiagnosisLabel::Throughput => (
             "throughput_pressure_present",
-            signals.age_signal
-                || signals.contention_signal
-                || signals.transition_signal
-                || signals.bottleneck_signal,
+            signals.age_signal()
+                || signals.contention_signal()
+                || signals.transition_signal()
+                || signals.bottleneck_signal(),
             1,
         ),
     }
@@ -450,11 +480,11 @@ fn primary_signal_for_stage(
 
 fn count_observed_signals(signals: &ConfidenceSignals) -> usize {
     [
-        signals.failure_signal,
-        signals.contention_signal,
-        signals.age_signal,
-        signals.transition_signal,
-        signals.bottleneck_signal,
+        signals.failure_signal(),
+        signals.contention_signal(),
+        signals.age_signal(),
+        signals.transition_signal(),
+        signals.bottleneck_signal(),
     ]
     .into_iter()
     .filter(|signal| *signal)
@@ -476,7 +506,7 @@ fn freshness_score(
 ) -> f64 {
     if freshness_signal {
         1.0
-    } else if signals.transition_signal
+    } else if signals.transition_signal()
         || signals.last_success_at.is_some()
         || signals.last_failure_at.is_some()
         || age_seconds.unwrap_or(0) > 0
@@ -529,7 +559,7 @@ fn maybe_add_bottleneck_signal(
     missing: &mut Vec<String>,
     signals: &ConfidenceSignals,
 ) {
-    if signals.bottleneck_signal {
+    if signals.bottleneck_signal() {
         matched.push("bottleneck_identified".to_string());
         return;
     }
@@ -546,7 +576,7 @@ fn confidence_score(
     bottleneck_signal: bool,
 ) -> f64 {
     if current_stage == DiagnosisLabel::Healthy && primary_signal {
-        if freshness_score == 1.0 {
+        if freshness_score >= 0.999_999 {
             0.92
         } else {
             0.82

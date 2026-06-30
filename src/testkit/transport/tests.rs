@@ -226,7 +226,7 @@ async fn should_reject_websocket_upgrade_before_data_plane_readiness() {
     let handle = crate::api::handlers::spawn_http_listener_with_bound_socket(
         ws_socket,
         ingress,
-        ingress_config,
+        &ingress_config,
         runtime,
         boot_config.ws_allowed_origins.clone(),
     )
@@ -261,7 +261,7 @@ async fn should_reject_tcp_session_before_data_plane_readiness() {
     let handle = crate::api::handlers::spawn_tcp_listener_with_bound_socket(
         tcp_socket,
         ingress,
-        ingress_config,
+        &ingress_config,
         runtime.clone(),
     )
     .expect("spawn tcp listener");

@@ -9,7 +9,11 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::info;
 
-/// Spawn TCP listener on configured port (binds internally)
+/// Spawn TCP listener on configured port.
+///
+/// # Errors
+///
+/// Returns an error if the socket cannot be bound or the listener task fails to start.
 pub async fn spawn_tcp_listener(
     config: &BootConfig,
     ingress: Arc<dyn Ingress>,
@@ -20,14 +24,18 @@ pub async fn spawn_tcp_listener(
     let tcp_listener = TcpListener::bind(&tcp_addr).await?;
     info!("TCP endpoint listening on {}", tcp_addr);
 
-    spawn_tcp_listener_with_bound_socket(tcp_listener, ingress, ingress_config, runtime)
+    spawn_tcp_listener_with_bound_socket(tcp_listener, ingress, &ingress_config, runtime)
 }
 
-/// Spawn TCP listener with pre-bound socket (eliminates port reallocation race)
+/// Spawn TCP listener with a pre-bound socket.
+///
+/// # Errors
+///
+/// Returns an error if the listener task cannot be started.
 pub fn spawn_tcp_listener_with_bound_socket(
     tcp_listener: TcpListener,
     ingress: Arc<dyn Ingress>,
-    ingress_config: IngressConfig,
+    ingress_config: &IngressConfig,
     runtime: crate::boot::Runtime,
 ) -> BootResult<ListenerHandle> {
     let tcp_config = ingress_config.clone();
