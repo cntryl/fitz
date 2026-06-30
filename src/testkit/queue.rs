@@ -3,7 +3,7 @@
 use crate::domains::queue::{QueueActor, QueueKey};
 use crate::runtime::routing::RouteFamily;
 
-/// Create a QueueActor for testing with in-memory storage
+/// Create a `QueueActor` for testing with in-memory storage
 ///
 /// # Arguments
 /// * `realm` - Realm name

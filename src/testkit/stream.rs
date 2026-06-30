@@ -40,7 +40,7 @@ impl TestSink {
     }
 
     pub fn clear(&self) {
-        self.delivered.lock().clear()
+        self.delivered.lock().clear();
     }
 }
 
@@ -65,7 +65,7 @@ pub fn create_test_db() -> Arc<cntryl_midge::Engine> {
     crate::testkit::create_test_engine_with_cfs(vec![1])
 }
 
-/// Create a StreamStore with in-memory database for tests
+/// Create a `StreamStore` with in-memory database for tests
 #[must_use]
 pub fn create_test_store() -> crate::domains::stream::StreamStore {
     create_test_store_with_layout(crate::domains::stream::StreamStorageLayout::default())
@@ -78,7 +78,7 @@ pub fn create_test_store_with_layout(
     crate::domains::stream::StreamStore::with_layout(create_test_db(), stream_storage_layout)
 }
 
-/// Create a StreamActor for testing with in-memory storage.
+/// Create a `StreamActor` for testing with in-memory storage.
 ///
 /// # Arguments
 /// * `realm` - Realm name
@@ -86,7 +86,12 @@ pub fn create_test_store_with_layout(
 /// * `resource` - Resource name
 ///
 /// # Returns
-/// StreamActor ready for testing
+/// `StreamActor` ready for testing
+///
+/// # Panics
+///
+/// Panics if the test `StreamActor` cannot be constructed for the default test
+/// family and store.
 #[must_use]
 pub fn create_test_stream_actor(realm: &str, area: &str, resource: &str) -> StreamActor {
     let family = RouteFamily::new(1);
@@ -114,13 +119,13 @@ pub fn route(path: &str) -> Route {
     Route::new(path)
 }
 
-/// Build a RouteAddress in the default test family
+/// Build a `RouteAddress` in the default test family
 #[must_use]
 pub fn addr(path: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(1), route(path))
 }
 
-/// Build a RouteAddress with specific family
+/// Build a `RouteAddress` with specific family
 #[must_use]
 pub fn addr_with_family(path: &str, family: u64) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(family), route(path))

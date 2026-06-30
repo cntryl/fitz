@@ -13,7 +13,7 @@ use uuid::Uuid;
 /// Create an RPC route actor context for testing
 ///
 /// # Arguments
-/// * `route_str` - The RPC route string (e.g., "rpc://realm/service/operation")
+/// * `route_str` - The RPC route string (e.g., `<rpc://realm/service/operation>`)
 #[must_use]
 pub fn create_test_rpc_context(route_str: &str) -> Context<RpcRouteActor> {
     let router = Arc::new(Router::new());

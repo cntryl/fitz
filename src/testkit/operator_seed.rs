@@ -44,6 +44,11 @@ pub struct OperatorSeedReport {
 }
 
 impl OperatorSeedReport {
+    /// Close all live seed clients retained by the report.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if any client close operation fails.
     pub async fn close(mut self) -> Result<(), String> {
         for client in self.live_clients.drain(..) {
             client.close().await.map_err(|error| error.to_string())?;
@@ -91,6 +96,12 @@ impl OperatorSeededFamily {
     }
 }
 
+/// Seed domain data and authenticated sessions for the operator console test surface.
+///
+/// # Errors
+///
+/// Returns an error string if any client connection, authentication, or seed
+/// operation fails.
 pub async fn seed_operator_console(
     server: &TestServer,
     families: &[OperatorSeedFamily],
@@ -397,7 +408,7 @@ fn build_lease_acquire_with_wait(
     buf.put_slice(route.as_bytes());
     buf.put_u32(usize_to_u32_saturating(owner_id.len()));
     buf.put_slice(owner_id.as_bytes());
-    buf.put_u64(ttl_secs as u64);
+    buf.put_u64(i32_to_u64_nonnegative(ttl_secs));
     buf.put_u32(wait_seconds);
 
     let mut builder = TlvFrameBuilder::new();
@@ -415,4 +426,9 @@ fn ensure_ok(operation: &str, status: u8) -> Result<(), String> {
 #[inline]
 fn usize_to_u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+#[inline]
+fn i32_to_u64_nonnegative(value: i32) -> u64 {
+    u64::try_from(value).unwrap_or_default()
 }

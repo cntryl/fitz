@@ -6,7 +6,7 @@ use crate::domains::stream::StreamStore;
 use crate::runtime::routing::RouteFamily;
 use std::sync::Arc;
 
-/// Create a StreamActor for benchmarking.
+/// Create a `StreamActor` for benchmarking.
 ///
 /// Creates an actor with in-memory storage suitable for performance testing.
 ///
@@ -16,7 +16,7 @@ use std::sync::Arc;
 /// * `resource` - Resource name for the stream
 ///
 /// # Returns
-/// StreamActor ready for benchmarking
+/// `StreamActor` ready for benchmarking
 ///
 /// # Panics
 ///
@@ -55,7 +55,7 @@ pub fn create_bench_stream_actor_with_layout(
     .expect("create bench stream actor")
 }
 
-/// Create a StreamActor for integration benchmarking with local disk storage.
+/// Create a `StreamActor` for integration benchmarking with local disk storage.
 ///
 /// Creates an actor with local disk-backed storage for realistic production testing.
 ///
@@ -65,7 +65,7 @@ pub fn create_bench_stream_actor_with_layout(
 /// * `resource` - Resource name for the stream
 ///
 /// # Returns
-/// Tuple of (StreamActor, TempDir). The TempDir must be kept alive for the
+/// Tuple of (`StreamActor`, `TempDir`). The `TempDir` must be kept alive for the
 /// lifetime of the actor, otherwise the directory will be deleted.
 ///
 /// # Panics

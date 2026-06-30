@@ -19,6 +19,28 @@ use tokio_tungstenite::{
 use super::{
     server::init_test_runtime_jwks_cache, TEST_AUDIENCE, TEST_ISSUER, TEST_RUNTIME_AUTH_SECRET,
 };
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+struct JwtClaims {
+    iss: String,
+    aud: String,
+    tid: String,
+    sub: String,
+    exp: i64,
+    iat: i64,
+    permissions: Vec<String>,
+}
+
+#[inline]
+fn unix_time_now_i64() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .cast_signed()
+}
 
 /// Test client for sending raw protocol frames
 pub struct TestClient {
@@ -27,6 +49,11 @@ pub struct TestClient {
 
 impl TestClient {
     /// Create a client by connecting to an address
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the TCP connection cannot be established or
+    /// configured.
     pub async fn new(addr: SocketAddr) -> Result<Self, Box<dyn std::error::Error>> {
         let stream = TcpStream::connect(addr).await?;
         stream.set_nodelay(true)?;
@@ -34,6 +61,11 @@ impl TestClient {
     }
 
     /// Send a length-prefixed frame (TCP protocol)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the frame length cannot be encoded or the socket
+    /// write fails.
     pub async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         // Write length prefix (u32 BE)
         let len = u32::try_from(frame.len())?;
@@ -44,6 +76,11 @@ impl TestClient {
     }
 
     /// Receive a length-prefixed frame with timeout
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the read times out, the socket read fails, or the
+    /// frame length is invalid for the current platform.
     pub async fn recv_frame(
         &mut self,
         timeout_ms: u64,
@@ -64,10 +101,15 @@ impl TestClient {
         timeout(Duration::from_millis(timeout_ms), recv_future)
             .await
             .map_err(|_| "timeout waiting for response".to_string())?
-            .map_err(|e| e.into())
+            .map_err(Into::into)
     }
 
     /// Send a frame and wait for response
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if sending fails, receiving fails, or the response
+    /// times out.
     pub async fn request(
         &mut self,
         frame: &[u8],
@@ -78,6 +120,10 @@ impl TestClient {
     }
 
     /// Gracefully close the TCP client connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket shutdown fails.
     pub async fn close(mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.stream.shutdown().await?;
         Ok(())
@@ -92,11 +138,22 @@ pub struct TestWebSocketClient {
 
 impl TestWebSocketClient {
     /// Connect to a WebSocket server
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the URL is invalid, the TCP connection fails, or
+    /// the WebSocket handshake is rejected.
     pub async fn connect(url: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let request = url.into_client_request()?;
         Self::connect_request(request).await
     }
 
+    /// Connect to a WebSocket server with an explicit `Origin` header.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the URL or header is invalid, the TCP connection
+    /// fails, or the WebSocket handshake is rejected.
     pub async fn connect_with_origin(
         url: &str,
         origin: &str,
@@ -127,12 +184,21 @@ impl TestWebSocketClient {
     }
 
     /// Send a WebSocket binary frame (no length prefix - handled by WebSocket protocol)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the WebSocket send fails.
     pub async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         self.ws.send(Message::Binary(frame.to_vec().into())).await?;
         Ok(())
     }
 
     /// Receive a WebSocket binary frame with timeout
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the read times out, the socket closes, or the
+    /// WebSocket stream yields an error.
     pub async fn recv_frame(
         &mut self,
         timeout_ms: u64,
@@ -144,35 +210,24 @@ impl TestWebSocketClient {
                 while let Some(msg) = self.pending_frames.pop_front() {
                     match msg {
                         Message::Binary(data) => return Ok(data.to_vec()),
-                        Message::Ping(_) | Message::Pong(_) => continue,
+                        Message::Ping(_)
+                        | Message::Pong(_)
+                        | Message::Text(_)
+                        | Message::Frame(_) => {}
                         Message::Close(_) => return Err("WebSocket closed".into()),
-                        Message::Text(_) => continue,
-                        Message::Frame(_) => continue,
                     }
                 }
 
                 // Pending buffer empty, await next message from WebSocket stream
                 match self.ws.next().await {
-                    Some(Ok(msg)) => {
-                        match msg {
-                            Message::Binary(data) => return Ok(data.to_vec()),
-                            Message::Ping(_) | Message::Pong(_) => {
-                                // Filter out control frames, try next message
-                                continue;
-                            }
-                            Message::Close(_) => {
-                                return Err("WebSocket closed".into());
-                            }
-                            Message::Text(_) => {
-                                // Filter out text frames, try next message
-                                continue;
-                            }
-                            Message::Frame(_) => {
-                                // Filter out raw frames, try next message
-                                continue;
-                            }
-                        }
-                    }
+                    Some(Ok(msg)) => match msg {
+                        Message::Binary(data) => return Ok(data.to_vec()),
+                        Message::Ping(_)
+                        | Message::Pong(_)
+                        | Message::Text(_)
+                        | Message::Frame(_) => {}
+                        Message::Close(_) => return Err("WebSocket closed".into()),
+                    },
                     Some(Err(e)) => return Err(e.into()),
                     None => return Err("WebSocket stream ended".into()),
                 }
@@ -186,6 +241,11 @@ impl TestWebSocketClient {
     }
 
     /// Send a frame and wait for response
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if sending fails, receiving fails, or the response
+    /// times out.
     pub async fn request(
         &mut self,
         frame: &[u8],
@@ -196,6 +256,10 @@ impl TestWebSocketClient {
     }
 
     /// Gracefully close the websocket client connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the WebSocket close frame cannot be sent.
     pub async fn close(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.ws.close(None).await?;
         Ok(())
@@ -215,7 +279,7 @@ impl TlvFrameBuilder {
         }
     }
 
-    /// Encode a TLV field: [message_type: u8 or ESCAPE+u16 BE][length: u16 BE][value: bytes]
+    /// Encode a TLV field: [`message_type`: u8 or ESCAPE+u16 BE][length: u16 BE][value: bytes]
     ///
     /// # Panics
     ///
@@ -228,16 +292,19 @@ impl TlvFrameBuilder {
         const MAX_SINGLE_BYTE: u16 = 254;
 
         if msg_type <= MAX_SINGLE_BYTE {
-            self.buf.put_u8(msg_type as u8);
+            self.buf
+                .put_u8(u8::try_from(msg_type).expect("single-byte TLV type validated above"));
         } else {
             self.buf.put_u8(ESCAPE_MARKER);
             self.buf.put_slice(&msg_type.to_be_bytes());
         }
 
         // Length is u16 BE (max 65535 bytes)
-        if value.len() > 65535 {
-            panic!("TLV value too large: {} bytes", value.len());
-        }
+        assert!(
+            value.len() <= 65535,
+            "TLV value too large: {} bytes",
+            value.len()
+        );
         self.buf.put_slice(
             &u16::try_from(value.len())
                 .expect("TLV value length checked above")
@@ -284,7 +351,7 @@ impl<'a> TlvFrameParser<'a> {
             self.offset += 3;
             mt
         } else {
-            let mt = self.buf[self.offset] as u16;
+            let mt = u16::from(self.buf[self.offset]);
             self.offset += 1;
             mt
         };
@@ -328,7 +395,7 @@ impl Default for TlvFrameBuilder {
     }
 }
 
-/// Build CONNECT message (msg_type 1).
+/// Build CONNECT message (`msg_type` 1).
 /// The legacy route argument is ignored; CONNECT carries only the JWT payload.
 #[must_use]
 pub fn build_connect_frame(_realm: &str, jwt_token: &str) -> Vec<u8> {
@@ -348,29 +415,17 @@ pub fn generate_test_jwt(realm: &str) -> String {
     generate_test_jwt_for_family(realm, 1)
 }
 
+/// Generate a provider-shaped test JWT for a specific route family slot.
+///
+/// # Panics
+///
+/// Panics if system time is earlier than the Unix epoch or JWT encoding fails.
 #[must_use]
 pub fn generate_test_jwt_for_family(realm: &str, _route_family: u32) -> String {
     init_test_runtime_jwks_cache();
-    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-    use serde::{Deserialize, Serialize};
+    let now = unix_time_now_i64();
 
-    #[derive(Debug, Serialize, Deserialize)]
-    struct Claims {
-        iss: String,
-        aud: String,
-        tid: String,
-        sub: String,
-        exp: i64,
-        iat: i64,
-        permissions: Vec<String>,
-    }
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
-
-    let claims = Claims {
+    let claims = JwtClaims {
         iss: TEST_ISSUER.to_string(),
         aud: TEST_AUDIENCE.to_string(),
         tid: realm.to_string(),
@@ -400,29 +455,16 @@ pub fn generate_test_jwt_for_family(realm: &str, _route_family: u32) -> String {
 }
 
 /// Generate expired JWT (for testing rejection)
+///
+/// # Panics
+///
+/// Panics if system time is earlier than the Unix epoch or JWT encoding fails.
 #[must_use]
 pub fn generate_expired_jwt(realm: &str) -> String {
     init_test_runtime_jwks_cache();
-    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-    use serde::{Deserialize, Serialize};
+    let now = unix_time_now_i64();
 
-    #[derive(Debug, Serialize, Deserialize)]
-    struct Claims {
-        iss: String,
-        aud: String,
-        tid: String,
-        sub: String,
-        exp: i64,
-        iat: i64,
-        permissions: Vec<String>,
-    }
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
-
-    let claims = Claims {
+    let claims = JwtClaims {
         iss: TEST_ISSUER.to_string(),
         aud: TEST_AUDIENCE.to_string(),
         tid: realm.to_string(),
@@ -443,29 +485,16 @@ pub fn generate_expired_jwt(realm: &str) -> String {
 }
 
 /// Generate JWT with invalid signature (for testing rejection)
+///
+/// # Panics
+///
+/// Panics if system time is earlier than the Unix epoch or JWT encoding fails.
 #[must_use]
 pub fn generate_invalid_signature_jwt(realm: &str) -> String {
     init_test_runtime_jwks_cache();
-    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-    use serde::{Deserialize, Serialize};
+    let now = unix_time_now_i64();
 
-    #[derive(Debug, Serialize, Deserialize)]
-    struct Claims {
-        iss: String,
-        aud: String,
-        tid: String,
-        sub: String,
-        exp: i64,
-        iat: i64,
-        permissions: Vec<String>,
-    }
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
-
-    let claims = Claims {
+    let claims = JwtClaims {
         iss: TEST_ISSUER.to_string(),
         aud: TEST_AUDIENCE.to_string(),
         tid: realm.to_string(),

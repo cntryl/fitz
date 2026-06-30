@@ -55,7 +55,7 @@ fn bench_mailbox_deliver_primary(c: &mut Criterion) {
                     .expect("deliver to empty mailbox should succeed");
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.bench_function("deliver_mid_fill_primary", |b| {
@@ -71,7 +71,7 @@ fn bench_mailbox_deliver_primary(c: &mut Criterion) {
                     .expect("deliver to mid-fill mailbox should succeed");
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.bench_function("deliver_full_primary", |b| {
@@ -88,7 +88,7 @@ fn bench_mailbox_deliver_primary(c: &mut Criterion) {
                 other => panic!("expected MailboxFull, got {other:?}"),
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.bench_function("deliver_high_priority_when_normal_lane_full_primary", |b| {
@@ -104,7 +104,7 @@ fn bench_mailbox_deliver_primary(c: &mut Criterion) {
                     .expect("high-priority lane should remain independent from normal saturation");
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.finish();
@@ -133,7 +133,7 @@ fn bench_mailbox_send_smoke(c: &mut Criterion) {
                 .send(black_box(idx as u64))
                 .expect("smoke send should stay on the success path");
             idx = (idx + 1) % actor_refs.len();
-        })
+        });
     });
 
     group.throughput(Throughput::Elements(100));
@@ -147,7 +147,7 @@ fn bench_mailbox_send_smoke(c: &mut Criterion) {
                     .expect("smoke burst should stay on the success path");
             }
             idx = (idx + 100) % actor_refs.len();
-        })
+        });
     });
 
     group.finish();

@@ -4,7 +4,7 @@ use super::storage::{create_bench_store, create_local_bench_store};
 use crate::domains::queue::{QueueActor, QueueKey};
 use crate::runtime::routing::RouteFamily;
 
-/// Create a QueueActor for benchmarking with ephemeral in-memory commits.
+/// Create a `QueueActor` for benchmarking with ephemeral in-memory commits.
 ///
 /// Creates an actor with in-memory storage suitable for performance testing.
 /// In-memory engines are already ephemeral, so the queue can use best-effort
@@ -41,7 +41,7 @@ pub fn create_bench_queue_actor(
     )
 }
 
-/// Create a QueueActor for integration benchmarking with local disk storage
+/// Create a `QueueActor` for integration benchmarking with local disk storage
 ///
 /// Creates an actor with local disk-backed storage for realistic production testing.
 /// Uses a temporary directory that persists for the lifetime of the returned tuple.
@@ -54,7 +54,7 @@ pub fn create_bench_queue_actor(
 ///
 /// # Returns
 ///
-/// A tuple of (QueueActor, TempDir). The TempDir must be kept alive for the
+/// A tuple of (`QueueActor`, `TempDir`). The `TempDir` must be kept alive for the
 /// lifetime of the actor, otherwise the directory will be deleted.
 #[must_use]
 pub fn create_local_bench_queue_actor(
