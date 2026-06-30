@@ -2,6 +2,12 @@ use crate::boot::Runtime;
 use std::fmt::Write as _;
 
 pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
+    append_gauge_metrics(output, runtime);
+    append_latency_bucket_metrics(output, runtime);
+    append_counter_metrics(output, runtime);
+}
+
+fn append_gauge_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str("# HELP fitz_rpc_workers_registered Registered RPC workers\n");
     output.push_str("# TYPE fitz_rpc_workers_registered gauge\n");
     let _ = writeln!(
@@ -42,8 +48,6 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
     );
     output.push('\n');
 
-    let rpc_latency_buckets = runtime.rpc_worker_latency_buckets();
-
     output.push_str(
         "# HELP fitz_rpc_slowest_worker_average_latency_ms Slowest RPC worker average latency in milliseconds\n",
     );
@@ -54,7 +58,10 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
         runtime.rpc_slowest_worker_average_latency_ms()
     );
     output.push('\n');
+}
 
+fn append_latency_bucket_metrics(output: &mut String, runtime: &Runtime) {
+    let rpc_latency_buckets = runtime.rpc_worker_latency_buckets();
     output.push_str("# HELP fitz_rpc_worker_latency_bucket_under_5ms RPC workers with average latency under 5 milliseconds\n");
     output.push_str("# TYPE fitz_rpc_worker_latency_bucket_under_5ms gauge\n");
     let _ = writeln!(
@@ -90,7 +97,9 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
         rpc_latency_buckets.over_100ms
     );
     output.push('\n');
+}
 
+fn append_counter_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str("# HELP fitz_rpc_request_timeouts_total Total RPC requests that timed out before completion\n");
     output.push_str("# TYPE fitz_rpc_request_timeouts_total counter\n");
     let _ = writeln!(

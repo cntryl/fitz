@@ -5,7 +5,6 @@ mod rpc_matching_and_filters;
 use crate::api::admin::list;
 use crate::boot::Runtime;
 use crate::runtime::routing::{route_quad, route_triplet};
-use std::collections::{BTreeMap, HashMap};
 
 use model_and_sessions::{AdminSearchResult, Candidate, SearchOptions};
 use queue_schedule_lease_notice::{

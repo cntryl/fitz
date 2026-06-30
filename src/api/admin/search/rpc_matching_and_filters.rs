@@ -1,4 +1,5 @@
-use super::*;
+use super::{list, route_quad, AdminSearchResult, Candidate, Runtime, SearchOptions};
+use std::collections::{BTreeMap, HashMap};
 
 pub(crate) fn collect_rpc_candidates(
     runtime: &Runtime,
@@ -9,6 +10,15 @@ pub(crate) fn collect_rpc_candidates(
         return;
     }
 
+    collect_rpc_worker_candidates(runtime, options, candidates);
+    collect_rpc_pending_candidates(runtime, options, candidates);
+}
+
+fn collect_rpc_worker_candidates(
+    runtime: &Runtime,
+    options: &SearchOptions,
+    candidates: &mut Vec<Candidate>,
+) {
     for worker in runtime.rpc_list_workers(options.realm.as_deref()) {
         let route_family = worker.route_family.to_string();
         let parsed = route_quad(&worker.route);
@@ -69,7 +79,13 @@ pub(crate) fn collect_rpc_candidates(
             ],
         ));
     }
+}
 
+fn collect_rpc_pending_candidates(
+    runtime: &Runtime,
+    options: &SearchOptions,
+    candidates: &mut Vec<Candidate>,
+) {
     for request in runtime.rpc_list_pending(options.realm.as_deref()) {
         let route_family = request.route_family.to_string();
         let parsed = route_quad(&request.route);

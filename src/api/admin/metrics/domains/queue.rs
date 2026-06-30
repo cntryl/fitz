@@ -2,6 +2,13 @@ use crate::boot::Runtime;
 use std::fmt::Write as _;
 
 pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
+    append_core_metrics(output, runtime);
+    append_backlog_age_metrics(output, runtime);
+    append_delay_age_metrics(output, runtime);
+    append_counter_metrics(output, runtime);
+}
+
+fn append_core_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str("# HELP fitz_queue_messages_pending Pending queue messages\n");
     output.push_str("# TYPE fitz_queue_messages_pending gauge\n");
     let _ = writeln!(
@@ -29,9 +36,6 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
     );
     output.push('\n');
 
-    let backlog_age_buckets = runtime.queue_backlog_age_buckets();
-    let delay_age_buckets = runtime.queue_delay_age_buckets();
-
     output.push_str("# HELP fitz_queue_oldest_backlog_age_seconds Oldest ready-or-delayed queue backlog age in seconds\n");
     output.push_str("# TYPE fitz_queue_oldest_backlog_age_seconds gauge\n");
     let _ = writeln!(
@@ -40,7 +44,10 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
         runtime.queue_oldest_backlog_age_seconds()
     );
     output.push('\n');
+}
 
+fn append_backlog_age_metrics(output: &mut String, runtime: &Runtime) {
+    let backlog_age_buckets = runtime.queue_backlog_age_buckets();
     output.push_str("# HELP fitz_queue_backlog_age_bucket_under_1m Ready-or-delayed queue messages younger than 1 minute\n");
     output.push_str("# TYPE fitz_queue_backlog_age_bucket_under_1m gauge\n");
     let _ = writeln!(
@@ -76,7 +83,10 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
         backlog_age_buckets.over_15m
     );
     output.push('\n');
+}
 
+fn append_delay_age_metrics(output: &mut String, runtime: &Runtime) {
+    let delay_age_buckets = runtime.queue_delay_age_buckets();
     output.push_str("# HELP fitz_queue_delay_age_bucket_under_1m Delayed queue messages younger than 1 minute\n");
     output.push_str("# TYPE fitz_queue_delay_age_bucket_under_1m gauge\n");
     let _ = writeln!(
@@ -112,7 +122,9 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
         delay_age_buckets.over_15m
     );
     output.push('\n');
+}
 
+fn append_counter_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str("# HELP fitz_queue_redeliveries_total Total queue message redeliveries recorded by this broker process\n");
     output.push_str("# TYPE fitz_queue_redeliveries_total counter\n");
     let _ = writeln!(

@@ -1,4 +1,5 @@
-use super::*;
+use super::{candidate, resource_href, route_triplet, AdminSearchResult, Candidate, Runtime, SearchOptions};
+use std::collections::BTreeMap;
 
 pub(crate) fn collect_queue_candidates(
     runtime: &Runtime,
@@ -9,6 +10,16 @@ pub(crate) fn collect_queue_candidates(
         return;
     }
 
+    collect_queue_resource_candidates(runtime, options, candidates);
+    collect_queue_inflight_candidates(runtime, options, candidates);
+    collect_queue_dead_letter_candidates(runtime, options, candidates);
+}
+
+fn collect_queue_resource_candidates(
+    runtime: &Runtime,
+    options: &SearchOptions,
+    candidates: &mut Vec<Candidate>,
+) {
     for queue in runtime.queue_list_queues(options.realm.as_deref()) {
         let route_family = queue.family.to_string();
         if !options.matches_scope(
@@ -80,7 +91,13 @@ pub(crate) fn collect_queue_candidates(
             ],
         ));
     }
+}
 
+fn collect_queue_inflight_candidates(
+    runtime: &Runtime,
+    options: &SearchOptions,
+    candidates: &mut Vec<Candidate>,
+) {
     for inflight in runtime.queue_list_inflight(options.realm.as_deref()) {
         let route_family = inflight.family.to_string();
         if !options.matches_scope(
@@ -134,7 +151,13 @@ pub(crate) fn collect_queue_candidates(
             ],
         ));
     }
+}
 
+fn collect_queue_dead_letter_candidates(
+    runtime: &Runtime,
+    options: &SearchOptions,
+    candidates: &mut Vec<Candidate>,
+) {
     for message in runtime.queue_list_dead_letters(options.realm.as_deref()) {
         let route_family = message.family.to_string();
         if !options.matches_scope(
@@ -325,6 +348,15 @@ pub(crate) fn collect_notice_candidates(
         return;
     }
 
+    collect_notice_subscription_candidates(runtime, options, candidates);
+    collect_notice_route_candidates(runtime, options, candidates);
+}
+
+fn collect_notice_subscription_candidates(
+    runtime: &Runtime,
+    options: &SearchOptions,
+    candidates: &mut Vec<Candidate>,
+) {
     for subscription in runtime.notice_list_subscriptions(options.realm.as_deref(), None) {
         let route_family = subscription.route_family.to_string();
         let parsed = route_triplet(&subscription.pattern);
@@ -382,7 +414,13 @@ pub(crate) fn collect_notice_candidates(
             ],
         ));
     }
+}
 
+fn collect_notice_route_candidates(
+    runtime: &Runtime,
+    options: &SearchOptions,
+    candidates: &mut Vec<Candidate>,
+) {
     for route in runtime.notice_list_routes(options.realm.as_deref()) {
         let route_family = route.route_family.to_string();
         let parsed = route_triplet(&route.route);

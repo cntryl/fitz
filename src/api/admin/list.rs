@@ -13,11 +13,9 @@ use crate::api::admin::troubleshooting::{
 };
 use crate::api::http::Response;
 use crate::boot::Runtime;
-use crate::domains::kv::sink::AdminKvRowsRequest;
 use crate::domains::stream::sink::AdminStreamReadRequest;
 use crate::runtime::routing::{route_quad, route_triplet, RouteFamily};
-use base64::Engine;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 

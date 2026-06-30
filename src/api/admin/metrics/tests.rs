@@ -162,7 +162,7 @@ fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
     metrics.histogram_observe_ms("fitz_schedule_latency_ms", 250);
 
     // Act
-    let metrics = generate_prometheus_metrics(runtime);
+    let metrics = generate_prometheus_metrics(&runtime);
 
     // Assert
     assert!(metrics.contains("fitz_schedule_active 1"));
@@ -216,7 +216,7 @@ fn should_export_type_metadata_for_every_metric_family() {
     ));
 
     // Act
-    let payload = generate_prometheus_metrics(runtime);
+    let payload = generate_prometheus_metrics(&runtime);
 
     // Assert
     let typed = typed_metric_families(&payload);

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 /// Handle /metrics endpoint (Prometheus format)
 pub async fn handle_metrics(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
-    let metrics = generate_prometheus_metrics(runtime);
+    let metrics = generate_prometheus_metrics(&runtime);
 
     Ok(hyper::http::Response::builder()
         .status(StatusCode::OK)
@@ -23,12 +23,12 @@ pub async fn handle_metrics(runtime: Arc<Runtime>) -> Result<Response, Infallibl
 }
 
 /// Generate Prometheus-format metrics
-fn generate_prometheus_metrics(runtime: Arc<Runtime>) -> String {
+fn generate_prometheus_metrics(runtime: &Runtime) -> String {
     let mut output = String::new();
 
-    broker::append_broker_metrics(&mut output, &runtime);
+    broker::append_broker_metrics(&mut output, runtime);
     collector::append_observability_metrics(&mut output);
-    domains::append_domain_metrics(&mut output, &runtime);
+    domains::append_domain_metrics(&mut output, runtime);
 
     output
 }

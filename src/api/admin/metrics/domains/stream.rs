@@ -4,6 +4,12 @@ use std::fmt::Write as _;
 use super::super::rendering::encode_prometheus_label_value;
 
 pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
+    append_core_metrics(output, runtime);
+    append_lag_bucket_metrics(output, runtime);
+    append_watermark_metrics(output, runtime);
+}
+
+fn append_core_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str("# HELP fitz_stream_active Active streams\n");
     output.push_str("# TYPE fitz_stream_active gauge\n");
     let _ = writeln!(output, "fitz_stream_active {}", runtime.stream_active());
@@ -19,8 +25,6 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
         runtime.stream_append_sessions_active()
     );
     output.push('\n');
-
-    let watermark_lag_buckets = runtime.stream_watermark_lag_buckets();
 
     output.push_str("# HELP fitz_stream_events_total Total committed stream events visible through the admin snapshot\n");
     output.push_str("# TYPE fitz_stream_events_total gauge\n");
@@ -81,7 +85,10 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
         runtime.stream_notify_drops_total()
     );
     output.push('\n');
+}
 
+fn append_lag_bucket_metrics(output: &mut String, runtime: &Runtime) {
+    let watermark_lag_buckets = runtime.stream_watermark_lag_buckets();
     output.push_str("# HELP fitz_stream_watermark_lag_bucket_caught_up Stream family watermarks aligned with the fastest family in their area\n");
     output.push_str("# TYPE fitz_stream_watermark_lag_bucket_caught_up gauge\n");
     let _ = writeln!(
@@ -117,8 +124,6 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
         watermark_lag_buckets.over_100
     );
     output.push('\n');
-
-    append_watermark_metrics(output, runtime);
 }
 
 fn append_watermark_metrics(output: &mut String, runtime: &Runtime) {

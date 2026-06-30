@@ -1,4 +1,13 @@
-use super::*;
+use super::{
+    collect_distinct_entries, collect_resource_refs, matches_family, parse_flexible_route,
+    parse_rpc_operation, Arc, AreaCollection, AreaEntry, Infallible, IntoResourceRef, KvByteValue,
+    KvCommittedPair, KvCommittedValueResponse, KvPrefixScanResponse, KvRowsResponse,
+    KvTransactionsList, OperationCollection, OperationEntry, RealmCollection, RealmEntry,
+    ResourceCollection, ResourceEntry, ResourcePath, ResourceRef, Response, Runtime, SessionsList,
+};
+use crate::domains::kv::sink::AdminKvRowsRequest;
+use base64::Engine;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn kv_storage_error_response(error: &str) -> Response {
     let status = if error.to_ascii_lowercase().contains("routefamily")
@@ -216,11 +225,21 @@ pub fn rpc_operations(
     }
 }
 
+/// Returns live admin session snapshots.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn list_sessions(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
     let sessions = runtime.list_sessions();
     crate::api::admin::json_response(SessionsList { sessions })
 }
 
+/// Returns active KV transactions for a specific resource.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn kv_transactions_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
@@ -237,6 +256,11 @@ pub async fn kv_transactions_for_resource(
     crate::api::admin::json_response(KvTransactionsList { transactions })
 }
 
+/// Returns the committed KV value for a specific resource key.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn kv_committed_value_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
@@ -263,6 +287,11 @@ pub async fn kv_committed_value_for_resource(
     }
 }
 
+/// Returns a committed KV prefix scan for the given resource.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn kv_prefix_scan_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,
@@ -298,6 +327,11 @@ pub async fn kv_prefix_scan_for_resource(
     }
 }
 
+/// Returns committed KV rows for the given resource.
+///
+/// # Errors
+///
+/// Propagates JSON response construction failures from the admin HTTP layer.
 pub async fn kv_rows_for_resource(
     runtime: Arc<Runtime>,
     path: &ResourcePath<'_>,

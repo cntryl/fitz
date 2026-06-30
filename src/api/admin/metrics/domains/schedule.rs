@@ -2,6 +2,11 @@ use crate::boot::Runtime;
 use std::fmt::Write as _;
 
 pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
+    append_gauge_metrics(output, runtime);
+    append_counter_metrics(output, runtime);
+}
+
+fn append_gauge_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str("# HELP fitz_schedule_active Active schedules\n");
     output.push_str("# TYPE fitz_schedule_active gauge\n");
     let _ = writeln!(output, "fitz_schedule_active {}", runtime.schedule_active());
@@ -51,7 +56,9 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
         runtime.schedule_oldest_pending_claim_age_seconds()
     );
     output.push('\n');
+}
 
+fn append_counter_metrics(output: &mut String, runtime: &Runtime) {
     output.push_str("# HELP fitz_schedule_notify_failures_total Total schedule live publish handoffs that failed to route\n");
     output.push_str("# TYPE fitz_schedule_notify_failures_total counter\n");
     let _ = writeln!(

@@ -1,8 +1,11 @@
-use super::*;
+use super::{
+    candidate, collect_lease_candidates, collect_notice_candidates, collect_queue_candidates,
+    collect_rpc_candidates, collect_schedule_candidates, domain_href, list, match_candidate,
+    matches_optional_filter, normalize_route_family_filter, parse_query_params,
+    push_resource_candidate, resource_href, scope_filter_matches, Runtime,
+};
 use crate::api::admin::auth::{AdminPrincipal, AdminRouteFamilyAccess};
-use crate::api::admin::list;
 use crate::api::http::Response;
-use crate::boot::Runtime;
 use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -368,6 +371,15 @@ pub(crate) fn collect_stream_candidates(
         return;
     }
 
+    collect_stream_resource_candidates(runtime, options, candidates);
+    collect_stream_area_watermark_candidates(runtime, options, candidates);
+}
+
+fn collect_stream_resource_candidates(
+    runtime: &Runtime,
+    options: &SearchOptions,
+    candidates: &mut Vec<Candidate>,
+) {
     for stream in runtime.stream_list_streams(options.realm.as_deref()) {
         let route_family = stream.route_family.to_string();
         if !options.matches_scope(
@@ -418,7 +430,13 @@ pub(crate) fn collect_stream_candidates(
             ],
         ));
     }
+}
 
+fn collect_stream_area_watermark_candidates(
+    runtime: &Runtime,
+    options: &SearchOptions,
+    candidates: &mut Vec<Candidate>,
+) {
     for detail in runtime.stream_list_area_watermark_details() {
         if !scope_filter_matches(options.realm.as_deref(), &detail.realm)
             || !scope_filter_matches(options.area.as_deref(), &detail.area)
