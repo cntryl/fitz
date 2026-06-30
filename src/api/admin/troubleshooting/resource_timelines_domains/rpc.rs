@@ -1,7 +1,7 @@
 use super::super::{
     build_resource_timeline, parse_rfc3339, parse_rpc_operation, rpc_operation_diagnostics,
     summarize_rpc_worker_latency, timeline_candidate, DiagnosticSnapshot, ResourcePath,
-    ResourceTimeline, ResourceTimelineEvent, ResourceTimelineKind,
+    ResourceTimeline, ResourceTimelineEvent, ResourceTimelineKind, TimelineCandidate,
 };
 use crate::api::admin::list::{RpcPendingRequest, RpcWorker};
 use chrono::Utc;
@@ -25,17 +25,11 @@ pub(crate) fn rpc_resource_timeline(
     let now = Utc::now();
     let matching_workers: Vec<_> = workers
         .iter()
-        .filter(|worker| {
-            parse_rpc_operation(&worker.route)
-                .is_some_and(|parsed| parsed.matches_resource_path(path))
-        })
+        .filter(|worker| matches_rpc(path, &worker.route))
         .collect();
     let matching_pending: Vec<_> = pending
         .iter()
-        .filter(|request| {
-            parse_rpc_operation(&request.route)
-                .is_some_and(|parsed| parsed.matches_resource_path(path))
-        })
+        .filter(|request| matches_rpc(path, &request.route))
         .collect();
 
     if matching_workers.is_empty() && matching_pending.is_empty() {
@@ -57,73 +51,14 @@ pub(crate) fn rpc_resource_timeline(
         requests_pending,
         Some(latency_summary.slowest_worker_average_latency_ms),
     );
-    let mut candidates = Vec::new();
     let mut oldest_pending_age = 0u64;
-
-    for worker in &matching_workers {
-        if let Some(registered_at) = parse_rfc3339(&worker.registered_at) {
-            candidates.push(timeline_candidate(
-                registered_at,
-                0,
-                ResourceTimelineEvent::new(
-                    "rpc",
-                    ResourceTimelineKind::Registration,
-                    registered_at,
-                    format!(
-                        "Worker {} registered on {}",
-                        worker.session_id, worker.route
-                    ),
-                    path,
-                    None,
-                    parse_rpc_operation(&worker.route).map(|operation| operation.operation),
-                    Some(i64_to_u64_non_negative(
-                        now.signed_duration_since(registered_at).num_seconds(),
-                    )),
-                    None,
-                    Some(worker.session_id.clone()),
-                    None,
-                    None,
-                    Some(u64_to_usize_non_negative(worker.requests_handled)),
-                ),
-            ));
-        }
-    }
-
-    for request in matching_pending {
-        if let Some(submitted_at) = parse_rfc3339(&request.submitted_at) {
-            let age_seconds = i64_to_u64_non_negative((now - submitted_at).num_seconds());
-            oldest_pending_age = oldest_pending_age.max(age_seconds);
-            candidates.push(timeline_candidate(
-                submitted_at,
-                1,
-                ResourceTimelineEvent::new(
-                    "rpc",
-                    ResourceTimelineKind::Transition,
-                    submitted_at,
-                    if let Some(worker_session_id) = &request.worker_session_id {
-                        format!(
-                            "Request {} pending for {}s; waiting on worker {}",
-                            request.correlation_id, age_seconds, worker_session_id
-                        )
-                    } else {
-                        format!(
-                            "Request {} pending for {}s",
-                            request.correlation_id, age_seconds
-                        )
-                    },
-                    path,
-                    None,
-                    parse_rpc_operation(&request.route).map(|operation| operation.operation),
-                    Some(age_seconds),
-                    None,
-                    request.worker_session_id.clone(),
-                    Some(request.correlation_id.clone()),
-                    None,
-                    None,
-                ),
-            ));
-        }
-    }
+    let mut candidates = build_rpc_timeline_candidates(
+        path,
+        now,
+        &matching_workers,
+        &matching_pending,
+        &mut oldest_pending_age,
+    );
 
     if workers_registered == 0 && requests_pending > 0 {
         candidates.push(timeline_candidate(
@@ -189,4 +124,82 @@ pub(crate) fn rpc_resource_timeline(
     }
 
     build_resource_timeline("rpc", path, None, diagnostics, limit, candidates)
+}
+
+fn matches_rpc(path: &ResourcePath<'_>, route: &str) -> bool {
+    parse_rpc_operation(route).is_some_and(|parsed| parsed.matches_resource_path(path))
+}
+
+fn build_rpc_timeline_candidates(
+    path: &ResourcePath<'_>,
+    now: chrono::DateTime<chrono::Utc>,
+    matching_workers: &[&RpcWorker],
+    matching_pending: &[&RpcPendingRequest],
+    oldest_pending_age: &mut u64,
+) -> Vec<TimelineCandidate> {
+    let mut candidates = Vec::new();
+    for worker in matching_workers {
+        if let Some(registered_at) = parse_rfc3339(&worker.registered_at) {
+            candidates.push(timeline_candidate(
+                registered_at,
+                0,
+                ResourceTimelineEvent::new(
+                    "rpc",
+                    ResourceTimelineKind::Registration,
+                    registered_at,
+                    format!(
+                        "Worker {} registered on {}",
+                        worker.session_id, worker.route
+                    ),
+                    path,
+                    None,
+                    parse_rpc_operation(&worker.route).map(|operation| operation.operation),
+                    Some(i64_to_u64_non_negative(
+                        now.signed_duration_since(registered_at).num_seconds(),
+                    )),
+                    None,
+                    Some(worker.session_id.clone()),
+                    None,
+                    None,
+                    Some(u64_to_usize_non_negative(worker.requests_handled)),
+                ),
+            ));
+        }
+    }
+    for request in matching_pending {
+        if let Some(submitted_at) = parse_rfc3339(&request.submitted_at) {
+            let age_seconds = i64_to_u64_non_negative((now - submitted_at).num_seconds());
+            *oldest_pending_age = (*oldest_pending_age).max(age_seconds);
+            candidates.push(timeline_candidate(
+                submitted_at,
+                1,
+                ResourceTimelineEvent::new(
+                    "rpc",
+                    ResourceTimelineKind::Transition,
+                    submitted_at,
+                    if let Some(worker_session_id) = &request.worker_session_id {
+                        format!(
+                            "Request {} pending for {}s; waiting on worker {}",
+                            request.correlation_id, age_seconds, worker_session_id
+                        )
+                    } else {
+                        format!(
+                            "Request {} pending for {}s",
+                            request.correlation_id, age_seconds
+                        )
+                    },
+                    path,
+                    None,
+                    parse_rpc_operation(&request.route).map(|operation| operation.operation),
+                    Some(age_seconds),
+                    None,
+                    request.worker_session_id.clone(),
+                    Some(request.correlation_id.clone()),
+                    None,
+                    None,
+                ),
+            ));
+        }
+    }
+    candidates
 }

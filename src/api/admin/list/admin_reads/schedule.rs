@@ -1,7 +1,7 @@
 use super::super::{
-    matches_family, route_quad, troubleshooting, Arc, Infallible, ResourcePath, Response,
-    RouteFamily, Runtime, ScheduleExecutionObservation, ScheduleExecutionObservationList,
-    ScheduleMissedObservation, ScheduleMissedObservationList,
+    matches_family, route_quad, troubleshooting, ResourcePath, Response, RouteFamily, Runtime,
+    ScheduleExecutionObservation, ScheduleExecutionObservationList, ScheduleMissedObservation,
+    ScheduleMissedObservationList,
 };
 use super::timestamp_ms_to_rfc3339;
 
@@ -10,12 +10,13 @@ use super::timestamp_ms_to_rfc3339;
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn schedule_executions_for_resource(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn schedule_executions_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: u64,
     limit: usize,
-) -> Result<Response, Infallible> {
+) -> Response {
     let observations = runtime
         .schedule_list_schedules(Some(path.realm))
         .into_iter()
@@ -53,14 +54,14 @@ pub async fn schedule_executions_for_resource(
 }
 
 /// Returns pending schedule handoff observations for the requested scope.
-pub(crate) async fn schedule_missed_observations(
-    runtime: Arc<Runtime>,
+pub(crate) fn schedule_missed_observations(
+    runtime: &Runtime,
     family: u64,
-    realm: Option<String>,
-    area: Option<String>,
-    resource: Option<String>,
+    realm: Option<&str>,
+    area: Option<&str>,
+    resource: Option<&str>,
     limit: usize,
-) -> Result<Response, Infallible> {
+) -> Response {
     let now_ms = u64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -73,11 +74,9 @@ pub(crate) async fn schedule_missed_observations(
         .into_iter()
         .filter_map(|claim| {
             let route = route_quad(&claim.route)?;
-            if realm.as_ref().is_none_or(|value| route.realm == value)
-                && area.as_ref().is_none_or(|value| route.area == value)
-                && resource
-                    .as_ref()
-                    .is_none_or(|value| route.resource == value)
+            if realm.is_none_or(|value| route.realm == value)
+                && area.is_none_or(|value| route.area == value)
+                && resource.is_none_or(|value| route.resource == value)
             {
                 Some(ScheduleMissedObservation {
                     route_family: family,
@@ -110,12 +109,13 @@ pub(crate) async fn schedule_missed_observations(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn schedule_events_for_resource(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn schedule_events_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: Option<u64>,
     limit: usize,
-) -> Result<Response, Infallible> {
+) -> Response {
     let schedules = runtime
         .schedule_list_schedules(Some(path.realm))
         .into_iter()

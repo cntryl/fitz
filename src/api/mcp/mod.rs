@@ -352,6 +352,12 @@ impl McpToolRegistry {
             .collect()
     }
 
+    /// Executes the named MCP tool against the current runtime and policy context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the tool is unknown, the arguments are invalid,
+    /// or execution is rejected by capability or runtime checks.
     pub fn execute(
         &self,
         tool_name: &str,

@@ -9,8 +9,6 @@ use crate::api::http::Response;
 use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::convert::Infallible;
-use std::sync::Arc;
 
 const DEFAULT_SEARCH_LIMIT: usize = 50;
 const MAX_SEARCH_LIMIT: usize = 100;
@@ -124,32 +122,25 @@ impl SearchOptions {
     }
 }
 
-pub async fn handle_search(
-    uri: &hyper::Uri,
-    runtime: Arc<Runtime>,
-    principal: &AdminPrincipal,
-) -> Result<Response, Infallible> {
+pub fn handle_search(uri: &hyper::Uri, runtime: &Runtime, principal: &AdminPrincipal) -> Response {
     let options = match SearchOptions::from_uri(uri) {
         Ok(options) => options,
         Err(message) => {
-            return Ok(crate::api::admin::error_response(
-                StatusCode::BAD_REQUEST,
-                &message,
-            ));
+            return crate::api::admin::error_response(StatusCode::BAD_REQUEST, &message);
         }
     };
 
     if let Some(route_family) = options.route_family.as_deref() {
         if !principal.route_family_access.allows(route_family) {
-            return Ok(crate::api::admin::error_response(
+            return crate::api::admin::error_response(
                 StatusCode::FORBIDDEN,
                 "Route family is not allowed for this admin session",
-            ));
+            );
         }
     }
 
     crate::api::admin::json_response(search_runtime(
-        runtime.as_ref(),
+        runtime,
         &options,
         &principal.route_family_access,
     ))

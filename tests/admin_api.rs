@@ -240,10 +240,13 @@ fn schedule_runtime_with_domains() -> (
 }
 
 fn current_epoch_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
 }
 
 fn seed_dead_lettered_queue_message(store: Arc<cntryl_midge::Engine>) -> u64 {
@@ -771,10 +774,13 @@ async fn login_cookie(runtime: Arc<Runtime>) -> String {
 }
 
 fn expired_admin_cookie() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
+    let now = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap_or(i64::MAX);
     let claims = serde_json::json!({
         "sub": "admin",
         "role": "admin",
@@ -2196,14 +2202,18 @@ async fn should_return_queue_events_with_bounded_timeline() {
         "dead_letter_pressure"
     );
     let events = payload["events"].as_array().unwrap();
-    assert_eq!(events.len(), 3);
-    assert!(events.iter().any(|event| event["kind"] == "failure"));
-    assert!(events
-        .iter()
-        .any(|event| event["kind"] == "ownership_change"));
-    assert!(events
-        .iter()
-        .any(|event| event["message_id"] == 42 && event["attempts"] == 3));
+    assert_eq!(events.len(), 2);
+    assert!(events.iter().any(|event| event["kind"] == "observation"));
+    assert!(events.iter().any(|event| {
+        event["summary"]
+            .as_str()
+            .is_some_and(|summary| summary.contains("3 dead-lettered"))
+    }));
+    assert!(events.iter().any(|event| {
+        event["summary"]
+            .as_str()
+            .is_some_and(|summary| summary.contains("15m+ old"))
+    }));
 }
 
 #[tokio::test]

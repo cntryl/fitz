@@ -7,6 +7,11 @@ use std::time::Instant;
 use tracing::{trace, warn};
 
 /// Decode all complete TLV messages in a transport frame and hand them to ingress.
+///
+/// # Errors
+///
+/// Returns `SessionError` when message decoding fails, ingress signals
+/// backpressure, or ingress requests the session to close.
 pub async fn process_session_frame(
     session: &mut Session,
     frame: Bytes,
@@ -27,7 +32,13 @@ pub async fn process_session_frame(
             .await;
         crate::observability::hot_path_histogram_observe_us(
             crate::observability::METRIC_SESSION_INGRESS_HANDOFF_LATENCY,
-            ingress_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+            u64::try_from(
+                ingress_start
+                    .elapsed()
+                    .as_micros()
+                    .min(u128::from(u64::MAX)),
+            )
+            .unwrap_or(u64::MAX),
         );
         session.release_channel(channel);
 

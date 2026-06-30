@@ -1,13 +1,10 @@
 use super::super::{
-    matches_family, troubleshooting, Arc, HashMap, Infallible, LeaseSearchItem, LeaseSearchRequest,
+    matches_family, troubleshooting, HashMap, LeaseSearchItem, LeaseSearchRequest,
     LeaseSearchResponse, ResourcePath, Response, Runtime,
 };
 
 /// Returns the current lease search view for the requested scope.
-pub(crate) async fn lease_search(
-    runtime: Arc<Runtime>,
-    request: LeaseSearchRequest,
-) -> Result<Response, Infallible> {
+pub(crate) fn lease_search(runtime: &Runtime, request: &LeaseSearchRequest) -> Response {
     let leases = runtime.lease_list_leases(request.realm.as_deref());
     let waiters = runtime.lease_list_waiters();
     let waiter_counts = waiters.iter().fold(HashMap::new(), |mut counts, waiter| {
@@ -52,7 +49,7 @@ pub(crate) async fn lease_search(
     let mut items = Vec::new();
     if include_owned {
         collect_owned_leases(
-            &request,
+            request,
             &leases,
             &waiter_counts,
             &scope_matches,
@@ -62,7 +59,7 @@ pub(crate) async fn lease_search(
     }
     if include_waiting {
         collect_waiting_leases(
-            &request,
+            request,
             &waiters,
             &scope_matches,
             &owner_matches,
@@ -179,12 +176,13 @@ fn collect_waiting_leases<F, G>(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn lease_events_for_resource(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn lease_events_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: Option<u64>,
     limit: usize,
-) -> Result<Response, Infallible> {
+) -> Response {
     let leases = runtime
         .lease_list_leases(Some(path.realm))
         .into_iter()

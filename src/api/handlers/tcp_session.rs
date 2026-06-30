@@ -3,6 +3,7 @@ use crate::api::ingress::IngressConfig;
 use crate::session::manager::Ingress;
 use bytes::Bytes;
 use parking_lot::Mutex;
+use std::convert::TryFrom;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -33,6 +34,162 @@ async fn close_tcp_session_on_frame_error(
         )
         .await;
     reason
+}
+
+fn frame_length_prefix(frame_len: usize) -> Result<[u8; 4], std::num::TryFromIntError> {
+    u32::try_from(frame_len).map(u32::to_be_bytes)
+}
+
+async fn write_tcp_frame(
+    write_half: &mut tokio::net::tcp::OwnedWriteHalf,
+    write_buf: &mut Vec<u8>,
+    frame: Bytes,
+) -> Result<(), std::io::Error> {
+    write_buf.clear();
+    write_buf
+        .extend_from_slice(&frame_length_prefix(frame.len()).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "frame too large")
+        })?);
+    write_buf.extend_from_slice(&frame);
+    write_half.write_all(write_buf).await?;
+    write_half.flush().await
+}
+
+struct TcpFrameTaskContext {
+    ingress: Arc<dyn Ingress>,
+    channel_capacity: usize,
+    runtime: Arc<crate::boot::Runtime>,
+    outbound_sink: Arc<crate::api::outbound::SessionOutboundSink>,
+    registered_inboxes: Arc<Mutex<Vec<crate::runtime::routing::RouteAddress>>>,
+    initial_family: crate::runtime::routing::RouteFamily,
+    session_id: u64,
+}
+
+fn spawn_tcp_frame_task(
+    frame_rx: tokio::sync::mpsc::Receiver<(u64, bytes::Bytes)>,
+    context: TcpFrameTaskContext,
+) -> tokio::task::JoinHandle<Result<(), String>> {
+    tokio::spawn(async move {
+        let session_config = crate::session::NewSessionConfig::unauthenticated(
+            crate::session::TransportKind::Tcp,
+            None,
+            crate::session::SessionPermissions::empty(),
+            crate::session::SessionMetadata::new(),
+            context.channel_capacity,
+            None,
+            crate::runtime::routing::RouteFamily::new(1),
+        );
+
+        let mut session = crate::session::Session::new(context.session_id, session_config);
+        let mut frame_rx = frame_rx;
+        let mut registered_inbox = crate::runtime::routing::session_inbox_address(
+            context.initial_family,
+            context.session_id,
+        );
+
+        while let Some((_sid, frame)) = frame_rx.recv().await {
+            context.runtime.increment_messages_received();
+            context.ingress.record_frame_received(context.session_id);
+            if let Err(error) = crate::api::session::process_session_frame(
+                &mut session,
+                frame,
+                context.ingress.as_ref(),
+            )
+            .await
+            {
+                if should_ignore_unknown_session_error(&error) {
+                    tracing::debug!(
+                        session_id = context.session_id,
+                        error = %error,
+                        "TCP frame processing encountered a stale frame for an already-closed session"
+                    );
+                    return Ok(());
+                }
+                tracing::error!(session_id = context.session_id, error = %error, "TCP frame processing error");
+                let reason = close_tcp_session_on_frame_error(
+                    context.ingress.as_ref(),
+                    context.session_id,
+                    error,
+                )
+                .await;
+                return Err(reason);
+            }
+
+            maybe_rebind_tcp_inbox(
+                context.ingress.as_ref(),
+                &context.runtime,
+                context.session_id,
+                &context.outbound_sink,
+                &context.registered_inboxes,
+                &mut registered_inbox,
+            );
+        }
+        Ok(())
+    })
+}
+
+fn maybe_rebind_tcp_inbox(
+    ingress: &dyn Ingress,
+    runtime: &crate::boot::Runtime,
+    session_id: u64,
+    outbound_sink: &Arc<crate::api::outbound::SessionOutboundSink>,
+    registered_inboxes: &Arc<Mutex<Vec<crate::runtime::routing::RouteAddress>>>,
+    registered_inbox: &mut crate::runtime::routing::RouteAddress,
+) {
+    if let Some(updated_route_family) = ingress.get_route_family(session_id) {
+        if updated_route_family != *registered_inbox.family() {
+            runtime.router.unregister(registered_inbox);
+            *registered_inbox =
+                crate::runtime::routing::session_inbox_address(updated_route_family, session_id);
+            runtime.router.register(
+                registered_inbox.clone(),
+                outbound_sink.clone() as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
+            );
+            let mut inboxes = registered_inboxes.lock();
+            if !inboxes.contains(registered_inbox) {
+                inboxes.push(registered_inbox.clone());
+            }
+        }
+    }
+}
+
+async fn resolve_tcp_run_result(
+    frame_tx: tokio::sync::mpsc::Sender<(u64, bytes::Bytes)>,
+    mut frame_handle: tokio::task::JoinHandle<Result<(), String>>,
+    mut handler_task: tokio::task::JoinHandle<Result<(), String>>,
+    session_id: u64,
+) -> Result<(), String> {
+    tokio::select! {
+        res = &mut handler_task => {
+            drop(frame_tx);
+            if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(1), &mut frame_handle).await {
+                tracing::warn!(session_id = session_id, error = %e, "TCP frame task did not terminate in time");
+            }
+            match res {
+                Ok(result) => result,
+                Err(e) => Err(format!("tcp handler task join error: {e}")),
+            }
+        }
+        res = &mut frame_handle => {
+            drop(frame_tx);
+            match res {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(reason)) => {
+                    tracing::debug!(
+                        session_id = session_id,
+                        reason = %reason,
+                        "TCP frame task requested transport close"
+                    );
+                    handler_task.abort();
+                    Err(reason)
+                }
+                Err(e) => {
+                    handler_task.abort();
+                    Err(format!("tcp frame task join error: {e}"))
+                }
+            }
+        }
+    }
 }
 
 /// Handle an incoming TCP connection with outbound response support.
@@ -83,9 +240,6 @@ pub(super) async fn handle_tcp_connection(
             session_id = tcp_session_id,
             "TCP outbound writer task started"
         );
-        // Reusable write buffer — one allocation per connection regardless of frame count.
-        // We prepend the 4-byte length prefix here so write_all sends header + payload in
-        // a single syscall instead of two separate write_all calls.
         let mut write_buf: Vec<u8> = Vec::with_capacity(WRITE_BUF_INIT_CAPACITY);
         while let Some(frame) = outbound_rx.recv().await {
             tracing::debug!(
@@ -93,15 +247,8 @@ pub(super) async fn handle_tcp_connection(
                 frame_len = frame.len(),
                 "TCP outbound: sending frame to wire"
             );
-            write_buf.clear();
-            write_buf.extend_from_slice(&(frame.len() as u32).to_be_bytes());
-            write_buf.extend_from_slice(&frame);
-            if let Err(e) = write_half.write_all(&write_buf).await {
+            if let Err(e) = write_tcp_frame(&mut write_half, &mut write_buf, frame).await {
                 tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound write error");
-                break;
-            }
-            if let Err(e) = write_half.flush().await {
-                tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound flush error");
                 break;
             }
             runtime_for_writes.increment_messages_sent();
@@ -113,108 +260,21 @@ pub(super) async fn handle_tcp_connection(
         );
     });
 
-    let ingress_clone = ingress.clone();
-    let config_clone = config.clone();
-    let runtime_for_frames = runtime.clone();
-    let outbound_sink = sink.clone();
-    let registered_inboxes_for_frames = registered_inboxes.clone();
-    let mut frame_handle = tokio::spawn(async move {
-        let session_config = crate::session::NewSessionConfig::unauthenticated(
-            crate::session::TransportKind::Tcp,
-            None,
-            crate::session::SessionPermissions::empty(),
-            crate::session::SessionMetadata::new(),
-            config_clone.channel_capacity,
-            None,
-            crate::runtime::routing::RouteFamily::new(1),
-        );
+    let frame_handle = spawn_tcp_frame_task(
+        frame_rx,
+        TcpFrameTaskContext {
+            ingress: ingress.clone(),
+            channel_capacity: config.channel_capacity,
+            runtime: runtime.clone(),
+            outbound_sink: sink.clone(),
+            registered_inboxes: registered_inboxes.clone(),
+            initial_family,
+            session_id,
+        },
+    );
 
-        let mut session = crate::session::Session::new(session_id, session_config);
-        let mut frame_rx = frame_rx;
-        let mut registered_inbox =
-            crate::runtime::routing::session_inbox_address(initial_family, session_id);
-
-        while let Some((_sid, frame)) = frame_rx.recv().await {
-            runtime_for_frames.increment_messages_received();
-            ingress_clone.record_frame_received(session_id);
-            if let Err(error) = crate::api::session::process_session_frame(
-                &mut session,
-                frame,
-                ingress_clone.as_ref(),
-            )
-            .await
-            {
-                if should_ignore_unknown_session_error(&error) {
-                    tracing::debug!(
-                        session_id = session_id,
-                        error = %error,
-                        "TCP frame processing encountered a stale frame for an already-closed session"
-                    );
-                    return Ok(());
-                }
-                tracing::error!(session_id = session_id, error = %error, "TCP frame processing error");
-                let reason =
-                    close_tcp_session_on_frame_error(ingress_clone.as_ref(), session_id, error)
-                        .await;
-                return Err(reason);
-            }
-
-            if let Some(updated_route_family) = ingress_clone.get_route_family(session_id) {
-                if updated_route_family != *registered_inbox.family() {
-                    // CONNECT may rebind the session from the default pre-auth
-                    // family to its assigned authenticated family exactly once.
-                    runtime_for_frames.router.unregister(&registered_inbox);
-                    registered_inbox = crate::runtime::routing::session_inbox_address(
-                        updated_route_family,
-                        session_id,
-                    );
-                    runtime_for_frames.router.register(
-                        registered_inbox.clone(),
-                        outbound_sink.clone()
-                            as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
-                    );
-                    let mut inboxes = registered_inboxes_for_frames.lock();
-                    if !inboxes.contains(&registered_inbox) {
-                        inboxes.push(registered_inbox.clone());
-                    }
-                }
-            }
-        }
-        Ok::<(), String>(())
-    });
-
-    let mut handler_task = tokio::spawn(async move { handler.run().await });
-    let run_result = tokio::select! {
-        res = &mut handler_task => {
-            drop(frame_tx);
-            if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(1), &mut frame_handle).await {
-                tracing::warn!(session_id = session_id, error = %e, "TCP frame task did not terminate in time");
-            }
-            match res {
-                Ok(result) => result,
-                Err(e) => Err(format!("tcp handler task join error: {e}")),
-            }
-        }
-        res = &mut frame_handle => {
-            drop(frame_tx);
-            match res {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(reason)) => {
-                    tracing::debug!(
-                        session_id = session_id,
-                        reason = %reason,
-                        "TCP frame task requested transport close"
-                    );
-                    handler_task.abort();
-                    Err(reason)
-                }
-                Err(e) => {
-                    handler_task.abort();
-                    Err(format!("tcp frame task join error: {e}"))
-                }
-            }
-        }
-    };
+    let handler_task = tokio::spawn(async move { handler.run().await });
+    let run_result = resolve_tcp_run_result(frame_tx, frame_handle, handler_task, session_id).await;
 
     let inboxes = registered_inboxes.lock().clone();
     for inbox in &inboxes {

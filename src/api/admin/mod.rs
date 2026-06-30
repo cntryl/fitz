@@ -60,7 +60,6 @@ use crate::api::http::{Body, Response};
 use hyper::header::HeaderValue;
 use hyper::StatusCode;
 use serde::Serialize;
-use std::convert::Infallible;
 
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 const HSTS_MAX_AGE: &str = "max-age=31536000";
@@ -88,9 +87,9 @@ pub(crate) fn with_browser_security_headers(
     response
 }
 
-/// Helper to create JSON responses
-pub(crate) fn json_response<T: Serialize>(data: T) -> Result<Response, Infallible> {
-    Ok(json_response_with_status(StatusCode::OK, data))
+/// Helper to create JSON responses.
+pub(crate) fn json_response<T: Serialize>(data: T) -> Response {
+    json_response_with_status(StatusCode::OK, data)
 }
 
 pub(crate) fn json_response_with_status<T: Serialize>(status: StatusCode, data: T) -> Response {

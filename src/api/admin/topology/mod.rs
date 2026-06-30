@@ -11,8 +11,6 @@ mod types;
 use crate::api::http::Response;
 use crate::boot::Runtime;
 use chrono::Utc;
-use std::convert::Infallible;
-use std::sync::Arc;
 use types::{MessagingTopology, TopologyConnectionBuilder};
 
 const CONNECTION_LIMIT: usize = 250;
@@ -52,6 +50,6 @@ fn build_messaging_topology(runtime: &Runtime) -> MessagingTopology {
     }
 }
 
-pub async fn handle_topology(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
-    super::json_response(build_messaging_topology(runtime.as_ref()))
+pub fn handle_topology(runtime: &Runtime) -> Response {
+    super::json_response(build_messaging_topology(runtime))
 }

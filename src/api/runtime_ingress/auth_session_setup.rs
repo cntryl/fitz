@@ -1,4 +1,5 @@
-use super::*;
+use super::{CloseReason, DispatchDomain, Ingress, RuntimeIngress};
+use std::borrow::Cow;
 
 impl RuntimeIngress {
     pub async fn close_all_sessions(&self, reason: CloseReason) {
@@ -16,16 +17,16 @@ impl RuntimeIngress {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn canonicalize_domain_route(
         domain: DispatchDomain,
-        route: crate::runtime::routing::Route,
+        route: &crate::runtime::routing::Route,
     ) -> Result<crate::runtime::routing::Route, String> {
         Self::canonicalize_domain_route_str(domain, route.as_str())
             .map(|route| crate::runtime::routing::Route::new(route.as_ref()))
     }
 
-    pub(super) fn canonicalize_domain_route_str<'a>(
+    pub(super) fn canonicalize_domain_route_str(
         domain: DispatchDomain,
-        route: &'a str,
-    ) -> Result<Cow<'a, str>, String> {
+        route: &str,
+    ) -> Result<Cow<'_, str>, String> {
         match domain {
             DispatchDomain::Kv => Self::canonicalize_triplet_route_str(domain, route, true),
             DispatchDomain::Queue | DispatchDomain::Lease | DispatchDomain::Stream => {
@@ -50,11 +51,11 @@ impl RuntimeIngress {
         }
     }
 
-    pub(super) fn canonicalize_triplet_route_str<'a>(
+    pub(super) fn canonicalize_triplet_route_str(
         domain: DispatchDomain,
-        route: &'a str,
+        route: &str,
         exact: bool,
-    ) -> Result<Cow<'a, str>, String> {
+    ) -> Result<Cow<'_, str>, String> {
         let parts = if exact {
             crate::runtime::routing::route_exact_triplet(route)
         } else {

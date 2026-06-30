@@ -1,6 +1,6 @@
 use super::super::{
-    matches_family, matches_resource_route, parse_flexible_route, troubleshooting, Arc, HashMap,
-    Infallible, NoticeDeliveryObservation, NoticeDeliveryObservationList, NoticeSubscriptionsList,
+    matches_family, matches_resource_route, parse_flexible_route, troubleshooting, HashMap,
+    NoticeDeliveryObservation, NoticeDeliveryObservationList, NoticeSubscriptionsList,
     ResourcePath, Response, Runtime,
 };
 
@@ -9,59 +9,58 @@ use super::super::{
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn notice_delivery_observations(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn notice_delivery_observations(
+    runtime: &Runtime,
     family: u64,
-    realm: Option<String>,
-    area: Option<String>,
-    resource: Option<String>,
-    query: Option<String>,
+    realm: Option<&str>,
+    area: Option<&str>,
+    resource: Option<&str>,
+    query: Option<&str>,
     limit: usize,
-) -> Result<Response, Infallible> {
-    let routes = runtime.notice_list_routes(realm.as_deref());
+) -> Response {
+    let routes = runtime.notice_list_routes(realm);
     let route_stats: HashMap<_, _> = routes
         .into_iter()
         .filter(|route| route.route_family == family)
         .map(|route| ((route.route_family, route.route.clone()), route))
         .collect();
-    let observations = runtime
-        .notice_list_subscriptions(realm.as_deref(), None)
-        .into_iter()
-        .filter(|subscription| subscription.route_family == family)
-        .filter_map(|subscription| {
-            let parsed = parse_flexible_route(&subscription.pattern);
-            if area
-                .as_ref()
-                .is_none_or(|value| parsed.as_ref().map(|parts| &parts.area) == Some(value))
-                && resource
-                    .as_ref()
-                    .is_none_or(|value| parsed.as_ref().map(|parts| &parts.resource) == Some(value))
-                && query.as_ref().is_none_or(|needle| {
+    let observations =
+        runtime
+            .notice_list_subscriptions(realm, None)
+            .into_iter()
+            .filter(|subscription| subscription.route_family == family)
+            .filter_map(|subscription| {
+                let parsed = parse_flexible_route(&subscription.pattern);
+                if area.is_none_or(|value| {
+                    parsed.as_ref().map(|parts| parts.area.as_str()) == Some(value)
+                }) && resource.is_none_or(|value| {
+                    parsed.as_ref().map(|parts| parts.resource.as_str()) == Some(value)
+                }) && query.is_none_or(|needle| {
                     subscription.pattern.contains(needle)
                         || subscription.session_id.contains(needle)
                         || subscription.subscription_id.to_string().contains(needle)
-                })
-            {
-                let stats = route_stats.get(&(family, subscription.pattern.clone()));
-                Some(NoticeDeliveryObservation {
-                    route_family: family,
-                    realm: subscription.realm,
-                    area: parsed.as_ref().map(|parts| parts.area.clone()),
-                    resource: parsed.as_ref().map(|parts| parts.resource.clone()),
-                    route: subscription.pattern,
-                    session_id: Some(subscription.session_id),
-                    subscription_id: Some(subscription.subscription_id),
-                    status: "active_subscription".to_string(),
-                    notifications_received: subscription.notifications_received,
-                    publishes_total: stats.map_or(0, |item| item.publishes_total),
-                    publishes_per_minute: stats.map_or(0.0, |item| item.publishes_per_minute),
-                })
-            } else {
-                None
-            }
-        })
-        .take(limit)
-        .collect();
+                }) {
+                    let stats = route_stats.get(&(family, subscription.pattern.clone()));
+                    Some(NoticeDeliveryObservation {
+                        route_family: family,
+                        realm: subscription.realm,
+                        area: parsed.as_ref().map(|parts| parts.area.clone()),
+                        resource: parsed.as_ref().map(|parts| parts.resource.clone()),
+                        route: subscription.pattern,
+                        session_id: Some(subscription.session_id),
+                        subscription_id: Some(subscription.subscription_id),
+                        status: "active_subscription".to_string(),
+                        notifications_received: subscription.notifications_received,
+                        publishes_total: stats.map_or(0, |item| item.publishes_total),
+                        publishes_per_minute: stats.map_or(0.0, |item| item.publishes_per_minute),
+                    })
+                } else {
+                    None
+                }
+            })
+            .take(limit)
+            .collect();
 
     crate::api::admin::json_response(NoticeDeliveryObservationList {
         route_family: family,
@@ -75,11 +74,12 @@ pub async fn notice_delivery_observations(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn notice_subscriptions_for_resource(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn notice_subscriptions_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: Option<u64>,
-) -> Result<Response, Infallible> {
+) -> Response {
     let subscriptions = runtime
         .notice_list_subscriptions(Some(path.realm), None)
         .into_iter()
@@ -96,12 +96,13 @@ pub async fn notice_subscriptions_for_resource(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn notice_events_for_resource(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn notice_events_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: Option<u64>,
     limit: usize,
-) -> Result<Response, Infallible> {
+) -> Response {
     let subscriptions = runtime
         .notice_list_subscriptions(Some(path.realm), None)
         .into_iter()

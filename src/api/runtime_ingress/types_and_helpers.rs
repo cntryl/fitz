@@ -14,7 +14,10 @@
 // - **API** (`api/tcp.rs`, `api/ws/mod.rs`) consumes this trait.
 // - **Other session helpers** remain in their respective modules.
 
-use super::*;
+use super::{
+    warn, AtomicBool, Bytes, ChannelId, CloseReason, Cow, DashMap, DispatchDomain, SessionInfo,
+};
+use std::sync::Arc;
 
 pub(super) fn dispatch_session_cleanup(
     router: &crate::runtime::Router,
@@ -44,18 +47,18 @@ pub(super) fn dispatch_session_cleanup(
     failed_domains
 }
 
-pub(super) fn canonicalize_dispatch_route_str<'a>(
+pub(super) fn canonicalize_dispatch_route_str(
     domain: DispatchDomain,
-    route: &'a str,
-) -> Result<Cow<'a, str>, String> {
+    route: &str,
+) -> Result<Cow<'_, str>, String> {
     RuntimeIngress::canonicalize_domain_route_str(domain, route)
 }
 
-pub(super) fn extract_auth_route_for_domain<'a>(
+pub(super) fn extract_auth_route_for_domain(
     domain: DispatchDomain,
     msg_type: u16,
-    payload: &'a [u8],
-) -> Result<Option<Cow<'a, str>>, String> {
+    payload: &[u8],
+) -> Result<Option<Cow<'_, str>>, String> {
     let descriptor =
         crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
             domain,
@@ -112,7 +115,7 @@ pub(super) struct PendingSessionCleanup {
     pub(super) route_family: crate::runtime::routing::RouteFamily,
 }
 
-impl<'a> AuthorizationTargets<'a> {
+impl AuthorizationTargets<'_> {
     pub(super) fn span_target(&self) -> (&str, usize) {
         match self {
             Self::SessionOwned => ("<session-owned>", 1),
@@ -221,7 +224,7 @@ pub enum SessionEvent {
 /// a runtime dispatcher or session manager.
 pub struct RuntimeIngress {
     pub(super) sessions: Arc<DashMap<u64, SessionInfo>>,
-    /// Per-session SessionActor instances for authorization checks
+    /// Per-session `SessionActor` instances for authorization checks
     pub(super) session_actors: Arc<DashMap<u64, crate::session::actor::SessionActor>>,
     /// Cached per-session inbox routes used as the source address for domain dispatch.
     pub(super) session_inbox_routes: Arc<DashMap<u64, crate::runtime::routing::Route>>,

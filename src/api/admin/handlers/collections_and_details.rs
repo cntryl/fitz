@@ -10,7 +10,7 @@ pub(super) fn handle_realms_collection(
     scheme: &str,
     runtime: &Arc<Runtime>,
     family: Option<u64>,
-) -> Result<Response, Infallible> {
+) -> Response {
     if scheme == "queue" {
         let queues = runtime
             .queue_list_queues(None)
@@ -29,7 +29,7 @@ pub(super) fn handle_areas_collection(
     runtime: &Arc<Runtime>,
     realm: &str,
     family: Option<u64>,
-) -> Result<Response, Infallible> {
+) -> Response {
     if scheme == "queue" {
         let queues = runtime
             .queue_list_queues(Some(realm))
@@ -49,7 +49,7 @@ pub(super) fn handle_resources_collection(
     realm: &str,
     area: &str,
     family: Option<u64>,
-) -> Result<Response, Infallible> {
+) -> Response {
     if scheme == "queue" {
         let queues = runtime
             .queue_list_queues(Some(realm))
@@ -79,7 +79,7 @@ pub(super) fn handle_resource_detail(
     area: &str,
     resource: &str,
     queue_family: Option<u64>,
-) -> Result<Response, Infallible> {
+) -> Response {
     let path = list::ResourcePath {
         realm,
         area,
@@ -105,7 +105,7 @@ pub(super) fn handle_resource_detail(
             resource: resource.to_string(),
             operations: vec![],
         }),
-        _ => Ok(super::not_found()),
+        _ => super::not_found(),
     }
 }
 
@@ -178,12 +178,12 @@ pub(super) async fn handle_current_session<B>(
         Err(response) => return Ok(*response),
     };
 
-    super::json_response(SessionResponse {
+    Ok(super::json_response(SessionResponse {
         authenticated: true,
         username: principal.username,
         route_families: principal.route_family_access.route_families(),
         route_families_wildcard: principal.route_family_access.is_wildcard(),
-    })
+    }))
 }
 
 pub(super) async fn handle_logout<B>(
@@ -206,7 +206,7 @@ pub(super) async fn handle_features(runtime: &Arc<Runtime>) -> Result<Response, 
     } else {
         Some(admin_auth.configured_route_family_access())
     };
-    super::json_response(AdminFeaturesResponse {
+    Ok(super::json_response(AdminFeaturesResponse {
         admin_auth_required: admin_auth.login_required(),
         admin_auth_mode: admin_auth.auth_mode(),
         route_families: route_family_access
@@ -216,5 +216,5 @@ pub(super) async fn handle_features(runtime: &Arc<Runtime>) -> Result<Response, 
         route_families_wildcard: route_family_access
             .as_ref()
             .is_some_and(crate::api::admin::auth::AdminRouteFamilyAccess::is_wildcard),
-    })
+    }))
 }

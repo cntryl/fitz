@@ -835,20 +835,22 @@ fn should_canonicalize_scheme_less_domain_routes_for_authorization() {
     // Act
     let queue_route = RuntimeIngress::canonicalize_domain_route(
         DispatchDomain::Queue,
-        Route::new("realm/area/tasks/receive"),
+        &Route::new("realm/area/tasks/receive"),
     )
     .expect("canonical queue route");
-    let notice_route =
-        RuntimeIngress::canonicalize_domain_route(DispatchDomain::Notice, Route::new("patterns/*"))
-            .expect("canonical notice route");
+    let notice_route = RuntimeIngress::canonicalize_domain_route(
+        DispatchDomain::Notice,
+        &Route::new("patterns/*"),
+    )
+    .expect("canonical notice route");
     let stream_route = RuntimeIngress::canonicalize_domain_route(
         DispatchDomain::Stream,
-        Route::new("realm/area/stream-data/append"),
+        &Route::new("realm/area/stream-data/append"),
     )
     .expect("canonical stream route");
     let existing_notice_route = RuntimeIngress::canonicalize_domain_route(
         DispatchDomain::Notice,
-        Route::new("notice://test/notifications/**"),
+        &Route::new("notice://test/notifications/**"),
     )
     .expect("canonical existing notice route");
 

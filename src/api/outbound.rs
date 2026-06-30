@@ -27,426 +27,90 @@ impl MailboxSink for SessionOutboundSink {
         let _deliver_latency =
             crate::observability::ScopedHistogramUs::new(obs::METRIC_OUTBOUND_DELIVER_LATENCY);
         if let Some(ctx) = envelope.payload::<FrameContext>() {
-            debug!(
-                session_id = ctx.session_id,
-                msg_type = ctx.msg_type.as_u16(),
-                payload_len = ctx.payload.len(),
-                "Outbound sink: encoding TLV response for session"
-            );
-            // TLV-encode a single record directly into an exact-sized buffer.
-            let encode_start = Instant::now();
-            let bytes = encode_single_tlv_frame(ctx.msg_type, &ctx.payload);
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
-                    .unwrap_or(u64::MAX),
-            );
-
-            return self.send_encoded_frame(ctx.session_id, bytes);
+            return self.deliver_frame_context(ctx);
         }
 
         if let Some(frame) = envelope.payload::<EncodedClientFrame>() {
-            debug!(
-                session_id = frame.meta.session_id,
-                msg_type = frame.meta.message_type,
-                payload_len = frame.payload.len(),
-                channel = ?frame.meta.channel,
-                "Outbound sink: encoding runtime client frame"
-            );
-            let encode_start = Instant::now();
-            let bytes = encode_single_tlv_frame(
-                crate::protocol::tlv::MessageType::new(frame.meta.message_type),
-                &frame.payload,
-            );
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
-                    .unwrap_or(u64::MAX),
-            );
-
-            return self.send_encoded_frame(frame.meta.session_id, bytes);
+            return self.deliver_encoded_client_frame(frame);
         }
 
         if let Some(response) = envelope.payload::<crate::domains::rpc::RpcClientResponse>() {
-            debug!(
-                session_id = response.meta.session_id,
-                msg_type = response.meta.message_type,
-                channel = ?response.meta.channel,
-                "Outbound sink: encoding RPC response"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::rpc_codec::encode_response(&response.response);
-            let bytes = encode_single_tlv_frame(
-                crate::protocol::tlv::MessageType::new(response.meta.message_type),
-                &payload,
-            );
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
-                    .unwrap_or(u64::MAX),
-            );
-
-            return self.send_encoded_frame(response.meta.session_id, bytes);
+            return self.deliver_rpc_client_response(response);
         }
 
         if let Some(delivery) = envelope.payload::<crate::domains::rpc::RpcWorkerRequestDelivery>()
         {
-            debug!(
-                session_id = delivery.session_id,
-                route = %delivery.request.route,
-                "Outbound sink: encoding RPC worker request delivery"
-            );
-            let encode_start = Instant::now();
-            let mut payload_encoder =
-                crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-            let payload = crate::protocol::rpc_codec::encode_request_into(
-                &delivery.request,
-                &mut payload_encoder,
-            );
-            let bytes =
-                encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(302), &payload);
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
-                    .unwrap_or(u64::MAX),
-            );
-
-            return self.send_encoded_frame(delivery.session_id, bytes);
+            return self.deliver_rpc_worker_request(delivery);
         }
 
         if let Some(forwarded) =
             envelope.payload::<crate::domains::rpc::RpcClientForwardedResponse>()
         {
-            debug!(
-                session_id = forwarded.session_id,
-                "Outbound sink: encoding forwarded RPC response"
-            );
-            let encode_start = Instant::now();
-            let payload = match &forwarded.body {
-                crate::domains::rpc::RpcClientForwardedResponseBody::Response(response) => {
-                    crate::protocol::rpc_codec::encode_response_message(response)
-                }
-                crate::domains::rpc::RpcClientForwardedResponseBody::TerminalError {
-                    correlation_id,
-                    code,
-                    message,
-                } => {
-                    let error_body = crate::protocol::rpc_codec::encode_error_body(*code, message);
-                    let response = crate::domains::rpc::RpcResponse::single(
-                        *correlation_id,
-                        bytes::Bytes::from(error_body),
-                    );
-                    crate::protocol::rpc_codec::encode_response_message(&response)
-                }
-            };
-            let bytes =
-                encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(303), &payload);
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
-                    .unwrap_or(u64::MAX),
-            );
-
-            return self.send_encoded_frame(forwarded.session_id, bytes);
+            return self.deliver_rpc_forwarded_response(forwarded);
         }
 
         if let Some(ack) = envelope.payload::<crate::domains::rpc::RpcWorkerAck>() {
-            debug!(
-                session_id = ack.session_id,
-                correlation_id = %ack.correlation_id,
-                "Outbound sink: encoding RPC worker ACK"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::rpc_codec::encode_ack(&ack.correlation_id);
-            let bytes =
-                encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(304), &payload);
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
-                    .unwrap_or(u64::MAX),
-            );
-
-            return self.send_encoded_frame(ack.session_id, bytes);
+            return self.deliver_rpc_worker_ack(ack);
         }
 
         if let Some(response) = envelope.payload::<crate::domains::kv::KvClientResponse>() {
-            debug!(
-                session_id = response.meta.session_id,
-                msg_type = response.meta.message_type,
-                channel = ?response.meta.channel,
-                "Outbound sink: encoding KV response"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::kv::encode_response(&response.response);
-            let bytes = encode_single_tlv_frame(
-                crate::protocol::tlv::MessageType::new(response.meta.message_type),
-                &payload,
-            );
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
-                    .unwrap_or(u64::MAX),
-            );
-
-            return self.send_encoded_frame(response.meta.session_id, bytes);
+            return self.deliver_kv_client_response(response);
         }
 
         if let Some(notification) = envelope.payload::<crate::domains::kv::KvClientNotification>() {
-            debug!(
-                session_id = notification.session_id,
-                route = %notification.route,
-                "Outbound sink: encoding KV notification"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::kv::encode_notify(
-                notification.subscription_id,
-                &notification.route,
-                notification.notification,
-            );
-            let bytes = encode_single_tlv_frame(
-                crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::NOTIFY),
-                &payload,
-            );
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                u64::try_from(encode_start.elapsed().as_micros().min(u128::from(u64::MAX)))
-                    .unwrap_or(u64::MAX),
-            );
-
-            return self.send_encoded_frame(notification.session_id, bytes);
+            return self.deliver_kv_notification(notification);
         }
 
         if let Some(response) = envelope.payload::<crate::domains::lease::LeaseClientResponse>() {
-            debug!(
-                session_id = response.meta.session_id,
-                msg_type = response.meta.message_type,
-                channel = ?response.meta.channel,
-                "Outbound sink: encoding Lease response"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::lease_codec::encode_domain_response(&response.response);
-            let bytes = encode_single_tlv_frame(
-                crate::protocol::tlv::MessageType::new(response.meta.message_type),
-                &payload,
-            );
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            );
-
-            return self.send_encoded_frame(response.meta.session_id, bytes);
+            return self.deliver_lease_client_response(response);
         }
 
         if let Some(notification) =
             envelope.payload::<crate::domains::lease::LeaseClientNotification>()
         {
-            debug!(
-                session_id = notification.session_id,
-                route = %notification.route,
-                "Outbound sink: encoding Lease notification"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::lease_codec::encode_notify(
-                notification.subscription_id,
-                notification.route.as_str(),
-                &notification.payload,
-            );
-            let bytes = encode_single_tlv_frame(
-                crate::protocol::tlv::MessageType::new(
-                    crate::protocol::lease_codec::msg_type::NOTIFY,
-                ),
-                &payload,
-            );
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            );
-
-            return self.send_encoded_frame(notification.session_id, bytes);
+            return self.deliver_lease_notification(notification);
         }
 
         if let Some(response) = envelope.payload::<crate::domains::notice::NoticeClientResponse>() {
-            debug!(
-                session_id = response.meta.session_id,
-                msg_type = response.meta.message_type,
-                channel = ?response.meta.channel,
-                "Outbound sink: encoding Notice response"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::notice_codec::encode_response(&response.response);
-            let bytes = encode_single_tlv_frame(
-                crate::protocol::tlv::MessageType::new(response.meta.message_type),
-                &payload,
-            );
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            );
-
-            return self.send_encoded_frame(response.meta.session_id, bytes);
+            return self.deliver_notice_client_response(response);
         }
 
         if let Some(notification) =
             envelope.payload::<crate::domains::notice::NoticeClientNotification>()
         {
-            debug!(
-                session_id = notification.session_id,
-                route = %notification.route,
-                "Outbound sink: encoding Notice notification"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::notice_codec::encode_notify(
-                notification.subscription_id,
-                &notification.route,
-                &notification.payload,
-            );
-            let bytes =
-                encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(504), &payload);
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            );
-
-            return self.send_encoded_frame(notification.session_id, bytes);
+            return self.deliver_notice_notification(notification);
         }
 
         if let Some(response) =
             envelope.payload::<crate::domains::schedule::ScheduleClientResponse>()
         {
-            debug!(
-                session_id = response.meta.session_id,
-                msg_type = response.meta.message_type,
-                channel = ?response.meta.channel,
-                "Outbound sink: encoding Schedule response"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::schedule_codec::encode_response(&response.response);
-            let bytes = encode_single_tlv_frame(
-                crate::protocol::tlv::MessageType::new(response.meta.message_type),
-                &payload,
-            );
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            );
-
-            return self.send_encoded_frame(response.meta.session_id, bytes);
+            return self.deliver_schedule_client_response(response);
         }
 
         if let Some(notification) =
             envelope.payload::<crate::domains::schedule::ScheduleClientNotification>()
         {
-            debug!(
-                session_id = notification.session_id,
-                "Outbound sink: encoding Schedule notification"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::schedule_codec::encode_notify(
-                notification.subscription_id,
-                &notification.payload,
-            );
-            let bytes =
-                encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(705), &payload);
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            );
-
-            return self.send_encoded_frame(notification.session_id, bytes);
+            return self.deliver_schedule_notification(notification);
         }
 
         if let Some(response) = envelope.payload::<crate::domains::stream::StreamClientResponse>() {
-            debug!(
-                session_id = response.meta.session_id,
-                msg_type = response.meta.message_type,
-                channel = ?response.meta.channel,
-                "Outbound sink: encoding Stream response"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::stream_codec::encode_response(&response.response);
-            let bytes = encode_single_tlv_frame(
-                crate::protocol::tlv::MessageType::new(response.meta.message_type),
-                &payload,
-            );
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            );
-
-            return self.send_encoded_frame(response.meta.session_id, bytes);
+            return self.deliver_stream_client_response(response);
         }
 
         if let Some(notification) =
             envelope.payload::<crate::domains::stream::StreamClientNotification>()
         {
-            debug!(
-                session_id = notification.session_id,
-                route = %notification.route,
-                "Outbound sink: encoding Stream notification"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::stream_codec::encode_notify(
-                notification.subscription_id,
-                &notification.route,
-                &notification.payload,
-            );
-            let bytes =
-                encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(609), &payload);
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            );
-
-            return self.send_encoded_frame(notification.session_id, bytes);
+            return self.deliver_stream_notification(notification);
         }
 
         if let Some(response) = envelope.payload::<crate::domains::queue::QueueClientResponse>() {
-            debug!(
-                session_id = response.meta.session_id,
-                msg_type = response.meta.message_type,
-                channel = ?response.meta.channel,
-                "Outbound sink: encoding Queue response"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::queue_codec::encode_response(&response.response);
-            let bytes = encode_single_tlv_frame(
-                crate::protocol::tlv::MessageType::new(response.meta.message_type),
-                &payload,
-            );
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            );
-
-            return self.send_encoded_frame(response.meta.session_id, bytes);
+            return self.deliver_queue_client_response(response);
         }
 
         if let Some(notification) =
             envelope.payload::<crate::domains::queue::QueueClientNotification>()
         {
-            debug!(
-                session_id = notification.session_id,
-                route = %notification.route,
-                "Outbound sink: encoding Queue notification"
-            );
-            let encode_start = Instant::now();
-            let payload = crate::protocol::queue_codec::encode_notify(
-                notification.subscription_id,
-                &notification.route,
-                notification.notification,
-            );
-            let bytes = encode_single_tlv_frame(
-                crate::protocol::tlv::MessageType::new(
-                    crate::protocol::queue_codec::msg_type::NOTIFY,
-                ),
-                &payload,
-            );
-            crate::observability::hot_path_histogram_observe_us(
-                obs::METRIC_OUTBOUND_ENCODE_LATENCY,
-                encode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            );
-
-            return self.send_encoded_frame(notification.session_id, bytes);
+            return self.deliver_queue_notification(notification);
         }
 
         warn!(
@@ -462,7 +126,386 @@ impl MailboxSink for SessionOutboundSink {
 }
 
 impl SessionOutboundSink {
-    fn send_encoded_frame(&self, session_id: u64, bytes: Bytes) -> Result<(), DeliveryError> {
+    fn elapsed_micros_u64(start: Instant) -> u64 {
+        u64::try_from(start.elapsed().as_micros().min(u128::from(u64::MAX))).unwrap_or(u64::MAX)
+    }
+
+    fn observe_encode_latency(start: Instant) {
+        crate::observability::hot_path_histogram_observe_us(
+            obs::METRIC_OUTBOUND_ENCODE_LATENCY,
+            Self::elapsed_micros_u64(start),
+        );
+    }
+
+    fn deliver_frame_context(&self, ctx: &FrameContext) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = ctx.session_id,
+            msg_type = ctx.msg_type.as_u16(),
+            payload_len = ctx.payload.len(),
+            "Outbound sink: encoding TLV response for session"
+        );
+        let encode_start = Instant::now();
+        let bytes = encode_single_tlv_frame(ctx.msg_type, &ctx.payload);
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(ctx.session_id, &bytes)
+    }
+
+    fn deliver_encoded_client_frame(
+        &self,
+        frame: &EncodedClientFrame,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = frame.meta.session_id,
+            msg_type = frame.meta.message_type,
+            payload_len = frame.payload.len(),
+            channel = ?frame.meta.channel,
+            "Outbound sink: encoding runtime client frame"
+        );
+        let encode_start = Instant::now();
+        let bytes = encode_single_tlv_frame(
+            crate::protocol::tlv::MessageType::new(frame.meta.message_type),
+            &frame.payload,
+        );
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(frame.meta.session_id, &bytes)
+    }
+
+    fn deliver_rpc_client_response(
+        &self,
+        response: &crate::domains::rpc::RpcClientResponse,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = response.meta.session_id,
+            msg_type = response.meta.message_type,
+            channel = ?response.meta.channel,
+            "Outbound sink: encoding RPC response"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::rpc_codec::encode_response(&response.response);
+        let bytes = encode_single_tlv_frame(
+            crate::protocol::tlv::MessageType::new(response.meta.message_type),
+            &payload,
+        );
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(response.meta.session_id, &bytes)
+    }
+
+    fn deliver_rpc_worker_request(
+        &self,
+        delivery: &crate::domains::rpc::RpcWorkerRequestDelivery,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = delivery.session_id,
+            route = %delivery.request.route,
+            "Outbound sink: encoding RPC worker request delivery"
+        );
+        let encode_start = Instant::now();
+        let mut payload_encoder =
+            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        let payload = crate::protocol::rpc_codec::encode_request_into(
+            &delivery.request,
+            &mut payload_encoder,
+        );
+        let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(302), &payload);
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(delivery.session_id, &bytes)
+    }
+
+    fn deliver_rpc_forwarded_response(
+        &self,
+        forwarded: &crate::domains::rpc::RpcClientForwardedResponse,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = forwarded.session_id,
+            "Outbound sink: encoding forwarded RPC response"
+        );
+        let encode_start = Instant::now();
+        let payload = match &forwarded.body {
+            crate::domains::rpc::RpcClientForwardedResponseBody::Response(response) => {
+                crate::protocol::rpc_codec::encode_response_message(response)
+            }
+            crate::domains::rpc::RpcClientForwardedResponseBody::TerminalError {
+                correlation_id,
+                code,
+                message,
+            } => {
+                let error_body = crate::protocol::rpc_codec::encode_error_body(*code, message);
+                let response = crate::domains::rpc::RpcResponse::single(
+                    *correlation_id,
+                    bytes::Bytes::from(error_body),
+                );
+                crate::protocol::rpc_codec::encode_response_message(&response)
+            }
+        };
+        let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(303), &payload);
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(forwarded.session_id, &bytes)
+    }
+
+    fn deliver_rpc_worker_ack(
+        &self,
+        ack: &crate::domains::rpc::RpcWorkerAck,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = ack.session_id,
+            correlation_id = %ack.correlation_id,
+            "Outbound sink: encoding RPC worker ACK"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::rpc_codec::encode_ack(&ack.correlation_id);
+        let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(304), &payload);
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(ack.session_id, &bytes)
+    }
+
+    fn deliver_kv_client_response(
+        &self,
+        response: &crate::domains::kv::KvClientResponse,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = response.meta.session_id,
+            msg_type = response.meta.message_type,
+            channel = ?response.meta.channel,
+            "Outbound sink: encoding KV response"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::kv::encode_response(&response.response);
+        let bytes = encode_single_tlv_frame(
+            crate::protocol::tlv::MessageType::new(response.meta.message_type),
+            &payload,
+        );
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(response.meta.session_id, &bytes)
+    }
+
+    fn deliver_kv_notification(
+        &self,
+        notification: &crate::domains::kv::KvClientNotification,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = notification.session_id,
+            route = %notification.route,
+            "Outbound sink: encoding KV notification"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::kv::encode_notify(
+            notification.subscription_id,
+            &notification.route,
+            notification.notification,
+        );
+        let bytes = encode_single_tlv_frame(
+            crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::NOTIFY),
+            &payload,
+        );
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(notification.session_id, &bytes)
+    }
+
+    fn deliver_lease_client_response(
+        &self,
+        response: &crate::domains::lease::LeaseClientResponse,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = response.meta.session_id,
+            msg_type = response.meta.message_type,
+            channel = ?response.meta.channel,
+            "Outbound sink: encoding Lease response"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::lease_codec::encode_domain_response(&response.response);
+        let bytes = encode_single_tlv_frame(
+            crate::protocol::tlv::MessageType::new(response.meta.message_type),
+            &payload,
+        );
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(response.meta.session_id, &bytes)
+    }
+
+    fn deliver_lease_notification(
+        &self,
+        notification: &crate::domains::lease::LeaseClientNotification,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = notification.session_id,
+            route = %notification.route,
+            "Outbound sink: encoding Lease notification"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::lease_codec::encode_notify(
+            notification.subscription_id,
+            notification.route.as_str(),
+            &notification.payload,
+        );
+        let bytes = encode_single_tlv_frame(
+            crate::protocol::tlv::MessageType::new(crate::protocol::lease_codec::msg_type::NOTIFY),
+            &payload,
+        );
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(notification.session_id, &bytes)
+    }
+
+    fn deliver_notice_client_response(
+        &self,
+        response: &crate::domains::notice::NoticeClientResponse,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = response.meta.session_id,
+            msg_type = response.meta.message_type,
+            channel = ?response.meta.channel,
+            "Outbound sink: encoding Notice response"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::notice_codec::encode_response(&response.response);
+        let bytes = encode_single_tlv_frame(
+            crate::protocol::tlv::MessageType::new(response.meta.message_type),
+            &payload,
+        );
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(response.meta.session_id, &bytes)
+    }
+
+    fn deliver_notice_notification(
+        &self,
+        notification: &crate::domains::notice::NoticeClientNotification,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = notification.session_id,
+            route = %notification.route,
+            "Outbound sink: encoding Notice notification"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::notice_codec::encode_notify(
+            notification.subscription_id,
+            &notification.route,
+            &notification.payload,
+        );
+        let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(504), &payload);
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(notification.session_id, &bytes)
+    }
+
+    fn deliver_schedule_client_response(
+        &self,
+        response: &crate::domains::schedule::ScheduleClientResponse,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = response.meta.session_id,
+            msg_type = response.meta.message_type,
+            channel = ?response.meta.channel,
+            "Outbound sink: encoding Schedule response"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::schedule_codec::encode_response(&response.response);
+        let bytes = encode_single_tlv_frame(
+            crate::protocol::tlv::MessageType::new(response.meta.message_type),
+            &payload,
+        );
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(response.meta.session_id, &bytes)
+    }
+
+    fn deliver_schedule_notification(
+        &self,
+        notification: &crate::domains::schedule::ScheduleClientNotification,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = notification.session_id,
+            "Outbound sink: encoding Schedule notification"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::schedule_codec::encode_notify(
+            notification.subscription_id,
+            &notification.payload,
+        );
+        let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(705), &payload);
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(notification.session_id, &bytes)
+    }
+
+    fn deliver_stream_client_response(
+        &self,
+        response: &crate::domains::stream::StreamClientResponse,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = response.meta.session_id,
+            msg_type = response.meta.message_type,
+            channel = ?response.meta.channel,
+            "Outbound sink: encoding Stream response"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::stream_codec::encode_response(&response.response);
+        let bytes = encode_single_tlv_frame(
+            crate::protocol::tlv::MessageType::new(response.meta.message_type),
+            &payload,
+        );
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(response.meta.session_id, &bytes)
+    }
+
+    fn deliver_stream_notification(
+        &self,
+        notification: &crate::domains::stream::StreamClientNotification,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = notification.session_id,
+            route = %notification.route,
+            "Outbound sink: encoding Stream notification"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::stream_codec::encode_notify(
+            notification.subscription_id,
+            &notification.route,
+            &notification.payload,
+        );
+        let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(609), &payload);
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(notification.session_id, &bytes)
+    }
+
+    fn deliver_queue_client_response(
+        &self,
+        response: &crate::domains::queue::QueueClientResponse,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = response.meta.session_id,
+            msg_type = response.meta.message_type,
+            channel = ?response.meta.channel,
+            "Outbound sink: encoding Queue response"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::queue_codec::encode_response(&response.response);
+        let bytes = encode_single_tlv_frame(
+            crate::protocol::tlv::MessageType::new(response.meta.message_type),
+            &payload,
+        );
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(response.meta.session_id, &bytes)
+    }
+
+    fn deliver_queue_notification(
+        &self,
+        notification: &crate::domains::queue::QueueClientNotification,
+    ) -> Result<(), DeliveryError> {
+        debug!(
+            session_id = notification.session_id,
+            route = %notification.route,
+            "Outbound sink: encoding Queue notification"
+        );
+        let encode_start = Instant::now();
+        let payload = crate::protocol::queue_codec::encode_notify(
+            notification.subscription_id,
+            &notification.route,
+            notification.notification,
+        );
+        let bytes = encode_single_tlv_frame(
+            crate::protocol::tlv::MessageType::new(crate::protocol::queue_codec::msg_type::NOTIFY),
+            &payload,
+        );
+        Self::observe_encode_latency(encode_start);
+        self.send_encoded_frame(notification.session_id, &bytes)
+    }
+
+    fn send_encoded_frame(&self, session_id: u64, bytes: &Bytes) -> Result<(), DeliveryError> {
         const MAX_OUTBOUND_SEND_RETRIES: usize = 100;
 
         trace!(
@@ -477,7 +520,7 @@ impl SessionOutboundSink {
             let send_result = self.tx.try_send(bytes.clone());
             crate::observability::hot_path_histogram_observe_us(
                 obs::METRIC_OUTBOUND_SEND_LATENCY,
-                send_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                Self::elapsed_micros_u64(send_start),
             );
 
             match send_result {
@@ -505,7 +548,6 @@ impl SessionOutboundSink {
                         });
                     }
                     std::thread::yield_now();
-                    continue;
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                     warn!(
@@ -520,25 +562,24 @@ impl SessionOutboundSink {
 }
 
 fn encode_single_tlv_frame(msg_type: crate::protocol::tlv::MessageType, payload: &[u8]) -> Bytes {
-    if payload.len() > u16::MAX as usize {
-        panic!(
-            "TLV value too large: {} bytes (max {})",
-            payload.len(),
-            u16::MAX
-        );
-    }
+    assert!(
+        u16::try_from(payload.len()).is_ok(),
+        "TLV value too large: {} bytes (max {})",
+        payload.len(),
+        u16::MAX
+    );
 
     let header_len = msg_type.encoded_type_len() + 2;
     let mut out = BytesMut::with_capacity(header_len + payload.len());
 
     if msg_type.is_single_byte() {
-        out.put_u8(msg_type.as_u16() as u8);
+        out.put_u8(u8::try_from(msg_type.as_u16()).unwrap_or(u8::MAX));
     } else {
         out.put_u8(crate::protocol::tlv::MessageType::ESCAPE_MARKER);
         out.extend_from_slice(&msg_type.as_u16().to_be_bytes());
     }
 
-    let payload_len = payload.len() as u16;
+    let payload_len = u16::try_from(payload.len()).unwrap_or(u16::MAX);
     out.extend_from_slice(&payload_len.to_be_bytes());
     out.extend_from_slice(payload);
     out.freeze()

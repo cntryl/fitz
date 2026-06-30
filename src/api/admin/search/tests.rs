@@ -302,7 +302,7 @@ async fn should_reject_disallowed_route_family_filter() {
     };
 
     // Act
-    let response = handle_search(&uri, runtime, &principal).await.unwrap();
+    let response = handle_search(&uri, &runtime, &principal);
 
     // Assert
     assert_eq!(response.status(), StatusCode::FORBIDDEN);

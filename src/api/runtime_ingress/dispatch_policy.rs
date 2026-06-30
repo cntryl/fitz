@@ -1,5 +1,8 @@
 use super::domain_frame_dispatcher::DomainFrameDispatcher;
-use super::*;
+use super::{
+    AuthorizationPolicy, AuthorizationTargets, DispatchDomain, DomainAuthorizationSpec,
+    RuntimeIngress,
+};
 
 impl RuntimeIngress {
     #[allow(dead_code)]
@@ -18,12 +21,12 @@ impl RuntimeIngress {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn resolve_authorization_targets<'a>(
+    pub(super) fn resolve_authorization_targets(
         domain: DispatchDomain,
         msg_type: crate::protocol::tlv::MessageType,
-        payload: &'a [u8],
+        payload: &[u8],
         policy: AuthorizationPolicy,
-    ) -> Result<(AuthorizationTargets<'a>, crate::auth::Access), String> {
+    ) -> Result<(AuthorizationTargets<'_>, crate::auth::Access), String> {
         DomainFrameDispatcher::resolve_authorization_targets(domain, msg_type, payload, policy)
     }
 }

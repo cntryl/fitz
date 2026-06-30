@@ -1,18 +1,17 @@
-use super::super::{
-    matches_family, troubleshooting, Arc, Infallible, ResourcePath, Response, Runtime,
-};
+use super::super::{matches_family, troubleshooting, ResourcePath, Response, Runtime};
 
 /// Returns recent KV timeline events for the given resource.
 ///
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn kv_events_for_resource(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn kv_events_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: Option<u64>,
     limit: usize,
-) -> Result<Response, Infallible> {
+) -> Response {
     let transactions = runtime
         .kv_list_transactions(Some(path.realm))
         .into_iter()

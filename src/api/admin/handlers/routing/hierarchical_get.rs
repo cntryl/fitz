@@ -31,14 +31,12 @@ pub(super) async fn handle_hierarchical_get(
     };
 
     if let Some(response) =
-        handle_domain_collection_routes(uri, &runtime, principal, scope, scheme, tail).await?
+        handle_domain_collection_routes(uri, &runtime, principal, scope, scheme, tail)
     {
         return Ok(response);
     }
 
-    if let Some(response) =
-        handle_resource_collection_routes(uri, &runtime, scope, scheme, tail).await?
-    {
+    if let Some(response) = handle_resource_collection_routes(uri, &runtime, scope, scheme, tail) {
         return Ok(response);
     }
 
@@ -51,137 +49,131 @@ pub(super) async fn handle_hierarchical_get(
     Ok(not_found())
 }
 
-async fn handle_domain_collection_routes(
+fn handle_domain_collection_routes(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     principal: &AdminPrincipal,
     scope: AdminFamilyScope,
     scheme: &str,
     tail: &[&str],
-) -> Result<Option<Response>, Infallible> {
+) -> Option<Response> {
     let response = match tail {
-        ["stats"] => Some(stats::handle_domain_stats(Arc::clone(runtime), scheme).await?),
+        ["stats"] => Some(stats::handle_domain_stats(runtime.as_ref(), scheme)),
         ["search"] if scheme == "stream" => {
             let request = match build_stream_search_request(uri, principal, scope) {
                 Ok(request) => request,
-                Err(response) => return Ok(Some(*response)),
+                Err(response) => return Some(*response),
             };
-            Some(list::stream_search(Arc::clone(runtime), request).await?)
+            Some(list::stream_search(runtime.as_ref(), &request))
         }
-        ["missed"] if scheme == "schedule" => Some(
-            list::schedule_missed_observations(
-                Arc::clone(runtime),
-                match require_family_for_search(uri, principal, scope) {
-                    Ok(family) => family,
-                    Err(response) => return Ok(Some(*response)),
-                },
-                list::parse_optional_string_query_param(uri, "realm"),
-                list::parse_optional_string_query_param(uri, "area"),
-                list::parse_optional_string_query_param(uri, "resource"),
-                match parse_admin_record_limit(uri) {
-                    Ok(limit) => limit,
-                    Err(response) => return Ok(Some(*response)),
-                },
-            )
-            .await?,
-        ),
+        ["missed"] if scheme == "schedule" => Some(list::schedule_missed_observations(
+            runtime.as_ref(),
+            match require_family_for_search(uri, principal, scope) {
+                Ok(family) => family,
+                Err(response) => return Some(*response),
+            },
+            list::parse_optional_string_query_param(uri, "realm").as_deref(),
+            list::parse_optional_string_query_param(uri, "area").as_deref(),
+            list::parse_optional_string_query_param(uri, "resource").as_deref(),
+            match parse_admin_record_limit(uri) {
+                Ok(limit) => limit,
+                Err(response) => return Some(*response),
+            },
+        )),
         ["search"] if scheme == "lease" => {
             let request = match build_lease_search_request(uri, principal, scope) {
                 Ok(request) => request,
-                Err(response) => return Ok(Some(*response)),
+                Err(response) => return Some(*response),
             };
-            Some(list::lease_search(Arc::clone(runtime), request).await?)
+            Some(list::lease_search(runtime.as_ref(), &request))
         }
-        ["deliveries"] if scheme == "notice" => Some(
-            list::notice_delivery_observations(
-                Arc::clone(runtime),
-                match require_family_for_search(uri, principal, scope) {
-                    Ok(family) => family,
-                    Err(response) => return Ok(Some(*response)),
-                },
-                list::parse_optional_string_query_param(uri, "realm"),
-                list::parse_optional_string_query_param(uri, "area"),
-                list::parse_optional_string_query_param(uri, "resource"),
-                list::parse_optional_string_query_param(uri, "q"),
-                match parse_admin_record_limit(uri) {
-                    Ok(limit) => limit,
-                    Err(response) => return Ok(Some(*response)),
-                },
-            )
-            .await?,
-        ),
+        ["deliveries"] if scheme == "notice" => Some(list::notice_delivery_observations(
+            runtime.as_ref(),
+            match require_family_for_search(uri, principal, scope) {
+                Ok(family) => family,
+                Err(response) => return Some(*response),
+            },
+            list::parse_optional_string_query_param(uri, "realm").as_deref(),
+            list::parse_optional_string_query_param(uri, "area").as_deref(),
+            list::parse_optional_string_query_param(uri, "resource").as_deref(),
+            list::parse_optional_string_query_param(uri, "q").as_deref(),
+            match parse_admin_record_limit(uri) {
+                Ok(limit) => limit,
+                Err(response) => return Some(*response),
+            },
+        )),
         ["calls"] if scheme == "rpc" => {
             let request = match build_rpc_call_observation_request(uri, principal, scope) {
                 Ok(request) => request,
-                Err(response) => return Ok(Some(*response)),
+                Err(response) => return Some(*response),
             };
-            Some(list::rpc_call_observations(Arc::clone(runtime), request).await?)
+            Some(list::rpc_call_observations(runtime.as_ref(), &request))
         }
         _ => None,
     };
 
-    Ok(response)
+    response
 }
 
-async fn handle_resource_collection_routes(
+fn handle_resource_collection_routes(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     scope: AdminFamilyScope,
     scheme: &str,
     tail: &[&str],
-) -> Result<Option<Response>, Infallible> {
+) -> Option<Response> {
     let response =
         match tail {
-            ["realms"] => Some(handle_realms_collection(scheme, runtime, scope.filter())?),
+            ["realms"] => Some(handle_realms_collection(scheme, runtime, scope.filter())),
             ["realms", realm, "watermarks"] if scheme == "stream" => Some(json_response(
                 list::stream_realm_watermark_detail(runtime.as_ref(), realm),
-            )?),
+            )),
             ["realms", realm] if scheme == "queue" => Some(json_response(
                 list::queue_realm_detail(runtime.as_ref(), realm, scope.filter()),
-            )?),
+            )),
             ["realms", realm] => Some(json_response(list::RealmDetail {
                 realm: (*realm).to_string(),
-            })?),
+            })),
             ["realms", realm, "areas"] => Some(handle_areas_collection(
                 scheme,
                 runtime,
                 realm,
                 scope.filter(),
-            )?),
+            )),
             ["realms", realm, "areas", area, "watermarks"] if scheme == "stream" => {
                 Some(json_response(list::stream_area_watermark_detail(
                     runtime.as_ref(),
                     realm,
                     area,
-                ))?)
+                )))
             }
             ["realms", realm, "areas", area] if scheme == "queue" => Some(json_response(
                 list::queue_area_detail(runtime.as_ref(), realm, area, scope.filter()),
-            )?),
+            )),
             ["realms", realm, "areas", area] => Some(json_response(list::AreaDetail {
                 realm: (*realm).to_string(),
                 area: (*area).to_string(),
-            })?),
+            })),
             ["realms", realm, "areas", area, "resources"] => Some(handle_resources_collection(
                 scheme,
                 runtime,
                 realm,
                 area,
                 scope.filter(),
-            )?),
+            )),
             ["realms", realm, "areas", area, "resources", resource] => {
                 let family = match resource_family_filter(scope, uri, scheme) {
                     Ok(family) => family,
-                    Err(response) => return Ok(Some(*response)),
+                    Err(response) => return Some(*response),
                 };
                 Some(handle_resource_detail(
                     scheme, runtime, realm, area, resource, family,
-                )?)
+                ))
             }
             _ => None,
         };
 
-    Ok(response)
+    response
 }
 
 async fn handle_resource_detail_routes(
@@ -243,23 +235,20 @@ async fn handle_resource_activity_routes(
             };
             Some(handle_resource_compare(
                 uri, runtime, principal, scope, scheme, &path,
-            )?)
+            ))
         }
         ["realms", realm, "areas", area, "resources", resource, "transactions"]
             if scheme == "kv" =>
         {
-            Some(
-                list::kv_transactions_for_resource(
-                    Arc::clone(runtime),
-                    &list::ResourcePath {
-                        realm,
-                        area,
-                        resource,
-                    },
-                    scope.filter(),
-                )
-                .await?,
-            )
+            Some(list::kv_transactions_for_resource(
+                runtime.as_ref(),
+                &list::ResourcePath {
+                    realm,
+                    area,
+                    resource,
+                },
+                scope.filter(),
+            ))
         }
         _ => None,
     };
@@ -347,18 +336,15 @@ async fn handle_queue_state_routes(
                 Ok(family) => family,
                 Err(response) => return Ok(Some(*response)),
             };
-            Some(
-                list::queue_inflight_for_resource(
-                    Arc::clone(runtime),
-                    &list::ResourcePath {
-                        realm,
-                        area,
-                        resource,
-                    },
-                    family,
-                )
-                .await?,
-            )
+            Some(list::queue_inflight_for_resource(
+                runtime.as_ref(),
+                &list::ResourcePath {
+                    realm,
+                    area,
+                    resource,
+                },
+                family,
+            ))
         }
         ["realms", realm, "areas", area, "resources", resource, "dead-letters"]
             if scheme == "queue" =>
@@ -367,18 +353,15 @@ async fn handle_queue_state_routes(
                 Ok(family) => family,
                 Err(response) => return Ok(Some(*response)),
             };
-            Some(
-                list::queue_dead_letters_for_resource(
-                    Arc::clone(runtime),
-                    &list::ResourcePath {
-                        realm,
-                        area,
-                        resource,
-                    },
-                    family,
-                )
-                .await?,
-            )
+            Some(list::queue_dead_letters_for_resource(
+                runtime.as_ref(),
+                &list::ResourcePath {
+                    realm,
+                    area,
+                    resource,
+                },
+                family,
+            ))
         }
         _ => None,
     };
@@ -396,18 +379,15 @@ async fn handle_notice_rpc_state_routes(
         ["realms", realm, "areas", area, "resources", resource, "subscriptions"]
             if scheme == "notice" =>
         {
-            Some(
-                list::notice_subscriptions_for_resource(
-                    Arc::clone(runtime),
-                    &list::ResourcePath {
-                        realm,
-                        area,
-                        resource,
-                    },
-                    scope.filter(),
-                )
-                .await?,
-            )
+            Some(list::notice_subscriptions_for_resource(
+                runtime.as_ref(),
+                &list::ResourcePath {
+                    realm,
+                    area,
+                    resource,
+                },
+                scope.filter(),
+            ))
         }
         ["realms", realm, "areas", area, "resources", resource, "operations"]
             if scheme == "rpc" =>
@@ -420,7 +400,7 @@ async fn handle_notice_rpc_state_routes(
                     resource,
                 },
                 scope.filter(),
-            ))?)
+            )))
         }
         ["realms", realm, "areas", area, "resources", resource, "operations", operation]
             if scheme == "rpc" =>
@@ -434,27 +414,24 @@ async fn handle_notice_rpc_state_routes(
                     operation,
                 },
                 scope.filter(),
-            ))?)
+            )))
         }
         ["realms", realm, "areas", area, "resources", resource, "operations", operation, "workers"]
             if scheme == "rpc" =>
         {
-            Some(
-                list::rpc_workers_for_operation(
-                    Arc::clone(runtime),
-                    &list::RpcOperationPath {
-                        realm,
-                        area,
-                        resource,
-                        operation,
-                    },
-                    scope.filter(),
-                )
-                .await?,
-            )
+            Some(list::rpc_workers_for_operation(
+                runtime.as_ref(),
+                &list::RpcOperationPath {
+                    realm,
+                    area,
+                    resource,
+                    operation,
+                },
+                scope.filter(),
+            ))
         }
         ["pending"] if scheme == "rpc" => {
-            Some(list::rpc_pending(Arc::clone(runtime), None, scope.filter()).await?)
+            Some(list::rpc_pending(runtime.as_ref(), None, scope.filter()))
         }
         _ => None,
     };
@@ -486,19 +463,48 @@ async fn handle_resource_events(
     };
 
     match scheme {
-        "kv" => list::kv_events_for_resource(Arc::clone(runtime), &path, family, limit).await,
-        "queue" => list::queue_events_for_resource(Arc::clone(runtime), &path, family, limit).await,
-        "stream" => {
-            list::stream_events_for_resource(Arc::clone(runtime), &path, family, limit).await
-        }
-        "lease" => list::lease_events_for_resource(Arc::clone(runtime), &path, family, limit).await,
-        "schedule" => {
-            list::schedule_events_for_resource(Arc::clone(runtime), &path, family, limit).await
-        }
-        "notice" => {
-            list::notice_events_for_resource(Arc::clone(runtime), &path, family, limit).await
-        }
-        "rpc" => list::rpc_events_for_resource(Arc::clone(runtime), &path, family, limit).await,
+        "kv" => Ok(list::kv_events_for_resource(
+            runtime.as_ref(),
+            &path,
+            family,
+            limit,
+        )),
+        "queue" => Ok(list::queue_events_for_resource(
+            runtime.as_ref(),
+            &path,
+            family,
+            limit,
+        )),
+        "stream" => Ok(list::stream_events_for_resource(
+            runtime.as_ref(),
+            &path,
+            family,
+            limit,
+        )),
+        "lease" => Ok(list::lease_events_for_resource(
+            runtime.as_ref(),
+            &path,
+            family,
+            limit,
+        )),
+        "schedule" => Ok(list::schedule_events_for_resource(
+            runtime.as_ref(),
+            &path,
+            family,
+            limit,
+        )),
+        "notice" => Ok(list::notice_events_for_resource(
+            runtime.as_ref(),
+            &path,
+            family,
+            limit,
+        )),
+        "rpc" => Ok(list::rpc_events_for_resource(
+            runtime.as_ref(),
+            &path,
+            family,
+            limit,
+        )),
         _ => Ok(not_found()),
     }
 }
@@ -525,8 +531,8 @@ async fn handle_stream_records(
         Err(response) => return Ok(*response),
     };
 
-    list::stream_records_for_resource(
-        Arc::clone(runtime),
+    Ok(list::stream_records_for_resource(
+        runtime.as_ref(),
         &list::ResourcePath {
             realm,
             area,
@@ -536,9 +542,9 @@ async fn handle_stream_records(
         from_offset,
         limit,
         list::parse_optional_string_query_param(uri, "discriminator")
-            .or_else(|| list::parse_optional_string_query_param(uri, "q")),
-    )
-    .await
+            .or_else(|| list::parse_optional_string_query_param(uri, "q"))
+            .as_deref(),
+    ))
 }
 
 async fn handle_schedule_executions(
@@ -559,8 +565,8 @@ async fn handle_schedule_executions(
         Err(message) => return Ok(error_response(StatusCode::BAD_REQUEST, &message)),
     };
 
-    list::schedule_executions_for_resource(
-        Arc::clone(runtime),
+    Ok(list::schedule_executions_for_resource(
+        runtime.as_ref(),
         &list::ResourcePath {
             realm,
             area,
@@ -568,8 +574,7 @@ async fn handle_schedule_executions(
         },
         family,
         limit,
-    )
-    .await
+    ))
 }
 
 fn handle_resource_compare(
@@ -579,29 +584,29 @@ fn handle_resource_compare(
     scope: AdminFamilyScope,
     scheme: &str,
     path: &list::ResourcePath<'_>,
-) -> Result<Response, Infallible> {
+) -> Response {
     let family = match resource_family_filter(scope, uri, scheme) {
         Ok(family) => family,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
     let against_realm = match parse_required_string_query_param(uri, "against_realm") {
         Ok(value) => value,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
     let against_area = match parse_required_string_query_param(uri, "against_area") {
         Ok(value) => value,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
     let against_resource = match parse_required_string_query_param(uri, "against_resource") {
         Ok(value) => value,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
     let against_family = match parse_optional_allowed_family_param(uri, principal, "against_family")
     {
         Ok(Some(family)) => Some(family),
         Ok(None) if matches!(scope, AdminFamilyScope::Legacy) && scheme == "queue" => None,
         Ok(None) => family,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
     let against_path = list::ResourcePath {
         realm: &against_realm,
@@ -659,7 +664,7 @@ fn handle_resource_compare(
             &against_path,
             against_family,
         ),
-        _ => return Ok(not_found()),
+        _ => return not_found(),
     };
 
     json_response(comparison)
@@ -692,18 +697,17 @@ async fn handle_kv_rows(
     };
 
     list::kv_rows_for_resource(
-        Arc::clone(runtime),
+        runtime.as_ref(),
         &list::ResourcePath {
             realm,
             area,
             resource,
         },
         family,
-        starts_with,
-        cursor,
+        &starts_with,
+        cursor.as_deref(),
         limit,
     )
-    .await
 }
 
 async fn handle_kv_value(
@@ -725,16 +729,15 @@ async fn handle_kv_value(
     };
 
     list::kv_committed_value_for_resource(
-        Arc::clone(runtime),
+        runtime.as_ref(),
         &list::ResourcePath {
             realm,
             area,
             resource,
         },
         family,
-        key,
+        &key,
     )
-    .await
 }
 
 async fn handle_kv_prefix(
@@ -760,17 +763,16 @@ async fn handle_kv_prefix(
     };
 
     list::kv_prefix_scan_for_resource(
-        Arc::clone(runtime),
+        runtime.as_ref(),
         &list::ResourcePath {
             realm,
             area,
             resource,
         },
         family,
-        prefix,
+        &prefix,
         limit,
     )
-    .await
 }
 
 fn require_family_for_search(

@@ -1,4 +1,4 @@
-use super::*;
+use super::{AuthorizationPolicy, Bytes, ChannelId, DispatchDomain, DomainAuthorizationSpec};
 
 type AuthRouteExtractor = for<'a> fn(u16, &'a [u8]) -> Result<Option<&'a str>, String>;
 type MessagePolicyResolver = fn(u16) -> Result<Option<AuthorizationPolicy>, &'static str>;
@@ -179,6 +179,7 @@ fn rpc_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &'st
         300 | 301 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::All))),
         302 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Write))),
         303 | 304 => Ok(Some(AuthorizationPolicy::SessionOwned)),
+        305 if msg_type == 305 => Err("invalid message type: 305 is server-to-client only"),
         305..=399 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
         _ => Ok(None),
     }

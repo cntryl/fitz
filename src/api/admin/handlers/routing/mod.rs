@@ -126,7 +126,7 @@ where
             if let Err(response) = require_admin_only(&req, &runtime) {
                 return Ok(*response);
             }
-            list::list_sessions(runtime).await
+            Ok(list::list_sessions(runtime.as_ref()))
         }
 
         (Method::GET, path) if path.starts_with("/api/v1/sessions/") => Ok(super::not_found()),
@@ -135,21 +135,21 @@ where
             if let Err(response) = require_admin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
-            stats::handle_global_stats(runtime).await
+            Ok(stats::handle_global_stats(runtime.as_ref()))
         }
 
         (Method::GET, "/api/v1/topology") => {
             if let Err(response) = require_admin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
-            topology::handle_topology(runtime).await
+            Ok(topology::handle_topology(runtime.as_ref()))
         }
 
         (Method::GET, "/api/v1/troubleshooting") => {
             if let Err(response) = require_admin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
-            stats::handle_global_troubleshooting(runtime).await
+            Ok(stats::handle_global_troubleshooting(runtime.as_ref()))
         }
 
         (Method::GET, "/api/v1/search") => {
@@ -160,7 +160,11 @@ where
             if let Err(response) = require_data_plane_ready(&runtime) {
                 return Ok(*response);
             }
-            search::handle_search(req.uri(), runtime, &principal).await
+            Ok(search::handle_search(
+                req.uri(),
+                runtime.as_ref(),
+                &principal,
+            ))
         }
 
         (Method::GET, path) if path.starts_with("/api/v1/") => {

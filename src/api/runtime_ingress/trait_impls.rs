@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    debug, info, obs, trace, Bytes, ChannelId, CloseReason, DispatchDomain, Ingress,
+    IngressDecision, RuntimeIngress, SessionEvent, SessionFrame,
+};
+use crate::session::SessionInfo;
 
 impl Default for RuntimeIngress {
     fn default() -> Self {
@@ -143,6 +147,7 @@ impl Ingress for RuntimeIngress {
 impl RuntimeIngress {
     /// Try to derive a precise Route from the frame payload for authorization
     #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(clippy::too_many_lines, clippy::unused_self)]
     pub(super) fn derive_route_for_frame(
         &self,
         session_info: &SessionInfo,
@@ -243,12 +248,12 @@ impl RuntimeIngress {
                 ),
             ) {
                 Ok(crate::domains::notice::protocol::NotificationMessage::Publish(p)) => Ok(Some(
-                    Self::canonicalize_domain_route(DispatchDomain::Notice, p.route.clone())?,
+                    Self::canonicalize_domain_route(DispatchDomain::Notice, &p.route)?,
                 )),
                 Ok(crate::domains::notice::protocol::NotificationMessage::Subscribe(s)) => {
                     Ok(Some(Self::canonicalize_domain_route(
                         DispatchDomain::Notice,
-                        s.pattern.clone(),
+                        &s.pattern,
                     )?))
                 }
                 Ok(_) => Ok(None),
@@ -262,12 +267,10 @@ impl RuntimeIngress {
                 Ok(crate::domains::rpc::protocol::RpcMessage::Request(r)) => {
                     Ok(Some(r.route.clone()))
                 }
-                Ok(crate::domains::rpc::protocol::RpcMessage::RegisterWorker { worker_addr }) => {
-                    Ok(Some(worker_addr.route().clone()))
-                }
-                Ok(crate::domains::rpc::protocol::RpcMessage::UnregisterWorker { worker_addr }) => {
-                    Ok(Some(worker_addr.route().clone()))
-                }
+                Ok(
+                    crate::domains::rpc::protocol::RpcMessage::RegisterWorker { worker_addr }
+                    | crate::domains::rpc::protocol::RpcMessage::UnregisterWorker { worker_addr },
+                ) => Ok(Some(worker_addr.route().clone())),
                 Ok(_) => Ok(None),
                 Err(e) => Err(e),
             },
@@ -304,7 +307,7 @@ impl RuntimeIngress {
                 ) {
                     Ok(Some(route_str)) => Ok(Some(Self::canonicalize_domain_route(
                         DispatchDomain::Stream,
-                        Route::new(route_str),
+                        &Route::new(route_str),
                     )?)),
                     Ok(None) => Ok(None),
                     Err(e) => Err(e),
@@ -327,19 +330,19 @@ impl RuntimeIngress {
                         payload: _,
                     }) => Ok(Some(Self::canonicalize_domain_route(
                         DispatchDomain::Schedule,
-                        Route::new(route),
+                        &Route::new(route),
                     )?)),
                     Ok(crate::domains::schedule::ScheduleMessage::Subscribe { route, .. }) => {
                         Ok(Some(Self::canonicalize_domain_route(
                             DispatchDomain::Schedule,
-                            route.clone(),
+                            &route,
                         )?))
                     }
                     Ok(crate::domains::schedule::ScheduleMessage::Unsubscribe {
                         route, ..
                     }) => Ok(Some(Self::canonicalize_domain_route(
                         DispatchDomain::Schedule,
-                        route.clone(),
+                        &route,
                     )?)),
                     Ok(_) => Ok(None),
                     Err(e) => Err(e),

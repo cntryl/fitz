@@ -15,14 +15,14 @@ pub(super) fn require_data_plane_ready(runtime: &Arc<Runtime>) -> Result<(), Box
 
 pub(super) async fn handle_runtime_drain(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
     runtime.begin_drain();
-    super::json_response(RuntimeDrainResponse {
+    Ok(super::json_response(RuntimeDrainResponse {
         lifecycle_state: runtime.lifecycle_state().as_str(),
         active_sessions: runtime.session_count(),
         drain_grace_seconds: runtime.drain_grace_seconds(),
         drain_started_epoch_ms: runtime.drain_started_epoch_ms(),
         drain_deadline_epoch_ms: runtime.drain_deadline_epoch_ms(),
         close_reason: runtime.drain_close_reason(),
-    })
+    }))
 }
 
 pub(super) fn require_admin<B>(

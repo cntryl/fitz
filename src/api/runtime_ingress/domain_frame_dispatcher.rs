@@ -1,4 +1,12 @@
-use super::*;
+use super::{
+    canonicalize_dispatch_route_str, extract_auth_route_for_domain, AuthorizationFailure,
+    AuthorizationPolicy, AuthorizationTargets, ChannelId, Cow, DispatchDomain,
+    DomainAuthorizationSpec, DomainDispatchRequest, IngressDecision, RuntimeIngress,
+};
+use crate::observability as obs;
+use bytes::Bytes;
+use std::time::Instant;
+use tracing::{debug, error, warn};
 
 pub(super) struct DomainFrameDispatcher<'a> {
     ingress: &'a RuntimeIngress,
@@ -11,6 +19,10 @@ impl RuntimeIngress {
 }
 
 impl DomainFrameDispatcher<'_> {
+    fn elapsed_micros_u64(start: Instant) -> u64 {
+        u64::try_from(start.elapsed().as_micros().min(u128::from(u64::MAX))).unwrap_or(u64::MAX)
+    }
+
     pub(super) fn dispatch_if_domain(
         &self,
         session_id: u64,
@@ -45,7 +57,7 @@ impl DomainFrameDispatcher<'_> {
                     msg_type,
                     preserve_payload_for_handler: should_preserve_payload,
                 };
-                self.authorize_and_dispatch_domain_frame(dispatch, message_payload)
+                self.authorize_and_dispatch_domain_frame(&dispatch, message_payload)
             }
             Ok(None) => Ok(()),
         }
@@ -78,7 +90,6 @@ impl DomainFrameDispatcher<'_> {
     }
 
     fn route_error_response_delivery_failure(
-        &self,
         session_id: u64,
         domain: DispatchDomain,
         error: crate::runtime::router::RouteError,
@@ -135,15 +146,15 @@ impl DomainFrameDispatcher<'_> {
             crate::runtime::envelope::Envelope::from_route(source, destination, response_ctx);
 
         dispatch.router.route(envelope).map_err(|error| {
-            self.route_error_response_delivery_failure(dispatch.session_id, dispatch.domain, error)
+            Self::route_error_response_delivery_failure(dispatch.session_id, dispatch.domain, error)
         })
     }
 
-    fn derive_auth_route_for_frame<'a>(
+    fn derive_auth_route_for_frame(
         domain: DispatchDomain,
         msg_type: crate::protocol::tlv::MessageType,
-        payload: &'a [u8],
-    ) -> Result<Option<Cow<'a, str>>, String> {
+        payload: &[u8],
+    ) -> Result<Option<Cow<'_, str>>, String> {
         extract_auth_route_for_domain(domain, msg_type.as_u16(), payload)
     }
 
@@ -165,21 +176,21 @@ impl DomainFrameDispatcher<'_> {
 
         let (auth_target, auth_target_count) = targets.span_target();
 
-        let _span = tracing::debug_span!(
+        let span = tracing::debug_span!(
             obs::SPAN_PERMISSION_CHECK,
             session_id = session_id,
             route = auth_target,
             route_count = auth_target_count,
             access = ?access,
         );
-        let _guard = _span.enter();
+        let _span_guard = span.enter();
         let start = Instant::now();
 
         let (authorized, denied_route, denied_route_count) =
             targets.authorize(&actor_ref, access, domain.wildcard_route());
 
         if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
-            let elapsed_us = start.elapsed().as_micros() as u64;
+            let elapsed_us = Self::elapsed_micros_u64(start);
             collector.histogram_observe_us(obs::METRIC_PERMISSION_CHECK_LATENCY, elapsed_us);
         }
 
@@ -205,7 +216,7 @@ impl DomainFrameDispatcher<'_> {
 
     fn dispatch_domain_frame(
         &self,
-        dispatch: DomainDispatchRequest<'_>,
+        dispatch: &DomainDispatchRequest<'_>,
         message_payload: &mut Option<Bytes>,
     ) -> Result<(), IngressDecision> {
         let route = dispatch.domain.inbound_route().clone();
@@ -250,7 +261,7 @@ impl DomainFrameDispatcher<'_> {
         if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
             collector.histogram_observe_us(
                 obs::METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY,
-                dispatch_start.elapsed().as_micros() as u64,
+                Self::elapsed_micros_u64(dispatch_start),
             );
         }
 
@@ -284,7 +295,7 @@ impl DomainFrameDispatcher<'_> {
 
     fn authorize_and_dispatch_domain_frame(
         &self,
-        dispatch: DomainDispatchRequest<'_>,
+        dispatch: &DomainDispatchRequest<'_>,
         message_payload: &mut Option<Bytes>,
     ) -> Result<(), IngressDecision> {
         debug!(
@@ -320,7 +331,7 @@ impl DomainFrameDispatcher<'_> {
         if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
             collector.histogram_observe_us(
                 obs::METRIC_INGRESS_AUTH_ROUTE_LATENCY,
-                auth_route_start.elapsed().as_micros() as u64,
+                Self::elapsed_micros_u64(auth_route_start),
             );
         }
 
@@ -336,18 +347,18 @@ impl DomainFrameDispatcher<'_> {
                 IngressDecision::Close("unauthorized: session actor missing".to_string())
             }
             AuthorizationFailure::PermissionDenied => self
-                .send_unauthorized_domain_response(&dispatch)
+                .send_unauthorized_domain_response(dispatch)
                 .map_or_else(|decision| decision, |()| IngressDecision::Accept),
         })?;
         self.dispatch_domain_frame(dispatch, message_payload)
     }
 
-    pub(super) fn resolve_authorization_targets<'a>(
+    pub(super) fn resolve_authorization_targets(
         domain: DispatchDomain,
         msg_type: crate::protocol::tlv::MessageType,
-        payload: &'a [u8],
+        payload: &[u8],
         policy: AuthorizationPolicy,
-    ) -> Result<(AuthorizationTargets<'a>, crate::auth::Access), String> {
+    ) -> Result<(AuthorizationTargets<'_>, crate::auth::Access), String> {
         match policy {
             AuthorizationPolicy::SessionOwned => Ok((
                 AuthorizationTargets::SessionOwned,

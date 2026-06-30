@@ -17,7 +17,6 @@ use crate::domains::stream::sink::AdminStreamReadRequest;
 use crate::runtime::routing::{route_quad, route_triplet, RouteFamily};
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::Arc;
 
 pub use admin_reads::{
     kv_events_for_resource, lease_events_for_resource, notice_delivery_observations,

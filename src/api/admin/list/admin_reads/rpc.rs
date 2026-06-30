@@ -1,13 +1,13 @@
 use super::super::{
-    matches_family, matches_operation_route, parse_rpc_operation, troubleshooting, Arc, Infallible,
-    ResourcePath, Response, RpcCallObservation, RpcCallObservationList, RpcCallObservationRequest,
+    matches_family, matches_operation_route, parse_rpc_operation, troubleshooting, ResourcePath,
+    Response, RpcCallObservation, RpcCallObservationList, RpcCallObservationRequest,
     RpcOperationPath, RpcPendingList, RpcWorkersList, Runtime,
 };
 
-pub(crate) async fn rpc_call_observations(
-    runtime: Arc<Runtime>,
-    request: RpcCallObservationRequest,
-) -> Result<Response, Infallible> {
+pub(crate) fn rpc_call_observations(
+    runtime: &Runtime,
+    request: &RpcCallObservationRequest,
+) -> Response {
     let scope_matches = |route: &str| {
         let Some(parsed) = parse_rpc_operation(route) else {
             return false;
@@ -111,11 +111,12 @@ pub(crate) async fn rpc_call_observations(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn rpc_workers_for_operation(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn rpc_workers_for_operation(
+    runtime: &Runtime,
     path: &RpcOperationPath<'_>,
     family: Option<u64>,
-) -> Result<Response, Infallible> {
+) -> Response {
     let workers = runtime
         .rpc_list_workers(Some(path.realm))
         .into_iter()
@@ -132,11 +133,8 @@ pub async fn rpc_workers_for_operation(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn rpc_pending(
-    runtime: Arc<Runtime>,
-    realm: Option<&str>,
-    family: Option<u64>,
-) -> Result<Response, Infallible> {
+#[must_use]
+pub fn rpc_pending(runtime: &Runtime, realm: Option<&str>, family: Option<u64>) -> Response {
     let requests = runtime
         .rpc_list_pending(realm)
         .into_iter()
@@ -150,12 +148,13 @@ pub async fn rpc_pending(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn rpc_events_for_resource(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn rpc_events_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: Option<u64>,
     limit: usize,
-) -> Result<Response, Infallible> {
+) -> Response {
     let workers = runtime
         .rpc_list_workers(Some(path.realm))
         .into_iter()

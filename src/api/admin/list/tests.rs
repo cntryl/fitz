@@ -12,10 +12,13 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn current_epoch_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time")
-        .as_millis() as u64
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
 }
 
 fn runtime_with_preloaded_schedule() -> Arc<Runtime> {
@@ -257,8 +260,8 @@ fn should_collect_queue_rollups_given_queue_rows() {
     assert_eq!(realms.realms[0].status, "falling_behind");
     assert_eq!(areas.areas[0].queue_count, 1);
     assert_eq!(resources.resources[0].family_count, 2);
-    assert_eq!(resources.resources[0].in_rate_per_second, 2.5);
-    assert_eq!(resources.resources[0].out_rate_per_second, 1.5);
+    assert!((resources.resources[0].in_rate_per_second - 2.5).abs() < f64::EPSILON);
+    assert!((resources.resources[0].out_rate_per_second - 1.5).abs() < f64::EPSILON);
 }
 
 #[test]

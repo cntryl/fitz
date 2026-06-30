@@ -1,7 +1,6 @@
 use super::super::{
-    kv_byte_value, matches_family, troubleshooting, AdminStreamReadRequest, Arc, Infallible,
-    ResourcePath, Response, RouteFamily, Runtime, StreamAdminRecord, StreamRecordsResponse,
-    StreamSearchRequest,
+    kv_byte_value, matches_family, troubleshooting, AdminStreamReadRequest, ResourcePath, Response,
+    RouteFamily, Runtime, StreamAdminRecord, StreamRecordsResponse, StreamSearchRequest,
 };
 
 fn stream_read_item_to_admin_record(
@@ -34,22 +33,22 @@ fn stream_read_item_to_admin_record(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn stream_records_for_resource(
-    runtime: Arc<Runtime>,
+pub fn stream_records_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: u64,
     from_offset: u64,
     limit: usize,
-    discriminator: Option<String>,
-) -> Result<Response, Infallible> {
+    discriminator: Option<&str>,
+) -> Response {
     match runtime.stream_read_resource_records(AdminStreamReadRequest {
         family: RouteFamily::new(family),
         realm: path.realm,
         area: path.area,
         resource: path.resource,
         from_offset,
-        limit: limit as u64,
-        discriminator,
+        limit: u64::try_from(limit).unwrap_or(u64::MAX),
+        discriminator: discriminator.map(ToOwned::to_owned),
     }) {
         Ok((items, cursor)) => {
             let records = items
@@ -67,17 +66,13 @@ pub async fn stream_records_for_resource(
                 records,
             })
         }
-        Err(error) => Ok(crate::api::admin::error_response(
-            hyper::StatusCode::SERVICE_UNAVAILABLE,
-            &error,
-        )),
+        Err(error) => {
+            crate::api::admin::error_response(hyper::StatusCode::SERVICE_UNAVAILABLE, &error)
+        }
     }
 }
 
-pub(crate) async fn stream_search(
-    runtime: Arc<Runtime>,
-    request: StreamSearchRequest,
-) -> Result<Response, Infallible> {
+pub(crate) fn stream_search(runtime: &Runtime, request: &StreamSearchRequest) -> Response {
     let mut remaining = request.limit;
     let mut has_more = false;
     let mut records = Vec::new();
@@ -115,16 +110,16 @@ pub(crate) async fn stream_search(
             area: &stream.area,
             resource: &stream.resource,
             from_offset: request.from_offset,
-            limit: remaining as u64,
+            limit: u64::try_from(remaining).unwrap_or(u64::MAX),
             discriminator: request.discriminator.clone(),
         });
         let (items, cursor) = match response {
             Ok(value) => value,
             Err(error) => {
-                return Ok(crate::api::admin::error_response(
+                return crate::api::admin::error_response(
                     hyper::StatusCode::SERVICE_UNAVAILABLE,
                     &error,
-                ));
+                );
             }
         };
         has_more = has_more || cursor.has_more;
@@ -141,9 +136,9 @@ pub(crate) async fn stream_search(
 
     crate::api::admin::json_response(StreamRecordsResponse {
         route_family: request.family,
-        realm: request.realm,
-        area: request.area,
-        resource: request.resource,
+        realm: request.realm.clone(),
+        area: request.area.clone(),
+        resource: request.resource.clone(),
         from_offset: request.from_offset,
         limit: request.limit,
         has_more,
@@ -156,12 +151,13 @@ pub(crate) async fn stream_search(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn stream_events_for_resource(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn stream_events_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: Option<u64>,
     limit: usize,
-) -> Result<Response, Infallible> {
+) -> Response {
     let streams = runtime
         .stream_list_streams(Some(path.realm))
         .into_iter()

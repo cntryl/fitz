@@ -1,10 +1,17 @@
 use super::super::{
     build_resource_timeline, matches_resource_path, parse_rfc3339, rfc3339,
     schedule_resource_diagnostics, timeline_candidate, DiagnosisLabel, DiagnosticSnapshot,
-    ResourcePath, ResourceTimeline, ResourceTimelineEvent, ResourceTimelineKind,
+    ResourcePath, ResourceTimeline, ResourceTimelineEvent, ResourceTimelineKind, TimelineCandidate,
 };
 use crate::api::admin::list::ScheduleInfo;
 use chrono::{DateTime, Utc};
+
+type ScheduleTimelineSummary = (
+    bool,
+    Option<DateTime<Utc>>,
+    Option<DateTime<Utc>>,
+    Vec<TimelineCandidate>,
+);
 
 #[inline]
 fn i64_to_u64_non_negative(seconds: i64) -> u64 {
@@ -33,9 +40,7 @@ pub(crate) fn schedule_resource_timeline(
     let now = Utc::now();
     let matching_schedules: Vec<_> = schedules
         .iter()
-        .filter(|schedule| {
-            matches_resource_path(path, &schedule.realm, &schedule.area, &schedule.resource)
-        })
+        .filter(|schedule| matches_schedule(path, schedule))
         .collect();
     if matching_schedules.is_empty() {
         return ResourceTimeline::new(
@@ -48,16 +53,62 @@ pub(crate) fn schedule_resource_timeline(
         );
     }
 
-    let mut candidates = Vec::new();
+    let (enabled, latest_run_at, latest_next_run_at, mut candidates) =
+        summarize_schedule_timeline(path, now, &matching_schedules);
+
+    let latest_next_run = latest_next_run_at.map(rfc3339);
+    let latest_last_run = latest_run_at.map(rfc3339);
+    let diagnostics = schedule_resource_diagnostics(
+        enabled,
+        latest_next_run.as_deref(),
+        latest_last_run.as_deref(),
+        matching_schedules
+            .iter()
+            .map(|schedule| schedule.executions_total)
+            .sum(),
+    );
+    let age_seconds = diagnostics.age_seconds;
+    let overdue = diagnostics.diagnosis_label() == DiagnosisLabel::StaleHandoff;
+    if let Some(event) = build_schedule_summary_event(
+        now,
+        overdue,
+        latest_next_run_at,
+        pending_fire_claims,
+        pending_ack_retries,
+        oldest_pending_claim_age_seconds,
+        notify_failures,
+        ack_failures,
+        overdue_normalizations,
+        pending_claims_expired_total,
+        pending_claim_cleanup_failures_total,
+        path,
+        &matching_schedules,
+        age_seconds,
+        enabled,
+    ) {
+        candidates.push(event);
+    }
+
+    build_resource_timeline("schedule", path, None, diagnostics, limit, candidates)
+}
+
+fn matches_schedule(path: &ResourcePath<'_>, schedule: &ScheduleInfo) -> bool {
+    matches_resource_path(path, &schedule.realm, &schedule.area, &schedule.resource)
+}
+
+fn summarize_schedule_timeline(
+    path: &ResourcePath<'_>,
+    now: DateTime<Utc>,
+    matching_schedules: &[&ScheduleInfo],
+) -> ScheduleTimelineSummary {
     let mut enabled = false;
     let mut latest_run_at: Option<DateTime<Utc>> = None;
     let mut latest_next_run_at: Option<DateTime<Utc>> = None;
-
-    for schedule in &matching_schedules {
+    let mut candidates = Vec::new();
+    for schedule in matching_schedules {
         enabled |= schedule.enabled;
         let next_run = parse_rfc3339(&schedule.next_run);
         let last_run = schedule.last_run.as_deref().and_then(parse_rfc3339);
-
         if let Some(last_run) = last_run {
             latest_run_at = Some(match latest_run_at {
                 Some(current) => current.max(last_run),
@@ -87,7 +138,6 @@ pub(crate) fn schedule_resource_timeline(
                 ),
             ));
         }
-
         if let Some(next_run) = next_run {
             latest_next_run_at = Some(match latest_next_run_at {
                 Some(current) => current.max(next_run),
@@ -95,127 +145,161 @@ pub(crate) fn schedule_resource_timeline(
             });
         }
     }
+    (enabled, latest_run_at, latest_next_run_at, candidates)
+}
 
-    let latest_next_run = latest_next_run_at.map(rfc3339);
-    let latest_last_run = latest_run_at.map(rfc3339);
-    let diagnostics = schedule_resource_diagnostics(
-        enabled,
-        latest_next_run.as_deref(),
-        latest_last_run.as_deref(),
-        matching_schedules
-            .iter()
-            .map(|schedule| schedule.executions_total)
-            .sum(),
-    );
-    let age_seconds = diagnostics.age_seconds;
-    let overdue = diagnostics.diagnosis_label() == DiagnosisLabel::StaleHandoff;
-    if enabled
+#[allow(clippy::too_many_arguments)]
+fn build_schedule_summary_event(
+    now: DateTime<Utc>,
+    overdue: bool,
+    latest_next_run_at: Option<DateTime<Utc>>,
+    pending_fire_claims: usize,
+    pending_ack_retries: usize,
+    oldest_pending_claim_age_seconds: u64,
+    notify_failures: u64,
+    ack_failures: u64,
+    overdue_normalizations: u64,
+    pending_claims_expired_total: u64,
+    pending_claim_cleanup_failures_total: u64,
+    path: &ResourcePath<'_>,
+    matching_schedules: &[&ScheduleInfo],
+    age_seconds: Option<u64>,
+    enabled: bool,
+) -> Option<TimelineCandidate> {
+    if !(enabled
         || overdue
         || pending_fire_claims > 0
         || notify_failures > 0
         || ack_failures > 0
         || pending_claims_expired_total > 0
-        || pending_claim_cleanup_failures_total > 0
+        || pending_claim_cleanup_failures_total > 0)
     {
-        let mut summary = if overdue {
-            match latest_next_run_at {
-                Some(next_run) => format!(
-                    "{} overdue by {}s",
-                    matching_schedules
-                        .first()
-                        .map_or("schedule", |schedule| schedule.operation.as_str()),
-                    (now - next_run).num_seconds().max(0)
-                ),
-                None => format!(
-                    "{} is overdue",
-                    matching_schedules
-                        .first()
-                        .map_or("schedule", |schedule| schedule.operation.as_str())
-                ),
-            }
-        } else if let Some(next_run) = latest_next_run_at {
-            format!(
-                "{} next runs at {}",
-                matching_schedules
-                    .first()
-                    .map_or("schedule", |schedule| schedule.operation.as_str()),
-                rfc3339(next_run)
-            )
-        } else {
-            format!(
-                "{} enabled with {} execution(s)",
-                matching_schedules
-                    .first()
-                    .map_or("schedule", |schedule| schedule.operation.as_str()),
-                matching_schedules
-                    .iter()
-                    .map(|schedule| schedule.executions_total)
-                    .sum::<u64>()
-            )
-        };
-
-        let mut pressure_notes = Vec::new();
-        if pending_fire_claims > 0 {
-            pressure_notes.push(format!("{pending_fire_claims} pending fire claim(s)"));
-        }
-        if pending_ack_retries > 0 {
-            pressure_notes.push(format!("{pending_ack_retries} pending ack retry(s)"));
-        }
-        if oldest_pending_claim_age_seconds > 0 {
-            pressure_notes.push(format!(
-                "oldest pending claim {oldest_pending_claim_age_seconds}s old"
-            ));
-        }
-        if notify_failures > 0 {
-            pressure_notes.push(format!("{notify_failures} notify failure(s)"));
-        }
-        if ack_failures > 0 {
-            pressure_notes.push(format!("{ack_failures} ack failure(s)"));
-        }
-        if overdue_normalizations > 0 {
-            pressure_notes.push(format!("{overdue_normalizations} overdue normalization(s)"));
-        }
-        if pending_claims_expired_total > 0 {
-            pressure_notes.push(format!(
-                "{pending_claims_expired_total} expired pending claim(s)"
-            ));
-        }
-        if pending_claim_cleanup_failures_total > 0 {
-            pressure_notes.push(format!(
-                "{pending_claim_cleanup_failures_total} pending claim cleanup failure(s)"
-            ));
-        }
-        if !pressure_notes.is_empty() {
-            summary.push_str("; ");
-            summary.push_str(&pressure_notes.join(", "));
-        }
-
-        candidates.push(timeline_candidate(
-            now,
-            1,
-            ResourceTimelineEvent::new(
-                "schedule",
-                if overdue {
-                    ResourceTimelineKind::StateFlip
-                } else {
-                    ResourceTimelineKind::Observation
-                },
-                now,
-                summary,
-                path,
-                None,
-                matching_schedules
-                    .first()
-                    .map(|schedule| schedule.operation.clone()),
-                age_seconds,
-                None,
-                None,
-                None,
-                None,
-                Some(matching_schedules.len()),
-            ),
-        ));
+        return None;
     }
 
-    build_resource_timeline("schedule", path, None, diagnostics, limit, candidates)
+    let operation = matching_schedules
+        .first()
+        .map_or("schedule", |schedule| schedule.operation.as_str());
+    let mut summary = summarize_schedule_state(
+        now,
+        overdue,
+        latest_next_run_at,
+        operation,
+        matching_schedules,
+    );
+    let pressure_notes = build_schedule_pressure_notes(
+        pending_fire_claims,
+        pending_ack_retries,
+        oldest_pending_claim_age_seconds,
+        notify_failures,
+        ack_failures,
+        overdue_normalizations,
+        pending_claims_expired_total,
+        pending_claim_cleanup_failures_total,
+    );
+    if !pressure_notes.is_empty() {
+        summary.push_str("; ");
+        summary.push_str(&pressure_notes.join(", "));
+    }
+
+    Some(timeline_candidate(
+        now,
+        1,
+        ResourceTimelineEvent::new(
+            "schedule",
+            if overdue {
+                ResourceTimelineKind::StateFlip
+            } else {
+                ResourceTimelineKind::Observation
+            },
+            now,
+            summary,
+            path,
+            None,
+            matching_schedules
+                .first()
+                .map(|schedule| schedule.operation.clone()),
+            age_seconds,
+            None,
+            None,
+            None,
+            None,
+            Some(matching_schedules.len()),
+        ),
+    ))
+}
+
+fn summarize_schedule_state(
+    now: DateTime<Utc>,
+    overdue: bool,
+    latest_next_run_at: Option<DateTime<Utc>>,
+    operation: &str,
+    matching_schedules: &[&ScheduleInfo],
+) -> String {
+    if overdue {
+        return match latest_next_run_at {
+            Some(next_run) => format!(
+                "{operation} overdue by {}s",
+                (now - next_run).num_seconds().max(0)
+            ),
+            None => format!("{operation} is overdue"),
+        };
+    }
+
+    if let Some(next_run) = latest_next_run_at {
+        return format!("{operation} next runs at {}", rfc3339(next_run));
+    }
+
+    format!(
+        "{operation} enabled with {} execution(s)",
+        matching_schedules
+            .iter()
+            .map(|schedule| schedule.executions_total)
+            .sum::<u64>()
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_schedule_pressure_notes(
+    pending_fire_claims: usize,
+    pending_ack_retries: usize,
+    oldest_pending_claim_age_seconds: u64,
+    notify_failures: u64,
+    ack_failures: u64,
+    overdue_normalizations: u64,
+    pending_claims_expired_total: u64,
+    pending_claim_cleanup_failures_total: u64,
+) -> Vec<String> {
+    let mut pressure_notes = Vec::new();
+    if pending_fire_claims > 0 {
+        pressure_notes.push(format!("{pending_fire_claims} pending fire claim(s)"));
+    }
+    if pending_ack_retries > 0 {
+        pressure_notes.push(format!("{pending_ack_retries} pending ack retry(s)"));
+    }
+    if oldest_pending_claim_age_seconds > 0 {
+        pressure_notes.push(format!(
+            "oldest pending claim {oldest_pending_claim_age_seconds}s old"
+        ));
+    }
+    if notify_failures > 0 {
+        pressure_notes.push(format!("{notify_failures} notify failure(s)"));
+    }
+    if ack_failures > 0 {
+        pressure_notes.push(format!("{ack_failures} ack failure(s)"));
+    }
+    if overdue_normalizations > 0 {
+        pressure_notes.push(format!("{overdue_normalizations} overdue normalization(s)"));
+    }
+    if pending_claims_expired_total > 0 {
+        pressure_notes.push(format!(
+            "{pending_claims_expired_total} expired pending claim(s)"
+        ));
+    }
+    if pending_claim_cleanup_failures_total > 0 {
+        pressure_notes.push(format!(
+            "{pending_claim_cleanup_failures_total} pending claim cleanup failure(s)"
+        ));
+    }
+    pressure_notes
 }

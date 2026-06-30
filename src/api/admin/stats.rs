@@ -13,8 +13,6 @@ use super::troubleshooting;
 use crate::api::http::Response;
 use crate::boot::Runtime;
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalStats {
@@ -383,20 +381,17 @@ pub(crate) fn build_global_troubleshooting(
 }
 
 /// Handle /admin/stats endpoint
-pub async fn handle_global_stats(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(build_global_stats(runtime.as_ref()))
+pub fn handle_global_stats(runtime: &Runtime) -> Response {
+    crate::api::admin::json_response(build_global_stats(runtime))
 }
 
 /// Handle /admin/troubleshooting endpoint
-pub async fn handle_global_troubleshooting(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
-    super::json_response(build_global_troubleshooting(runtime.as_ref()))
+pub fn handle_global_troubleshooting(runtime: &Runtime) -> Response {
+    super::json_response(build_global_troubleshooting(runtime))
 }
 
 /// Handle domain-specific stats endpoints
-pub async fn handle_domain_stats(
-    runtime: Arc<Runtime>,
-    domain: &str,
-) -> Result<Response, Infallible> {
+pub fn handle_domain_stats(runtime: &Runtime, domain: &str) -> Response {
     let troubleshooting::TroubleshootingSnapshot {
         kv,
         stream,
@@ -406,66 +401,63 @@ pub async fn handle_domain_stats(
         lease,
         schedule,
         ..
-    } = troubleshooting::build_troubleshooting_snapshot(runtime.as_ref());
+    } = troubleshooting::build_troubleshooting_snapshot(runtime);
     match domain {
-        "kv" => handle_kv_stats(runtime, kv).await,
-        "stream" => handle_stream_stats(runtime, stream).await,
-        "notice" => handle_notice_stats(runtime, notice).await,
-        "queue" => handle_queue_stats(runtime, queue).await,
-        "rpc" => handle_rpc_stats(runtime, rpc).await,
-        "lease" => handle_lease_stats(runtime, lease).await,
-        "schedule" => handle_schedule_stats(runtime, schedule).await,
-        _ => Ok(crate::api::admin::not_found()),
+        "kv" => handle_kv_stats(runtime, kv),
+        "stream" => handle_stream_stats(runtime, stream),
+        "notice" => handle_notice_stats(runtime, notice),
+        "queue" => handle_queue_stats(runtime, queue),
+        "rpc" => handle_rpc_stats(runtime, rpc),
+        "lease" => handle_lease_stats(runtime, lease),
+        "schedule" => handle_schedule_stats(runtime, schedule),
+        _ => crate::api::admin::not_found(),
     }
 }
 
-async fn handle_kv_stats(
-    runtime: Arc<Runtime>,
-    diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(build_kv_stats(runtime.as_ref(), diagnostics))
+fn handle_kv_stats(runtime: &Runtime, diagnostics: troubleshooting::DomainDiagnostics) -> Response {
+    crate::api::admin::json_response(build_kv_stats(runtime, diagnostics))
 }
 
-async fn handle_stream_stats(
-    runtime: Arc<Runtime>,
+fn handle_stream_stats(
+    runtime: &Runtime,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(build_stream_stats(runtime.as_ref(), diagnostics))
+) -> Response {
+    crate::api::admin::json_response(build_stream_stats(runtime, diagnostics))
 }
 
-async fn handle_notice_stats(
-    runtime: Arc<Runtime>,
+fn handle_notice_stats(
+    runtime: &Runtime,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(build_notice_stats(runtime.as_ref(), diagnostics))
+) -> Response {
+    crate::api::admin::json_response(build_notice_stats(runtime, diagnostics))
 }
 
-async fn handle_queue_stats(
-    runtime: Arc<Runtime>,
+fn handle_queue_stats(
+    runtime: &Runtime,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(build_queue_stats(runtime.as_ref(), diagnostics))
+) -> Response {
+    crate::api::admin::json_response(build_queue_stats(runtime, diagnostics))
 }
 
-async fn handle_rpc_stats(
-    runtime: Arc<Runtime>,
+fn handle_rpc_stats(
+    runtime: &Runtime,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(build_rpc_stats(runtime.as_ref(), diagnostics))
+) -> Response {
+    crate::api::admin::json_response(build_rpc_stats(runtime, diagnostics))
 }
 
-async fn handle_lease_stats(
-    runtime: Arc<Runtime>,
+fn handle_lease_stats(
+    runtime: &Runtime,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(build_lease_stats(runtime.as_ref(), diagnostics))
+) -> Response {
+    crate::api::admin::json_response(build_lease_stats(runtime, diagnostics))
 }
 
-async fn handle_schedule_stats(
-    runtime: Arc<Runtime>,
+fn handle_schedule_stats(
+    runtime: &Runtime,
     diagnostics: troubleshooting::DomainDiagnostics,
-) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(build_schedule_stats(runtime.as_ref(), diagnostics))
+) -> Response {
+    crate::api::admin::json_response(build_schedule_stats(runtime, diagnostics))
 }
 
 /// Parse realm filter from query string

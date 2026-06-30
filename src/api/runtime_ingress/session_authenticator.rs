@@ -1,4 +1,7 @@
-use super::*;
+use super::{debug, warn, Bytes, ChannelId, IngressDecision, RuntimeIngress, SessionFrame};
+use crate::session::{SessionInfo, SessionPermissions};
+use std::sync::Arc;
+use tracing::error;
 
 pub(super) struct SessionAuthenticator<'a> {
     ingress: &'a RuntimeIngress,
@@ -71,17 +74,16 @@ impl SessionAuthenticator<'_> {
     }
 
     fn needs_authentication(&self, session_id: u64) -> Result<bool, IngressDecision> {
-        match self.ingress.sessions.get(&session_id) {
-            Some(entry) => Ok(!entry.authenticated),
-            None => {
-                warn!(
-                    session_id = session_id,
-                    "Ingress: frame for unknown session"
-                );
-                Err(IngressDecision::Close(format!(
-                    "unknown session: {session_id}"
-                )))
-            }
+        if let Some(entry) = self.ingress.sessions.get(&session_id) {
+            Ok(!entry.authenticated)
+        } else {
+            warn!(
+                session_id = session_id,
+                "Ingress: frame for unknown session"
+            );
+            Err(IngressDecision::Close(format!(
+                "unknown session: {session_id}"
+            )))
         }
     }
 

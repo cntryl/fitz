@@ -284,6 +284,7 @@ fn build_lease_hotspot(
     )
 }
 
+#[allow(clippy::too_many_lines)]
 fn build_schedule_hotspot(
     realm: &str,
     area: &str,

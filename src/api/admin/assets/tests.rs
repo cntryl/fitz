@@ -38,10 +38,10 @@ async fn serve(
     if_none_match: Option<&str>,
 ) -> Response {
     let server = AssetServer::new(root);
-    serve_with_server(&server, path, accept_encoding, if_none_match).await
+    serve_with_server(&server, path, accept_encoding, if_none_match)
 }
 
-async fn serve_with_server(
+fn serve_with_server(
     server: &AssetServer,
     path: &str,
     accept_encoding: Option<&str>,
@@ -243,8 +243,8 @@ async fn should_reuse_cached_entry_given_unchanged_asset_metadata() {
     server.reset_entry_build_count();
 
     // Act
-    let first = serve_with_server(&server, "/assets/app.js", Some("gzip"), None).await;
-    let second = serve_with_server(&server, "/assets/app.js", Some("gzip"), None).await;
+    let first = serve_with_server(&server, "/assets/app.js", Some("gzip"), None);
+    let second = serve_with_server(&server, "/assets/app.js", Some("gzip"), None);
 
     // Assert
     assert_eq!(first.status(), StatusCode::OK);
@@ -258,7 +258,7 @@ async fn should_refresh_cached_entry_given_changed_asset_metadata() {
     let root = test_root();
     let server = AssetServer::new(root.path());
     server.reset_entry_build_count();
-    let initial = serve_with_server(&server, "/assets/app.js", None, None).await;
+    let initial = serve_with_server(&server, "/assets/app.js", None, None);
     let initial_etag = initial
         .headers()
         .get(header::ETAG)
@@ -273,7 +273,7 @@ async fn should_refresh_cached_entry_given_changed_asset_metadata() {
     );
 
     // Act
-    let response = serve_with_server(&server, "/assets/app.js", None, None).await;
+    let response = serve_with_server(&server, "/assets/app.js", None, None);
 
     // Assert
     assert_eq!(response.status(), StatusCode::OK);

@@ -1,6 +1,6 @@
 use super::{
     collect_distinct_entries, collect_resource_refs, matches_family, parse_flexible_route,
-    parse_rpc_operation, Arc, AreaCollection, AreaEntry, Infallible, IntoResourceRef, KvByteValue,
+    parse_rpc_operation, AreaCollection, AreaEntry, Infallible, IntoResourceRef, KvByteValue,
     KvCommittedPair, KvCommittedValueResponse, KvPrefixScanResponse, KvRowsResponse,
     KvTransactionsList, OperationCollection, OperationEntry, RealmCollection, RealmEntry,
     ResourceCollection, ResourceEntry, ResourcePath, ResourceRef, Response, Runtime, SessionsList,
@@ -230,7 +230,8 @@ pub fn rpc_operations(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn list_sessions(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
+#[must_use]
+pub fn list_sessions(runtime: &Runtime) -> Response {
     let sessions = runtime.list_sessions();
     crate::api::admin::json_response(SessionsList { sessions })
 }
@@ -240,11 +241,12 @@ pub async fn list_sessions(runtime: Arc<Runtime>) -> Result<Response, Infallible
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn kv_transactions_for_resource(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn kv_transactions_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: Option<u64>,
-) -> Result<Response, Infallible> {
+) -> Response {
     let transactions = runtime
         .kv_list_transactions(Some(path.realm))
         .into_iter()
@@ -261,28 +263,28 @@ pub async fn kv_transactions_for_resource(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn kv_committed_value_for_resource(
-    runtime: Arc<Runtime>,
+pub fn kv_committed_value_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: u64,
-    key: Vec<u8>,
+    key: &[u8],
 ) -> Result<Response, Infallible> {
     match runtime.kv_get_committed_value(
         crate::runtime::routing::RouteFamily::new(family),
         path.realm,
         path.area,
         path.resource,
-        &key,
+        key,
     ) {
-        Ok(value) => crate::api::admin::json_response(KvCommittedValueResponse {
+        Ok(value) => Ok(crate::api::admin::json_response(KvCommittedValueResponse {
             route_family: family,
             realm: path.realm.to_string(),
             area: path.area.to_string(),
             resource: path.resource.to_string(),
-            key: kv_byte_value(&key),
+            key: kv_byte_value(key),
             found: value.is_some(),
             value: value.as_deref().map(kv_byte_value),
-        }),
+        })),
         Err(error) => Ok(kv_storage_error_response(&error)),
     }
 }
@@ -292,11 +294,12 @@ pub async fn kv_committed_value_for_resource(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn kv_prefix_scan_for_resource(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn kv_prefix_scan_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: u64,
-    prefix: Vec<u8>,
+    prefix: &[u8],
     limit: usize,
 ) -> Result<Response, Infallible> {
     match runtime.kv_scan_committed_prefix(
@@ -304,15 +307,15 @@ pub async fn kv_prefix_scan_for_resource(
         path.realm,
         path.area,
         path.resource,
-        &prefix,
+        prefix,
         limit,
     ) {
-        Ok((items, has_more)) => crate::api::admin::json_response(KvPrefixScanResponse {
+        Ok((items, has_more)) => Ok(crate::api::admin::json_response(KvPrefixScanResponse {
             route_family: family,
             realm: path.realm.to_string(),
             area: path.area.to_string(),
             resource: path.resource.to_string(),
-            prefix: kv_byte_value(&prefix),
+            prefix: kv_byte_value(prefix),
             limit,
             has_more,
             items: items
@@ -322,7 +325,7 @@ pub async fn kv_prefix_scan_for_resource(
                     value: kv_byte_value(&value),
                 })
                 .collect(),
-        }),
+        })),
         Err(error) => Ok(kv_storage_error_response(&error)),
     }
 }
@@ -332,12 +335,13 @@ pub async fn kv_prefix_scan_for_resource(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
-pub async fn kv_rows_for_resource(
-    runtime: Arc<Runtime>,
+#[must_use]
+pub fn kv_rows_for_resource(
+    runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: u64,
-    starts_with: Vec<u8>,
-    cursor: Option<Vec<u8>>,
+    starts_with: &[u8],
+    cursor: Option<&[u8]>,
     limit: usize,
 ) -> Result<Response, Infallible> {
     match runtime.kv_scan_committed_rows(AdminKvRowsRequest {
@@ -345,28 +349,30 @@ pub async fn kv_rows_for_resource(
         realm: path.realm,
         area: path.area,
         resource: path.resource,
-        starts_with: &starts_with,
-        cursor: cursor.as_deref(),
+        starts_with,
+        cursor,
         limit,
     }) {
-        Ok((items, next_cursor, has_more)) => crate::api::admin::json_response(KvRowsResponse {
-            route_family: family,
-            realm: path.realm.to_string(),
-            area: path.area.to_string(),
-            resource: path.resource.to_string(),
-            starts_with: kv_byte_value(&starts_with),
-            limit,
-            next_cursor: next_cursor
-                .map(|cursor| base64::engine::general_purpose::STANDARD.encode(cursor)),
-            has_more,
-            items: items
-                .into_iter()
-                .map(|(key, value)| KvCommittedPair {
-                    key: kv_byte_value(&key),
-                    value: kv_byte_value(&value),
-                })
-                .collect(),
-        }),
+        Ok((items, next_cursor, has_more)) => {
+            Ok(crate::api::admin::json_response(KvRowsResponse {
+                route_family: family,
+                realm: path.realm.to_string(),
+                area: path.area.to_string(),
+                resource: path.resource.to_string(),
+                starts_with: kv_byte_value(starts_with),
+                limit,
+                next_cursor: next_cursor
+                    .map(|cursor| base64::engine::general_purpose::STANDARD.encode(cursor)),
+                has_more,
+                items: items
+                    .into_iter()
+                    .map(|(key, value)| KvCommittedPair {
+                        key: kv_byte_value(&key),
+                        value: kv_byte_value(&value),
+                    })
+                    .collect(),
+            }))
+        }
         Err(error) => Ok(kv_storage_error_response(&error)),
     }
 }

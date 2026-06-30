@@ -108,7 +108,7 @@ fn websocket_origin_allowed<B>(
     };
     if origin_values.next().is_some() {
         return false;
-    };
+    }
     let Some(origin) = origin_value
         .to_str()
         .ok()
@@ -200,7 +200,61 @@ where
         tracing::debug!(session_id = ws_session_id, "WS outbound writer task ended");
     });
 
-    let result = loop {
+    let result = process_websocket_frames(
+        &mut ws_receiver,
+        WebSocketFrameContext {
+            session: &mut session,
+            config: &config,
+            ingress: ingress.as_ref(),
+            runtime: &runtime,
+            router: &router,
+            session_id,
+            sink: &sink,
+            inbox_route: &mut inbox_route,
+        },
+    )
+    .await;
+
+    writer_handle.abort();
+
+    let close_reason = websocket_close_reason(&result);
+    ingress.on_close(session_id, close_reason).await;
+    router.unregister(&inbox_route);
+
+    drop(sink);
+    drop(outbound_tx);
+    if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(1), writer_handle).await {
+        tracing::warn!(session_id = session_id, error = %e, "WS writer task did not terminate in time");
+    }
+
+    if result.is_ok() {
+        info!("WebSocket connection closed, session {}", session_id);
+    }
+    result
+}
+
+struct WebSocketFrameContext<'a> {
+    session: &'a mut Session,
+    config: &'a IngressConfig,
+    ingress: &'a dyn Ingress,
+    runtime: &'a Arc<crate::boot::Runtime>,
+    router: &'a Arc<crate::runtime::Router>,
+    session_id: u64,
+    sink: &'a Arc<crate::api::outbound::SessionOutboundSink>,
+    inbox_route: &'a mut crate::runtime::routing::RouteAddress,
+}
+
+async fn process_websocket_frames<S>(
+    ws_receiver: &mut futures_util::stream::SplitStream<hyper_tungstenite::WebSocketStream<S>>,
+    context: WebSocketFrameContext<'_>,
+) -> Result<(), String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use futures_util::StreamExt;
+    use hyper_tungstenite::tungstenite::Message;
+
+    loop {
         let Some(msg_result) = ws_receiver.next().await else {
             break Ok(());
         };
@@ -208,101 +262,83 @@ where
         match msg_result {
             Ok(Message::Binary(data)) => {
                 let frame = data;
-                runtime.increment_messages_received();
-                ingress.record_frame_received(session_id);
+                context.runtime.increment_messages_received();
+                context.ingress.record_frame_received(context.session_id);
                 tracing::debug!(
-                    session_id = session_id,
+                    session_id = context.session_id,
                     frame_len = frame.len(),
                     "WS inbound: received binary frame"
                 );
 
-                if frame.len() > config.max_frame_size {
+                if frame.len() > context.config.max_frame_size {
                     let reason = format!(
                         "frame too large: {} > {}",
                         frame.len(),
-                        config.max_frame_size
+                        context.config.max_frame_size
                     );
                     tracing::warn!(
-                        session_id = session_id,
+                        session_id = context.session_id,
                         frame_len = frame.len(),
-                        max = config.max_frame_size,
+                        max = context.config.max_frame_size,
                         "WS frame too large"
                     );
                     break Err(reason);
                 }
 
                 if let Err(error) = crate::api::session::process_session_frame(
-                    &mut session,
+                    context.session,
                     frame,
-                    ingress.as_ref(),
+                    context.ingress,
                 )
                 .await
                 {
                     let reason = websocket_session_frame_error_reason(&error);
-                    tracing::error!(session_id = session_id, error = %reason, "WS session frame processing error");
+                    tracing::error!(session_id = context.session_id, error = %reason, "WS session frame processing error");
                     break Err(reason);
                 }
 
-                if let Some(updated_route_family) = ingress.get_route_family(session_id) {
-                    if updated_route_family != *inbox_route.family() {
-                        router.unregister(&inbox_route);
-                        inbox_route = crate::runtime::routing::session_inbox_address(
+                if let Some(updated_route_family) =
+                    context.ingress.get_route_family(context.session_id)
+                {
+                    if updated_route_family != *context.inbox_route.family() {
+                        context.router.unregister(context.inbox_route);
+                        *context.inbox_route = crate::runtime::routing::session_inbox_address(
                             updated_route_family,
-                            session_id,
+                            context.session_id,
                         );
-                        router.register(
-                            inbox_route.clone(),
-                            sink.clone() as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
+                        context.router.register(
+                            context.inbox_route.clone(),
+                            context.sink.clone()
+                                as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
                         );
                     }
                 }
                 tracing::trace!(
-                    session_id = session_id,
+                    session_id = context.session_id,
                     "WS inbound frame processed successfully"
                 );
             }
             Ok(Message::Close(_)) => {
-                tracing::debug!(session_id = session_id, "WS received Close frame");
+                tracing::debug!(session_id = context.session_id, "WS received Close frame");
                 break Ok(());
             }
             Ok(Message::Ping(_) | Message::Pong(_) | Message::Text(_)) => {
                 tracing::trace!(
-                    session_id = session_id,
+                    session_id = context.session_id,
                     "WS received non-binary frame (ignored)"
                 );
             }
             Ok(_) => {}
             Err(e) => {
                 if is_normal_websocket_disconnect(&e) {
-                    tracing::info!(session_id = session_id, error = %e, "WS connection terminated by client without a close handshake");
+                    tracing::info!(session_id = context.session_id, error = %e, "WS connection terminated by client without a close handshake");
                     break Ok(());
                 }
-                tracing::error!(session_id = session_id, error = %e, "WS session error");
+                tracing::error!(session_id = context.session_id, error = %e, "WS session error");
                 break Err(format!("WebSocket error: {e}"));
             }
         }
-    };
-
-    let close_reason = websocket_close_reason(&result);
-    ingress.on_close(session_id, close_reason).await;
-    router.unregister(&inbox_route);
-
-    // Drop the sender-side of the outbound channel so the writer task sees EOF
-    // and stops. Then wait up to 1 s for it to finish flushing remaining frames.
-    drop(sink);
-    drop(outbound_tx);
-    if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(1), writer_handle).await {
-        tracing::warn!(
-            session_id = session_id,
-            error = %e,
-            "WS writer task did not terminate in time"
-        );
     }
-
-    if result.is_ok() {
-        info!("WebSocket connection closed, session {}", session_id);
-    }
-    result
 }
 
 #[cfg(test)]

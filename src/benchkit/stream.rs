@@ -17,6 +17,10 @@ use std::sync::Arc;
 ///
 /// # Returns
 /// StreamActor ready for benchmarking
+///
+/// # Panics
+///
+/// Panics when the benchmark stream actor cannot be created.
 #[must_use]
 pub fn create_bench_stream_actor(realm: &str, area: &str, resource: &str) -> StreamActor {
     create_bench_stream_actor_with_layout(
@@ -28,6 +32,9 @@ pub fn create_bench_stream_actor(realm: &str, area: &str, resource: &str) -> Str
 }
 
 #[must_use]
+/// # Panics
+///
+/// Panics when the benchmark stream actor cannot be created.
 pub fn create_bench_stream_actor_with_layout(
     realm: &str,
     area: &str,
@@ -60,6 +67,10 @@ pub fn create_bench_stream_actor_with_layout(
 /// # Returns
 /// Tuple of (StreamActor, TempDir). The TempDir must be kept alive for the
 /// lifetime of the actor, otherwise the directory will be deleted.
+///
+/// # Panics
+///
+/// Panics when the local benchmark stream actor cannot be created.
 #[must_use]
 pub fn create_local_bench_stream_actor(
     realm: &str,
@@ -75,6 +86,9 @@ pub fn create_local_bench_stream_actor(
 }
 
 #[must_use]
+/// # Panics
+///
+/// Panics when the local benchmark stream actor cannot be created.
 pub fn create_local_bench_stream_actor_with_layout(
     realm: &str,
     area: &str,
