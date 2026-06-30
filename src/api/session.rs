@@ -17,7 +17,7 @@ pub async fn process_session_frame(
     frame: Bytes,
     ingress: &dyn Ingress,
 ) -> Result<(), SessionError> {
-    session.push_frame(frame);
+    session.push_frame(&frame);
 
     while let Some(message) = session.next_message()? {
         let channel = message.channel;

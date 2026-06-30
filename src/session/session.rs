@@ -21,6 +21,11 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 use tracing::{debug, error, trace, warn};
 
+#[inline]
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
 /// Unique session identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SessionId(pub u64);
@@ -110,7 +115,7 @@ impl SessionMetadata {
 
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&str> {
-        self.properties.get(key).map(|s| s.as_str())
+        self.properties.get(key).map(String::as_str)
     }
 
     #[must_use]
@@ -349,7 +354,7 @@ impl Session {
     }
 
     /// Append bytes received from a transport to the session decoder buffer.
-    pub fn push_frame(&mut self, frame: Bytes) {
+    pub fn push_frame(&mut self, frame: &Bytes) {
         let _frame_latency =
             crate::observability::ScopedHistogramUs::new(obs::METRIC_SESSION_FRAME_PROCESS_LATENCY);
         debug!(
@@ -358,10 +363,15 @@ impl Session {
             buffer_before = self.buffer.len(),
             "Session on_frame: received raw frame"
         );
-        self.buffer.extend_from_slice(&frame);
+        self.buffer.extend_from_slice(frame);
     }
 
     /// Decode the next complete message, if one is buffered.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SessionError` if TLV decoding fails or mux routing rejects the
+    /// decoded record.
     pub fn next_message(
         &mut self,
     ) -> Result<Option<crate::protocol::mux::ChannelMessage>, SessionError> {
@@ -369,7 +379,7 @@ impl Session {
         let decode_result = self.decoder.decode_one_ref(&self.buffer);
         crate::observability::hot_path_histogram_observe_us(
             obs::METRIC_SESSION_TLV_DECODE_LATENCY,
-            decode_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+            u128_to_u64_saturating(decode_start.elapsed().as_micros()),
         );
 
         match decode_result {
@@ -391,7 +401,7 @@ impl Session {
                 let message = self.mux.route(record);
                 crate::observability::hot_path_histogram_observe_us(
                     obs::METRIC_SESSION_MUX_ROUTE_LATENCY,
-                    mux_start.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                    u128_to_u64_saturating(mux_start.elapsed().as_micros()),
                 );
                 message.map(Some).map_err(|error| {
                     warn!(session_id = self.info.session_id, error = ?error, "Mux routing error");
@@ -434,13 +444,18 @@ impl Session {
     /// Get the immutable claims for this session (if authenticated)
     #[must_use]
     pub fn claims(&self) -> Option<&crate::auth::Claims> {
-        self.info.claims.as_ref().map(|c| c.as_ref())
+        self.info.claims.as_ref().map(AsRef::as_ref)
     }
 
     /// Authenticate this session with new claims and update permissions
     ///
     /// **Important:** This replaces both claims AND permissions atomically.
     /// Used for initial auth and re-auth flows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if a future authentication flow adds validation
+    /// and rejects the supplied claims or permissions.
     pub fn authenticate(
         &mut self,
         claims: crate::auth::Claims,
@@ -456,6 +471,11 @@ impl Session {
     }
 
     /// Check expiration of claims (if authenticated)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string when the session is unauthenticated or the token
+    /// has expired.
     pub fn check_expiration(&self, now: u64) -> Result<(), String> {
         if let Some(claims) = self.claims() {
             if now >= claims.exp {
@@ -499,7 +519,7 @@ mod tests {
         let data = encoder.finish();
 
         // Act
-        session.push_frame(data);
+        session.push_frame(&data);
         let first = session.next_message().unwrap().unwrap();
         session.release_channel(first.channel);
         let second = session.next_message().unwrap().unwrap();
@@ -533,9 +553,9 @@ mod tests {
         let part2 = data.slice(split..);
 
         // Act
-        session.push_frame(part1);
+        session.push_frame(&part1);
         let incomplete = session.next_message().unwrap();
-        session.push_frame(part2);
+        session.push_frame(&part2);
         let complete = session.next_message().unwrap().unwrap();
 
         // Assert

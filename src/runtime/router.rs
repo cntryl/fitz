@@ -43,6 +43,14 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, trace, warn};
 
+fn usize_to_f64_saturating(value: usize) -> f64 {
+    f64::from(u32::try_from(value).unwrap_or(u32::MAX))
+}
+
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
 /// Trait for delivering envelopes to actor mailboxes
 ///
 /// This trait provides a narrow interface between the routing layer
@@ -105,7 +113,7 @@ impl DeliveryError {
             | DeliveryError::HighLaneFull {
                 capacity,
                 current_len,
-            } => *current_len as f64 / *capacity as f64,
+            } => usize_to_f64_saturating(*current_len) / usize_to_f64_saturating(*capacity),
             DeliveryError::ActorStopped => 1.0,
         }
     }
@@ -170,15 +178,15 @@ fn extract_domain(route_str: &str) -> Option<&str> {
     None
 }
 
-/// Route registry mapping RouteAddress to mailbox sinks
+/// Route registry mapping `RouteAddress` to mailbox sinks
 ///
-/// Uses DashMap for lock-free concurrent access with minimal contention.
+/// Uses `DashMap` for lock-free concurrent access with minimal contention.
 /// Enforces route family isolation: routes in different families
 /// never conflict even if they have the same path string.
 struct RouteRegistry {
     sinks: DashMap<RouteAddress, Arc<dyn MailboxSink>, FxBuildHasher>,
     /// Domain pattern registry: Maps domain prefix (e.g., "kv", "queue") to sink
-    /// Used as fallback when exact RouteAddress lookup fails
+    /// Used as fallback when exact `RouteAddress` lookup fails
     domain_patterns: DashMap<String, Arc<dyn MailboxSink>, FxBuildHasher>,
 }
 
@@ -268,7 +276,7 @@ impl Router {
         if let Ok(metrics) = std::panic::catch_unwind(crate::observability::metrics) {
             metrics.histogram_observe_us(
                 obs::METRIC_ROUTE_MATCH_LATENCY,
-                start.elapsed().as_micros() as u64,
+                u128_to_u64_saturating(start.elapsed().as_micros()),
             );
         }
     }
@@ -313,9 +321,8 @@ impl Router {
     }
 
     fn deliver_with_sink(
-        &self,
         dest: RouteAddress,
-        sink: Arc<dyn MailboxSink>,
+        sink: &Arc<dyn MailboxSink>,
         envelope: Envelope,
         start: Instant,
     ) -> Result<(), RouteError> {
@@ -338,7 +345,6 @@ impl Router {
     }
 
     fn route_with_resolved_sink(
-        &self,
         envelope: Envelope,
         domain: &str,
         missing_route_kind: MissingRouteKind,
@@ -349,12 +355,12 @@ impl Router {
 
         trace!(destination = %dest, domain = domain, "Router: routing envelope");
 
-        let _route_span = Self::route_span(&dest, domain);
-        let _route_guard = _route_span.as_ref().map(|span| span.enter());
+        let route_span = Self::route_span(&dest, domain);
+        let _route_guard = route_span.as_ref().map(|span| span.enter());
 
         let sink = sink.ok_or_else(|| Self::route_not_found(&dest, domain, missing_route_kind))?;
 
-        self.deliver_with_sink(dest, sink, envelope, start)
+        Self::deliver_with_sink(dest, &sink, envelope, start)
     }
 
     fn resolve_sink_for_route(
@@ -418,16 +424,16 @@ impl Router {
 
     /// Register a domain pattern (e.g., "kv", "queue", "notice")
     ///
-    /// Domain patterns are used as a fallback when exact RouteAddress lookup fails.
+    /// Domain patterns are used as a fallback when exact `RouteAddress` lookup fails.
     /// This allows domains to handle all routes matching a prefix across ALL route families.
     ///
     /// # Multi-Tenant Support
     ///
     /// Domain patterns enable multi-tenant routing:
-    /// - Realm "acme" (family 1) sends `kv://acme/app/users` → kv_domain_sink
-    /// - Realm "xyz" (family 2) sends `kv://xyz/app/users` → same kv_domain_sink
+    /// - Realm "acme" (family 1) sends `kv://acme/app/users` → `kv_domain_sink`
+    /// - Realm "xyz" (family 2) sends `kv://xyz/app/users` → same `kv_domain_sink`
     ///
-    /// The domain sink receives the full RouteAddress (family + route) and can
+    /// The domain sink receives the full `RouteAddress` (family + route) and can
     /// enforce tenant isolation internally.
     pub fn register_domain_pattern(&self, domain: &str, sink: Arc<dyn MailboxSink>) {
         debug!(domain = domain, "Router: registering domain pattern");
@@ -454,7 +460,7 @@ impl Router {
     ///
     /// # Routing Strategy
     ///
-    /// 1. **Exact Match**: First tries exact RouteAddress lookup
+    /// 1. **Exact Match**: First tries exact `RouteAddress` lookup
     /// 2. **Domain Pattern**: Falls back to domain prefix matching (e.g., "kv://" → kv domain)
     ///
     /// # Route Family Isolation
@@ -480,7 +486,7 @@ impl Router {
         let fallback_domain = extract_domain(&route_str).unwrap_or("");
         let sink = self.resolve_sink_for_route(envelope.destination(), fallback_domain);
 
-        self.route_with_resolved_sink(
+        Self::route_with_resolved_sink(
             envelope,
             domain,
             MissingRouteKind::ExactOrDomainPattern,
@@ -492,10 +498,15 @@ impl Router {
     ///
     /// This avoids an exact-route lookup miss when the caller already resolved
     /// the domain from another signal such as message type.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RouteError` when no domain sink is registered or the sink
+    /// rejects the envelope.
     pub fn route_to_domain(&self, domain: &str, envelope: Envelope) -> Result<(), RouteError> {
         let sink = self.registry.get_by_domain(domain);
 
-        self.route_with_resolved_sink(envelope, domain, MissingRouteKind::KnownDomainPattern, sink)
+        Self::route_with_resolved_sink(envelope, domain, MissingRouteKind::KnownDomainPattern, sink)
     }
 
     /// Route an envelope to the high-priority lane (runtime-internal use only)
@@ -514,7 +525,7 @@ impl Router {
     /// # Invariants
     ///
     /// - High-priority lane has the SAME capacity as normal lane (no extra buffer)
-    /// - Caller must handle HighLaneFull as a critical error (control plane saturated)
+    /// - Caller must handle `HighLaneFull` as a critical error (control plane saturated)
     /// - Scheduler guarantees high-priority messages process first (capped at 4/tick)
     #[allow(dead_code)]
     pub(crate) fn route_high_priority(&self, envelope: Envelope) -> Result<(), RouteError> {
@@ -565,7 +576,7 @@ impl Default for Router {
 fn should_sample_hot_path() -> bool {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .is_ok_and(|d| (d.as_nanos() as u64).is_multiple_of(1000))
+        .is_ok_and(|d| u128_to_u64_saturating(d.as_nanos()).is_multiple_of(1000))
 }
 
 #[cfg(test)]

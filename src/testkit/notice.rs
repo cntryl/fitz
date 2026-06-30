@@ -64,7 +64,7 @@ pub fn route(path: &str) -> Route {
     Route::new(path)
 }
 
-/// Build a RouteAddress in the default test family
+/// Build a `RouteAddress` in the default test family
 #[must_use]
 pub fn addr(path: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(1), route(path))

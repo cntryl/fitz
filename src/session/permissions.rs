@@ -14,7 +14,7 @@ type AuthorizationCache = HashMap<u8, HashMap<String, bool>>;
 const CHECK_CACHE_ENTRY_LIMIT: usize = 256;
 
 /// Compiled permission used by runtime checks. This is created from an
-/// auth::Permission by compiling the route-shaped string into a `Pattern`.
+/// `auth::Permission` by compiling the route-shaped string into a `Pattern`.
 #[derive(Debug, Clone)]
 struct CompiledPermission {
     pattern: crate::runtime::matcher::Pattern,
@@ -23,7 +23,7 @@ struct CompiledPermission {
 
 impl CompiledPermission {
     fn from_permission(
-        permission: Permission,
+        permission: &Permission,
         pattern_cache: Option<&mut HashMap<String, crate::runtime::matcher::Pattern>>,
     ) -> Self {
         let route_part = permission_route_part(&permission.raw);
@@ -58,8 +58,8 @@ pub struct SessionPermissions {
     inner: Arc<HashMap<String, String>>,
     /// Compiled Fitz permissions used by authorization checks
     compiled: Arc<Vec<CompiledPermission>>,
-    /// Cache for permission checks: access_bits -> route -> allowed
-    /// Uses RwLock for thread-safe interior mutability
+    /// Cache for permission checks: `access_bits` -> route -> allowed
+    /// Uses `RwLock` for thread-safe interior mutability
     check_cache: Arc<RwLock<AuthorizationCache>>,
 }
 
@@ -82,7 +82,7 @@ impl SessionPermissions {
 
     /// Create a permission set that allow all operations on all routes
     ///
-    /// Used for unauthenticated sessions when auth_required=false
+    /// Used for unauthenticated sessions when `auth_required=false`
     #[must_use]
     pub fn all() -> Self {
         Self::from_permissions(vec![Permission {
@@ -93,7 +93,7 @@ impl SessionPermissions {
 
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&str> {
-        self.inner.get(key).map(|s| s.as_str())
+        self.inner.get(key).map(String::as_str)
     }
 
     /// Check whether the permission set allows the given access to the route
@@ -133,7 +133,7 @@ impl SessionPermissions {
         perms
             .into_iter()
             .map(|permission| {
-                CompiledPermission::from_permission(permission, pattern_cache.as_mut())
+                CompiledPermission::from_permission(&permission, pattern_cache.as_mut())
             })
             .collect()
     }

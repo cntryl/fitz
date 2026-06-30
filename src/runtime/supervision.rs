@@ -58,7 +58,7 @@ impl SupervisorStrategy {
 
 impl Default for SupervisorStrategy {
     fn default() -> Self {
-        Self::restart(3, Duration::from_secs(60))
+        Self::restart(3, Duration::from_mins(1))
     }
 }
 
@@ -123,7 +123,7 @@ mod tests {
     fn should_create_restart_strategy() {
         // Arrange
         let max_restarts = 3;
-        let within = Duration::from_secs(60);
+        let within = Duration::from_mins(1);
 
         // Act
         let strategy = SupervisorStrategy::restart(max_restarts, within);
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn should_decide_restart_action() {
         // Arrange
-        let strategy = SupervisorStrategy::restart(3, Duration::from_secs(60));
+        let strategy = SupervisorStrategy::restart(3, Duration::from_mins(1));
         let error = ActorError::Panic("test".to_string());
 
         // Act
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn should_track_restart_within_limit() {
         // Arrange
-        let mut tracker = RestartTracker::new(3, Duration::from_secs(60));
+        let mut tracker = RestartTracker::new(3, Duration::from_mins(1));
 
         // Act
         let result1 = tracker.record_restart();
@@ -204,7 +204,7 @@ mod tests {
     #[test]
     fn should_fail_restart_when_exceeding_limit() {
         // Arrange
-        let mut tracker = RestartTracker::new(2, Duration::from_secs(60));
+        let mut tracker = RestartTracker::new(2, Duration::from_mins(1));
         tracker.record_restart();
         tracker.record_restart();
 
@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn should_reset_restart_tracker() {
         // Arrange
-        let mut tracker = RestartTracker::new(3, Duration::from_secs(60));
+        let mut tracker = RestartTracker::new(3, Duration::from_mins(1));
         tracker.record_restart();
         tracker.record_restart();
 

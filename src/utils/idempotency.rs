@@ -66,7 +66,7 @@ use uuid::Uuid;
 /// Unique identifier for a context-dependent operation that requires deduplication
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DedupIdentifier {
-    /// Queue COMPLETE: (family, area, resource, owner_session_id, message_id, token)
+    /// Queue COMPLETE: (family, area, resource, `owner_session_id`, `message_id`, token)
     QueueComplete {
         family: u64,
         area: String,
@@ -75,7 +75,7 @@ pub enum DedupIdentifier {
         message_id: u64,
         token: u64,
     },
-    /// RPC REQUEST: correlation_id (Uuid)
+    /// RPC REQUEST: `correlation_id` (`Uuid`)
     RpcRequest(Uuid),
 }
 
@@ -157,7 +157,7 @@ impl DedupStore {
 /// Create a fresh deduplication store using the default queue/RPC retry TTL.
 #[must_use]
 pub fn default_dedup_store() -> Arc<DedupStore> {
-    Arc::new(DedupStore::new(Duration::from_secs(300)))
+    Arc::new(DedupStore::new(Duration::from_mins(5)))
 }
 
 /// Classify an operation by domain and message type ID
@@ -178,8 +178,7 @@ fn classify_kv(msg_type: u16) -> Idempotency {
     match msg_type {
         // GET, SCAN are idempotent
         103 | 108 => Idempotency::Idempotent,
-        // BEGIN, COMMIT, ROLLBACK, PUT, INSERT, DELETE are non-idempotent
-        100 | 101 | 102 | 104 | 105 | 106 | 107 => Idempotency::NonIdempotent,
+        // All other KV operations are non-idempotent.
         _ => Idempotency::NonIdempotent, // Default to safe
     }
 }
@@ -188,18 +187,13 @@ fn classify_stream(msg_type: u16) -> Idempotency {
     match msg_type {
         // READ, LAST, GET_METADATA are idempotent
         604..=606 => Idempotency::Idempotent,
-        // BEGIN, APPEND, COMMIT, ROLLBACK are non-idempotent
-        600..=603 => Idempotency::NonIdempotent,
         _ => Idempotency::NonIdempotent,
     }
 }
 
 fn classify_notice(msg_type: u16) -> Idempotency {
-    match msg_type {
-        // PUBLISH, SUBSCRIBE, UNSUBSCRIBE, UNSUBSCRIBE_ALL, NOTIFY are all non-idempotent
-        500..=504 => Idempotency::NonIdempotent,
-        _ => Idempotency::NonIdempotent,
-    }
+    let _ = msg_type;
+    Idempotency::NonIdempotent
 }
 
 fn classify_queue(msg_type: u16) -> Idempotency {
@@ -208,8 +202,7 @@ fn classify_queue(msg_type: u16) -> Idempotency {
         204 => Idempotency::ContextDependent {
             dedup_key: "message_id+token",
         },
-        // ENQUEUE, RESERVE, EXTEND are non-idempotent
-        200..=203 => Idempotency::NonIdempotent,
+        // All other queue operations are non-idempotent.
         _ => Idempotency::NonIdempotent,
     }
 }
@@ -218,26 +211,22 @@ fn classify_lease(msg_type: u16) -> Idempotency {
     match msg_type {
         // QUERY is idempotent
         403 => Idempotency::Idempotent,
-        // ACQUIRE, RENEW, RELEASE are non-idempotent
-        400..=402 => Idempotency::NonIdempotent,
+        // All other lease operations are non-idempotent.
         _ => Idempotency::NonIdempotent,
     }
 }
 
 fn classify_rpc(msg_type: u16) -> Idempotency {
-    match msg_type {
-        // RPC operations are process-local and must not imply durable replay or deduplication.
-        300..=304 => Idempotency::NonIdempotent,
-        _ => Idempotency::NonIdempotent,
-    }
+    let _ = msg_type;
+    // RPC operations are process-local and must not imply durable replay or deduplication.
+    Idempotency::NonIdempotent
 }
 
 fn classify_schedule(msg_type: u16) -> Idempotency {
     match msg_type {
         // LIST is idempotent
         702 => Idempotency::Idempotent,
-        // CREATE, CANCEL are non-idempotent
-        700 | 701 => Idempotency::NonIdempotent,
+        // All other schedule operations are non-idempotent.
         _ => Idempotency::NonIdempotent,
     }
 }

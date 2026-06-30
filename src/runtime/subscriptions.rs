@@ -3,7 +3,7 @@
 //!
 //! # Design
 //!
-//! Uses a per-RouteFamily segment trie to index subscriptions by route pattern.
+//! Uses a per-`RouteFamily` segment trie to index subscriptions by route pattern.
 //! Patterns are parsed once at insert time; matching is O(depth + matches).
 //!
 //! Routes follow: `{scheme}://{realm}/{area}/{resource}/{operation}`
@@ -49,6 +49,16 @@ type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 type NodeId = u32;
 type SegmentId = u32;
 
+#[inline]
+fn usize_to_node_id_saturating(value: usize) -> NodeId {
+    NodeId::try_from(value).unwrap_or(NodeId::MAX)
+}
+
+#[inline]
+fn usize_to_segment_id_saturating(value: usize) -> SegmentId {
+    SegmentId::try_from(value).unwrap_or(SegmentId::MAX)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CompiledPatternSegment {
     Exact(SegmentId),
@@ -78,7 +88,7 @@ impl SegmentInterner {
             return id;
         }
 
-        let id = self.ids.len() as SegmentId;
+        let id = usize_to_segment_id_saturating(self.ids.len());
         self.ids.insert(value.to_string(), id);
         id
     }
@@ -169,7 +179,7 @@ struct Node {
     /// Subscriptions whose pattern ends exactly at this node.
     terminals: SmallVec<[SubscriptionId; 2]>,
     /// Subscriptions with `**` at this position.
-    /// Parallel vectors: double_star_subs[i] has suffix double_star_suffixes[i].
+    /// Parallel vectors: `double_star_subs[i]` has suffix `double_star_suffixes[i]`.
     /// Uses Arc to share suffixes when multiple subscriptions share the same pattern.
     double_star_subs: SmallVec<[SubscriptionId; 2]>,
     double_star_suffixes: SmallVec<[Arc<[CompiledPatternSegment]>; 2]>,
@@ -271,12 +281,12 @@ impl Node {
 ///
 /// - Insert: O(depth) time
 /// - Remove: O(depth) time
-/// - Match: O(depth + active_nodes * double_star_work) time
+/// - Match: O(depth + `active_nodes` * `double_star_work`) time
 pub struct SubscriptionIndex {
-    /// Flat node pool. NodeIds refer into this vector; per-family roots are
+    /// Flat node pool. `NodeId`s refer into this vector; per-family roots are
     /// recorded in `family_roots`.
     nodes: Vec<Node>,
-    /// Trie root per RouteFamily.
+    /// Trie root per `RouteFamily`.
     family_roots: FastMap<RouteFamily, NodeId>,
     /// Cache for parsed pattern segments to avoid re-parsing same routes.
     segments_cache: SegmentsCache,
@@ -298,12 +308,12 @@ impl SubscriptionIndex {
 
     /// Allocate a new node and return its ID
     fn alloc_node(&mut self) -> NodeId {
-        let id = self.nodes.len() as NodeId;
+        let id = usize_to_node_id_saturating(self.nodes.len());
         self.nodes.push(Node::new());
         id
     }
 
-    /// Get or create the root node for a RouteFamily
+    /// Get or create the root node for a `RouteFamily`
     fn get_or_create_root(&mut self, family_id: RouteFamily) -> NodeId {
         if let Some(&root) = self.family_roots.get(&family_id) {
             return root;
@@ -316,7 +326,7 @@ impl SubscriptionIndex {
     /// Insert a subscription by pattern
     ///
     /// # Arguments
-    /// - `family_id`: RouteFamily for isolation
+    /// - `family_id`: `RouteFamily` for isolation
     /// - `pattern`: The route pattern (may contain `*` and `**` wildcards)
     /// - `subscription_id`: Unique identifier for this subscription
     pub fn insert(
@@ -350,7 +360,7 @@ impl SubscriptionIndex {
     /// Remove a subscription
     ///
     /// # Arguments
-    /// - `family_id`: RouteFamily
+    /// - `family_id`: `RouteFamily`
     /// - `pattern`: The original route pattern
     /// - `subscription_id`: Subscription to remove
     pub fn remove(
@@ -370,7 +380,7 @@ impl SubscriptionIndex {
     /// Find all subscriptions matching a route
     ///
     /// # Arguments
-    /// - `family_id`: RouteFamily (must match insertion family)
+    /// - `family_id`: `RouteFamily` (must match insertion family)
     /// - `route`: The published route to match against all patterns
     ///
     /// # Returns
@@ -462,7 +472,7 @@ impl SubscriptionIndex {
         results
     }
 
-    /// Count subscriptions in a specific RouteFamily (for diagnostics/metrics)
+    /// Count subscriptions in a specific `RouteFamily` (for diagnostics/metrics)
     #[must_use]
     pub fn count_subscriptions(&self, family_id: RouteFamily) -> usize {
         let Some(&root) = self.family_roots.get(&family_id) else {

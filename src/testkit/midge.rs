@@ -5,8 +5,8 @@
 //! **CRITICAL ARCHITECTURAL RULE:**
 //! **ALL Fitz tests MUST use explicit column families (CF). The default CF (CF=0) is FORBIDDEN.**
 //!
-//! Midge (based on RocksDB) requires column families to be explicitly created
-//! before use. Fitz enforces that every persisted domain maps RouteFamily → ColumnFamily.
+//! Midge (based on `RocksDB`) requires column families to be explicitly created
+//! before use. Fitz enforces that every persisted domain maps `RouteFamily` -> `ColumnFamily`.
 //!
 //! # Required Pattern for Tests
 //!
@@ -32,7 +32,7 @@
 //!
 //! # Why This Rule Exists
 //!
-//! 1. **Data isolation**: Each RouteFamily must have its own ColumnFamily
+//! 1. **Data isolation**: Each `RouteFamily` must have its own `ColumnFamily`
 //! 2. **No silent mixing**: Default CF usage would violate isolation
 //! 3. **Production parity**: Tests must match production behavior
 //! 4. **Architectural invariant**: Explicit mapping is foundational to Fitz design
@@ -63,19 +63,20 @@ use std::sync::Arc;
 /// // Create engine supporting CFs 1, 2, 3
 /// let engine = create_test_engine_with_cfs(vec![1, 2, 3]);
 /// ```
+static ENGINE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[allow(clippy::needless_pass_by_value)]
 pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
     // Validate: CF=0 is FORBIDDEN
     for cf_id in &cf_ids {
-        if *cf_id == 0 {
-            panic!(
-                "CRITICAL TEST VIOLATION: Attempted to create engine with default CF (CF=0). \
-                 All Fitz tests MUST use explicit non-zero column families. \
-                 This enforces the architectural rule: RouteFamily → ColumnFamily mapping."
-            );
-        }
+        assert!(
+            *cf_id != 0,
+            "CRITICAL TEST VIOLATION: Attempted to create engine with default CF (CF=0). \
+             All Fitz tests MUST use explicit non-zero column families. \
+             This enforces the architectural rule: RouteFamily -> ColumnFamily mapping."
+        );
     }
 
-    static ENGINE_COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique_id = ENGINE_COUNTER.fetch_add(1, Ordering::SeqCst);
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

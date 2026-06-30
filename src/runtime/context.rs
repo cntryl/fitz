@@ -3,6 +3,18 @@
 use fxhash::FxHashMap;
 use std::time::{Duration, Instant};
 
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
 /// Timer identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TimerId(u64);
@@ -160,7 +172,7 @@ impl TimerManager {
         if instant <= start_instant {
             return 0;
         }
-        let delta_ms = instant.duration_since(start_instant).as_millis() as u64;
+        let delta_ms = u128_to_u64_saturating(instant.duration_since(start_instant).as_millis());
         delta_ms / TICK_MS
     }
 
@@ -177,7 +189,8 @@ impl TimerManager {
     }
 
     fn slot_for_tick(deadline_tick: u64, level: usize) -> usize {
-        ((deadline_tick >> (LEVEL_SHIFT * level as u32)) & (WHEEL_SIZE as u64 - 1)) as usize
+        let shift = LEVEL_SHIFT * usize_to_u32_saturating(level);
+        u64_to_usize_saturating((deadline_tick >> shift) & (WHEEL_SIZE as u64 - 1))
     }
 
     fn insert_entry(&mut self, id: TimerId, timer: Timer) {
@@ -219,8 +232,8 @@ impl TimerManager {
     }
 
     fn cascade_level(&mut self, level: usize) {
-        let slot = ((self.current_tick >> (LEVEL_SHIFT * level as u32)) & (WHEEL_SIZE as u64 - 1))
-            as usize;
+        let shift = LEVEL_SHIFT * usize_to_u32_saturating(level);
+        let slot = u64_to_usize_saturating((self.current_tick >> shift) & (WHEEL_SIZE as u64 - 1));
         let ids = self.wheel.take_slot(level, slot);
         for id in ids {
             if let Some(entry) = self.timers.get(&id) {
@@ -234,16 +247,20 @@ impl TimerManager {
         let mut best: Option<u64> = None;
 
         for level in 0..WHEEL_LEVELS {
-            let shift = LEVEL_SHIFT * level as u32;
+            let shift = LEVEL_SHIFT * usize_to_u32_saturating(level);
             let current_slot = (self.current_tick >> shift) & (WHEEL_SIZE as u64 - 1);
 
             for offset in 0..WHEEL_SIZE {
-                let slot = ((current_slot + offset as u64) & (WHEEL_SIZE as u64 - 1)) as usize;
+                let slot = u64_to_usize_saturating(
+                    (current_slot + u64::try_from(offset).unwrap_or(u64::MAX))
+                        & (WHEEL_SIZE as u64 - 1),
+                );
                 if self.wheel.slot_is_empty(level, slot) {
                     continue;
                 }
 
-                let base = (self.current_tick >> shift).saturating_add(offset as u64);
+                let base = (self.current_tick >> shift)
+                    .saturating_add(u64::try_from(offset).unwrap_or(u64::MAX));
                 let mut candidate = base << shift;
                 if candidate < self.current_tick {
                     candidate = self.current_tick;
@@ -341,7 +358,7 @@ impl TimerManager {
         let mut fired = Vec::new();
 
         while self.current_tick <= now_tick {
-            let slot = (self.current_tick & (WHEEL_SIZE as u64 - 1)) as usize;
+            let slot = u64_to_usize_saturating(self.current_tick & (WHEEL_SIZE as u64 - 1));
             let ids = self.wheel.take_slot(0, slot);
 
             for id in ids {

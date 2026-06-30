@@ -26,8 +26,8 @@
 //!
 //! # Isolation
 //!
-//! Wildcards apply **only within the same RouteFamily**.
-//! The RouteFamily ID must match exactly; wildcards never cross family boundaries.
+//! Wildcards apply **only within the same `RouteFamily`**.
+//! The `RouteFamily` ID must match exactly; wildcards never cross family boundaries.
 
 use crate::runtime::routing::Route;
 use smallvec::SmallVec;
@@ -40,7 +40,7 @@ type RouteSegments<'a> = SmallVec<[&'a str; 8]>;
 /// Patterns are matched against published routes to determine fan-out targets.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Pattern {
-    /// The full route pattern (e.g., "notify://realm/area/*")
+    /// The full route pattern (e.g., `<notify://realm/area/*>`)
     route: String,
     scheme: Option<String>,
     segments: Vec<PatternSegment>,
@@ -165,13 +165,13 @@ fn parse_pattern(route: &str) -> (Option<String>, Vec<PatternSegment>) {
 }
 
 /// Extract path segments from a route string as Strings
-/// DEPRECATED: Use extract_route_segments_borrowed for zero-copy matching
+/// DEPRECATED: Use `extract_route_segments_borrowed` for zero-copy matching
 #[must_use]
 pub fn extract_route_segments(route: &str) -> Vec<String> {
     split_route(route)
         .1
         .into_iter()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect()
 }
 
@@ -184,7 +184,7 @@ pub fn extract_route_segments_borrowed(route: &str) -> RouteSegments<'_> {
 }
 
 /// Match pattern segments against route segments using index-based recursion
-/// Used by both Pattern matching and SubscriptionIndex suffix matching
+/// Used by both Pattern matching and `SubscriptionIndex` suffix matching
 #[must_use]
 pub fn match_pattern_segments(
     patterns: &[PatternSegment],

@@ -111,7 +111,7 @@ impl Clone for Mailbox {
     }
 }
 
-/// Implement MailboxSink to bridge transport and runtime layers
+/// Implement `MailboxSink` to bridge transport and runtime layers
 ///
 /// This allows the router (in transport) to deliver envelopes to mailboxes
 /// (in runtime) without creating a circular dependency.

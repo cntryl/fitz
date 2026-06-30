@@ -393,9 +393,9 @@ fn build_lease_acquire_with_wait(
     wait_seconds: u32,
 ) -> Vec<u8> {
     let mut buf = Vec::new();
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(usize_to_u32_saturating(route.len()));
     buf.put_slice(route.as_bytes());
-    buf.put_u32(owner_id.len() as u32);
+    buf.put_u32(usize_to_u32_saturating(owner_id.len()));
     buf.put_slice(owner_id.as_bytes());
     buf.put_u64(ttl_secs as u64);
     buf.put_u32(wait_seconds);
@@ -411,4 +411,8 @@ fn ensure_ok(operation: &str, status: u8) -> Result<(), String> {
     } else {
         Err(format!("{operation} failed with status {status}"))
     }
+}
+#[inline]
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }

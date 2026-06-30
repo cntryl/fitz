@@ -28,8 +28,16 @@ const MIN_POLL_TIMEOUT_MS: u64 = 1;
 /// Maximum timeout for mailbox polling (when mailbox is empty)
 const MAX_POLL_TIMEOUT_MS: u64 = 1;
 
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn usize_to_f64_saturating(value: usize) -> f64 {
+    f64::from(u32::try_from(value).unwrap_or(u32::MAX))
+}
+
 fn record_duration_counter(name: &str, duration: Duration) {
-    let duration_us = duration.as_micros().min(u64::MAX as u128) as u64;
+    let duration_us = u128_to_u64_saturating(duration.as_micros().min(u128::from(u64::MAX)));
     if duration_us == 0 {
         return;
     }
@@ -49,9 +57,11 @@ fn record_mailbox_observability(mailbox: &Mailbox, envelope: &crate::runtime::en
     if let Some(queued_at) = envelope.queued_at() {
         crate::observability::histogram_observe_us(
             obs::METRIC_QUEUE_WAIT_LATENCY,
-            Instant::now()
-                .saturating_duration_since(queued_at)
-                .as_micros() as u64,
+            u128_to_u64_saturating(
+                Instant::now()
+                    .saturating_duration_since(queued_at)
+                    .as_micros(),
+            ),
         );
     }
 
@@ -59,6 +69,48 @@ fn record_mailbox_observability(mailbox: &Mailbox, envelope: &crate::runtime::en
         obs::METRIC_MAILBOX_DEPTH,
         mailbox.len().saturating_add(mailbox.high_priority_len()) as u64,
     );
+}
+
+fn poll_timeout_ms(mailbox: &Mailbox) -> u64 {
+    let occupancy =
+        usize_to_f64_saturating(mailbox.len()) / usize_to_f64_saturating(mailbox.capacity());
+    if occupancy > 0.5 {
+        MIN_POLL_TIMEOUT_MS
+    } else {
+        MAX_POLL_TIMEOUT_MS
+    }
+}
+
+fn normal_message_budget(processed_high: usize) -> usize {
+    if processed_high == 0 {
+        MAX_HIGH_PER_TICK + MAX_NORMAL_PER_TICK
+    } else {
+        MAX_NORMAL_PER_TICK
+    }
+}
+
+fn handle_fired_timers<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &RouteAddress) {
+    let fired_timers = ctx.timer_manager().fired_timers();
+    for timer_id in fired_timers {
+        let timer_start = Instant::now();
+        if let Err(error) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            actor.on_timer(timer_id, ctx);
+        })) {
+            record_worker_busy_time(timer_start.elapsed());
+            tracing::error!(actor = ?address, error = ?error, "Actor panicked during timer handling");
+
+            ctx.metrics().record_panic();
+            let actor_error = ActorError::Panic(format!("timer panic: {error:?}"));
+            actor.on_error(actor_error, ctx);
+            ctx.stop();
+            break;
+        }
+
+        let elapsed = timer_start.elapsed();
+        record_worker_busy_time(elapsed);
+        ctx.metrics()
+            .record_processed(u128_to_u64_saturating(elapsed.as_micros()));
+    }
 }
 
 /// Actor system scheduler that manages actor lifecycles and message processing
@@ -98,15 +150,15 @@ impl Scheduler {
 
     /// Spawn a new actor and return its reference
     ///
-    /// The caller must provide a RouteAddress for the actor. The scheduler will:
+    /// The caller must provide a `RouteAddress` for the actor. The scheduler will:
     /// - Register the actor's mailbox with the router at the given address
     /// - Start a dedicated thread for message processing
-    /// - Return an ActorRef for sending messages to the actor
+    /// - Return an `ActorRef` for sending messages to the actor
     ///
     /// # Cost and variance
     ///
     /// Full spawn cost includes mailbox creation, router registration, and `thread::spawn`.
-    /// Tier 2 subsystem_scheduler benchmarks measure this full cost; variance (rel_stddev
+    /// Tier 2 `subsystem_scheduler` benchmarks measure this full cost; variance (`rel_stddev`
     /// ~0.10–0.15) is expected from OS thread scheduling. Use the `register_only` bench
     /// to isolate registration cost from thread creation.
     ///
@@ -146,13 +198,7 @@ impl Scheduler {
 
             // Process messages with two-phase priority lanes
             while ctx.is_running() {
-                // Adaptive timeout based on mailbox occupancy
-                let occupancy = mailbox.len() as f64 / mailbox.capacity() as f64;
-                let timeout_ms = if occupancy > 0.5 {
-                    MIN_POLL_TIMEOUT_MS // Fast drain when mailbox is filling up
-                } else {
-                    MAX_POLL_TIMEOUT_MS // Standard polling when idle
-                };
+                let timeout_ms = poll_timeout_ms(&mailbox);
 
                 // Track tick start for time budget enforcement
                 let tick_start = Instant::now();
@@ -162,7 +208,9 @@ impl Scheduler {
                 // PHASE 1: High-priority messages (capped at MAX_HIGH_PER_TICK)
                 while processed_high < MAX_HIGH_PER_TICK {
                     // INVARIANT: Time budget check to prevent thread monopolization
-                    if tick_start.elapsed().as_millis() as u64 >= MAX_TICK_DURATION_MS {
+                    if u128_to_u64_saturating(tick_start.elapsed().as_millis())
+                        >= MAX_TICK_DURATION_MS
+                    {
                         break;
                     }
 
@@ -201,15 +249,13 @@ impl Scheduler {
 
                 // PHASE 2: Normal-priority messages (remaining budget)
                 // If high lane was idle, use full budget (16), otherwise use 12
-                let normal_budget = if processed_high == 0 {
-                    MAX_HIGH_PER_TICK + MAX_NORMAL_PER_TICK // 16 total when high is idle
-                } else {
-                    MAX_NORMAL_PER_TICK // 12 when high used its quota
-                };
+                let normal_budget = normal_message_budget(processed_high);
 
                 while processed_normal < normal_budget {
                     // INVARIANT: Time budget check to prevent thread monopolization
-                    if tick_start.elapsed().as_millis() as u64 >= MAX_TICK_DURATION_MS {
+                    if u128_to_u64_saturating(tick_start.elapsed().as_millis())
+                        >= MAX_TICK_DURATION_MS
+                    {
                         break;
                     }
 
@@ -260,31 +306,7 @@ impl Scheduler {
                     processed_normal += 1;
                 }
 
-                // After processing messages, handle any fired timers for this actor
-                let fired_timers = ctx.timer_manager().fired_timers();
-                for timer_id in fired_timers {
-                    let timer_start = Instant::now();
-                    // Invoke on_timer with panic safety similar to message processing
-                    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        actor.on_timer(timer_id, &mut ctx);
-                    })) {
-                        record_worker_busy_time(timer_start.elapsed());
-                        tracing::error!(
-                            actor = ?address,
-                            error = ?e,
-                            "Actor panicked during timer handling"
-                        );
-
-                        ctx.metrics().record_panic();
-                        let error = ActorError::Panic(format!("timer panic: {e:?}"));
-                        actor.on_error(error, &mut ctx);
-                        ctx.stop();
-                        break;
-                    }
-                    let elapsed = timer_start.elapsed();
-                    record_worker_busy_time(elapsed);
-                    ctx.metrics().record_processed(elapsed.as_micros() as u64);
-                }
+                handle_fired_timers(&mut actor, &mut ctx, &address);
             }
 
             // Call stopped hook
@@ -330,27 +352,23 @@ fn process_envelope<A: Actor>(
     // Extract typed message and metadata from envelope
     let (metadata, msg) = envelope.into_parts::<A::Message>();
 
-    let msg = match msg {
-        Some(m) => m,
-        None => {
-            // Type mismatch - record metric and notify actor
-            ctx.metrics().record_type_mismatch();
+    let Some(msg) = msg else {
+        ctx.metrics().record_type_mismatch();
 
-            let error = ActorError::TypeMismatch {
-                expected: std::any::type_name::<A::Message>().to_string(),
-                envelope_id: metadata.id.as_u64(),
-            };
+        let error = ActorError::TypeMismatch {
+            expected: std::any::type_name::<A::Message>().to_string(),
+            envelope_id: metadata.id.as_u64(),
+        };
 
-            tracing::warn!(
-                message_id = metadata.id.as_u64(),
-                actor = ?address,
-                expected = std::any::type_name::<A::Message>(),
-                "Actor received message with mismatched type"
-            );
+        tracing::warn!(
+            message_id = metadata.id.as_u64(),
+            actor = ?address,
+            expected = std::any::type_name::<A::Message>(),
+            "Actor received message with mismatched type"
+        );
 
-            actor.on_error(error, ctx);
-            return;
-        }
+        actor.on_error(error, ctx);
+        return;
     };
 
     // Set current metadata for causation tracking (no allocation)
@@ -378,7 +396,7 @@ fn process_envelope<A: Actor>(
         ctx.stop();
     } else {
         // Record successful processing
-        let elapsed = start.elapsed().as_micros() as u64;
+        let elapsed = u128_to_u64_saturating(start.elapsed().as_micros());
         ctx.metrics().record_processed(elapsed);
     }
 }
@@ -508,7 +526,9 @@ mod tests {
         let actor_ref = scheduler.spawn(actor, address.clone(), 10);
 
         // Send a message with an already-expired deadline
-        let past_deadline = std::time::Instant::now() - Duration::from_secs(1);
+        let past_deadline = std::time::Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .expect("past deadline should be representable");
         let expired_envelope =
             Envelope::new(address, TestMsg::Increment).with_deadline(past_deadline);
         scheduler.router().route(expired_envelope).unwrap();
@@ -528,6 +548,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::items_after_statements)]
     fn should_enable_actor_to_actor_messaging() {
         // Arrange
         let scheduler = Scheduler::new(2);
@@ -608,6 +629,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::items_after_statements)]
     fn should_support_reply_pattern() {
         // Arrange
         let scheduler = Scheduler::new(2);

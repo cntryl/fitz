@@ -4,7 +4,7 @@
 //! This layer provides:
 //! - Per-connection session state (metadata, permissions, ID)
 //! - Synchronous TLV decoding and multiplexing
-//! - SessionId generation
+//! - `SessionId` generation
 //! - Session lifecycle (open, close, reason tracking)
 //!
 //! Async transport adapters live under `src/api/`.

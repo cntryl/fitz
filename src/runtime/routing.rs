@@ -3,21 +3,21 @@
 //!
 //! # Universal Addressing Model
 //!
-//! Fitz uses **RouteFamily + Route** as the universal addressing and isolation
+//! Fitz uses **`RouteFamily` + Route** as the universal addressing and isolation
 //! model across the entire runtime. All domains (RPC, Notifications, Queue,
 //! Stream, KV, Lease) use this same addressing pattern.
 //!
 //! # Core Concepts
 //!
-//! ## RouteFamily
+//! ## `RouteFamily`
 //!
-//! A **RouteFamily** is a hard isolation boundary represented as an integer (u32).
+//! A **`RouteFamily`** is a hard isolation boundary represented as an integer (u32).
 //!
 //! **Properties:**
 //! - Opaque identifier with no semantic meaning to the runtime
 //! - No hierarchy, prefix semantics, or inheritance between families
 //! - Isolation applies to routing, leasing, coordination, and state
-//! - **Alignment:** RouteFamilyId aligns 1:1 with Midge ColumnFamilyId (same value)
+//! - **Alignment:** `RouteFamilyId` aligns 1:1 with Midge `ColumnFamilyId` (same value)
 //!
 //! ## Route
 //!
@@ -35,7 +35,7 @@
 //! - **realm**: Top-level logical namespace
 //!   - May represent tenant, organization, department, environment, or any root concept
 //!   - Semantics are user-defined, not enforced by the runtime
-//!   - **IMPORTANT:** Realm is just a string in the route path, NOT the RouteFamily
+//!   - **IMPORTANT:** Realm is just a string in the route path, NOT the `RouteFamily`
 //!
 //! - **area**: Logical subsystem or bounded context
 //!
@@ -57,10 +57,10 @@
 //! A full address is **always** the pair: `(RouteFamilyId, Route)`
 //!
 //! **Rules:**
-//! - Every message send must specify a RouteFamilyId
-//! - RouteFamilyId is never optional and has no default
-//! - Replies must preserve the original RouteFamilyId
-//! - Domains must never observe or influence state outside their RouteFamily
+//! - Every message send must specify a `RouteFamilyId`
+//! - `RouteFamilyId` is never optional and has no default
+//! - Replies must preserve the original `RouteFamilyId`
+//! - Domains must never observe or influence state outside their `RouteFamily`
 //!
 //! # Invariants
 //!
@@ -75,7 +75,7 @@
 //! 3. **No cross-family messages**: Messages sent to (family A, route X) will
 //!    never be delivered to (family B, route X).
 //!
-//! 4. **No cross-family state**: Domains operate within RouteFamily boundaries;
+//! 4. **No cross-family state**: Domains operate within `RouteFamily` boundaries;
 //!    state changes in family A never affect family B.
 //!
 //! 5. **Schemes don't imply domains**: Multiple schemes can map to the same
@@ -223,7 +223,7 @@ fn route_segments(route: &str) -> std::str::Split<'_, char> {
 ///
 /// # Isolation Guarantee
 ///
-/// RouteFamily provides **complete isolation**:
+/// `RouteFamily` provides **complete isolation**:
 /// - No routing leaks between families
 /// - No lease conflicts between families
 /// - No message delivery between families
@@ -231,15 +231,15 @@ fn route_segments(route: &str) -> std::str::Split<'_, char> {
 ///
 /// # Alignment with Storage
 ///
-/// RouteFamilyId aligns 1:1 (by value) with Midge ColumnFamilyId:
-/// - RouteFamily stores u32 (aligned with Midge ColumnFamilyId)
-/// - ColumnFamilyId stores u32 (Midge internal storage type)
+/// `RouteFamilyId` aligns 1:1 (by value) with Midge `ColumnFamilyId`:
+/// - `RouteFamily` stores u32 (aligned with Midge `ColumnFamilyId`)
+/// - `ColumnFamilyId` stores u32 (Midge internal storage type)
 /// - Wire format may send u64 for future compatibility; values are validated on parse
 /// - Alignment is contractual, not enforced by storage code
 ///
 /// # Design
 ///
-/// RouteFamily is intentionally opaque:
+/// `RouteFamily` is intentionally opaque:
 /// - Numeric ID for efficiency
 /// - No hierarchy or inheritance
 /// - Pure identity comparison
@@ -254,7 +254,7 @@ impl RouteFamily {
     /// Create a new route family from a wire-format u64 value
     ///
     /// Values above `u32::MAX` are clamped to `u32::MAX` with a warning.
-    /// Fitz stores route families as u32 to align 1:1 with Midge ColumnFamilyId.
+    /// Fitz stores route families as u32 to align 1:1 with Midge `ColumnFamilyId`.
     ///
     /// # Example
     ///
@@ -265,8 +265,8 @@ impl RouteFamily {
     /// ```
     #[inline]
     pub fn new(id: u64) -> Self {
-        if id <= u32::MAX as u64 {
-            Self { id: id as u32 }
+        if let Ok(id) = u32::try_from(id) {
+            Self { id }
         } else {
             tracing::warn!(
                 "RouteFamily {} exceeds u32::MAX, clamping to {}",
@@ -295,7 +295,7 @@ impl RouteFamily {
     #[inline]
     #[must_use]
     pub fn as_u64(&self) -> u64 {
-        self.id as u64
+        u64::from(self.id)
     }
 }
 
@@ -326,7 +326,7 @@ impl fmt::Display for RouteFamily {
 ///   - Multiple schemes may map to the same domain
 ///
 /// - **realm**: Top-level namespace (user-defined semantics)
-///   - NOT the RouteFamily (realm is a string in the route)
+///   - NOT the `RouteFamily` (realm is a string in the route)
 ///   - May represent tenant, org, env, or any organizational concept
 ///   - Runtime does not enforce semantics
 ///
@@ -354,13 +354,13 @@ impl fmt::Display for RouteFamily {
 /// - Pure string equality for lookups
 /// - Domains may parse and interpret the structure
 ///
-/// # Route vs RouteFamily
+/// # Route vs `RouteFamily`
 ///
 /// **IMPORTANT:** Route contains a `{realm}` component as a string,
-/// but realm is NOT the RouteFamily:
-/// - RouteFamily is an integer providing hard isolation
+/// but realm is NOT the `RouteFamily`:
+/// - `RouteFamily` is an integer providing hard isolation
 /// - realm is a string in the route path providing logical organization
-/// - Same realm value can appear in different RouteFamilies
+/// - Same realm value can appear in different `RouteFamilies`
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Route {
     path: Arc<str>,
@@ -418,11 +418,11 @@ impl fmt::Display for Route {
 /// A complete route address (family + route)
 ///
 /// This is the fundamental addressing unit in Fitz.
-/// All messages, leases, and routing decisions are scoped to a RouteAddress.
+/// All messages, leases, and routing decisions are scoped to a `RouteAddress`.
 ///
 /// # Isolation Guarantees
 ///
-/// Two RouteAddress instances are equal if and only if both their
+/// Two `RouteAddress` instances are equal if and only if both their
 /// family AND route match. This ensures complete isolation between families.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct RouteAddress {
