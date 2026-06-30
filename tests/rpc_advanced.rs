@@ -638,7 +638,7 @@ async fn should_reject_late_worker_response_after_timeout_given_rpc_sink() {
     let caller_sink = register_capture_sink(&router, caller_addr.clone());
     let worker_sink = register_capture_sink(&router, worker_addr.clone());
 
-    fitz::api::background::start_rpc_timeout_loop(sink.clone());
+    fitz::api::background::start_rpc_timeout_loop(&sink.clone());
     deliver_rpc_frame(
         sink.as_ref(),
         worker_addr.clone(),

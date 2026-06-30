@@ -93,10 +93,7 @@ pub(crate) fn json_response<T: Serialize>(data: T) -> Result<Response, Infallibl
     Ok(json_response_with_status(StatusCode::OK, data))
 }
 
-pub(crate) fn json_response_with_status<T: Serialize>(
-    status: StatusCode,
-    data: T,
-) -> Response {
+pub(crate) fn json_response_with_status<T: Serialize>(status: StatusCode, data: T) -> Response {
     match serde_json::to_string(&data) {
         Ok(json) => hyper::http::Response::builder()
             .status(status)

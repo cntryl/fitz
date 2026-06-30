@@ -52,9 +52,8 @@ impl TestClient {
             // Read length prefix
             let mut len_buf = [0u8; 4];
             self.stream.read_exact(&mut len_buf).await?;
-            let len = usize::try_from(u32::from_be_bytes(len_buf)).map_err(|error| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, error)
-            })?;
+            let len = usize::try_from(u32::from_be_bytes(len_buf))
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
 
             // Read frame
             let mut frame = vec![0u8; len];
@@ -239,8 +238,11 @@ impl TlvFrameBuilder {
         if value.len() > 65535 {
             panic!("TLV value too large: {} bytes", value.len());
         }
-        self.buf
-            .put_slice(&u16::try_from(value.len()).expect("TLV value length checked above").to_be_bytes());
+        self.buf.put_slice(
+            &u16::try_from(value.len())
+                .expect("TLV value length checked above")
+                .to_be_bytes(),
+        );
 
         // Value
         self.buf.put_slice(value);

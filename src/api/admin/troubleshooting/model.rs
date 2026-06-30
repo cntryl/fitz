@@ -442,7 +442,9 @@ fn primary_signal_for_stage(
     match current_stage {
         DiagnosisLabel::Healthy => (
             "no_active_pressure",
-            !signals.failure_signal() && !signals.contention_signal() && !signals.bottleneck_signal(),
+            !signals.failure_signal()
+                && !signals.contention_signal()
+                && !signals.bottleneck_signal(),
             0,
         ),
         DiagnosisLabel::Contention => (
