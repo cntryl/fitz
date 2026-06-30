@@ -191,146 +191,185 @@ pub(crate) fn build_global_stats(runtime: &Runtime) -> GlobalStats {
     } = troubleshooting::build_troubleshooting_snapshot(runtime);
 
     GlobalStats {
-        broker: BrokerStats {
-            uptime_seconds: runtime.uptime().as_secs(),
-            connections: runtime.connection_count(),
-            sessions: runtime.session_count(),
-            realms: runtime.active_realms(),
-            messages_per_second: runtime.messages_per_second(),
-            router_backpressure_total: runtime.router_backpressure_total(),
-            router_high_lane_backpressure_total: runtime.router_high_lane_backpressure_total(),
-        },
+        broker: build_broker_stats(runtime),
         domains: DomainStats {
-            kv: KvStats {
-                transactions_active: runtime.kv_transactions_active(),
-                keys_total: runtime.kv_keys_total(),
-                commits_failed_total: runtime.kv_commits_failed_total(),
-                invalid_transaction_rejects_total: runtime.kv_invalid_transaction_rejects_total(),
-                operations_per_second: runtime.kv_operations_per_second(),
-                diagnostics: kv,
-            },
-            stream: StreamStats {
-                streams_active: runtime.stream_active(),
-                append_sessions_active: runtime.stream_append_sessions_active(),
-                watermark_lag_buckets: runtime.stream_watermark_lag_buckets(),
-                request_latency_buckets: runtime.stream_request_latency_buckets(),
-                events_total: runtime.stream_events_total(),
-                requests_total: runtime.stream_requests_total(),
-                success_total: runtime.stream_success_total(),
-                failure_total: runtime.stream_failure_total(),
-                append_sessions_started_total: runtime.stream_append_sessions_started_total(),
-                append_sessions_ended_total: runtime.stream_append_sessions_ended_total(),
-                append_conflicts_total: runtime.stream_append_conflicts_total(),
-                notify_drops_total: runtime.stream_notify_drops_total(),
-                operations_per_second: runtime.stream_operations_per_second(),
-                subscriptions_active: runtime.stream_subscriptions_active(),
-                diagnostics: stream,
-            },
-            notice: NoticeStats {
-                subscriptions_active: runtime.notice_subscriptions_active(),
-                routes_active: runtime.notice_routes_active(),
-                max_route_subscribers: runtime.notice_max_route_subscribers(),
-                requests_total: runtime.notice_requests_total(),
-                success_total: runtime.notice_success_total(),
-                failure_total: runtime.notice_failure_total(),
-                delivery_drops_total: runtime.notice_delivery_drops_total(),
-                unsubscribes_total: runtime.notice_unsubscribes_total(),
-                wildcard_limit_rejects_total: runtime.notice_wildcard_limit_rejects_total(),
-                publishes_per_second: runtime.notice_publishes_per_second(),
-                diagnostics: notice,
-            },
-            queue: QueueStats {
-                messages_ready: runtime.queue_messages_ready(),
-                messages_delayed: runtime.queue_messages_delayed(),
-                messages_pending: runtime.queue_messages_pending(),
-                messages_dead_lettered: runtime.queue_messages_dead_lettered(),
-                oldest_message_age_seconds: runtime.queue_oldest_message_age_seconds(),
-                oldest_backlog_age_seconds: runtime.queue_oldest_backlog_age_seconds(),
-                backlog_age_buckets: runtime.queue_backlog_age_buckets(),
-                delay_age_buckets: runtime.queue_delay_age_buckets(),
-                inflight_active: runtime.queue_inflight_active(),
-                requests_total: runtime.queue_requests_total(),
-                success_total: runtime.queue_success_total(),
-                failure_total: runtime.queue_failure_total(),
-                enqueues_total: runtime.queue_enqueues_total(),
-                reserves_total: runtime.queue_reserves_total(),
-                completes_total: runtime.queue_completes_total(),
-                releases_total: runtime.queue_releases_total(),
-                extends_total: runtime.queue_extends_total(),
-                notify_drops_total: runtime.queue_notify_drops_total(),
-                redeliveries_total: runtime.queue_redeliveries_total(),
-                dead_letter_transitions_total: runtime.queue_dead_letter_transitions_total(),
-                complete_rejected_total: runtime.queue_complete_rejected_total(),
-                operations_per_second: runtime.queue_operations_per_second(),
-                diagnostics: queue,
-            },
-            rpc: RpcStats {
-                workers_registered: runtime.rpc_workers_registered(),
-                requests_pending: runtime.rpc_requests_pending(),
-                oldest_pending_request_age_seconds: runtime
-                    .rpc_oldest_pending_request_age_seconds(),
-                pending_routes_active: runtime.rpc_pending_routes_active(),
-                slowest_worker_average_latency_ms: runtime.rpc_slowest_worker_average_latency_ms(),
-                worker_latency_buckets: runtime.rpc_worker_latency_buckets(),
-                requests_total: runtime.rpc_requests_total(),
-                success_total: runtime.rpc_success_total(),
-                failure_total: runtime.rpc_failure_total(),
-                request_timeouts_total: runtime.rpc_request_timeouts_total(),
-                backpressure_rejects_total: runtime.rpc_backpressure_rejects_total(),
-                duplicate_correlation_rejects_total: runtime
-                    .rpc_duplicate_correlation_rejects_total(),
-                wrong_worker_rejects_total: runtime.rpc_wrong_worker_rejects_total(),
-                responses_dropped_closed_caller_total: runtime
-                    .rpc_responses_dropped_closed_caller_total(),
-                responses_missing_pending_total: runtime.rpc_responses_missing_pending_total(),
-                acks_rejected_wrong_worker_total: runtime.rpc_acks_rejected_wrong_worker_total(),
-                invalid_sequence_responses_total: runtime.rpc_invalid_sequence_responses_total(),
-                invalid_sequence_errors_forwarded_total: runtime
-                    .rpc_invalid_sequence_errors_forwarded_total(),
-                invalid_sequence_errors_dropped_total: runtime
-                    .rpc_invalid_sequence_errors_dropped_total(),
-                operations_per_second: runtime.rpc_operations_per_second(),
-                diagnostics: rpc,
-            },
-            lease: LeaseStats {
-                leases_active: runtime.lease_active(),
-                waiter_depth: runtime.lease_waiter_depth(),
-                oldest_lease_age_seconds: runtime.lease_oldest_lease_age_seconds(),
-                requests_total: runtime.lease_requests_total(),
-                success_total: runtime.lease_success_total(),
-                failure_total: runtime.lease_failure_total(),
-                acquire_timeouts_total: runtime.lease_acquire_timeouts_total(),
-                forced_releases_total: runtime.lease_forced_releases_total(),
-                invalid_token_rejects_total: runtime.lease_invalid_token_rejects_total(),
-                ownership_churn_total: runtime.lease_ownership_churn_total(),
-                operations_per_second: runtime.lease_operations_per_second(),
-                diagnostics: lease,
-            },
-            schedule: ScheduleStats {
-                schedules_active: runtime.schedule_active(),
-                executions_per_minute: runtime.schedule_executions_per_minute(),
-                subscriptions_active: runtime.schedule_subscriptions_active(),
-                pending_fire_claims: runtime.schedule_pending_fire_claims(),
-                pending_ack_retries: runtime.schedule_pending_ack_retries(),
-                oldest_pending_claim_age_seconds: runtime
-                    .schedule_oldest_pending_claim_age_seconds(),
-                request_latency_buckets: runtime.schedule_request_latency_buckets(),
-                notify_failures_total: runtime.schedule_notify_failures(),
-                ack_failures_total: runtime.schedule_ack_failures(),
-                overdue_normalizations_total: runtime.schedule_overdue_normalizations(),
-                pending_claims_expired_total: runtime.schedule_pending_claims_expired_total(),
-                pending_claim_cleanup_failures_total: runtime
-                    .schedule_pending_claim_cleanup_failures_total(),
-                create_persistence_failures_total: runtime
-                    .schedule_create_persistence_failures_total(),
-                upsert_persistence_failures_total: runtime
-                    .schedule_upsert_persistence_failures_total(),
-                cancel_persistence_failures_total: runtime
-                    .schedule_cancel_persistence_failures_total(),
-                diagnostics: schedule,
-            },
+            kv: build_kv_stats(runtime, kv),
+            stream: build_stream_stats(runtime, stream),
+            notice: build_notice_stats(runtime, notice),
+            queue: build_queue_stats(runtime, queue),
+            rpc: build_rpc_stats(runtime, rpc),
+            lease: build_lease_stats(runtime, lease),
+            schedule: build_schedule_stats(runtime, schedule),
         },
         diagnostics: global,
+    }
+}
+
+fn build_broker_stats(runtime: &Runtime) -> BrokerStats {
+    BrokerStats {
+        uptime_seconds: runtime.uptime().as_secs(),
+        connections: runtime.connection_count(),
+        sessions: runtime.session_count(),
+        realms: runtime.active_realms(),
+        messages_per_second: runtime.messages_per_second(),
+        router_backpressure_total: runtime.router_backpressure_total(),
+        router_high_lane_backpressure_total: runtime.router_high_lane_backpressure_total(),
+    }
+}
+
+fn build_kv_stats(runtime: &Runtime, diagnostics: troubleshooting::DomainDiagnostics) -> KvStats {
+    KvStats {
+        transactions_active: runtime.kv_transactions_active(),
+        keys_total: runtime.kv_keys_total(),
+        commits_failed_total: runtime.kv_commits_failed_total(),
+        invalid_transaction_rejects_total: runtime.kv_invalid_transaction_rejects_total(),
+        operations_per_second: runtime.kv_operations_per_second(),
+        diagnostics,
+    }
+}
+
+fn build_stream_stats(
+    runtime: &Runtime,
+    diagnostics: troubleshooting::DomainDiagnostics,
+) -> StreamStats {
+    StreamStats {
+        streams_active: runtime.stream_active(),
+        append_sessions_active: runtime.stream_append_sessions_active(),
+        watermark_lag_buckets: runtime.stream_watermark_lag_buckets(),
+        request_latency_buckets: runtime.stream_request_latency_buckets(),
+        events_total: runtime.stream_events_total(),
+        requests_total: runtime.stream_requests_total(),
+        success_total: runtime.stream_success_total(),
+        failure_total: runtime.stream_failure_total(),
+        append_sessions_started_total: runtime.stream_append_sessions_started_total(),
+        append_sessions_ended_total: runtime.stream_append_sessions_ended_total(),
+        append_conflicts_total: runtime.stream_append_conflicts_total(),
+        notify_drops_total: runtime.stream_notify_drops_total(),
+        operations_per_second: runtime.stream_operations_per_second(),
+        subscriptions_active: runtime.stream_subscriptions_active(),
+        diagnostics,
+    }
+}
+
+fn build_notice_stats(
+    runtime: &Runtime,
+    diagnostics: troubleshooting::DomainDiagnostics,
+) -> NoticeStats {
+    NoticeStats {
+        subscriptions_active: runtime.notice_subscriptions_active(),
+        routes_active: runtime.notice_routes_active(),
+        max_route_subscribers: runtime.notice_max_route_subscribers(),
+        requests_total: runtime.notice_requests_total(),
+        success_total: runtime.notice_success_total(),
+        failure_total: runtime.notice_failure_total(),
+        delivery_drops_total: runtime.notice_delivery_drops_total(),
+        unsubscribes_total: runtime.notice_unsubscribes_total(),
+        wildcard_limit_rejects_total: runtime.notice_wildcard_limit_rejects_total(),
+        publishes_per_second: runtime.notice_publishes_per_second(),
+        diagnostics,
+    }
+}
+
+fn build_queue_stats(
+    runtime: &Runtime,
+    diagnostics: troubleshooting::DomainDiagnostics,
+) -> QueueStats {
+    QueueStats {
+        messages_ready: runtime.queue_messages_ready(),
+        messages_delayed: runtime.queue_messages_delayed(),
+        messages_pending: runtime.queue_messages_pending(),
+        messages_dead_lettered: runtime.queue_messages_dead_lettered(),
+        oldest_message_age_seconds: runtime.queue_oldest_message_age_seconds(),
+        oldest_backlog_age_seconds: runtime.queue_oldest_backlog_age_seconds(),
+        backlog_age_buckets: runtime.queue_backlog_age_buckets(),
+        delay_age_buckets: runtime.queue_delay_age_buckets(),
+        inflight_active: runtime.queue_inflight_active(),
+        requests_total: runtime.queue_requests_total(),
+        success_total: runtime.queue_success_total(),
+        failure_total: runtime.queue_failure_total(),
+        enqueues_total: runtime.queue_enqueues_total(),
+        reserves_total: runtime.queue_reserves_total(),
+        completes_total: runtime.queue_completes_total(),
+        releases_total: runtime.queue_releases_total(),
+        extends_total: runtime.queue_extends_total(),
+        notify_drops_total: runtime.queue_notify_drops_total(),
+        redeliveries_total: runtime.queue_redeliveries_total(),
+        dead_letter_transitions_total: runtime.queue_dead_letter_transitions_total(),
+        complete_rejected_total: runtime.queue_complete_rejected_total(),
+        operations_per_second: runtime.queue_operations_per_second(),
+        diagnostics,
+    }
+}
+
+fn build_rpc_stats(runtime: &Runtime, diagnostics: troubleshooting::DomainDiagnostics) -> RpcStats {
+    RpcStats {
+        workers_registered: runtime.rpc_workers_registered(),
+        requests_pending: runtime.rpc_requests_pending(),
+        oldest_pending_request_age_seconds: runtime.rpc_oldest_pending_request_age_seconds(),
+        pending_routes_active: runtime.rpc_pending_routes_active(),
+        slowest_worker_average_latency_ms: runtime.rpc_slowest_worker_average_latency_ms(),
+        worker_latency_buckets: runtime.rpc_worker_latency_buckets(),
+        requests_total: runtime.rpc_requests_total(),
+        success_total: runtime.rpc_success_total(),
+        failure_total: runtime.rpc_failure_total(),
+        request_timeouts_total: runtime.rpc_request_timeouts_total(),
+        backpressure_rejects_total: runtime.rpc_backpressure_rejects_total(),
+        duplicate_correlation_rejects_total: runtime.rpc_duplicate_correlation_rejects_total(),
+        wrong_worker_rejects_total: runtime.rpc_wrong_worker_rejects_total(),
+        responses_dropped_closed_caller_total: runtime.rpc_responses_dropped_closed_caller_total(),
+        responses_missing_pending_total: runtime.rpc_responses_missing_pending_total(),
+        acks_rejected_wrong_worker_total: runtime.rpc_acks_rejected_wrong_worker_total(),
+        invalid_sequence_responses_total: runtime.rpc_invalid_sequence_responses_total(),
+        invalid_sequence_errors_forwarded_total: runtime
+            .rpc_invalid_sequence_errors_forwarded_total(),
+        invalid_sequence_errors_dropped_total: runtime.rpc_invalid_sequence_errors_dropped_total(),
+        operations_per_second: runtime.rpc_operations_per_second(),
+        diagnostics,
+    }
+}
+
+fn build_lease_stats(
+    runtime: &Runtime,
+    diagnostics: troubleshooting::DomainDiagnostics,
+) -> LeaseStats {
+    LeaseStats {
+        leases_active: runtime.lease_active(),
+        waiter_depth: runtime.lease_waiter_depth(),
+        oldest_lease_age_seconds: runtime.lease_oldest_lease_age_seconds(),
+        requests_total: runtime.lease_requests_total(),
+        success_total: runtime.lease_success_total(),
+        failure_total: runtime.lease_failure_total(),
+        acquire_timeouts_total: runtime.lease_acquire_timeouts_total(),
+        forced_releases_total: runtime.lease_forced_releases_total(),
+        invalid_token_rejects_total: runtime.lease_invalid_token_rejects_total(),
+        ownership_churn_total: runtime.lease_ownership_churn_total(),
+        operations_per_second: runtime.lease_operations_per_second(),
+        diagnostics,
+    }
+}
+
+fn build_schedule_stats(
+    runtime: &Runtime,
+    diagnostics: troubleshooting::DomainDiagnostics,
+) -> ScheduleStats {
+    ScheduleStats {
+        schedules_active: runtime.schedule_active(),
+        executions_per_minute: runtime.schedule_executions_per_minute(),
+        subscriptions_active: runtime.schedule_subscriptions_active(),
+        pending_fire_claims: runtime.schedule_pending_fire_claims(),
+        pending_ack_retries: runtime.schedule_pending_ack_retries(),
+        oldest_pending_claim_age_seconds: runtime.schedule_oldest_pending_claim_age_seconds(),
+        request_latency_buckets: runtime.schedule_request_latency_buckets(),
+        notify_failures_total: runtime.schedule_notify_failures(),
+        ack_failures_total: runtime.schedule_ack_failures(),
+        overdue_normalizations_total: runtime.schedule_overdue_normalizations(),
+        pending_claims_expired_total: runtime.schedule_pending_claims_expired_total(),
+        pending_claim_cleanup_failures_total: runtime
+            .schedule_pending_claim_cleanup_failures_total(),
+        create_persistence_failures_total: runtime.schedule_create_persistence_failures_total(),
+        upsert_persistence_failures_total: runtime.schedule_upsert_persistence_failures_total(),
+        cancel_persistence_failures_total: runtime.schedule_cancel_persistence_failures_total(),
+        diagnostics,
     }
 }
 
@@ -384,162 +423,49 @@ async fn handle_kv_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
 ) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(KvStats {
-        transactions_active: runtime.kv_transactions_active(),
-        keys_total: runtime.kv_keys_total(),
-        commits_failed_total: runtime.kv_commits_failed_total(),
-        invalid_transaction_rejects_total: runtime.kv_invalid_transaction_rejects_total(),
-        operations_per_second: runtime.kv_operations_per_second(),
-        diagnostics,
-    })
+    crate::api::admin::json_response(build_kv_stats(runtime.as_ref(), diagnostics))
 }
 
 async fn handle_stream_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
 ) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(StreamStats {
-        streams_active: runtime.stream_active(),
-        append_sessions_active: runtime.stream_append_sessions_active(),
-        watermark_lag_buckets: runtime.stream_watermark_lag_buckets(),
-        request_latency_buckets: runtime.stream_request_latency_buckets(),
-        events_total: runtime.stream_events_total(),
-        requests_total: runtime.stream_requests_total(),
-        success_total: runtime.stream_success_total(),
-        failure_total: runtime.stream_failure_total(),
-        append_sessions_started_total: runtime.stream_append_sessions_started_total(),
-        append_sessions_ended_total: runtime.stream_append_sessions_ended_total(),
-        append_conflicts_total: runtime.stream_append_conflicts_total(),
-        notify_drops_total: runtime.stream_notify_drops_total(),
-        operations_per_second: runtime.stream_operations_per_second(),
-        subscriptions_active: runtime.stream_subscriptions_active(),
-        diagnostics,
-    })
+    crate::api::admin::json_response(build_stream_stats(runtime.as_ref(), diagnostics))
 }
 
 async fn handle_notice_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
 ) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(NoticeStats {
-        subscriptions_active: runtime.notice_subscriptions_active(),
-        routes_active: runtime.notice_routes_active(),
-        max_route_subscribers: runtime.notice_max_route_subscribers(),
-        requests_total: runtime.notice_requests_total(),
-        success_total: runtime.notice_success_total(),
-        failure_total: runtime.notice_failure_total(),
-        delivery_drops_total: runtime.notice_delivery_drops_total(),
-        unsubscribes_total: runtime.notice_unsubscribes_total(),
-        wildcard_limit_rejects_total: runtime.notice_wildcard_limit_rejects_total(),
-        publishes_per_second: runtime.notice_publishes_per_second(),
-        diagnostics,
-    })
+    crate::api::admin::json_response(build_notice_stats(runtime.as_ref(), diagnostics))
 }
 
 async fn handle_queue_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
 ) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(QueueStats {
-        messages_ready: runtime.queue_messages_ready(),
-        messages_delayed: runtime.queue_messages_delayed(),
-        messages_pending: runtime.queue_messages_pending(),
-        messages_dead_lettered: runtime.queue_messages_dead_lettered(),
-        oldest_message_age_seconds: runtime.queue_oldest_message_age_seconds(),
-        oldest_backlog_age_seconds: runtime.queue_oldest_backlog_age_seconds(),
-        backlog_age_buckets: runtime.queue_backlog_age_buckets(),
-        delay_age_buckets: runtime.queue_delay_age_buckets(),
-        inflight_active: runtime.queue_inflight_active(),
-        requests_total: runtime.queue_requests_total(),
-        success_total: runtime.queue_success_total(),
-        failure_total: runtime.queue_failure_total(),
-        enqueues_total: runtime.queue_enqueues_total(),
-        reserves_total: runtime.queue_reserves_total(),
-        completes_total: runtime.queue_completes_total(),
-        releases_total: runtime.queue_releases_total(),
-        extends_total: runtime.queue_extends_total(),
-        notify_drops_total: runtime.queue_notify_drops_total(),
-        redeliveries_total: runtime.queue_redeliveries_total(),
-        dead_letter_transitions_total: runtime.queue_dead_letter_transitions_total(),
-        complete_rejected_total: runtime.queue_complete_rejected_total(),
-        operations_per_second: runtime.queue_operations_per_second(),
-        diagnostics,
-    })
+    crate::api::admin::json_response(build_queue_stats(runtime.as_ref(), diagnostics))
 }
 
 async fn handle_rpc_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
 ) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(RpcStats {
-        workers_registered: runtime.rpc_workers_registered(),
-        requests_pending: runtime.rpc_requests_pending(),
-        oldest_pending_request_age_seconds: runtime.rpc_oldest_pending_request_age_seconds(),
-        pending_routes_active: runtime.rpc_pending_routes_active(),
-        slowest_worker_average_latency_ms: runtime.rpc_slowest_worker_average_latency_ms(),
-        worker_latency_buckets: runtime.rpc_worker_latency_buckets(),
-        requests_total: runtime.rpc_requests_total(),
-        success_total: runtime.rpc_success_total(),
-        failure_total: runtime.rpc_failure_total(),
-        request_timeouts_total: runtime.rpc_request_timeouts_total(),
-        backpressure_rejects_total: runtime.rpc_backpressure_rejects_total(),
-        duplicate_correlation_rejects_total: runtime.rpc_duplicate_correlation_rejects_total(),
-        wrong_worker_rejects_total: runtime.rpc_wrong_worker_rejects_total(),
-        responses_dropped_closed_caller_total: runtime.rpc_responses_dropped_closed_caller_total(),
-        responses_missing_pending_total: runtime.rpc_responses_missing_pending_total(),
-        acks_rejected_wrong_worker_total: runtime.rpc_acks_rejected_wrong_worker_total(),
-        invalid_sequence_responses_total: runtime.rpc_invalid_sequence_responses_total(),
-        invalid_sequence_errors_forwarded_total: runtime
-            .rpc_invalid_sequence_errors_forwarded_total(),
-        invalid_sequence_errors_dropped_total: runtime.rpc_invalid_sequence_errors_dropped_total(),
-        operations_per_second: runtime.rpc_operations_per_second(),
-        diagnostics,
-    })
+    crate::api::admin::json_response(build_rpc_stats(runtime.as_ref(), diagnostics))
 }
 
 async fn handle_lease_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
 ) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(LeaseStats {
-        leases_active: runtime.lease_active(),
-        waiter_depth: runtime.lease_waiter_depth(),
-        oldest_lease_age_seconds: runtime.lease_oldest_lease_age_seconds(),
-        requests_total: runtime.lease_requests_total(),
-        success_total: runtime.lease_success_total(),
-        failure_total: runtime.lease_failure_total(),
-        acquire_timeouts_total: runtime.lease_acquire_timeouts_total(),
-        forced_releases_total: runtime.lease_forced_releases_total(),
-        invalid_token_rejects_total: runtime.lease_invalid_token_rejects_total(),
-        ownership_churn_total: runtime.lease_ownership_churn_total(),
-        operations_per_second: runtime.lease_operations_per_second(),
-        diagnostics,
-    })
+    crate::api::admin::json_response(build_lease_stats(runtime.as_ref(), diagnostics))
 }
 
 async fn handle_schedule_stats(
     runtime: Arc<Runtime>,
     diagnostics: troubleshooting::DomainDiagnostics,
 ) -> Result<Response, Infallible> {
-    crate::api::admin::json_response(ScheduleStats {
-        schedules_active: runtime.schedule_active(),
-        executions_per_minute: runtime.schedule_executions_per_minute(),
-        subscriptions_active: runtime.schedule_subscriptions_active(),
-        pending_fire_claims: runtime.schedule_pending_fire_claims(),
-        pending_ack_retries: runtime.schedule_pending_ack_retries(),
-        oldest_pending_claim_age_seconds: runtime.schedule_oldest_pending_claim_age_seconds(),
-        request_latency_buckets: runtime.schedule_request_latency_buckets(),
-        notify_failures_total: runtime.schedule_notify_failures(),
-        ack_failures_total: runtime.schedule_ack_failures(),
-        overdue_normalizations_total: runtime.schedule_overdue_normalizations(),
-        pending_claims_expired_total: runtime.schedule_pending_claims_expired_total(),
-        pending_claim_cleanup_failures_total: runtime
-            .schedule_pending_claim_cleanup_failures_total(),
-        create_persistence_failures_total: runtime.schedule_create_persistence_failures_total(),
-        upsert_persistence_failures_total: runtime.schedule_upsert_persistence_failures_total(),
-        cancel_persistence_failures_total: runtime.schedule_cancel_persistence_failures_total(),
-        diagnostics,
-    })
+    crate::api::admin::json_response(build_schedule_stats(runtime.as_ref(), diagnostics))
 }
 
 /// Parse realm filter from query string
@@ -549,7 +475,7 @@ pub fn parse_realm_filter(query: Option<&str>) -> Option<String> {
         q.split('&').find_map(|pair| {
             let mut parts = pair.split('=');
             if parts.next()? == "realm" {
-                parts.next().map(|s| s.to_string())
+                parts.next().map(std::string::ToString::to_string)
             } else {
                 None
             }
