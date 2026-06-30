@@ -14,12 +14,8 @@ use crate::api::admin::list::{
     ScheduleInfo, ScheduleLatencyBuckets, StreamInfo, StreamLatencyBuckets,
 };
 use crate::api::admin::ResourcePath;
-use crate::boot::Runtime;
 use crate::runtime::routing::{route_quad, route_triplet};
-use chrono::{DateTime, Duration, Utc};
-use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap};
+use num_traits::ToPrimitive;
 
 pub(crate) use analysis_kv_stream_notice::{analyze_kv, analyze_notice, analyze_stream};
 pub(crate) use analysis_lease_schedule::{
@@ -54,10 +50,21 @@ pub(crate) use resource_timelines_domains::{
     rpc_resource_timeline, schedule_resource_timeline, stream_resource_timeline,
 };
 pub use runtime_snapshot::build_troubleshooting_snapshot;
-pub(crate) use runtime_snapshot::compare_scored_hotspots;
 
 #[cfg(test)]
 pub(crate) use runtime_snapshot::summarize_incident;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn score_usize(value: usize) -> f64 {
+    value.to_f64().unwrap_or(f64::MAX)
+}
+
+pub(crate) fn score_u64(value: u64) -> f64 {
+    value.to_f64().unwrap_or(f64::MAX)
+}
+
+pub(crate) fn saturating_usize(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}

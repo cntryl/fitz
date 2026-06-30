@@ -316,8 +316,8 @@ pub(crate) fn build_resource_comparison(
 ) -> ResourceComparison {
     troubleshooting::compare_resource_sides(
         domain,
-        comparison_side(left_path, left_family, left_diagnostics, left_metrics),
-        comparison_side(right_path, right_family, right_diagnostics, right_metrics),
+        &comparison_side(left_path, left_family, left_diagnostics, left_metrics),
+        &comparison_side(right_path, right_family, right_diagnostics, right_metrics),
     )
 }
 

@@ -1,4 +1,20 @@
-use super::super::*;
+use super::super::{
+    build_resource_timeline, parse_rfc3339, parse_rpc_operation, rpc_operation_diagnostics,
+    summarize_rpc_worker_latency, timeline_candidate, DiagnosticSnapshot, ResourcePath,
+    ResourceTimeline, ResourceTimelineEvent, ResourceTimelineKind,
+};
+use crate::api::admin::list::{RpcPendingRequest, RpcWorker};
+use chrono::Utc;
+
+#[inline]
+fn i64_to_u64_non_negative(seconds: i64) -> u64 {
+    u64::try_from(seconds).unwrap_or(0)
+}
+
+#[inline]
+fn u64_to_usize_non_negative(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
 
 pub(crate) fn rpc_resource_timeline(
     workers: &[RpcWorker],
@@ -60,16 +76,14 @@ pub(crate) fn rpc_resource_timeline(
                     path,
                     None,
                     parse_rpc_operation(&worker.route).map(|operation| operation.operation),
-                    Some(
-                        now.signed_duration_since(registered_at)
-                            .num_seconds()
-                            .max(0) as u64,
-                    ),
+                    Some(i64_to_u64_non_negative(
+                        now.signed_duration_since(registered_at).num_seconds(),
+                    )),
                     None,
                     Some(worker.session_id.clone()),
                     None,
                     None,
-                    Some(worker.requests_handled as usize),
+                    Some(u64_to_usize_non_negative(worker.requests_handled)),
                 ),
             ));
         }
@@ -77,7 +91,7 @@ pub(crate) fn rpc_resource_timeline(
 
     for request in matching_pending {
         if let Some(submitted_at) = parse_rfc3339(&request.submitted_at) {
-            let age_seconds = (now - submitted_at).num_seconds().max(0) as u64;
+            let age_seconds = i64_to_u64_non_negative((now - submitted_at).num_seconds());
             oldest_pending_age = oldest_pending_age.max(age_seconds);
             candidates.push(timeline_candidate(
                 submitted_at,

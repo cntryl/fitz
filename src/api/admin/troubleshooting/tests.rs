@@ -1,5 +1,17 @@
-use super::*;
+use super::model::DiagnosticSnapshotInput;
+use super::{
+    analyze_lease, analyze_notice, analyze_queue, analyze_rpc, analyze_schedule, analyze_stream,
+    kv_resource_diagnostics, lease_resource_diagnostics, queue_resource_diagnostics,
+    rpc_operation_diagnostics, schedule_resource_diagnostics, summarize_incident,
+    summarize_rpc_worker_latency, DiagnosisLabel, DiagnosticHotspot, DiagnosticSeverity,
+    DiagnosticSnapshot, DiagnosticTrend, IncidentStatus,
+};
+use crate::api::admin::list::{
+    LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueDeadLetter, QueueInfo, RpcWorker,
+    ScheduleInfo, ScheduleLatencyBuckets, StreamInfo, StreamLatencyBuckets,
+};
 use crate::api::admin::QueueAgeBuckets;
+use chrono::{Duration, Utc};
 
 #[test]
 fn should_mark_empty_snapshot_healthy() {
@@ -679,7 +691,7 @@ fn should_summarize_incident_given_hotspot() {
     };
 
     // Act
-    let summary = summarize_incident(&Some(hotspot));
+    let summary = summarize_incident(Some(&hotspot));
 
     // Assert
     assert_eq!(summary.status, IncidentStatus::Degraded);
@@ -710,25 +722,25 @@ fn should_summarize_incident_given_broker_hotspot() {
         subscriptions: None,
         owner_session: None,
         worker_session: None,
-        snapshot: DiagnosticSnapshot::with_stage(
-            DiagnosisLabel::Throughput,
-            DiagnosticTrend::Growing,
-            DiagnosticSeverity::Medium,
-            Some("router saturation".to_string()),
-            None,
-            None,
-            None,
-            None,
-            0,
-            0,
-            0,
-            0,
-            vec!["5 router mailbox saturation event(s)".to_string()],
-        ),
+        snapshot: DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
+            current_stage: DiagnosisLabel::Throughput,
+            trend: DiagnosticTrend::Growing,
+            severity: DiagnosticSeverity::Medium,
+            likely_bottleneck: Some("router saturation".to_string()),
+            last_changed_at: None,
+            last_success_at: None,
+            last_failure_at: None,
+            age_seconds: None,
+            recent_transition_count: 0,
+            failure_count: 0,
+            contention_count: 0,
+            waiter_count: 0,
+            explanation_hints: vec!["5 router mailbox saturation event(s)".to_string()],
+        }),
     };
 
     // Act
-    let summary = summarize_incident(&Some(hotspot));
+    let summary = summarize_incident(Some(&hotspot));
 
     // Assert
     assert_eq!(summary.status, IncidentStatus::Degraded);

@@ -11,6 +11,27 @@ pub use fitz::testkit::{
     TestClient, TestServer, TestWebSocketClient, TlvFrameBuilder, TlvFrameParser,
 };
 
+#[inline]
+fn u32_len(value: usize) -> u32 {
+    u32::try_from(value)
+        .unwrap_or_else(|_| panic!("transport frame length exceeds u32::MAX: {value}"))
+}
+
+#[inline]
+fn u64_from_i32(value: i32) -> u64 {
+    u64::try_from(value).unwrap_or_else(|_| panic!("negative TTL seconds are invalid: {value}"))
+}
+
+#[inline]
+fn msg_type_to_u8(msg_type: u16) -> u8 {
+    msg_type.to_le_bytes()[0]
+}
+
+#[inline]
+fn u32_to_usize(value: u32) -> usize {
+    usize::try_from(value).unwrap_or_else(|_| panic!("u32 value does not fit usize: {value}"))
+}
+
 // ============================================================================
 // GENERIC CONNECTOR TRAITS
 // ============================================================================
@@ -212,21 +233,21 @@ impl LeaseConnector for WsLeaseConnector {
     }
 }
 
-/// Build LEASE ACQUIRE frame (msg_type 400)
+/// Build LEASE ACQUIRE frame (`msg_type` 400)
 pub fn build_lease_acquire_immediate(route: &str, owner_id: &str, ttl_secs: i32) -> Vec<u8> {
     // Wire format: [string route][string owner_id][u64 ttl_secs][u32 wait_seconds (optional)]
     let mut buf = Vec::new();
 
     // Route (length-prefixed string)
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
     // Owner ID (length-prefixed string)
-    buf.put_u32(owner_id.len() as u32);
+    buf.put_u32(u32_len(owner_id.len()));
     buf.put_slice(owner_id.as_bytes());
 
     // TTL seconds (u64)
-    buf.put_u64(ttl_secs as u64);
+    buf.put_u64(u64_from_i32(ttl_secs));
 
     // Wait seconds (u32, 0 for immediate)
     buf.put_u32(0);
@@ -236,7 +257,7 @@ pub fn build_lease_acquire_immediate(route: &str, owner_id: &str, ttl_secs: i32)
     builder.build()
 }
 
-/// Build LEASE ACQUIRE frame (msg_type 400) with waiting.
+/// Build LEASE ACQUIRE frame (`msg_type` 400) with waiting.
 pub fn build_lease_acquire_with_wait(
     route: &str,
     owner_id: &str,
@@ -245,13 +266,13 @@ pub fn build_lease_acquire_with_wait(
 ) -> Vec<u8> {
     let mut buf = Vec::new();
 
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
-    buf.put_u32(owner_id.len() as u32);
+    buf.put_u32(u32_len(owner_id.len()));
     buf.put_slice(owner_id.as_bytes());
 
-    buf.put_u64(ttl_secs as u64);
+    buf.put_u64(u64_from_i32(ttl_secs));
     buf.put_u32(wait_seconds);
 
     let mut builder = TlvFrameBuilder::new();
@@ -259,41 +280,41 @@ pub fn build_lease_acquire_with_wait(
     builder.build()
 }
 
-/// Build LEASE RENEW frame (msg_type 401)
+/// Build LEASE RENEW frame (`msg_type` 401)
 pub fn build_lease_renew(route: &str, owner_id: &str, token: u64, ttl_secs: i32) -> Vec<u8> {
     // Wire format: [string route][string owner_id][u64 fencing_token][u64 ttl_secs]
     let mut buf = Vec::new();
 
     // Route (length-prefixed string)
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
     // Owner ID (length-prefixed string)
-    buf.put_u32(owner_id.len() as u32);
+    buf.put_u32(u32_len(owner_id.len()));
     buf.put_slice(owner_id.as_bytes());
 
     // Fencing token (u64)
     buf.put_u64(token);
 
     // TTL seconds (u64)
-    buf.put_u64(ttl_secs as u64);
+    buf.put_u64(u64_from_i32(ttl_secs));
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(401, &buf);
     builder.build()
 }
 
-/// Build LEASE RELEASE frame (msg_type 402)
+/// Build LEASE RELEASE frame (`msg_type` 402)
 pub fn build_lease_release(route: &str, owner_id: &str, token: u64) -> Vec<u8> {
     // Wire format: [string route][string owner_id][u64 fencing_token]
     let mut buf = Vec::new();
 
     // Route (length-prefixed string)
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
     // Owner ID (length-prefixed string)
-    buf.put_u32(owner_id.len() as u32);
+    buf.put_u32(u32_len(owner_id.len()));
     buf.put_slice(owner_id.as_bytes());
 
     // Fencing token (u64)
@@ -304,10 +325,10 @@ pub fn build_lease_release(route: &str, owner_id: &str, token: u64) -> Vec<u8> {
     builder.build()
 }
 
-/// Build LEASE QUERY frame (msg_type 403)
+/// Build LEASE QUERY frame (`msg_type` 403)
 pub fn build_lease_query(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -315,10 +336,10 @@ pub fn build_lease_query(route: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build LEASE SUBSCRIBE frame (msg_type 407)
+/// Build LEASE SUBSCRIBE frame (`msg_type` 407)
 pub fn build_lease_subscribe(pattern: &str) -> Vec<u8> {
     let mut buf = Vec::new();
-    buf.put_u32(pattern.len() as u32);
+    buf.put_u32(u32_len(pattern.len()));
     buf.put_slice(pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -326,10 +347,10 @@ pub fn build_lease_subscribe(pattern: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build LEASE UNSUBSCRIBE frame (msg_type 408)
+/// Build LEASE UNSUBSCRIBE frame (`msg_type` 408)
 pub fn build_lease_unsubscribe(pattern: &str) -> Vec<u8> {
     let mut buf = Vec::new();
-    buf.put_u32(pattern.len() as u32);
+    buf.put_u32(u32_len(pattern.len()));
     buf.put_slice(pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -392,24 +413,24 @@ pub struct LeaseStatusPayload {
     pub pending_waiters: u32,
 }
 
-/// Parse LEASE response: (msg_type: u8, status: u8, data: Vec<u8>)
+/// Parse LEASE response: (`msg_type: u8`, `status: u8`, `data: Vec<u8>`)
 pub fn parse_lease_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
 
-    // Server sends single TLV record: [msg_type][len][payload]
-    // Payload format: [u8 status][optional u64 token]
+    // Server sends single TLV record: [`msg_type`][`len`][`payload`]
+    // Payload format: [`u8` `status`][optional `u64` token]
     if let Some((msg_type, payload)) = parser.next_field() {
-        let status = if !payload.is_empty() { payload[0] } else { 1 };
-        // Return msg_type (as u8), status, and full payload for further parsing
-        return ((msg_type & 0xFF) as u8, status, payload);
+        let status = if payload.is_empty() { 1 } else { payload[0] };
+        // Return `msg_type` (as `u8`), `status`, and full payload for further parsing
+        return (msg_type_to_u8(msg_type), status, payload);
     }
 
     // Fallback if no data
     (0, 1, Vec::new())
 }
 
-/// Parse lease token from ACQUIRE success response data (CLIENT_SPEC).
-/// Wire format: [u8 status=0][u8 response_type (0=Acquired,1=AlreadyHeld,2=Queued,3=AlreadyQueued)][u64 BE fencing_token]
+/// Parse lease token from `ACQUIRE` success response data (`CLIENT_SPEC`).
+/// Wire format: [`u8 status=0`][`u8 response_type` (`0=Acquired`, `1=AlreadyHeld`, `2=Queued`, `3=AlreadyQueued`)][`u64` BE `fencing_token`]
 pub fn parse_lease_token_response(data: &[u8]) -> Result<u64, String> {
     if data.len() < 10 {
         return Err("Token data too short".to_string());
@@ -420,7 +441,7 @@ pub fn parse_lease_token_response(data: &[u8]) -> Result<u64, String> {
         return Err("Lease operation failed".to_string());
     }
 
-    // Bytes 2-9: fencing_token (u64 big-endian)
+    // Bytes 2-9: `fencing_token` (`u64` big-endian)
     let bytes = [
         data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9],
     ];
@@ -518,7 +539,7 @@ impl NoticeConnector for WsNoticeConnector {
     }
 }
 
-/// Build NOTICE PUBLISH frame (msg_type 500)
+/// Build NOTICE PUBLISH frame (`msg_type` 500)
 pub fn build_notice_publish(route: &str, _realm: &str, data: &[u8]) -> Vec<u8> {
     use bytes::BufMut;
 
@@ -526,11 +547,11 @@ pub fn build_notice_publish(route: &str, _realm: &str, data: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();
 
     // Route (length-prefixed string)
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
     // Payload (length-prefixed bytes)
-    buf.put_u32(data.len() as u32);
+    buf.put_u32(u32_len(data.len()));
     buf.put_slice(data);
 
     let mut builder = TlvFrameBuilder::new();
@@ -538,7 +559,7 @@ pub fn build_notice_publish(route: &str, _realm: &str, data: &[u8]) -> Vec<u8> {
     builder.build()
 }
 
-/// Build NOTICE SUBSCRIBE frame (msg_type 501)
+/// Build NOTICE SUBSCRIBE frame (`msg_type` 501)
 pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
     use bytes::BufMut;
 
@@ -546,7 +567,7 @@ pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
     let mut buf = Vec::new();
 
     // Pattern (length-prefixed string)
-    buf.put_u32(route_pattern.len() as u32);
+    buf.put_u32(u32_len(route_pattern.len()));
     buf.put_slice(route_pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -554,7 +575,7 @@ pub fn build_notice_subscribe(route_pattern: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build NOTICE UNSUBSCRIBE frame (msg_type 502)
+/// Build NOTICE UNSUBSCRIBE frame (`msg_type` 502)
 pub fn build_notice_unsubscribe(subscription_id: u64) -> Vec<u8> {
     use bytes::BufMut;
 
@@ -573,14 +594,14 @@ pub fn parse_notice_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
     if let Some((msg_type, payload)) = parser.next_field() {
-        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        let status = if payload.is_empty() { 1 } else { payload[0] };
         // Return msg_type (as u8), status, and data portion (skipping status byte)
         let data = if payload.len() > 1 {
             payload[1..].to_vec()
         } else {
             Vec::new()
         };
-        return ((msg_type & 0xFF) as u8, status, data);
+        return (msg_type_to_u8(msg_type), status, data);
     }
 
     // Fallback if no data
@@ -679,7 +700,7 @@ impl QueueConnector for WsQueueConnector {
     }
 }
 
-/// Build QUEUE ENQUEUE frame (msg_type 200)
+/// Build QUEUE ENQUEUE frame (`msg_type` 200)
 fn normalize_queue_route(queue_name: &str) -> String {
     if queue_name.contains("://") {
         queue_name.to_string()
@@ -701,9 +722,9 @@ pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
     // Wire format: [u32 route_len][route][u32 body_len][body][u8 has_delay=0]
     let route = normalize_queue_route(queue_name);
     let mut payload = Vec::new();
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
-    payload.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(data.len())).to_be_bytes());
     payload.extend_from_slice(data);
     payload.push(0); // has_delay = false
 
@@ -712,12 +733,12 @@ pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
     builder.build()
 }
 
-/// Build QUEUE RESERVE frame (msg_type 202)
+/// Build QUEUE RESERVE frame (`msg_type` 202)
 pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
     // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=0]
     let route = normalize_queue_route(queue_name);
     let mut payload = Vec::new();
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
     payload.extend_from_slice(&30_u64.to_be_bytes()); // lease_seconds = 30
     payload.push(0); // has_batch_size = false
@@ -727,11 +748,11 @@ pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build QUEUE WATCH frame (msg_type 207).
+/// Build QUEUE WATCH frame (`msg_type` 207).
 pub fn build_queue_watch(pattern: &str) -> Vec<u8> {
     let pattern = normalize_queue_watch_pattern(pattern);
     let mut payload = Vec::new();
-    payload.extend_from_slice(&(pattern.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(pattern.len())).to_be_bytes());
     payload.extend_from_slice(pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -739,11 +760,11 @@ pub fn build_queue_watch(pattern: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build QUEUE UNWATCH frame (msg_type 208).
+/// Build QUEUE UNWATCH frame (`msg_type` 208).
 pub fn build_queue_unwatch(pattern: &str) -> Vec<u8> {
     let pattern = normalize_queue_watch_pattern(pattern);
     let mut payload = Vec::new();
-    payload.extend_from_slice(&(pattern.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(pattern.len())).to_be_bytes());
     payload.extend_from_slice(pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -785,7 +806,7 @@ pub fn parse_queue_watch_delivery(frame: &[u8]) -> Result<QueueWatchDelivery, St
     }
 
     let subscription_id = u64::from_be_bytes(payload[0..8].try_into().unwrap());
-    let route_len = u32::from_be_bytes(payload[8..12].try_into().unwrap()) as usize;
+    let route_len = u32_to_usize(u32::from_be_bytes(payload[8..12].try_into().unwrap()));
     if payload.len() < 12 + route_len + 24 {
         return Err("Queue watch payload truncated".to_string());
     }
@@ -815,17 +836,17 @@ pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
     if let Some((msg_type, payload)) = parser.next_field() {
-        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        let status = if payload.is_empty() { 1 } else { payload[0] };
         // Return msg_type (as u8), status, and full payload for further parsing
-        return ((msg_type & 0xFF) as u8, status, payload);
+        return (msg_type_to_u8(msg_type), status, payload);
     }
 
     // Fallback if no data
     (0, 1, Vec::new())
 }
 
-/// Extract message bodies from Queue Reserve response
-/// Wire format: [u8 status][u32 count][for each: u64 id, u64 token, u32 body_len, bytes body]
+/// Extract message bodies from `QUEUE_RESERVE` response
+/// Wire format: [`u8 status`][`u32 count`][for each: `u64 id`, `u64 token`, `u32 body_len`, bytes body]
 pub fn extract_queue_messages(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     if data.len() < 5 {
         return Err("Queue response data too short".to_string());
@@ -833,7 +854,7 @@ pub fn extract_queue_messages(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
 
     // Byte 0: status (already checked by caller)
     // Bytes 1-4: message count
-    let count = u32::from_be_bytes([data[1], data[2], data[3], data[4]]) as usize;
+    let count = u32_to_usize(u32::from_be_bytes([data[1], data[2], data[3], data[4]]));
 
     let mut messages = Vec::new();
     let mut offset = 5;
@@ -855,12 +876,12 @@ pub fn extract_queue_messages(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
             return Err("Incomplete body length".to_string());
         }
         // Read body length
-        let body_len = u32::from_be_bytes([
+        let body_len = u32_to_usize(u32::from_be_bytes([
             data[offset],
             data[offset + 1],
             data[offset + 2],
             data[offset + 3],
-        ]) as usize;
+        ]));
         offset += 4;
 
         if offset + body_len > data.len() {
@@ -924,13 +945,13 @@ impl RpcConnector for WsRpcConnector {
     }
 }
 
-/// Build RPC SUBSCRIBE frame (msg_type 300) to register a worker
+/// Build RPC SUBSCRIBE frame (`msg_type` 300) to register a worker
 pub fn build_rpc_subscribe(worker_addr: &str) -> Vec<u8> {
     use bytes::BufMut;
 
     // Wire format: [string worker_addr]
     let mut buf = Vec::new();
-    buf.put_u32(worker_addr.len() as u32);
+    buf.put_u32(u32_len(worker_addr.len()));
     buf.put_slice(worker_addr.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -938,12 +959,12 @@ pub fn build_rpc_subscribe(worker_addr: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build RPC UNSUBSCRIBE frame (msg_type 301) to unregister a worker
+/// Build RPC UNSUBSCRIBE frame (`msg_type` 301) to unregister a worker
 pub fn build_rpc_unsubscribe(worker_addr: &str) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
-    buf.put_u32(worker_addr.len() as u32);
+    buf.put_u32(u32_len(worker_addr.len()));
     buf.put_slice(worker_addr.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -951,7 +972,7 @@ pub fn build_rpc_unsubscribe(worker_addr: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build RPC REQUEST frame (msg_type 302)
+/// Build RPC REQUEST frame (`msg_type` 302)
 pub fn build_rpc_request(route: &str, _method: &str, payload: &[u8]) -> Vec<u8> {
     use bytes::BufMut;
     use uuid::Uuid;
@@ -965,16 +986,16 @@ pub fn build_rpc_request(route: &str, _method: &str, payload: &[u8]) -> Vec<u8> 
     buf.put_slice(uuid.as_bytes());
 
     // Route (length-prefixed string)
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
     // Reply route (use inbox pattern)
     let reply_route = format!("inbox://session/1/{uuid}");
-    buf.put_u32(reply_route.len() as u32);
+    buf.put_u32(u32_len(reply_route.len()));
     buf.put_slice(reply_route.as_bytes());
 
     // Body (length-prefixed bytes)
-    buf.put_u32(payload.len() as u32);
+    buf.put_u32(u32_len(payload.len()));
     buf.put_slice(payload);
 
     let mut builder = TlvFrameBuilder::new();
@@ -982,7 +1003,7 @@ pub fn build_rpc_request(route: &str, _method: &str, payload: &[u8]) -> Vec<u8> 
     builder.build()
 }
 
-/// Build RPC RESPONSE frame for workers (msg_type 303)
+/// Build RPC RESPONSE frame for workers (`msg_type` 303)
 pub fn build_rpc_response_delivery(
     correlation_id: uuid::Uuid,
     seq: u64,
@@ -995,7 +1016,7 @@ pub fn build_rpc_response_delivery(
     enc.put_bytes(correlation_id.as_bytes());
     enc.put_u64(seq);
     enc.put_bytes(body);
-    enc.put_u8(stream_end as u8);
+    enc.put_u8(u8::from(stream_end));
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(303, &enc.finish());
@@ -1009,9 +1030,9 @@ pub fn parse_rpc_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
     if let Some((msg_type, payload)) = parser.next_field() {
-        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        let status = if payload.is_empty() { 1 } else { payload[0] };
         // Return msg_type (as u8), status, and full payload for further parsing
-        return ((msg_type & 0xFF) as u8, status, payload);
+        return (msg_type_to_u8(msg_type), status, payload);
     }
 
     // Fallback if no data
@@ -1034,7 +1055,7 @@ pub struct RpcResponseDelivery {
     pub stream_end: bool,
 }
 
-/// Parse RPC REQUEST delivery (msg_type 302) sent to workers
+/// Parse RPC REQUEST delivery (`msg_type` 302) sent to workers
 pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, String> {
     use fitz::protocol::payload_codec::PayloadDecoder;
 
@@ -1071,7 +1092,7 @@ pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, St
     })
 }
 
-/// Parse RPC RESPONSE delivery (msg_type 303) received by callers
+/// Parse RPC RESPONSE delivery (`msg_type` 303) received by callers
 pub fn parse_rpc_response_delivery(frame: &[u8]) -> Result<RpcResponseDelivery, String> {
     use fitz::protocol::payload_codec::PayloadDecoder;
 
@@ -1154,7 +1175,7 @@ impl StreamConnector for WsStreamConnector {
     }
 }
 
-/// Build STREAM BEGIN frame (msg_type 600)
+/// Build STREAM BEGIN frame (`msg_type` 600)
 /// Wire format: [string route][optional bytes ingest_metadata]
 pub fn build_stream_begin(route: &str) -> Vec<u8> {
     use bytes::BufMut;
@@ -1162,7 +1183,7 @@ pub fn build_stream_begin(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
 
     // Route (length-prefixed string)
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
     // Optional ingest metadata (flag = 0 for none)
@@ -1173,12 +1194,12 @@ pub fn build_stream_begin(route: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build STREAM APPEND frame (msg_type 601)
+/// Build STREAM APPEND frame (`msg_type` 601)
 pub fn build_stream_append(session_id: u64, expected_offset: u64, data: &[u8]) -> Vec<u8> {
     build_stream_append_with_metadata(session_id, expected_offset, data, None)
 }
 
-/// Build STREAM APPEND frame (msg_type 601) with optional metadata.
+/// Build STREAM APPEND frame (`msg_type` 601) with optional metadata.
 pub fn build_stream_append_with_metadata(
     session_id: u64,
     expected_offset: u64,
@@ -1197,13 +1218,13 @@ pub fn build_stream_append_with_metadata(
     buf.put_u64(expected_offset);
 
     // Body (length-prefixed bytes)
-    buf.put_u32(data.len() as u32);
+    buf.put_u32(u32_len(data.len()));
     buf.put_slice(data);
 
     match metadata {
         Some(metadata) => {
             buf.put_u8(1);
-            buf.put_u32(metadata.len() as u32);
+            buf.put_u32(u32_len(metadata.len()));
             buf.put_slice(metadata);
         }
         None => buf.put_u8(0),
@@ -1214,7 +1235,7 @@ pub fn build_stream_append_with_metadata(
     builder.build()
 }
 
-/// Build STREAM COMMIT frame (msg_type 602)
+/// Build STREAM COMMIT frame (`msg_type` 602)
 pub fn build_stream_commit(session_id: u64) -> Vec<u8> {
     use bytes::BufMut;
 
@@ -1227,12 +1248,12 @@ pub fn build_stream_commit(session_id: u64) -> Vec<u8> {
     builder.build()
 }
 
-/// Build STREAM SUBSCRIBE frame (msg_type 607)
+/// Build STREAM SUBSCRIBE frame (`msg_type` 607)
 pub fn build_stream_subscribe(route_pattern: &str) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
-    buf.put_u32(route_pattern.len() as u32);
+    buf.put_u32(u32_len(route_pattern.len()));
     buf.put_slice(route_pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -1240,12 +1261,12 @@ pub fn build_stream_subscribe(route_pattern: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build STREAM UNSUBSCRIBE frame (msg_type 608)
+/// Build STREAM UNSUBSCRIBE frame (`msg_type` 608)
 pub fn build_stream_unsubscribe(route_pattern: &str) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
-    buf.put_u32(route_pattern.len() as u32);
+    buf.put_u32(u32_len(route_pattern.len()));
     buf.put_slice(route_pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -1254,12 +1275,12 @@ pub fn build_stream_unsubscribe(route_pattern: &str) -> Vec<u8> {
 }
 
 /// Build STREAM APPEND frame with default session ID (for simple tests)
-/// Uses session_id = 1 by default - tests should call BEGIN first if they need a real session
+/// Uses `session_id = 1` by default; tests should call `BEGIN` first if they need a real session
 pub fn build_stream_append_simple(_route: &str, data: &[u8]) -> Vec<u8> {
     build_stream_append(1, 0, data)
 }
 
-/// Build STREAM READ frame (msg_type 604)
+/// Build STREAM READ frame (`msg_type` 604)
 pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
     use bytes::BufMut;
 
@@ -1267,7 +1288,7 @@ pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
     let mut buf = Vec::new();
 
     // Route (length-prefixed string)
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
     // From offset
@@ -1284,12 +1305,12 @@ pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {
     builder.build()
 }
 
-/// Build STREAM LAST frame (msg_type 605)
+/// Build STREAM LAST frame (`msg_type` 605)
 pub fn build_stream_last(route: &str) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -1297,12 +1318,12 @@ pub fn build_stream_last(route: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build STREAM GET_METADATA frame (msg_type 606)
+/// Build STREAM `GET_METADATA` frame (`msg_type` 606)
 pub fn build_stream_get_metadata(route: &str) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -1310,24 +1331,24 @@ pub fn build_stream_get_metadata(route: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Parse STREAM response
+/// Parse `STREAM` response
 pub fn parse_stream_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     let mut parser = TlvFrameParser::new(response);
 
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][optional u64 session_id][...response data...]
     if let Some((msg_type, payload)) = parser.next_field() {
-        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        let status = if payload.is_empty() { 1 } else { payload[0] };
         // Return msg_type (as u8), status, and full payload for further parsing
-        return ((msg_type & 0xFF) as u8, status, payload);
+        return (msg_type_to_u8(msg_type), status, payload);
     }
 
     // Fallback if no data
     (0, 1, Vec::new())
 }
 
-/// Parse session_id from STREAM BEGIN response data
-/// Wire format: [u8 status][u8 has_session_id][u64 session_id][bytes data]
+/// Parse `session_id` from `STREAM` `BEGIN` response data
+/// Wire format: [`u8 status`][`u8 has_session_id`][`u64 session_id`][bytes data]
 pub fn parse_stream_session_id(data: &[u8]) -> Result<u64, String> {
     if data.len() < 2 {
         return Err("Stream response data too short".to_string());
@@ -1436,7 +1457,7 @@ impl ScheduleConnector for WsScheduleConnector {
     }
 }
 
-/// Build SCHEDULE CREATE frame (msg_type 700)
+/// Build SCHEDULE CREATE frame (`msg_type` 700)
 pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8> {
     use bytes::BufMut;
 
@@ -1444,15 +1465,15 @@ pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8>
     let mut buf = Vec::new();
 
     // Route (length-prefixed string)
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
     // Cron expression (length-prefixed string)
-    buf.put_u32(cron.len() as u32);
+    buf.put_u32(u32_len(cron.len()));
     buf.put_slice(cron.as_bytes());
 
     // Payload (length-prefixed bytes)
-    buf.put_u32(payload.len() as u32);
+    buf.put_u32(u32_len(payload.len()));
     buf.put_slice(payload);
 
     let mut builder = TlvFrameBuilder::new();
@@ -1460,21 +1481,21 @@ pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8>
     builder.build()
 }
 
-/// Build SCHEDULE CREATE BATCH frame (msg_type 706)
+/// Build SCHEDULE CREATE BATCH frame (`msg_type` 706)
 pub fn build_schedule_create_batch(entries: &[(&str, &str, &[u8])]) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
-    buf.put_u32(entries.len() as u32);
+    buf.put_u32(u32_len(entries.len()));
 
     for (route, cron, payload) in entries {
-        buf.put_u32(route.len() as u32);
+        buf.put_u32(u32_len(route.len()));
         buf.put_slice(route.as_bytes());
 
-        buf.put_u32(cron.len() as u32);
+        buf.put_u32(u32_len(cron.len()));
         buf.put_slice(cron.as_bytes());
 
-        buf.put_u32(payload.len() as u32);
+        buf.put_u32(u32_len(payload.len()));
         buf.put_slice(payload);
     }
 
@@ -1483,7 +1504,7 @@ pub fn build_schedule_create_batch(entries: &[(&str, &str, &[u8])]) -> Vec<u8> {
     builder.build()
 }
 
-/// Build SCHEDULE CANCEL frame (msg_type 701)
+/// Build SCHEDULE CANCEL frame (`msg_type` 701)
 pub fn build_schedule_cancel(route: &str) -> Vec<u8> {
     use bytes::BufMut;
 
@@ -1491,7 +1512,7 @@ pub fn build_schedule_cancel(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
 
     // Route (length-prefixed string)
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -1499,7 +1520,7 @@ pub fn build_schedule_cancel(route: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build SCHEDULE LIST frame (msg_type 702)
+/// Build SCHEDULE LIST frame (`msg_type` 702)
 pub fn build_schedule_list() -> Vec<u8> {
     // Wire format: empty payload
     let builder = TlvFrameBuilder::new();
@@ -1508,12 +1529,12 @@ pub fn build_schedule_list() -> Vec<u8> {
     frame_builder.build()
 }
 
-/// Build SCHEDULE SUBSCRIBE frame (msg_type 703)
+/// Build SCHEDULE SUBSCRIBE frame (`msg_type` 703)
 pub fn build_schedule_subscribe(route_pattern: &str) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
-    buf.put_u32(route_pattern.len() as u32);
+    buf.put_u32(u32_len(route_pattern.len()));
     buf.put_slice(route_pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -1521,12 +1542,12 @@ pub fn build_schedule_subscribe(route_pattern: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build SCHEDULE UNSUBSCRIBE frame (msg_type 704)
+/// Build SCHEDULE UNSUBSCRIBE frame (`msg_type` 704)
 pub fn build_schedule_unsubscribe(route_pattern: &str) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
-    buf.put_u32(route_pattern.len() as u32);
+    buf.put_u32(u32_len(route_pattern.len()));
     buf.put_slice(route_pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -1541,9 +1562,9 @@ pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
     if let Some((msg_type, payload)) = parser.next_field() {
-        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        let status = if payload.is_empty() { 1 } else { payload[0] };
         // Return msg_type (as u8), status, and full payload for further parsing
-        return ((msg_type & 0xFF) as u8, status, payload);
+        return (msg_type_to_u8(msg_type), status, payload);
     }
 
     // Fallback if no data
@@ -1611,11 +1632,11 @@ impl KvConnector for WsClient {
 pub type TcpConnector = TcpClient;
 pub type WsConnector = WsClient;
 
-/// Build KV BEGIN frame (msg_type 100)
+/// Build KV BEGIN frame (`msg_type` 100)
 pub fn build_kv_begin(route: &str, mode: u8, durability: u8) -> Vec<u8> {
     let mut payload = Vec::new();
     // [u32 BE route_len][route][u8 mode][u8 durability]
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
     payload.push(mode);
     payload.push(durability);
@@ -1625,16 +1646,16 @@ pub fn build_kv_begin(route: &str, mode: u8, durability: u8) -> Vec<u8> {
     builder.build()
 }
 
-/// Build KV PUT frame (msg_type 104)
+/// Build KV PUT frame (`msg_type` 104)
 pub fn build_kv_put(tx_id: u64, route: &str, key: &[u8], value: &[u8]) -> Vec<u8> {
     let mut payload = Vec::new();
     // [u64 BE tx_id][u32 BE route_len][route][u32 BE key_len][key][u32 BE value_len][value]
     payload.extend_from_slice(&tx_id.to_be_bytes());
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
-    payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(key.len())).to_be_bytes());
     payload.extend_from_slice(key);
-    payload.extend_from_slice(&(value.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(value.len())).to_be_bytes());
     payload.extend_from_slice(value);
 
     let mut builder = TlvFrameBuilder::new();
@@ -1642,14 +1663,14 @@ pub fn build_kv_put(tx_id: u64, route: &str, key: &[u8], value: &[u8]) -> Vec<u8
     builder.build()
 }
 
-/// Build KV GET frame (msg_type 103)
+/// Build KV GET frame (`msg_type` 103)
 pub fn build_kv_get(tx_id: u64, route: &str, key: &[u8]) -> Vec<u8> {
     let mut payload = Vec::new();
     // [u64 BE tx_id][u32 BE route_len][route][u32 BE key_len][key]
     payload.extend_from_slice(&tx_id.to_be_bytes());
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
-    payload.extend_from_slice(&(key.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(key.len())).to_be_bytes());
     payload.extend_from_slice(key);
 
     let mut builder = TlvFrameBuilder::new();
@@ -1657,12 +1678,12 @@ pub fn build_kv_get(tx_id: u64, route: &str, key: &[u8]) -> Vec<u8> {
     builder.build()
 }
 
-/// Build KV COMMIT frame (msg_type 101)
+/// Build KV COMMIT frame (`msg_type` 101)
 pub fn build_kv_commit(tx_id: u64, route: &str) -> Vec<u8> {
     let mut payload = Vec::new();
     // [u64 BE tx_id][u32 BE route_len][route]
     payload.extend_from_slice(&tx_id.to_be_bytes());
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -1670,10 +1691,10 @@ pub fn build_kv_commit(tx_id: u64, route: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build KV SUBSCRIBE frame (msg_type 109)
+/// Build KV SUBSCRIBE frame (`msg_type` 109)
 pub fn build_kv_subscribe(route_pattern: &str) -> Vec<u8> {
     let mut payload = Vec::new();
-    payload.extend_from_slice(&(route_pattern.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(route_pattern.len())).to_be_bytes());
     payload.extend_from_slice(route_pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -1681,10 +1702,10 @@ pub fn build_kv_subscribe(route_pattern: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build KV UNSUBSCRIBE frame (msg_type 110)
+/// Build KV UNSUBSCRIBE frame (`msg_type` 110)
 pub fn build_kv_unsubscribe(route_pattern: &str) -> Vec<u8> {
     let mut payload = Vec::new();
-    payload.extend_from_slice(&(route_pattern.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(route_pattern.len())).to_be_bytes());
     payload.extend_from_slice(route_pattern.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -1692,12 +1713,12 @@ pub fn build_kv_unsubscribe(route_pattern: &str) -> Vec<u8> {
     builder.build()
 }
 
-/// Build KV ROLLBACK frame (msg_type 102)
+/// Build KV ROLLBACK frame (`msg_type` 102)
 pub fn build_kv_rollback(tx_id: u64, route: &str) -> Vec<u8> {
     let mut payload = Vec::new();
     // [u64 BE tx_id][u32 BE route_len][route]
     payload.extend_from_slice(&tx_id.to_be_bytes());
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -1713,10 +1734,10 @@ pub fn parse_kv_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
     // Server sends single TLV record: [msg_type][len][payload]
     // Payload format: [u8 status][...response data...]
     if let Some((msg_type, payload)) = parser.next_field() {
-        let status = if !payload.is_empty() { payload[0] } else { 1 };
+        let status = if payload.is_empty() { 1 } else { payload[0] };
         // Return msg_type (as u8), status, and full payload (including status byte)
         // Helper functions expect the full payload and will skip the status byte themselves
-        return ((msg_type & 0xFF) as u8, status, payload);
+        return (msg_type_to_u8(msg_type), status, payload);
     }
 
     // Fallback if no data
@@ -1784,9 +1805,9 @@ pub fn parse_kv_watch_delivery(frame: &[u8]) -> Result<KvWatchDelivery, String> 
     })
 }
 
-/// Extract value from KV GET response
+/// Extract value from `KV GET` response
 ///
-/// GetResult format: [u8 status][u8 found][u32 length_be][...value_bytes]
+/// `GetResult` format: [`u8 status`][`u8 found`][`u32 length_be`][...`value_bytes`]
 /// Returns the actual value bytes if found, empty vec if not found
 pub fn extract_kv_value(data: &[u8]) -> Result<Vec<u8>, String> {
     if data.len() < 6 {
@@ -1799,7 +1820,7 @@ pub fn extract_kv_value(data: &[u8]) -> Result<Vec<u8>, String> {
     }
 
     // Read length from bytes 2-5 (big-endian u32)
-    let length = u32::from_be_bytes([data[2], data[3], data[4], data[5]]) as usize;
+    let length = u32_to_usize(u32::from_be_bytes([data[2], data[3], data[4], data[5]]));
 
     // Extract value from bytes 6 onwards
     if data.len() < 6 + length {

@@ -1,4 +1,20 @@
-use super::super::*;
+use super::super::{
+    build_resource_timeline, matches_resource_route, notice_resource_diagnostics, parse_rfc3339,
+    timeline_candidate, DiagnosticSnapshot, ResourcePath, ResourceTimeline, ResourceTimelineEvent,
+    ResourceTimelineKind,
+};
+use crate::api::admin::list::{NoticeRouteInfo, NoticeSubscription};
+use chrono::Utc;
+
+#[inline]
+fn i64_to_u64_non_negative(seconds: i64) -> u64 {
+    u64::try_from(seconds).unwrap_or(0)
+}
+
+#[inline]
+fn u64_to_usize_non_negative(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
 
 pub(crate) fn notice_resource_timeline(
     subscriptions: &[NoticeSubscription],
@@ -41,7 +57,7 @@ pub(crate) fn notice_resource_timeline(
 
     for subscription in &matching_subscriptions {
         if let Some(created_at) = parse_rfc3339(&subscription.created_at) {
-            let age_seconds = (now - created_at).num_seconds().max(0) as u64;
+            let age_seconds = i64_to_u64_non_negative((now - created_at).num_seconds());
             candidates.push(timeline_candidate(
                 created_at,
                 0,
@@ -61,7 +77,9 @@ pub(crate) fn notice_resource_timeline(
                     None,
                     None,
                     None,
-                    Some(subscription.notifications_received as usize),
+                    Some(u64_to_usize_non_negative(
+                        subscription.notifications_received,
+                    )),
                 ),
             ));
         }

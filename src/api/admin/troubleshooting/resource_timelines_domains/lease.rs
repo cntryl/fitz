@@ -1,4 +1,15 @@
-use super::super::*;
+use super::super::{
+    build_resource_timeline, lease_resource_diagnostics, matches_resource_path, parse_rfc3339,
+    timeline_candidate, DiagnosticSnapshot, ResourcePath, ResourceTimeline, ResourceTimelineEvent,
+    ResourceTimelineKind,
+};
+use crate::api::admin::list::LeaseInfo;
+use chrono::Utc;
+
+#[inline]
+fn i64_to_u64_non_negative(seconds: i64) -> u64 {
+    u64::try_from(seconds).unwrap_or(0)
+}
 
 pub(crate) fn lease_resource_timeline(
     leases: &[LeaseInfo],
@@ -32,7 +43,7 @@ pub(crate) fn lease_resource_timeline(
 
     for lease in &matching_leases {
         if let Some(acquired_at) = parse_rfc3339(&lease.acquired_at) {
-            let age_seconds = (now - acquired_at).num_seconds().max(0) as u64;
+            let age_seconds = i64_to_u64_non_negative((now - acquired_at).num_seconds());
             oldest_age_seconds = oldest_age_seconds.max(age_seconds);
             candidates.push(timeline_candidate(
                 acquired_at,
@@ -59,7 +70,7 @@ pub(crate) fn lease_resource_timeline(
         }
 
         if let Some(expires_at) = parse_rfc3339(&lease.expires_at) {
-            let remaining_seconds = (expires_at - now).num_seconds().max(0) as u64;
+            let remaining_seconds = i64_to_u64_non_negative((expires_at - now).num_seconds());
             next_expiry_seconds = Some(match next_expiry_seconds {
                 Some(current) => current.min(remaining_seconds),
                 None => remaining_seconds,

@@ -1,4 +1,20 @@
-use super::super::*;
+use super::super::{
+    build_resource_timeline, matches_resource_path, parse_rfc3339, rfc3339,
+    schedule_resource_diagnostics, timeline_candidate, DiagnosisLabel, DiagnosticSnapshot,
+    ResourcePath, ResourceTimeline, ResourceTimelineEvent, ResourceTimelineKind,
+};
+use crate::api::admin::list::ScheduleInfo;
+use chrono::{DateTime, Utc};
+
+#[inline]
+fn i64_to_u64_non_negative(seconds: i64) -> u64 {
+    u64::try_from(seconds).unwrap_or(0)
+}
+
+#[inline]
+fn u64_to_usize_non_negative(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn schedule_resource_timeline(
@@ -62,12 +78,12 @@ pub(crate) fn schedule_resource_timeline(
                     path,
                     None,
                     Some(schedule.operation.clone()),
-                    Some((now - last_run).num_seconds().max(0) as u64),
+                    Some(i64_to_u64_non_negative((now - last_run).num_seconds())),
                     None,
                     None,
                     None,
                     None,
-                    Some(schedule.executions_total as usize),
+                    Some(u64_to_usize_non_negative(schedule.executions_total)),
                 ),
             ));
         }

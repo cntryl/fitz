@@ -1,7 +1,8 @@
-use super::*;
 use crate::api::admin::ResourcePath;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+use super::{is_recent, rfc3339, score_usize};
 
 pub(crate) const RECENT_WINDOW_SECS: i64 = 300;
 
@@ -198,51 +199,39 @@ impl DiagnosticSnapshot {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn with_stage(
-        current_stage: DiagnosisLabel,
-        trend: DiagnosticTrend,
-        severity: DiagnosticSeverity,
-        likely_bottleneck: Option<String>,
-        last_changed_at: Option<DateTime<Utc>>,
-        last_success_at: Option<DateTime<Utc>>,
-        last_failure_at: Option<DateTime<Utc>>,
-        age_seconds: Option<u64>,
-        recent_transition_count: u64,
-        failure_count: u64,
-        contention_count: u64,
-        waiter_count: usize,
-        explanation_hints: Vec<String>,
-    ) -> Self {
-        let (confidence, confidence_justification) = calculate_confidence(
-            current_stage,
-            likely_bottleneck.as_deref(),
-            last_changed_at,
-            last_success_at,
-            last_failure_at,
-            age_seconds,
-            recent_transition_count,
-            failure_count,
-            contention_count,
-            waiter_count,
-        );
+    pub(super) fn with_stage(input: DiagnosticSnapshotInput) -> Self {
+        let (confidence, confidence_justification) = calculate_confidence(ConfidenceInput {
+            current_stage: input.current_stage,
+            likely_bottleneck: input.likely_bottleneck.as_deref(),
+            last_changed_at: input.last_changed_at,
+            last_success_at: input.last_success_at,
+            last_failure_at: input.last_failure_at,
+            age_seconds: input.age_seconds,
+            recent_transition_count: input.recent_transition_count,
+            failure_count: input.failure_count,
+            contention_count: input.contention_count,
+            waiter_count: input.waiter_count,
+        });
 
         Self {
-            current_stage: current_stage.as_str().to_string(),
-            trend,
-            severity,
-            likely_bottleneck,
-            last_changed_at: last_changed_at.map(rfc3339),
-            last_success_at: last_success_at.map(rfc3339),
-            last_failure_at: last_failure_at.map(rfc3339),
-            age_seconds,
-            recent_transition_count,
-            failure_count,
-            contention_count,
-            waiter_count,
+            current_stage: input.current_stage.as_str().to_string(),
+            trend: input.trend,
+            severity: input.severity,
+            likely_bottleneck: input.likely_bottleneck,
+            last_changed_at: input.last_changed_at.map(rfc3339),
+            last_success_at: input.last_success_at.map(rfc3339),
+            last_failure_at: input.last_failure_at.map(rfc3339),
+            age_seconds: input.age_seconds,
+            recent_transition_count: input.recent_transition_count,
+            failure_count: input.failure_count,
+            contention_count: input.contention_count,
+            waiter_count: input.waiter_count,
             confidence,
             confidence_justification: Some(confidence_justification),
-            explanation_hints: canonical_explanation_hints(current_stage, explanation_hints),
+            explanation_hints: canonical_explanation_hints(
+                input.current_stage,
+                input.explanation_hints,
+            ),
             delta_5m: None,
             delta_1h: None,
         }
@@ -260,91 +249,249 @@ impl DiagnosticSnapshot {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn calculate_confidence(
-    current_stage: DiagnosisLabel,
-    likely_bottleneck: Option<&str>,
+pub(crate) fn calculate_confidence(input: ConfidenceInput<'_>) -> (f64, ConfidenceJustification) {
+    let signals = gather_confidence_signals(ConfidenceSignalInput {
+        failure_count: input.failure_count,
+        contention_count: input.contention_count,
+        waiter_count: input.waiter_count,
+        likely_bottleneck: input.likely_bottleneck,
+        age_seconds: input.age_seconds,
+        recent_transition_count: input.recent_transition_count,
+        last_changed_at: input.last_changed_at,
+        last_success_at: input.last_success_at,
+        last_failure_at: input.last_failure_at,
+    });
+    let freshness_signal = freshness_signal(
+        signals.last_changed_at,
+        signals.last_success_at,
+        signals.last_failure_at,
+        input.age_seconds,
+        input.recent_transition_count,
+    );
+    let (primary_signal_name, primary_signal, coverage_target) =
+        primary_signal_for_stage(input.current_stage, &signals);
+
+    let observed_support = count_observed_signals(&signals);
+    let coverage_ratio = coverage_signal_ratio(observed_support, coverage_target);
+    let coverage_signal = coverage_target == 0 || observed_support >= coverage_target;
+    let freshness_score = freshness_score(freshness_signal, &signals, input.age_seconds);
+
+    let (mut signals_matched, mut signals_missing) =
+        evaluate_signal_alignment(input.current_stage, primary_signal_name, primary_signal);
+    maybe_add_signal(
+        &mut signals_matched,
+        &mut signals_missing,
+        "fresh_telemetry",
+        freshness_signal,
+    );
+    maybe_add_signal(
+        &mut signals_matched,
+        &mut signals_missing,
+        &format!("rule_coverage_{observed_support}_of_{coverage_target}"),
+        coverage_signal,
+    );
+    maybe_add_bottleneck_signal(
+        input.current_stage,
+        &mut signals_matched,
+        &mut signals_missing,
+        &signals,
+    );
+
+    let confidence = confidence_score(
+        input.current_stage,
+        primary_signal,
+        coverage_ratio,
+        freshness_score,
+        signals.bottleneck_signal,
+    );
+    let matched_summary = summarize_signal_names(&signals_matched);
+    let missing_summary = summarize_signal_names(&signals_missing);
+    (
+        confidence,
+        ConfidenceJustification {
+            signals_matched,
+            signals_missing,
+            rationale: format!(
+                "{} confidence is derived from observed signals, telemetry freshness, and rule coverage. Matched: {}. Missing: {}.",
+                input.current_stage.display_name(),
+                matched_summary,
+                missing_summary,
+            ),
+        },
+    )
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ConfidenceInput<'a> {
+    pub(crate) current_stage: DiagnosisLabel,
+    pub(crate) likely_bottleneck: Option<&'a str>,
+    pub(crate) last_changed_at: Option<DateTime<Utc>>,
+    pub(crate) last_success_at: Option<DateTime<Utc>>,
+    pub(crate) last_failure_at: Option<DateTime<Utc>>,
+    pub(crate) age_seconds: Option<u64>,
+    pub(crate) recent_transition_count: u64,
+    pub(crate) failure_count: u64,
+    pub(crate) contention_count: u64,
+    pub(crate) waiter_count: usize,
+}
+
+pub(crate) struct DiagnosticSnapshotInput {
+    pub(crate) current_stage: DiagnosisLabel,
+    pub(crate) trend: DiagnosticTrend,
+    pub(crate) severity: DiagnosticSeverity,
+    pub(crate) likely_bottleneck: Option<String>,
+    pub(crate) last_changed_at: Option<DateTime<Utc>>,
+    pub(crate) last_success_at: Option<DateTime<Utc>>,
+    pub(crate) last_failure_at: Option<DateTime<Utc>>,
+    pub(crate) age_seconds: Option<u64>,
+    pub(crate) recent_transition_count: u64,
+    pub(crate) failure_count: u64,
+    pub(crate) contention_count: u64,
+    pub(crate) waiter_count: usize,
+    pub(crate) explanation_hints: Vec<String>,
+}
+
+struct ConfidenceSignals {
+    failure_signal: bool,
+    contention_signal: bool,
+    age_signal: bool,
+    transition_signal: bool,
+    last_changed_at: Option<DateTime<Utc>>,
+    last_success_at: Option<DateTime<Utc>>,
+    last_failure_at: Option<DateTime<Utc>>,
+    bottleneck_signal: bool,
+}
+
+struct ConfidenceSignalInput<'a> {
+    failure_count: u64,
+    contention_count: u64,
+    waiter_count: usize,
+    likely_bottleneck: Option<&'a str>,
+    age_seconds: Option<u64>,
+    recent_transition_count: u64,
+    last_changed_at: Option<DateTime<Utc>>,
+    last_success_at: Option<DateTime<Utc>>,
+    last_failure_at: Option<DateTime<Utc>>,
+}
+
+fn gather_confidence_signals(input: ConfidenceSignalInput<'_>) -> ConfidenceSignals {
+    ConfidenceSignals {
+        failure_signal: input.failure_count > 0 || input.last_failure_at.is_some(),
+        contention_signal: input.contention_count > 0 || input.waiter_count > 0,
+        age_signal: input.age_seconds.unwrap_or(0) > 0,
+        transition_signal: input.recent_transition_count > 0 || input.last_changed_at.is_some(),
+        last_changed_at: input.last_changed_at,
+        last_success_at: input.last_success_at,
+        last_failure_at: input.last_failure_at,
+        bottleneck_signal: input.likely_bottleneck.is_some(),
+    }
+}
+
+fn freshness_signal(
     last_changed_at: Option<DateTime<Utc>>,
     last_success_at: Option<DateTime<Utc>>,
     last_failure_at: Option<DateTime<Utc>>,
     age_seconds: Option<u64>,
     recent_transition_count: u64,
-    failure_count: u64,
-    contention_count: u64,
-    waiter_count: usize,
-) -> (f64, ConfidenceJustification) {
-    let failure_signal = failure_count > 0 || last_failure_at.is_some();
-    let contention_signal = contention_count > 0 || waiter_count > 0;
-    let age_signal = age_seconds.unwrap_or(0) > 0;
-    let transition_signal = recent_transition_count > 0 || last_changed_at.is_some();
-    let bottleneck_signal = likely_bottleneck.is_some();
+) -> bool {
     let now = Utc::now();
-    let freshness_signal = [last_changed_at, last_success_at, last_failure_at]
+    [last_changed_at, last_success_at, last_failure_at]
         .into_iter()
         .flatten()
         .any(|timestamp| is_recent(timestamp, now))
-        || age_seconds.is_some_and(|age| age <= RECENT_WINDOW_SECS as u64)
-        || recent_transition_count > 0;
+        || age_seconds
+            .is_some_and(|age| age <= u64::try_from(RECENT_WINDOW_SECS).unwrap_or(u64::MAX))
+        || recent_transition_count > 0
+}
 
-    let (primary_signal_name, primary_signal, coverage_target) = match current_stage {
+fn primary_signal_for_stage(
+    current_stage: DiagnosisLabel,
+    signals: &ConfidenceSignals,
+) -> (&'static str, bool, usize) {
+    match current_stage {
         DiagnosisLabel::Healthy => (
             "no_active_pressure",
-            !failure_signal && !contention_signal && !bottleneck_signal,
+            !signals.failure_signal && !signals.contention_signal && !signals.bottleneck_signal,
             0,
         ),
-        DiagnosisLabel::Contention => ("contention_or_waiters_present", contention_signal, 2),
+        DiagnosisLabel::Contention => (
+            "contention_or_waiters_present",
+            signals.contention_signal,
+            2,
+        ),
         DiagnosisLabel::WorkerStarvation => (
             "waiters_without_capacity",
-            contention_signal || age_signal,
+            signals.contention_signal || signals.age_signal,
             2,
         ),
         DiagnosisLabel::BacklogGrowth => (
             "backlog_age_or_waiters_present",
-            contention_signal || age_signal,
+            signals.contention_signal || signals.age_signal,
             2,
         ),
-        DiagnosisLabel::DeadLetterPressure => ("failure_signal_present", failure_signal, 2),
-        DiagnosisLabel::DataLossRisk => ("failure_signal_present", failure_signal, 2),
+        DiagnosisLabel::DeadLetterPressure | DiagnosisLabel::DataLossRisk => {
+            ("failure_signal_present", signals.failure_signal, 2)
+        }
         DiagnosisLabel::StaleHandoff => (
             "staleness_signal_present",
-            age_signal || transition_signal,
+            signals.age_signal || signals.transition_signal,
             2,
         ),
         DiagnosisLabel::Throughput => (
             "throughput_pressure_present",
-            age_signal || contention_signal || transition_signal || bottleneck_signal,
+            signals.age_signal
+                || signals.contention_signal
+                || signals.transition_signal
+                || signals.bottleneck_signal,
             1,
         ),
-    };
+    }
+}
 
-    let observed_support = [
-        failure_signal,
-        contention_signal,
-        age_signal,
-        transition_signal,
-        bottleneck_signal,
+fn count_observed_signals(signals: &ConfidenceSignals) -> usize {
+    [
+        signals.failure_signal,
+        signals.contention_signal,
+        signals.age_signal,
+        signals.transition_signal,
+        signals.bottleneck_signal,
     ]
     .into_iter()
     .filter(|signal| *signal)
-    .count();
-    let coverage_ratio = if coverage_target == 0 {
+    .count()
+}
+
+fn coverage_signal_ratio(observed_support: usize, coverage_target: usize) -> f64 {
+    if coverage_target == 0 {
         1.0
     } else {
-        (observed_support as f64 / coverage_target as f64).min(1.0)
-    };
-    let coverage_signal = coverage_target == 0 || observed_support >= coverage_target;
-    let freshness_score = if freshness_signal {
+        (score_usize(observed_support) / score_usize(coverage_target)).min(1.0)
+    }
+}
+
+fn freshness_score(
+    freshness_signal: bool,
+    signals: &ConfidenceSignals,
+    age_seconds: Option<u64>,
+) -> f64 {
+    if freshness_signal {
         1.0
-    } else if transition_signal
-        || last_success_at.is_some()
-        || last_failure_at.is_some()
-        || age_signal
+    } else if signals.transition_signal
+        || signals.last_success_at.is_some()
+        || signals.last_failure_at.is_some()
+        || age_seconds.unwrap_or(0) > 0
     {
         0.6
     } else {
         0.35
-    };
+    }
+}
 
+fn evaluate_signal_alignment(
+    current_stage: DiagnosisLabel,
+    primary_signal_name: &'static str,
+    primary_signal: bool,
+) -> (Vec<String>, Vec<String>) {
     let mut signals_matched = Vec::new();
     let mut signals_missing = Vec::new();
 
@@ -354,30 +501,52 @@ pub(crate) fn calculate_confidence(
         signals_missing.push(primary_signal_name.to_string());
     }
 
-    if freshness_signal {
-        signals_matched.push("fresh_telemetry".to_string());
+    if current_stage == DiagnosisLabel::Healthy {
+        return (signals_matched, signals_missing);
+    }
+    (signals_matched, signals_missing)
+}
+
+fn maybe_add_signal(
+    matched: &mut Vec<String>,
+    missing: &mut Vec<String>,
+    signal_name: &str,
+    signal_present: bool,
+) {
+    if signal_name.is_empty() {
+        return;
+    }
+    if signal_present {
+        matched.push(signal_name.to_string());
     } else {
-        signals_missing.push("fresh_telemetry".to_string());
+        missing.push(signal_name.to_string());
     }
+}
 
-    if coverage_signal {
-        signals_matched.push(format!(
-            "rule_coverage_{observed_support}_of_{coverage_target}"
-        ));
-    } else {
-        signals_missing.push(format!(
-            "rule_coverage_{observed_support}_of_{coverage_target}"
-        ));
+fn maybe_add_bottleneck_signal(
+    current_stage: DiagnosisLabel,
+    matched: &mut Vec<String>,
+    missing: &mut Vec<String>,
+    signals: &ConfidenceSignals,
+) {
+    if signals.bottleneck_signal {
+        matched.push("bottleneck_identified".to_string());
+        return;
     }
-
-    if bottleneck_signal {
-        signals_matched.push("bottleneck_identified".to_string());
-    } else if !matches!(current_stage, DiagnosisLabel::Healthy) {
-        signals_missing.push("bottleneck_identified".to_string());
+    if !matches!(current_stage, DiagnosisLabel::Healthy) {
+        missing.push("bottleneck_identified".to_string());
     }
+}
 
-    let confidence = if matches!(current_stage, DiagnosisLabel::Healthy) && primary_signal {
-        if freshness_signal {
+fn confidence_score(
+    current_stage: DiagnosisLabel,
+    primary_signal: bool,
+    coverage_ratio: f64,
+    freshness_score: f64,
+    bottleneck_signal: bool,
+) -> f64 {
+    if current_stage == DiagnosisLabel::Healthy && primary_signal {
+        if freshness_score == 1.0 {
             0.92
         } else {
             0.82
@@ -391,32 +560,15 @@ pub(crate) fn calculate_confidence(
             + 0.10 * freshness_score
             + 0.05 * bottleneck_score)
             .min(0.90)
-    };
+    }
+}
 
-    let matched_summary = if signals_matched.is_empty() {
+fn summarize_signal_names(signals: &[String]) -> String {
+    if signals.is_empty() {
         "none".to_string()
     } else {
-        signals_matched.join(", ")
-    };
-    let missing_summary = if signals_missing.is_empty() {
-        "none".to_string()
-    } else {
-        signals_missing.join(", ")
-    };
-
-    (
-        confidence,
-        ConfidenceJustification {
-            signals_matched,
-            signals_missing,
-            rationale: format!(
-                "{} confidence is derived from observed signals, telemetry freshness, and rule coverage. Matched: {}. Missing: {}.",
-                current_stage.display_name(),
-                matched_summary,
-                missing_summary,
-            ),
-        },
-    )
+        signals.join(", ")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

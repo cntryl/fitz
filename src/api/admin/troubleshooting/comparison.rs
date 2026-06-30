@@ -1,4 +1,14 @@
-use super::*;
+use chrono::{DateTime, Utc};
+
+use crate::api::admin::ResourcePath;
+use num_traits::ToPrimitive;
+use serde::{Deserialize, Serialize};
+
+use super::{
+    DiagnosticHotspot, DiagnosticSeverity, DiagnosticSnapshot, DiagnosticTrend, DomainDiagnostics,
+    ResourceTimelineEvent, RuntimeDiagnostics,
+};
+use crate::api::admin::troubleshooting::runtime_snapshot::compare_scored_hotspots;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceComparisonScope {
@@ -49,23 +59,22 @@ impl ResourceComparisonMetrics {
             DiagnosticTrend::Growing => 1.0,
             DiagnosticTrend::Stalled => 2.0,
             DiagnosticTrend::Steady => 0.5,
-            DiagnosticTrend::Shrinking => 0.0,
-            DiagnosticTrend::Unknown => 0.0,
+            DiagnosticTrend::Shrinking | DiagnosticTrend::Unknown => 0.0,
         };
 
         severity_score
             + trend_score
-            + self.backlog.unwrap_or(0) as f64 * 2.5
-            + self.inflight.unwrap_or(0) as f64 * 0.5
-            + self.dead_letters.unwrap_or(0) as f64 * 5.0
-            + self.workers.unwrap_or(0) as f64 * 0.25
-            + self.subscriptions.unwrap_or(0) as f64 * 0.2
-            + self.waiters.unwrap_or(0) as f64 * 1.5
-            + self.failure_count.unwrap_or(0) as f64 * 3.0
-            + self.contention_count.unwrap_or(0) as f64 * 2.0
-            + self.age_seconds.unwrap_or(0) as f64 / 30.0
-            + self.recent_transition_count.unwrap_or(0) as f64 * 0.25
-            + self.operations_total.unwrap_or(0) as f64 * 0.0
+            + usize_to_f64(self.backlog.unwrap_or_default()) * 2.5
+            + usize_to_f64(self.inflight.unwrap_or_default()) * 0.5
+            + usize_to_f64(self.dead_letters.unwrap_or_default()) * 5.0
+            + usize_to_f64(self.workers.unwrap_or_default()) * 0.25
+            + usize_to_f64(self.subscriptions.unwrap_or_default()) * 0.2
+            + usize_to_f64(self.waiters.unwrap_or_default()) * 1.5
+            + u64_to_f64(self.failure_count.unwrap_or_default()) * 3.0
+            + u64_to_f64(self.contention_count.unwrap_or_default()) * 2.0
+            + u64_to_f64(self.age_seconds.unwrap_or_default()) / 30.0
+            + u64_to_f64(self.recent_transition_count.unwrap_or_default()) * 0.25
+            + u64_to_f64(self.operations_total.unwrap_or_default()) * 0.0
     }
 }
 
@@ -138,18 +147,18 @@ impl ResourceComparisonDelta {
 
 pub(crate) fn compare_resource_sides(
     domain: &str,
-    left: ResourceComparisonSide,
-    right: ResourceComparisonSide,
+    left: &ResourceComparisonSide,
+    right: &ResourceComparisonSide,
 ) -> ResourceComparison {
     let delta = ResourceComparisonDelta::from_sides(&left.metrics, &right.metrics);
-    let summary = summarize_comparison(&left, &right, &delta);
+    let summary = summarize_comparison(left, right, &delta);
 
     ResourceComparison {
         domain: domain.to_string(),
         comparison_mode: "snapshot_vs_snapshot".to_string(),
         derived: true,
-        left,
-        right,
+        left: left.clone(),
+        right: right.clone(),
         delta,
         summary,
     }
@@ -220,16 +229,32 @@ pub(crate) fn append_delta_note(notes: &mut Vec<String>, name: &str, value: Opti
 
 pub(crate) fn diff_usize(left: Option<usize>, right: Option<usize>) -> Option<i64> {
     match (left, right) {
-        (Some(left), Some(right)) => Some(left as i64 - right as i64),
+        (Some(left), Some(right)) => Some(usize_to_i64(left).saturating_sub(usize_to_i64(right))),
         _ => None,
     }
 }
 
+fn usize_to_i64(value: usize) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
 pub(crate) fn diff_u64(left: Option<u64>, right: Option<u64>) -> Option<i64> {
     match (left, right) {
-        (Some(left), Some(right)) => Some(left as i64 - right as i64),
+        (Some(left), Some(right)) => Some(u64_to_i64(left).saturating_sub(u64_to_i64(right))),
         _ => None,
     }
+}
+
+fn u64_to_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn usize_to_f64(value: usize) -> f64 {
+    value.to_f64().unwrap_or(f64::MAX)
+}
+
+fn u64_to_f64(value: u64) -> f64 {
+    value.to_f64().unwrap_or(f64::MAX)
 }
 
 #[derive(Clone)]

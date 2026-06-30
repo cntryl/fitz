@@ -1,29 +1,34 @@
-use super::*;
+use super::model::DiagnosticSnapshotInput;
+use super::{
+    is_recent, parse_rfc3339, rfc3339, DiagnosisLabel, DiagnosticSeverity, DiagnosticSnapshot,
+    DiagnosticTrend, QueueAgeBuckets,
+};
+use chrono::Utc;
 
 pub(crate) fn kv_resource_diagnostics(transactions_active: usize) -> DiagnosticSnapshot {
     if transactions_active == 0 {
         return DiagnosticSnapshot::healthy();
     }
 
-    DiagnosticSnapshot::with_stage(
-        DiagnosisLabel::Contention,
-        if transactions_active > 1 {
+    DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
+        current_stage: DiagnosisLabel::Contention,
+        trend: if transactions_active > 1 {
             DiagnosticTrend::Growing
         } else {
             DiagnosticTrend::Steady
         },
-        DiagnosticSeverity::Medium,
-        Some("transaction coordination".to_string()),
-        None,
-        None,
-        None,
-        None,
-        0,
-        0,
-        transactions_active as u64,
-        transactions_active,
-        vec![format!("{transactions_active} open transaction(s)")],
-    )
+        severity: DiagnosticSeverity::Medium,
+        likely_bottleneck: Some("transaction coordination".to_string()),
+        last_changed_at: None,
+        last_success_at: None,
+        last_failure_at: None,
+        age_seconds: None,
+        recent_transition_count: 0,
+        failure_count: 0,
+        contention_count: usize_to_u64(transactions_active),
+        waiter_count: transactions_active,
+        explanation_hints: vec![format!("{transactions_active} open transaction(s)")],
+    })
 }
 
 pub(crate) fn queue_resource_diagnostics(
@@ -80,24 +85,24 @@ pub(crate) fn queue_resource_diagnostics(
         )
     };
 
-    DiagnosticSnapshot::with_stage(
-        label,
+    DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
+        current_stage: label,
         trend,
         severity,
-        bottleneck,
-        None,
-        None,
-        None,
-        if oldest_backlog_age_seconds > 0 {
+        likely_bottleneck: bottleneck,
+        last_changed_at: None,
+        last_success_at: None,
+        last_failure_at: None,
+        age_seconds: if oldest_backlog_age_seconds > 0 {
             Some(oldest_backlog_age_seconds)
         } else {
             None
         },
-        0,
-        messages_dead_lettered as u64,
-        backlog as u64,
-        backlog,
-        {
+        recent_transition_count: 0,
+        failure_count: usize_to_u64(messages_dead_lettered),
+        contention_count: usize_to_u64(backlog),
+        waiter_count: backlog,
+        explanation_hints: {
             let mut hints = Vec::new();
             if has_backlog {
                 hints.push(format!("{backlog} message(s) waiting"));
@@ -121,7 +126,7 @@ pub(crate) fn queue_resource_diagnostics(
             }
             hints
         },
-    )
+    })
 }
 
 pub(crate) fn stream_resource_diagnostics(
@@ -150,20 +155,20 @@ pub(crate) fn stream_resource_diagnostics(
         )
     };
 
-    DiagnosticSnapshot::with_stage(
-        label,
+    DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
+        current_stage: label,
         trend,
         severity,
-        bottleneck,
-        None,
-        None,
-        None,
-        None,
-        0,
-        0,
-        lag,
-        sessions_active,
-        {
+        likely_bottleneck: bottleneck,
+        last_changed_at: None,
+        last_success_at: None,
+        last_failure_at: None,
+        age_seconds: None,
+        recent_transition_count: 0,
+        failure_count: 0,
+        contention_count: lag,
+        waiter_count: sessions_active,
+        explanation_hints: {
             let mut hints = Vec::new();
             if lag > 0 {
                 hints.push(format!("stream lag is {lag} event(s)"));
@@ -173,7 +178,7 @@ pub(crate) fn stream_resource_diagnostics(
             }
             hints
         },
-    )
+    })
 }
 
 pub(crate) fn lease_resource_diagnostics(
@@ -198,35 +203,35 @@ pub(crate) fn lease_resource_diagnostics(
         DiagnosticSeverity::Low
     };
 
-    DiagnosticSnapshot::with_stage(
-        DiagnosisLabel::Contention,
-        if churn_pressure {
+    DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
+        current_stage: DiagnosisLabel::Contention,
+        trend: if churn_pressure {
             DiagnosticTrend::Growing
         } else {
             DiagnosticTrend::Steady
         },
         severity,
-        Some(if churn_pressure {
+        likely_bottleneck: Some(if churn_pressure {
             "lease ownership churn".to_string()
         } else {
             "lease ownership".to_string()
         }),
-        None,
-        None,
-        None,
-        oldest_lease_age_seconds,
-        0,
-        0,
-        renewals_total as u64,
-        active_leases,
-        {
+        last_changed_at: None,
+        last_success_at: None,
+        last_failure_at: None,
+        age_seconds: oldest_lease_age_seconds,
+        recent_transition_count: 0,
+        failure_count: 0,
+        contention_count: usize_to_u64(renewals_total),
+        waiter_count: active_leases,
+        explanation_hints: {
             let mut hints = vec![format!("{active_leases} active lease(s)")];
             if renewals_total > 0 {
                 hints.push(format!("{renewals_total} renewals recorded"));
             }
             hints
         },
-    )
+    })
 }
 
 pub(crate) fn notice_resource_diagnostics(subscriptions_active: usize) -> DiagnosticSnapshot {
@@ -234,25 +239,25 @@ pub(crate) fn notice_resource_diagnostics(subscriptions_active: usize) -> Diagno
         return DiagnosticSnapshot::healthy();
     }
 
-    DiagnosticSnapshot::with_stage(
-        DiagnosisLabel::Throughput,
-        DiagnosticTrend::Steady,
-        if subscriptions_active > 25 {
+    DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
+        current_stage: DiagnosisLabel::Throughput,
+        trend: DiagnosticTrend::Steady,
+        severity: if subscriptions_active > 25 {
             DiagnosticSeverity::High
         } else {
             DiagnosticSeverity::Low
         },
-        Some("subscription fanout".to_string()),
-        None,
-        None,
-        None,
-        None,
-        0,
-        0,
-        subscriptions_active as u64,
-        subscriptions_active,
-        vec![format!("{subscriptions_active} active subscription(s)")],
-    )
+        likely_bottleneck: Some("subscription fanout".to_string()),
+        last_changed_at: None,
+        last_success_at: None,
+        last_failure_at: None,
+        age_seconds: None,
+        recent_transition_count: 0,
+        failure_count: 0,
+        contention_count: usize_to_u64(subscriptions_active),
+        waiter_count: subscriptions_active,
+        explanation_hints: vec![format!("{subscriptions_active} active subscription(s)")],
+    })
 }
 
 pub(crate) fn rpc_operation_diagnostics(
@@ -306,20 +311,20 @@ pub(crate) fn rpc_operation_diagnostics(
         )
     };
 
-    DiagnosticSnapshot::with_stage(
-        label,
+    DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
+        current_stage: label,
         trend,
         severity,
-        bottleneck,
-        None,
-        None,
-        None,
-        None,
-        0,
-        0,
-        requests_pending as u64,
-        requests_pending,
-        {
+        likely_bottleneck: bottleneck,
+        last_changed_at: None,
+        last_success_at: None,
+        last_failure_at: None,
+        age_seconds: None,
+        recent_transition_count: 0,
+        failure_count: 0,
+        contention_count: usize_to_u64(requests_pending),
+        waiter_count: requests_pending,
+        explanation_hints: {
             let mut hints = Vec::new();
             if workers_registered > 0 {
                 hints.push(format!("{workers_registered} registered worker(s)"));
@@ -334,7 +339,7 @@ pub(crate) fn rpc_operation_diagnostics(
             }
             hints
         },
-    )
+    })
 }
 
 pub(crate) fn schedule_resource_diagnostics(
@@ -348,9 +353,9 @@ pub(crate) fn schedule_resource_diagnostics(
     let last_run_at = last_run.and_then(parse_rfc3339);
     let is_overdue = enabled && next_run_at.is_some_and(|next| next <= now);
     let age_seconds = if is_overdue {
-        next_run_at.map(|next| (now - next).num_seconds().max(0) as u64)
+        next_run_at.map(|next| duration_to_u64((now - next).num_seconds()))
     } else {
-        last_run_at.map(|last| (now - last).num_seconds().max(0) as u64)
+        last_run_at.map(|last| duration_to_u64((now - last).num_seconds()))
     };
 
     if !enabled && next_run_at.is_none() && last_run_at.is_none() {
@@ -401,23 +406,27 @@ pub(crate) fn schedule_resource_diagnostics(
         hints.push("schedule is overdue".to_string());
     }
 
-    DiagnosticSnapshot::with_stage(
-        label,
+    DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
+        current_stage: label,
         trend,
         severity,
-        bottleneck,
-        last_run_at.or(next_run_at),
-        last_run_at,
-        None,
+        likely_bottleneck: bottleneck,
+        last_changed_at: last_run_at.or(next_run_at),
+        last_success_at: last_run_at,
+        last_failure_at: None,
         age_seconds,
-        if last_run_at.is_some_and(|last| is_recent(last, now)) {
-            1
-        } else {
-            0
-        },
-        0,
-        if is_overdue { 1 } else { 0 },
-        if is_overdue { 1 } else { 0 },
-        hints,
-    )
+        recent_transition_count: u64::from(last_run_at.is_some_and(|last| is_recent(last, now))),
+        failure_count: 0,
+        contention_count: u64::from(is_overdue),
+        waiter_count: usize::from(u8::from(is_overdue)),
+        explanation_hints: hints,
+    })
+}
+
+fn duration_to_u64(seconds: i64) -> u64 {
+    u64::try_from(seconds).unwrap_or(0)
+}
+
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
 }

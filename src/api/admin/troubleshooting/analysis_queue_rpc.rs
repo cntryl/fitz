@@ -1,4 +1,21 @@
-use super::*;
+use super::model::DiagnosticSnapshotInput;
+use chrono::{DateTime, Duration, Utc};
+use std::collections::HashMap;
+
+use super::{
+    is_recent, parse_rfc3339, route_quad, score_u64, score_usize, DiagnosisLabel,
+    DiagnosticHotspot, DiagnosticSeverity, DiagnosticSnapshot, DiagnosticTrend, DomainAnalysis,
+    QueueDeadLetter, QueueInflight, QueueInfo, RpcLatencyBuckets, RpcPendingRequest, RpcWorker,
+    ScoredHotspot,
+};
+
+fn i64_from_u64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn u64_from_usize(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
 
 pub(crate) fn analyze_queue(
     queues: &[QueueInfo],
@@ -62,7 +79,7 @@ pub(crate) fn analyze_queue(
             .filter_map(|item| parse_rfc3339(&item.dead_lettered_at))
             .max();
         let last_change_from_age = if queue.oldest_backlog_age_seconds > 0 {
-            Some(now - Duration::seconds(queue.oldest_backlog_age_seconds as i64))
+            Some(now - Duration::seconds(i64_from_u64(queue.oldest_backlog_age_seconds)))
         } else {
             None
         };
@@ -78,20 +95,27 @@ pub(crate) fn analyze_queue(
         .into_iter()
         .flatten()
         .max();
-        let recent_transition_count = queue_dead_letters
-            .iter()
-            .filter_map(|item| parse_rfc3339(&item.dead_lettered_at))
-            .filter(|ts| is_recent(*ts, now))
-            .count() as u64
-            + queue_inflight
-                .iter()
-                .filter_map(|item| parse_rfc3339(&item.expires_at))
-                .filter(|ts| is_recent(*ts, now))
-                .count() as u64;
+        let recent_transition_count = {
+            let dead_letter_transitions = u64_from_usize(
+                queue_dead_letters
+                    .iter()
+                    .filter_map(|item| parse_rfc3339(&item.dead_lettered_at))
+                    .filter(|ts| is_recent(*ts, now))
+                    .count(),
+            );
+            let inflight_transitions = u64_from_usize(
+                queue_inflight
+                    .iter()
+                    .filter_map(|item| parse_rfc3339(&item.expires_at))
+                    .filter(|ts| is_recent(*ts, now))
+                    .count(),
+            );
+            dead_letter_transitions.saturating_add(inflight_transitions)
+        };
         let contention_count = if backlog > 0 {
-            backlog as u64
+            u64_from_usize(backlog)
         } else {
-            dead_letter_count as u64
+            u64_from_usize(dead_letter_count)
         };
         let (label, trend, severity, bottleneck) = if dead_letter_count > 0 {
             (
@@ -171,21 +195,21 @@ pub(crate) fn analyze_queue(
             ));
         }
 
-        let snapshot = DiagnosticSnapshot::with_stage(
-            label,
+        let snapshot = DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
+            current_stage: label,
             trend,
             severity,
-            bottleneck.clone(),
-            last_changed,
-            None,
+            likely_bottleneck: bottleneck.clone(),
+            last_changed_at: last_changed,
+            last_success_at: None,
             last_failure_at,
-            Some(queue.oldest_backlog_age_seconds),
+            age_seconds: Some(queue.oldest_backlog_age_seconds),
             recent_transition_count,
-            dead_letter_count as u64,
+            failure_count: u64_from_usize(dead_letter_count),
             contention_count,
-            waiters,
-            hints,
-        );
+            waiter_count: waiters,
+            explanation_hints: hints,
+        });
 
         if let Some(candidate_changed_at) = last_changed {
             let previous = last_changed_at;
@@ -196,11 +220,11 @@ pub(crate) fn analyze_queue(
         }
 
         hotspots.push(ScoredHotspot {
-            score: backlog as f64 * 4.0
-                + dead_letter_count as f64 * 8.0
-                + inflight_count as f64 * 1.5
-                + queue.delay_age_buckets.over_15m as f64 * 2.0
-                + queue.oldest_backlog_age_seconds as f64 / 12.0,
+            score: score_usize(backlog) * 4.0
+                + score_usize(dead_letter_count) * 8.0
+                + score_usize(inflight_count) * 1.5
+                + score_usize(queue.delay_age_buckets.over_15m) * 2.0
+                + score_u64(queue.oldest_backlog_age_seconds) / 12.0,
             hotspot: DiagnosticHotspot {
                 domain: "queue".to_string(),
                 realm: Some(queue.realm.clone()),
@@ -331,17 +355,24 @@ pub(crate) fn analyze_rpc(
             .max();
         let latency_summary = summarize_rpc_worker_latency(workers.iter().copied());
         let slowest_worker_average_latency_ms = latency_summary.slowest_worker_average_latency_ms;
-        let recent_transition_count = pending_items
-            .iter()
-            .filter_map(|item| parse_rfc3339(&item.submitted_at))
-            .filter(|ts| is_recent(*ts, now))
-            .count() as u64
-            + workers
-                .iter()
-                .filter_map(|item| parse_rfc3339(&item.registered_at))
-                .filter(|ts| is_recent(*ts, now))
-                .count() as u64;
-        let contention_count = pending_count.saturating_sub(worker_count) as u64;
+        let recent_transition_count = {
+            let pending_transitions = u64_from_usize(
+                pending_items
+                    .iter()
+                    .filter_map(|item| parse_rfc3339(&item.submitted_at))
+                    .filter(|ts| is_recent(*ts, now))
+                    .count(),
+            );
+            let worker_transitions = u64_from_usize(
+                workers
+                    .iter()
+                    .filter_map(|item| parse_rfc3339(&item.registered_at))
+                    .filter(|ts| is_recent(*ts, now))
+                    .count(),
+            );
+            pending_transitions.saturating_add(worker_transitions)
+        };
+        let contention_count = u64_from_usize(pending_count.saturating_sub(worker_count));
         let (label, trend, severity, bottleneck) = if worker_count == 0 && pending_count > 0 {
             (
                 DiagnosisLabel::WorkerStarvation,
@@ -454,21 +485,21 @@ pub(crate) fn analyze_rpc(
             ));
         }
 
-        let snapshot = DiagnosticSnapshot::with_stage(
-            label,
+        let snapshot = DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
+            current_stage: label,
             trend,
             severity,
-            bottleneck.clone(),
-            last_change,
-            None,
+            likely_bottleneck: bottleneck.clone(),
+            last_changed_at: last_change,
+            last_success_at: None,
             last_failure_at,
             age_seconds,
             recent_transition_count,
             failure_count,
             contention_count,
-            pending_count,
-            hints,
-        );
+            waiter_count: pending_count,
+            explanation_hints: hints,
+        });
 
         if let Some(candidate_changed_at) = last_change {
             let previous = last_changed_at;
@@ -479,9 +510,9 @@ pub(crate) fn analyze_rpc(
         }
 
         hotspots.push(ScoredHotspot {
-            score: pending_count as f64 * 5.0
-                + contention_count as f64 * 4.0
-                + age_seconds.unwrap_or(0) as f64 / 10.0
+            score: score_usize(pending_count) * 5.0
+                + score_u64(contention_count) * 4.0
+                + score_u64(age_seconds.unwrap_or(0)) / 10.0
                 + slowest_worker_average_latency_ms / 10.0,
             hotspot: DiagnosticHotspot {
                 domain: "rpc".to_string(),
@@ -559,9 +590,9 @@ pub(crate) fn analyze_rpc(
                 ));
             }
             hotspots.push(ScoredHotspot {
-                score: late_response_pressure as f64 * 12.0
-                    + correlation_pressure as f64 * 6.0
-                    + transport_pressure as f64 * 2.0,
+                score: score_u64(late_response_pressure) * 12.0
+                    + score_u64(correlation_pressure) * 6.0
+                    + score_u64(transport_pressure) * 2.0,
                 hotspot: DiagnosticHotspot {
                     domain: "rpc".to_string(),
                     realm: None,
@@ -578,27 +609,27 @@ pub(crate) fn analyze_rpc(
                     subscriptions: None,
                     owner_session: None,
                     worker_session: None,
-                    snapshot: DiagnosticSnapshot::with_stage(
-                        label,
+                    snapshot: DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
+                        current_stage: label,
                         trend,
                         severity,
-                        Some(bottleneck.to_string()),
-                        None,
-                        None,
-                        None,
-                        Some(
+                        likely_bottleneck: Some(bottleneck.to_string()),
+                        last_changed_at: None,
+                        last_success_at: None,
+                        last_failure_at: None,
+                        age_seconds: Some(
                             pending
                                 .iter()
                                 .map(|item| item.age_seconds)
                                 .max()
                                 .unwrap_or(0),
                         ),
-                        data_loss_pressure,
-                        data_loss_pressure,
-                        correlation_pressure,
-                        pending.len(),
-                        hints,
-                    ),
+                        recent_transition_count: data_loss_pressure,
+                        failure_count: data_loss_pressure,
+                        contention_count: correlation_pressure,
+                        waiter_count: pending.len(),
+                        explanation_hints: hints,
+                    }),
                 },
                 last_changed_at: pending
                     .iter()
@@ -623,8 +654,14 @@ pub(crate) fn analyze_rpc(
             hints.push(format!(
                 "slowest worker average latency is {slowest_latency_ms:.1}ms"
             ));
+            let recent_worker_transitions = u64_from_usize(
+                registered_at_times
+                    .iter()
+                    .filter(|ts| is_recent(**ts, now))
+                    .count(),
+            );
             hotspots.push(ScoredHotspot {
-                score: slowest_latency_ms / 10.0 + workers.len() as f64,
+                score: slowest_latency_ms / 10.0 + score_usize(workers.len()),
                 hotspot: DiagnosticHotspot {
                     domain: "rpc".to_string(),
                     realm: None,
@@ -641,24 +678,21 @@ pub(crate) fn analyze_rpc(
                     subscriptions: None,
                     owner_session: None,
                     worker_session: workers.first().map(|worker| worker.session_id.clone()),
-                    snapshot: DiagnosticSnapshot::with_stage(
-                        DiagnosisLabel::Throughput,
-                        DiagnosticTrend::Steady,
+                    snapshot: DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
+                        current_stage: DiagnosisLabel::Throughput,
+                        trend: DiagnosticTrend::Steady,
                         severity,
-                        Some("slow worker latency".to_string()),
-                        registered_at_times.iter().copied().max(),
-                        None,
-                        None,
-                        None,
-                        registered_at_times
-                            .iter()
-                            .filter(|ts| is_recent(**ts, now))
-                            .count() as u64,
-                        0,
-                        0,
-                        pending.len(),
-                        hints,
-                    ),
+                        likely_bottleneck: Some("slow worker latency".to_string()),
+                        last_changed_at: registered_at_times.iter().copied().max(),
+                        last_success_at: None,
+                        last_failure_at: None,
+                        age_seconds: None,
+                        recent_transition_count: recent_worker_transitions,
+                        failure_count: 0,
+                        contention_count: 0,
+                        waiter_count: pending.len(),
+                        explanation_hints: hints,
+                    }),
                 },
                 last_changed_at: registered_at_times.iter().copied().max(),
             });
