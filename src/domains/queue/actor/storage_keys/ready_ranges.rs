@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{MessageId, QueueActor, ReadyRange};
 
 impl QueueActor {
     pub(in crate::domains::queue::actor) fn ready_range_key_with_prefix(
@@ -8,7 +8,7 @@ impl QueueActor {
     ) -> Vec<u8> {
         let mut key = Vec::with_capacity(prefix.len() + 9);
         key.extend_from_slice(prefix);
-        key.push(shard as u8);
+        key.push(u8::try_from(shard).unwrap_or(u8::MAX));
         key.extend_from_slice(&start.to_be_bytes());
         key
     }
@@ -48,7 +48,7 @@ impl QueueActor {
         value: &[u8],
     ) -> Option<ReadyRange> {
         let end = u64::from_le_bytes(value.get(0..8)?.try_into().ok()?);
-        let step = Self::READY_SHARDS as u64;
+        let step = Self::ready_shards_u64();
         if end < start || !(end - start).is_multiple_of(step) {
             return None;
         }

@@ -59,27 +59,30 @@ impl QueueMetrics {
     }
 
     pub fn set_ready_messages(&self, count: usize) {
-        self.metrics.gauge_set(METRIC_READY_GAUGE, count as u64);
+        self.metrics
+            .gauge_set(METRIC_READY_GAUGE, Self::usize_to_u64(count));
     }
 
     pub fn set_delayed_messages(&self, count: usize) {
-        self.metrics.gauge_set(METRIC_DELAYED_GAUGE, count as u64);
+        self.metrics
+            .gauge_set(METRIC_DELAYED_GAUGE, Self::usize_to_u64(count));
     }
 
     pub fn set_inflight_messages(&self, count: usize) {
-        self.metrics.gauge_set(METRIC_INFLIGHT_GAUGE, count as u64);
+        self.metrics
+            .gauge_set(METRIC_INFLIGHT_GAUGE, Self::usize_to_u64(count));
     }
 
     pub fn record_enqueue(&self, started_at: Instant) {
         self.metrics.counter_inc(METRIC_ENQUEUE_TOTAL);
-        let elapsed_ms = started_at.elapsed().as_micros() as u64 / 1_000;
+        let elapsed_ms = Self::elapsed_ms_since(started_at);
         self.metrics
             .histogram_observe_ms(METRIC_ENQUEUE_LATENCY_MS, elapsed_ms);
     }
 
     pub fn record_reserve(&self, started_at: Instant) {
         self.metrics.counter_inc(METRIC_RESERVE_TOTAL);
-        let elapsed_ms = started_at.elapsed().as_micros() as u64 / 1_000;
+        let elapsed_ms = Self::elapsed_ms_since(started_at);
         self.metrics
             .histogram_observe_ms(METRIC_RESERVE_LATENCY_MS, elapsed_ms);
     }
@@ -94,5 +97,15 @@ impl QueueMetrics {
 
     pub fn record_extend(&self) {
         self.metrics.counter_inc(METRIC_EXTEND_TOTAL);
+    }
+
+    fn elapsed_ms_since(started_at: Instant) -> u64 {
+        u64::try_from(started_at.elapsed().as_micros())
+            .unwrap_or(u64::MAX)
+            .saturating_div(1_000)
+    }
+
+    fn usize_to_u64(value: usize) -> u64 {
+        u64::try_from(value).unwrap_or(u64::MAX)
     }
 }

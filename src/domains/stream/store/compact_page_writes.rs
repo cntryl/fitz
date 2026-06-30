@@ -1,4 +1,32 @@
-use super::*;
+use super::{
+    encode_area_counter_key, encode_compact_area_page_key, encode_compact_resource_page_key,
+    encode_compressed_compact_realm_page_key, encode_realm_counter_key, encode_resource_meta_key,
+    AreaCounterValue, CommitPromotionFrontierBatchParams, CommitResponse, CompactAreaPageRecord,
+    CompactAreaPageValue, CompactRealmPageRecord, CompactResourcePageRecord,
+    CompactResourcePageValue, CompressedCompactRealmPageValue, DiscriminatorWriteRowsParams,
+    EventPayload, PromotionFrontierWriteRowsParams, RealmCounterValue, ResourceMetaValue,
+    StreamStore, StreamWriteMode, REALM_PAGE_RECORD_LIMIT,
+};
+
+#[cfg(test)]
+use super::FAIL_NEXT_PROMOTION_FRONTIER_COMMIT;
+
+fn u64_to_u32_saturating(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+struct PromotionFrontierBatchWritePlan {
+    created_at: u64,
+    batch_size: usize,
+    last_resource_offset: u64,
+    last_area_offset: u64,
+    last_realm_offset: u64,
+    committed_size_delta: u64,
+}
 
 impl StreamStore {
     pub(super) fn build_realm_page_records(
@@ -80,7 +108,7 @@ impl StreamStore {
             .map_err(|e| format!("get error: {e:?}"))?
         {
             Some(value_bytes) => CompactAreaPageValue::try_decode(&value_bytes).map_err(|error| {
-                Self::invalid_compact_area_page_error(realm, area, page_start_offset, error)
+                Self::invalid_compact_area_page_error(realm, area, page_start_offset, &error)
             }),
             None => Ok(CompactAreaPageValue {
                 records: Vec::new(),
@@ -105,7 +133,7 @@ impl StreamStore {
 
         while next_record_index < records.len() {
             let page_start_offset = Self::page_start_offset(current_area_offset);
-            let page_offset = (current_area_offset - page_start_offset) as usize;
+            let page_offset = u64_to_usize_saturating(current_area_offset - page_start_offset);
             let mut page =
                 Self::load_compact_area_page_for_write(txn, realm, area, page_start_offset)?;
 
@@ -155,7 +183,7 @@ impl StreamStore {
                         area,
                         resource,
                         page_start_offset,
-                        error,
+                        &error,
                     )
                 })
             }
@@ -183,7 +211,7 @@ impl StreamStore {
 
         while next_record_index < records.len() {
             let page_start_offset = Self::page_start_offset(current_resource_offset);
-            let page_offset = (current_resource_offset - page_start_offset) as usize;
+            let page_offset = u64_to_usize_saturating(current_resource_offset - page_start_offset);
             let mut page = Self::load_compact_resource_page_for_write(
                 txn,
                 realm,
@@ -228,7 +256,7 @@ impl StreamStore {
             .map_err(|e| format!("get error: {e:?}"))?
         {
             Some(value_bytes) => CompressedCompactRealmPageValue::try_decode(&value_bytes)
-                .map_err(|error| Self::invalid_compact_realm_page_error(page_start_offset, error)),
+                .map_err(|error| Self::invalid_compact_realm_page_error(page_start_offset, &error)),
             None => Ok(CompressedCompactRealmPageValue {
                 records: Vec::new(),
             }),
@@ -251,7 +279,7 @@ impl StreamStore {
 
         while next_record_index < records.len() {
             let page_start_offset = Self::page_start_offset(current_realm_offset);
-            let page_offset = (current_realm_offset - page_start_offset) as usize;
+            let page_offset = u64_to_usize_saturating(current_realm_offset - page_start_offset);
             let mut page =
                 Self::load_compressed_compact_realm_page_for_write(txn, realm, page_start_offset)?;
 
@@ -281,7 +309,7 @@ impl StreamStore {
     pub(super) fn write_promotion_frontier_event_rows(
         &self,
         txn: &mut cntryl_midge::Transaction,
-        params: PromotionFrontierWriteRowsParams<'_>,
+        params: &PromotionFrontierWriteRowsParams<'_>,
     ) -> Result<(), String> {
         let PromotionFrontierWriteRowsParams {
             realm,
@@ -292,7 +320,7 @@ impl StreamStore {
             first_realm_offset,
             events,
             created_at,
-        } = params;
+        } = *params;
         let resource_records = Self::build_promotion_frontier_resource_records(
             events,
             first_area_offset,
@@ -339,73 +367,108 @@ impl StreamStore {
         &self,
         params: CommitPromotionFrontierBatchParams<'_>,
     ) -> Result<(CommitResponse, ResourceMetaValue), String> {
-        let CommitPromotionFrontierBatchParams {
-            family,
-            realm,
-            area,
-            resource,
-            first_resource_offset,
-            first_area_offset,
-            first_realm_offset,
-            events,
-            committed_size_before,
-            ingest_metadata,
-            mode,
-        } = params;
-        let created_at = Self::now_epoch_ms();
-        let batch_size = events.len();
-        let batch_size_u64 = batch_size as u64;
-        let last_resource_offset = first_resource_offset + batch_size_u64 - 1;
-        let last_area_offset = first_area_offset + batch_size_u64 - 1;
-        let last_realm_offset = first_realm_offset + batch_size_u64 - 1;
-        let committed_size_delta = events.iter().map(Self::event_size_bytes).sum::<u64>();
+        let plan = Self::derive_promotion_frontier_batch_write_plan(&params);
+        let mut txn = self.write_promotion_frontier_batch_rows(&params, &plan)?;
+        let resource_meta_after =
+            Self::persist_promotion_frontier_counters_and_metadata(&mut txn, &params, &plan)?;
+        Self::commit_promotion_frontier_tx(txn, params.mode)?;
 
+        Ok((
+            Self::build_promotion_frontier_commit_response(params, &plan),
+            resource_meta_after,
+        ))
+    }
+
+    fn derive_promotion_frontier_batch_write_plan(
+        params: &CommitPromotionFrontierBatchParams<'_>,
+    ) -> PromotionFrontierBatchWritePlan {
+        let created_at = Self::now_epoch_ms();
+        let batch_size = params.events.len();
+        let batch_size_u64 = batch_size as u64;
+        let last_resource_offset = params.first_resource_offset + batch_size_u64 - 1;
+        let last_area_offset = params.first_area_offset + batch_size_u64 - 1;
+        let last_realm_offset = params.first_realm_offset + batch_size_u64 - 1;
+        let committed_size_delta = params
+            .events
+            .iter()
+            .map(Self::event_size_bytes)
+            .sum::<u64>();
+
+        PromotionFrontierBatchWritePlan {
+            created_at,
+            batch_size,
+            last_resource_offset,
+            last_area_offset,
+            last_realm_offset,
+            committed_size_delta,
+        }
+    }
+
+    fn write_promotion_frontier_batch_rows(
+        &self,
+        params: &CommitPromotionFrontierBatchParams<'_>,
+        plan: &PromotionFrontierBatchWritePlan,
+    ) -> Result<cntryl_midge::Transaction, String> {
         let mut txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(
+                u64_to_u32_saturating(params.family),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
             .map_err(|e| format!("begin_tx failed: {e:?}"))?;
+
         self.write_promotion_frontier_event_rows(
             &mut txn,
-            PromotionFrontierWriteRowsParams {
-                realm,
-                area,
-                resource,
-                first_resource_offset,
-                first_area_offset,
-                first_realm_offset,
-                events,
-                created_at,
+            &PromotionFrontierWriteRowsParams {
+                realm: params.realm,
+                area: params.area,
+                resource: params.resource,
+                first_resource_offset: params.first_resource_offset,
+                first_area_offset: params.first_area_offset,
+                first_realm_offset: params.first_realm_offset,
+                events: params.events,
+                created_at: plan.created_at,
             },
         )?;
         Self::write_discriminator_rows(
             &mut txn,
             DiscriminatorWriteRowsParams {
-                realm,
-                area,
-                resource,
-                first_resource_offset,
-                first_area_offset,
-                first_realm_offset,
-                events,
+                realm: params.realm,
+                area: params.area,
+                resource: params.resource,
+                first_resource_offset: params.first_resource_offset,
+                first_area_offset: params.first_area_offset,
+                first_realm_offset: params.first_realm_offset,
+                events: params.events,
                 ttl_opt: self.ttl.ttl_seconds,
             },
         )?;
 
+        Ok(txn)
+    }
+
+    fn persist_promotion_frontier_counters_and_metadata(
+        txn: &mut cntryl_midge::Transaction,
+        params: &CommitPromotionFrontierBatchParams<'_>,
+        plan: &PromotionFrontierBatchWritePlan,
+    ) -> Result<ResourceMetaValue, String> {
         let resource_meta_after = ResourceMetaValue {
-            next_offset: last_resource_offset.saturating_add(1),
-            committed_size_bytes: committed_size_before.saturating_add(committed_size_delta),
+            next_offset: plan.last_resource_offset.saturating_add(1),
+            committed_size_bytes: params
+                .committed_size_before
+                .saturating_add(plan.committed_size_delta),
         };
         txn.put(
-            encode_resource_meta_key(realm, area, resource),
+            encode_resource_meta_key(params.realm, params.area, params.resource),
             resource_meta_after.encode(),
             None,
         )
         .map_err(|e| format!("txn put failed: {e:?}"))?;
 
         txn.put(
-            encode_area_counter_key(realm, area),
+            encode_area_counter_key(params.realm, params.area),
             AreaCounterValue {
-                next_offset: last_area_offset.saturating_add(1),
+                next_offset: plan.last_area_offset.saturating_add(1),
             }
             .encode(),
             None,
@@ -413,15 +476,22 @@ impl StreamStore {
         .map_err(|e| format!("txn put failed: {e:?}"))?;
 
         txn.put(
-            encode_realm_counter_key(realm),
+            encode_realm_counter_key(params.realm),
             RealmCounterValue {
-                next_offset: last_realm_offset.saturating_add(1),
+                next_offset: plan.last_realm_offset.saturating_add(1),
             }
             .encode(),
             None,
         )
         .map_err(|e| format!("txn put failed: {e:?}"))?;
 
+        Ok(resource_meta_after)
+    }
+
+    fn commit_promotion_frontier_tx(
+        txn: cntryl_midge::Transaction,
+        mode: StreamWriteMode,
+    ) -> Result<(), String> {
         let write_options = match mode {
             StreamWriteMode::Sync => cntryl_midge::WriteOptions::sync(),
             StreamWriteMode::Buffered => cntryl_midge::WriteOptions::buffered(),
@@ -444,18 +514,22 @@ impl StreamStore {
         txn.commit(write_options)
             .map_err(|e| format!("midge commit error: {e:?}"))?;
 
-        Ok((
-            CommitResponse {
-                first_resource_offset,
-                last_resource_offset,
-                first_area_offset,
-                last_area_offset,
-                first_realm_offset,
-                last_realm_offset,
-                batch_size,
-                ingest_metadata,
-            },
-            resource_meta_after,
-        ))
+        Ok(())
+    }
+
+    fn build_promotion_frontier_commit_response(
+        params: CommitPromotionFrontierBatchParams<'_>,
+        plan: &PromotionFrontierBatchWritePlan,
+    ) -> CommitResponse {
+        CommitResponse {
+            first_resource_offset: params.first_resource_offset,
+            last_resource_offset: plan.last_resource_offset,
+            first_area_offset: params.first_area_offset,
+            last_area_offset: plan.last_area_offset,
+            first_realm_offset: params.first_realm_offset,
+            last_realm_offset: plan.last_realm_offset,
+            batch_size: plan.batch_size,
+            ingest_metadata: params.ingest_metadata,
+        }
     }
 }

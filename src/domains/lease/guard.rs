@@ -5,8 +5,8 @@
 //!
 //! # Components
 //!
-//! - **LeaseHandle**: Holds an acquired lease with fencing token and expiration
-//! - **LeaseGuard**: Helper for acquiring leases and creating handles
+//! - **`LeaseHandle`**: Holds an acquired lease with fencing token and expiration
+//! - **`LeaseGuard`**: Helper for acquiring leases and creating handles
 //!
 //! # Error Types
 //!
@@ -75,14 +75,14 @@ impl std::error::Error for LeaseError {}
 ///
 /// # Lifecycle
 ///
-/// 1. Created from a LeaseResponse::Acquired or AlreadyHeld
-/// 2. Validated before critical work via is_valid()
-/// 3. Released via release() when done
+/// 1. Created from a `LeaseResponse::Acquired` or `AlreadyHeld`
+/// 2. Validated before critical work via `is_valid()`
+/// 3. Released via `release()` when done
 ///
 /// # Expiration
 ///
 /// The handle tracks when it expires based on the TTL.
-/// After expiration, is_valid() returns false and operations
+/// After expiration, `is_valid()` returns false and operations
 /// with the stale token will be rejected by the lease actor.
 #[derive(Debug, Clone)]
 pub struct LeaseHandle {
@@ -155,6 +155,11 @@ impl LeaseHandle {
     ///
     /// Sends a Release message to the lease actor. This is fire-and-forget;
     /// the handle does not wait for a response.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LeaseError::ActorUnreachable`] when the release message cannot
+    /// be sent to the lease actor.
     pub fn release<A: crate::runtime::Actor>(self, ctx: &Context<A>) -> Result<(), LeaseError> {
         ctx.send(
             self.lease_actor.address().clone(),
@@ -184,6 +189,11 @@ impl LeaseGuard {
     /// Create a lease handle from a lease response
     ///
     /// Returns None if the response indicates the lease could not be acquired.
+    ///
+    /// # Errors
+    ///
+    /// Returns a mapped [`LeaseError`] when `response` indicates the lease was
+    /// not acquired successfully.
     pub fn handle_from_response(
         &self,
         response: LeaseResponse,

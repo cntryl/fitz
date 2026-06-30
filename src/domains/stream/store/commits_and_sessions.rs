@@ -1,6 +1,24 @@
-use super::*;
+use super::{
+    encode_compact_resource_page_key, AppendSession, CommitPromotionFrontierBatchParams,
+    CommitRecordsParams, CommitResponse, CompactResourcePageValue, EventPayload, IngestMetadata,
+    ResourceMetaValue, SessionId, StreamAdminRecord, StreamRecord, StreamStore, StreamWriteMode,
+    ERR_SESSION_ROUTE_FAMILY_MISMATCH,
+};
+
+fn u64_to_u32_saturating(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
 
 impl StreamStore {
+    /// # Errors
+    ///
+    /// Returns an error if layout activation fails, the batch is empty, the
+    /// expected frontier no longer matches persisted state, or the commit write
+    /// path fails.
     pub fn commit_records(
         &self,
         params: CommitRecordsParams<'_>,
@@ -75,6 +93,10 @@ impl StreamStore {
         Ok(response)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if layout activation fails or metadata scanning cannot
+    /// be completed from storage.
     pub fn list_resource_metadata(&self, family: u64) -> Result<Vec<StreamAdminRecord>, String> {
         self.ensure_layout_activation_for_family(family)?;
 
@@ -87,7 +109,10 @@ impl StreamStore {
     ) -> Result<Vec<StreamAdminRecord>, String> {
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                u64_to_u32_saturating(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
         let resource_meta_query = cntryl_midge::Query::new();
@@ -126,6 +151,10 @@ impl StreamStore {
         Ok(values)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error only if future session allocation or initialization
+    /// fails.
     pub fn begin_session(
         &self,
         family: u64,
@@ -155,15 +184,19 @@ impl StreamStore {
         Ok(session_id)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the session is missing, the route family does not
+    /// match, or the staged batch would exceed configured size limits.
     pub fn append_to_session(
         &self,
         family: u64,
-        session_id: &SessionId,
+        session_id: SessionId,
         event: EventPayload,
     ) -> Result<(), String> {
         let mut sessions = self.sessions.lock();
         let session = sessions
-            .get_mut(session_id)
+            .get_mut(&session_id)
             .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?;
 
         if session.family != family {
@@ -178,7 +211,7 @@ impl StreamStore {
             ));
         }
 
-        let event_bytes = event.body.len() + event.metadata.as_ref().map_or(0, |m| m.len());
+        let event_bytes = event.body.len() + event.metadata.as_ref().map_or(0, bytes::Bytes::len);
         if session.total_bytes + event_bytes > self.limits.max_batch_bytes {
             return Err(format!(
                 "ERR_BATCH_TOO_LARGE: total {} + event {} exceeds max_batch_bytes {}",
@@ -196,13 +229,19 @@ impl StreamStore {
     /// Commit session with StreamActor-provided first offsets.
     ///
     /// **STORAGE ONLY - VALIDATED FRONTIER**
-    /// - Accepts first offsets from StreamActor after durable frontier validation
+    /// - Accepts first offsets from `StreamActor` after durable frontier validation
     /// - Computes subsequent offsets by index: first + i
-    /// - Does NOT validate expected_offset (StreamActor's job)
+    /// - Does NOT validate `expected_offset` (`StreamActor`'s job)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session is missing, the family or provided
+    /// frontier does not match persisted state, layout activation fails, or the
+    /// commit write path fails.
     pub fn commit_session(
         &self,
         family: u64,
-        session_id: &SessionId,
+        session_id: SessionId,
         first_resource_offset: u64,
         first_area_offset: u64,
         first_realm_offset: u64,
@@ -221,7 +260,7 @@ impl StreamStore {
     pub(super) fn commit_session_promotion_frontier(
         &self,
         family: u64,
-        session_id: &SessionId,
+        session_id: SessionId,
         first_resource_offset: u64,
         first_area_offset: u64,
         first_realm_offset: u64,
@@ -230,22 +269,22 @@ impl StreamStore {
         let session = {
             let mut sessions = self.sessions.lock();
             sessions
-                .remove(session_id)
+                .remove(&session_id)
                 .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?
         };
 
         if session.family != family {
-            self.sessions.lock().insert(*session_id, session);
+            self.sessions.lock().insert(session_id, session);
             return Err(ERR_SESSION_ROUTE_FAMILY_MISMATCH.to_string());
         }
 
         if session.event_count == 0 {
-            self.sessions.lock().insert(*session_id, session);
+            self.sessions.lock().insert(session_id, session);
             return Err("ERR_EMPTY_BATCH".to_string());
         }
 
         if let Err(error) = self.ensure_layout_activation_for_family(family) {
-            self.sessions.lock().insert(*session_id, session);
+            self.sessions.lock().insert(session_id, session);
             return Err(error);
         }
 
@@ -267,14 +306,14 @@ impl StreamStore {
         ) {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                self.sessions.lock().insert(*session_id, session);
+                self.sessions.lock().insert(session_id, session);
                 return Err(error);
             }
         };
         resource_meta_state.snapshot = Some(resource_meta_before.clone());
 
         if resource_meta_before.next_offset != first_resource_offset {
-            self.sessions.lock().insert(*session_id, session);
+            self.sessions.lock().insert(session_id, session);
             return Err("ERR_CONCURRENCY_CONFLICT".to_string());
         }
 
@@ -282,12 +321,12 @@ impl StreamStore {
             match self.load_area_next_offset_snapshot(family, &session.realm, &session.area) {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
-                    self.sessions.lock().insert(*session_id, session);
+                    self.sessions.lock().insert(session_id, session);
                     return Err(error);
                 }
             };
         if area_next_offset != first_area_offset {
-            self.sessions.lock().insert(*session_id, session);
+            self.sessions.lock().insert(session_id, session);
             return Err("ERR_CONCURRENCY_CONFLICT".to_string());
         }
         realm_sequence_state
@@ -298,12 +337,12 @@ impl StreamStore {
             match self.load_realm_next_offset_snapshot(family, &session.realm) {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
-                    self.sessions.lock().insert(*session_id, session);
+                    self.sessions.lock().insert(session_id, session);
                     return Err(error);
                 }
             };
         if realm_next_offset != first_realm_offset {
-            self.sessions.lock().insert(*session_id, session);
+            self.sessions.lock().insert(session_id, session);
             return Err("ERR_CONCURRENCY_CONFLICT".to_string());
         }
         realm_sequence_state.next_realm_offset = Some(realm_next_offset);
@@ -325,7 +364,7 @@ impl StreamStore {
         let (response, resource_meta_after) = match result {
             Ok(result) => result,
             Err(error) => {
-                self.sessions.lock().insert(*session_id, session);
+                self.sessions.lock().insert(session_id, session);
                 return Err(error);
             }
         };
@@ -340,22 +379,30 @@ impl StreamStore {
         Ok(response)
     }
 
-    pub fn abort_session(&self, session_id: &SessionId) -> Result<(), String> {
+    /// # Errors
+    ///
+    /// Returns an error if the session does not exist.
+    pub fn abort_session(&self, session_id: SessionId) -> Result<(), String> {
         self.sessions
             .lock()
-            .remove(session_id)
+            .remove(&session_id)
             .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?;
         Ok(())
     }
 
-    pub fn session_event_count(&self, session_id: &SessionId) -> Option<usize> {
-        self.sessions.lock().get(session_id).map(|s| s.event_count)
+    pub fn session_event_count(&self, session_id: SessionId) -> Option<usize> {
+        self.sessions.lock().get(&session_id).map(|s| s.event_count)
     }
 
     /// Peek at the last committed record in a resource stream (tail operation)
     ///
-    /// **NO WATERMARK GATING**: Resource reads are strictly ordered by StreamActor.
+    /// **NO WATERMARK GATING**: Resource reads are strictly ordered by `StreamActor`.
     /// Watermark is for area/realm dimensions only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation fails or the backing store read
+    /// path cannot be completed.
     pub fn peek_resource(
         &self,
         family: u64,
@@ -395,7 +442,10 @@ impl StreamStore {
         let page_key = encode_compact_resource_page_key(realm, area, resource, page_start);
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                u64_to_u32_saturating(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
         match txn
@@ -405,10 +455,10 @@ impl StreamStore {
             Some(value_bytes) => {
                 let page = CompactResourcePageValue::try_decode(&value_bytes).map_err(|error| {
                     Self::invalid_compact_resource_page_error(
-                        realm, area, resource, page_start, error,
+                        realm, area, resource, page_start, &error,
                     )
                 })?;
-                let slot = (resource_offset - page_start) as usize;
+                let slot = u64_to_usize_saturating(resource_offset - page_start);
                 Ok(page.records.get(slot).map(|record| StreamRecord {
                     resource_offset,
                     area_offset: Some(record.area_offset),

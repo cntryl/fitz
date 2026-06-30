@@ -1,11 +1,11 @@
-//! Lightweight SessionActor helpers for the RPC domain
+//! Lightweight `SessionActor` helpers for the RPC domain
 //!
 //! Responsibilities:
 //! - Enforce session-level authorization for RPC call and worker-registration operations
-//! - Forward authorized operations to the RpcRouteActor
+//! - Forward authorized operations to the `RpcRouteActor`
 //!
 //! This is intentionally small: a full actor system is out-of-scope for this change,
-//! but tests rely on the SessionActor's semantic enforcement.
+//! but tests rely on the `SessionActor`'s semantic enforcement.
 
 use crate::auth::Access;
 use crate::domains::rpc::RpcRouteActor;
@@ -15,7 +15,7 @@ use crate::runtime::routing::{Route, RouteAddress};
 use crate::session::permissions::SessionPermissions;
 use crate::session::session::SessionId;
 
-/// Lightweight SessionActor for testing RPC authorization
+/// Lightweight `SessionActor` for testing RPC authorization
 pub struct SessionActor {
     pub session_id: SessionId,
     pub permissions: SessionPermissions,
@@ -30,9 +30,13 @@ impl SessionActor {
         }
     }
 
-    /// Attempt to send an RPC request. Returns Err if authorization fails.
+    /// Attempt to send an RPC request. Returns `Err` if authorization fails.
     ///
     /// Requires "call" permission (represented as Write access) on the RPC route.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session lacks permission to call the requested route.
     pub fn call_rpc(
         &self,
         request: RpcRequest,
@@ -49,9 +53,13 @@ impl SessionActor {
         Ok(())
     }
 
-    /// Attempt to register a worker. Returns Err if authorization fails.
+    /// Attempt to register a worker. Returns `Err` if authorization fails.
     ///
     /// Requires worker-registration permission (represented as All access) on the RPC route.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session lacks permission to register a worker for the route.
     pub fn register_worker(
         &self,
         worker_addr: RouteAddress,

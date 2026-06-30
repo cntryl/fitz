@@ -39,6 +39,10 @@ pub struct StreamActor {
 }
 
 impl StreamActor {
+    /// # Errors
+    ///
+    /// Returns an error when loading the next durable resource offset from the
+    /// backing `StreamStore` fails.
     pub fn new(
         family_id: RouteFamily,
         realm: String,
@@ -74,6 +78,10 @@ impl StreamActor {
             .map(|session| session.owner_session_id)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when a live append session is already active for this
+    /// resource stream.
     pub fn begin_append_session(
         &mut self,
         owner_session_id: u64,
@@ -95,6 +103,11 @@ impl StreamActor {
         Ok(stream_session_id)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the session is missing, the expected offset does
+    /// not match the live staged state, the event exceeds size limits, or the
+    /// staged batch exceeds configured limits.
     pub fn append_to_session_with_discriminator_for_owner(
         &mut self,
         owner_session_id: u64,
@@ -113,26 +126,22 @@ impl StreamActor {
             })
             .ok_or_else(|| "session not found".to_string())?;
 
-        let assigned_offset = match session.expected_offset {
-            Some(base_expected_offset) => {
-                let next_expected_offset =
-                    base_expected_offset + session.staged_events.len() as u64;
-                if expected_offset != next_expected_offset {
-                    return Err("concurrency conflict".to_string());
-                }
-                next_expected_offset
+        let assigned_offset = if let Some(base_expected_offset) = session.expected_offset {
+            let next_expected_offset = base_expected_offset + session.staged_events.len() as u64;
+            if expected_offset != next_expected_offset {
+                return Err("concurrency conflict".to_string());
             }
-            None => {
-                if expected_offset != self.next_resource_offset {
-                    return Err("concurrency conflict".to_string());
-                }
-                session.expected_offset = Some(expected_offset);
-                expected_offset
+            next_expected_offset
+        } else {
+            if expected_offset != self.next_resource_offset {
+                return Err("concurrency conflict".to_string());
             }
+            session.expected_offset = Some(expected_offset);
+            expected_offset
         };
 
         let event_size = body.len()
-            + metadata.as_ref().map_or(0, |m| m.len())
+            + metadata.as_ref().map_or(0, Bytes::len)
             + discriminator
                 .as_ref()
                 .map_or(0, |value| value.as_str().len());
@@ -156,6 +165,10 @@ impl StreamActor {
         Ok(assigned_offset)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the session is missing, empty, uninitialized, or
+    /// when the durable commit fails.
     pub fn commit_session_for_owner(
         &mut self,
         owner_session_id: u64,
@@ -216,6 +229,10 @@ impl StreamActor {
         })
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the session is missing or owned by a different
+    /// caller.
     pub fn rollback_session_for_owner(
         &mut self,
         owner_session_id: u64,
@@ -246,6 +263,9 @@ impl StreamActor {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the underlying durable read fails.
     pub fn read(
         &self,
         from_offset: u64,
@@ -255,6 +275,9 @@ impl StreamActor {
         self.read_with_filter(from_offset, limit, max_bytes, None)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the underlying durable read fails.
     pub fn read_with_filter(
         &self,
         from_offset: u64,
@@ -287,6 +310,9 @@ impl StreamActor {
         Ok(ReadResponse { items, cursor })
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the underlying durable peek fails.
     pub fn last(&self) -> Result<PeekResponse, String> {
         if self.next_resource_offset == 0 {
             return Ok(PeekResponse { record: None });
@@ -301,6 +327,9 @@ impl StreamActor {
         Ok(PeekResponse { record })
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when loading durable stream metadata fails.
     pub fn metadata(&self) -> Result<GetMetadataResponse, String> {
         let metadata = self.store.get_metadata(
             self.family_id.as_u64(),
@@ -348,9 +377,8 @@ mod tests {
         );
 
         // Assert
-        let error = match result {
-            Ok(_) => panic!("actor recovery should surface layout mismatch"),
-            Err(error) => error,
+        let Err(error) = result else {
+            panic!("actor recovery should surface layout mismatch");
         };
         assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
     }

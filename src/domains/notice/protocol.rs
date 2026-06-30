@@ -1,29 +1,29 @@
 //! Notification protocol message types
 //!
 //! Defines the message types used for pub/sub operations:
-//! - **Publish**: Send message to matching subscribers
-//! - **Subscribe**: Register pattern subscription
-//! - **Unsubscribe**: Remove specific subscription
-//! - **UnsubscribeAll**: Clean up session subscriptions on disconnect
-//! - **Deliver**: Deliver published message to subscriber
+//! - **`Publish`**: Send message to matching subscribers
+//! - **`Subscribe`**: Register pattern subscription
+//! - **`Unsubscribe`**: Remove specific subscription
+//! - **`UnsubscribeAll`**: Clean up session subscriptions on disconnect
+//! - **`Deliver`**: Deliver published message to subscriber
 
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
 use crate::session::session::SessionId;
 use bytes::Bytes;
 
-/// Messages for the notification domain
+/// Messages for the notification domain.
 #[derive(Debug, Clone)]
 pub enum NotificationMessage {
     /// Publish a message to all matching subscribers (from any domain/client)
     Publish(PublishMessage),
-    /// Subscribe to messages matching a pattern (from SessionActor)
+    /// Subscribe to messages matching a pattern (from `SessionActor`)
     Subscribe(SubscribeMessage),
-    /// Unsubscribe from a subscription ID (from SessionActor)
+    /// Unsubscribe from a subscription ID (from `SessionActor`)
     Unsubscribe(UnsubscribeMessage),
     /// Unsubscribe all subscriptions for a session (called on disconnect)
     UnsubscribeAll(UnsubscribeAllMessage),
-    /// Deliver a published message to a subscriber (internal to NoticeRouteActor)
+    /// Deliver a published message to a subscriber (internal to `NoticeRouteActor`)
     Deliver(DeliverMessage),
 }
 
@@ -48,10 +48,10 @@ impl PublishMessage {
     }
 }
 
-/// Subscribe to messages matching a pattern (may include wildcards * and **)
+/// Subscribe to messages matching a pattern (may include wildcards `*` and `**`)
 ///
-/// Sent from SessionActor to NoticeRouteActor after authorization is verified.
-/// SessionActor has already enforced prefix-based auth rules.
+/// Sent from `SessionActor` to `NoticeRouteActor` after authorization is verified.
+/// `SessionActor` has already enforced prefix-based auth rules.
 #[derive(Debug, Clone)]
 pub struct SubscribeMessage {
     /// Route family for isolation
@@ -60,7 +60,7 @@ pub struct SubscribeMessage {
     pub pattern: Route,
     /// Session making the subscription
     pub session_id: SessionId,
-    /// Address to send notifications to (typically the SessionActor)
+    /// Address to send notifications to (typically the `SessionActor`)
     pub subscriber: RouteAddress,
 }
 
@@ -83,7 +83,7 @@ impl SubscribeMessage {
 
 /// Unsubscribe from a subscription
 ///
-/// Sent from SessionActor to NoticeRouteActor.
+/// Sent from `SessionActor` to `NoticeRouteActor`.
 #[derive(Debug, Clone)]
 pub struct UnsubscribeMessage {
     /// Route family for isolation
@@ -107,8 +107,8 @@ impl UnsubscribeMessage {
 
 /// Unsubscribe all subscriptions for a session (called on disconnect)
 ///
-/// SessionActor sends this to all NoticeRouteActors when the session terminates.
-/// Cleanup is best-effort; NoticeRouteActor may not have received all subscribe messages yet.
+/// `SessionActor` sends this to all `NoticeRouteActor`s when the session terminates.
+/// Cleanup is best-effort; a `NoticeRouteActor` may not have received all subscribe messages yet.
 #[derive(Debug, Clone)]
 pub struct UnsubscribeAllMessage {
     /// Session being disconnected
@@ -212,7 +212,7 @@ pub enum NoticeResponse {
     Error(String),
 }
 
-/// Notice errors
+/// Notice errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeError {
     /// Invalid realm format (3030)

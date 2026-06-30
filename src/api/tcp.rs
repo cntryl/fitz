@@ -75,24 +75,17 @@ impl TcpHandler {
     /// Reads length-prefixed frames from the TCP stream and forwards them
     /// to the runtime. Handles backpressure gracefully.
     ///
-    /// Returns `Ok` on clean close, `Err` on error
+    /// # Errors
+    ///
+    /// Returns an error when reading from the socket fails, the peer sends a
+    /// frame larger than the configured maximum, the transport channel remains
+    /// backpressured after one retry, or the runtime channel closes.
     pub async fn run(mut self) -> Result<(), String> {
         let mut buffer = BytesMut::with_capacity(4096);
         info!(session_id = self.session_id, "TCP handler run loop started");
 
         loop {
-            // Read more data from the owned read half (no mutex needed)
-            let n = match self.read_half.read_buf(&mut buffer).await {
-                Ok(n) => n,
-                Err(e) => {
-                    error!(session_id = self.session_id, error = %e, "TCP read error");
-                    let reason = format!("read error: {e}");
-                    self.ingress
-                        .on_close(self.session_id, CloseReason::Error(reason.clone()))
-                        .await;
-                    return Err(reason);
-                }
-            };
+            let n = self.read_into_buffer(&mut buffer).await?;
 
             // 0 bytes means EOF
             if n == 0 {
@@ -114,11 +107,7 @@ impl TcpHandler {
 
             // Try to extract complete frames from buffer
             while buffer.len() >= 4 {
-                // Read length field (u32 BE)
-                let len_bytes = &buffer[0..4];
-                let len =
-                    u32::from_be_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
-                        as usize;
+                let len = frame_len(&buffer);
 
                 // Check frame size
                 if len > self.config.max_frame_size {
@@ -163,51 +152,75 @@ impl TcpHandler {
                 let _handoff_latency = crate::observability::ScopedHistogramUs::new(
                     obs::METRIC_TCP_CHANNEL_HANDOFF_LATENCY,
                 );
-                match self.tx.try_send((self.session_id, frame)) {
-                    Ok(()) => {
-                        trace!(
-                            session_id = self.session_id,
-                            "TCP frame forwarded to channel successfully"
-                        );
-                    }
-                    Err(mpsc::error::TrySendError::Full((_, frame))) => {
-                        crate::observability::counter_inc(obs::METRIC_TCP_BACKPRESSURE);
-                        warn!(
-                            session_id = self.session_id,
-                            "TCP channel full, backpressure - retrying after timeout"
-                        );
-                        tokio::time::sleep(self.config.backpressure_timeout).await;
-                        match self.tx.try_send((self.session_id, frame)) {
-                            Ok(()) => {
-                                debug!(
-                                    session_id = self.session_id,
-                                    "TCP frame forwarded after backpressure retry"
-                                );
-                            }
-                            Err(_) => {
-                                let reason = "channel full: backpressure exceeded".to_string();
-                                error!(
-                                    session_id = self.session_id,
-                                    "TCP backpressure exceeded, closing session"
-                                );
-                                self.ingress
-                                    .on_close(self.session_id, CloseReason::Error(reason.clone()))
-                                    .await;
-                                return Err(reason);
-                            }
-                        }
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                        error!(session_id = self.session_id, "TCP runtime channel closed");
-                        let reason = "runtime channel closed".to_string();
-                        self.ingress
-                            .on_close(self.session_id, CloseReason::Error(reason.clone()))
-                            .await;
-                        return Err(reason);
-                    }
+                if let Err(send_error) = self.tx.try_send((self.session_id, frame)) {
+                    self.handle_send_error(send_error).await?;
+                } else {
+                    trace!(
+                        session_id = self.session_id,
+                        "TCP frame forwarded to channel successfully"
+                    );
                 }
             }
         }
+    }
+
+    async fn read_into_buffer(&mut self, buffer: &mut BytesMut) -> Result<usize, String> {
+        match self.read_half.read_buf(buffer).await {
+            Ok(bytes_read) => Ok(bytes_read),
+            Err(error) => {
+                error!(session_id = self.session_id, error = %error, "TCP read error");
+                let reason = format!("read error: {error}");
+                self.ingress
+                    .on_close(self.session_id, CloseReason::Error(reason.clone()))
+                    .await;
+                Err(reason)
+            }
+        }
+    }
+
+    async fn handle_send_error(
+        &self,
+        error: mpsc::error::TrySendError<(u64, Bytes)>,
+    ) -> Result<(), String> {
+        match error {
+            mpsc::error::TrySendError::Full((_, frame)) => self.retry_send(frame).await,
+            mpsc::error::TrySendError::Closed(_) => {
+                error!(session_id = self.session_id, "TCP runtime channel closed");
+                self.close_with_error("runtime channel closed".to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn retry_send(&self, frame: Bytes) -> Result<(), String> {
+        crate::observability::counter_inc(obs::METRIC_TCP_BACKPRESSURE);
+        warn!(
+            session_id = self.session_id,
+            "TCP channel full, backpressure - retrying after timeout"
+        );
+        tokio::time::sleep(self.config.backpressure_timeout).await;
+
+        if let Ok(()) = self.tx.try_send((self.session_id, frame)) {
+            debug!(
+                session_id = self.session_id,
+                "TCP frame forwarded after backpressure retry"
+            );
+            Ok(())
+        } else {
+            error!(
+                session_id = self.session_id,
+                "TCP backpressure exceeded, closing session"
+            );
+            self.close_with_error("channel full: backpressure exceeded".to_string())
+                .await
+        }
+    }
+
+    async fn close_with_error(&self, reason: String) -> Result<(), String> {
+        self.ingress
+            .on_close(self.session_id, CloseReason::Error(reason.clone()))
+            .await;
+        Err(reason)
     }
 }
 
@@ -227,6 +240,11 @@ impl TcpHandler {
 ///
 /// `(handler, write_half)` if session accepted, error message if rejected.
 /// The caller should pass `write_half` to the outbound writer task.
+///
+/// # Errors
+///
+/// Returns an error when enabling `TCP_NODELAY` fails or ingress rejects the
+/// newly opened transport session.
 pub async fn create_session(
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
@@ -267,6 +285,11 @@ pub async fn create_session(
     ))
 }
 
+fn frame_len(buffer: &BytesMut) -> usize {
+    let len_bytes = &buffer[..4];
+    u32::from_be_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]) as usize
+}
+
 /// Helper: preview first N bytes as hex string for trace logging
 fn hex_preview(data: &[u8]) -> String {
     let limit = data.len().min(32);
@@ -300,11 +323,12 @@ mod tests {
     fn should_encode_length_prefix() {
         // Arrange
         let data = [1, 2, 3, 4, 5];
-        let len = data.len() as u32;
+        let len = u32::try_from(data.len()).expect("test frame length fits in u32");
 
         // Act
         let len_bytes = len.to_be_bytes();
-        let reconstructed = u32::from_be_bytes(len_bytes) as usize;
+        let reconstructed =
+            usize::try_from(u32::from_be_bytes(len_bytes)).expect("u32 length fits in usize");
 
         // Assert
         assert_eq!(reconstructed, 5);
@@ -313,11 +337,12 @@ mod tests {
     #[test]
     fn should_handle_large_frames() {
         // Arrange
-        let large_len = 1024 * 1024; // 1 MB
+        let large_len: i32 = 1024 * 1024; // 1 MB
 
         // Act
-        let len_bytes = (large_len as u32).to_be_bytes();
-        let reconstructed = u32::from_be_bytes(len_bytes) as usize;
+        let len_bytes = large_len.cast_unsigned().to_be_bytes();
+        let reconstructed =
+            usize::try_from(u32::from_be_bytes(len_bytes)).expect("u32 length fits in usize");
 
         // Assert
         assert_eq!(reconstructed, 1024 * 1024);

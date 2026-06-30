@@ -58,110 +58,18 @@ impl WebSocketHandler {
     /// Text frames are logged and dropped.
     /// Control frames (ping, close) are handled appropriately.
     ///
-    /// Returns `Ok(true)` if connection should continue,
-    /// `Ok(false)` if connection should close.
+    /// Returns `Ok(true)` if connection should continue and `Ok(false)` if the
+    /// client closed the connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a binary frame exceeds the configured maximum
+    /// size, the runtime channel stays backpressured after one retry, or the
+    /// runtime channel is closed.
     pub async fn handle_message(&self, msg: Message) -> Result<bool, String> {
         match msg {
             // Binary frames: convert to Bytes and forward
-            Message::Binary(data) => {
-                let _handoff_latency = crate::observability::ScopedHistogramUs::new(
-                    obs::METRIC_WS_CHANNEL_HANDOFF_LATENCY,
-                );
-                let frame = data;
-                debug!(
-                    session_id = self.session_id,
-                    frame_len = frame.len(),
-                    "WS received binary frame"
-                );
-                trace!(
-                    session_id = self.session_id,
-                    frame_hex = %hex_preview(&frame),
-                    "WS binary frame payload preview"
-                );
-
-                // Check frame size
-                if frame.len() > self.config.max_frame_size {
-                    let reason = format!(
-                        "frame too large: {} > {}",
-                        frame.len(),
-                        self.config.max_frame_size
-                    );
-                    warn!(
-                        session_id = self.session_id,
-                        frame_len = frame.len(),
-                        max = self.config.max_frame_size,
-                        "WS frame too large"
-                    );
-                    self.ingress
-                        .on_close(self.session_id, CloseReason::Error(reason.clone()))
-                        .await;
-                    return Err(reason);
-                }
-
-                // Forward frame to session for processing, handling backpressure
-                // via the bounded transport channel. Mirror TCP behavior: retry once
-                // after a short pause, then close the session if pressure persists.
-                match self.tx.try_send((self.session_id, frame.clone())) {
-                    Ok(()) => {
-                        trace!(
-                            session_id = self.session_id,
-                            "WS frame forwarded to channel"
-                        );
-                    }
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        crate::observability::counter_inc(obs::METRIC_WS_BACKPRESSURE);
-                        warn!(
-                            session_id = self.session_id,
-                            "WS channel full, backpressure - retrying after timeout"
-                        );
-                        tokio::time::sleep(self.config.backpressure_timeout).await;
-
-                        match self.tx.try_send((self.session_id, frame)) {
-                            Ok(()) => {
-                                trace!(
-                                    session_id = self.session_id,
-                                    "WS frame forwarded after backpressure retry"
-                                );
-                            }
-                            Err(mpsc::error::TrySendError::Full(_)) => {
-                                let reason = "channel full: backpressure exceeded".to_string();
-                                warn!(
-                                    session_id = self.session_id,
-                                    "WS backpressure exceeded, closing session"
-                                );
-                                self.ingress
-                                    .on_close(self.session_id, CloseReason::Error(reason.clone()))
-                                    .await;
-                                return Err(reason);
-                            }
-                            Err(mpsc::error::TrySendError::Closed(_)) => {
-                                let reason = "failed to send frame: channel closed".to_string();
-                                error!(
-                                    session_id = self.session_id,
-                                    "WS channel closed during backpressure retry"
-                                );
-                                self.ingress
-                                    .on_close(self.session_id, CloseReason::Error(reason.clone()))
-                                    .await;
-                                return Err(reason);
-                            }
-                        }
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                        let reason = "failed to send frame: channel closed".to_string();
-                        error!(
-                            session_id = self.session_id,
-                            "WS failed to send frame to channel"
-                        );
-                        self.ingress
-                            .on_close(self.session_id, CloseReason::Error(reason.clone()))
-                            .await;
-                        return Err(reason);
-                    }
-                }
-
-                Ok(true)
-            }
+            Message::Binary(data) => self.handle_binary_message(data).await,
             Message::Close(_) => {
                 debug!(session_id = self.session_id, "WS received Close frame");
                 self.ingress
@@ -180,7 +88,7 @@ impl WebSocketHandler {
                 );
                 Ok(true)
             }
-            _ => {
+            Message::Frame(_) => {
                 trace!(
                     session_id = self.session_id,
                     "WS received unknown frame type"
@@ -188,6 +96,110 @@ impl WebSocketHandler {
                 Ok(true)
             }
         }
+    }
+
+    async fn handle_binary_message(&self, frame: Bytes) -> Result<bool, String> {
+        let _handoff_latency =
+            crate::observability::ScopedHistogramUs::new(obs::METRIC_WS_CHANNEL_HANDOFF_LATENCY);
+        debug!(
+            session_id = self.session_id,
+            frame_len = frame.len(),
+            "WS received binary frame"
+        );
+        trace!(
+            session_id = self.session_id,
+            frame_hex = %hex_preview(&frame),
+            "WS binary frame payload preview"
+        );
+
+        if frame.len() > self.config.max_frame_size {
+            let reason = format!(
+                "frame too large: {} > {}",
+                frame.len(),
+                self.config.max_frame_size
+            );
+            warn!(
+                session_id = self.session_id,
+                frame_len = frame.len(),
+                max = self.config.max_frame_size,
+                "WS frame too large"
+            );
+            self.ingress
+                .on_close(self.session_id, CloseReason::Error(reason.clone()))
+                .await;
+            return Err(reason);
+        }
+
+        if let Err(send_error) = self.tx.try_send((self.session_id, frame.clone())) {
+            self.handle_send_error(send_error, frame).await?;
+        } else {
+            trace!(
+                session_id = self.session_id,
+                "WS frame forwarded to channel"
+            );
+        }
+
+        Ok(true)
+    }
+
+    async fn handle_send_error(
+        &self,
+        error: mpsc::error::TrySendError<(u64, Bytes)>,
+        frame: Bytes,
+    ) -> Result<(), String> {
+        match error {
+            mpsc::error::TrySendError::Full(_) => self.retry_send(frame).await,
+            mpsc::error::TrySendError::Closed(_) => {
+                error!(
+                    session_id = self.session_id,
+                    "WS failed to send frame to channel"
+                );
+                self.close_with_error("failed to send frame: channel closed".to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn retry_send(&self, frame: Bytes) -> Result<(), String> {
+        crate::observability::counter_inc(obs::METRIC_WS_BACKPRESSURE);
+        warn!(
+            session_id = self.session_id,
+            "WS channel full, backpressure - retrying after timeout"
+        );
+        tokio::time::sleep(self.config.backpressure_timeout).await;
+
+        match self.tx.try_send((self.session_id, frame)) {
+            Ok(()) => {
+                trace!(
+                    session_id = self.session_id,
+                    "WS frame forwarded after backpressure retry"
+                );
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!(
+                    session_id = self.session_id,
+                    "WS backpressure exceeded, closing session"
+                );
+                self.close_with_error("channel full: backpressure exceeded".to_string())
+                    .await
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                error!(
+                    session_id = self.session_id,
+                    "WS channel closed during backpressure retry"
+                );
+                self.close_with_error("failed to send frame: channel closed".to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn close_with_error(&self, reason: String) -> Result<(), String> {
+        self.ingress
+            .on_close(self.session_id, CloseReason::Error(reason.clone()))
+            .await;
+        Err(reason)
     }
 }
 

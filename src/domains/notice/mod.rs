@@ -2,9 +2,9 @@
 //!
 //! # Architecture
 //!
-//! - **NoticeDomainSink** (`src/domains/notice/sink.rs`): Live production handler that keeps broker-local subscription state in memory for the current process
-//! - **NoticeRouteActor** ([actor]): Sync actor model used for core matching and focused unit tests
-//! - **SessionActor**: Enforces authentication/authorization before forwarding notice messages
+//! - **`NoticeDomainSink`** (`src/domains/notice/sink.rs`): Live production handler that keeps broker-local subscription state in memory for the current process
+//! - **`NoticeRouteActor`** ([actor]): Sync actor model used for core matching and focused unit tests
+//! - **`SessionActor`**: Enforces authentication/authorization before forwarding notice messages
 //! - Subscriptions are session-scoped and cleaned up on disconnect
 //!
 //! # Semantics
@@ -20,7 +20,7 @@
 //!
 //! - `*` matches a single path segment
 //! - `**` matches zero or more path segments
-//! - Wildcards apply only within the same RouteFamily
+//! - Wildcards apply only within the same `RouteFamily`
 
 pub mod actor;
 pub mod events;

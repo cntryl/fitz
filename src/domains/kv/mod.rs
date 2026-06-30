@@ -12,7 +12,7 @@
 //! It enforces:
 //! - All operations execute within a transaction
 //! - Transactions are scoped to a single resource (table)
-//! - Explicit RouteFamily -> ColumnFamily mapping (no default CF)
+//! - Explicit `RouteFamily` -> `ColumnFamily` mapping (no default CF)
 //! - Direct exposure of Midge semantics (no buffering, retries, caching)
 //!
 //! # Routes
@@ -35,17 +35,17 @@
 //! # KV Watches
 //!
 //! Clients can watch KV resources for committed mutations:
-//! - KvDomainSink owns ephemeral watch state for the current broker process
+//! - `KvDomainSink` owns ephemeral watch state for the current broker process
 //! - Watches target `kv://{realm}/{area}/{resource}` and wildcard resource patterns
 //! - Notifications are emitted only after a transaction commits at least one mutating operation
 //! - Uncommitted writes, empty commits, disconnect cleanup, and broker restart do not replay notifications
 //!
 //! # Column Family Mapping
 //!
-//! KV domain uses explicit RouteFamily -> ColumnFamily mapping:
-//! - ColumnFamilyId = RouteFamily.id (cast to u32)
+//! KV domain uses explicit `RouteFamily` -> `ColumnFamily` mapping:
+//! - `ColumnFamilyId` = `RouteFamily`.id (cast to `u32`)
 //! - Default column family (CF=0) is FORBIDDEN
-//! - All KV persistence MUST specify explicit CF via RouteFamily
+//! - All KV persistence MUST specify explicit CF via `RouteFamily`
 
 pub mod actor;
 pub mod events;

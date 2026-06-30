@@ -121,6 +121,7 @@ pub struct StreamTTL {
     pub ttl_seconds: Option<u64>,
 }
 
+#[derive(Clone, Copy)]
 struct PromotionFrontierWriteRowsParams<'a> {
     realm: &'a str,
     area: &'a str,
@@ -132,6 +133,7 @@ struct PromotionFrontierWriteRowsParams<'a> {
     created_at: u64,
 }
 
+#[derive(Clone, Copy)]
 struct DiscriminatorWriteRowsParams<'a> {
     realm: &'a str,
     area: &'a str,
@@ -275,6 +277,7 @@ pub struct StreamStore {
     resource_meta_states: Arc<Mutex<HashMap<SequenceGuardKey, ResourceMetaStateHandle>>>,
 }
 
+#[allow(clippy::struct_field_names)]
 #[derive(Clone, Copy)]
 struct ReadCursorState {
     last_resource_offset: u64,
@@ -295,7 +298,7 @@ struct ReadPageState<'a> {
 }
 
 fn resource_page_record_bytes(page_record: &CompactResourcePageRecord) -> usize {
-    page_record.body.len() + page_record.metadata.as_ref().map_or(0, |m| m.len())
+    page_record.body.len() + page_record.metadata.as_ref().map_or(0, Bytes::len)
 }
 
 fn update_resource_cursor(
@@ -309,7 +312,7 @@ fn update_resource_cursor(
 }
 
 fn area_page_record_bytes(page_record: &CompactAreaPageRecord) -> usize {
-    page_record.body.len() + page_record.metadata.as_ref().map_or(0, |m| m.len())
+    page_record.body.len() + page_record.metadata.as_ref().map_or(0, Bytes::len)
 }
 
 fn update_area_cursor(
@@ -323,7 +326,7 @@ fn update_area_cursor(
 }
 
 fn realm_page_record_bytes(page_record: &CompactRealmPageRecord) -> usize {
-    page_record.body.len() + page_record.metadata.as_ref().map_or(0, |m| m.len())
+    page_record.body.len() + page_record.metadata.as_ref().map_or(0, Bytes::len)
 }
 
 fn update_realm_cursor(
@@ -334,6 +337,22 @@ fn update_realm_cursor(
     state.last_resource_offset = page_record.resource_offset;
     state.last_area_offset = Some(page_record.area_offset);
     state.last_realm_offset = Some(realm_offset);
+}
+
+fn family_to_storage_partition(family: u64) -> u32 {
+    u32::try_from(family).unwrap_or(u32::MAX)
+}
+
+fn read_limit_to_usize(limit: u64) -> usize {
+    usize::try_from(limit).unwrap_or(usize::MAX)
+}
+
+fn usize_to_u64_saturating(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn millis_to_u64_saturating(millis: u128) -> u64 {
+    u64::try_from(millis).unwrap_or(u64::MAX)
 }
 
 impl ReadCursorState {
@@ -392,7 +411,7 @@ where
             None
         };
 
-        if !StreamStore::record_matches_filter(state.filter, discriminator) {
+        if !StreamStore::record_matches_filter(state.filter, discriminator.as_deref()) {
             if state.items.len() == state.limit {
                 *state.has_more = true;
                 return Ok(true);

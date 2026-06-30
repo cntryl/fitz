@@ -99,6 +99,13 @@ impl AuthClaimsConfig {
         }
     }
 
+    /// Validate the auth claims configuration loaded from code or environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any configured claim name is empty, overlaps with
+    /// another configured claim source, or references removed legacy Fitz claim
+    /// behavior.
     pub fn validate(&self) -> Result<(), String> {
         if let Some(reason) = &self.invalid_reason {
             return Err(reason.clone());

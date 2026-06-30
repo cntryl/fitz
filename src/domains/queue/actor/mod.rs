@@ -1,4 +1,4 @@
-//! QueueActor: manages a single message queue with configurable durability
+//! `QueueActor`: manages a single message queue with configurable durability
 //!
 //! Each queue has:
 //! - Identity: (realm, area, resource) from route
@@ -12,7 +12,7 @@
 //! 3. **Inflight isolation**: Reserved messages invisible to other consumers
 //! 4. **Automatic redelivery**: Expired inflight entries or crashes return messages to ready queue
 //! 5. **Policy-scoped recovery**: State that reached durable storage is restored on restart
-//! 6. **Correct time semantics**: Delays use absolute SystemTime epochs (V-002 Fix)
+//! 6. **Correct time semantics**: Delays use absolute `SystemTime` epochs (V-002 Fix)
 //! 7. **Fair distribution**: Competing consumers get best-effort ready-queue order
 //!
 //! # Intent vs Events
@@ -34,15 +34,15 @@
 //!
 //! # Performance Model
 //!
-//! - ready shards: VecDeque of compressed ranges - O(1) push_back, O(1) pop_front
-//! - inflight: HashMap - O(1) lookup, O(1) insert, O(1) remove
-//! - timers: BinaryHeap - O(log n) push, O(1) peek, O(log n) pop
+//! - ready shards: `VecDeque` of compressed ranges - O(1) `push_back`, O(1) `pop_front`
+//! - inflight: `HashMap` - O(1) lookup, O(1) insert, O(1) remove
+//! - timers: `BinaryHeap` - O(log n) push, O(1) peek, O(log n) pop
 //!
 //! # Storage Model
 //!
 //! Midge keys:
-//! - `queue:{realm}:{area}:{resource}:msg:{id}` -> QueueRecord (body, attempts)
-//! - `queue:{realm}:{area}:{resource}:meta` -> [next_id:8]
+//! - `queue:{realm}:{area}:{resource}:msg:{id}` -> `QueueRecord` (body, attempts)
+//! - `queue:{realm}:{area}:{resource}:meta` -> [`next_id:8`]
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
@@ -53,7 +53,6 @@ use bytes::Bytes;
 use fxhash::FxBuildHasher;
 use lexkey::LexKey;
 
-use crate::control::admin::QueueAgeBuckets;
 use crate::observability as obs;
 use crate::runtime::clock::{Clock, SystemClock};
 use crate::runtime::routing::RouteFamily;
@@ -113,7 +112,7 @@ fn decode_cached_response(bytes: &[u8]) -> Result<QueueResponse, String> {
 
 /// Durable queue record (persisted to Midge)
 ///
-/// All time values use SystemTime::UNIX_EPOCH (milliseconds).
+/// All time values use `SystemTime::UNIX_EPOCH` (milliseconds).
 /// This ensures delays survive process restarts correctly.
 #[derive(Debug, Clone)]
 struct QueueRecord {
@@ -262,6 +261,7 @@ impl QueueRecord {
 
 /// In-flight message state (ephemeral, actor-owned)
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_field_names)]
 pub struct Inflight {
     /// Random token for operation validation
     token: u64,
@@ -304,7 +304,7 @@ impl PartialOrd for InflightExpiry {
 }
 
 /// Delayed message visibility event
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DelayedMessage {
     /// Message ID to make visible
     id: MessageId,
@@ -394,7 +394,8 @@ impl RollingRateWindow {
             .iter()
             .filter(|&&event_epoch_ms| event_epoch_ms >= cutoff)
             .count();
-        current_window_count as f64 / (Self::WINDOW_MS as f64 / 1_000.0)
+        QueueActor::usize_to_f64(current_window_count)
+            / (QueueActor::u64_to_f64(Self::WINDOW_MS) / 1_000.0)
     }
 
     fn prune(&mut self, now_epoch_ms: u64) {
@@ -406,6 +407,29 @@ impl RollingRateWindow {
         {
             self.events_epoch_ms.pop_front();
         }
+    }
+}
+
+impl QueueActor {
+    fn ready_shards_u64() -> u64 {
+        u64::try_from(Self::READY_SHARDS).unwrap_or(u64::MAX)
+    }
+
+    fn ready_shard_index(id: u64) -> usize {
+        let shard_mask = u64::try_from(Self::READY_SHARDS - 1).unwrap_or(u64::MAX);
+        usize::try_from(id & shard_mask).unwrap_or(0)
+    }
+
+    fn usize_to_u64(value: usize) -> u64 {
+        u64::try_from(value).unwrap_or(u64::MAX)
+    }
+
+    fn usize_to_f64(value: usize) -> f64 {
+        f64::from(u32::try_from(value).unwrap_or(u32::MAX))
+    }
+
+    fn u64_to_f64(value: u64) -> f64 {
+        f64::from(u32::try_from(value).unwrap_or(u32::MAX))
     }
 }
 
@@ -468,7 +492,7 @@ enum DecodedIndexMeta {
 ///
 /// # State
 ///
-/// - `family`: RouteFamily this actor serves (for validation)
+/// - `family`: `RouteFamily` this actor serves (for validation)
 /// - `queue_key`: Queue identity (realm/area/resource)
 /// - `store`: Midge storage handle (for persistence)
 /// - `next_id`: Message ID counter (monotonic)

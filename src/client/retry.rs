@@ -7,20 +7,20 @@
 
 use std::time::Duration;
 
-/// Exponential backoff calculator
+/// Exponential backoff calculator.
 ///
-/// Formula: backoff = min(base * (2 ^ attempt), max_backoff)
-/// Example sequence (base=100ms, max=30s):
-///   attempt 1: 100ms
-///   attempt 2: 200ms
-///   attempt 3: 400ms
-///   attempt 4: 800ms
-///   attempt 5: 1600ms
-///   attempt 6: 3200ms
-///   attempt 7: 6400ms
-///   attempt 8: 12800ms
-///   attempt 9: 25600ms
-///   attempt 10: 30000ms (capped at max)
+/// Formula: `backoff = min(base * (2 ^ attempt), max_backoff)`.
+/// Example sequence (`base=100ms`, `max=30s`):
+///   attempt 1: `100ms`
+///   attempt 2: `200ms`
+///   attempt 3: `400ms`
+///   attempt 4: `800ms`
+///   attempt 5: `1600ms`
+///   attempt 6: `3200ms`
+///   attempt 7: `6400ms`
+///   attempt 8: `12800ms`
+///   attempt 9: `25600ms`
+///   attempt 10: `30000ms` (capped at max)
 #[derive(Clone, Debug)]
 pub struct ExponentialBackoff {
     base_ms: u64,
@@ -28,12 +28,16 @@ pub struct ExponentialBackoff {
 }
 
 impl ExponentialBackoff {
+    fn duration_millis_saturated(duration: Duration) -> u64 {
+        u64::try_from(duration.as_millis().min(u128::from(u64::MAX))).unwrap_or(u64::MAX)
+    }
+
     /// Create new backoff with base delay and maximum cap
     #[must_use]
     pub fn new(base: Duration, max: Duration) -> Self {
         Self {
-            base_ms: base.as_millis() as u64,
-            max_ms: max.as_millis() as u64,
+            base_ms: Self::duration_millis_saturated(base),
+            max_ms: Self::duration_millis_saturated(max),
         }
     }
 
@@ -148,17 +152,17 @@ impl RetryableError {
 /// Default error classification logic
 ///
 /// Retryable errors:
-/// - ECONNREFUSED: Connection refused
-/// - ECONNRESET: Connection reset
-/// - ETIMEDOUT: Operation timeout
-/// - EAGAIN: Resource temporarily unavailable
-/// - timeout: Application-level timeout
+/// - `ECONNREFUSED`: connection refused
+/// - `ECONNRESET`: connection reset
+/// - `ETIMEDOUT`: operation timeout
+/// - `EAGAIN`: resource temporarily unavailable
+/// - `timeout`: application-level timeout
 ///
 /// Fatal errors:
-/// - ERR_FRAME_TOO_LARGE: Protocol violation
-/// - ERR_INVALID_UTF8: Protocol violation
-/// - ERR_UNAUTHORIZED: Authorization failure
-/// - ERR_INVALID_OPERATION: Protocol violation
+/// - `ERR_FRAME_TOO_LARGE`: protocol violation
+/// - `ERR_INVALID_UTF8`: protocol violation
+/// - `ERR_UNAUTHORIZED`: authorization failure
+/// - `ERR_INVALID_OPERATION`: protocol violation
 #[must_use]
 pub fn default_error_classification(error_msg: &str) -> ErrorClassification {
     let msg_lower = error_msg.to_lowercase();
@@ -215,8 +219,8 @@ mod tests {
         assert_eq!(backoff.delay(7), Duration::from_millis(12800));
         assert_eq!(backoff.delay(8), Duration::from_millis(25600));
         // Capped at 30000ms
-        assert_eq!(backoff.delay(9), Duration::from_millis(30000));
-        assert_eq!(backoff.delay(10), Duration::from_millis(30000));
+        assert_eq!(backoff.delay(9), Duration::from_secs(30));
+        assert_eq!(backoff.delay(10), Duration::from_secs(30));
     }
 
     #[test]

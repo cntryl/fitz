@@ -1,15 +1,15 @@
-//! NoticeRouteActor: subscription management and fanout
+//! `NoticeRouteActor`: subscription management and fanout
 //!
-//! Owns subscriptions for a specific (RouteFamily, route) pair and performs
+//! Owns subscriptions for a specific (`RouteFamily`, route) pair and performs
 //! wildcard matching and fanout when messages are published.
 //!
-//! **Trust model**: SessionActor enforces all auth; this actor trusts incoming messages.
+//! **Trust model**: `SessionActor` enforces all auth; this actor trusts incoming messages.
 //!
 //! **Operations**:
-//! - **Publish**: Fan-out to all subscribers matching the route pattern
-//! - **Subscribe**: Register pattern + session + subscriber (post-auth)
-//! - **Unsubscribe**: Remove specific subscription
-//! - **UnsubscribeAll**: Clean up all subscriptions for a disconnected session
+//! - **`Publish`**: Fan-out to all subscribers matching the route pattern
+//! - **`Subscribe`**: Register pattern + session + subscriber (post-auth)
+//! - **`Unsubscribe`**: Remove specific subscription
+//! - **`UnsubscribeAll`**: Clean up all subscriptions for a disconnected session
 
 use crate::domains::notice::protocol::{
     DeliverMessage, NotificationMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 
-/// Maps subscription ID to (session_id, subscriber_address, pattern)
+/// Maps subscription ID to (`session_id`, `subscriber_address`, pattern)
 /// Pattern is stored so we can remove the subscription from the index on unsubscribe
 type SubscriptionMap = FastMap<
     SubscriptionId,
@@ -39,27 +39,27 @@ type SubscriptionMap = FastMap<
     ),
 >;
 
-/// NoticeRouteActor owns subscriptions for a specific (RouteFamily, route) pair
+/// `NoticeRouteActor` owns subscriptions for a specific (`RouteFamily`, route) pair
 ///
 /// This actor:
 /// - Maintains a subscription index (trie) for fast wildcard matching
 /// - Performs fanout when messages are published
 /// - Cleans up subscriptions when sessions disconnect
-/// - Trusts SessionActor for all authorization checks
+/// - Trusts `SessionActor` for all authorization checks
 pub struct NoticeRouteActor {
     /// Route family isolation boundary
     family_id: RouteFamily,
     /// Fast, in-memory trie-based subscription index
     /// Maps patterns (with wildcards) to subscription IDs
     index: SubscriptionIndex,
-    /// Maps subscription ID to metadata (session_id, subscriber address)
+    /// Maps subscription ID to metadata (`session_id`, subscriber address)
     subscriptions: SubscriptionMap,
     /// Counter for generating unique subscription IDs
     next_subscription_id: u64,
 }
 
 impl NoticeRouteActor {
-    /// Create a new NoticeRouteActor for a specific route family
+    /// Create a new `NoticeRouteActor` for a specific route family
     #[must_use]
     pub fn new(family_id: RouteFamily) -> Self {
         Self {
@@ -77,7 +77,7 @@ impl NoticeRouteActor {
         id
     }
 
-    /// Subscribe to a pattern (SessionActor has already verified authorization)
+    /// Subscribe to a pattern (`SessionActor` has already verified authorization)
     fn handle_subscribe(&mut self, msg: SubscribeMessage, ctx: &mut Context<Self>) {
         // Deduplicate identical subscriptions (session_id, subscriber, pattern)
         let already_exists = self
@@ -107,7 +107,7 @@ impl NoticeRouteActor {
     }
 
     /// Unsubscribe from a specific pattern
-    fn handle_unsubscribe(&mut self, msg: UnsubscribeMessage) {
+    fn handle_unsubscribe(&mut self, msg: &UnsubscribeMessage) {
         let subscription_id = SubscriptionId(msg.subscription_id);
 
         if let Some((session_id, _subscriber, pattern, _)) =
@@ -122,7 +122,7 @@ impl NoticeRouteActor {
     }
 
     /// Unsubscribe all subscriptions for a session (called on disconnect)
-    fn handle_unsubscribe_all(&mut self, msg: UnsubscribeAllMessage) {
+    fn handle_unsubscribe_all(&mut self, msg: &UnsubscribeAllMessage) {
         // Remove all subscriptions for this session and from index
         let to_remove: Vec<(SubscriptionId, crate::runtime::routing::Route)> = self
             .subscriptions
@@ -142,7 +142,7 @@ impl NoticeRouteActor {
     /// Uses Arc-based sharing to avoid per-subscriber allocations.
     /// With 1000 subscribers:
     /// - Old: 1000 route clones + 1000 payload clones (~70-150µs)
-    /// - New: 1 Arc allocation + 1000 Arc::clone (~<1µs, 100-150x faster)
+    /// - New: 1 Arc allocation + 1000 `Arc::clone` (~<1µs, 100-150x faster)
     fn handle_publish(&mut self, msg: PublishMessage, ctx: &mut Context<Self>) {
         // Validate family isolation
         if msg.family_id != self.family_id {
@@ -204,9 +204,9 @@ impl Actor for NoticeRouteActor {
         match msg {
             NotificationMessage::Publish(publish) => self.handle_publish(publish, ctx),
             NotificationMessage::Subscribe(subscribe) => self.handle_subscribe(subscribe, ctx),
-            NotificationMessage::Unsubscribe(unsubscribe) => self.handle_unsubscribe(unsubscribe),
+            NotificationMessage::Unsubscribe(unsubscribe) => self.handle_unsubscribe(&unsubscribe),
             NotificationMessage::UnsubscribeAll(unsubscribe_all) => {
-                self.handle_unsubscribe_all(unsubscribe_all)
+                self.handle_unsubscribe_all(&unsubscribe_all);
             }
             NotificationMessage::Deliver(_) => {
                 // NoticeRouteActor doesn't receive Deliver messages
@@ -321,7 +321,7 @@ mod tests {
 
         // Act
         let unsubscribe_all = UnsubscribeAllMessage::new(test_session_id(1), subscriber);
-        actor.handle_unsubscribe_all(unsubscribe_all);
+        actor.handle_unsubscribe_all(&unsubscribe_all);
 
         // Assert
         assert_eq!(actor.subscriptions.len(), 0);
@@ -356,7 +356,7 @@ mod tests {
         // Act
         // Disconnect session 1
         let unsubscribe_all = UnsubscribeAllMessage::new(test_session_id(1), sub1);
-        actor.handle_unsubscribe_all(unsubscribe_all);
+        actor.handle_unsubscribe_all(&unsubscribe_all);
 
         // Assert
         assert_eq!(actor.subscriptions.len(), 1);
@@ -389,7 +389,7 @@ mod tests {
 
         // Act
         let unsubscribe_all = UnsubscribeAllMessage::new(test_session_id(1), subscriber);
-        actor.handle_unsubscribe_all(unsubscribe_all);
+        actor.handle_unsubscribe_all(&unsubscribe_all);
 
         // Assert
         assert_eq!(actor.subscription_count(), 1);
@@ -419,8 +419,8 @@ mod tests {
 
         // Act
         let unsubscribe = UnsubscribeMessage::new(test_family(), 1, test_session_id(1));
-        actor.handle_unsubscribe(unsubscribe.clone());
-        actor.handle_unsubscribe(unsubscribe); // Second time should be safe
+        actor.handle_unsubscribe(&unsubscribe);
+        actor.handle_unsubscribe(&unsubscribe); // Second time should be safe
 
         // Assert - subscription was removed in first call
         assert_eq!(actor.subscriptions.len(), 0); // Now empty after removal
@@ -433,9 +433,10 @@ mod tests {
         let actor = NoticeRouteActor::new(test_family());
 
         // Act
-        let _exists = actor.subscriptions.len();
+        let exists = actor.subscriptions.len();
 
         // Assert: Just verify the actor exists and has no auth logic
+        assert_eq!(exists, 0);
         assert_eq!(actor.subscriptions.len(), 0);
     }
 
@@ -694,7 +695,7 @@ mod tests {
 
         // Act — unsubscribe an id that was never subscribed
         let unsubscribe = UnsubscribeMessage::new(test_family(), 999, test_session_id(1));
-        actor.handle_unsubscribe(unsubscribe);
+        actor.handle_unsubscribe(&unsubscribe);
 
         // Assert — actor remains empty, no panic
         assert_eq!(actor.subscription_count(), 0);
@@ -709,7 +710,7 @@ mod tests {
 
         // Act — unsubscribe all on an actor that has no subscriptions
         let msg = UnsubscribeAllMessage::new(test_session_id(7), subscriber);
-        actor.handle_unsubscribe_all(msg);
+        actor.handle_unsubscribe_all(&msg);
 
         // Assert — still empty, no panic
         assert_eq!(actor.subscription_count(), 0);

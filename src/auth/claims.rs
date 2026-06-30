@@ -81,6 +81,11 @@ pub struct RawClaims {
 }
 
 impl RawClaims {
+    /// Read a raw identity claim value as a string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the selected claim exists but is not a string.
     pub fn identity_claim_value(&self, claim: &str) -> Result<Option<String>, String> {
         match claim {
             "sub" => Ok(Some(self.sub.clone())),
@@ -96,8 +101,14 @@ impl RawClaims {
         }
     }
 
-    /// Validate standard claims against issuer allowlist and audience, and time
+    /// Validate standard claims against issuer allowlist, audience, and time
     /// checks. `now` is the current unix epoch seconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when claim configuration is invalid, the issuer or
+    /// audience does not match policy, token time bounds fail, or removed Fitz
+    /// claim shapes are present.
     pub fn validate(
         &self,
         allowlist: &[&str],
@@ -192,6 +203,11 @@ impl RawClaims {
     /// Validate and normalize into a `Claims` object. This performs the same
     /// validation as `RawClaims::validate` and resolves Fitz realm semantics
     /// from external claim-source names plus permissions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when base claim validation fails or when identity or
+    /// permission normalization cannot derive a valid `Claims` view.
     pub fn normalize(
         &self,
         allowlist: &[&str],

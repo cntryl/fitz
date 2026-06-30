@@ -58,11 +58,11 @@ pub(super) struct PendingClaim {
 /// derived accelerator: authoritative state lives in the persisted definition
 /// row, and the due index can always be rebuilt from those durable definitions.
 pub struct ScheduleActor {
-    /// RouteFamily for storage column family mapping.
+    /// `RouteFamily` for storage column family mapping.
     pub(super) family: RouteFamily,
     /// Durable schedule storage plus legacy migration helpers.
     pub(super) store: ScheduleStore,
-    /// In-memory schedule cache: route -> ScheduleDef.
+    /// In-memory schedule cache: route -> `ScheduleDef`.
     pub(super) schedules: FastMap<String, ScheduleDef>,
     /// Parsed cron expressions reused across repeated creates/upserts.
     pub(super) cron_cache: FastMap<String, CronSchedule>,

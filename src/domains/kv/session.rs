@@ -2,9 +2,9 @@
 //!
 //! Responsibilities:
 //! - Enforce session-level authorization for KV operations
-//! - Forward authorized operations to the KvActor
+//! - Forward authorized operations to the `KvActor`
 //!
-//! Authorization is checked using the realm field from KvMessage::Begin,
+//! Authorization is checked using the realm field from `KvMessage::Begin`,
 //! which is mapped to a route pattern for permission checking.
 
 use crate::auth::Access;
@@ -14,11 +14,11 @@ use crate::runtime::routing::Route;
 use crate::session::permissions::SessionPermissions;
 use crate::session::session::SessionId;
 
-/// Lightweight SessionActor helpers for the KV domain.
+/// Lightweight `SessionActor` helpers for the KV domain.
 ///
 /// Responsibilities:
 /// - Enforce session-level authorization for KV operations
-/// - Forward authorized operations to the KvActor
+/// - Forward authorized operations to the `KvActor`
 pub struct SessionActor {
     pub session_id: SessionId,
     pub permissions: SessionPermissions,
@@ -33,7 +33,12 @@ impl SessionActor {
         }
     }
 
-    /// Attempt to begin a KV transaction. Returns Err if authorization fails or actor returns error.
+    /// Attempt to begin a KV transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when authorization fails, the message is not `Begin`, or
+    /// the actor returns [`KvResponse::Error`].
     pub fn begin(&self, msg: KvMessage, kv_actor: &mut KvActor) -> Result<(), String> {
         if let KvMessage::Begin {
             ref realm, mode, ..
@@ -67,7 +72,6 @@ impl SessionActor {
             // Forward to actor and check for errors
             let response = kv_actor.handle(msg);
             match response {
-                KvResponse::BeginOk { .. } => Ok(()),
                 KvResponse::Error { error } => Err(format!("kv error: {error}")),
                 _ => Ok(()),
             }
@@ -159,6 +163,11 @@ impl SessionActor {
 
     /// Forward subsequent KV operations (after begin).
     /// Realm authorization was already checked at begin time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only if later validation logic adds one; current
+    /// operation forwarding is infallible.
     pub fn operation(&self, kv_actor: &mut KvActor, msg: KvMessage) -> Result<(), String> {
         kv_actor.handle(msg);
         Ok(())

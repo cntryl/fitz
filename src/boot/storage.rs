@@ -5,15 +5,21 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 
-const STORAGE_OPEN_RETRY_BUDGET: Duration = Duration::from_secs(60);
+const STORAGE_OPEN_RETRY_BUDGET: Duration = Duration::from_mins(1);
 const STORAGE_OPEN_BASE_BACKOFF: Duration = Duration::from_millis(250);
 const STORAGE_OPEN_MAX_BACKOFF: Duration = Duration::from_secs(5);
 const STORAGE_OPEN_MAX_JITTER_MS: u64 = 250;
 
 /// Initialize Midge storage engine based on configured storage mode.
+///
+/// # Errors
+///
+/// Returns an error when the selected storage backend cannot be opened, when
+/// storage directories cannot be created, or when required route-family column
+/// families cannot be ensured.
 pub async fn init(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
     match &config.storage_mode {
-        StorageMode::Memory => init_memory(config).await,
+        StorageMode::Memory => init_memory(config),
         StorageMode::LocalDisk { db_path } => init_local_disk(config, db_path).await,
         StorageMode::CloudBacked(cloud) => init_cloud(config, cloud).await,
         StorageMode::Invalid { reason } => Err(reason.clone().into()),
@@ -31,7 +37,12 @@ fn ensure_column_families(engine: &cntryl_midge::Engine, config: &BootConfig) ->
     Ok(())
 }
 
-/// Ensure the storage column family aligned with a RouteFamily exists.
+/// Ensure the storage column family aligned with a `RouteFamily` exists.
+///
+/// # Errors
+///
+/// Returns an error when Midge cannot create the aligned column family or when
+/// the created column-family id does not match the expected route family.
 pub fn ensure_route_family(
     engine: &cntryl_midge::Engine,
     family: crate::runtime::routing::RouteFamily,
@@ -65,10 +76,10 @@ pub fn ensure_route_family(
 }
 
 /// Initialize in-memory storage.
-async fn init_memory(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
+fn init_memory(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
     info!("Initializing in-memory storage (ephemeral, no persistence)");
 
-    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::in_memory(), config)?;
+    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::in_memory(), config);
     let store = cntryl_midge::Engine::open(open_options)
         .map_err(|e| format!("Failed to open in-memory Midge: {e}"))?;
 
@@ -101,7 +112,7 @@ async fn open_local_disk_with_retry(
     config: &BootConfig,
     db_path: &str,
 ) -> BootResult<cntryl_midge::Engine> {
-    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::local(db_path), config)?;
+    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::local(db_path), config);
     let retry_started_at = Instant::now();
     let mut retry_attempt = 0;
 
@@ -115,9 +126,9 @@ async fn open_local_disk_with_retry(
                 warn!(
                     db_path = db_path,
                     retry_attempt = retry_attempt + 1,
-                    retry_budget_ms = STORAGE_OPEN_RETRY_BUDGET.as_millis() as u64,
-                    elapsed_ms = retry_started_at.elapsed().as_millis() as u64,
-                    delay_ms = delay.as_millis() as u64,
+                    retry_budget_ms = duration_millis_u64(STORAGE_OPEN_RETRY_BUDGET),
+                    elapsed_ms = duration_millis_u64(retry_started_at.elapsed()),
+                    delay_ms = duration_millis_u64(delay),
                     error = %error,
                     "Local disk storage open hit an active writer lease; retrying with exponential backoff"
                 );
@@ -140,9 +151,9 @@ fn should_retry_storage_open(error: &cntryl_midge::MidgeError) -> bool {
 fn storage_open_retry_delay(started_at: Instant, attempt: u32) -> Option<Duration> {
     let remaining_budget = STORAGE_OPEN_RETRY_BUDGET.checked_sub(started_at.elapsed())?;
     let multiplier = 1_u64.checked_shl(attempt).unwrap_or(u64::MAX);
-    let base_delay_ms = (STORAGE_OPEN_BASE_BACKOFF.as_millis() as u64)
+    let base_delay_ms = duration_millis_u64(STORAGE_OPEN_BASE_BACKOFF)
         .saturating_mul(multiplier)
-        .min(STORAGE_OPEN_MAX_BACKOFF.as_millis() as u64);
+        .min(duration_millis_u64(STORAGE_OPEN_MAX_BACKOFF));
     let jitter_ms = storage_open_retry_jitter_ms(attempt);
     let delay = Duration::from_millis(base_delay_ms.saturating_add(jitter_ms));
 
@@ -153,15 +164,15 @@ fn storage_open_retry_jitter_ms(attempt: u32) -> u64 {
     let now_nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .subsec_nanos() as u64;
-    let salt = now_nanos ^ (attempt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        .subsec_nanos();
+    let salt = u64::from(now_nanos) ^ u64::from(attempt).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     salt % (STORAGE_OPEN_MAX_JITTER_MS + 1)
 }
 
 fn build_midge_open_options(
     open_options: cntryl_midge::OpenOptions,
     config: &BootConfig,
-) -> BootResult<cntryl_midge::OpenOptions> {
+) -> cntryl_midge::OpenOptions {
     let open_options = if matches!(&config.storage_mode, StorageMode::CloudBacked(_))
         && config.storage_memtable_bytes().is_none()
     {
@@ -184,7 +195,7 @@ fn build_midge_open_options(
         None => open_options,
     };
 
-    Ok(open_options.build())
+    open_options.build()
 }
 
 /// Initialize cloud-backed storage.
@@ -216,7 +227,7 @@ async fn init_cloud(
             cloud.prefix.clone().unwrap_or_default(),
         ),
         config,
-    )?;
+    );
     let store = open_cloud_with_retry(open_options, cloud).await?;
 
     ensure_column_families(&store, config)?;
@@ -256,9 +267,9 @@ async fn open_cloud_with_retry(
                     namespace = %cloud.provider_config.bucket_or_container(),
                     prefix = ?cloud.prefix,
                     retry_attempt = retry_attempt + 1,
-                    retry_budget_ms = STORAGE_OPEN_RETRY_BUDGET.as_millis() as u64,
-                    elapsed_ms = retry_started_at.elapsed().as_millis() as u64,
-                    delay_ms = delay.as_millis() as u64,
+                    retry_budget_ms = duration_millis_u64(STORAGE_OPEN_RETRY_BUDGET),
+                    elapsed_ms = duration_millis_u64(retry_started_at.elapsed()),
+                    delay_ms = duration_millis_u64(delay),
                     error = %error,
                     "Cloud-backed storage open hit an active writer lease; retrying with exponential backoff"
                 );
@@ -273,6 +284,10 @@ async fn open_cloud_with_retry(
             }
         }
     }
+}
+
+fn duration_millis_u64(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis().min(u128::from(u64::MAX))).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

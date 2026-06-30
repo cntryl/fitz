@@ -12,10 +12,10 @@ use crate::runtime::routing::{Route, RouteFamily};
 use super::protocol::{LeaseGranted, StreamCoordinationMessage};
 use super::store::StreamStore;
 
-/// RealmActor coordinates realm-level offsets and aggregates watermarks
+/// `RealmActor` coordinates realm-level offsets and aggregates watermarks
 ///
 /// Responsibilities:
-/// - Mint realm offset leases for AreaActors
+/// - Mint realm offset leases for `AreaActors`
 /// - Track area watermarks
 /// - Calculate realm watermark (minimum of all area watermarks)
 #[allow(dead_code)]
@@ -66,7 +66,7 @@ impl RealmActor {
         }
     }
 
-    /// Grant realm offset lease to AreaActor
+    /// Grant realm offset lease to `AreaActor`
     fn handle_request_realm_lease(&mut self, count: u64, _ctx: &mut Context<Self>) -> LeaseGranted {
         let start = self.next_realm_offset;
         let end_excl = start + count;
@@ -80,7 +80,7 @@ impl RealmActor {
         }
     }
 
-    /// Handle AreaWatermarkAdvanced from AreaActor
+    /// Handle `AreaWatermarkAdvanced` from `AreaActor`
     fn handle_area_watermark_advanced(
         &mut self,
         area: String,
@@ -112,42 +112,41 @@ impl RealmActor {
             Some(current) => Some(current),
         };
 
+        if new_watermark == old_watermark {
+            self.realm_watermark = new_watermark;
+            return;
+        }
+
         // Emit realm watermark notification ONLY if watermark advanced
-        if new_watermark != old_watermark {
-            let current_watermark = new_watermark.expect("advanced realm watermark");
-            let previous_watermark = old_watermark.unwrap_or(0);
-            self.realm_watermark = new_watermark;
+        let current_watermark = new_watermark.expect("advanced realm watermark");
+        let previous_watermark = old_watermark.unwrap_or(0);
+        self.realm_watermark = new_watermark;
 
-            // Persist realm watermark to storage
-            let _ = self.store.set_realm_watermark(
-                self.family_id.as_u64(),
-                &self.realm,
-                current_watermark,
-            );
+        // Persist realm watermark to storage
+        let _ =
+            self.store
+                .set_realm_watermark(self.family_id.as_u64(), &self.realm, current_watermark);
 
-            let route_str = format!("stream://{}/*/*/watermark", self.realm);
-            let route = Route::new(route_str);
-            let payload_json = serde_json::json!({
-                "previous": previous_watermark,
-                "watermark": current_watermark,
-                "ts": std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-            });
-            let payload = Bytes::from(payload_json.to_string());
-            let publish_event = DomainPublishEvent::new(self.family_id, route, payload);
+        let route_str = format!("stream://{}/*/*/watermark", self.realm);
+        let route = Route::new(route_str);
+        let payload_json = serde_json::json!({
+            "previous": previous_watermark,
+            "watermark": current_watermark,
+            "ts": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        });
+        let payload = Bytes::from(payload_json.to_string());
+        let publish_event = DomainPublishEvent::new(self.family_id, route, payload);
 
-            // Debounce realm watermark publish (do not send immediately)
-            self.pending_publish = Some(publish_event);
-            if self.notification_timer.is_none() {
-                let timer_id = ctx
-                    .timer_manager()
-                    .schedule_once(std::time::Duration::from_millis(Self::NOTICE_DEBOUNCE_MS));
-                self.notification_timer = Some(timer_id);
-            }
-        } else {
-            self.realm_watermark = new_watermark;
+        // Debounce realm watermark publish (do not send immediately)
+        self.pending_publish = Some(publish_event);
+        if self.notification_timer.is_none() {
+            let timer_id = ctx
+                .timer_manager()
+                .schedule_once(std::time::Duration::from_millis(Self::NOTICE_DEBOUNCE_MS));
+            self.notification_timer = Some(timer_id);
         }
     }
 

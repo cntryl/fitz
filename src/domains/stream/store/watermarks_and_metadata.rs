@@ -1,6 +1,16 @@
-use super::*;
+use super::{
+    decode_resource_offset_from_key, encode_area_counter_key, encode_realm_counter_key,
+    encode_watermark_key, family_to_storage_partition, usize_to_u64_saturating, AreaCounterValue,
+    Bytes, CompactResourcePageValue, RealmCounterValue, StreamStore, WatermarkValue,
+};
 
 impl StreamStore {
+    /// Get the current area watermark.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, storage reads, counter decoding,
+    /// or fallback offset scanning fails.
     pub fn get_watermark(&self, family: u64, realm: &str, area: &str) -> Result<u64, String> {
         self.ensure_layout_activation_for_family(family)?;
 
@@ -9,7 +19,10 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         match txn
             .get(&key)
@@ -33,6 +46,12 @@ impl StreamStore {
         }
     }
 
+    /// Advance the current area watermark.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, storage reads or writes,
+    /// watermark encoding, or transaction commit fails.
     pub fn set_watermark(
         &self,
         family: u64,
@@ -47,7 +66,10 @@ impl StreamStore {
 
         let mut txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
         // Monotonicity guard: watermarks must only advance, never regress.
@@ -66,6 +88,12 @@ impl StreamStore {
             .map_err(|e| format!("midge commit error: {e:?}"))
     }
 
+    /// Get the current realm watermark.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, storage reads, counter decoding,
+    /// or fallback offset scanning fails.
     pub fn get_realm_watermark(&self, family: u64, realm: &str) -> Result<u64, String> {
         self.ensure_layout_activation_for_family(family)?;
 
@@ -74,7 +102,10 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         match txn
             .get(&key)
@@ -98,6 +129,12 @@ impl StreamStore {
         }
     }
 
+    /// Advance the current realm watermark.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, storage reads or writes,
+    /// watermark encoding, or transaction commit fails.
     pub fn set_realm_watermark(
         &self,
         family: u64,
@@ -111,7 +148,10 @@ impl StreamStore {
 
         let mut txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
         // Monotonicity guard: realm watermarks must only advance, never regress.
@@ -131,7 +171,12 @@ impl StreamStore {
 
     /// Get stream metadata (limits, TTL, offsets, watermarks)
     ///
-    /// Used for describe_stream / introspection API
+    /// Used for `describe_stream` / introspection API.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if offset, area watermark, or realm watermark loading
+    /// fails.
     pub fn get_metadata(
         &self,
         family: u64,
@@ -165,8 +210,13 @@ impl StreamStore {
 
     /// Get the last committed resource offset for recovery
     ///
-    /// **CRITICAL**: StreamActor must call this on initialization to recover
-    /// next_resource_offset and avoid reusing offsets after restart.
+    /// **CRITICAL**: `StreamActor` must call this on initialization to recover
+    /// `next_resource_offset` and avoid reusing offsets after restart.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, storage transaction creation,
+    /// page scanning, or page decoding fails.
     pub fn get_last_resource_offset(
         &self,
         family: u64,
@@ -191,7 +241,10 @@ impl StreamStore {
         ));
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
@@ -199,13 +252,17 @@ impl StreamStore {
         if let Some((key, value)) = results.last() {
             let page_start = decode_resource_offset_from_key(key)?;
             let page = CompactResourcePageValue::try_decode(value).map_err(|error| {
-                Self::invalid_compact_resource_page_error(realm, area, resource, page_start, error)
+                Self::invalid_compact_resource_page_error(realm, area, resource, page_start, &error)
             })?;
 
             if page.records.is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(page_start + page.records.len() as u64 - 1))
+                Ok(Some(
+                    page_start
+                        .saturating_add(usize_to_u64_saturating(page.records.len()))
+                        .saturating_sub(1),
+                ))
             }
         } else {
             Ok(None)
@@ -216,6 +273,11 @@ impl StreamStore {
     ///
     /// This is used by exact-resource metadata surfaces that need to remain
     /// truthful when older resource rows are trimmed from the head.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, storage transaction creation,
+    /// page scanning, or page decoding fails.
     pub fn get_first_resource_offset(
         &self,
         family: u64,
@@ -240,7 +302,10 @@ impl StreamStore {
         ));
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
@@ -248,7 +313,7 @@ impl StreamStore {
         for (key, value) in results {
             let page_start = decode_resource_offset_from_key(&key)?;
             let page = CompactResourcePageValue::try_decode(&value).map_err(|error| {
-                Self::invalid_compact_resource_page_error(realm, area, resource, page_start, error)
+                Self::invalid_compact_resource_page_error(realm, area, resource, page_start, &error)
             })?;
 
             if !page.records.is_empty() {
@@ -262,6 +327,11 @@ impl StreamStore {
     /// Get the next resource offset from durable stream metadata.
     ///
     /// Returns 0 if no metadata exists for the resource yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, storage transaction creation,
+    /// metadata decoding, or fallback offset scanning fails.
     pub fn get_next_resource_offset(
         &self,
         family: u64,
@@ -283,7 +353,10 @@ impl StreamStore {
     ) -> Result<u64, String> {
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         self.load_next_resource_offset_from_txn(&txn, family, realm, area, resource)
     }

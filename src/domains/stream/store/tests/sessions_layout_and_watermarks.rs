@@ -79,7 +79,7 @@ pub(super) fn should_reject_append_given_stream_session_route_family_mismatch() 
     // Act
     let result = store.append_to_session(
         2,
-        &session_id,
+        session_id,
         EventPayload {
             body: Bytes::from_static(b"wrong-family"),
             metadata: None,
@@ -92,7 +92,7 @@ pub(super) fn should_reject_append_given_stream_session_route_family_mismatch() 
         result.expect_err("family mismatch append should fail"),
         "ERR_SESSION_ROUTE_FAMILY_MISMATCH"
     );
-    assert_eq!(store.session_event_count(&session_id), Some(0));
+    assert_eq!(store.session_event_count(session_id), Some(0));
 }
 
 #[test]
@@ -105,7 +105,7 @@ pub(super) fn should_preserve_session_given_commit_route_family_mismatch() {
     store
         .append_to_session(
             1,
-            &session_id,
+            session_id,
             EventPayload {
                 body: Bytes::from_static(b"right-family"),
                 metadata: None,
@@ -115,17 +115,17 @@ pub(super) fn should_preserve_session_given_commit_route_family_mismatch() {
         .expect("append in original family");
 
     // Act
-    let result = store.commit_session(2, &session_id, 0, 0, 0, StreamWriteMode::Buffered);
+    let result = store.commit_session(2, session_id, 0, 0, 0, StreamWriteMode::Buffered);
 
     // Assert
     assert_eq!(
         result.expect_err("family mismatch commit should fail"),
         "ERR_SESSION_ROUTE_FAMILY_MISMATCH"
     );
-    assert_eq!(store.session_event_count(&session_id), Some(1));
+    assert_eq!(store.session_event_count(session_id), Some(1));
     assert_eq!(read_layout_marker(store.db.as_ref(), 2), None);
     let commit = store
-        .commit_session(1, &session_id, 0, 0, 0, StreamWriteMode::Buffered)
+        .commit_session(1, session_id, 0, 0, 0, StreamWriteMode::Buffered)
         .expect("commit preserved session in original family");
     assert_eq!(commit.first_resource_offset, 0);
 }
@@ -152,7 +152,7 @@ pub(super) fn should_reject_stale_resource_offset_given_session_commit() {
     store
         .append_to_session(
             1,
-            &session_id,
+            session_id,
             EventPayload {
                 body: Bytes::from_static(b"retry"),
                 metadata: None,
@@ -162,9 +162,9 @@ pub(super) fn should_reject_stale_resource_offset_given_session_commit() {
         .expect("append retry record");
 
     // Act
-    let stale = store.commit_session(1, &session_id, 0, 1, 1, StreamWriteMode::Buffered);
+    let stale = store.commit_session(1, session_id, 0, 1, 1, StreamWriteMode::Buffered);
     let retry = store
-        .commit_session(1, &session_id, 1, 1, 1, StreamWriteMode::Buffered)
+        .commit_session(1, session_id, 1, 1, 1, StreamWriteMode::Buffered)
         .expect("retry with durable next offsets");
 
     // Assert
@@ -175,7 +175,7 @@ pub(super) fn should_reject_stale_resource_offset_given_session_commit() {
     assert_eq!(retry.first_resource_offset, 1);
     assert_eq!(retry.first_area_offset, 1);
     assert_eq!(retry.first_realm_offset, 1);
-    assert_eq!(store.session_event_count(&session_id), None);
+    assert_eq!(store.session_event_count(session_id), None);
 }
 
 #[test]
@@ -200,7 +200,7 @@ pub(super) fn should_reject_stale_area_offset_given_session_commit() {
     store
         .append_to_session(
             1,
-            &session_id,
+            session_id,
             EventPayload {
                 body: Bytes::from_static(b"retry"),
                 metadata: None,
@@ -210,9 +210,9 @@ pub(super) fn should_reject_stale_area_offset_given_session_commit() {
         .expect("append retry record");
 
     // Act
-    let stale = store.commit_session(1, &session_id, 0, 0, 1, StreamWriteMode::Buffered);
+    let stale = store.commit_session(1, session_id, 0, 0, 1, StreamWriteMode::Buffered);
     let retry = store
-        .commit_session(1, &session_id, 0, 1, 1, StreamWriteMode::Buffered)
+        .commit_session(1, session_id, 0, 1, 1, StreamWriteMode::Buffered)
         .expect("retry with durable next area offset");
 
     // Assert
@@ -223,7 +223,7 @@ pub(super) fn should_reject_stale_area_offset_given_session_commit() {
     assert_eq!(retry.first_resource_offset, 0);
     assert_eq!(retry.first_area_offset, 1);
     assert_eq!(retry.first_realm_offset, 1);
-    assert_eq!(store.session_event_count(&session_id), None);
+    assert_eq!(store.session_event_count(session_id), None);
 }
 
 #[test]
@@ -248,7 +248,7 @@ pub(super) fn should_reject_stale_realm_offset_given_session_commit() {
     store
         .append_to_session(
             1,
-            &session_id,
+            session_id,
             EventPayload {
                 body: Bytes::from_static(b"retry"),
                 metadata: None,
@@ -258,9 +258,9 @@ pub(super) fn should_reject_stale_realm_offset_given_session_commit() {
         .expect("append retry record");
 
     // Act
-    let stale = store.commit_session(1, &session_id, 0, 0, 0, StreamWriteMode::Buffered);
+    let stale = store.commit_session(1, session_id, 0, 0, 0, StreamWriteMode::Buffered);
     let retry = store
-        .commit_session(1, &session_id, 0, 0, 1, StreamWriteMode::Buffered)
+        .commit_session(1, session_id, 0, 0, 1, StreamWriteMode::Buffered)
         .expect("retry with durable next realm offset");
 
     // Assert
@@ -271,7 +271,7 @@ pub(super) fn should_reject_stale_realm_offset_given_session_commit() {
     assert_eq!(retry.first_resource_offset, 0);
     assert_eq!(retry.first_area_offset, 0);
     assert_eq!(retry.first_realm_offset, 1);
-    assert_eq!(store.session_event_count(&session_id), None);
+    assert_eq!(store.session_event_count(session_id), None);
 }
 
 #[test]
@@ -284,7 +284,7 @@ pub(super) fn should_preserve_session_given_injected_session_commit_failure() {
     store
         .append_to_session(
             1,
-            &session_id,
+            session_id,
             EventPayload {
                 body: Bytes::from_static(b"retry"),
                 metadata: None,
@@ -295,13 +295,13 @@ pub(super) fn should_preserve_session_given_injected_session_commit_failure() {
     StreamStore::fail_next_promotion_frontier_commit_for_tests();
 
     // Act
-    let failed = store.commit_session(1, &session_id, 0, 0, 0, StreamWriteMode::Buffered);
-    let session_count_after_failure = store.session_event_count(&session_id);
+    let failed = store.commit_session(1, session_id, 0, 0, 0, StreamWriteMode::Buffered);
+    let session_count_after_failure = store.session_event_count(session_id);
     let next_offset_after_failure = store
         .get_next_resource_offset(1, "test", "events", "orders")
         .expect("read next offset after failed commit");
     let retry = store
-        .commit_session(1, &session_id, 0, 0, 0, StreamWriteMode::Buffered)
+        .commit_session(1, session_id, 0, 0, 0, StreamWriteMode::Buffered)
         .expect("retry preserved stream session");
 
     // Assert
@@ -310,7 +310,7 @@ pub(super) fn should_preserve_session_given_injected_session_commit_failure() {
         "Injected stream commit failure"
     );
     assert_eq!(session_count_after_failure, Some(1));
-    assert_eq!(store.session_event_count(&session_id), None);
+    assert_eq!(store.session_event_count(session_id), None);
     assert_eq!(next_offset_after_failure, 0);
     assert_eq!(retry.first_resource_offset, 0);
     assert_eq!(retry.first_area_offset, 0);

@@ -396,9 +396,8 @@ fn should_delay_message_visibility() {
     let body = Bytes::from("delayed message");
     let response = actor.handle_send(body.clone(), Some(30));
 
-    let msg_id = match response {
-        QueueResponse::Sent { id } => id,
-        _ => panic!("Expected Enqueued response"),
+    let QueueResponse::Sent { id: msg_id } = response else {
+        panic!("Expected Enqueued response");
     };
 
     // Message should stay delayed until visibility expires.
@@ -455,9 +454,8 @@ fn should_move_to_dlq_after_max_attempts() {
     // Act - Enqueue message
     let body = Bytes::from("test message");
     let enqueue_response = actor.handle_send(body.clone(), None);
-    let msg_id = match enqueue_response {
-        QueueResponse::Sent { id } => id,
-        _ => panic!("Expected Sent response"),
+    let QueueResponse::Sent { id: msg_id } = enqueue_response else {
+        panic!("Expected Sent response");
     };
 
     // Simulate 3 failed delivery attempts
@@ -534,9 +532,8 @@ fn should_not_requeue_dlq_message_after_restart() {
         );
 
         let enqueue_response = actor.handle_send(Bytes::from("test message"), None);
-        let msg_id = match enqueue_response {
-            QueueResponse::Sent { id } => id,
-            _ => panic!("Expected Sent response"),
+        let QueueResponse::Sent { id: msg_id } = enqueue_response else {
+            panic!("Expected Sent response");
         };
 
         for _ in 0..2 {

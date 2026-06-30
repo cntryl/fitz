@@ -344,7 +344,7 @@ pub fn kv_rows_for_resource(
     cursor: Option<&[u8]>,
     limit: usize,
 ) -> Result<Response, Infallible> {
-    match runtime.kv_scan_committed_rows(AdminKvRowsRequest {
+    match runtime.kv_scan_committed_rows(&AdminKvRowsRequest {
         route_family: crate::runtime::routing::RouteFamily::new(family),
         realm: path.realm,
         area: path.area,

@@ -1,41 +1,55 @@
-use super::*;
+use super::{
+    area_page_record_bytes, collect_filtered_read_page_items, decode_area_offset_from_key,
+    decode_realm_offset_from_key, decode_resource_offset_from_key, encode_compact_area_page_key,
+    encode_compact_resource_page_key, encode_compressed_compact_realm_page_key,
+    family_to_storage_partition, read_limit_to_usize, realm_page_record_bytes,
+    resource_page_record_bytes, update_area_cursor, update_realm_cursor, update_resource_cursor,
+    usize_to_u64_saturating, Bytes, CompactAreaPageValue, CompactResourcePageValue,
+    CompressedCompactRealmPageValue, ReadAreaParams, ReadCursorState, ReadPageState,
+    ReadResourceParams, StreamFilterSet, StreamFilteredReason, StreamReadItem, StreamRecord,
+    StreamStore,
+};
+use crate::domains::stream::protocol::ReadCursor;
+
+fn page_slot_offset(page_start: u64, slot: usize) -> u64 {
+    page_start.saturating_add(usize_to_u64_saturating(slot))
+}
 
 impl StreamStore {
     /// Read resource stream records
     ///
-    /// **NO WATERMARK GATING**: Resource reads are strictly ordered by StreamActor.
+    /// **NO WATERMARK GATING**: Resource reads are strictly ordered by `StreamActor`.
     /// Each resource offset is durably committed before being visible.
     /// Watermark is only relevant for area/realm dimensions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, storage transaction creation,
+    /// page scanning, or page decoding fails.
     pub fn read_resource(
         &self,
         params: &ReadResourceParams,
-    ) -> Result<
-        (
-            Vec<StreamReadItem>,
-            crate::domains::stream::protocol::ReadCursor,
-        ),
-        String,
-    > {
+    ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         self.read_resource_with_filter(params, None)
     }
 
+    /// Read resource stream records with an optional server-side discriminator filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, storage transaction creation,
+    /// page scanning, page decoding, or discriminator loading fails.
     pub fn read_resource_with_filter(
         &self,
         params: &ReadResourceParams,
         filter: Option<&StreamFilterSet>,
-    ) -> Result<
-        (
-            Vec<StreamReadItem>,
-            crate::domains::stream::protocol::ReadCursor,
-        ),
-        String,
-    > {
+    ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         self.ensure_layout_activation_for_family(params.family)?;
 
         if params.limit == 0 {
             return Ok((
                 Vec::new(),
-                crate::domains::stream::protocol::ReadCursor {
+                ReadCursor {
                     last_resource_offset: params.from_offset,
                     last_area_offset: None,
                     last_realm_offset: None,
@@ -51,13 +65,7 @@ impl StreamStore {
         &self,
         params: &ReadResourceParams,
         filter: Option<&StreamFilterSet>,
-    ) -> Result<
-        (
-            Vec<StreamReadItem>,
-            crate::domains::stream::protocol::ReadCursor,
-        ),
-        String,
-    > {
+    ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         let query = cntryl_midge::Query::new()
             .start_key(Bytes::from(encode_compact_resource_page_key(
                 params.realm,
@@ -78,14 +86,14 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(
-                params.family as u32,
+                family_to_storage_partition(params.family),
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
-        let limit = params.limit as usize;
+        let limit = read_limit_to_usize(params.limit);
         let mut items = Vec::with_capacity(limit.min(1000));
         let mut total_bytes = 0usize;
         let mut cursor = ReadCursorState {
@@ -104,7 +112,7 @@ impl StreamStore {
                     params.area,
                     params.resource,
                     page_start,
-                    error,
+                    &error,
                 )
             })?;
 
@@ -123,7 +131,7 @@ impl StreamStore {
                 page.records
                     .into_iter()
                     .enumerate()
-                    .map(|(slot, page_record)| (page_start + slot as u64, page_record)),
+                    .map(|(slot, page_record)| (page_slot_offset(page_start, slot), page_record)),
                 &mut state,
                 |resource_offset, _page_record| {
                     Self::load_optional_discriminator(
@@ -162,6 +170,12 @@ impl StreamStore {
         Ok((items, cursor.into_cursor(has_more)))
     }
 
+    /// Read area stream records up to the current area watermark.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, watermark loading, storage
+    /// transaction creation, page scanning, or page decoding fails.
     pub fn read_area(
         &self,
         family: u64,
@@ -170,13 +184,7 @@ impl StreamStore {
         from_offset: u64,
         limit: u64,
         max_bytes: Option<usize>,
-    ) -> Result<
-        (
-            Vec<StreamReadItem>,
-            crate::domains::stream::protocol::ReadCursor,
-        ),
-        String,
-    > {
+    ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         let params = ReadAreaParams {
             family,
             realm,
@@ -192,19 +200,13 @@ impl StreamStore {
         &self,
         params: &ReadAreaParams<'_>,
         filter: Option<&StreamFilterSet>,
-    ) -> Result<
-        (
-            Vec<StreamReadItem>,
-            crate::domains::stream::protocol::ReadCursor,
-        ),
-        String,
-    > {
+    ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         self.ensure_layout_activation_for_family(params.family)?;
 
         if params.limit == 0 {
             return Ok((
                 Vec::new(),
-                crate::domains::stream::protocol::ReadCursor {
+                ReadCursor {
                     last_resource_offset: 0,
                     last_area_offset: Some(params.from_offset),
                     last_realm_offset: None,
@@ -220,13 +222,7 @@ impl StreamStore {
         &self,
         params: &ReadAreaParams<'_>,
         filter: Option<&StreamFilterSet>,
-    ) -> Result<
-        (
-            Vec<StreamReadItem>,
-            crate::domains::stream::protocol::ReadCursor,
-        ),
-        String,
-    > {
+    ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         let watermark = self.get_watermark(params.family, params.realm, params.area)?;
         let query = cntryl_midge::Query::new()
             .start_key(Bytes::from(encode_compact_area_page_key(
@@ -246,14 +242,14 @@ impl StreamStore {
         let txn = self
             .db
             .begin_tx(
-                params.family as u32,
+                family_to_storage_partition(params.family),
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
-        let limit = params.limit as usize;
+        let limit = read_limit_to_usize(params.limit);
         let mut items = Vec::with_capacity(limit.min(1000));
         let mut total_bytes = 0usize;
         let mut cursor = ReadCursorState {
@@ -267,7 +263,7 @@ impl StreamStore {
         'page_scan: for (key_bytes, value_bytes) in results {
             let page_start = decode_area_offset_from_key(&key_bytes)?;
             let page = CompactAreaPageValue::try_decode(&value_bytes).map_err(|error| {
-                Self::invalid_compact_area_page_error(params.realm, params.area, page_start, error)
+                Self::invalid_compact_area_page_error(params.realm, params.area, page_start, &error)
             })?;
 
             let mut state = ReadPageState {
@@ -285,7 +281,7 @@ impl StreamStore {
                 page.records
                     .into_iter()
                     .enumerate()
-                    .map(|(slot, page_record)| (page_start + slot as u64, page_record)),
+                    .map(|(slot, page_record)| (page_slot_offset(page_start, slot), page_record)),
                 &mut state,
                 |area_offset, _page_record| {
                     Self::load_optional_discriminator(
@@ -323,6 +319,12 @@ impl StreamStore {
         Ok((items, cursor.into_cursor(has_more)))
     }
 
+    /// Read realm stream records up to the current realm watermark.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, realm watermark loading,
+    /// storage transaction creation, page scanning, or page decoding fails.
     pub fn read_realm(
         &self,
         family: u64,
@@ -330,16 +332,17 @@ impl StreamStore {
         from_offset: u64,
         limit: u64,
         max_bytes: Option<usize>,
-    ) -> Result<
-        (
-            Vec<StreamReadItem>,
-            crate::domains::stream::protocol::ReadCursor,
-        ),
-        String,
-    > {
+    ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         self.read_realm_with_filter(family, realm, from_offset, limit, max_bytes, None)
     }
 
+    /// Read realm stream records with an optional server-side discriminator filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, realm watermark loading,
+    /// storage transaction creation, page scanning, page decoding, or
+    /// discriminator loading fails.
     pub fn read_realm_with_filter(
         &self,
         family: u64,
@@ -348,19 +351,13 @@ impl StreamStore {
         limit: u64,
         max_bytes: Option<usize>,
         filter: Option<&StreamFilterSet>,
-    ) -> Result<
-        (
-            Vec<StreamReadItem>,
-            crate::domains::stream::protocol::ReadCursor,
-        ),
-        String,
-    > {
+    ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         self.ensure_layout_activation_for_family(family)?;
 
         if limit == 0 {
             return Ok((
                 Vec::new(),
-                crate::domains::stream::protocol::ReadCursor {
+                ReadCursor {
                     last_resource_offset: 0,
                     last_area_offset: None,
                     last_realm_offset: Some(from_offset),
@@ -380,13 +377,7 @@ impl StreamStore {
         limit: u64,
         max_bytes: Option<usize>,
         filter: Option<&StreamFilterSet>,
-    ) -> Result<
-        (
-            Vec<StreamReadItem>,
-            crate::domains::stream::protocol::ReadCursor,
-        ),
-        String,
-    > {
+    ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         let realm_watermark = self.get_realm_watermark(family, realm)?;
         let query = cntryl_midge::Query::new()
             .start_key(Bytes::from(encode_compressed_compact_realm_page_key(
@@ -400,12 +391,15 @@ impl StreamStore {
 
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
-        let limit = limit as usize;
+        let limit = read_limit_to_usize(limit);
         let mut items = Vec::with_capacity(limit.min(1000));
         let mut total_bytes = 0usize;
         let mut cursor = ReadCursorState {
@@ -419,7 +413,7 @@ impl StreamStore {
         'page_scan: for (key_bytes, value_bytes) in results {
             let page_start = decode_realm_offset_from_key(&key_bytes)?;
             let page = CompressedCompactRealmPageValue::try_decode(&value_bytes)
-                .map_err(|error| Self::invalid_compact_realm_page_error(page_start, error))?
+                .map_err(|error| Self::invalid_compact_realm_page_error(page_start, &error))?
                 .into_compact_realm_page();
 
             let mut state = ReadPageState {
@@ -437,7 +431,7 @@ impl StreamStore {
                 page.records
                     .into_iter()
                     .enumerate()
-                    .map(|(slot, page_record)| (page_start + slot as u64, page_record)),
+                    .map(|(slot, page_record)| (page_slot_offset(page_start, slot), page_record)),
                 &mut state,
                 |realm_offset, _page_record| {
                     Self::load_optional_discriminator(

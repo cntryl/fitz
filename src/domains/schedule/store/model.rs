@@ -32,6 +32,7 @@ pub struct ScheduleBatchInsert {
     pub executions_total: u64,
 }
 
+#[derive(Clone, Copy)]
 pub struct ScheduleInsert<'a> {
     pub route: &'a str,
     pub cron: &'a str,

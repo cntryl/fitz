@@ -9,7 +9,11 @@ fn should_derive_canonical_routes_for_scheme_less_domain_payloads() {
 
     let mut queue_payload = Vec::new();
     let queue_wire_route = b"realm/area/tasks/receive";
-    queue_payload.extend_from_slice(&(queue_wire_route.len() as u32).to_be_bytes());
+    queue_payload.extend_from_slice(
+        &u32::try_from(queue_wire_route.len())
+            .expect("queue route length fits in u32")
+            .to_be_bytes(),
+    );
     queue_payload.extend_from_slice(queue_wire_route);
     queue_payload.extend_from_slice(&(1_u32).to_be_bytes());
     queue_payload.extend_from_slice(b"x");
@@ -27,7 +31,11 @@ fn should_derive_canonical_routes_for_scheme_less_domain_payloads() {
 
     let pattern = b"patterns/*";
     let mut notice_payload = Vec::new();
-    notice_payload.extend_from_slice(&(pattern.len() as u32).to_be_bytes());
+    notice_payload.extend_from_slice(
+        &u32::try_from(pattern.len())
+            .expect("notice pattern length fits in u32")
+            .to_be_bytes(),
+    );
     notice_payload.extend_from_slice(pattern);
     let notice_route = ingress
         .derive_route_for_frame(
@@ -44,7 +52,11 @@ fn should_derive_canonical_routes_for_scheme_less_domain_payloads() {
 
     let stream_name = b"realm/area/stream-data/read";
     let mut stream_payload = Vec::new();
-    stream_payload.extend_from_slice(&(stream_name.len() as u32).to_be_bytes());
+    stream_payload.extend_from_slice(
+        &u32::try_from(stream_name.len())
+            .expect("stream route length fits in u32")
+            .to_be_bytes(),
+    );
     stream_payload.extend_from_slice(stream_name);
     stream_payload.extend_from_slice(&0_u64.to_be_bytes());
     stream_payload.extend_from_slice(&1000_u64.to_be_bytes());

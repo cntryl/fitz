@@ -1,4 +1,10 @@
-use super::super::*;
+use super::super::{
+    storage_key, DomainKeyspace, LexKey, MessageId, QueueActor, QueueKey,
+    QUEUE_KEY_FAMILY_ACK_DEDUP, QUEUE_KEY_FAMILY_BODY, QUEUE_KEY_FAMILY_DELAYED_INDEX,
+    QUEUE_KEY_FAMILY_DLQ_INDEX, QUEUE_KEY_FAMILY_HEADER, QUEUE_KEY_FAMILY_INDEX_META,
+    QUEUE_KEY_FAMILY_INFLIGHT_INDEX, QUEUE_KEY_FAMILY_LEGACY_MESSAGE, QUEUE_KEY_FAMILY_META,
+    QUEUE_KEY_FAMILY_READY_INDEX,
+};
 
 impl QueueActor {
     pub(in crate::domains::queue::actor) fn split_authoritative_key(
@@ -14,7 +20,7 @@ impl QueueActor {
         let family_marker = *suffix.get(family_index)?;
 
         Some((
-            &suffix[..resource_end + 1],
+            &suffix[..=resource_end],
             family_marker,
             &suffix[(family_index + 1)..],
         ))

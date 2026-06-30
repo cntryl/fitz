@@ -17,6 +17,16 @@ fn metric_gauge(name: &str) -> u64 {
     crate::observability::metrics().gauge_get(name)
 }
 
+fn u64_to_f64(value: u64) -> f64 {
+    let high = u32::try_from(value >> 32).unwrap_or(u32::MAX);
+    let low = u32::try_from(value & u64::from(u32::MAX)).unwrap_or(u32::MAX);
+    f64::from(high) * 4_294_967_296.0 + f64::from(low)
+}
+
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
 impl Runtime {
     #[must_use]
     pub fn queue_messages_ready(&self) -> usize {
@@ -384,7 +394,7 @@ impl Runtime {
 
         let total_operations =
             crate::observability::metrics().counter_get("fitz_stream_operations_total");
-        total_operations as f64 / uptime_secs
+        u64_to_f64(total_operations) / uptime_secs
     }
 
     #[must_use]
@@ -427,7 +437,7 @@ impl Runtime {
             return 0.0;
         }
 
-        self.notice_requests_total() as f64 / uptime_secs
+        u64_to_f64(self.notice_requests_total()) / uptime_secs
     }
 
     #[must_use]
@@ -467,7 +477,7 @@ impl Runtime {
             return 0.0;
         }
 
-        self.queue_requests_total() as f64 / uptime_secs
+        u64_to_f64(self.queue_requests_total()) / uptime_secs
     }
 
     #[must_use]
@@ -477,7 +487,7 @@ impl Runtime {
             return 0.0;
         }
 
-        self.rpc_requests_total() as f64 / uptime_secs
+        u64_to_f64(self.rpc_requests_total()) / uptime_secs
     }
 
     #[must_use]
@@ -552,7 +562,7 @@ impl Runtime {
             return 0.0;
         }
 
-        self.lease_requests_total() as f64 / uptime_secs
+        u64_to_f64(self.lease_requests_total()) / uptime_secs
     }
 
     #[must_use]
@@ -574,7 +584,7 @@ impl Runtime {
     pub fn lease_waiter_depth(&self) -> usize {
         let direct_depth = metric_gauge("fitz_lease_waiters_gauge");
         let legacy_depth = metric_gauge("fitz_lease_waiter_depth");
-        direct_depth.max(legacy_depth) as usize
+        u64_to_usize_saturating(direct_depth.max(legacy_depth))
     }
 
     #[must_use]

@@ -33,14 +33,14 @@ pub struct ReleaseRequest {
     pub fencing_token: u64,
 }
 
-/// Lightweight SessionActor helpers for the lease domain.
+/// Lightweight `SessionActor` helpers for the lease domain.
 ///
 /// Responsibilities:
 /// - Enforce session-level authorization for lease operations
-/// - Forward authorized operations to the LeaseActor
+/// - Forward authorized operations to the `LeaseActor`
 ///
 /// This is intentionally small: a full actor system is out-of-scope for this change,
-/// but tests rely on the SessionActor's semantic enforcement.
+/// but tests rely on the `SessionActor`'s semantic enforcement.
 pub struct SessionActor {
     pub session_id: SessionId,
     pub permissions: SessionPermissions,
@@ -55,7 +55,11 @@ impl SessionActor {
         }
     }
 
-    /// Attempt to acquire a lease. Returns Err if authorization fails.
+    /// Attempt to acquire a lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session lacks write access to the lease route.
     pub fn acquire(
         &self,
         request: AcquireRequest,
@@ -78,7 +82,11 @@ impl SessionActor {
         Ok(())
     }
 
-    /// Attempt to extend a lease. Returns Err if authorization fails.
+    /// Attempt to extend a lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session lacks write access to the lease route.
     pub fn extend(
         &self,
         request: ExtendRequest,
@@ -101,7 +109,11 @@ impl SessionActor {
         Ok(())
     }
 
-    /// Attempt to release a lease. Returns Err if authorization fails.
+    /// Attempt to release a lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session lacks write access to the lease route.
     pub fn release(
         &self,
         request: ReleaseRequest,
@@ -123,7 +135,11 @@ impl SessionActor {
         Ok(())
     }
 
-    /// Attempt to query lease status. Returns Err if authorization fails.
+    /// Attempt to query lease status.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session lacks read access to the lease route.
     pub fn query(
         &self,
         family: RouteFamily,

@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Duration, HeapOrdering, Instant, RPC_MAX_TIMEOUT_SWEEP_INTERVAL, RPC_MIN_TIMEOUT_SWEEP_INTERVAL,
+};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(in crate::domains::rpc::sink) struct ExpiringPendingRequest {

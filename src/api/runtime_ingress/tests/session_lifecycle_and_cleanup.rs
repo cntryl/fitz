@@ -290,16 +290,25 @@ pub(super) fn encode_schedule_subscribe(route: &str) -> Bytes {
 
 pub(super) fn encode_queue_send(route: &str, body: &[u8]) -> Bytes {
     let mut payload = Vec::new();
-    bytes::BufMut::put_u32(&mut payload, route.len() as u32);
+    bytes::BufMut::put_u32(
+        &mut payload,
+        u32::try_from(route.len()).expect("queue route length fits in u32"),
+    );
     bytes::BufMut::put_slice(&mut payload, route.as_bytes());
-    bytes::BufMut::put_u32(&mut payload, body.len() as u32);
+    bytes::BufMut::put_u32(
+        &mut payload,
+        u32::try_from(body.len()).expect("queue body length fits in u32"),
+    );
     bytes::BufMut::put_slice(&mut payload, body);
     Bytes::from(payload)
 }
 
 pub(super) fn encode_queue_reserve(route: &str, inflight_seconds: u64, batch_size: u32) -> Bytes {
     let mut payload = Vec::new();
-    bytes::BufMut::put_u32(&mut payload, route.len() as u32);
+    bytes::BufMut::put_u32(
+        &mut payload,
+        u32::try_from(route.len()).expect("queue route length fits in u32"),
+    );
     bytes::BufMut::put_slice(&mut payload, route.as_bytes());
     bytes::BufMut::put_u64(&mut payload, inflight_seconds);
     bytes::BufMut::put_u8(&mut payload, 1);
@@ -351,6 +360,21 @@ pub(super) fn make_cleanup_ingress(
     runtime_ingress_with_jwks_auth()
         .with_router(router)
         .with_admin_read_model(admin_read_model)
+}
+
+fn assert_queue_cleanup_admin_state(
+    admin_read_model: &AdminReadModel,
+    next_worker_session_id: u64,
+) {
+    let queues = admin_read_model.queues(None);
+    assert_eq!(queues.len(), 1);
+    assert_eq!(queues[0].messages_ready, 0);
+    assert_eq!(queues[0].messages_inflight, 1);
+    assert_eq!(admin_read_model.queue_inflight(None).len(), 1);
+    assert_eq!(
+        admin_read_model.queue_inflight(None)[0].session_id,
+        next_worker_session_id.to_string()
+    );
 }
 
 #[tokio::test]
@@ -826,13 +850,5 @@ async fn should_cleanup_real_queue_inflight_on_close() {
         1
     );
 
-    let queues = admin_read_model.queues(None);
-    assert_eq!(queues.len(), 1);
-    assert_eq!(queues[0].messages_ready, 0);
-    assert_eq!(queues[0].messages_inflight, 1);
-    assert_eq!(admin_read_model.queue_inflight(None).len(), 1);
-    assert_eq!(
-        admin_read_model.queue_inflight(None)[0].session_id,
-        next_worker_session_id.to_string()
-    );
+    assert_queue_cleanup_admin_state(&admin_read_model, next_worker_session_id);
 }

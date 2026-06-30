@@ -1,4 +1,8 @@
-use super::model::*;
+use super::model::{
+    Arc, AtomicBool, AtomicU64, HashMap, Instant, LeaseDomainSink, LeaseMetrics, Mutex, Ordering,
+    SinkLeaseState, Utc, VecDeque,
+};
+use crate::runtime::Router;
 
 impl LeaseDomainSink {
     pub fn new(
@@ -51,14 +55,17 @@ impl LeaseDomainSink {
     }
 
     pub(super) fn lease_info_from_state(
-        &self,
         key: &crate::domains::lease::protocol::LeaseKey,
         state: &SinkLeaseState,
     ) -> crate::control::admin::LeaseInfo {
         let now = std::time::Instant::now();
         let expires_at = Utc::now()
             .checked_add_signed(chrono::TimeDelta::seconds(
-                state.expiry.saturating_duration_since(now).as_secs() as i64,
+                state
+                    .expiry
+                    .saturating_duration_since(now)
+                    .as_secs()
+                    .cast_signed(),
             ))
             .unwrap_or_else(Utc::now)
             .to_rfc3339();
@@ -81,7 +88,7 @@ impl LeaseDomainSink {
         state: &SinkLeaseState,
     ) {
         self.admin_read_model
-            .upsert_lease(self.lease_info_from_state(key, state));
+            .upsert_lease(Self::lease_info_from_state(key, state));
         self.refresh_metrics_gauges();
     }
 
@@ -132,7 +139,11 @@ impl LeaseDomainSink {
             for waiter in queue {
                 let expires_at = Utc::now()
                     .checked_add_signed(chrono::TimeDelta::seconds(
-                        waiter.expires_at.saturating_duration_since(now).as_secs() as i64,
+                        waiter
+                            .expires_at
+                            .saturating_duration_since(now)
+                            .as_secs()
+                            .cast_signed(),
                     ))
                     .unwrap_or_else(Utc::now)
                     .to_rfc3339();

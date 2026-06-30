@@ -3,11 +3,11 @@
 //!
 //! # Architecture
 //!
-//! - **StreamActor** ([actor]): warm per-resource append-session owner for the
+//! - **`StreamActor`** ([actor]): warm per-resource append-session owner for the
 //!   current broker process
-//! - **StreamStore** ([store]): durable authority for committed resource,
+//! - **`StreamStore`** ([store]): durable authority for committed resource,
 //!   area, and realm ordering
-//! - **StreamDomainSink** ([sink]): enforces live session ownership before
+//! - **`StreamDomainSink`** ([sink]): enforces live session ownership before
 //!   forwarding append-session operations to the stream runtime
 //!
 //! # Ordering

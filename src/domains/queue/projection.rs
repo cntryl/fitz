@@ -67,63 +67,9 @@ impl QueueProjectionState {
         let mut dead_letters = Vec::new();
 
         for entry in entries {
-            queues.push(QueueInfo::snapshot(AdminQueueInfoSnapshot {
-                family: entry.key.family.as_u64(),
-                realm: &entry.key.realm,
-                area: &entry.key.area,
-                resource: &entry.key.resource,
-                messages_ready: entry.snapshot.messages_ready,
-                messages_delayed: entry.snapshot.messages_delayed,
-                messages_inflight: entry.snapshot.messages_inflight,
-                messages_dead_lettered: entry.snapshot.messages_dead_lettered,
-                messages_total: entry.snapshot.messages_total,
-                oldest_message_age_seconds: entry.snapshot.oldest_message_age_seconds,
-                oldest_backlog_age_seconds: entry.snapshot.oldest_backlog_age_seconds,
-                backlog_age_buckets: entry.snapshot.backlog_age_buckets,
-                delay_age_buckets: entry.snapshot.delay_age_buckets,
-                subscriptions_active: entry.subscriptions_active,
-                enqueue_success_total: entry.snapshot.enqueue_success_total,
-                complete_success_total: entry.snapshot.complete_success_total,
-                in_rate_per_second: entry.snapshot.in_rate_per_second,
-                out_rate_per_second: entry.snapshot.out_rate_per_second,
-            }));
-
-            for inflight_entry in entry.inflight {
-                let expires_at = Utc
-                    .timestamp_millis_opt(inflight_entry.expires_at_epoch_ms as i64)
-                    .single()
-                    .map(|timestamp| timestamp.to_rfc3339())
-                    .unwrap_or_default();
-                inflight.push(QueueInflight::snapshot(AdminQueueInflightSnapshot {
-                    message_id: inflight_entry.message_id,
-                    family: entry.key.family.as_u64(),
-                    realm: &entry.key.realm,
-                    area: &entry.key.area,
-                    resource: &entry.key.resource,
-                    inflight_token: inflight_entry.inflight_token,
-                    session_id: inflight_entry.session_id,
-                    expires_at: &expires_at,
-                    attempts: inflight_entry.attempts,
-                }));
-            }
-
-            for dead_letter in entry.dead_letters {
-                let dead_lettered_at = Utc
-                    .timestamp_millis_opt(dead_letter.dead_lettered_at_epoch_ms as i64)
-                    .single()
-                    .map(|timestamp| timestamp.to_rfc3339())
-                    .unwrap_or_default();
-                dead_letters.push(QueueDeadLetter::snapshot(AdminQueueDeadLetterSnapshot {
-                    message_id: dead_letter.message_id,
-                    family: entry.key.family.as_u64(),
-                    realm: &entry.key.realm,
-                    area: &entry.key.area,
-                    resource: &entry.key.resource,
-                    dead_lettered_at: &dead_lettered_at,
-                    attempts: dead_letter.attempts,
-                    reason: dead_letter.reason,
-                }));
-            }
+            queues.push(Self::project_queue_info(&entry));
+            inflight.extend(Self::project_inflight_entries(&entry));
+            dead_letters.extend(Self::project_dead_letter_entries(&entry));
         }
 
         queues.sort_by(|left, right| {
@@ -172,6 +118,78 @@ impl QueueProjectionState {
             dead_letters,
         }
     }
+
+    fn project_queue_info(entry: &QueueProjectionEntry) -> QueueInfo {
+        QueueInfo::snapshot(&AdminQueueInfoSnapshot {
+            family: entry.key.family.as_u64(),
+            realm: &entry.key.realm,
+            area: &entry.key.area,
+            resource: &entry.key.resource,
+            messages_ready: entry.snapshot.messages_ready,
+            messages_delayed: entry.snapshot.messages_delayed,
+            messages_inflight: entry.snapshot.messages_inflight,
+            messages_dead_lettered: entry.snapshot.messages_dead_lettered,
+            messages_total: entry.snapshot.messages_total,
+            oldest_message_age_seconds: entry.snapshot.oldest_message_age_seconds,
+            oldest_backlog_age_seconds: entry.snapshot.oldest_backlog_age_seconds,
+            backlog_age_buckets: entry.snapshot.backlog_age_buckets,
+            delay_age_buckets: entry.snapshot.delay_age_buckets,
+            subscriptions_active: entry.subscriptions_active,
+            enqueue_success_total: entry.snapshot.enqueue_success_total,
+            complete_success_total: entry.snapshot.complete_success_total,
+            in_rate_per_second: entry.snapshot.in_rate_per_second,
+            out_rate_per_second: entry.snapshot.out_rate_per_second,
+        })
+    }
+
+    fn project_inflight_entries(entry: &QueueProjectionEntry) -> Vec<QueueInflight> {
+        entry
+            .inflight
+            .iter()
+            .map(|inflight_entry| {
+                let expires_at = Self::rfc3339_from_epoch_ms(inflight_entry.expires_at_epoch_ms);
+                QueueInflight::snapshot(&AdminQueueInflightSnapshot {
+                    message_id: inflight_entry.message_id,
+                    family: entry.key.family.as_u64(),
+                    realm: &entry.key.realm,
+                    area: &entry.key.area,
+                    resource: &entry.key.resource,
+                    inflight_token: inflight_entry.inflight_token,
+                    session_id: inflight_entry.session_id,
+                    expires_at: &expires_at,
+                    attempts: inflight_entry.attempts,
+                })
+            })
+            .collect()
+    }
+
+    fn project_dead_letter_entries(entry: &QueueProjectionEntry) -> Vec<QueueDeadLetter> {
+        entry
+            .dead_letters
+            .iter()
+            .map(|dead_letter| {
+                let dead_lettered_at =
+                    Self::rfc3339_from_epoch_ms(dead_letter.dead_lettered_at_epoch_ms);
+                QueueDeadLetter::snapshot(&AdminQueueDeadLetterSnapshot {
+                    message_id: dead_letter.message_id,
+                    family: entry.key.family.as_u64(),
+                    realm: &entry.key.realm,
+                    area: &entry.key.area,
+                    resource: &entry.key.resource,
+                    dead_lettered_at: &dead_lettered_at,
+                    attempts: dead_letter.attempts,
+                    reason: dead_letter.reason,
+                })
+            })
+            .collect()
+    }
+
+    fn rfc3339_from_epoch_ms(epoch_ms: u64) -> String {
+        Utc.timestamp_millis_opt(epoch_ms.cast_signed())
+            .single()
+            .map(|timestamp| timestamp.to_rfc3339())
+            .unwrap_or_default()
+    }
 }
 
 pub(crate) struct QueueAdminProjection {
@@ -212,6 +230,10 @@ impl QueueAdminProjection {
 mod tests {
     use super::*;
     use crate::runtime::routing::RouteFamily;
+
+    fn assert_f64_eq(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < f64::EPSILON);
+    }
 
     fn queue_key(realm: &str, area: &str, resource: &str) -> QueueKey {
         QueueKey {
@@ -296,8 +318,8 @@ mod tests {
         assert_eq!(queues.len(), 1);
         assert_eq!(queues[0].realm, "acme");
         assert_eq!(queues[0].subscriptions_active, 9);
-        assert_eq!(queues[0].in_rate_per_second, 1.5);
-        assert_eq!(queues[0].out_rate_per_second, 0.75);
+        assert_f64_eq(queues[0].in_rate_per_second, 1.5);
+        assert_f64_eq(queues[0].out_rate_per_second, 0.75);
         assert_eq!(inflight.len(), 1);
         assert_eq!(inflight[0].resource, "emails");
         assert_eq!(dead_letters.len(), 1);

@@ -1,4 +1,9 @@
-use super::model::*;
+use super::model::{
+    DeliveryError, Envelope, KvClientFrame, KvClientRequest, KvDomainSink, KvResourceLockKey,
+    KvSubscription, MailboxSink, Ordering, RoutedSubscriptionSet,
+};
+#[cfg(test)]
+use crate::protocol::frame_context::FrameContext;
 
 impl MailboxSink for KvDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
@@ -6,11 +11,11 @@ impl MailboxSink for KvDomainSink {
             return Ok(());
         }
         self.ensure_active()?;
-        self.log_delivery(&envelope);
+        Self::log_delivery(&envelope);
 
-        let request = self.extract_request(&envelope)?;
+        let request = Self::extract_request(&envelope)?;
         let meta = request.meta;
-        let operation_started = self.record_operation_start();
+        let operation_started = Self::record_operation_start();
         let request_started = self.record_request_start();
         let parsed_frame = self.parse_request_frame(meta, request.frame, request_started)?;
 
@@ -51,7 +56,7 @@ impl KvDomainSink {
         Ok(())
     }
 
-    fn log_delivery(&self, envelope: &Envelope) {
+    fn log_delivery(envelope: &Envelope) {
         tracing::debug!(
             domain = "kv",
             destination = %envelope.destination(),
@@ -60,7 +65,7 @@ impl KvDomainSink {
         );
     }
 
-    fn extract_request(&self, envelope: &Envelope) -> Result<KvClientRequest, DeliveryError> {
+    fn extract_request(envelope: &Envelope) -> Result<KvClientRequest, DeliveryError> {
         Self::request_from_envelope(envelope).ok_or_else(|| {
             tracing::warn!(
                 domain = "kv",
@@ -71,14 +76,14 @@ impl KvDomainSink {
         })
     }
 
-    fn record_operation_start(&self) -> std::time::Instant {
+    fn record_operation_start() -> std::time::Instant {
         std::time::Instant::now()
     }
 
     fn record_request_start(&self) -> Option<std::time::Instant> {
         self.metrics
             .as_ref()
-            .map(|metrics| metrics.record_request_start())
+            .map(super::super::metrics::KvMetrics::record_request_start)
     }
 
     fn parse_request_frame(
@@ -191,7 +196,7 @@ impl KvDomainSink {
         operation_started: std::time::Instant,
         kv_message: crate::domains::kv::KvMessage,
     ) -> Result<(), DeliveryError> {
-        use crate::domains::kv::{KvError, KvMessage, KvResponse, TxMode};
+        use crate::domains::kv::{KvMessage, TxMode};
         let kv_message = self.apply_sync_write_options(kv_message);
         let session_id = meta.session_id;
 
@@ -210,172 +215,21 @@ impl KvDomainSink {
                 resource,
                 mode,
                 ..
-            } if *mode == TxMode::ReadWrite => {
-                let lock_key = KvResourceLockKey::new(route_family.as_u64(), realm, area, resource);
-                {
-                    let locks = self.resource_locks.lock();
-                    if let Some(&holder) = locks.get(&lock_key) {
-                        if holder != session_id {
-                            drop(locks);
-                            (
-                                KvResponse::Error {
-                                    error: KvError::Conflict(
-                                        "resource locked by another session".to_string(),
-                                    ),
-                                },
-                                false,
-                                None,
-                            )
-                        } else {
-                            drop(locks);
-                            let mut actors = self.actors.lock();
-                            let actor = actors.entry(session_id).or_insert_with(|| {
-                                tracing::trace!(
-                                    domain = "kv",
-                                    session_id = session_id,
-                                    "Creating new KvActor instance"
-                                );
-                                crate::domains::kv::KvActor::new(self.store.clone())
-                            });
-                            tracing::trace!(
-                                domain = "kv",
-                                session_id = session_id,
-                                "Calling actor.handle() for BEGIN (ReadWrite)"
-                            );
-                            let resp = actor.handle(kv_message.clone());
-                            if let KvResponse::BeginOk { tx_id } = resp {
-                                tracing::trace!(
-                                    domain = "kv",
-                                    session_id = session_id,
-                                    tx_id = tx_id,
-                                    "BEGIN succeeded, storing resource lock"
-                                );
-                                self.resource_locks
-                                    .lock()
-                                    .insert(lock_key.clone(), session_id);
-                                self.tx_to_resource
-                                    .lock()
-                                    .insert((session_id, tx_id), lock_key);
-                                (resp, true, None)
-                            } else {
-                                (resp, false, None)
-                            }
-                        }
-                    } else {
-                        drop(locks);
-                        let mut actors = self.actors.lock();
-                        let actor = actors.entry(session_id).or_insert_with(|| {
-                            tracing::trace!(
-                                domain = "kv",
-                                session_id = session_id,
-                                "Creating new KvActor instance"
-                            );
-                            crate::domains::kv::KvActor::new(self.store.clone())
-                        });
-                        tracing::trace!(
-                            domain = "kv",
-                            session_id = session_id,
-                            "Calling actor.handle() for BEGIN (ReadWrite, acquiring lock)"
-                        );
-                        let resp = actor.handle(kv_message.clone());
-                        if let KvResponse::BeginOk { tx_id } = resp {
-                            tracing::trace!(
-                                domain = "kv",
-                                session_id = session_id,
-                                tx_id = tx_id,
-                                "BEGIN succeeded, acquiring resource lock"
-                            );
-                            self.resource_locks
-                                .lock()
-                                .insert(lock_key.clone(), session_id);
-                            self.tx_to_resource
-                                .lock()
-                                .insert((session_id, tx_id), lock_key);
-                            (resp, true, None)
-                        } else {
-                            (resp, false, None)
-                        }
-                    }
-                }
-            }
+            } if *mode == TxMode::ReadWrite => self.handle_begin_read_write(
+                session_id,
+                route_family.as_u64(),
+                realm,
+                area,
+                resource,
+                &kv_message,
+            ),
             KvMessage::Commit { tx_id } => {
-                let mut actors = self.actors.lock();
-                let actor = actors.entry(session_id).or_insert_with(|| {
-                    tracing::trace!(
-                        domain = "kv",
-                        session_id = session_id,
-                        "Creating new KvActor instance (COMMIT)"
-                    );
-                    crate::domains::kv::KvActor::new(self.store.clone())
-                });
-                tracing::trace!(
-                    domain = "kv",
-                    session_id = session_id,
-                    tx_id = tx_id,
-                    "Calling actor.handle() for COMMIT"
-                );
-                let mutation_count = actor.mutation_count_for_tx(*tx_id).unwrap_or(0);
-                let resp = actor.handle(kv_message.clone());
-                if let KvResponse::CommitOk = resp {
-                    let lock_key = self.tx_to_resource.lock().remove(&(session_id, *tx_id));
-                    if let Some(k) = lock_key {
-                        self.resource_locks.lock().remove(&k);
-                        let notify = (mutation_count > 0).then_some((k, mutation_count));
-                        (resp, true, notify)
-                    } else {
-                        (resp, true, None)
-                    }
-                } else {
-                    crate::observability::counter_inc("fitz_kv_commits_failed_total");
-                    (resp, false, None)
-                }
+                self.handle_commit_frame(session_id, *tx_id, &kv_message)
             }
             KvMessage::Rollback { tx_id } => {
-                let mut actors = self.actors.lock();
-                let actor = actors.entry(session_id).or_insert_with(|| {
-                    tracing::trace!(
-                        domain = "kv",
-                        session_id = session_id,
-                        "Creating new KvActor instance (ROLLBACK)"
-                    );
-                    crate::domains::kv::KvActor::new(self.store.clone())
-                });
-                tracing::trace!(
-                    domain = "kv",
-                    session_id = session_id,
-                    tx_id = tx_id,
-                    "Calling actor.handle() for ROLLBACK"
-                );
-                let resp = actor.handle(kv_message.clone());
-                if let KvResponse::RollbackOk = resp {
-                    let lock_key = self.tx_to_resource.lock().remove(&(session_id, *tx_id));
-                    if let Some(k) = lock_key {
-                        self.resource_locks.lock().remove(&k);
-                    }
-                    crate::observability::counter_inc("fitz_kv_rollbacks_total");
-                    (resp, true, None)
-                } else {
-                    (resp, false, None)
-                }
+                self.handle_rollback_frame(session_id, *tx_id, &kv_message)
             }
-            _ => {
-                let mut actors = self.actors.lock();
-                let actor = actors.entry(session_id).or_insert_with(|| {
-                    tracing::trace!(
-                        domain = "kv",
-                        session_id = session_id,
-                        "Creating new KvActor instance (other operation)"
-                    );
-                    crate::domains::kv::KvActor::new(self.store.clone())
-                });
-                tracing::trace!(
-                    domain = "kv",
-                    session_id = session_id,
-                    msg_type = meta.message_type,
-                    "Calling actor.handle() for operation"
-                );
-                (actor.handle(kv_message.clone()), false, None)
-            }
+            _ => self.handle_regular_operation_frame(session_id, meta.message_type, &kv_message),
         };
         if matches!(
             &response,
@@ -415,6 +269,180 @@ impl KvDomainSink {
         );
 
         self.route_kv_response(envelope, meta, &response, request_started)
+    }
+
+    fn actor_for_session(
+        &self,
+        session_id: u64,
+        context: &str,
+    ) -> parking_lot::lock_api::MappedMutexGuard<
+        '_,
+        parking_lot::RawMutex,
+        crate::domains::kv::KvActor,
+    > {
+        parking_lot::MutexGuard::map(self.actors.lock(), |actors| {
+            actors.entry(session_id).or_insert_with(|| {
+                tracing::trace!(
+                    domain = "kv",
+                    session_id = session_id,
+                    "Creating new KvActor instance ({context})"
+                );
+                crate::domains::kv::KvActor::new(self.store.clone())
+            })
+        })
+    }
+
+    fn handle_begin_read_write(
+        &self,
+        session_id: u64,
+        family_id: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        kv_message: &crate::domains::kv::KvMessage,
+    ) -> (
+        crate::domains::kv::KvResponse,
+        bool,
+        Option<(KvResourceLockKey, u64)>,
+    ) {
+        use crate::domains::kv::{KvError, KvResponse};
+
+        let lock_key = KvResourceLockKey::new(family_id, realm, area, resource);
+        let held_by_same_session = {
+            let locks = self.resource_locks.lock();
+            match locks.get(&lock_key).copied() {
+                Some(holder) if holder == session_id => true,
+                Some(_) => {
+                    return (
+                        KvResponse::Error {
+                            error: KvError::Conflict(
+                                "resource locked by another session".to_string(),
+                            ),
+                        },
+                        false,
+                        None,
+                    );
+                }
+                None => false,
+            }
+        };
+
+        let log_context = if held_by_same_session {
+            "BEGIN (ReadWrite)"
+        } else {
+            "BEGIN (ReadWrite, acquiring lock)"
+        };
+        let mut actor = self.actor_for_session(session_id, "begin");
+        tracing::trace!(
+            domain = "kv",
+            session_id = session_id,
+            "Calling actor.handle() for {log_context}"
+        );
+        let response = actor.handle(kv_message.clone());
+        if let KvResponse::BeginOk { tx_id } = response {
+            tracing::trace!(
+                domain = "kv",
+                session_id = session_id,
+                tx_id = tx_id,
+                "BEGIN succeeded, storing resource lock"
+            );
+            self.resource_locks
+                .lock()
+                .insert(lock_key.clone(), session_id);
+            self.tx_to_resource
+                .lock()
+                .insert((session_id, tx_id), lock_key);
+            (response, true, None)
+        } else {
+            (response, false, None)
+        }
+    }
+
+    fn handle_commit_frame(
+        &self,
+        session_id: u64,
+        tx_id: u64,
+        kv_message: &crate::domains::kv::KvMessage,
+    ) -> (
+        crate::domains::kv::KvResponse,
+        bool,
+        Option<(KvResourceLockKey, u64)>,
+    ) {
+        use crate::domains::kv::KvResponse;
+
+        let mut actor = self.actor_for_session(session_id, "commit");
+        tracing::trace!(
+            domain = "kv",
+            session_id = session_id,
+            tx_id = tx_id,
+            "Calling actor.handle() for COMMIT"
+        );
+        let mutation_count = actor.mutation_count_for_tx(tx_id).unwrap_or(0);
+        let response = actor.handle(kv_message.clone());
+        if let KvResponse::CommitOk = response {
+            let lock_key = self.tx_to_resource.lock().remove(&(session_id, tx_id));
+            if let Some(lock_key) = lock_key {
+                self.resource_locks.lock().remove(&lock_key);
+                let notify = (mutation_count > 0).then_some((lock_key, mutation_count));
+                (response, true, notify)
+            } else {
+                (response, true, None)
+            }
+        } else {
+            crate::observability::counter_inc("fitz_kv_commits_failed_total");
+            (response, false, None)
+        }
+    }
+
+    fn handle_rollback_frame(
+        &self,
+        session_id: u64,
+        tx_id: u64,
+        kv_message: &crate::domains::kv::KvMessage,
+    ) -> (
+        crate::domains::kv::KvResponse,
+        bool,
+        Option<(KvResourceLockKey, u64)>,
+    ) {
+        use crate::domains::kv::KvResponse;
+
+        let mut actor = self.actor_for_session(session_id, "rollback");
+        tracing::trace!(
+            domain = "kv",
+            session_id = session_id,
+            tx_id = tx_id,
+            "Calling actor.handle() for ROLLBACK"
+        );
+        let response = actor.handle(kv_message.clone());
+        if let KvResponse::RollbackOk = response {
+            if let Some(lock_key) = self.tx_to_resource.lock().remove(&(session_id, tx_id)) {
+                self.resource_locks.lock().remove(&lock_key);
+            }
+            crate::observability::counter_inc("fitz_kv_rollbacks_total");
+            (response, true, None)
+        } else {
+            (response, false, None)
+        }
+    }
+
+    fn handle_regular_operation_frame(
+        &self,
+        session_id: u64,
+        message_type: u16,
+        kv_message: &crate::domains::kv::KvMessage,
+    ) -> (
+        crate::domains::kv::KvResponse,
+        bool,
+        Option<(KvResourceLockKey, u64)>,
+    ) {
+        let mut actor = self.actor_for_session(session_id, "other operation");
+        tracing::trace!(
+            domain = "kv",
+            session_id = session_id,
+            msg_type = message_type,
+            "Calling actor.handle() for operation"
+        );
+        (actor.handle(kv_message.clone()), false, None)
     }
 
     fn request_from_envelope(envelope: &Envelope) -> Option<KvClientRequest> {

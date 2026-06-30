@@ -13,7 +13,16 @@ fn current_epoch_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as u64
+        .as_millis()
+        .min(u128::from(u64::MAX))
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+fn u64_to_f64(value: u64) -> f64 {
+    let high = u32::try_from(value >> 32).unwrap_or(u32::MAX);
+    let low = u32::try_from(value & u64::from(u32::MAX)).unwrap_or(u32::MAX);
+    f64::from(high) * 4_294_967_296.0 + f64::from(low)
 }
 
 impl Runtime {
@@ -342,12 +351,12 @@ impl Runtime {
 
     #[must_use]
     pub fn messages_per_second(&self) -> f64 {
-        let uptime_secs = self.uptime_seconds() as f64;
+        let uptime_secs = u64_to_f64(self.uptime_seconds());
         if uptime_secs < 0.001 {
             return 0.0;
         }
         let total_messages = self.messages_received() + self.messages_sent();
-        total_messages as f64 / uptime_secs
+        u64_to_f64(total_messages) / uptime_secs
     }
 }
 
@@ -466,7 +475,7 @@ mod tests {
         let router = Arc::new(Router::new());
         let runtime = Runtime::new(router);
 
-        assert_eq!(runtime.messages_per_second(), 0.0);
+        assert!(runtime.messages_per_second().abs() < f64::EPSILON);
 
         // Act
         runtime.increment_messages_received();

@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    storage_key, Arc, BinaryHeap, Clock, DomainKeyspace, FxBuildHasher, HashMap, HashSet, Instant,
+    QueueActor, QueueKey, RecoveryPath, RollingRateWindow, RouteFamily, SystemClock, VecDeque,
+    QUEUE_KEY_FAMILY_BODY, QUEUE_KEY_FAMILY_HEADER, QUEUE_KEY_FAMILY_LEGACY_MESSAGE,
+    QUEUE_KEY_FAMILY_META,
+};
 
 impl QueueActor {
     pub(in crate::domains::queue::actor) const READY_SHARDS: usize = 8;
@@ -37,6 +42,10 @@ impl QueueActor {
     }
 
     /// Create a new queue actor with explicit commit policy selection.
+    ///
+    /// # Panics
+    ///
+    /// Panics when persisted queue state cannot be recovered.
     pub fn new_with_write_options(
         family: RouteFamily,
         queue_key: QueueKey,
@@ -56,6 +65,9 @@ impl QueueActor {
         .expect("recover queue actor from store")
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when persisted queue state cannot be recovered.
     pub fn try_new_with_write_options(
         family: RouteFamily,
         queue_key: QueueKey,
@@ -96,6 +108,10 @@ impl QueueActor {
     }
 
     /// Create a new queue actor with a custom clock and explicit commit policy.
+    ///
+    /// # Panics
+    ///
+    /// Panics when persisted queue state cannot be recovered.
     pub fn with_clock_and_write_options(
         family: RouteFamily,
         queue_key: QueueKey,
@@ -117,6 +133,9 @@ impl QueueActor {
         .expect("recover queue actor from store")
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when persisted queue state cannot be recovered.
     pub fn try_with_clock_and_write_options(
         family: RouteFamily,
         queue_key: QueueKey,
@@ -183,6 +202,9 @@ impl QueueActor {
         Ok(actor)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when any existing queue family contains invalid persisted state.
     pub fn validate_persisted_state_for_existing_families(
         store: &cntryl_midge::Engine,
     ) -> Result<(), String> {

@@ -1,4 +1,8 @@
-use super::state_model::*;
+use super::state_model::{Envelope, RpcClientRequest, RpcClientResponseBody, RpcDomainSink};
+#[cfg(not(test))]
+use crate::domains::rpc::RpcClientResponse;
+#[cfg(test)]
+use crate::protocol::frame_context::FrameContext;
 
 impl RpcDomainSink {
     pub(super) fn request_from_envelope(envelope: &Envelope) -> Option<RpcClientRequest> {

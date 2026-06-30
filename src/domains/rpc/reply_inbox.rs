@@ -1,6 +1,6 @@
-//! ReplyInboxActor: per-client inbox for strict contiguous RPC responses
+//! `ReplyInboxActor`: per-client inbox for strict contiguous RPC responses
 //!
-//! Each client session has a dedicated ReplyInboxActor that:
+//! Each client session has a dedicated `ReplyInboxActor` that:
 //! - Enforces strict contiguous streaming order
 //! - Handles slow transports without blocking workers
 //! - Drops state when session disconnects
@@ -11,7 +11,7 @@
 //! The inbox tracks expected sequence numbers per correlation ID:
 //! - If seq == expected: forward immediately and increment expected
 //! - If seq != expected: terminate the stream state immediately
-//! - On stream_end: finalize and clear correlation state
+//! - On `stream_end`: finalize and clear correlation state
 
 use crate::domains::rpc::errors::RpcError;
 use crate::domains::rpc::protocol::RpcResponse;
@@ -33,10 +33,10 @@ impl StreamState {
     }
 }
 
-/// Messages handled by ReplyInboxActor
+/// Messages handled by `ReplyInboxActor`
 #[derive(Debug, Clone)]
 pub enum InboxMessage {
-    /// Response chunk from worker via RpcRouteActor
+    /// Response chunk from worker via `RpcRouteActor`
     Response(RpcResponse),
     /// Error to be delivered to client
     Error(RpcError),
@@ -44,7 +44,7 @@ pub enum InboxMessage {
     Cleanup { correlation_id: Uuid },
 }
 
-/// ReplyInboxActor manages response ordering and delivery for one client
+/// `ReplyInboxActor` manages response ordering and delivery for one client
 ///
 /// Maintains per-correlation streaming state and enforces chunk ordering.
 /// Buffers out-of-order chunks until gaps are filled.
@@ -75,7 +75,7 @@ impl ReplyInboxActor {
     }
 
     /// Handle incoming response chunk
-    fn handle_response(&mut self, response: RpcResponse, _ctx: &mut Context<Self>) {
+    fn handle_response(&mut self, response: &RpcResponse, _ctx: &mut Context<Self>) {
         let correlation_id = response.correlation_id;
 
         // Get or create stream state
@@ -87,7 +87,7 @@ impl ReplyInboxActor {
         // Check sequence number
         if response.seq == stream.next_seq {
             // Expected chunk, forward immediately
-            Self::forward_response_static(&response);
+            Self::forward_response_static(response);
             stream.next_seq += 1;
 
             // If this completes the stream, clean up
@@ -108,7 +108,7 @@ impl ReplyInboxActor {
     }
 
     /// Handle error delivery
-    fn handle_error(&mut self, error: RpcError, _ctx: &mut Context<Self>) {
+    fn handle_error(&mut self, error: &RpcError, _ctx: &mut Context<Self>) {
         // Clean up any streaming state for this correlation
         self.streams.remove(&error.correlation_id);
 
@@ -150,10 +150,10 @@ impl Actor for ReplyInboxActor {
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         match msg {
             InboxMessage::Response(response) => {
-                self.handle_response(response, ctx);
+                self.handle_response(&response, ctx);
             }
             InboxMessage::Error(error) => {
-                self.handle_error(error, ctx);
+                self.handle_error(&error, ctx);
             }
             InboxMessage::Cleanup { correlation_id } => {
                 self.handle_cleanup(correlation_id);
@@ -197,7 +197,7 @@ mod tests {
         let response = create_response(correlation_id, 0, true);
 
         // Act
-        inbox.handle_response(response, &mut ctx);
+        inbox.handle_response(&response, &mut ctx);
 
         // Assert
         assert_eq!(inbox.active_streams(), 0); // Cleaned up after stream_end
@@ -213,7 +213,7 @@ mod tests {
         let correlation_id = Uuid::new_v4();
 
         // Act - receive seq 2 before seq 0 and 1
-        inbox.handle_response(create_response(correlation_id, 2, false), &mut ctx);
+        inbox.handle_response(&create_response(correlation_id, 2, false), &mut ctx);
 
         // Assert
         assert_eq!(inbox.active_streams(), 0);
@@ -231,8 +231,8 @@ mod tests {
         let correlation_id = Uuid::new_v4();
 
         // Act
-        inbox.handle_response(create_response(correlation_id, 0, false), &mut ctx);
-        inbox.handle_response(create_response(correlation_id, 2, false), &mut ctx);
+        inbox.handle_response(&create_response(correlation_id, 0, false), &mut ctx);
+        inbox.handle_response(&create_response(correlation_id, 2, false), &mut ctx);
 
         // Assert
         assert_eq!(inbox.active_streams(), 0);
@@ -250,8 +250,8 @@ mod tests {
         let correlation_id = Uuid::new_v4();
 
         // Act - receive seq 0 twice
-        inbox.handle_response(create_response(correlation_id, 0, false), &mut ctx);
-        inbox.handle_response(create_response(correlation_id, 0, false), &mut ctx);
+        inbox.handle_response(&create_response(correlation_id, 0, false), &mut ctx);
+        inbox.handle_response(&create_response(correlation_id, 0, false), &mut ctx);
 
         // Assert
         assert_eq!(inbox.active_streams(), 0);

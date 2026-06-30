@@ -2,7 +2,7 @@
 //!
 //! Responsibilities:
 //! - Enforce session-level authorization for schedule operations
-//! - Validate permissions before forwarding to ScheduleActor
+//! - Validate permissions before forwarding to `ScheduleActor`
 
 use crate::auth::Access;
 use crate::domains::schedule::ScheduleMessage;
@@ -10,7 +10,7 @@ use crate::runtime::routing::Route;
 use crate::session::permissions::SessionPermissions;
 use crate::session::session::SessionId;
 
-/// Lightweight SessionActor helpers for the schedule domain.
+/// Lightweight `SessionActor` helpers for the schedule domain.
 ///
 /// Responsibilities:
 /// - Enforce session-level authorization for schedule operations
@@ -29,7 +29,12 @@ impl SessionActor {
         }
     }
 
-    /// Validate authorization for a schedule operation
+    /// Validate authorization for a schedule operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session lacks the required read or write
+    /// permission for the route.
     pub fn authorize(&self, route: &Route, msg: &ScheduleMessage) -> Result<(), String> {
         match msg {
             ScheduleMessage::Create { .. }

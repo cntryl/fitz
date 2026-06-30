@@ -6,15 +6,15 @@ use crate::utils::storage_key::{self, DomainKeyspace};
 /// Storage key prefixes for stream data
 #[derive(Debug, Clone, Copy)]
 pub enum KeyPrefix {
-    /// Resource stream entry: [RF][realm][area][resource][resource_offset]
+    /// Resource stream entry: [RF][realm][area][resource][`resource_offset`]
     Resource = 0x01,
     /// Area index entry: [RF][realm][area][area_offset]
     Area = 0x02,
-    /// Realm index entry: [RF][realm][realm_offset]
+    /// Realm index entry: [RF][realm][`realm_offset`]
     Realm = 0x03,
     /// Watermark entry: [RF][realm][area]
     Watermark = 0x04,
-    /// Staging entry for active sessions: [session_id][event_index]
+    /// Staging entry for active sessions: [`session_id`][event_index]
     Staging = 0x05,
     /// Offset counter: [RF][realm][area][resource] - stores next offset independent of TTL
     OffsetCounter = 0x06,
@@ -26,21 +26,21 @@ pub enum KeyPrefix {
     AreaCounter = 0x09,
     /// Realm offset counter: [RF][realm]
     RealmCounter = 0x0A,
-    /// Resource discriminator sidecar: [RF][realm][area][resource][resource_offset]
+    /// Resource discriminator sidecar: [RF][realm][area][resource][`resource_offset`]
     ResourceDiscriminator = 0x0F,
     /// Area discriminator sidecar: [RF][realm][area][area_offset]
     AreaDiscriminator = 0x10,
-    /// Realm discriminator sidecar: [RF][realm][realm_offset]
+    /// Realm discriminator sidecar: [RF][realm][`realm_offset`]
     RealmDiscriminator = 0x11,
-    /// Prototype canonical resource row for storage redesign research: [stream_id][resource_offset]
+    /// Prototype canonical resource row for storage redesign research: [`stream_id`][resource_offset]
     CanonicalResource = 0x0B,
     /// Prototype area locator row for storage redesign research: [RF][realm][area][area_offset]
     AreaLocator = 0x0C,
-    /// Prototype realm locator row for storage redesign research: [RF][realm][realm_offset]
+    /// Prototype realm locator row for storage redesign research: [RF][realm][`realm_offset`]
     RealmLocator = 0x0D,
     /// Stream storage layout marker for the route family
     LayoutMarker = 0x0E,
-    /// Promotion-frontier area page row: [realm][area][page_start_area_offset]
+    /// Promotion-frontier area page row: [realm][area][`page_start_area_offset`]
     CompactAreaPage = 0xE4,
     /// Promotion-frontier compressed compact realm page row: [realm][page_start_realm_offset]
     CompressedCompactRealmPage = 0xE8,
@@ -149,7 +149,12 @@ pub fn encode_realm_key(realm: &str, realm_offset: u64) -> Vec<u8> {
     encoder.into_vec()
 }
 
-/// Decode area_offset from area key
+/// Decode `area_offset` from area key.
+///
+/// # Errors
+///
+/// Returns an error if the key is too short to contain the trailing encoded
+/// offset.
 pub fn decode_area_offset_from_key(key: &[u8]) -> Result<u64, String> {
     if key.len() < 8 {
         return Err("key too short".to_string());
@@ -160,7 +165,12 @@ pub fn decode_area_offset_from_key(key: &[u8]) -> Result<u64, String> {
     Ok(u64::from_be_bytes(arr))
 }
 
-/// Decode realm_offset from realm key
+/// Decode `realm_offset` from realm key.
+///
+/// # Errors
+///
+/// Returns an error if the key is too short to contain the trailing encoded
+/// offset.
 pub fn decode_realm_offset_from_key(key: &[u8]) -> Result<u64, String> {
     if key.len() < 8 {
         return Err("key too short".to_string());
@@ -331,7 +341,12 @@ pub fn encode_compact_resource_page_key(
     encoder.into_vec()
 }
 
-/// Decode resource_offset from compact resource page key.
+/// Decode `resource_offset` from compact resource page key.
+///
+/// # Errors
+///
+/// Returns an error if the key is too short to contain the trailing encoded
+/// offset.
 pub fn decode_resource_offset_from_key(key: &[u8]) -> Result<u64, String> {
     if key.len() < 8 {
         return Err("key too short".to_string());

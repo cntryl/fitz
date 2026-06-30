@@ -324,7 +324,7 @@ impl TestServer {
             &router,
             &store,
             &runtime.admin_read_model(),
-            crate::boot::domains::DomainSetupOptions {
+            &crate::boot::domains::DomainSetupOptions {
                 server_write_options,
                 queue_write_options,
                 queue_fast_flush_interval: boot_config.queue_fast_flush_interval(),

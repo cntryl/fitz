@@ -1,12 +1,16 @@
-use super::*;
+use super::{
+    DelayedMessage, Duration, MessageId, QueueActor, QueueState, Reverse, StoredRecordLayout,
+};
 
 impl QueueActor {
+    /// # Errors
+    ///
+    /// Returns an error when the dead-letter replay transaction cannot be persisted.
     pub fn replay_dead_letter(&mut self, id: MessageId) -> Result<bool, String> {
         self.process_due_work();
 
-        let (mut record, record_layout) = match self.load_full_record_for_admin_mutation(id) {
-            Ok(record) => record,
-            Err(_) => return Ok(false),
+        let Ok((mut record, record_layout)) = self.load_full_record_for_admin_mutation(id) else {
+            return Ok(false);
         };
 
         if !matches!(record.state, QueueState::Dlq) {
@@ -53,8 +57,8 @@ impl QueueActor {
             self.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
-                (self.persisted_ready_count + 1) as u64,
-                self.persisted_delayed.len() as u64,
+                Self::usize_to_u64(self.persisted_ready_count + 1),
+                Self::usize_to_u64(self.persisted_delayed.len()),
                 self.min_persisted_delayed_visibility_ms(),
             ),
             None,
@@ -72,6 +76,9 @@ impl QueueActor {
         Ok(true)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the dead-letter purge transaction cannot be persisted.
     pub fn purge_dead_letter(&mut self, id: MessageId) -> Result<bool, String> {
         self.process_due_work();
 
@@ -118,8 +125,8 @@ impl QueueActor {
             self.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
-                self.persisted_ready_count as u64,
-                self.persisted_delayed.len() as u64,
+                Self::usize_to_u64(self.persisted_ready_count),
+                Self::usize_to_u64(self.persisted_delayed.len()),
                 self.min_persisted_delayed_visibility_ms(),
             ),
             None,
@@ -206,8 +213,8 @@ impl QueueActor {
             self.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
-                (self.persisted_ready_count + 1) as u64,
-                staged_delayed_count as u64,
+                Self::usize_to_u64(self.persisted_ready_count + 1),
+                Self::usize_to_u64(staged_delayed_count),
                 staged_next_delayed_visibility,
             ),
             None,
@@ -241,9 +248,11 @@ impl QueueActor {
         true
     }
 
-    /// Handle inflight expiration (internal timer event)
-    /// Process delayed messages that are now visible
-    /// Updates the cached deadline for the next delayed message check
+    /// Process delayed messages that are now visible and update the next delayed deadline.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the delayed heap is internally inconsistent after a successful `peek`.
     pub fn process_delayed_messages(&mut self) {
         let now = self.clock.now_instant();
         let was_empty = self.ready_count == 0;
@@ -258,7 +267,7 @@ impl QueueActor {
             // Pop now-visible message
             let delayed = self.delayed.pop().unwrap().0;
 
-            if !self.promote_delayed_message(delayed.clone()) {
+            if !self.promote_delayed_message(delayed) {
                 self.delayed.push(Reverse(delayed));
                 self.next_delayed_deadline = now + Duration::from_secs(1);
                 break;
@@ -267,7 +276,7 @@ impl QueueActor {
 
         // If no more delayed messages, set deadline to far future
         if self.delayed.is_empty() {
-            self.next_delayed_deadline = now + Duration::from_secs(3600); // 1 hour
+            self.next_delayed_deadline = now + Duration::from_hours(1); // 1 hour
         }
 
         if was_empty && self.ready_count > 0 {

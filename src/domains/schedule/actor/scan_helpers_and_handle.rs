@@ -1,4 +1,9 @@
-use super::model::*;
+#[cfg(test)]
+use super::model::SystemClock;
+use super::model::{
+    epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference, Clock, Duration,
+    Instant, Reverse, ScheduleActor, ScheduleMessage, ScheduleResponse,
+};
 
 impl ScheduleActor {
     #[doc(hidden)]
@@ -7,7 +12,7 @@ impl ScheduleActor {
         let ready_limit = ready_count.min(self.list_entries.len());
         let ready_ms =
             Self::instant_to_ms_at_with_clock(now, now, self.clock.as_ref()).saturating_sub(1);
-        let not_ready_time = now.checked_add(Duration::from_secs(60)).unwrap_or(now);
+        let not_ready_time = now.checked_add(Duration::from_mins(1)).unwrap_or(now);
         let not_ready_ms =
             Self::instant_to_ms_at_with_clock(not_ready_time, now, self.clock.as_ref());
         let routes: Vec<_> = self
@@ -93,7 +98,7 @@ impl ScheduleActor {
                 Ok(_) => ScheduleResponse::Ok,
                 Err(e) => ScheduleResponse::Error(e),
             },
-            ScheduleMessage::Cancel { route } => match self.delete_schedule(route) {
+            ScheduleMessage::Cancel { route } => match self.delete_schedule(&route) {
                 Ok(_) => ScheduleResponse::Ok,
                 Err(e) => ScheduleResponse::Error(e),
             },

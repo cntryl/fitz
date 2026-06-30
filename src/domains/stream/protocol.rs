@@ -11,6 +11,10 @@ use crate::runtime::ClientFrameMeta;
 ///
 /// Expected format: `{scheme}://{realm}/{area}/{resource}/{operation}`
 /// or `/{realm}/{area}/{resource}/{operation}`
+///
+/// # Errors
+///
+/// Returns an error when `route` does not contain exactly four path segments.
 pub fn parse_stream_route(route: &Route) -> Result<(String, String, String, String), String> {
     route_exact_quad(route.as_str())
         .map(|parts| {
@@ -31,11 +35,11 @@ pub fn parse_stream_route(route: &Route) -> Result<(String, String, String, Stri
 /// Maximum size for a single event (body + metadata combined)
 pub const MAX_EVENT_SIZE: usize = 1_048_576; // 1 MB
 
-/// Default lease size when requesting offsets from AreaActor
+/// Default lease size when requesting offsets from `AreaActor`
 /// Optimized for bulk workloads: 10K events amortizes coordination overhead
 pub const DEFAULT_LEASE_SIZE: u64 = 10_000;
 
-/// Default realm lease block size when AreaActor requests from RealmActor
+/// Default realm lease block size when `AreaActor` requests from `RealmActor`
 pub const DEFAULT_REALM_LEASE_BLOCK: u64 = 10_000;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -109,7 +113,7 @@ impl Default for OffsetLease {
 /// A durable event record in a stream
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamRecord {
-    /// Strict order within resource stream (server-assigned by StreamActor, strictly increasing)
+    /// Strict order within resource stream (server-assigned by `StreamActor`, strictly increasing)
     pub resource_offset: u64,
 
     /// Global order within area (server-assigned via leased offsets on commit).
@@ -189,7 +193,7 @@ impl StreamFilterClause {
             }
             Self::AnyOf(values) => {
                 enc.put_u8(3);
-                enc.put_u32(values.len() as u32);
+                enc.put_u32(u32::try_from(values.len()).unwrap_or(u32::MAX));
                 for value in values {
                     enc.put_string(value);
                 }
@@ -238,13 +242,17 @@ impl StreamFilterSet {
         let mut enc = PayloadEncoder::with_capacity(2 + 4 + self.clauses.len() * 8);
         enc.put_u8(Self::VERSION_MARKER[0]);
         enc.put_u8(Self::VERSION_MARKER[1]);
-        enc.put_u32(self.clauses.len() as u32);
+        enc.put_u32(u32::try_from(self.clauses.len()).unwrap_or(u32::MAX));
         for clause in &self.clauses {
             clause.encode_into(&mut enc);
         }
         enc.finish()
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the byte payload is missing the version marker,
+    /// contains malformed clauses, or has trailing bytes.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         let mut dec = PayloadDecoder::new(bytes);
         let marker0 = dec.get_u8()?;
@@ -327,7 +335,7 @@ pub enum StreamMessage {
     },
 
     /// Append event to active session
-    /// Client provides: session_id, expected_offset, body, optional metadata,
+    /// Client provides: `session_id`, `expected_offset`, body, optional metadata,
     /// and an optional immutable discriminator sidecar.
     Append {
         session_id: u64,
@@ -468,31 +476,31 @@ impl StreamClientNotification {
 // INTERNAL MESSAGES (Actor-to-actor communication)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Messages exchanged between AreaActor, RealmActor, and StreamActor for
+/// Messages exchanged between `AreaActor`, `RealmActor`, and `StreamActor` for
 /// offset lease coordination and watermark propagation.
 ///
 /// These are internal to the stream module and must never appear on the
 /// client-facing `StreamMessage` enum or be routed through the public sink.
 #[derive(Debug, Clone)]
 pub enum StreamCoordinationMessage {
-    /// Request paired area+realm offsets from AreaActor (StreamActor -> AreaActor)
+    /// Request paired area+realm offsets from `AreaActor` (`StreamActor` -> `AreaActor`)
     RequestLease {
         realm: String,
         area: String,
         count: u64,
         reply_to: String,
     },
-    /// Lease granted from AreaActor to StreamActor
+    /// Lease granted from `AreaActor` to `StreamActor`
     LeaseGranted { grant: LeaseGranted },
-    /// Request realm offsets from RealmActor (AreaActor -> RealmActor)
+    /// Request realm offsets from `RealmActor` (`AreaActor` -> `RealmActor`)
     RequestRealmLease { count: u64 },
-    /// Batch committed notification from StreamActor to AreaActor
+    /// Batch committed notification from `StreamActor` to `AreaActor`
     BatchCommitted(BatchCommitted),
-    /// Area watermark advanced from AreaActor to RealmActor
+    /// Area watermark advanced from `AreaActor` to `RealmActor`
     AreaWatermarkAdvanced(AreaWatermarkAdvanced),
 }
 
-/// Request lease from AreaActor
+/// Request lease from `AreaActor`
 #[derive(Debug, Clone)]
 pub struct RequestLease {
     pub realm: String,
@@ -501,11 +509,11 @@ pub struct RequestLease {
     pub reply_to: String, // StreamActor ID
 }
 
-/// Lease granted by AreaActor (paired area+realm ranges)
+/// Lease granted by `AreaActor` (paired area+realm ranges)
 ///
 /// **CRITICAL: All ranges are END-EXCLUSIVE**
-/// Valid range: [start, end_exclusive)
-#[derive(Debug, Clone)]
+/// Valid range: [start, `end_exclusive`)
+#[derive(Debug, Clone, Copy)]
 pub struct LeaseGranted {
     pub area_start: u64,
     pub area_end_exclusive: u64,
@@ -520,11 +528,11 @@ pub enum StreamWriteMode {
     Buffered,
     /// Sync: correctness-first, writes are committed synchronously
     Sync,
-    /// CloudStrict: internal broker mode for cloud provider-ack commits
+    /// `CloudStrict`: internal broker mode for cloud provider-ack commits
     CloudStrict,
 }
 
-/// Batch committed notification from StreamActor to AreaActor
+/// Batch committed notification from `StreamActor` to `AreaActor`
 #[derive(Debug, Clone)]
 pub struct BatchCommitted {
     pub first_area_offset: u64,
@@ -533,7 +541,7 @@ pub struct BatchCommitted {
     pub last_realm_offset: u64,
 }
 
-/// Area watermark advanced notification from AreaActor to RealmActor
+/// Area watermark advanced notification from `AreaActor` to `RealmActor`
 #[derive(Debug, Clone)]
 pub struct AreaWatermarkAdvanced {
     pub area: String,
@@ -641,7 +649,7 @@ pub enum StreamResponse {
     ReadOk(ReadResponse),
     /// Response to Last operation
     LastOk(PeekResponse),
-    /// Response to GetMetadata operation
+    /// Response to `GetMetadata` operation
     MetadataOk(GetMetadataResponse),
     /// Error response for any operation
     Error(StreamError),
@@ -660,7 +668,7 @@ pub enum StreamError {
     /// Realm mismatch - operation targets different realm than active session (3001)
     RealmMismatch,
 
-    /// Optimistic concurrency conflict - expected_offset mismatch (2001)
+    /// Optimistic concurrency conflict - `expected_offset` mismatch (2001)
     ConcurrencyConflict,
 
     /// Session already active for this resource (2002)

@@ -38,7 +38,7 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Access level attached to a permission fragment.
-/// Used in permission strings like "notice://realm/area#read"
+/// Used in permission strings like `<notice://realm/area#read>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
     Read,
@@ -68,13 +68,19 @@ impl FromStr for Access {
 /// **Immutant after auth time.** Once issued, permissions are never reinterpreted.
 #[derive(Debug, Clone)]
 pub struct Permission {
-    /// Original permission string, e.g. "notice://prod/orders/**#read" or "notice://**#write"
+    /// Original permission string, e.g. `<notice://prod/orders/**#read>` or
+    /// `<notice://**#write>`.
     pub raw: String,
     pub access: Access,
 }
 
 impl Permission {
     /// Parse from '<route>#<access>' where '#<access>' is optional and defaults to '*'
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the access suffix is present but not one of the
+    /// supported access levels.
     pub fn parse(s: &str) -> Result<Self, String> {
         let raw = s.to_string();
         let (_route_part, access_part) = if let Some(idx) = s.rfind('#') {
@@ -177,6 +183,13 @@ impl AuthConfig {
         Self::Disabled
     }
 
+    /// Validate auth configuration against the current runtime requirements.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when authentication is required but disabled, when an
+    /// HMAC secret or audience set is invalid, or when JWKS issuer or URL
+    /// configuration is incomplete or malformed.
     pub fn validate(&self, auth_required: bool) -> Result<(), String> {
         match self {
             AuthConfig::Disabled => {
@@ -372,6 +385,13 @@ pub fn map_coarse_scope(s: &str) -> Option<&'static str> {
     }
 }
 
+/// Verify a JWT through JWKS and return session permissions plus normalized
+/// claims using the default claims configuration.
+///
+/// # Errors
+///
+/// Returns an error when JWKS retrieval, header parsing, signature
+/// verification, or claim normalization fails.
 pub async fn permissions_from_jwt_using_jwks(
     compact: &str,
     issuer: &JwksIssuerConfig,
@@ -393,6 +413,13 @@ pub async fn permissions_from_jwt_using_jwks(
     Ok((verified.permissions, verified.claims))
 }
 
+/// Verify a JWT through JWKS and return session permissions plus normalized
+/// claims.
+///
+/// # Errors
+///
+/// Returns an error when JWKS retrieval, header parsing, signature
+/// verification, or claim normalization fails.
 pub async fn verified_jwt_using_jwks_with_claims_config(
     compact: &str,
     issuer: &JwksIssuerConfig,
@@ -447,6 +474,11 @@ pub async fn verified_jwt_using_jwks_with_claims_config(
 /// - Tokens with `iss` must verify against issuer-derived JWKS.
 /// - Tokens without `iss` may be accepted only with explicit HMAC auth config.
 /// - There is no permissive no-verify fallback.
+///
+/// # Errors
+///
+/// Returns an error when the configured verification path fails or when claim
+/// normalization rejects the token.
 pub async fn permissions_from_verified_jwt(
     compact: &str,
     auth_config: &AuthConfig,
@@ -462,6 +494,13 @@ pub async fn permissions_from_verified_jwt(
     Ok((verified.permissions, verified.claims))
 }
 
+/// Verify a JWT using the configured auth path and normalize session claims.
+///
+/// # Errors
+///
+/// Returns an error when the token cannot be parsed, the selected auth mode
+/// rejects the issuer or algorithm, signature verification fails, or claim
+/// normalization fails.
 pub async fn verified_jwt_with_claims_config(
     compact: &str,
     auth_config: &AuthConfig,
@@ -498,7 +537,7 @@ pub async fn verified_jwt_with_claims_config(
 }
 
 /// Create default anonymous permissions with full access across all domains.
-/// Used when FITZ_AUTH_REQUIRED=false for development/testing.
+/// Used when `FITZ_AUTH_REQUIRED=false` for development/testing.
 #[must_use]
 pub fn default_anonymous_permissions() -> crate::session::permissions::SessionPermissions {
     let perms = vec![

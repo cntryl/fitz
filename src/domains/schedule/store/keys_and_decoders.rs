@@ -1,6 +1,16 @@
-use super::model::*;
+use super::model::{
+    parse_concrete_schedule_route, storage_key, Arc, Bytes, DecodedDefinitionRow, DomainKeyspace,
+    Encoder, LexKey, ScheduleDefinitionData, ScheduleRows, ScheduleStore, BODY_PREFIX,
+    BODY_VALUE_VERSION_V1, DEFINITION_PREFIX, DEFINITION_VALUE_VERSION_V1,
+    DEFINITION_VALUE_VERSION_V2, DEFINITION_VALUE_VERSION_V3, DUE_PREFIX, LEGACY_PREFIX,
+    PENDING_FIRE_PREFIX, PENDING_FIRE_VALUE_VERSION_V1, PENDING_FIRE_VALUE_VERSION_V2,
+};
 
 impl ScheduleStore {
+    fn usize_to_u32_saturating(value: usize) -> u32 {
+        u32::try_from(value).unwrap_or(u32::MAX)
+    }
+
     pub fn new(db: Arc<cntryl_midge::Engine>) -> Self {
         Self::new_with_storage(crate::storage::FitzStorageEngine::new(db))
     }
@@ -300,9 +310,9 @@ impl ScheduleStore {
     pub(super) fn encode_definition_body_value(cron: &str, payload: &Bytes) -> Vec<u8> {
         let mut value = Vec::with_capacity(1 + 4 + cron.len() + 4 + payload.len());
         value.push(BODY_VALUE_VERSION_V1);
-        value.extend_from_slice(&(cron.len() as u32).to_be_bytes());
+        value.extend_from_slice(&Self::usize_to_u32_saturating(cron.len()).to_be_bytes());
         value.extend_from_slice(cron.as_bytes());
-        value.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        value.extend_from_slice(&Self::usize_to_u32_saturating(payload.len()).to_be_bytes());
         value.extend_from_slice(payload);
         value
     }

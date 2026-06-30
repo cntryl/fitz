@@ -1,6 +1,14 @@
-use super::model::*;
+use super::model::{
+    parse_concrete_schedule_route, ScheduleBatchInsert, ScheduleDefinitionData, ScheduleFireClaim,
+    ScheduleInsert, SchedulePendingFireClaimAck, ScheduleStore, WriteOptions, BODY_PREFIX,
+    DEFINITION_PREFIX, DUE_PREFIX, PENDING_FIRE_PREFIX,
+};
 
 impl ScheduleStore {
+    /// # Errors
+    ///
+    /// Returns an error when the route cannot be parsed, any write fails, or
+    /// the transaction commit fails.
     pub fn insert(
         &self,
         cf_id: u64,
@@ -14,10 +22,11 @@ impl ScheduleStore {
             schedule.route,
             DUE_PREFIX,
         );
+        let cf_id_u32 = Self::u64_to_u32_saturating(cf_id)?;
 
         let mut txn = self
             .db
-            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         Self::put_schedule_definition(
@@ -51,6 +60,10 @@ impl ScheduleStore {
         Ok(due_key)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when any route cannot be parsed, any write fails, or
+    /// the transaction commit fails.
     pub fn insert_batch(
         &self,
         cf_id: u64,
@@ -60,10 +73,11 @@ impl ScheduleStore {
         if items.is_empty() {
             return Ok(());
         }
+        let cf_id_u32 = Self::u64_to_u32_saturating(cf_id)?;
 
         let mut txn = self
             .db
-            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         for item in items {
@@ -96,6 +110,10 @@ impl ScheduleStore {
         self.commit_or_inject(txn, write_options)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when any claimed route cannot be parsed, any write
+    /// fails, or the transaction commit fails.
     pub fn claim_due_batch(
         &self,
         cf_id: u64,
@@ -105,10 +123,11 @@ impl ScheduleStore {
         if items.is_empty() {
             return Ok(());
         }
+        let cf_id_u32 = Self::u64_to_u32_saturating(cf_id)?;
 
         let mut txn = self
             .db
-            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         for item in items {
@@ -147,6 +166,10 @@ impl ScheduleStore {
         self.commit_or_inject(txn, write_options)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when any pending-claim route cannot be parsed, any
+    /// write fails, or the transaction commit fails.
     pub fn ack_pending_fire_claims(
         &self,
         cf_id: u64,
@@ -156,10 +179,11 @@ impl ScheduleStore {
         if items.is_empty() {
             return Ok(());
         }
+        let cf_id_u32 = Self::u64_to_u32_saturating(cf_id)?;
 
         let mut txn = self
             .db
-            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         for item in items {
@@ -189,6 +213,10 @@ impl ScheduleStore {
         self.commit_or_inject(txn, write_options)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the route cannot be parsed or the delete/commit
+    /// operation fails.
     pub fn delete_current(
         &self,
         cf_id: u64,
@@ -208,9 +236,10 @@ impl ScheduleStore {
         next_fire_ms: u64,
         write_options: WriteOptions,
     ) -> Result<(), String> {
+        let cf_id_u32 = Self::u64_to_u32_saturating(cf_id)?;
         let mut txn = self
             .db
-            .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         txn.delete(Self::encode_prefixed_route_key_from_realm(

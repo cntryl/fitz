@@ -4,12 +4,16 @@ use std::time::Instant;
 ///
 /// Provides helpers for:
 /// - Creating spans with automatic context linking
-/// - Linking MessageId causation to span relationships
+/// - Linking `MessageId` causation to span relationships
 /// - Recording attributes with automatic formatting
 ///
 /// Safe for use in both async and sync code.
 use tracing::Span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
 
 /// Guard for measuring operation latency and recording to tracing span.
 /// Automatically records the duration when dropped.
@@ -41,13 +45,13 @@ impl LatencyGuard {
     /// Get the elapsed time in milliseconds.
     #[must_use]
     pub fn elapsed_ms(&self) -> u64 {
-        self.start.elapsed().as_millis() as u64
+        u128_to_u64_saturating(self.start.elapsed().as_millis())
     }
 
     /// Get the elapsed time in microseconds.
     #[must_use]
     pub fn elapsed_us(&self) -> u64 {
-        self.start.elapsed().as_micros() as u64
+        u128_to_u64_saturating(self.start.elapsed().as_micros())
     }
 }
 
@@ -70,7 +74,7 @@ pub fn record_error(span: &Span, error_kind: &'static str, error_message: &str) 
 
 impl Drop for LatencyGuard {
     fn drop(&mut self) {
-        let elapsed_ms = self.start.elapsed().as_millis() as u64;
+        let elapsed_ms = u128_to_u64_saturating(self.start.elapsed().as_millis());
         self.span.record("latency_ms", elapsed_ms);
 
         if let Some(_metric_name) = &self.metric_name {

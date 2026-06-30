@@ -14,6 +14,11 @@ struct CgroupMemoryLimit {
 }
 
 /// Reject known-impossible container memory limits before heavier broker startup.
+///
+/// # Errors
+///
+/// Returns an error when the configured minimum memory limit cannot be parsed
+/// or when the detected cgroup memory limit is below that minimum.
 pub fn enforce_startup_resource_limits() -> BootResult<()> {
     let minimum = minimum_memory_limit_bytes_from_env()?;
     if minimum == 0 {

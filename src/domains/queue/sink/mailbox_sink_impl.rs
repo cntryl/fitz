@@ -1,4 +1,43 @@
-use super::model::*;
+use super::model::{
+    obs, DeliveryError, Envelope, Instant, MailboxSink, Ordering, QueueClientFrame,
+    QueueClientRequest, QueueDomainSink, QueueReadyNotification, QueueSubscription,
+    QueueSubscriptionMessage, RoutedSubscriptionSet,
+};
+#[cfg(test)]
+use crate::protocol::frame_context::FrameContext;
+use crate::runtime::routing::RouteFamily;
+
+type ReadyNotificationEvent = (crate::domains::queue::QueueKey, QueueReadyNotification);
+
+#[derive(Clone, Copy)]
+struct OperationRequestContext<'a> {
+    envelope: &'a Envelope,
+    meta: crate::runtime::ClientFrameMeta,
+    request_started: Option<Instant>,
+}
+
+struct OperationOutcome {
+    response: crate::domains::queue::QueueResponse,
+    ready_notification: Option<ReadyNotificationEvent>,
+    mark_admin_snapshot_dirty: bool,
+}
+
+#[derive(Clone, Copy)]
+struct ExtendOperation {
+    session_id: u64,
+    id: crate::domains::queue::MessageId,
+    token: u64,
+    inflight_seconds: u64,
+}
+
+#[derive(Clone, Copy)]
+enum QueueOpKind {
+    Send,
+    Receive,
+    Extend,
+    Ack,
+    InflightExpired,
+}
 
 impl MailboxSink for QueueDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
@@ -6,9 +45,9 @@ impl MailboxSink for QueueDomainSink {
             return Ok(());
         }
         self.ensure_active()?;
-        self.log_delivery(&envelope);
+        Self::log_delivery(&envelope);
 
-        let Some(request) = self.extract_request(&envelope)? else {
+        let Some(request) = Self::extract_request(&envelope)? else {
             return Ok(());
         };
         let meta = request.meta;
@@ -16,7 +55,7 @@ impl MailboxSink for QueueDomainSink {
         let request_started = self.record_request_start();
 
         let Some(parsed_frame) =
-            self.parse_request_frame(&envelope, meta, request.frame, request_started)?
+            self.parse_request_frame(&envelope, meta, request.frame, request_started)
         else {
             return Ok(());
         };
@@ -25,15 +64,19 @@ impl MailboxSink for QueueDomainSink {
 
         match parsed_frame {
             QueueClientFrame::Sub(sub_msg) => {
-                self.handle_subscription_frame(&envelope, meta, request_started, sub_msg)
+                self.handle_subscription_frame(&envelope, meta, request_started, sub_msg);
+                Ok(())
             }
-            QueueClientFrame::Op(queue_msg) => self.handle_actor_operation_frame(
-                &envelope,
-                meta,
-                request_started,
-                route_family,
-                queue_msg,
-            ),
+            QueueClientFrame::Op(queue_msg) => {
+                self.handle_actor_operation_frame(
+                    &envelope,
+                    meta,
+                    request_started,
+                    route_family,
+                    queue_msg,
+                );
+                Ok(())
+            }
         }
     }
 
@@ -60,7 +103,7 @@ impl QueueDomainSink {
         Ok(())
     }
 
-    fn log_delivery(&self, envelope: &Envelope) {
+    fn log_delivery(envelope: &Envelope) {
         tracing::debug!(
             domain = "queue",
             destination = %envelope.destination(),
@@ -69,26 +112,22 @@ impl QueueDomainSink {
         );
     }
 
-    fn extract_request(
-        &self,
-        envelope: &Envelope,
-    ) -> Result<Option<QueueClientRequest>, DeliveryError> {
-        match Self::request_from_envelope(envelope) {
-            Some(request) => Ok(Some(request)),
-            None => {
-                tracing::warn!(
-                    domain = "queue",
-                    "Envelope payload was not QueueClientRequest"
-                );
-                Err(DeliveryError::ActorStopped)
-            }
+    fn extract_request(envelope: &Envelope) -> Result<Option<QueueClientRequest>, DeliveryError> {
+        if let Some(request) = Self::request_from_envelope(envelope) {
+            return Ok(Some(request));
         }
+
+        tracing::warn!(
+            domain = "queue",
+            "Envelope payload was not QueueClientRequest"
+        );
+        Err(DeliveryError::ActorStopped)
     }
 
     fn record_request_start(&self) -> Option<Instant> {
         self.metrics
             .as_ref()
-            .map(|metrics| metrics.record_request_start())
+            .map(crate::domains::queue::QueueMetrics::record_request_start)
     }
 
     fn parse_request_frame(
@@ -97,7 +136,7 @@ impl QueueDomainSink {
         meta: crate::runtime::ClientFrameMeta,
         frame: Result<QueueClientFrame, String>,
         request_started: Option<Instant>,
-    ) -> Result<Option<QueueClientFrame>, DeliveryError> {
+    ) -> Option<QueueClientFrame> {
         let parsed_frame = match frame {
             Ok(frame) => frame,
             Err(reason) => {
@@ -107,7 +146,7 @@ impl QueueDomainSink {
                 {
                     metrics.record_failure(started_at);
                 }
-                return Ok(None);
+                return None;
             }
         };
 
@@ -118,7 +157,7 @@ impl QueueDomainSink {
             "Parsed Queue message successfully"
         );
 
-        Ok(Some(parsed_frame))
+        Some(parsed_frame)
     }
 
     fn handle_subscription_frame(
@@ -127,7 +166,7 @@ impl QueueDomainSink {
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<Instant>,
         sub_msg: QueueSubscriptionMessage,
-    ) -> Result<(), DeliveryError> {
+    ) {
         let (response, initial_watch_snapshot) = match sub_msg {
             QueueSubscriptionMessage::Watch {
                 family_id,
@@ -205,14 +244,7 @@ impl QueueDomainSink {
             );
         }
 
-        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
-            if Self::queue_response_is_failure(&response) {
-                metrics.record_failure(started_at);
-            } else {
-                metrics.record_success(started_at);
-            }
-        }
-        Ok(())
+        self.record_operation_metrics(request_started, &response, QueueOpKind::InflightExpired);
     }
 
     fn handle_actor_operation_frame(
@@ -220,248 +252,313 @@ impl QueueDomainSink {
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<Instant>,
-        route_family: crate::runtime::routing::RouteFamily,
+        route_family: RouteFamily,
         queue_msg: crate::domains::queue::protocol::QueueMessage,
-    ) -> Result<(), DeliveryError> {
-        use crate::domains::queue::protocol::QueueMessage;
-
-        // Capture the operation kind before the consuming match for operation-specific metrics.
-        #[derive(Clone, Copy)]
-        enum QueueOpKind {
-            Send,
-            Receive,
-            Extend,
-            Ack,
-            Other,
-        }
-        let op_kind = match &queue_msg {
-            QueueMessage::Send { .. } => QueueOpKind::Send,
-            QueueMessage::Receive { .. } => QueueOpKind::Receive,
-            QueueMessage::Extend { .. } => QueueOpKind::Extend,
-            QueueMessage::Ack { .. } => QueueOpKind::Ack,
-            _ => QueueOpKind::Other,
+    ) {
+        let request_context = OperationRequestContext {
+            envelope,
+            meta,
+            request_started,
         };
-
-        let (response, ready_notification, should_mark_admin_snapshot_dirty) = match queue_msg {
-            QueueMessage::Send {
+        let op_kind = Self::classify_operation(&queue_msg);
+        let outcome = match queue_msg {
+            crate::domains::queue::protocol::QueueMessage::Send {
                 family_id,
                 route,
                 body,
                 delay_seconds,
-            } => match Self::queue_key_for_route(family_id, &route) {
-                Ok(key) => {
-                    let notification_key = key.clone();
-                    let actor_lock_start = Instant::now();
-                    let (actor_handle, created_actor) = match self.get_or_create_actor(key) {
-                        Ok(actor) => actor,
-                        Err(message) => {
-                            return self.route_queue_recovery_error(
-                                envelope,
-                                meta,
-                                request_started,
-                                message,
-                            );
-                        }
-                    };
-                    self.observe_histogram_us(
-                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-                        actor_lock_start.elapsed().as_micros() as u64,
-                    );
-                    let mut actor = actor_handle.lock();
-                    let actor_exec_start = Instant::now();
-                    actor.process_due_work();
-                    let resp = actor.handle_send(body, delay_seconds);
-                    let notification =
-                        self.record_ready_state(&notification_key, actor.admin_snapshot());
-                    self.observe_histogram_us(
-                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-                        actor_exec_start.elapsed().as_micros() as u64,
-                    );
-                    let _ = created_actor;
-                    (
-                        resp,
-                        notification.map(|event| (notification_key.clone(), event)),
-                        true,
-                    )
-                }
-                Err(response) => (response, None, false),
+            } => match self.handle_enqueue_operation(
+                family_id,
+                &route,
+                body,
+                delay_seconds,
+                request_context,
+            ) {
+                Some(outcome) => outcome,
+                None => return,
             },
-            QueueMessage::Receive {
+            crate::domains::queue::protocol::QueueMessage::Receive {
                 family_id,
                 route,
                 inflight_seconds,
                 batch_size,
-            } => match Self::queue_key_for_route(family_id, &route) {
-                Ok(key) => {
-                    let notification_key = key.clone();
-                    let actor_lock_start = Instant::now();
-                    let (actor_handle, created_actor) = match self.get_or_create_actor(key) {
-                        Ok(actor) => actor,
-                        Err(message) => {
-                            return self.route_queue_recovery_error(
-                                envelope,
-                                meta,
-                                request_started,
-                                message,
-                            );
-                        }
-                    };
-                    self.observe_histogram_us(
-                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-                        actor_lock_start.elapsed().as_micros() as u64,
-                    );
-                    let mut actor = actor_handle.lock();
-                    let actor_exec_start = Instant::now();
-                    actor.process_due_work();
-                    let response = actor.handle_receive_for_session(
-                        meta.session_id,
-                        inflight_seconds,
-                        batch_size,
-                    );
-                    let notification =
-                        self.record_ready_state(&notification_key, actor.admin_snapshot());
-                    self.observe_histogram_us(
-                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-                        actor_exec_start.elapsed().as_micros() as u64,
-                    );
-                    let _ = created_actor;
-
-                    (
-                        response,
-                        notification.map(|event| (notification_key.clone(), event)),
-                        true,
-                    )
-                }
-                Err(response) => (response, None, false),
+            } => match self.handle_receive_operation(
+                family_id,
+                &route,
+                meta.session_id,
+                inflight_seconds,
+                batch_size,
+                request_context,
+            ) {
+                Some(outcome) => outcome,
+                None => return,
             },
-            QueueMessage::Extend {
+            crate::domains::queue::protocol::QueueMessage::Extend {
                 family_id,
                 route,
                 id,
                 token,
                 inflight_seconds,
-            } => match Self::queue_key_for_route(family_id, &route) {
-                Ok(key) => {
-                    let notification_key = key.clone();
-                    let actor_lock_start = Instant::now();
-                    let (actor_handle, created_actor) = match self.get_or_create_actor(key) {
-                        Ok(actor) => actor,
-                        Err(message) => {
-                            return self.route_queue_recovery_error(
-                                envelope,
-                                meta,
-                                request_started,
-                                message,
-                            );
-                        }
-                    };
-                    self.observe_histogram_us(
-                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-                        actor_lock_start.elapsed().as_micros() as u64,
-                    );
-                    let mut actor = actor_handle.lock();
-                    let actor_exec_start = Instant::now();
-                    actor.process_due_work();
-                    let response = actor.handle_extend_for_session(
-                        meta.session_id,
-                        id,
-                        token,
-                        inflight_seconds,
-                    );
-                    let notification =
-                        self.record_ready_state(&notification_key, actor.admin_snapshot());
-                    self.observe_histogram_us(
-                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-                        actor_exec_start.elapsed().as_micros() as u64,
-                    );
-                    let _ = created_actor;
-                    (
-                        response,
-                        notification.map(|event| (notification_key.clone(), event)),
-                        true,
-                    )
-                }
-                Err(response) => (response, None, false),
+            } => match self.handle_extend_operation(
+                family_id,
+                &route,
+                ExtendOperation {
+                    session_id: meta.session_id,
+                    id,
+                    token,
+                    inflight_seconds,
+                },
+                request_context,
+            ) {
+                Some(outcome) => outcome,
+                None => return,
             },
-            QueueMessage::Ack {
+            crate::domains::queue::protocol::QueueMessage::Ack {
                 family_id,
                 route,
                 id,
                 token,
-            } => match Self::queue_key_for_route(family_id, &route) {
-                Ok(key) => {
-                    let notification_key = key.clone();
-                    let actor_lock_start = Instant::now();
-                    let (actor_handle, created_actor) = match self.get_or_create_actor(key) {
-                        Ok(actor) => actor,
-                        Err(message) => {
-                            return self.route_queue_recovery_error(
-                                envelope,
-                                meta,
-                                request_started,
-                                message,
-                            );
-                        }
-                    };
-                    self.observe_histogram_us(
-                        obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-                        actor_lock_start.elapsed().as_micros() as u64,
-                    );
-                    let mut actor = actor_handle.lock();
-                    let actor_exec_start = Instant::now();
-                    actor.process_due_work();
-                    let response = actor.handle_ack_for_session(meta.session_id, id, token);
-                    let notification =
-                        self.record_ready_state(&notification_key, actor.admin_snapshot());
-                    self.observe_histogram_us(
-                        obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-                        actor_exec_start.elapsed().as_micros() as u64,
-                    );
-                    let _ = created_actor;
-                    (
-                        response,
-                        notification.map(|event| (notification_key.clone(), event)),
-                        true,
-                    )
-                }
-                Err(response) => (response, None, false),
+            } => match self.handle_ack_operation(
+                family_id,
+                &route,
+                meta.session_id,
+                id,
+                token,
+                request_context,
+            ) {
+                Some(outcome) => outcome,
+                None => return,
             },
-            QueueMessage::InflightExpired { .. } => (
-                crate::domains::queue::QueueResponse::Error {
-                    message: "InflightExpired is an internal message".to_string(),
-                },
-                None,
-                false,
-            ),
+            crate::domains::queue::protocol::QueueMessage::InflightExpired { .. } => {
+                OperationOutcome {
+                    response: crate::domains::queue::QueueResponse::Error {
+                        message: "InflightExpired is an internal message".to_string(),
+                    },
+                    ready_notification: None,
+                    mark_admin_snapshot_dirty: false,
+                }
+            }
         };
-        if should_mark_admin_snapshot_dirty {
+
+        if outcome.mark_admin_snapshot_dirty {
             self.mark_admin_snapshot_dirty();
             self.mark_fast_flush_dirty(route_family);
         }
 
-        if let Some((key, notification)) = ready_notification {
+        if let Some((key, notification)) = outcome.ready_notification {
             self.route_queue_ready_notification(&key, notification);
         }
 
-        self.route_queue_response(envelope, meta, &response);
+        self.route_queue_response(envelope, meta, &outcome.response);
+        self.record_operation_metrics(request_started, &outcome.response, op_kind);
+    }
 
-        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
-            if Self::queue_response_is_failure(&response) {
-                metrics.record_failure(started_at);
-            } else {
-                metrics.record_success(started_at);
-                match op_kind {
-                    QueueOpKind::Send => metrics.record_enqueue(started_at),
-                    QueueOpKind::Receive => metrics.record_reserve(started_at),
-                    QueueOpKind::Ack => metrics.record_complete(),
-                    QueueOpKind::Extend => metrics.record_extend(),
-                    QueueOpKind::Other => {}
-                }
+    fn handle_enqueue_operation(
+        &self,
+        family_id: RouteFamily,
+        route: &crate::runtime::routing::Route,
+        body: bytes::Bytes,
+        delay_seconds: Option<u64>,
+        request_context: OperationRequestContext<'_>,
+    ) -> Option<OperationOutcome> {
+        let key = match Self::queue_key_for_route(family_id, route) {
+            Ok(key) => key,
+            Err(response) => {
+                return Some(OperationOutcome {
+                    response,
+                    ready_notification: None,
+                    mark_admin_snapshot_dirty: false,
+                });
+            }
+        };
+
+        self.with_actor_for_operation(&key, request_context, |actor| {
+            actor.handle_send(body, delay_seconds)
+        })
+        .map(|(response, notification)| OperationOutcome {
+            response,
+            ready_notification: notification,
+            mark_admin_snapshot_dirty: true,
+        })
+    }
+
+    fn handle_receive_operation(
+        &self,
+        family_id: RouteFamily,
+        route: &crate::runtime::routing::Route,
+        session_id: u64,
+        inflight_seconds: u64,
+        batch_size: Option<usize>,
+        request_context: OperationRequestContext<'_>,
+    ) -> Option<OperationOutcome> {
+        let key = match Self::queue_key_for_route(family_id, route) {
+            Ok(key) => key,
+            Err(response) => {
+                return Some(OperationOutcome {
+                    response,
+                    ready_notification: None,
+                    mark_admin_snapshot_dirty: false,
+                });
+            }
+        };
+
+        self.with_actor_for_operation(&key, request_context, |actor| {
+            actor.handle_receive_for_session(session_id, inflight_seconds, batch_size)
+        })
+        .map(|(response, notification)| OperationOutcome {
+            response,
+            ready_notification: notification,
+            mark_admin_snapshot_dirty: true,
+        })
+    }
+
+    fn handle_extend_operation(
+        &self,
+        family_id: RouteFamily,
+        route: &crate::runtime::routing::Route,
+        extend: ExtendOperation,
+        request_context: OperationRequestContext<'_>,
+    ) -> Option<OperationOutcome> {
+        let key = match Self::queue_key_for_route(family_id, route) {
+            Ok(key) => key,
+            Err(response) => {
+                return Some(OperationOutcome {
+                    response,
+                    ready_notification: None,
+                    mark_admin_snapshot_dirty: false,
+                });
+            }
+        };
+
+        self.with_actor_for_operation(&key, request_context, |actor| {
+            actor.handle_extend_for_session(
+                extend.session_id,
+                extend.id,
+                extend.token,
+                extend.inflight_seconds,
+            )
+        })
+        .map(|(response, notification)| OperationOutcome {
+            response,
+            ready_notification: notification,
+            mark_admin_snapshot_dirty: true,
+        })
+    }
+
+    fn handle_ack_operation(
+        &self,
+        family_id: RouteFamily,
+        route: &crate::runtime::routing::Route,
+        session_id: u64,
+        id: crate::domains::queue::MessageId,
+        token: u64,
+        request_context: OperationRequestContext<'_>,
+    ) -> Option<OperationOutcome> {
+        let key = match Self::queue_key_for_route(family_id, route) {
+            Ok(key) => key,
+            Err(response) => {
+                return Some(OperationOutcome {
+                    response,
+                    ready_notification: None,
+                    mark_admin_snapshot_dirty: false,
+                });
+            }
+        };
+
+        self.with_actor_for_operation(&key, request_context, |actor| {
+            actor.handle_ack_for_session(session_id, id, token)
+        })
+        .map(|(response, notification)| OperationOutcome {
+            response,
+            ready_notification: notification,
+            mark_admin_snapshot_dirty: true,
+        })
+    }
+
+    fn with_actor_for_operation<F>(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+        request_context: OperationRequestContext<'_>,
+        operation: F,
+    ) -> Option<(
+        crate::domains::queue::QueueResponse,
+        Option<ReadyNotificationEvent>,
+    )>
+    where
+        F: FnOnce(&mut crate::domains::queue::QueueActor) -> crate::domains::queue::QueueResponse,
+    {
+        let actor_lock_start = Instant::now();
+        let (actor_handle, _) = match self.get_or_create_actor(key.clone()) {
+            Ok(actor) => actor,
+            Err(message) => {
+                self.route_queue_recovery_error(
+                    request_context.envelope,
+                    request_context.meta,
+                    request_context.request_started,
+                    message,
+                );
+                return None;
+            }
+        };
+        self.observe_histogram_us(
+            obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
+            Self::u128_to_u64_saturating(actor_lock_start.elapsed().as_micros()),
+        );
+
+        let mut actor = actor_handle.lock();
+        let actor_exec_start = Instant::now();
+        actor.process_due_work();
+        let response = operation(&mut actor);
+        let notification = self.record_ready_state(key, actor.admin_snapshot());
+        self.observe_histogram_us(
+            obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
+            Self::u128_to_u64_saturating(actor_exec_start.elapsed().as_micros()),
+        );
+
+        Some((response, notification.map(|event| (key.clone(), event))))
+    }
+
+    fn classify_operation(
+        queue_msg: &crate::domains::queue::protocol::QueueMessage,
+    ) -> QueueOpKind {
+        match queue_msg {
+            crate::domains::queue::protocol::QueueMessage::Send { .. } => QueueOpKind::Send,
+            crate::domains::queue::protocol::QueueMessage::Receive { .. } => QueueOpKind::Receive,
+            crate::domains::queue::protocol::QueueMessage::Extend { .. } => QueueOpKind::Extend,
+            crate::domains::queue::protocol::QueueMessage::Ack { .. } => QueueOpKind::Ack,
+            crate::domains::queue::protocol::QueueMessage::InflightExpired { .. } => {
+                QueueOpKind::InflightExpired
             }
         }
-
-        Ok(())
     }
+
+    fn record_operation_metrics(
+        &self,
+        request_started: Option<Instant>,
+        response: &crate::domains::queue::QueueResponse,
+        op_kind: QueueOpKind,
+    ) {
+        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            if Self::queue_response_is_failure(response) {
+                metrics.record_failure(started_at);
+                return;
+            }
+
+            metrics.record_success(started_at);
+            match op_kind {
+                QueueOpKind::Send => metrics.record_enqueue(started_at),
+                QueueOpKind::Receive => metrics.record_reserve(started_at),
+                QueueOpKind::Ack => metrics.record_complete(),
+                QueueOpKind::Extend => metrics.record_extend(),
+                QueueOpKind::InflightExpired => {}
+            }
+        }
+    }
+
+    fn u128_to_u64_saturating(value: u128) -> u64 {
+        value.try_into().unwrap_or(u64::MAX)
+    }
+
     fn request_from_envelope(envelope: &Envelope) -> Option<QueueClientRequest> {
         if let Some(request) = envelope.payload::<QueueClientRequest>() {
             return Some(request.clone());

@@ -90,11 +90,16 @@ pub struct DomainSetupOptions {
 }
 
 /// Set up all 7 domain actors and register them with the router.
+///
+/// # Errors
+///
+/// Returns an error when any domain sink initialization fails or when schedule
+/// preload cannot restore persisted schedule families.
 pub fn setup(
     router: &StdArc<Router>,
     store: &StdArc<cntryl_midge::Engine>,
     admin_read_model: &Arc<crate::control::admin::read_model::AdminReadModel>,
-    options: DomainSetupOptions,
+    options: &DomainSetupOptions,
 ) -> BootResult<DomainHandles> {
     let metrics = (*crate::observability::metrics()).clone();
     let storage = crate::storage::FitzStorageEngine::new(store.clone());
@@ -288,7 +293,7 @@ mod tests {
             &router,
             &store,
             &admin_read_model,
-            DomainSetupOptions {
+            &DomainSetupOptions {
                 server_write_options: cntryl_midge::WriteOptions::best_effort(),
                 queue_write_options: cntryl_midge::WriteOptions::best_effort(),
                 queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
@@ -314,7 +319,7 @@ mod tests {
             &router,
             &store,
             &admin_read_model,
-            DomainSetupOptions {
+            &DomainSetupOptions {
                 server_write_options: cntryl_midge::WriteOptions::best_effort(),
                 queue_write_options: cntryl_midge::WriteOptions::best_effort(),
                 queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),

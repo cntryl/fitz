@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    decode_cached_response, encode_cached_response, obs, Duration, Inflight, InflightExpiry,
+    MessageId, PersistedIndexMutationPlan, QueueActor, QueueResponse, ReservedMessage, Reverse,
+    StoredRecordLayout,
+};
+use crate::utils::idempotency::{DedupIdentifier, DedupKey, Domain};
 
 impl QueueActor {
     pub fn handle_receive_for_session(
@@ -29,9 +34,8 @@ impl QueueActor {
         let mut messages = Vec::with_capacity(self.ready.len().min(batch_size));
 
         for _ in 0..batch_size {
-            let id = match self.ready.front().map(|entry| entry.id) {
-                Some(id) => id,
-                None => break, // No more messages
+            let Some(id) = self.ready.front().map(|entry| entry.id) else {
+                break;
             };
 
             let (body, attempts) = match self.hydrate_record_for_receive(id) {
@@ -48,9 +52,8 @@ impl QueueActor {
                 }
             };
 
-            let id = match self.pop_ready() {
-                Some(id) => id,
-                None => break,
+            let Some(id) = self.pop_ready() else {
+                break;
             };
             self.evict_cached_body(id);
 
@@ -127,8 +130,7 @@ impl QueueActor {
             Some(inflight) if inflight.owner_session_id == Some(session_id) => {
                 self.handle_extend_authorized(id, token, inflight_seconds)
             }
-            Some(_) => QueueResponse::NotFound,
-            None => QueueResponse::NotFound,
+            Some(_) | None => QueueResponse::NotFound,
         }
     }
 
@@ -142,9 +144,8 @@ impl QueueActor {
         let now_epoch_ms = self.clock.now_epoch_ms();
 
         // Check if message is inflight
-        let inflight = match self.inflight.get_mut(&id) {
-            Some(inflight) => inflight,
-            None => return QueueResponse::NotFound,
+        let Some(inflight) = self.inflight.get_mut(&id) else {
+            return QueueResponse::NotFound;
         };
 
         // Validate token
@@ -216,23 +217,8 @@ impl QueueActor {
         id: MessageId,
         token: u64,
     ) -> QueueResponse {
-        use crate::utils::idempotency::{DedupIdentifier, DedupKey, Domain};
-
-        let now = self.clock.now_instant();
-
         // Check deduplication store first (prevents re-processing completed operations)
-        let dedup_key = DedupKey {
-            realm: self.queue_key.realm.clone(),
-            domain: Domain::Queue,
-            identifier: DedupIdentifier::QueueComplete {
-                family: self.queue_key.family.as_u64(),
-                area: self.queue_key.area.clone(),
-                resource: self.queue_key.resource.clone(),
-                owner_session_id,
-                message_id: id.as_u64(),
-                token,
-            },
-        };
+        let dedup_key = self.ack_response_dedup_key(owner_session_id, id, token);
 
         if let Some(cached_response) = self.dedup_store.get(&dedup_key) {
             tracing::debug!(
@@ -257,109 +243,128 @@ impl QueueActor {
             }
         }
 
-        // Check if message is inflight
-        let inflight = match self.inflight.get(&id) {
-            Some(inflight) => inflight.clone(),
-            None => {
-                let response = QueueResponse::NotFound;
-                // Cache negative response (prevents retries from hitting storage)
-                if let Some(bytes) = encode_cached_response(&response) {
-                    self.dedup_store.record(dedup_key, bytes);
-                }
-                return response;
-            }
+        let now = self.clock.now_instant();
+        let Some(inflight) = self.load_inflight_for_ack(id, &dedup_key) else {
+            return QueueResponse::NotFound;
         };
 
         // Validate token
         if inflight.token != token {
             Self::increment_counter(obs::METRIC_QUEUE_COMPLETE_REJECTED);
-            let response = QueueResponse::InvalidToken;
             // Don't cache invalid token - security: wrong token should fail every time
-            return response;
+            return QueueResponse::InvalidToken;
         }
 
         // Check if already expired
         if inflight.expires_at <= now {
             self.handle_inflight_expired(id);
             Self::increment_counter(obs::METRIC_QUEUE_COMPLETE_REJECTED);
-            let response = QueueResponse::InflightExpired;
-            return response;
+            return QueueResponse::InflightExpired;
         }
 
-        let (stored_layout, _record_visible_at_ms) = if let Some(record) = self.records.get(&id) {
-            (
-                self.record_layouts
-                    .get(&id)
-                    .copied()
-                    .unwrap_or(StoredRecordLayout::EmbeddedHeader),
-                record.visible_at_ms,
-            )
-        } else {
-            match self.load_record_metadata_from_store(id) {
-                Ok((record, layout)) => (layout, record.visible_at_ms),
-                Err(_) => (StoredRecordLayout::EmbeddedHeader, 0),
-            }
-        };
+        let stored_layout = self.load_stored_layout_for_ack(id);
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
+        if let Err(message) = self.commit_ack_delete(id, stored_layout, index_plan) {
+            return QueueResponse::Error { message };
+        }
 
-        let cf_id = self.queue_key.family.id();
+        self.finish_ack_success(id, dedup_key)
+    }
+
+    fn ack_response_dedup_key(&self, owner_session_id: u64, id: MessageId, token: u64) -> DedupKey {
+        DedupKey {
+            realm: self.queue_key.realm.clone(),
+            domain: Domain::Queue,
+            identifier: DedupIdentifier::QueueComplete {
+                family: self.queue_key.family.as_u64(),
+                area: self.queue_key.area.clone(),
+                resource: self.queue_key.resource.clone(),
+                owner_session_id,
+                message_id: id.as_u64(),
+                token,
+            },
+        }
+    }
+
+    fn load_inflight_for_ack(&mut self, id: MessageId, dedup_key: &DedupKey) -> Option<Inflight> {
+        if let Some(inflight) = self.inflight.get(&id) {
+            return Some(inflight.clone());
+        }
+
+        let response = QueueResponse::NotFound;
+        if let Some(bytes) = encode_cached_response(&response) {
+            self.dedup_store.record(dedup_key.clone(), bytes);
+        }
+
+        None
+    }
+
+    fn load_stored_layout_for_ack(&self, id: MessageId) -> StoredRecordLayout {
+        if self.records.contains_key(&id) {
+            return self
+                .record_layouts
+                .get(&id)
+                .copied()
+                .unwrap_or(StoredRecordLayout::EmbeddedHeader);
+        }
+
+        self.load_record_metadata_from_store(id)
+            .map_or(StoredRecordLayout::EmbeddedHeader, |(_, layout)| layout)
+    }
+
+    fn commit_ack_delete(
+        &mut self,
+        id: MessageId,
+        stored_layout: StoredRecordLayout,
+        index_plan: PersistedIndexMutationPlan,
+    ) -> Result<(), String> {
         let header_key = self.cached_header_key(id);
         let body_key = self.cached_body_key(id);
         let legacy_key = self.cached_legacy_message_key(id);
 
-        let commit_result = match self
-            .store
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
-        {
-            Ok(mut txn) => match Self::delete_record_for_layout(
-                &mut txn,
-                stored_layout,
-                header_key,
-                body_key,
-                legacy_key,
-            ) {
-                Err(e) => {
+        match self.store.begin_tx(
+            self.queue_key.family.id(),
+            cntryl_midge::TransactionMode::ReadWrite,
+        ) {
+            Ok(mut txn) => {
+                if let Err(error) = Self::delete_record_for_layout(
+                    &mut txn,
+                    stored_layout,
+                    header_key,
+                    body_key,
+                    legacy_key,
+                ) {
                     tracing::warn!(
                         queue = ?self.queue_key,
                         route_family = self.queue_key.family.as_u64(),
                         message_id = id.as_u64(),
-                        error = ?e,
+                        error = ?error,
                         "Failed to delete queue message in transaction"
                     );
-                    Err(format!("Failed to delete message {id} in txn: {e:?}"))
+                    return Err(format!("Failed to delete message {id} in txn: {error:?}"));
                 }
-                Ok(()) => {
-                    if let Err(error) =
-                        self.write_index_mutation_plan(&mut txn, id, index_plan, None)
-                    {
-                        return QueueResponse::Error { message: error };
-                    }
 
-                    match Self::commit_ack_transaction(txn, self.commit_write_options) {
-                        Ok(()) => {
-                            self.apply_index_mutation_plan(id, index_plan, None);
-                            Ok(())
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                queue = ?self.queue_key,
-                                route_family = self.queue_key.family.as_u64(),
-                                message_id = id.as_u64(),
-                                error_reason = %e,
-                                "Failed to commit queue delete transaction"
-                            );
-                            Err(format!("Failed to commit delete txn for message {id}: {e}"))
-                        }
-                    }
-                }
-            },
-            Err(e) => Err(format!("Failed to begin tx to delete message {id}: {e:?}")),
-        };
-
-        if let Err(message) = commit_result {
-            return QueueResponse::Error { message };
+                self.write_index_mutation_plan(&mut txn, id, index_plan, None)?;
+                Self::commit_ack_transaction(txn, self.commit_write_options).map_err(|error| {
+                    tracing::warn!(
+                        queue = ?self.queue_key,
+                        route_family = self.queue_key.family.as_u64(),
+                        message_id = id.as_u64(),
+                        error_reason = %error,
+                        "Failed to commit queue delete transaction"
+                    );
+                    format!("Failed to commit delete txn for message {id}: {error}")
+                })?;
+                self.apply_index_mutation_plan(id, index_plan, None);
+                Ok(())
+            }
+            Err(error) => Err(format!(
+                "Failed to begin tx to delete message {id}: {error:?}"
+            )),
         }
+    }
 
+    fn finish_ack_success(&mut self, id: MessageId, dedup_key: DedupKey) -> QueueResponse {
         self.inflight.remove(&id);
         self.evict_cached_record(id);
         self.evict_cached_body(id);
@@ -367,8 +372,6 @@ impl QueueActor {
             .record(self.clock.now_epoch_ms(), 1);
 
         let response = QueueResponse::Acked;
-
-        // Cache successful completion response
         if let Some(bytes) = encode_cached_response(&response) {
             self.dedup_store.record(dedup_key, bytes);
         }

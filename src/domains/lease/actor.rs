@@ -1,4 +1,4 @@
-//! LeaseActor: manages ephemeral lease state inside one broker process
+//! `LeaseActor`: manages ephemeral lease state inside one broker process.
 //!
 //! Each lease has:
 //! - Identity: (realm, area, resource) from route
@@ -14,7 +14,7 @@
 //!
 //! 1. **Exclusive ownership**: At most one owner per lease at any time
 //! 2. **Monotonic tokens**: Fencing tokens never decrease within a running process, but restart resets the lineage
-//! 3. **Expiration semantics**: Lease with expiry <= now_instant() is expired and can be taken
+//! 3. **Expiration semantics**: Lease with expiry <= `now_instant()` is expired and can be taken
 //! 4. **Idempotency**: Same operation by same owner produces same result
 //!
 //! # State Model
@@ -67,6 +67,13 @@ struct LeaseState {
     expiry: Instant,
 }
 
+enum ExtendDecision {
+    NotHeld,
+    Expired,
+    Fenced(u64),
+    Extend,
+}
+
 impl LeaseState {
     /// Check if this lease is expired at the given time
     fn is_expired(&self, now: Instant) -> bool {
@@ -88,25 +95,25 @@ impl LeaseState {
 ///
 /// # State
 ///
-/// - `family`: RouteFamily this actor serves (for validation)
-/// - `leases`: Map of (RouteFamily, Route) → LeaseState
-/// - `pending_acquires`: Map of LeaseKey → VecDeque of waiting acquirers (FIFO queue)
-/// - `timer_to_waiter`: Map of TimerId → (LeaseKey) for validating stale timers
+/// - `family`: `RouteFamily` this actor serves (for validation)
+/// - `leases`: Map of (`RouteFamily`, `Route`) -> `LeaseState`
+/// - `pending_acquires`: Map of `LeaseKey` -> `VecDeque` of waiting acquirers (FIFO queue)
+/// - `timer_to_waiter`: Map of `TimerId` -> (`LeaseKey`) for validating stale timers
 /// - `next_token`: Process-local token counter (resets on restart)
 /// - `clock`: Time source for expiration checks
-/// - `max_wait_seconds`: Maximum wait time allowed (capped to prevent DoS)
+/// - `max_wait_seconds`: Maximum wait time allowed (capped to prevent `DoS`)
 /// - `max_queue_depth`: Maximum pending acquirers per lease (capped to prevent memory bloat)
 pub struct LeaseActor {
     /// Route family this actor serves (for validation)
     family: crate::runtime::routing::RouteFamily,
 
-    /// Map of LeaseKey to current lease state
+    /// Map of `LeaseKey` to current lease state
     leases: HashMap<LeaseKey, LeaseState>,
 
-    /// Map of LeaseKey to pending acquire queue (FIFO)
+    /// Map of `LeaseKey` to pending acquire queue (FIFO)
     pending_acquires: HashMap<LeaseKey, VecDeque<PendingAcquire>>,
 
-    /// Map of TimerId to LeaseKey for timer validation
+    /// Map of `TimerId` to `LeaseKey` for timer validation
     timer_to_waiter: HashMap<TimerId, LeaseKey>,
 
     /// Next fencing token to issue within the current process
@@ -217,7 +224,7 @@ impl LeaseActor {
                     return None;
                 }
                 match LeaseKey::from_route(family_id, &route) {
-                    Some(key) => self.handle_extend(key, owner_id, fencing_token, ttl_secs, ctx),
+                    Some(key) => self.handle_extend(&key, &owner_id, fencing_token, ttl_secs, ctx),
                     None => LeaseResponse::NotFound,
                 }
             }
@@ -232,7 +239,7 @@ impl LeaseActor {
                 }
                 match LeaseKey::from_route(family_id, &route) {
                     Some(key) => {
-                        let response = self.handle_release(key.clone(), owner_id, fencing_token);
+                        let response = self.handle_release(&key, &owner_id, fencing_token);
 
                         if matches!(response, LeaseResponse::Released) {
                             // Schedule debounced availability notification on the concrete lease route
@@ -251,7 +258,7 @@ impl LeaseActor {
                     return None;
                 }
                 match LeaseKey::from_route(family_id, &route) {
-                    Some(key) => self.handle_query(key),
+                    Some(key) => self.handle_query(&key),
                     None => LeaseResponse::NotFound,
                 }
             }
@@ -275,9 +282,9 @@ impl LeaseActor {
     /// Handle lease acquisition with optional waiting
     ///
     /// If the lease is available, returns Acquired immediately.
-    /// If the lease is unavailable and wait_seconds > 0, queues the request
+    /// If the lease is unavailable and `wait_seconds` > 0, queues the request
     /// and schedules a timeout, returning Queued (deferred response).
-    /// If the lease is unavailable and wait_seconds = 0, returns HeldByOther immediately.
+    /// If the lease is unavailable and `wait_seconds` = 0, returns `HeldByOther` immediately.
     fn handle_acquire(
         &mut self,
         key: LeaseKey,
@@ -304,24 +311,7 @@ impl LeaseActor {
         }
 
         // Check if lease is available
-        if !self.leases.contains_key(&key) {
-            // Lease doesn't exist or is expired - grant it immediately
-            let token = self.next_fencing_token();
-            let expiry = now + ttl;
-
-            self.leases.insert(
-                key,
-                LeaseState {
-                    owner_id: owner_id.clone(),
-                    fencing_token: token,
-                    expiry,
-                },
-            );
-
-            LeaseResponse::Acquired {
-                fencing_token: token,
-            }
-        } else {
+        if self.leases.contains_key(&key) {
             // Lease exists and is not expired
             let state = &self.leases[&key];
             if state.is_held_by(&owner_id) {
@@ -337,6 +327,23 @@ impl LeaseActor {
             } else {
                 // Held by another owner and willing to wait
                 self.enqueue_waiter(key, owner_id, ttl_secs, wait_seconds, source, ctx)
+            }
+        } else {
+            // Lease doesn't exist or is expired - grant it immediately
+            let token = self.next_fencing_token();
+            let expiry = now + ttl;
+
+            self.leases.insert(
+                key,
+                LeaseState {
+                    owner_id: owner_id.clone(),
+                    fencing_token: token,
+                    expiry,
+                },
+            );
+
+            LeaseResponse::Acquired {
+                fencing_token: token,
             }
         }
     }
@@ -374,7 +381,7 @@ impl LeaseActor {
         }
 
         // Schedule timeout
-        let timeout_duration = Duration::from_secs(wait_seconds as u64);
+        let timeout_duration = Duration::from_secs(u64::from(wait_seconds));
         let timer_id = ctx.timer_manager().schedule_once(timeout_duration);
 
         // Enqueue waiter
@@ -459,8 +466,8 @@ impl LeaseActor {
     /// Handle lease extension
     fn handle_extend(
         &mut self,
-        key: LeaseKey,
-        owner_id: String,
+        key: &LeaseKey,
+        owner_id: &str,
         fencing_token: u64,
         ttl_secs: u64,
         ctx: &mut Context<LeaseActor>,
@@ -468,19 +475,12 @@ impl LeaseActor {
         let now = self.clock.now_instant();
         let ttl = Duration::from_secs(ttl_secs);
 
-        enum ExtendDecision {
-            NotHeld,
-            Expired,
-            Fenced(u64),
-            Extend,
-        }
-
-        let decision = match self.leases.get(&key) {
+        let decision = match self.leases.get(key) {
             None => ExtendDecision::NotHeld,
             Some(state) => {
                 if state.is_expired(now) {
                     ExtendDecision::Expired
-                } else if !state.is_held_by(&owner_id) {
+                } else if !state.is_held_by(owner_id) {
                     ExtendDecision::NotHeld
                 } else if state.fencing_token != fencing_token {
                     ExtendDecision::Fenced(state.fencing_token)
@@ -493,15 +493,15 @@ impl LeaseActor {
         match decision {
             ExtendDecision::NotHeld => LeaseResponse::NotHeld,
             ExtendDecision::Expired => {
-                self.leases.remove(&key);
+                self.leases.remove(key);
                 self.schedule_availability_notification(ctx, key.to_route());
-                self.grant_next_waiter(&key, ctx);
+                self.grant_next_waiter(key, ctx);
                 LeaseResponse::Expired
             }
             ExtendDecision::Fenced(current_token) => LeaseResponse::Fenced { current_token },
             ExtendDecision::Extend => {
                 let new_token = self.next_fencing_token();
-                if let Some(state) = self.leases.get_mut(&key) {
+                if let Some(state) = self.leases.get_mut(key) {
                     state.expiry = now + ttl;
                     state.fencing_token = new_token;
                 }
@@ -515,13 +515,13 @@ impl LeaseActor {
     /// Handle lease release
     fn handle_release(
         &mut self,
-        key: LeaseKey,
-        owner_id: String,
+        key: &LeaseKey,
+        owner_id: &str,
         fencing_token: u64,
     ) -> LeaseResponse {
         let now = self.clock.now_instant();
 
-        let response = match self.leases.get(&key) {
+        match self.leases.get(key) {
             None => {
                 // Idempotent delete: if lease doesn't exist, it's already released
                 LeaseResponse::Released
@@ -529,9 +529,9 @@ impl LeaseActor {
             Some(state) => {
                 if state.is_expired(now) {
                     // Already expired - remove it and return success (idempotent)
-                    self.leases.remove(&key);
+                    self.leases.remove(key);
                     LeaseResponse::Released
-                } else if !state.is_held_by(&owner_id) {
+                } else if !state.is_held_by(owner_id) {
                     LeaseResponse::NotHeld
                 } else if state.fencing_token != fencing_token {
                     // Token mismatch - fencing
@@ -540,27 +540,25 @@ impl LeaseActor {
                     }
                 } else {
                     // Valid release - remove lease and set notification flag
-                    self.leases.remove(&key);
+                    self.leases.remove(key);
                     LeaseResponse::Released
                 }
             }
-        };
-
-        response
+        }
     }
 
     /// Handle lease query (for testing/debugging)
-    fn handle_query(&self, key: LeaseKey) -> LeaseResponse {
+    fn handle_query(&self, key: &LeaseKey) -> LeaseResponse {
         let now = self.clock.now_instant();
 
-        match self.leases.get(&key) {
+        match self.leases.get(key) {
             None => LeaseResponse::NotFound,
             Some(state) => {
                 if state.is_expired(now) {
                     LeaseResponse::Expired
                 } else {
                     let expires_in = state.expiry.duration_since(now);
-                    let pending_waiters = self.pending_acquires.get(&key).map_or(0, |q| q.len());
+                    let pending_waiters = self.pending_acquires.get(key).map_or(0, VecDeque::len);
 
                     LeaseResponse::Status {
                         owner_id: state.owner_id.clone(),
@@ -661,9 +659,8 @@ impl Actor for LeaseActor {
         };
 
         // Find and remove the waiter from the queue
-        let queue = match self.pending_acquires.get_mut(&lease_key) {
-            None => return,
-            Some(q) => q,
+        let Some(queue) = self.pending_acquires.get_mut(&lease_key) else {
+            return;
         };
 
         // Find the waiter with this timer_id

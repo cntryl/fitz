@@ -1,15 +1,15 @@
 //! RPC protocol message types
 //!
 //! Defines the message types used for request/response operations:
-//! - **RegisterWorker**: Worker registers to handle requests for a route
-//! - **UnregisterWorker**: Worker stops handling requests for a route
+//! - **`RegisterWorker`**: Worker registers to handle requests for a route
+//! - **`UnregisterWorker`**: Worker stops handling requests for a route
 //! - **Request**: Client request routed to available worker
 //! - **Response**: Worker response forwarded to client (supports streaming)
 //! - **Ack**: Worker signals completion for cleanup
 //!
 //! # Correlation Protocol
 //!
-//! Every request carries a unique correlation_id that must be echoed in responses.
+//! Every request carries a unique `correlation_id` that must be echoed in responses.
 //! This enables clients to match responses to requests when multiple requests
 //! are in flight.
 //!
@@ -19,7 +19,7 @@
 //! and contiguous:
 //! - First chunk: seq=0
 //! - Next chunk: seq=previous+1
-//! - Final chunk: stream_end=true on the last contiguous chunk
+//! - Final chunk: `stream_end=true` on the last contiguous chunk
 //!
 //! Duplicate or out-of-order chunks are terminal protocol failures. Fitz does
 //! not buffer or reorder RPC responses on the broker side.
@@ -41,10 +41,10 @@ pub struct RpcRequest {
     /// Unique correlation ID for matching responses (UUID for distributed tracing)
     pub correlation_id: Uuid,
 
-    /// Target RPC route (e.g., "rpc://acme/auth/user/create")
+    /// Target RPC route (e.g., `<rpc://acme/auth/user/create>`)
     pub route: Route,
 
-    /// Reply inbox route (e.g., "inbox://session/123")
+    /// Reply inbox route (e.g., `<inbox://session/123>`)
     pub reply_route: Route,
 
     /// Request payload (Bytes for zero-copy)
@@ -72,9 +72,9 @@ impl RpcRequest {
 
 /// RPC response from worker back to client
 ///
-/// Workers send responses with the same correlation_id as the request.
+/// Workers send responses with the same `correlation_id` as the request.
 /// For streaming responses, workers must send chunks in strict contiguous
-/// sequence order and mark the final chunk with stream_end=true.
+/// sequence order and mark the final chunk with `stream_end=true`.
 #[derive(Debug, Clone)]
 pub struct RpcResponse {
     /// Correlation ID matching the request (UUID for distributed tracing)
@@ -115,7 +115,7 @@ impl RpcResponse {
     }
 }
 
-/// Messages handled by RpcRouteActor
+/// Messages handled by `RpcRouteActor`
 ///
 /// These messages coordinate worker registration, request routing, and response delivery.
 #[derive(Debug, Clone)]
@@ -146,7 +146,7 @@ pub enum RpcMessage {
 
     /// Worker response to be forwarded to client
     ///
-    /// Contains correlation_id matching the original request. Responses that do
+    /// Contains `correlation_id` matching the original request. Responses that do
     /// not follow strict contiguous sequence order are terminally rejected.
     Response(RpcResponse),
 
@@ -161,19 +161,19 @@ pub enum RpcMessage {
 
     /// Request delivery to worker (internal routing message)
     ///
-    /// Sent from RpcRouteActor to worker session actor to deliver a request.
+    /// Sent from `RpcRouteActor` to worker session actor to deliver a request.
     /// The session actor encodes this as message type 302 (REQUEST) on the wire.
     Deliver(RpcWorkItem),
 }
 
 impl RpcMessage {
-    /// Create RegisterWorker message
+    /// Create `RegisterWorker` message
     #[must_use]
     pub fn register_worker(worker_addr: RouteAddress) -> Self {
         Self::RegisterWorker { worker_addr }
     }
 
-    /// Create UnregisterWorker message
+    /// Create `UnregisterWorker` message
     #[must_use]
     pub fn unregister_worker(worker_addr: RouteAddress) -> Self {
         Self::UnregisterWorker { worker_addr }
@@ -309,7 +309,7 @@ impl RpcWorkerAck {
 /// Work item dispatched to a worker
 ///
 /// Contains the minimal information needed for a worker to process a request
-/// and send responses back to the client. Created from RpcRequest before
+/// and send responses back to the client. Created from `RpcRequest` before
 /// dispatching to the worker pool.
 #[derive(Debug, Clone)]
 pub struct RpcWorkItem {

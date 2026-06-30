@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{MessageId, QueueActor};
 
 impl QueueActor {
     pub(in crate::domains::queue::actor) fn min_persisted_delayed_visibility_ms(

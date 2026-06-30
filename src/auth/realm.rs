@@ -19,7 +19,7 @@ pub enum RealmError {
     MalformedRealm(String),
     /// Realm does not match the authorized realm for this session
     UnauthorizedRealm { claimed: String, authorized: String },
-    /// Realm was not resolved (no default_realm in token and no explicit realm provided)
+    /// Realm was not resolved (no `default_realm` in token and no explicit realm provided)
     RealmNotResolved,
 }
 
@@ -48,7 +48,10 @@ impl fmt::Display for RealmError {
 /// - No whitespace allowed
 /// - No control characters allowed
 ///
-/// **Returns:** `Ok(realm)` if valid, `Err(RealmError)` otherwise
+/// # Errors
+///
+/// Returns `RealmError` when the realm is empty or contains whitespace,
+/// control characters, or non-opaque special characters.
 pub fn validate_realm_format(realm: &str) -> Result<&str, RealmError> {
     // Empty realm
     if realm.is_empty() {
@@ -56,11 +59,11 @@ pub fn validate_realm_format(realm: &str) -> Result<&str, RealmError> {
     }
 
     // Check for whitespace or control characters
-    if realm.chars().any(|c| c.is_whitespace()) {
+    if realm.chars().any(char::is_whitespace) {
         return Err(RealmError::MalformedRealm(realm.to_string()));
     }
 
-    if realm.chars().any(|c| c.is_control()) {
+    if realm.chars().any(char::is_control) {
         return Err(RealmError::MalformedRealm(realm.to_string()));
     }
 

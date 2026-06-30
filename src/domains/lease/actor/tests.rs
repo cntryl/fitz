@@ -304,8 +304,8 @@ fn should_renew_lease_with_valid_token() {
 
     // Act
     let renew_response = actor.handle_extend(
-        test_key("acme", "locks", "test1"),
-        "owner1".to_string(),
+        &test_key("acme", "locks", "test1"),
+        "owner1",
         token,
         60,
         &mut ctx,
@@ -334,8 +334,8 @@ fn should_reject_renew_with_wrong_token() {
 
     // Act
     let response = actor.handle_extend(
-        test_key("acme", "locks", "test1"),
-        "owner1".to_string(),
+        &test_key("acme", "locks", "test1"),
+        "owner1",
         999,
         60,
         &mut ctx,
@@ -377,8 +377,8 @@ fn should_reject_renew_of_expired_lease() {
 
     // Act
     let renew_response = actor.handle_extend(
-        test_key("acme", "locks", "test1"),
-        "owner1".to_string(),
+        &test_key("acme", "locks", "test1"),
+        "owner1",
         token,
         60,
         &mut ctx,
@@ -404,11 +404,8 @@ fn should_release_lease_with_valid_token() {
     };
 
     // Act
-    let release_response = actor.handle_release(
-        test_key("acme", "locks", "test1"),
-        "owner1".to_string(),
-        token,
-    );
+    let release_response =
+        actor.handle_release(&test_key("acme", "locks", "test1"), "owner1", token);
 
     // Assert
     assert_eq!(release_response, LeaseResponse::Released);
@@ -426,11 +423,7 @@ fn should_reject_release_with_wrong_token() {
     );
 
     // Act
-    let response = actor.handle_release(
-        test_key("acme", "locks", "test1"),
-        "owner1".to_string(),
-        999,
-    );
+    let response = actor.handle_release(&test_key("acme", "locks", "test1"), "owner1", 999);
 
     // Assert
     assert!(matches!(
@@ -453,11 +446,7 @@ fn should_allow_reacquire_after_release() {
         LeaseResponse::Acquired { fencing_token } => fencing_token,
         _ => panic!("Expected Acquired"),
     };
-    actor.handle_release(
-        test_key("acme", "locks", "test1"),
-        "owner1".to_string(),
-        token,
-    );
+    actor.handle_release(&test_key("acme", "locks", "test1"), "owner1", token);
 
     // Act
     let reacquire = test_acquire(
@@ -486,7 +475,7 @@ fn should_query_lease_status() {
     );
 
     // Act
-    let response = actor.handle_query(test_key("acme", "locks", "test1"));
+    let response = actor.handle_query(&test_key("acme", "locks", "test1"));
 
     // Assert
     assert!(matches!(
@@ -544,7 +533,7 @@ fn should_grant_lease_to_queued_waiter_on_release() {
     assert!(matches!(r1, LeaseResponse::Acquired { .. }));
     assert_eq!(released, Some(LeaseResponse::Released));
 
-    let status = actor.handle_query(key.clone());
+    let status = actor.handle_query(&key);
     match status {
         LeaseResponse::Status {
             owner_id,
@@ -582,8 +571,8 @@ fn should_isolate_leases_across_realm_boundaries() {
     assert!(matches!(r2, LeaseResponse::Acquired { fencing_token: 2 }));
 
     // Verify queries reflect different owners
-    let s1 = actor.handle_query(test_key("realm_a", "locks", "shared-resource"));
-    let s2 = actor.handle_query(test_key("realm_b", "locks", "shared-resource"));
+    let s1 = actor.handle_query(&test_key("realm_a", "locks", "shared-resource"));
+    let s2 = actor.handle_query(&test_key("realm_b", "locks", "shared-resource"));
 
     match (s1, s2) {
         (
@@ -650,7 +639,7 @@ fn should_promote_first_waiter_when_holder_releases() {
     // Assert
     assert_eq!(released, Some(LeaseResponse::Released));
 
-    let status = actor.handle_query(key.clone());
+    let status = actor.handle_query(&key);
     match status {
         LeaseResponse::Status {
             owner_id,
@@ -707,7 +696,7 @@ fn should_promote_next_waiter_when_current_holder_releases() {
     // Assert
     assert_eq!(released2, Some(LeaseResponse::Released));
 
-    let status2 = actor.handle_query(key.clone());
+    let status2 = actor.handle_query(&key);
     match status2 {
         LeaseResponse::Status {
             owner_id,
@@ -753,7 +742,7 @@ fn should_promote_waiter_when_expired_before_new_acquire() {
         } if current_owner == "owner2"
     ));
 
-    let status = actor.handle_query(key);
+    let status = actor.handle_query(&key);
     match status {
         LeaseResponse::Status {
             owner_id,
@@ -794,17 +783,11 @@ fn should_promote_waiter_when_extend_observes_expired_holder() {
     clock_ref.advance(Duration::from_secs(10));
 
     // Act
-    let response = actor.handle_extend(
-        key.clone(),
-        "owner1".to_string(),
-        holder_token,
-        30,
-        &mut ctx,
-    );
+    let response = actor.handle_extend(&key, "owner1", holder_token, 30, &mut ctx);
 
     // Assert
     assert_eq!(response, LeaseResponse::Expired);
-    match actor.handle_query(key) {
+    match actor.handle_query(&key) {
         LeaseResponse::Status {
             owner_id,
             fencing_token,
@@ -836,7 +819,7 @@ fn should_scale_under_high_contention_queueing() {
     }
 
     // Assert - queue depth reflects the enqueued waiters
-    let status = actor.handle_query(key.clone());
+    let status = actor.handle_query(&key);
     match status {
         LeaseResponse::Status {
             pending_waiters, ..

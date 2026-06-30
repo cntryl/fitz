@@ -36,7 +36,9 @@ impl MockClock {
     pub fn advance(&self, duration: Duration) {
         let mut state = self.state.lock().unwrap();
         state.instant += duration;
-        state.epoch_ms = state.epoch_ms.saturating_add(duration.as_millis() as u64);
+        state.epoch_ms = state
+            .epoch_ms
+            .saturating_add(u64::try_from(duration.as_millis()).unwrap_or(u64::MAX));
     }
 }
 
@@ -64,9 +66,8 @@ pub(super) fn send_and_reserve_single_message(
     body: &str,
 ) -> (MessageId, u64) {
     let send_response = actor.handle_send(Bytes::from(body.to_string()), None);
-    let id = match send_response {
-        QueueResponse::Sent { id } => id,
-        _ => panic!("Expected Sent response"),
+    let QueueResponse::Sent { id } = send_response else {
+        panic!("Expected Sent response");
     };
 
     let receive_response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
@@ -213,10 +214,10 @@ pub(super) fn clear_queue_index(
     let mut keys = Vec::new();
 
     while let Some((key, _)) = ready_iter.next() {
-        keys.push(key.to_vec());
+        keys.push(key.clone());
     }
     while let Some((key, _)) = delayed_iter.next() {
-        keys.push(key.to_vec());
+        keys.push(key.clone());
     }
     keys.push(QueueActor::index_meta_key(queue_key));
 
@@ -380,9 +381,8 @@ pub(super) fn should_reserve_enqueued_message() {
     // Act
     let body = Bytes::from("test message");
     let enqueue_response = actor.handle_send(body.clone(), None);
-    let msg_id = match enqueue_response {
-        QueueResponse::Sent { id } => id,
-        _ => panic!("Expected Enqueued response"),
+    let QueueResponse::Sent { id: msg_id } = enqueue_response else {
+        panic!("Expected Enqueued response");
     };
 
     // Assert
@@ -449,8 +449,8 @@ pub(super) fn should_track_success_rates_given_enqueue_then_complete() {
     let expired_window_snapshot = actor.admin_snapshot();
     assert_eq!(expired_window_snapshot.enqueue_success_total, 2);
     assert_eq!(expired_window_snapshot.complete_success_total, 1);
-    assert_eq!(expired_window_snapshot.in_rate_per_second, 0.0);
-    assert_eq!(expired_window_snapshot.out_rate_per_second, 0.0);
+    assert!(expired_window_snapshot.in_rate_per_second.abs() < f64::EPSILON);
+    assert!(expired_window_snapshot.out_rate_per_second.abs() < f64::EPSILON);
 }
 
 #[test]
@@ -583,7 +583,8 @@ pub(super) fn should_bound_hot_body_cache_total_bytes() {
     // Act
     let body_size = QueueActor::BODY_CACHE_LIMIT_BYTES / 4 + 1;
     for i in 0..5 {
-        let body = Bytes::from(vec![i as u8; body_size]);
+        let byte = u8::try_from(i).expect("body byte should fit in u8");
+        let body = Bytes::from(vec![byte; body_size]);
         let response = actor.handle_send(body, None);
         assert!(matches!(response, QueueResponse::Sent { .. }));
     }

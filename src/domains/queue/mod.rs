@@ -54,7 +54,7 @@
 //! - **Ephemeral inflight state**: Inflight state lost on restart (automatic redelivery)
 //! - **Microsecond latency**: In-memory reserve/complete with persistent backing
 //! - **Token-based operations**: Random tokens prevent accidental duplicate operations
-//! - **Dead Letter Queue (DLQ)**: Optional max_attempts threshold for failed messages
+//! - **Dead Letter Queue (DLQ)**: Optional `max_attempts` threshold for failed messages
 //! - **Recovery**: Flushed or WAL-backed state restored after restart (messages + delayed visibility)
 //!
 //! # Route Format
@@ -67,7 +67,7 @@
 //!
 //! # Operations
 //!
-//! - **enqueue**: Add message to queue (returns MessageId after commit)
+//! - **enqueue**: Add message to queue (returns `MessageId` after commit)
 //! - **reserve**: Mark one or more messages inflight for processing (fair distribution)
 //! - **extend**: Extend inflight expiration for a reserved message
 //! - **complete**: Mark message as processed and delete it after commit
@@ -90,7 +90,7 @@
 //!
 //! Batch enqueue operations are atomic:
 //! - ID allocation happens INSIDE Midge transaction
-//! - All message writes + next_id update in SINGLE transaction
+//! - All message writes + `next_id` update in SINGLE transaction
 //! - If crash before commit: no IDs lost or duplicated
 //! - Prevents ID collisions across restarts
 //!
@@ -98,27 +98,27 @@
 //!
 //! Process restart fully recovers queue state:
 //! - All persisted messages recovered from storage
-//! - Delayed messages have correct visibility windows (using absolute epoch_ms)
+//! - Delayed messages have correct visibility windows (using absolute `epoch_ms`)
 //! - In-flight messages automatically redelivered (inflight state is ephemeral)
-//! - next_id correctly initialized to prevent duplicate IDs
+//! - `next_id` correctly initialized to prevent duplicate IDs
 //!
 //! # Time Semantics (V-002 Fix)
 //!
-//! All persisted times use SystemTime::UNIX_EPOCH (milliseconds):
-//! - visible_at_ms is absolute epoch, not relative delay
+//! All persisted times use `SystemTime::UNIX_EPOCH` (milliseconds):
+//! - `visible_at_ms` is absolute epoch, not relative delay
 //! - Delays survive process restarts correctly
 //! - No clock skew issues between restarts
 //!
 //! # Dead Letter Queue (DLQ) Policy
 //!
-//! When creating a QueueActor with `max_attempts: Some(n)`:
+//! When creating a `QueueActor` with `max_attempts: Some(n)`:
 //! - Each inflight expiration increments `attempts`
 //! - When `attempts >= max_attempts`:
 //!   - Message transitions into durable DLQ state
 //!   - Header and body remain in storage with DLQ metadata
 //!   - Log message emitted: `DLQ: queue={...} message_id={...} attempts={...}`
 //!   - Message is NOT re-enqueued
-//! - QueueActor retains DLQ rows durably and keeps them out of reserve/redelivery
+//! - `QueueActor` retains DLQ rows durably and keeps them out of reserve/redelivery
 //! - Higher-level admin, replay, and purge surfaces build on top of this retained state
 //!
 //! When `max_attempts: None` (default):
@@ -128,8 +128,8 @@
 //! # Queue Watches
 //!
 //! Queue consumers can watch readiness routes instead of parking reserve requests:
-//! - QueueActor always returns immediately (never blocks)
-//! - QueueDomainSink owns ephemeral watch state for the current broker process
+//! - `QueueActor` always returns immediately (never blocks)
+//! - `QueueDomainSink` owns ephemeral watch state for the current broker process
 //! - Watches target `queue://{realm}/{area}/{resource}/ready`
 //! - Notifications signal availability and never carry queue message bodies
 //! - Delayed visibility and inflight-expiry transitions are surfaced through queue-local runtime sweeps

@@ -3,7 +3,7 @@
 //! The KV domain is a thin wrapper over Midge transactions, providing:
 //! - Transaction-scoped KV operations
 //! - Resource (table) isolation
-//! - Explicit RouteFamily → ColumnFamily mapping
+//! - Explicit `RouteFamily` → `ColumnFamily` mapping
 
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
@@ -82,7 +82,7 @@ pub enum KvMessage {
     },
 }
 
-/// KV watch messages handled by KvDomainSink before actor dispatch.
+/// KV watch messages handled by `KvDomainSink` before actor dispatch.
 #[derive(Debug, Clone)]
 pub enum KvSubscriptionMessage {
     Subscribe {
@@ -248,7 +248,7 @@ pub enum KvError {
     /// Realm validation failed
     InvalidRealm,
 
-    /// RouteFamily is invalid (e.g., id=0 maps to default CF)
+    /// `RouteFamily` is invalid (for example, `id=0` maps to the default CF)
     InvalidRouteFamily,
 
     /// Realm mismatch (transaction bound to different realm)

@@ -1,4 +1,4 @@
-use super::*;
+use super::RPC_ADMIN_SNAPSHOT_INTERVAL_US;
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 pub(in crate::domains::rpc::sink) fn rpc_admin_snapshot_due(

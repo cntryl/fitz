@@ -1,4 +1,4 @@
-use super::*;
+use super::{RouteAddress, Utc};
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 #[derive(Clone)]
@@ -75,6 +75,7 @@ impl RpcWorker {
             return 0.0;
         }
 
-        self.total_latency_us as f64 / 1000.0 / self.requests_handled as f64
+        let average_latency_us = self.total_latency_us / self.requests_handled;
+        std::time::Duration::from_micros(average_latency_us).as_secs_f64() * 1000.0
     }
 }

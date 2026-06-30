@@ -5,27 +5,31 @@ pub(super) use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 pub(super) use crate::runtime::Mailbox;
 pub(super) use bytes::{BufMut, Bytes};
 
+fn len_to_u32(len: usize) -> u32 {
+    u32::try_from(len).expect("payload length should fit in u32")
+}
+
 pub(super) fn encode_route_pattern(pattern: &str) -> Bytes {
     let mut payload = Vec::new();
-    payload.put_u32(pattern.len() as u32);
+    payload.put_u32(len_to_u32(pattern.len()));
     payload.put_slice(pattern.as_bytes());
     Bytes::from(payload)
 }
 
 pub(super) fn encode_queue_send(route: &str, body: &[u8]) -> Bytes {
     let mut payload = Vec::new();
-    payload.put_u32(route.len() as u32);
+    payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
-    payload.put_u32(body.len() as u32);
+    payload.put_u32(len_to_u32(body.len()));
     payload.put_slice(body);
     Bytes::from(payload)
 }
 
 pub(super) fn encode_queue_send_with_delay(route: &str, body: &[u8], delay_seconds: u64) -> Bytes {
     let mut payload = Vec::new();
-    payload.put_u32(route.len() as u32);
+    payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
-    payload.put_u32(body.len() as u32);
+    payload.put_u32(len_to_u32(body.len()));
     payload.put_slice(body);
     payload.put_u8(1);
     payload.put_u64(delay_seconds);
@@ -34,7 +38,7 @@ pub(super) fn encode_queue_send_with_delay(route: &str, body: &[u8], delay_secon
 
 pub(super) fn encode_queue_reserve(route: &str, inflight_seconds: u64, batch_size: u32) -> Bytes {
     let mut payload = Vec::new();
-    payload.put_u32(route.len() as u32);
+    payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u64(inflight_seconds);
     payload.put_u8(1);
@@ -44,14 +48,14 @@ pub(super) fn encode_queue_reserve(route: &str, inflight_seconds: u64, batch_siz
 
 pub(super) fn encode_queue_watch(pattern: &str) -> Bytes {
     let mut payload = Vec::new();
-    payload.put_u32(pattern.len() as u32);
+    payload.put_u32(len_to_u32(pattern.len()));
     payload.put_slice(pattern.as_bytes());
     Bytes::from(payload)
 }
 
 pub(super) fn encode_queue_unwatch(pattern: &str) -> Bytes {
     let mut payload = Vec::new();
-    payload.put_u32(pattern.len() as u32);
+    payload.put_u32(len_to_u32(pattern.len()));
     payload.put_slice(pattern.as_bytes());
     Bytes::from(payload)
 }
@@ -63,7 +67,7 @@ pub(super) fn encode_queue_extend(
     inflight_seconds: u64,
 ) -> Bytes {
     let mut payload = Vec::new();
-    payload.put_u32(route.len() as u32);
+    payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u64(id);
     payload.put_u64(token);
@@ -73,7 +77,7 @@ pub(super) fn encode_queue_extend(
 
 pub(super) fn encode_queue_ack(route: &str, id: u64, token: u64) -> Bytes {
     let mut payload = Vec::new();
-    payload.put_u32(route.len() as u32);
+    payload.put_u32(len_to_u32(route.len()));
     payload.put_slice(route.as_bytes());
     payload.put_u64(id);
     payload.put_u64(token);
@@ -152,7 +156,8 @@ pub(super) fn watch_response_subscription_id(frame: &FrameContext) -> u64 {
 
 pub(super) fn decode_queue_watch_delivery(frame: &FrameContext) -> (u64, String, u64) {
     let subscription_id = u64::from_be_bytes(frame.payload[0..8].try_into().unwrap());
-    let route_len = u32::from_be_bytes(frame.payload[8..12].try_into().unwrap()) as usize;
+    let route_len = usize::try_from(u32::from_be_bytes(frame.payload[8..12].try_into().unwrap()))
+        .expect("route length should fit in usize");
     let route = String::from_utf8(frame.payload[12..12 + route_len].to_vec())
         .expect("queue watch route should be utf-8");
     let offset = 12 + route_len;
@@ -165,7 +170,9 @@ pub(super) fn force_actor_idle(sink: &QueueDomainSink, queue_route: &str, family
         .expect("queue key");
     let mut actors = sink.actors.lock();
     let warm_actor = actors.get_mut(&key).expect("warm queue actor");
-    warm_actor.last_used = Instant::now() - QUEUE_ACTOR_IDLE_TTL - Duration::from_secs(1);
+    warm_actor.last_used = Instant::now()
+        .checked_sub(QUEUE_ACTOR_IDLE_TTL + Duration::from_secs(1))
+        .expect("idle deadline should remain representable");
 }
 
 #[test]
@@ -527,9 +534,9 @@ pub(super) fn should_notify_queue_watch_given_queue_send_when_queue_transitions_
         Envelope::from_route(receiver_addr.clone(), queue_inbound_addr.clone(), watch_ctx);
     let body: &[u8] = b"x";
     let mut send_payload = Vec::new();
-    send_payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    send_payload.extend_from_slice(&len_to_u32(route.len()).to_be_bytes());
     send_payload.extend_from_slice(route.as_bytes());
-    send_payload.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    send_payload.extend_from_slice(&len_to_u32(body.len()).to_be_bytes());
     send_payload.extend_from_slice(body);
     let send_ctx = FrameContext::new(
         2,

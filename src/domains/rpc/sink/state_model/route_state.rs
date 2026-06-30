@@ -1,4 +1,4 @@
-use super::*;
+use super::{RouteAddress, RpcWorker, VecDeque};
 
 pub(in crate::domains::rpc::sink) struct RpcRouteState {
     pub(in crate::domains::rpc::sink) workers: Vec<RpcWorker>,

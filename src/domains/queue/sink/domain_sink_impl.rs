@@ -1,6 +1,19 @@
-use super::model::*;
+use super::model::{
+    AtomicBool, AtomicU64, Duration, Envelope, HashMap, HashSet, Instant, Mutex, Ordering,
+    QueueAdminProjection, QueueAdminSnapshot, QueueDomainSink, QueueMetrics, QueueNotification,
+    QueueProjectionEntry, QueueProjectionState, QueueReadyNotification, Router, WarmQueueActor,
+    QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_INTERVAL,
+};
+#[cfg(test)]
+use crate::protocol::frame_context::FrameContext;
+use std::sync::Arc;
 
 impl QueueDomainSink {
+    /// Constructs a queue sink over a raw Midge engine after validating persisted queue state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the persisted queue state is invalid for the current runtime.
     pub fn try_new(
         store: Arc<cntryl_midge::Engine>,
         router: Arc<Router>,
@@ -178,7 +191,7 @@ impl QueueDomainSink {
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<Instant>,
         message: String,
-    ) -> Result<(), DeliveryError> {
+    ) {
         tracing::error!(
             domain = "queue",
             family = meta.route_family.as_u64(),
@@ -190,7 +203,6 @@ impl QueueDomainSink {
         if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
             metrics.record_failure(started_at);
         }
-        Ok(())
     }
 
     pub(super) fn queue_ready_route(
@@ -702,9 +714,14 @@ impl QueueDomainSink {
             .sum()
     }
 
+    /// Replays a dead-lettered message back into its queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the warm queue actor cannot be recovered or the replay fails.
     pub fn replay_dead_letter(
         &self,
-        key: crate::domains::queue::QueueKey,
+        key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<bool, String> {
         let (actor_handle, created_actor) = self.get_or_create_actor(key.clone())?;
@@ -716,10 +733,10 @@ impl QueueDomainSink {
         if matches!(result, Ok(true)) {
             self.mark_fast_flush_dirty(key.family);
             let snapshot = actor_handle.lock().admin_snapshot();
-            let notification = self.record_ready_state(&key, snapshot);
+            let notification = self.record_ready_state(key, snapshot);
             self.mark_admin_snapshot_dirty();
             if let Some(notification) = notification {
-                self.route_queue_ready_notification(&key, notification);
+                self.route_queue_ready_notification(key, notification);
             }
         }
 
@@ -729,8 +746,8 @@ impl QueueDomainSink {
                 actor.admin_snapshot().messages_total == 0 && actor.inflight.is_empty()
             };
             if should_remove {
-                self.actors.lock().remove(&key);
-                self.ready_states.lock().remove(&key);
+                self.actors.lock().remove(key);
+                self.ready_states.lock().remove(key);
                 self.mark_admin_snapshot_dirty();
             }
         }
@@ -738,9 +755,14 @@ impl QueueDomainSink {
         result
     }
 
+    /// Permanently removes a dead-lettered message from its queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the warm queue actor cannot be recovered or the purge fails.
     pub fn purge_dead_letter(
         &self,
-        key: crate::domains::queue::QueueKey,
+        key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<bool, String> {
         let (actor_handle, created_actor) = self.get_or_create_actor(key.clone())?;
@@ -760,8 +782,8 @@ impl QueueDomainSink {
                 actor.admin_snapshot().messages_total == 0 && actor.inflight.is_empty()
             };
             if should_remove {
-                self.actors.lock().remove(&key);
-                self.ready_states.lock().remove(&key);
+                self.actors.lock().remove(key);
+                self.ready_states.lock().remove(key);
                 self.mark_admin_snapshot_dirty();
             }
         }

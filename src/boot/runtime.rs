@@ -15,7 +15,7 @@ pub use config::{
 
 pub type BootResult<T> = Result<T, Box<dyn std::error::Error>>;
 
-/// Type alias for the complex runtime initialization return type
+/// Type alias for the complex runtime initialization return type.
 type RuntimeComponents = (
     Arc<Router>,
     Arc<RuntimeIngress>,
@@ -26,10 +26,15 @@ type RuntimeComponents = (
 /// Initialize runtime infrastructure
 ///
 /// Creates:
-/// - Router for message delivery
-/// - RuntimeIngress for session management
-/// - IngressConfig for transport configuration
-/// - Runtime stats tracker for observability
+/// - `Router` for message delivery
+/// - `RuntimeIngress` for session management
+/// - `IngressConfig` for transport configuration
+/// - runtime stats tracker for observability
+///
+/// # Errors
+///
+/// Returns an error when boot configuration validation fails before runtime
+/// components are constructed.
 pub fn init(config: &BootConfig) -> BootResult<RuntimeComponents> {
     info!("Initializing runtime infrastructure");
     config.validate()?;

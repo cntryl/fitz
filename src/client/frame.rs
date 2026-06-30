@@ -1,9 +1,9 @@
-//! Frame validation and protocol safety
+//! Frame validation and protocol safety.
 //!
 //! Validates frames before processing to prevent:
-//! - Frame too large (buffering DoS)
-//! - Invalid UTF-8 (protocol violation)
-//! - Malformed TLV (protocol violation)
+//! - frame too large (buffering `DoS`)
+//! - invalid UTF-8 (protocol violation)
+//! - malformed TLV (protocol violation)
 
 use std::str;
 
@@ -66,12 +66,20 @@ pub fn validate_frame(data: &[u8], limits: &FrameLimits) -> FrameValidation {
     FrameValidation::Valid
 }
 
-/// Validate UTF-8 string (e.g., in TLV fields)
+/// Validate a UTF-8 string (for example, in `TLV` fields).
+///
+/// # Errors
+///
+/// Returns [`FrameValidation::InvalidUtf8`] when `bytes` is not valid UTF-8.
 pub fn validate_utf8(bytes: &[u8]) -> Result<&str, FrameValidation> {
     str::from_utf8(bytes).map_err(|_| FrameValidation::InvalidUtf8)
 }
 
-/// Validate UTF-8 and return owned string
+/// Validate UTF-8 and return an owned [`String`].
+///
+/// # Errors
+///
+/// Returns [`FrameValidation::InvalidUtf8`] when `bytes` is not valid UTF-8.
 pub fn validate_utf8_owned(bytes: Vec<u8>) -> Result<String, FrameValidation> {
     String::from_utf8(bytes).map_err(|_| FrameValidation::InvalidUtf8)
 }

@@ -1,6 +1,14 @@
-use super::model::*;
+use super::model::{
+    parse_concrete_schedule_route, Arc, BinaryHeap, Bytes, CronSchedule, FastSet, FxBuildHasher,
+    Instant, PendingScheduleCreate, Reverse, ScheduleActor, ScheduleCreateEntry, ScheduleDef,
+    ScheduleInsert, ScheduleListEntry, METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL,
+    METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL, METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
+};
 
 impl ScheduleActor {
+    /// # Errors
+    ///
+    /// Returns an error when the cron expression is invalid.
     pub(super) fn parsed_cron_for(&mut self, cron: &str) -> Result<CronSchedule, String> {
         if let Some(parsed) = self.cron_cache.get(cron) {
             return Ok(parsed.clone());
@@ -11,6 +19,10 @@ impl ScheduleActor {
         Ok(parsed)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when cron parsing fails or the updated definition
+    /// cannot be persisted.
     pub(super) fn create_schedule_at(
         &mut self,
         route: String,
@@ -86,6 +98,10 @@ impl ScheduleActor {
         Ok(true)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when cron parsing fails or the definition cannot be
+    /// persisted.
     pub fn create_schedule(
         &mut self,
         route: String,
@@ -95,6 +111,10 @@ impl ScheduleActor {
         self.create_schedule_at(route, cron, payload, self.clock.now_instant())
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the batch is empty, contains duplicate routes,
+    /// includes an invalid cron expression, or cannot be persisted.
     pub(super) fn create_schedules_at(
         &mut self,
         entries: Vec<ScheduleCreateEntry>,
@@ -148,67 +168,27 @@ impl ScheduleActor {
                 continue;
             }
 
-            let parsed_cron = self.parsed_cron_for(&entry.cron)?;
-            let next_fire_time = parsed_cron.next_fire_time_with_clock(now, self.clock.as_ref());
-            let next_fire_ms =
-                Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
-
-            pending.push(PendingScheduleCreate {
-                route: entry.route,
-                cron: entry.cron,
-                parsed_cron,
-                payload: entry.payload,
-                next_fire_time,
-                next_fire_ms,
+            pending.push(self.build_pending_schedule_create(
+                entry,
+                now,
                 previous_fire_ms,
+                previous_list_index,
                 last_fire_ms,
                 executions_total,
-                previous_list_index,
-            });
+            )?);
         }
 
         if pending.is_empty() {
             return Ok(0);
         }
 
-        let store_items: Vec<_> = pending
-            .iter()
-            .map(
-                |entry| crate::domains::schedule::store::ScheduleBatchInsert {
-                    route: entry.route.clone(),
-                    cron: entry.cron.clone(),
-                    payload: entry.payload.clone(),
-                    next_fire_ms: entry.next_fire_ms,
-                    previous_fire_ms: entry.previous_fire_ms,
-                    last_fire_ms: entry.last_fire_ms,
-                    executions_total: entry.executions_total,
-                },
-            )
-            .collect();
+        let store_items = Self::build_schedule_batch_insert_items(&pending);
 
         if let Err(error) =
             self.store
                 .insert_batch(self.family.as_u64(), &store_items, self.write_options)
         {
-            let upsert_failures = pending
-                .iter()
-                .filter(|entry| entry.previous_list_index.is_some())
-                .count() as u64;
-            let create_failures = pending.len() as u64 - upsert_failures;
-
-            if create_failures > 0 {
-                crate::observability::counter_add(
-                    METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
-                    create_failures,
-                );
-            }
-            if upsert_failures > 0 {
-                crate::observability::counter_add(
-                    METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
-                    upsert_failures,
-                );
-            }
-
+            Self::record_batch_persistence_failures(&pending);
             return Err(error);
         }
 
@@ -242,21 +222,29 @@ impl ScheduleActor {
         Ok(changed)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the batch is empty, contains duplicate routes,
+    /// includes an invalid cron expression, or cannot be persisted.
     pub fn create_schedules(&mut self, entries: Vec<ScheduleCreateEntry>) -> Result<usize, String> {
         self.create_schedules_at(entries, self.clock.now_instant())
     }
 
-    pub fn delete_schedule(&mut self, route: String) -> Result<bool, String> {
-        let parsed_route = parse_concrete_schedule_route(&route)?;
+    /// # Errors
+    ///
+    /// Returns an error when the route cannot be parsed or the deletion cannot
+    /// be persisted.
+    pub fn delete_schedule(&mut self, route: &str) -> Result<bool, String> {
+        let parsed_route = parse_concrete_schedule_route(route)?;
 
-        let Some(existing) = self.schedules.get(&route) else {
+        let Some(existing) = self.schedules.get(route) else {
             return Ok(false);
         };
 
         if let Err(error) = self.store.delete_current_with_realm(
             self.family.as_u64(),
             &parsed_route.realm,
-            &route,
+            route,
             existing.next_fire_ms,
             self.write_options,
         ) {
@@ -264,13 +252,81 @@ impl ScheduleActor {
             return Err(error);
         }
 
-        if let Some(removed_def) = self.schedules.remove(&route) {
+        if let Some(removed_def) = self.schedules.remove(route) {
             self.remove_list_entry(removed_def.list_index);
             self.compact_ready_heap_if_needed();
             return Ok(true);
         }
 
         Ok(false)
+    }
+
+    fn build_pending_schedule_create(
+        &mut self,
+        entry: ScheduleCreateEntry,
+        now: Instant,
+        previous_fire_ms: Option<u64>,
+        previous_list_index: Option<usize>,
+        last_fire_ms: Option<u64>,
+        executions_total: u64,
+    ) -> Result<PendingScheduleCreate, String> {
+        let parsed_cron = self.parsed_cron_for(&entry.cron)?;
+        let next_fire_time = parsed_cron.next_fire_time_with_clock(now, self.clock.as_ref());
+        let next_fire_ms =
+            Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
+
+        Ok(PendingScheduleCreate {
+            route: entry.route,
+            cron: entry.cron,
+            parsed_cron,
+            payload: entry.payload,
+            next_fire_time,
+            next_fire_ms,
+            previous_fire_ms,
+            last_fire_ms,
+            executions_total,
+            previous_list_index,
+        })
+    }
+
+    fn build_schedule_batch_insert_items(
+        pending: &[PendingScheduleCreate],
+    ) -> Vec<crate::domains::schedule::store::ScheduleBatchInsert> {
+        pending
+            .iter()
+            .map(
+                |entry| crate::domains::schedule::store::ScheduleBatchInsert {
+                    route: entry.route.clone(),
+                    cron: entry.cron.clone(),
+                    payload: entry.payload.clone(),
+                    next_fire_ms: entry.next_fire_ms,
+                    previous_fire_ms: entry.previous_fire_ms,
+                    last_fire_ms: entry.last_fire_ms,
+                    executions_total: entry.executions_total,
+                },
+            )
+            .collect()
+    }
+
+    fn record_batch_persistence_failures(pending: &[PendingScheduleCreate]) {
+        let upsert_failures = pending
+            .iter()
+            .filter(|entry| entry.previous_list_index.is_some())
+            .count() as u64;
+        let create_failures = pending.len() as u64 - upsert_failures;
+
+        if create_failures > 0 {
+            crate::observability::counter_add(
+                METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
+                create_failures,
+            );
+        }
+        if upsert_failures > 0 {
+            crate::observability::counter_add(
+                METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
+                upsert_failures,
+            );
+        }
     }
 
     #[must_use]

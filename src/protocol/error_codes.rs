@@ -1,13 +1,14 @@
 //! Authoritative Error Code Allocation for All Fitz Domains
 //!
-//! See CLIENT_SPEC.md sections for each domain for the official error code allocations.
+//! See `CLIENT_SPEC.md` sections for each domain for the official error code allocations.
 //! All domains use numeric error codes allocated in 100-block ranges.
-//! Error codes are returned in domain-specific response envelopes as [u8 1][u32 code][u32 msg_len][msg].
+//! Error codes are returned in domain-specific response envelopes as
+//! `[u8 1][u32 code][u32 msg_len][msg]`.
 //!
-//! ## Backpressure Signaling (Per CLIENT_SPEC §Flow Control & Backpressure)
+//! ## Backpressure Signaling (Per `CLIENT_SPEC` §Flow Control & Backpressure)
 //! When a domain's internal queue is full, the broker returns a backpressure error:
-//! - RPC: 6003 = ERR_RPC_BACKPRESSURE (client should retry with exponential backoff)
-//! - Queue: 4005 = ERR_QUEUE_FULL (client should retry with exponential backoff)
+//! - RPC: 6003 = `ERR_RPC_BACKPRESSURE` (client should retry with exponential backoff)
+//! - Queue: 4005 = `ERR_QUEUE_FULL` (client should retry with exponential backoff)
 //! - Other domains: connection may close if internal buffers overflow
 //! - Notice PUBLISH: silently drops notifications on backpressure (fire-and-forget semantics, no response sent)
 
@@ -22,11 +23,14 @@ pub fn encode_error_body(code: u16, message: &str) -> Vec<u8> {
 pub fn encode_error_body_into(code: u16, message: &str, enc: &mut PayloadEncoder) -> Vec<u8> {
     enc.clear();
     enc.put_u8(1);
-    enc.put_u32(code as u32);
+    enc.put_u32(u32::from(code));
     enc.put_string(message);
     enc.finish()
 }
 
+/// # Errors
+///
+/// Returns an error if the payload is not a valid Fitz error envelope.
 pub fn decode_error_body(payload: &[u8]) -> Result<(u16, String), String> {
     let mut dec = PayloadDecoder::new(payload);
     if dec.get_u8()? != 1 {
@@ -34,7 +38,7 @@ pub fn decode_error_body(payload: &[u8]) -> Result<(u16, String), String> {
     }
 
     let code = dec.get_u32()?;
-    if code > u16::MAX as u32 {
+    if code > u32::from(u16::MAX) {
         return Err("Error code exceeds u16 range".to_string());
     }
 
@@ -43,10 +47,13 @@ pub fn decode_error_body(payload: &[u8]) -> Result<(u16, String), String> {
         return Err("Trailing data in error envelope".to_string());
     }
 
-    Ok((code as u16, message))
+    Ok((
+        u16::try_from(code).map_err(|_| "Error code exceeds u16 range".to_string())?,
+        message,
+    ))
 }
 
-/// KV domain error codes (per CLIENT_SPEC KV Domain section)
+/// KV domain error codes (per `CLIENT_SPEC` KV Domain section)
 pub mod kv {
     pub const ERR_TRANSACTION_NOT_FOUND: u16 = 1001;
     pub const ERR_INVALID_MODE: u16 = 1002;
@@ -61,7 +68,7 @@ pub mod kv {
     pub const ERR_UNAUTHORIZED: u16 = 1011; // AC-KV-010: Permission denied for KV operation
 }
 
-/// Stream domain error codes (per CLIENT_SPEC Stream Domain section)
+/// Stream domain error codes (per `CLIENT_SPEC` Stream Domain section)
 pub mod stream {
     pub const ERR_CONCURRENCY_CONFLICT: u16 = 2001;
     pub const ERR_SESSION_ALREADY_ACTIVE: u16 = 2002;
@@ -76,7 +83,7 @@ pub mod stream {
     pub const ERR_BACKEND_ERROR: u16 = 2012;
 }
 
-/// Notice domain error codes (per CLIENT_SPEC Notice Domain section)
+/// Notice domain error codes (per `CLIENT_SPEC` Notice Domain section)
 pub mod notice {
     pub const ERR_INVALID_ROUTE: u16 = 3001;
     pub const ERR_INVALID_PATTERN: u16 = 3002;
@@ -86,7 +93,7 @@ pub mod notice {
     pub const ERR_UNAUTHORIZED: u16 = 3009; // AC-NOTICE-009: Permission denied for notice operation
 }
 
-/// Queue domain error codes (per CLIENT_SPEC Queue Domain section)
+/// Queue domain error codes (per `CLIENT_SPEC` Queue Domain section)
 pub mod queue {
     pub const ERR_INVALID_TOKEN: u16 = 4001; // AC-QUEUE-006: Invalid or wrong inflight token
     pub const ERR_INFLIGHT_EXPIRED: u16 = 4002;
@@ -98,7 +105,7 @@ pub mod queue {
     pub const ERR_UNAUTHORIZED: u16 = 4009; // AC-QUEUE-008: Permission denied for queue operation
 }
 
-/// Lease domain error codes (per CLIENT_SPEC Lease Domain section)
+/// Lease domain error codes (per `CLIENT_SPEC` Lease Domain section)
 pub mod lease {
     pub const ERR_LEASE_HELD: u16 = 5001;
     pub const ERR_INVALID_FENCE: u16 = 5002;
@@ -110,7 +117,7 @@ pub mod lease {
     pub const ERR_UNAUTHORIZED: u16 = 5009; // AC-LEASE-010: Permission denied for lease operation
 }
 
-/// RPC domain error codes (per CLIENT_SPEC RPC Domain section)
+/// RPC domain error codes (per `CLIENT_SPEC` RPC Domain section)
 pub mod rpc {
     pub const ERR_RPC_TIMEOUT: u16 = 6001;
     pub const ERR_WORKER_NOT_FOUND: u16 = 6002;
@@ -124,7 +131,7 @@ pub mod rpc {
     pub const ERR_BACKEND_ERROR: u16 = 6010;
 }
 
-/// Schedule domain error codes (per CLIENT_SPEC Schedule Domain section)
+/// Schedule domain error codes (per `CLIENT_SPEC` Schedule Domain section)
 pub mod schedule {
     pub const ERR_SCHEDULE_NOT_FOUND: u16 = 7001;
     pub const ERR_INVALID_CRON: u16 = 7002; // AC-SCHEDULE-002: Invalid cron expression syntax

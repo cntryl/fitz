@@ -1,5 +1,20 @@
 use super::*;
 
+struct BackpressuredSink;
+
+impl MailboxSink for BackpressuredSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        Err(DeliveryError::MailboxFull {
+            capacity: 1,
+            current_len: 1,
+        })
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
 #[test]
 fn should_reject_connect_with_unprovisioned_resolved_route_family() {
     // Arrange
@@ -722,26 +737,8 @@ fn should_allow_e2e_notification_publish_via_ingress_snapshot() {
 #[test]
 fn should_surface_router_backpressure_in_ingress_decision() {
     // Arrange
-    use crate::runtime::envelope::Envelope;
-    use crate::runtime::router::{DeliveryError, MailboxSink};
-
     let metrics = crate::observability::metrics();
     let backpressure_before = metrics.counter_get(obs::METRIC_ROUTER_BACKPRESSURE);
-
-    struct BackpressuredSink;
-
-    impl MailboxSink for BackpressuredSink {
-        fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
-            Err(DeliveryError::MailboxFull {
-                capacity: 1,
-                current_len: 1,
-            })
-        }
-
-        fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-            self.deliver(envelope)
-        }
-    }
 
     let router = Arc::new(crate::runtime::Router::new());
     router.register_domain_pattern("kv", Arc::new(BackpressuredSink));

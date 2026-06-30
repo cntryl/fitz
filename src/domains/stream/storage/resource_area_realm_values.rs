@@ -1,6 +1,18 @@
 use super::super::store::StreamStorageLayout;
-use super::*;
+use super::{
+    AreaValue, RealmValue, ResourceValue, StreamLayoutMarkerValue, AREA_VALUE_V2_MARKER,
+    OPTIONAL_BYTES_ABSENT, OPTIONAL_OFFSET_ABSENT, REALM_VALUE_V2_MARKER, RESOURCE_VALUE_V2_MARKER,
+    STREAM_LAYOUT_MARKER_VALUE_V1_MARKER,
+};
 use bytes::Bytes;
+
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn u32_to_usize(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
 
 impl StreamLayoutMarkerValue {
     #[must_use]
@@ -20,6 +32,10 @@ impl StreamLayoutMarkerValue {
         ]
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the marker is missing or the encoded layout id is
+    /// unknown.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() != 3 || !bytes.starts_with(&STREAM_LAYOUT_MARKER_VALUE_V1_MARKER) {
             return Err("decode stream layout marker: invalid encoding".to_string());
@@ -41,7 +57,7 @@ impl StreamLayoutMarkerValue {
 
 impl ResourceValue {
     pub fn encode(&self) -> Vec<u8> {
-        let metadata_len = self.metadata.as_ref().map_or(0, |m| m.len());
+        let metadata_len = self.metadata.as_ref().map_or(0, Bytes::len);
         let mut buf = Vec::with_capacity(42 + self.body.len() + metadata_len);
         buf.extend_from_slice(&RESOURCE_VALUE_V2_MARKER);
         buf.extend_from_slice(&self.resource_offset.to_le_bytes());
@@ -58,12 +74,12 @@ impl ResourceValue {
                 .unwrap_or(OPTIONAL_OFFSET_ABSENT)
                 .to_le_bytes(),
         );
-        buf.extend_from_slice(&(self.body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&usize_to_u32_saturating(self.body.len()).to_le_bytes());
         buf.extend_from_slice(
             &self
                 .metadata
                 .as_ref()
-                .map_or(OPTIONAL_BYTES_ABSENT, |m| m.len() as u32)
+                .map_or(OPTIONAL_BYTES_ABSENT, |m| usize_to_u32_saturating(m.len()))
                 .to_le_bytes(),
         );
         buf.extend_from_slice(&self.body);
@@ -73,10 +89,17 @@ impl ResourceValue {
         buf
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the resource value is malformed, truncated, or has
+    /// trailing bytes.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         Self::decode_v2(bytes)
     }
 
+    /// # Panics
+    ///
+    /// Panics if `bytes` do not contain a valid resource value encoding.
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize resource value")
@@ -94,12 +117,12 @@ impl ResourceValue {
         let created_at = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
         let area_offset_raw = u64::from_le_bytes(bytes[18..26].try_into().unwrap());
         let realm_offset_raw = u64::from_le_bytes(bytes[26..34].try_into().unwrap());
-        let body_len = u32::from_le_bytes(bytes[34..38].try_into().unwrap()) as usize;
+        let body_len = u32_to_usize(u32::from_le_bytes(bytes[34..38].try_into().unwrap()));
         let metadata_len_raw = u32::from_le_bytes(bytes[38..42].try_into().unwrap());
         let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
             None
         } else {
-            Some(metadata_len_raw as usize)
+            Some(u32_to_usize(metadata_len_raw))
         };
 
         let mut offset = 42;
@@ -138,17 +161,17 @@ impl ResourceValue {
 
 impl AreaValue {
     pub fn encode(&self) -> Vec<u8> {
-        let metadata_len = self.metadata.as_ref().map_or(0, |m| m.len());
+        let metadata_len = self.metadata.as_ref().map_or(0, Bytes::len);
         let mut buf = Vec::with_capacity(26 + self.body.len() + metadata_len);
         buf.extend_from_slice(&AREA_VALUE_V2_MARKER);
         buf.extend_from_slice(&self.resource_offset.to_le_bytes());
         buf.extend_from_slice(&self.created_at.to_le_bytes());
-        buf.extend_from_slice(&(self.body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&usize_to_u32_saturating(self.body.len()).to_le_bytes());
         buf.extend_from_slice(
             &self
                 .metadata
                 .as_ref()
-                .map_or(OPTIONAL_BYTES_ABSENT, |m| m.len() as u32)
+                .map_or(OPTIONAL_BYTES_ABSENT, |m| usize_to_u32_saturating(m.len()))
                 .to_le_bytes(),
         );
         buf.extend_from_slice(&self.body);
@@ -158,10 +181,17 @@ impl AreaValue {
         buf
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the area value is malformed, truncated, or has
+    /// trailing bytes.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         Self::decode_v2(bytes)
     }
 
+    /// # Panics
+    ///
+    /// Panics if `bytes` do not contain a valid area value encoding.
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize area value")
@@ -177,12 +207,12 @@ impl AreaValue {
 
         let resource_offset = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
         let created_at = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
-        let body_len = u32::from_le_bytes(bytes[18..22].try_into().unwrap()) as usize;
+        let body_len = u32_to_usize(u32::from_le_bytes(bytes[18..22].try_into().unwrap()));
         let metadata_len_raw = u32::from_le_bytes(bytes[22..26].try_into().unwrap());
         let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
             None
         } else {
-            Some(metadata_len_raw as usize)
+            Some(u32_to_usize(metadata_len_raw))
         };
 
         let mut offset = 26;
@@ -219,23 +249,27 @@ impl AreaValue {
 }
 
 impl RealmValue {
+    /// # Errors
+    ///
+    /// Returns an error if the realm value is malformed, truncated, or has
+    /// trailing bytes.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         Self::decode_v2(bytes)
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        let metadata_len = self.metadata.as_ref().map_or(0, |m| m.len());
+        let metadata_len = self.metadata.as_ref().map_or(0, Bytes::len);
         let mut buf = Vec::with_capacity(34 + self.body.len() + metadata_len);
         buf.extend_from_slice(&REALM_VALUE_V2_MARKER);
         buf.extend_from_slice(&self.area_offset.to_le_bytes());
         buf.extend_from_slice(&self.resource_offset.to_le_bytes());
         buf.extend_from_slice(&self.created_at.to_le_bytes());
-        buf.extend_from_slice(&(self.body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&usize_to_u32_saturating(self.body.len()).to_le_bytes());
         buf.extend_from_slice(
             &self
                 .metadata
                 .as_ref()
-                .map_or(OPTIONAL_BYTES_ABSENT, |m| m.len() as u32)
+                .map_or(OPTIONAL_BYTES_ABSENT, |m| usize_to_u32_saturating(m.len()))
                 .to_le_bytes(),
         );
         buf.extend_from_slice(&self.body);
@@ -245,6 +279,9 @@ impl RealmValue {
         buf
     }
 
+    /// # Panics
+    ///
+    /// Panics if `bytes` do not contain a valid realm value encoding.
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize realm value")
@@ -261,12 +298,12 @@ impl RealmValue {
         let area_offset = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
         let resource_offset = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
         let created_at = u64::from_le_bytes(bytes[18..26].try_into().unwrap());
-        let body_len = u32::from_le_bytes(bytes[26..30].try_into().unwrap()) as usize;
+        let body_len = u32_to_usize(u32::from_le_bytes(bytes[26..30].try_into().unwrap()));
         let metadata_len_raw = u32::from_le_bytes(bytes[30..34].try_into().unwrap());
         let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
             None
         } else {
-            Some(metadata_len_raw as usize)
+            Some(u32_to_usize(metadata_len_raw))
         };
 
         let mut offset = 34;

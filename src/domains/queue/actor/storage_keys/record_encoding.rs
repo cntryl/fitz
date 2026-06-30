@@ -1,7 +1,7 @@
-use super::super::*;
+use super::super::{QueueActor, QueueRecord};
 
 impl QueueActor {
-    /// Serialize QueueRecord header to bytes.
+    /// Serialize `QueueRecord` header to bytes.
     pub(in crate::domains::queue::actor) fn encode_record_header(record: &QueueRecord) -> Vec<u8> {
         let mut buf = Vec::with_capacity(79);
         buf.push(Self::HEADER_VERSION_V2);
@@ -20,7 +20,7 @@ impl QueueActor {
         buf
     }
 
-    /// Serialize a legacy combined QueueRecord for compatibility writes.
+    /// Serialize a legacy combined `QueueRecord` for compatibility writes.
     pub(in crate::domains::queue::actor) fn encode_legacy_record(record: &QueueRecord) -> Vec<u8> {
         let body = record
             .body
@@ -29,7 +29,7 @@ impl QueueActor {
         let mut buf = Vec::with_capacity(16 + body.len());
         buf.extend_from_slice(&record.attempts.to_le_bytes());
         buf.extend_from_slice(&record.visible_at_ms.to_le_bytes());
-        buf.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&u32::try_from(body.len()).unwrap_or(u32::MAX).to_le_bytes());
         buf.extend_from_slice(body);
         buf
     }

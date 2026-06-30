@@ -1,13 +1,21 @@
-use super::model::*;
+use super::model::{
+    info, warn, Arc, Bytes, FastMap, FxBuildHasher, HashMap, Instant, PendingClaim,
+    PendingScheduleFire, PersistedPendingFireClaim, Reverse, ScheduleAckDefinition, ScheduleActor,
+    ScheduleFireClaim, ScheduleListEntry, SchedulePendingFireClaimAck,
+};
 
 impl ScheduleActor {
+    fn u64_to_usize_saturating(value: u64) -> usize {
+        usize::try_from(value).unwrap_or(usize::MAX)
+    }
+
     pub fn list_entries(
         &mut self,
         offset: u64,
         limit: u64,
     ) -> (Arc<Vec<Arc<ScheduleListEntry>>>, u64) {
         let total_count = self.schedules.len() as u64;
-        let start = offset as usize;
+        let start = Self::u64_to_usize_saturating(offset);
         if start >= self.list_entries.len() {
             return (Arc::new(Vec::new()), total_count);
         }
@@ -16,7 +24,7 @@ impl ScheduleActor {
         let take = if limit == 0 {
             remaining
         } else {
-            remaining.min(limit as usize)
+            remaining.min(Self::u64_to_usize_saturating(limit))
         };
 
         if start == 0 && take == self.list_entries.len() {
@@ -207,6 +215,11 @@ impl ScheduleActor {
     /// Acknowledges occurrences handed off to the live publish path.
     /// Returns `(acked_count, acknowledged_at_ms)`.
     /// `acknowledged_at_ms` is only meaningful when `acked_count > 0`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the pending-claim acknowledgement batch cannot be
+    /// persisted.
     pub(crate) fn ack_pending_fire_claims(
         &mut self,
         handed_off_occurrences: &[(u64, String)],
@@ -280,6 +293,10 @@ impl ScheduleActor {
         self.ack_pending_fire_claims(delivered)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when deleting expired pending-claim rows from durable
+    /// storage fails.
     pub(crate) fn cleanup_stale_pending_claims(&mut self, ttl_ms: u64) -> Result<usize, String> {
         let now_epoch_ms = self.clock.now_epoch_ms();
         let expired: Vec<_> = self

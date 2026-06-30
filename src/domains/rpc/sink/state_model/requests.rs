@@ -1,4 +1,4 @@
-use super::*;
+use super::{Instant, Route, RouteAddress, RpcWorker, Utc};
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 #[derive(Debug, Clone)]

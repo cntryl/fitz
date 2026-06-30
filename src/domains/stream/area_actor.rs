@@ -16,13 +16,13 @@ use super::protocol::{
 };
 use super::store::StreamStore;
 
-/// AreaActor coordinates area-level offsets and watermark
+/// `AreaActor` coordinates area-level offsets and watermark
 ///
 /// Responsibilities:
-/// - Mint area offset leases for StreamActors
-/// - Track committed ranges from BatchCommitted notifications
+/// - Mint area offset leases for `StreamActors`
+/// - Track committed ranges from `BatchCommitted` notifications
 /// - Calculate and advance area watermark (highest contiguous offset)
-/// - Notify RealmActor when watermark advances
+/// - Notify `RealmActor` when watermark advances
 pub struct AreaActor {
     #[allow(dead_code)]
     family_id: RouteFamily,
@@ -44,10 +44,10 @@ pub struct AreaActor {
     area_watermark: Option<u64>,
 
     /// Committed ranges from resources (for watermark calculation)
-    /// Key: first_offset, Value: last_offset
+    /// Key: `first_offset`, Value: `last_offset`
     committed_ranges: BTreeMap<u64, u64>,
 
-    /// Realm offset lease (pre-allocated from RealmActor)
+    /// Realm offset lease (pre-allocated from `RealmActor`)
     realm_lease_next: u64,
     realm_lease_end: u64,
 
@@ -87,7 +87,7 @@ impl AreaActor {
         }
     }
 
-    /// Get RouteAddress for RealmActor coordination
+    /// Get `RouteAddress` for `RealmActor` coordination
     fn realm_actor_address(&self) -> RouteAddress {
         let route = Route::new(format!(
             "stream://{}/{}",
@@ -96,7 +96,7 @@ impl AreaActor {
         RouteAddress::new(self.family_id, route)
     }
 
-    /// Handle RequestLease from StreamActor and mint paired area+realm offsets
+    /// Handle `RequestLease` from `StreamActor` and mint paired area+realm offsets
     fn handle_request_lease(
         &mut self,
         realm: &str,
@@ -152,7 +152,7 @@ impl AreaActor {
         );
     }
 
-    /// Handle BatchCommitted from StreamActor
+    /// Handle `BatchCommitted` from `StreamActor`
     fn handle_batch_committed(
         &mut self,
         first_area_offset: u64,
@@ -221,7 +221,7 @@ impl AreaActor {
     ///
     /// This prevents bridging gaps where offsets are missing.
     ///
-    /// **OPTIMIZATION**: Uses BTreeMap exact-key lookup for the next contiguous
+    /// **OPTIMIZATION**: Uses `BTreeMap` exact-key lookup for the next contiguous
     /// range, avoiding full iteration.
     fn advance_watermark(&mut self) {
         while let Some(next_offset) = self
@@ -254,7 +254,7 @@ impl AreaActor {
         }
     }
 
-    /// Update realm lease from RealmActor grant
+    /// Update realm lease from `RealmActor` grant
     pub fn update_realm_lease(&mut self, grant: LeaseGranted) {
         self.realm_lease_next = grant.realm_start;
         self.realm_lease_end = grant.realm_end_exclusive; // Already exclusive

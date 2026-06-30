@@ -1,6 +1,6 @@
 /// Synchronous, lock-free metrics collector for the Fitz runtime.
 ///
-/// Uses DashMap for concurrent counter/gauge access without blocking.
+/// Uses `DashMap` for concurrent counter/gauge access without blocking.
 /// Histograms use a simple Vec-based approach (preallocated buckets).
 /// No async I/O; all updates are atomic or lock-free.
 ///
@@ -15,6 +15,10 @@ use std::time::Instant;
 const HISTOGRAM_BUCKET_BOUNDS: [&str; 9] = [
     "1ms", "5ms", "10ms", "50ms", "100ms", "500ms", "1s", "5s", "+Inf",
 ];
+
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
 
 fn append_metric_metadata(output: &mut String, name: &str, metric_type: &str, help: &str) {
     let _ = writeln!(output, "# HELP {name} {help}");
@@ -107,7 +111,7 @@ impl DomainMetricSet {
     }
 
     fn observe_latency_ms(&self, started_at: Instant) {
-        let elapsed_ms = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        let elapsed_ms = u128_to_u64_saturating(started_at.elapsed().as_millis());
         self.collector
             .histogram_observe_ms(self.latency_ms, elapsed_ms);
     }

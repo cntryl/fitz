@@ -20,6 +20,11 @@ pub(super) use std::collections::{HashMap, VecDeque};
 pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 pub(super) use std::sync::Arc;
 
+#[allow(clippy::cast_precision_loss)]
+fn usize_to_f64(value: usize) -> f64 {
+    value as f64
+}
+
 pub type AdminKvCommittedPair = (Vec<u8>, Vec<u8>);
 pub type AdminKvPrefixScanResult = (Vec<AdminKvCommittedPair>, bool);
 pub type AdminKvRowsResult = (Vec<AdminKvCommittedPair>, Option<Vec<u8>>, bool);
@@ -82,7 +87,7 @@ impl KvRollingLatency {
         }
 
         let mut samples = self.samples.iter().copied().collect::<Vec<_>>();
-        samples.sort_by(|left, right| left.total_cmp(right));
+        samples.sort_by(f64::total_cmp);
         let sum = samples.iter().sum::<f64>();
         let p95_index = samples
             .len()
@@ -92,7 +97,7 @@ impl KvRollingLatency {
             .saturating_sub(1);
 
         crate::control::admin::KvLatencySnapshot {
-            avg_ms: sum / samples.len() as f64,
+            avg_ms: sum / usize_to_f64(samples.len()),
             p95_ms: samples[p95_index],
         }
     }

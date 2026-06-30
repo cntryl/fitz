@@ -1,4 +1,10 @@
-use super::*;
+use super::{
+    Bytes, DlqReason, Instant, MessageId, QueueActor, QueueMetaSnapshot, QueueRecord, QueueState,
+    StoredRecordLayout,
+};
+#[cfg(test)]
+use super::{FAIL_NEXT_ACK_COMMIT, FAIL_NEXT_REDELIVERY_COMMIT};
+use crate::observability as obs;
 
 impl QueueActor {
     pub(super) fn decode_legacy_record<B: Into<Bytes>>(bytes: B) -> Result<QueueRecord, String> {
@@ -10,7 +16,8 @@ impl QueueActor {
 
         let attempts = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         let visible_at_ms = u64::from_le_bytes(bytes[4..12].try_into().unwrap());
-        let body_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        let body_len = usize::try_from(u32::from_le_bytes(bytes[12..16].try_into().unwrap()))
+            .unwrap_or(usize::MAX);
 
         if bytes.len().saturating_sub(16) < body_len {
             return Err("Truncated record body".to_string());
@@ -233,7 +240,8 @@ impl QueueActor {
     }
 
     pub(super) fn observe_elapsed_us(metric_name: &str, start: Instant) {
-        Self::observe_histogram_us(metric_name, start.elapsed().as_micros() as u64);
+        let elapsed_us = u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX);
+        Self::observe_histogram_us(metric_name, elapsed_us);
     }
 
     pub(super) fn increment_counter(metric_name: &str) {
@@ -290,10 +298,10 @@ impl QueueActor {
         QueueMetaSnapshot {
             next_id: self.next_id,
             next_ready_seq: self.next_ready_seq,
-            ready_count: self.ready.len() as u64,
-            delayed_count: self.persisted_delayed.len() as u64,
-            inflight_count: self.inflight.len() as u64,
-            dlq_count: self.persisted_dlq.len() as u64,
+            ready_count: Self::usize_to_u64(self.ready.len()),
+            delayed_count: Self::usize_to_u64(self.persisted_delayed.len()),
+            inflight_count: Self::usize_to_u64(self.inflight.len()),
+            dlq_count: Self::usize_to_u64(self.persisted_dlq.len()),
             oldest_ready_enqueued_at_ms: self.oldest_ready_enqueued_at_ms,
         }
     }

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Duration, MessageId, QueueActor};
 
 impl QueueActor {
     pub(in crate::domains::queue::actor) fn reset_recovery_state(&mut self) {
@@ -6,7 +6,7 @@ impl QueueActor {
         self.reset_persisted_index_state();
         self.delayed.clear();
         let now = self.clock.now_instant();
-        self.next_delayed_deadline = now + Duration::from_secs(3600);
+        self.next_delayed_deadline = now + Duration::from_hours(1);
     }
 
     pub(in crate::domains::queue::actor) fn populate_live_ready_from_persisted(
@@ -22,12 +22,12 @@ impl QueueActor {
                 let mut id = range.next;
                 while id <= range.end {
                     ready_ids.push(MessageId::new(id));
-                    id = id.saturating_add(Self::READY_SHARDS as u64);
+                    id = id.saturating_add(Self::ready_shards_u64());
                 }
             }
         }
         ready_ids.extend_from_slice(matured_delayed_ids);
-        ready_ids.sort_unstable_by_key(|id| id.as_u64());
+        ready_ids.sort_unstable_by_key(MessageId::as_u64);
         ready_ids.dedup_by_key(|id| id.as_u64());
 
         for id in ready_ids {

@@ -1,4 +1,6 @@
-use super::super::*;
+use super::super::{
+    MessageId, PersistedIndexMutationPlan, PersistedReadyMutation, QueueActor, StoredRecordLayout,
+};
 
 impl QueueActor {
     pub(in crate::domains::queue::actor) fn delete_record_for_layout(
@@ -11,7 +13,7 @@ impl QueueActor {
         match layout {
             StoredRecordLayout::EmbeddedHeader => txn.delete(header_key),
             StoredRecordLayout::SplitHeaderBody => {
-                txn.delete(header_key).and_then(|_| txn.delete(body_key))
+                txn.delete(header_key).and_then(|()| txn.delete(body_key))
             }
             StoredRecordLayout::LegacyKey => txn.delete(legacy_key),
         }
@@ -75,7 +77,7 @@ impl QueueActor {
                 .map_err(|e| format!("Failed to delete queue ready index: {e:?}")),
             PersistedReadyMutation::Replace { removed, inserted } => txn
                 .delete(self.ready_range_key(shard, removed.next))
-                .and_then(|_| {
+                .and_then(|()| {
                     txn.put(
                         self.ready_range_key(shard, inserted.next),
                         Self::encode_ready_range_value(inserted),
@@ -89,14 +91,14 @@ impl QueueActor {
                 right,
             } => txn
                 .delete(self.ready_range_key(shard, removed.next))
-                .and_then(|_| {
+                .and_then(|()| {
                     txn.put(
                         self.ready_range_key(shard, left.next),
                         Self::encode_ready_range_value(left),
                         None,
                     )
                 })
-                .and_then(|_| {
+                .and_then(|()| {
                     txn.put(
                         self.ready_range_key(shard, right.next),
                         Self::encode_ready_range_value(right),
@@ -139,8 +141,8 @@ impl QueueActor {
             self.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
-                plan.staged_ready_count as u64,
-                plan.staged_delayed_count as u64,
+                Self::usize_to_u64(plan.staged_ready_count),
+                Self::usize_to_u64(plan.staged_delayed_count),
                 plan.staged_next_delayed_visibility,
             ),
             None,

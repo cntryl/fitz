@@ -9,8 +9,6 @@
 
 pub(super) use crate::domains::lease::LeaseMetrics;
 pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
-#[cfg(test)]
-pub(super) use crate::protocol::frame_context::FrameContext;
 pub(super) use crate::runtime::{ClientChannel, DeliveryError, Envelope, MailboxSink, Router};
 pub(super) use chrono::Utc;
 pub(super) use parking_lot::Mutex;
@@ -61,6 +59,19 @@ pub(super) struct LeaseAcquireRequest {
     pub(super) reply_destination: Option<crate::runtime::routing::RouteAddress>,
     pub(super) channel: ClientChannel,
     pub(super) route_family: crate::runtime::routing::RouteFamily,
+}
+
+pub(super) struct QueuedAcquireRequest {
+    pub(super) current_owner: String,
+    pub(super) owner_session_id: u64,
+    pub(super) owner_id: String,
+    pub(super) ttl_secs: u64,
+    pub(super) wait_seconds: u32,
+    pub(super) reply_source: crate::runtime::routing::RouteAddress,
+    pub(super) reply_destination: Option<crate::runtime::routing::RouteAddress>,
+    pub(super) channel: ClientChannel,
+    pub(super) route_family: crate::runtime::routing::RouteFamily,
+    pub(super) now: Instant,
 }
 
 /// Live lease coordination state for the current broker process only.

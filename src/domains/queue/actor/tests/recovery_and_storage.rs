@@ -237,12 +237,11 @@ fn should_preserve_ready_body_cache_when_receiving_uncached_message() {
     );
     let mut ids = Vec::with_capacity(QueueActor::BODY_CACHE_LIMIT + 1);
 
-    for i in 0..(QueueActor::BODY_CACHE_LIMIT + 1) {
+    for i in 0..=QueueActor::BODY_CACHE_LIMIT {
         let body = Bytes::from(format!("message-{i}"));
         let response = actor.handle_send(body, None);
-        let id = match response {
-            QueueResponse::Sent { id } => id,
-            _ => panic!("Expected Sent response"),
+        let QueueResponse::Sent { id } = response else {
+            panic!("Expected Sent response");
         };
         ids.push(id);
     }
@@ -283,9 +282,10 @@ fn should_evict_reserved_message_body_from_cache_on_receive() {
         None,
         crate::utils::idempotency::default_dedup_store(),
     );
-    let message_id = match actor.handle_send(Bytes::from("cached message"), None) {
-        QueueResponse::Sent { id } => id,
-        _ => panic!("Expected Sent response"),
+    let QueueResponse::Sent { id: message_id } =
+        actor.handle_send(Bytes::from("cached message"), None)
+    else {
+        panic!("Expected Sent response");
     };
     assert!(actor.body_cache.contains_key(&message_id));
 
@@ -323,9 +323,8 @@ fn should_compact_hot_body_fifo_under_cache_churn() {
     for i in 0..(QueueActor::BODY_CACHE_LIMIT * 3) {
         let body = Bytes::from(format!("message-{i}"));
         let response = actor.handle_send(body, None);
-        let id = match response {
-            QueueResponse::Sent { id } => id,
-            _ => panic!("Expected Sent response"),
+        let QueueResponse::Sent { id } = response else {
+            panic!("Expected Sent response");
         };
         let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
         let token = match response {
@@ -426,13 +425,13 @@ fn should_return_error_when_ack_commit_fails() {
     );
 
     let sent = actor.handle_send(Bytes::from("test message"), None);
-    let id = match sent {
-        QueueResponse::Sent { id } => id,
-        _ => panic!("Expected Sent response"),
+    let QueueResponse::Sent { id } = sent else {
+        panic!("Expected Sent response");
     };
-    let reserved = match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
-        QueueResponse::Received { messages } => messages,
-        _ => panic!("Expected Received response"),
+    let QueueResponse::Received { messages: reserved } =
+        actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1))
+    else {
+        panic!("Expected Received response");
     };
     let token = reserved[0].token;
     QueueActor::fail_next_ack_commit_for_tests();

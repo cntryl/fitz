@@ -10,7 +10,10 @@ impl RawClaims {
     /// 4) scp (space-delimited or array)
     /// 5) scope (space-delimited string)
     ///
-    /// Returns Err if the chosen source is malformed or produces no permissions.
+    /// # Errors
+    ///
+    /// Returns an error if the chosen permission source is malformed or if no
+    /// non-empty permission values can be derived from the resolved source.
     pub fn normalized_permissions(
         &self,
         custom_claim: Option<&str>,

@@ -1,4 +1,13 @@
-use super::model::*;
+use super::model::{
+    Duration, Instant, LeaseAcquireRequest, LeaseDomainSink, Ordering, PendingAcquire,
+    PendingAcquireRef, QueuedAcquireRequest, SinkLeaseState, Utc, LEASE_MAX_QUEUE_DEPTH,
+    LEASE_MAX_WAIT_SECONDS,
+};
+use crate::domains::subscription_state::RoutedSubscriptionSet;
+#[cfg(test)]
+use crate::protocol::frame_context::FrameContext;
+use crate::runtime::Envelope;
+use std::collections::VecDeque;
 
 impl LeaseDomainSink {
     pub(super) fn track_session_lease(
@@ -118,7 +127,7 @@ impl LeaseDomainSink {
         meta: crate::runtime::ClientFrameMeta,
         response: &crate::domains::lease::protocol::LeaseResponse,
         request_started: Option<std::time::Instant>,
-    ) -> Result<(), DeliveryError> {
+    ) {
         #[cfg(test)]
         let response_ctx = {
             let response_bytes = crate::protocol::lease_codec::encode_domain_response(response);
@@ -145,8 +154,6 @@ impl LeaseDomainSink {
                 metrics.record_success(started_at);
             }
         }
-
-        Ok(())
     }
 
     pub(super) fn notify_lease_change(&self, key: &crate::domains::lease::protocol::LeaseKey) {
@@ -155,7 +162,7 @@ impl LeaseDomainSink {
             key.to_route(),
             bytes::Bytes::new(),
         );
-        let _ = self.handle_domain_publish(&event);
+        self.handle_domain_publish(&event);
     }
 
     pub(super) fn remove_session_waiters(&self, session_id: u64) -> usize {
@@ -434,14 +441,11 @@ impl LeaseDomainSink {
         let families = self.families.lock();
         families
             .values()
-            .map(|state| state.subscription_count())
+            .map(RoutedSubscriptionSet::subscription_count)
             .sum()
     }
 
-    pub(super) fn handle_domain_publish(
-        &self,
-        event: &crate::runtime::DomainPublishEvent,
-    ) -> Result<(), DeliveryError> {
+    pub(super) fn handle_domain_publish(&self, event: &crate::runtime::DomainPublishEvent) {
         let family_id = event.family_id.as_u64();
         let families = self.families.lock();
 
@@ -486,7 +490,6 @@ impl LeaseDomainSink {
                 }
             });
         }
-        Ok(())
     }
 
     pub(super) fn unsubscribe_all(&self, session_id: u64) -> usize {
@@ -531,24 +534,7 @@ impl LeaseDomainSink {
             return LeaseResponse::Timeout;
         }
 
-        let expired_state = {
-            let mut leases = self.leases.lock();
-            match leases.get(&key) {
-                Some(state) if state.expiry <= now => leases.remove(&key),
-                _ => None,
-            }
-        };
-
-        if let Some(state) = expired_state {
-            self.untrack_session_lease(state.owner_session_id, &key);
-            self.remove_admin_lease(&key);
-            self.notify_lease_change(&key);
-            self.grant_next_waiter_if_available(&key, now);
-        }
-
-        if !self.leases.lock().contains_key(&key) {
-            self.grant_next_waiter_if_available(&key, now);
-        }
+        self.prepare_acquire_key(&key, now);
 
         let mut acquired_state = None;
         let response = {
@@ -577,53 +563,21 @@ impl LeaseDomainSink {
                 Some(state) if wait_seconds == 0 => LeaseResponse::HeldByOther {
                     current_owner: state.owner_id,
                 },
-                Some(state) => {
-                    let Some(reply_destination) = reply_destination else {
-                        return LeaseResponse::HeldByOther {
-                            current_owner: state.owner_id,
-                        };
-                    };
-
-                    let mut pending_acquires = self.pending_acquires.lock();
-                    if let Some(queue) = pending_acquires.get(&key) {
-                        if let Some(existing) =
-                            queue.iter().find(|waiter| waiter.owner_id == owner_id)
-                        {
-                            return LeaseResponse::AlreadyQueued {
-                                fencing_token: existing.queued_token,
-                            };
-                        }
-
-                        if queue.len() >= LEASE_MAX_QUEUE_DEPTH {
-                            return LeaseResponse::QueueFull {
-                                pending_count: queue.len(),
-                            };
-                        }
-                    }
-
-                    let queued_token = self.next_fencing_token();
-                    pending_acquires
-                        .entry(key.clone())
-                        .or_default()
-                        .push_back(PendingAcquire {
-                            session_id: owner_session_id,
-                            owner_id,
-                            reply_destination,
-                            reply_source,
-                            channel,
-                            route_family,
-                            queued_token,
-                            ttl_secs,
-                            expires_at: now + Duration::from_secs(wait_seconds as u64),
-                        });
-                    drop(pending_acquires);
-
-                    self.track_session_waiter(owner_session_id, &key, queued_token);
-
-                    LeaseResponse::Queued {
-                        fencing_token: queued_token,
-                    }
-                }
+                Some(state) => self.queue_acquire_waiter(
+                    &key,
+                    QueuedAcquireRequest {
+                        current_owner: state.owner_id,
+                        owner_session_id,
+                        owner_id,
+                        ttl_secs,
+                        wait_seconds,
+                        reply_source,
+                        reply_destination,
+                        channel,
+                        route_family,
+                        now,
+                    },
+                ),
             }
         };
 
@@ -639,10 +593,94 @@ impl LeaseDomainSink {
         response
     }
 
+    fn prepare_acquire_key(&self, key: &crate::domains::lease::protocol::LeaseKey, now: Instant) {
+        let expired_state = {
+            let mut leases = self.leases.lock();
+            match leases.get(key) {
+                Some(state) if state.expiry <= now => leases.remove(key),
+                _ => None,
+            }
+        };
+
+        if let Some(state) = expired_state {
+            self.untrack_session_lease(state.owner_session_id, key);
+            self.remove_admin_lease(key);
+            self.notify_lease_change(key);
+            self.grant_next_waiter_if_available(key, now);
+        }
+
+        if !self.leases.lock().contains_key(key) {
+            self.grant_next_waiter_if_available(key, now);
+        }
+    }
+
+    fn queue_acquire_waiter(
+        &self,
+        key: &crate::domains::lease::protocol::LeaseKey,
+        request: QueuedAcquireRequest,
+    ) -> crate::domains::lease::protocol::LeaseResponse {
+        use crate::domains::lease::protocol::LeaseResponse;
+
+        let QueuedAcquireRequest {
+            current_owner,
+            owner_session_id,
+            owner_id,
+            ttl_secs,
+            wait_seconds,
+            reply_source,
+            reply_destination,
+            channel,
+            route_family,
+            now,
+        } = request;
+
+        let Some(reply_destination) = reply_destination else {
+            return LeaseResponse::HeldByOther { current_owner };
+        };
+
+        let mut pending_acquires = self.pending_acquires.lock();
+        if let Some(queue) = pending_acquires.get(key) {
+            if let Some(existing) = queue.iter().find(|waiter| waiter.owner_id == owner_id) {
+                return LeaseResponse::AlreadyQueued {
+                    fencing_token: existing.queued_token,
+                };
+            }
+
+            if queue.len() >= LEASE_MAX_QUEUE_DEPTH {
+                return LeaseResponse::QueueFull {
+                    pending_count: queue.len(),
+                };
+            }
+        }
+
+        let queued_token = self.next_fencing_token();
+        pending_acquires
+            .entry(key.clone())
+            .or_default()
+            .push_back(PendingAcquire {
+                session_id: owner_session_id,
+                owner_id,
+                reply_destination,
+                reply_source,
+                channel,
+                route_family,
+                queued_token,
+                ttl_secs,
+                expires_at: now + Duration::from_secs(u64::from(wait_seconds)),
+            });
+        drop(pending_acquires);
+
+        self.track_session_waiter(owner_session_id, key, queued_token);
+
+        LeaseResponse::Queued {
+            fencing_token: queued_token,
+        }
+    }
+
     pub(super) fn handle_extend(
         &self,
-        key: crate::domains::lease::protocol::LeaseKey,
-        owner_id: String,
+        key: &crate::domains::lease::protocol::LeaseKey,
+        owner_id: &str,
         fencing_token: u64,
         ttl_secs: u64,
     ) -> crate::domains::lease::protocol::LeaseResponse {
@@ -657,10 +695,10 @@ impl LeaseDomainSink {
         let response = {
             let mut leases = self.leases.lock();
 
-            match leases.get(&key).cloned() {
+            match leases.get(key).cloned() {
                 None => LeaseResponse::NotHeld,
                 Some(state) if state.expiry <= now => {
-                    leases.remove(&key);
+                    leases.remove(key);
                     expired_state = Some(state);
                     LeaseResponse::Expired
                 }
@@ -673,7 +711,7 @@ impl LeaseDomainSink {
                 }
                 Some(_) => {
                     let new_token = self.next_fencing_token();
-                    if let Some(state) = leases.get_mut(&key) {
+                    if let Some(state) = leases.get_mut(key) {
                         state.expiry = now + ttl;
                         state.fencing_token = new_token;
                         state.renewals = state.renewals.saturating_add(1);
@@ -688,13 +726,13 @@ impl LeaseDomainSink {
 
         if let Some(state) = updated_state.as_ref() {
             self.counter_inc("fitz_lease_ownership_churn_total");
-            self.upsert_admin_lease(&key, state);
+            self.upsert_admin_lease(key, state);
         }
         if let Some(state) = expired_state {
-            self.untrack_session_lease(state.owner_session_id, &key);
-            self.remove_admin_lease(&key);
-            self.notify_lease_change(&key);
-            self.grant_next_waiter_if_available(&key, now);
+            self.untrack_session_lease(state.owner_session_id, key);
+            self.remove_admin_lease(key);
+            self.notify_lease_change(key);
+            self.grant_next_waiter_if_available(key, now);
         }
 
         response
@@ -702,8 +740,8 @@ impl LeaseDomainSink {
 
     pub(super) fn handle_release(
         &self,
-        key: crate::domains::lease::protocol::LeaseKey,
-        owner_id: String,
+        key: &crate::domains::lease::protocol::LeaseKey,
+        owner_id: &str,
         fencing_token: u64,
     ) -> crate::domains::lease::protocol::LeaseResponse {
         use crate::domains::lease::protocol::LeaseResponse;
@@ -714,10 +752,10 @@ impl LeaseDomainSink {
         let response = {
             let mut leases = self.leases.lock();
 
-            match leases.get(&key).cloned() {
+            match leases.get(key).cloned() {
                 None => LeaseResponse::Released,
                 Some(state) if state.expiry <= now => {
-                    leases.remove(&key);
+                    leases.remove(key);
                     removed_state = Some(state);
                     LeaseResponse::Released
                 }
@@ -729,7 +767,7 @@ impl LeaseDomainSink {
                     }
                 }
                 Some(state) => {
-                    leases.remove(&key);
+                    leases.remove(key);
                     removed_state = Some(state);
                     LeaseResponse::Released
                 }
@@ -737,10 +775,10 @@ impl LeaseDomainSink {
         };
 
         if let Some(state) = removed_state {
-            self.untrack_session_lease(state.owner_session_id, &key);
-            self.remove_admin_lease(&key);
-            self.notify_lease_change(&key);
-            self.grant_next_waiter_if_available(&key, now);
+            self.untrack_session_lease(state.owner_session_id, key);
+            self.remove_admin_lease(key);
+            self.notify_lease_change(key);
+            self.grant_next_waiter_if_available(key, now);
         }
 
         response
@@ -748,7 +786,7 @@ impl LeaseDomainSink {
 
     pub(super) fn handle_query(
         &self,
-        key: crate::domains::lease::protocol::LeaseKey,
+        key: &crate::domains::lease::protocol::LeaseKey,
     ) -> crate::domains::lease::protocol::LeaseResponse {
         use crate::domains::lease::protocol::LeaseResponse;
         use std::time::Instant;
@@ -756,7 +794,7 @@ impl LeaseDomainSink {
         let now = Instant::now();
         let leases = self.leases.lock();
 
-        match leases.get(&key) {
+        match leases.get(key) {
             None => LeaseResponse::NotFound,
             Some(state) => {
                 if state.expiry <= now {
@@ -767,7 +805,7 @@ impl LeaseDomainSink {
                         owner_id: state.owner_id.clone(),
                         fencing_token: state.fencing_token,
                         expires_in_secs: expires_in.as_secs(),
-                        pending_waiters: self.pending_waiter_count(&key),
+                        pending_waiters: self.pending_waiter_count(key),
                     }
                 }
             }

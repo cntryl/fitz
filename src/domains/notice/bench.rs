@@ -51,16 +51,16 @@ impl Matcher {
             .map(|(_, v)| &v[..])
     }
 
-    /// Match into a caller-provided SmallVec without allocating.
+    /// Match into a caller-provided `SmallVec` without allocating.
     /// Returns the number of subscribers written into `out`.
     pub fn match_into(
         &self,
         out: &mut smallvec::SmallVec<[SubscriberId; 8]>,
         msg_type: MessageType,
-        _payload: &[u8],
+        payload: &[u8],
     ) -> usize {
         out.clear();
-        if let Some(subs) = self.matching_subscribers(msg_type, _payload) {
+        if let Some(subs) = self.matching_subscribers(msg_type, payload) {
             out.extend_from_slice(subs);
             subs.len()
         } else {
@@ -70,7 +70,7 @@ impl Matcher {
 }
 
 /// Minimal fan-out stub: records deliveries as a simple counter and stores an optional
-/// record of (SubscriberId, payload_len) for verification.
+/// record of (`SubscriberId`, `payload_len`) for verification.
 #[derive(Debug, Default)]
 pub struct Fanout {
     deliveries: usize,
@@ -104,7 +104,7 @@ impl Fanout {
     }
 }
 
-/// Thin NotificationDomain that composes a `Matcher` and a `Fanout` and wires the
+/// Thin `NotificationDomain` that composes a `Matcher` and a `Fanout` and wires the
 /// match -> fanout flow. This is intentionally small to make domain boundaries explicit.
 #[derive(Debug, Default)]
 pub struct NotificationDomain {

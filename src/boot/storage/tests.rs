@@ -109,8 +109,7 @@ fn should_apply_configured_storage_memtable_bytes_to_midge_options() {
     let config = BootConfig::with_memory_storage().with_storage_memtable_bytes(memtable_bytes);
 
     // Act
-    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::in_memory(), &config)
-        .expect("build open options");
+    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::in_memory(), &config);
 
     // Assert
     assert_eq!(open_options.memtable_size_limit(), memtable_bytes);
@@ -152,7 +151,7 @@ fn should_apply_cloud_throughput_defaults_when_memtable_is_auto() {
     .memory_budget(MemoryBudget::Bytes(512 * 1024 * 1024));
 
     // Act
-    let tuned = build_midge_open_options(open_options, &config).expect("build tuned options");
+    let tuned = build_midge_open_options(open_options, &config);
 
     // Assert
     assert_eq!(tuned.goal, Goal::Throughput);
@@ -183,7 +182,7 @@ fn should_respect_cloud_memtable_override_before_tuning() {
     .memory_budget(MemoryBudget::Bytes(512 * 1024 * 1024));
 
     // Act
-    let tuned = build_midge_open_options(open_options, &config).expect("build tuned options");
+    let tuned = build_midge_open_options(open_options, &config);
 
     // Assert
     let engine = cntryl_midge::Engine::open(tuned).expect("open tuned cloud engine");
@@ -226,8 +225,7 @@ fn should_reduce_cloud_wal_flush_churn_with_throughput_tuning_on_cloud_simulated
         )
         .memory_budget(budget),
         &config,
-    )
-    .expect("build tuned cloud options");
+    );
 
     assert_eq!(baseline_opts.wal_buffer_size(), 128 * 1024);
     assert_eq!(tuned_opts.wal_buffer_size(), 1024 * 1024);
@@ -628,10 +626,7 @@ async fn signed_s3_request(method: &str, path: &str, body: &[u8]) -> Result<Vec<
         ("x-amz-date".to_string(), amz_date.clone()),
     ];
     headers.sort_by(|left, right| left.0.cmp(&right.0));
-    let canonical_headers = headers
-        .iter()
-        .map(|(name, value)| format!("{name}:{value}\n"))
-        .collect::<String>();
+    let canonical_headers = canonicalize_headers(&headers);
     let signed_headers = headers
         .iter()
         .map(|(name, _)| name.clone())
@@ -779,21 +774,7 @@ async fn signed_azure_request(
     } else {
         body.len().to_string()
     };
-    let mut x_ms = headers
-        .iter()
-        .filter(|(name, _)| name.to_ascii_lowercase().starts_with("x-ms-"))
-        .map(|(name, value)| {
-            (
-                name.to_ascii_lowercase(),
-                value.split_whitespace().collect::<Vec<_>>().join(" "),
-            )
-        })
-        .collect::<Vec<_>>();
-    x_ms.sort_by(|left, right| left.0.cmp(&right.0));
-    let canonical_headers = x_ms
-        .into_iter()
-        .map(|(name, value)| format!("{name}:{value}\n"))
-        .collect::<String>();
+    let canonical_headers = canonicalize_x_ms_headers(&headers);
     let mut canonical_resource = format!("/{}{}", peas_access_key(), path);
     if !query.is_empty() {
         let mut query_pairs = query
@@ -859,6 +840,31 @@ async fn signed_azure_request(
     }
     let response = request.send().await.map_err(|error| error.to_string())?;
     cloud_setup_response("Azure", method, path, response).await
+}
+
+fn canonicalize_headers(headers: &[(String, String)]) -> String {
+    use std::fmt::Write as _;
+
+    let mut canonical_headers = String::new();
+    for (name, value) in headers {
+        let _ = writeln!(canonical_headers, "{name}:{value}");
+    }
+    canonical_headers
+}
+
+fn canonicalize_x_ms_headers(headers: &[(String, String)]) -> String {
+    let mut x_ms_headers = headers
+        .iter()
+        .filter(|(name, _)| name.to_ascii_lowercase().starts_with("x-ms-"))
+        .map(|(name, value)| {
+            (
+                name.to_ascii_lowercase(),
+                value.split_whitespace().collect::<Vec<_>>().join(" "),
+            )
+        })
+        .collect::<Vec<_>>();
+    x_ms_headers.sort_by(|left, right| left.0.cmp(&right.0));
+    canonicalize_headers(&x_ms_headers)
 }
 
 async fn cloud_setup_response(

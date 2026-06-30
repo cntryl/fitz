@@ -125,11 +125,10 @@ impl StorageMemtableConfig {
 
     fn validate(&self) -> Result<(), String> {
         match self {
-            Self::Auto => Ok(()),
             Self::Bytes(0) => Err(format!(
                 "{ENV_STORAGE_MEMTABLE_BYTES} must be greater than 0"
             )),
-            Self::Bytes(_) => Ok(()),
+            Self::Auto | Self::Bytes(_) => Ok(()),
             Self::Invalid { reason } => Err(reason.clone()),
         }
     }
@@ -146,7 +145,7 @@ impl StorageMemtableConfig {
 /// Parsed cloud provider configuration for Midge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CloudStorageConfig {
-    /// Fitz provider label from FITZ_STORAGE_PROVIDER.
+    /// Fitz provider label from `FITZ_STORAGE_PROVIDER`.
     pub provider_name: String,
     /// Provider configuration consumed by Midge.
     pub provider_config: cntryl_midge::CloudProviderConfig,
@@ -224,6 +223,12 @@ impl StorageMode {
         }
     }
 
+    /// Validate storage backend configuration loaded into `StorageMode`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when local storage paths are empty or when cloud
+    /// provider, namespace, or cache-path settings are missing or malformed.
     pub fn validate(&self) -> Result<(), String> {
         match self {
             StorageMode::Memory => Ok(()),
@@ -311,7 +316,7 @@ pub struct BootConfig {
     pub auth_claims_config: crate::auth::AuthClaimsConfig,
     /// Broker-local route-family resolver for verified identity claims.
     pub route_family_resolver: crate::auth::RouteFamilyResolverConfig,
-    /// Provisioned RouteFamily values accepted after identity resolution.
+    /// Provisioned `RouteFamily` values accepted after identity resolution.
     pub route_families: Vec<u32>,
     /// Maximum concurrent connections
     pub max_connections: usize,
@@ -375,14 +380,16 @@ impl BootConfig {
     #[must_use]
     pub fn queue_write_options(&self) -> cntryl_midge::WriteOptions {
         match (&self.storage_mode, &self.queue_write_policy) {
-            (StorageMode::Memory, _) => cntryl_midge::WriteOptions::best_effort(),
-            (_, QueueWritePolicy::Fast) => cntryl_midge::WriteOptions::best_effort(),
-            (_, QueueWritePolicy::Buffered) => cntryl_midge::WriteOptions::buffered(),
+            (StorageMode::Memory, _) | (_, QueueWritePolicy::Fast) => {
+                cntryl_midge::WriteOptions::best_effort()
+            }
             (StorageMode::CloudBacked(_), QueueWritePolicy::Strict) => {
                 cntryl_midge::WriteOptions::cloud_strict()
             }
             (_, QueueWritePolicy::Strict) => cntryl_midge::WriteOptions::sync(),
-            (_, QueueWritePolicy::Invalid { .. }) => cntryl_midge::WriteOptions::buffered(),
+            (_, QueueWritePolicy::Buffered | QueueWritePolicy::Invalid { .. }) => {
+                cntryl_midge::WriteOptions::buffered()
+            }
         }
     }
 
@@ -587,6 +594,12 @@ impl BootConfig {
         self.storage_memtable.bytes()
     }
 
+    /// Validate the full broker boot configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when drain, transport, auth, storage, origin-security,
+    /// or route-family settings are invalid or incomplete for startup.
     pub fn validate(&self) -> BootResult<()> {
         if let Some(error) = &self.drain_config_error {
             return Err(error.clone().into());
@@ -631,7 +644,7 @@ impl BootConfig {
         let public_bind = !bind_addr_is_loopback(&self.bind_addr);
         let ws_allowed_origins = configured_ws_allowed_origins(
             &self.ws_allowed_origins,
-            &self.ws_allowed_origins_error,
+            self.ws_allowed_origins_error.as_ref(),
         )?;
         validate_public_origin_security("FITZ_WS_ALLOWED_ORIGINS", &ws_allowed_origins)?;
         if self.auth_required && public_bind && ws_allowed_origins.is_empty() {
@@ -645,7 +658,9 @@ impl BootConfig {
             return Err("FITZ_ROUTE_FAMILIES must contain at least one family".into());
         }
         for (index, family) in self.route_families.iter().copied().enumerate() {
-            let expected = index as u32 + 1;
+            let expected = u32::try_from(index + 1).map_err(|_| {
+                "FITZ_ROUTE_FAMILIES contains too many entries to validate contiguity".to_string()
+            })?;
             if family != expected {
                 return Err(format!(
                     "FITZ_ROUTE_FAMILIES must be contiguous non-zero values starting at 1; expected {expected}, found {family}"

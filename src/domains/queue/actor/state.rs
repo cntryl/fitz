@@ -1,12 +1,16 @@
-use super::*;
+use super::{
+    Bytes, MessageId, PersistedReadyMutation, QueueActor, QueueRecord, ReadyEntry, ReadyRange,
+    StoredRecordLayout, VecDeque,
+};
 
 impl QueueActor {
     pub(super) fn shard_for_id(id: MessageId) -> usize {
-        id.as_u64() as usize & (Self::READY_SHARDS - 1)
+        Self::ready_shard_index(id.as_u64())
     }
 
     pub(super) fn range_len(range: ReadyRange) -> usize {
-        (((range.end - range.next) / Self::READY_SHARDS as u64) + 1) as usize
+        usize::try_from(((range.end - range.next) / Self::ready_shards_u64()) + 1)
+            .unwrap_or(usize::MAX)
     }
 
     pub(super) fn reset_live_ready_state(&mut self) {
@@ -32,7 +36,7 @@ impl QueueActor {
         shard: usize,
         range: ReadyRange,
     ) {
-        let step = Self::READY_SHARDS as u64;
+        let step = Self::ready_shards_u64();
 
         if let Some(existing) = shards[shard].back_mut() {
             if range.next == existing.end.saturating_add(step) {
@@ -51,7 +55,7 @@ impl QueueActor {
         let shard = Self::shard_for_id(id);
         let id_u64 = id.as_u64();
         let range = match tail {
-            Some(existing) if id_u64 == existing.end.saturating_add(Self::READY_SHARDS as u64) => {
+            Some(existing) if id_u64 == existing.end.saturating_add(Self::ready_shards_u64()) => {
                 ReadyRange {
                     next: existing.next,
                     end: id_u64,
@@ -127,7 +131,7 @@ impl QueueActor {
     }
 
     pub(super) fn push_persisted_ready_range(&mut self, range: ReadyRange) {
-        let shard = range.next as usize & (Self::READY_SHARDS - 1);
+        let shard = Self::ready_shard_index(range.next);
         Self::push_range_into(&mut self.persisted_ready_shards, shard, range);
         self.persisted_ready_count += Self::range_len(range);
     }
@@ -154,7 +158,7 @@ impl QueueActor {
     ) -> Option<(usize, PersistedReadyMutation)> {
         let shard = Self::shard_for_id(id);
         let id_u64 = id.as_u64();
-        let step = Self::READY_SHARDS as u64;
+        let step = Self::ready_shards_u64();
         let ranges = &shards[shard];
 
         for range in ranges.iter().copied() {

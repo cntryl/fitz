@@ -1,4 +1,9 @@
-use super::model::*;
+use super::model::{
+    DeliveryError, Envelope, LeaseAcquireRequest, LeaseDomainSink, LeaseSubscription, MailboxSink,
+    Ordering, RoutedSubscriptionSet,
+};
+#[cfg(test)]
+use crate::protocol::frame_context::FrameContext;
 
 impl MailboxSink for LeaseDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
@@ -7,13 +12,13 @@ impl MailboxSink for LeaseDomainSink {
         }
         self.ensure_active()?;
 
-        if self.handle_domain_publish_envelope(&envelope)? {
+        if self.handle_domain_publish_envelope(&envelope) {
             return Ok(());
         }
 
-        self.log_delivery(&envelope);
+        Self::log_delivery(&envelope);
 
-        let Some(request) = self.extract_request(&envelope)? else {
+        let Some(request) = Self::extract_request(&envelope)? else {
             return Ok(());
         };
         let meta = request.meta;
@@ -23,10 +28,12 @@ impl MailboxSink for LeaseDomainSink {
 
         match parsed_frame {
             crate::domains::lease::protocol::LeaseClientFrame::Sub(sub_msg) => {
-                self.handle_subscription_frame(&envelope, meta, request_started, sub_msg)
+                self.handle_subscription_frame(&envelope, meta, request_started, sub_msg);
+                Ok(())
             }
             crate::domains::lease::protocol::LeaseClientFrame::Op(lease_msg) => {
-                self.handle_actor_operation_frame(&envelope, meta, request_started, lease_msg)
+                self.handle_actor_operation_frame(&envelope, meta, request_started, lease_msg);
+                Ok(())
             }
         }
     }
@@ -54,16 +61,16 @@ impl LeaseDomainSink {
         Ok(())
     }
 
-    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> Result<bool, DeliveryError> {
+    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
-            self.handle_domain_publish(event)?;
-            return Ok(true);
+            self.handle_domain_publish(event);
+            return true;
         }
 
-        Ok(false)
+        false
     }
 
-    fn log_delivery(&self, envelope: &Envelope) {
+    fn log_delivery(envelope: &Envelope) {
         tracing::debug!(
             domain = "lease",
             destination = %envelope.destination(),
@@ -73,25 +80,23 @@ impl LeaseDomainSink {
     }
 
     fn extract_request(
-        &self,
         envelope: &Envelope,
     ) -> Result<Option<crate::domains::lease::LeaseClientRequest>, DeliveryError> {
-        match Self::request_from_envelope(envelope) {
-            Some(request) => Ok(Some(request)),
-            None => {
-                tracing::warn!(
-                    domain = "lease",
-                    "Envelope payload was not LeaseClientRequest"
-                );
-                Err(DeliveryError::ActorStopped)
-            }
+        if let Some(request) = Self::request_from_envelope(envelope) {
+            Ok(Some(request))
+        } else {
+            tracing::warn!(
+                domain = "lease",
+                "Envelope payload was not LeaseClientRequest"
+            );
+            Err(DeliveryError::ActorStopped)
         }
     }
 
     fn record_request_start(&self) -> Option<std::time::Instant> {
         self.metrics
             .as_ref()
-            .map(|metrics| metrics.record_request_start())
+            .map(crate::domains::lease::LeaseMetrics::record_request_start)
     }
 
     fn parse_request_frame(
@@ -127,7 +132,7 @@ impl LeaseDomainSink {
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<std::time::Instant>,
         sub_msg: crate::domains::lease::protocol::LeaseSubscriptionMessage,
-    ) -> Result<(), DeliveryError> {
+    ) {
         use crate::domains::lease::protocol::{LeaseResponse, LeaseSubscriptionMessage};
 
         let response = match sub_msg {
@@ -187,7 +192,7 @@ impl LeaseDomainSink {
         };
 
         self.refresh_metrics_gauges();
-        self.route_lease_response(envelope, meta, &response, request_started)
+        self.route_lease_response(envelope, meta, &response, request_started);
     }
 
     fn handle_actor_operation_frame(
@@ -196,7 +201,7 @@ impl LeaseDomainSink {
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<std::time::Instant>,
         lease_msg: crate::domains::lease::protocol::LeaseMessage,
-    ) -> Result<(), DeliveryError> {
+    ) {
         use crate::domains::lease::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
 
         let session_prefix = meta.session_id.to_string();
@@ -247,7 +252,7 @@ impl LeaseDomainSink {
                 ttl_secs,
             } => match LeaseKey::from_route(family_id, &route) {
                 Some(key) => {
-                    self.handle_extend(key, effective_owner(owner_id), fencing_token, ttl_secs)
+                    self.handle_extend(&key, &effective_owner(owner_id), fencing_token, ttl_secs)
                 }
                 None => LeaseResponse::NotFound,
             },
@@ -257,12 +262,12 @@ impl LeaseDomainSink {
                 owner_id,
                 fencing_token,
             } => match LeaseKey::from_route(family_id, &route) {
-                Some(key) => self.handle_release(key, effective_owner(owner_id), fencing_token),
+                Some(key) => self.handle_release(&key, &effective_owner(owner_id), fencing_token),
                 None => LeaseResponse::NotFound,
             },
             LeaseMessage::Query { family_id, route } => {
                 match LeaseKey::from_route(family_id, &route) {
-                    Some(key) => self.handle_query(key),
+                    Some(key) => self.handle_query(&key),
                     None => LeaseResponse::NotFound,
                 }
             }
@@ -272,11 +277,11 @@ impl LeaseDomainSink {
                 {
                     metrics.record_success(started_at);
                 }
-                return Ok(());
+                return;
             }
         };
 
-        self.route_lease_response(envelope, meta, &domain_response, request_started)
+        self.route_lease_response(envelope, meta, &domain_response, request_started);
     }
 
     fn request_from_envelope(

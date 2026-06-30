@@ -158,7 +158,7 @@ fn should_complete_system_cancel_create_churn(ctx: &mut StressContext) {
                 .pop_front()
                 .expect("schedule churn must keep at least one live route");
             let deleted = actor
-                .delete_schedule(route)
+                .delete_schedule(&route)
                 .expect("schedule cancel should succeed");
             assert!(
                 deleted,
@@ -293,7 +293,7 @@ fn should_complete_system_mixed_workload(ctx: &mut StressContext) {
                 .pop_front()
                 .expect("mixed workload must keep at least one live schedule");
             let deleted = actor
-                .delete_schedule(route)
+                .delete_schedule(&route)
                 .expect("mixed workload cancel should succeed");
             assert!(
                 deleted,

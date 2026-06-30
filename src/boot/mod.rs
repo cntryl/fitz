@@ -19,6 +19,7 @@ pub mod storage;
 pub use resource_limits::enforce_startup_resource_limits;
 pub use runtime::{BootConfig, BootResult};
 pub use stats::{BrokerLifecycleState, Runtime};
+use std::sync::Arc;
 
 enum ShutdownSignal {
     CtrlC,
@@ -34,6 +35,17 @@ impl ShutdownSignal {
     }
 }
 
+struct ShutdownContext {
+    runtime: Runtime,
+    ingress: Arc<crate::session::manager::RuntimeIngress>,
+    router: Arc<crate::runtime::Router>,
+    store: Arc<cntryl_midge::Engine>,
+    ws_shutdown: tokio::sync::oneshot::Sender<()>,
+    ws_join: tokio::task::JoinHandle<()>,
+    tcp_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    tcp_join: Option<tokio::task::JoinHandle<()>>,
+}
+
 /// Complete broker boot sequence
 ///
 /// # Steps
@@ -45,6 +57,11 @@ impl ShutdownSignal {
 /// 5. Start TCP listener
 /// 6. Wait for shutdown signal
 /// 7. Graceful shutdown
+///
+/// # Errors
+///
+/// Returns an error when observability, runtime, storage, domain, transport,
+/// or shutdown coordination fails during broker boot or teardown.
 pub async fn boot(config: BootConfig) -> BootResult<()> {
     resource_limits::enforce_startup_resource_limits()?;
 
@@ -62,7 +79,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
 
     runtime.mark_auth_config_ready();
 
-    let ws_listener = crate::api::handlers::spawn_http_listener(
+    let ws_listener = start_http_listener(
         &config,
         ingress.clone(),
         ingress_config.clone(),
@@ -84,11 +101,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     // Step 2: Open storage after HTTP target health is reachable.
     let store = match storage::init(&config).await {
         Ok(store) => store,
-        Err(error) => {
-            let _ = ws_shutdown.send(());
-            wait_for_listener("HTTP", ws_join).await?;
-            return Err(error);
-        }
+        Err(error) => return abort_startup(ws_shutdown, ws_join, error).await,
     };
     tracing::info!("Storage initialized");
 
@@ -101,7 +114,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         &router,
         &store,
         &runtime.admin_read_model(),
-        domains::DomainSetupOptions {
+        &domains::DomainSetupOptions {
             server_write_options,
             queue_write_options,
             queue_fast_flush_interval: config.queue_fast_flush_interval(),
@@ -111,11 +124,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         },
     ) {
         Ok(domains) => domains,
-        Err(error) => {
-            let _ = ws_shutdown.send(());
-            wait_for_listener("HTTP", ws_join).await?;
-            return Err(error);
-        }
+        Err(error) => return abort_startup(ws_shutdown, ws_join, error).await,
     };
     runtime.attach_domains(std::sync::Arc::new(domains));
     tracing::info!("Domain actors registered");
@@ -126,25 +135,16 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     // Step 4: Start TCP listener only after domain actors exist. WebSocket
     // has been listening since target health came online, but its upgrade path
     // stays closed until startup is complete.
-    let tcp_listener = if config.tcp_enabled {
-        match crate::api::handlers::spawn_tcp_listener(
-            &config,
-            ingress.clone(),
-            ingress_config.clone(),
-            runtime.clone(),
-        )
-        .await
-        {
-            Ok(listener) => Some(listener),
-            Err(error) => {
-                let _ = ws_shutdown.send(());
-                wait_for_listener("HTTP", ws_join).await?;
-                return Err(error);
-            }
-        }
-    } else {
-        tracing::info!("TCP listener disabled");
-        None
+    let tcp_listener = start_tcp_listener(
+        &config,
+        ingress.clone(),
+        ingress_config.clone(),
+        runtime.clone(),
+    )
+    .await;
+    let tcp_listener = match tcp_listener {
+        Ok(listener) => listener,
+        Err(error) => return abort_startup(ws_shutdown, ws_join, error).await,
     };
 
     let (tcp_shutdown, tcp_join) = if let Some(tcp_listener) = tcp_listener {
@@ -166,6 +166,36 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     // Mark startup complete
     runtime.mark_startup_complete();
 
+    log_ready_endpoints(&config);
+
+    // Step 5: Wait for shutdown signal
+    shutdown_broker(
+        wait_for_shutdown_signal().await?,
+        ShutdownContext {
+            runtime,
+            ingress,
+            router,
+            store,
+            ws_shutdown,
+            ws_join,
+            tcp_shutdown,
+            tcp_join,
+        },
+    )
+    .await
+}
+
+async fn wait_for_listener(
+    name: &'static str,
+    join: tokio::task::JoinHandle<()>,
+) -> Result<(), String> {
+    tokio::time::timeout(std::time::Duration::from_secs(6), join)
+        .await
+        .map_err(|_| format!("{name} listener shutdown timed out"))?
+        .map_err(|error| format!("{name} listener join failed: {error}"))
+}
+
+fn log_ready_endpoints(config: &BootConfig) {
     tracing::info!("Fitz broker ready");
     if config.tcp_enabled {
         tracing::info!("  TCP:  {}:{}", config.bind_addr, config.tcp_port);
@@ -173,12 +203,75 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         tracing::info!("  TCP:  disabled");
     }
     tracing::info!("  HTTP: {}:{}", config.bind_addr, config.http_port);
+}
 
-    // Step 5: Wait for shutdown signal
-    let signal = wait_for_shutdown_signal().await?;
+async fn start_http_listener(
+    config: &BootConfig,
+    ingress: Arc<crate::session::manager::RuntimeIngress>,
+    ingress_config: crate::api::ingress::IngressConfig,
+    runtime: Runtime,
+) -> BootResult<crate::api::handlers::ListenerHandle> {
+    crate::api::handlers::spawn_http_listener(config, ingress, ingress_config, runtime).await
+}
+
+async fn abort_startup<T>(
+    ws_shutdown: tokio::sync::oneshot::Sender<()>,
+    ws_join: tokio::task::JoinHandle<()>,
+    error: Box<dyn std::error::Error>,
+) -> BootResult<T> {
+    let _ = ws_shutdown.send(());
+    wait_for_listener("HTTP", ws_join).await?;
+    Err(error)
+}
+
+async fn start_tcp_listener(
+    config: &BootConfig,
+    ingress: Arc<crate::session::manager::RuntimeIngress>,
+    ingress_config: crate::api::ingress::IngressConfig,
+    runtime: Runtime,
+) -> BootResult<Option<crate::api::handlers::ListenerHandle>> {
+    if !config.tcp_enabled {
+        tracing::info!("TCP listener disabled");
+        return Ok(None);
+    }
+
+    crate::api::handlers::spawn_tcp_listener(config, ingress, ingress_config, runtime)
+        .await
+        .map(Some)
+}
+
+async fn shutdown_broker(signal: ShutdownSignal, context: ShutdownContext) -> BootResult<()> {
     tracing::info!(signal = signal.as_str(), "Shutting down Fitz broker");
 
-    let session_close_reason = match signal {
+    let session_close_reason = session_close_reason(&context.runtime, &signal).await;
+    context.runtime.begin_shutdown();
+    context
+        .ingress
+        .close_all_sessions(crate::session::CloseReason::ServerClose(
+            session_close_reason,
+        ))
+        .await;
+
+    if let Some(tcp_shutdown) = context.tcp_shutdown {
+        let _ = tcp_shutdown.send(());
+    }
+    let _ = context.ws_shutdown.send(());
+
+    if let Some(tcp_join) = context.tcp_join {
+        wait_for_listener("TCP", tcp_join).await?;
+    }
+    wait_for_listener("HTTP", context.ws_join).await?;
+
+    shutdown_runtime(
+        context.runtime,
+        context.ingress,
+        context.router,
+        context.store,
+    )
+}
+
+async fn session_close_reason(runtime: &Runtime, signal: &ShutdownSignal) -> String {
+    match signal {
         ShutdownSignal::Sigterm => {
             runtime.begin_drain();
             let remaining = runtime.remaining_drain_grace();
@@ -192,25 +285,15 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
             runtime.drain_close_reason()
         }
         ShutdownSignal::CtrlC => "broker shutdown".to_string(),
-    };
-
-    runtime.begin_shutdown();
-    ingress
-        .close_all_sessions(crate::session::CloseReason::ServerClose(
-            session_close_reason,
-        ))
-        .await;
-
-    if let Some(tcp_shutdown) = tcp_shutdown {
-        let _ = tcp_shutdown.send(());
     }
-    let _ = ws_shutdown.send(());
+}
 
-    if let Some(tcp_join) = tcp_join {
-        wait_for_listener("TCP", tcp_join).await?;
-    }
-    wait_for_listener("HTTP", ws_join).await?;
-
+fn shutdown_runtime(
+    runtime: Runtime,
+    ingress: Arc<crate::session::manager::RuntimeIngress>,
+    router: Arc<crate::runtime::Router>,
+    store: Arc<cntryl_midge::Engine>,
+) -> BootResult<()> {
     let domains = runtime.detach_domains();
     if let Some(domains) = &domains {
         domains.stop();
@@ -222,10 +305,10 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     drop(router);
     drop(runtime);
 
-    let store = std::sync::Arc::try_unwrap(store).map_err(|store| {
+    let store = Arc::try_unwrap(store).map_err(|store| {
         format!(
             "Midge shutdown blocked by {} leftover engine references",
-            std::sync::Arc::strong_count(&store)
+            Arc::strong_count(&store)
         )
     })?;
     store
@@ -233,16 +316,6 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         .map_err(|error| format!("Midge shutdown failed: {error}"))?;
 
     Ok(())
-}
-
-async fn wait_for_listener(
-    name: &'static str,
-    join: tokio::task::JoinHandle<()>,
-) -> Result<(), String> {
-    tokio::time::timeout(std::time::Duration::from_secs(6), join)
-        .await
-        .map_err(|_| format!("{name} listener shutdown timed out"))?
-        .map_err(|error| format!("{name} listener join failed: {error}"))
 }
 
 async fn wait_for_shutdown_signal() -> BootResult<ShutdownSignal> {

@@ -3,7 +3,7 @@ use super::{BootResult, DEFAULT_LOCAL_WS_ALLOWED_ORIGIN_VALUES};
 
 pub(super) fn configured_ws_allowed_origins(
     configured: &[crate::api::origin::ExactOrigin],
-    configured_error: &Option<String>,
+    configured_error: Option<&String>,
 ) -> BootResult<Vec<crate::api::origin::ExactOrigin>> {
     if let Some(error) = configured_error {
         return Err(error.clone().into());

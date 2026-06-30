@@ -1,4 +1,21 @@
-use super::*;
+use super::{
+    decode_staging_value, encode_stream_layout_marker_key, AreaCounterValue, AreaLocatorValue,
+    AreaValue, BatchLimits, CanonicalResourceValue, CompactAreaPageValue, CompactResourcePageValue,
+    CompressedCompactRealmPageValue, KeyPrefix, LayoutActivationFailure, OffsetCounterValue,
+    RealmCounterValue, RealmLocatorValue, RealmValue, ResourceMetaValue, ResourceValue,
+    StreamLayoutMarkerValue, StreamStorageLayout, StreamStore, StreamTTL, WatermarkValue,
+    REALM_PAGE_RECORD_LIMIT,
+};
+use parking_lot::Mutex;
+use std::{collections::HashMap, sync::Arc};
+
+fn u64_to_u32_saturating(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
 
 impl StreamStore {
     pub fn new(db: Arc<cntryl_midge::Engine>) -> Self {
@@ -99,6 +116,10 @@ impl StreamStore {
         self.layout
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if column families cannot be listed or if any existing
+    /// stream family cannot be activated for the configured layout.
     pub fn ensure_layout_activation_for_existing_families(&self) -> Result<(), String> {
         let families = self
             .db
@@ -109,13 +130,17 @@ impl StreamStore {
             if family.id() == 0 {
                 continue;
             }
-            self.inspect_and_activate_layout_for_family_detailed(family.id() as u64)
+            self.inspect_and_activate_layout_for_family_detailed(u64::from(family.id()))
                 .map_err(LayoutActivationFailure::into_string)?;
         }
 
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if column families cannot be listed or if any persisted
+    /// stream row fails validation.
     pub fn validate_persisted_state_for_existing_families(&self) -> Result<(), String> {
         let families = self
             .db
@@ -126,7 +151,7 @@ impl StreamStore {
             if family.id() == 0 {
                 continue;
             }
-            self.validate_persisted_state_for_family(family.id() as u64)?;
+            self.validate_persisted_state_for_family(u64::from(family.id()))?;
         }
 
         Ok(())
@@ -135,7 +160,10 @@ impl StreamStore {
     pub(super) fn validate_persisted_state_for_family(&self, family: u64) -> Result<(), String> {
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                u64_to_u32_saturating(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("stream validation failed: family={family} begin_tx: {e:?}"))?;
         let mut iter = txn
             .scan(&cntryl_midge::Query::new())
@@ -259,7 +287,10 @@ impl StreamStore {
         let marker_key = encode_stream_layout_marker_key();
         let mut txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadWrite)
+            .begin_tx(
+                u64_to_u32_saturating(family),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
             .map_err(|e| LayoutActivationFailure::Other(format!("begin_tx failed: {e:?}")))?;
 
         if let Some(bytes) = txn
@@ -353,7 +384,7 @@ impl StreamStore {
         )
     }
 
-    pub(super) fn invalid_compact_realm_page_error(realm_offset: u64, error: String) -> String {
+    pub(super) fn invalid_compact_realm_page_error(realm_offset: u64, error: &str) -> String {
         format!("ERR_INVALID_COMPACT_REALM_PAGE: realm_offset={realm_offset} {error}")
     }
 
@@ -361,7 +392,7 @@ impl StreamStore {
         realm: &str,
         area: &str,
         area_offset: u64,
-        error: String,
+        error: &str,
     ) -> String {
         format!(
             "ERR_INVALID_COMPACT_AREA_PAGE: realm={realm} area={area} area_offset={area_offset} {error}"
@@ -373,7 +404,7 @@ impl StreamStore {
         area: &str,
         resource: &str,
         resource_offset: u64,
-        error: String,
+        error: &str,
     ) -> String {
         format!(
             "ERR_INVALID_COMPACT_RESOURCE_PAGE: realm={realm} area={area} resource={resource} resource_offset={resource_offset} {error}"
@@ -423,8 +454,8 @@ impl StreamStore {
 
     pub(super) fn compact_page_query_limit(from_offset: u64, limit: u64) -> usize {
         let page_start = Self::page_start_offset(from_offset);
-        let start_slot = (from_offset - page_start) as usize;
-        let capped_limit = limit.min(usize::MAX as u64) as usize;
+        let start_slot = u64_to_usize_saturating(from_offset - page_start);
+        let capped_limit = u64_to_usize_saturating(limit);
         start_slot
             .saturating_add(capped_limit)
             .saturating_add(1)

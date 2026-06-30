@@ -1,5 +1,59 @@
 use super::*;
 
+fn parse_rpc_request(
+    session_id: u64,
+    family: RouteFamily,
+    request_payload: &Bytes,
+    request_msg_type: u16,
+) -> crate::domains::rpc::protocol::RpcRequest {
+    let request_ctx = FrameContext::new(
+        session_id,
+        ChannelId::Rpc,
+        MessageType::new(request_msg_type),
+        request_payload.clone(),
+        family,
+    );
+
+    match crate::protocol::rpc_codec::parse_request(&request_ctx, request_payload, family)
+        .expect("parse rpc request")
+    {
+        crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+        other => panic!("expected rpc request, found {other:?}"),
+    }
+}
+
+fn assert_rpc_disconnect_response(caller_mailbox: &Mailbox, correlation_id: uuid::Uuid) {
+    let request_ack = caller_mailbox
+        .receiver()
+        .try_recv()
+        .expect("rpc request ack")
+        .into_payload::<FrameContext>()
+        .expect("rpc request ack frame");
+    assert_eq!(request_ack.msg_type.as_u16(), 302);
+    assert_eq!(request_ack.payload[0], 0);
+
+    let disconnect_error = caller_mailbox
+        .receiver()
+        .try_recv()
+        .expect("rpc disconnect error")
+        .into_payload::<FrameContext>()
+        .expect("rpc disconnect error frame");
+    assert_eq!(disconnect_error.msg_type.as_u16(), 303);
+
+    let error_response = parse_rpc_response_frame(&disconnect_error);
+    assert_eq!(error_response.correlation_id, correlation_id);
+    assert_eq!(error_response.seq, 0);
+    assert!(error_response.stream_end);
+
+    let (error_code, _) =
+        crate::protocol::rpc_codec::decode_error_body(error_response.body.as_ref())
+            .expect("decode rpc disconnect error body");
+    assert_eq!(
+        error_code,
+        crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND
+    );
+}
+
 #[tokio::test]
 async fn should_cleanup_real_rpc_pending_request_on_close() {
     // Arrange
@@ -58,13 +112,12 @@ async fn should_cleanup_real_rpc_pending_request_on_close() {
         request_payload.clone(),
         family,
     );
-    let request =
-        match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
-            .expect("parse rpc request")
-        {
-            crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
-            other => panic!("expected rpc request, found {other:?}"),
-        };
+    let request = parse_rpc_request(
+        caller_session_id,
+        family,
+        &request_payload,
+        request_msg_type,
+    );
 
     rpc_sink
         .deliver(Envelope::from_route(
@@ -90,35 +143,7 @@ async fn should_cleanup_real_rpc_pending_request_on_close() {
     assert_eq!(rpc_sink.worker_count(), 0);
     assert_eq!(rpc_sink.pending_request_count(), 0);
 
-    let request_ack = caller_mailbox
-        .receiver()
-        .try_recv()
-        .expect("rpc request ack")
-        .into_payload::<FrameContext>()
-        .expect("rpc request ack frame");
-    assert_eq!(request_ack.msg_type.as_u16(), 302);
-    assert_eq!(request_ack.payload[0], 0);
-
-    let disconnect_error = caller_mailbox
-        .receiver()
-        .try_recv()
-        .expect("rpc disconnect error")
-        .into_payload::<FrameContext>()
-        .expect("rpc disconnect error frame");
-    assert_eq!(disconnect_error.msg_type.as_u16(), 303);
-
-    let error_response = parse_rpc_response_frame(&disconnect_error);
-    assert_eq!(error_response.correlation_id, request.correlation_id);
-    assert_eq!(error_response.seq, 0);
-    assert!(error_response.stream_end);
-
-    let (error_code, _) =
-        crate::protocol::rpc_codec::decode_error_body(error_response.body.as_ref())
-            .expect("decode rpc disconnect error body");
-    assert_eq!(
-        error_code,
-        crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND
-    );
+    assert_rpc_disconnect_response(&caller_mailbox, request.correlation_id);
 }
 
 #[tokio::test]

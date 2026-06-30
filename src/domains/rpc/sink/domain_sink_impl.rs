@@ -1,6 +1,27 @@
-use super::state_model::*;
+use super::state_model::{
+    route_quad, rpc_admin_snapshot_due, rpc_timeout_sweep_interval, Arc, AtomicBool, AtomicU64,
+    DeliveryError, Duration, Envelope, Instant, Mutex, Ordering, Route, RouteAddress, Router,
+    RpcDomainSink, RpcPendingErrorDelivery, RpcPendingRequest, RpcRouteState,
+    RpcSessionCleanupResult, RpcState, RpcWorker, RpcWorkerCleanupResult, RPC_BACKPRESSURE_ERROR,
+    RPC_DEFAULT_REQUEST_TIMEOUT, RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
+    RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
+};
+#[cfg(not(test))]
+use crate::domains::rpc::{
+    RpcClientForwardedResponse, RpcClientForwardedResponseBody, RpcWorkerRequestDelivery,
+};
+#[cfg(test)]
+use crate::protocol::frame_context::FrameContext;
 
 impl RpcDomainSink {
+    fn u64_to_usize_saturating(value: u64) -> usize {
+        usize::try_from(value).unwrap_or(usize::MAX)
+    }
+
+    fn elapsed_us_saturating(start: Instant) -> u64 {
+        start.elapsed().as_micros().try_into().unwrap_or(u64::MAX)
+    }
+
     pub fn new(
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
@@ -81,7 +102,7 @@ impl RpcDomainSink {
         if let Some(ref metrics) = self.metrics {
             metrics.gauge_set(name, value);
             if name == "rpc_pending_requests" {
-                metrics.set_pending_request_count(value as usize);
+                metrics.set_pending_request_count(Self::u64_to_usize_saturating(value));
             }
         }
     }
@@ -93,7 +114,7 @@ impl RpcDomainSink {
     }
 
     pub(super) fn histogram_observe_elapsed_us(&self, name: &str, start: Instant) {
-        self.histogram_observe_us(name, start.elapsed().as_micros() as u64);
+        self.histogram_observe_us(name, Self::elapsed_us_saturating(start));
     }
 
     pub(super) fn refresh_metrics_gauges(&self) {
@@ -381,7 +402,7 @@ impl RpcDomainSink {
             .map(|(correlation_id, queued)| {
                 crate::control::admin::RpcPendingRequest::snapshot(
                     queued.caller_inbox_addr.family().as_u64(),
-                    correlation_id.to_string(),
+                    correlation_id,
                     queued.request.route.as_str(),
                     &queued.submitted_at,
                     queued.age_seconds(snapshot_now),
@@ -396,7 +417,7 @@ impl RpcDomainSink {
                     .map(|(correlation_id, pending)| {
                         crate::control::admin::RpcPendingRequest::snapshot(
                             pending.worker_addr.family().as_u64(),
-                            correlation_id.to_string(),
+                            correlation_id,
                             pending.route.as_str(),
                             &pending.submitted_at,
                             pending.age_seconds(snapshot_now),
@@ -544,7 +565,7 @@ impl RpcDomainSink {
             return;
         }
 
-        let now_elapsed_us = self.snapshot_epoch.elapsed().as_micros() as u64;
+        let now_elapsed_us = Self::elapsed_us_saturating(self.snapshot_epoch);
         let last_snapshot_elapsed_us = self.last_snapshot_elapsed_us.load(Ordering::Relaxed);
         let snapshot_dirty = self.snapshot_dirty.load(Ordering::Relaxed);
 
@@ -572,9 +593,9 @@ impl RpcDomainSink {
 
         let snapshot_start = Instant::now();
         self.sync_admin_snapshot();
-        let snapshot_time_us = snapshot_start.elapsed().as_micros() as u64;
+        let snapshot_time_us = Self::elapsed_us_saturating(snapshot_start);
         self.last_snapshot_elapsed_us.store(
-            self.snapshot_epoch.elapsed().as_micros() as u64,
+            Self::elapsed_us_saturating(self.snapshot_epoch),
             Ordering::Relaxed,
         );
         self.snapshot_syncing.store(false, Ordering::Release);

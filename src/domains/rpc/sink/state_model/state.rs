@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    BinaryHeap, ExpiringPendingRequest, FxBuildHasher, HashMap, Instant, Route, RouteAddress,
+    RpcFastMap, RpcPendingErrorDelivery, RpcPendingRequest, RpcPendingRequestInit, RpcPendingTable,
+    RpcPendingTimeoutResult, RpcQueuedDispatch, RpcQueuedRequest, RpcRouteState,
+    RpcSessionCleanupResult, RpcWorkerCleanupResult,
+};
 
 pub(in crate::domains::rpc::sink) struct RpcState {
     pub(in crate::domains::rpc::sink) routes: RpcFastMap<Route, RpcRouteState>,
@@ -49,7 +54,7 @@ impl RpcState {
         let mut removed_workers = 0;
         let mut empty_routes = Vec::new();
 
-        for (route, route_state) in self.routes.iter_mut() {
+        for (route, route_state) in &mut self.routes {
             removed_workers += route_state.unregister_session(session_id);
             if route_state.worker_count() == 0 && !route_state.has_queued_requests() {
                 empty_routes.push(route.clone());

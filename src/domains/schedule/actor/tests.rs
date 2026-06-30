@@ -375,9 +375,7 @@ fn should_clear_ready_heap_given_last_schedule_delete() {
         .expect("create schedule");
 
     // Act
-    let deleted = actor
-        .delete_schedule(route.to_string())
-        .expect("delete schedule");
+    let deleted = actor.delete_schedule(route).expect("delete schedule");
 
     // Assert
     assert!(deleted);
@@ -408,9 +406,7 @@ fn should_invalidate_shared_full_list_cache_given_schedule_delete() {
     let (cached, _) = actor.list_entries(0, 0);
 
     // Act
-    actor
-        .delete_schedule(first_route.to_string())
-        .expect("delete schedule");
+    actor.delete_schedule(first_route).expect("delete schedule");
     let (refreshed, total_count) = actor.list_entries(0, 0);
 
     // Assert
@@ -479,9 +475,7 @@ fn should_not_fire_deleted_schedule_given_stale_ready_heap_entry() {
         )
         .expect("create schedule");
     actor.bench_prepare_scan(1);
-    actor
-        .delete_schedule(route.to_string())
-        .expect("delete schedule");
+    actor.delete_schedule(route).expect("delete schedule");
 
     let now = Instant::now();
     actor.last_scan_time = now
@@ -521,9 +515,7 @@ fn should_not_fire_future_occurrence_given_cancel_after_due_scan() {
     // Act
     let first_fired = actor.collect_due_occurrences_for_publish_at(first_scan_at);
     let next_fire_time = actor.schedules.get(route).expect("schedule").next_fire_time;
-    actor
-        .delete_schedule(route.to_string())
-        .expect("delete schedule");
+    actor.delete_schedule(route).expect("delete schedule");
     actor.last_scan_time = next_fire_time
         .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
         .unwrap();
@@ -863,7 +855,7 @@ fn should_not_remove_schedule_given_cancel_persistence_failure() {
 
     // Act
     actor.store.fail_next_commit_for_tests();
-    let result = actor.delete_schedule(route.to_string());
+    let result = actor.delete_schedule(route);
 
     // Assert
     assert!(result.is_err(), "cancel should propagate the store error");

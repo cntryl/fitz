@@ -1,4 +1,4 @@
-use super::*;
+use super::Duration;
 
 pub(in crate::domains::rpc::sink) const RPC_BACKPRESSURE_ERROR: &str =
     "RPC backpressure: too many pending requests";

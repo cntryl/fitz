@@ -46,15 +46,15 @@ pub(super) struct QueueReadyNotification {
     pub(super) snapshot: QueueAdminSnapshot,
 }
 
-pub(super) const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_secs(5 * 60);
+pub(super) const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_mins(5);
 pub(super) const QUEUE_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 pub(super) const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Queue domain sink with per-queue QueueActor instances
+/// Queue domain sink with per-queue `QueueActor` instances
 ///
 /// This sink:
-/// - Maintains per-queue QueueActor instances keyed by QueueKey
-/// - Parses TLV frames to QueueMessage
+/// - Maintains per-queue `QueueActor` instances keyed by `QueueKey`
+/// - Parses TLV frames to `QueueMessage`
 /// - Dispatches to the correct actor based on route
 /// - Returns responses
 /// - Tracks queue-local watch subscriptions for the current broker process
@@ -66,7 +66,7 @@ pub struct QueueDomainSink {
     pub(super) queue_write_options: cntryl_midge::WriteOptions,
     /// Deduplication store shared by warm actors created through this sink.
     pub(super) dedup_store: Arc<crate::utils::idempotency::DedupStore>,
-    /// Per-queue actors keyed by QueueKey
+    /// Per-queue actors keyed by `QueueKey`
     pub(super) actors: Mutex<HashMap<crate::domains::queue::QueueKey, WarmQueueActor>>,
     /// Queue-local watch subscriptions scoped to this broker process.
     pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<QueueSubscription>>>,

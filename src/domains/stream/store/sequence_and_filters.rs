@@ -1,4 +1,21 @@
-use super::*;
+use super::{
+    decode_area_offset_from_key, decode_realm_offset_from_key, decode_resource_offset_from_key,
+    encode_area_counter_key, encode_realm_counter_key, encode_resource_meta_key,
+    family_to_storage_partition, millis_to_u64_saturating, usize_to_u64_saturating,
+    AreaCounterValue, Bytes, CompactAreaPageValue, CompactResourcePageValue,
+    CompressedCompactRealmPageValue, DiscriminatorWriteRowsParams, Entry, EventPayload,
+    RealmCounterValue, RealmSequenceState, RealmSequenceStateHandle, ResourceMetaState,
+    ResourceMetaStateHandle, ResourceMetaValue, SequenceGuard, StreamFilterSet, StreamStore,
+    WatermarkValue,
+};
+use parking_lot::Mutex;
+use std::sync::Arc;
+
+#[cfg(test)]
+use super::{
+    FAIL_NEXT_AREA_WATERMARK_GUARD_READ, FAIL_NEXT_PROMOTION_FRONTIER_COMMIT,
+    FAIL_NEXT_REALM_WATERMARK_GUARD_READ,
+};
 
 impl StreamStore {
     pub(super) fn resource_sequence_guard(
@@ -70,19 +87,22 @@ impl StreamStore {
     }
 
     pub(in crate::domains::stream::store) fn now_epoch_ms() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64
+        millis_to_u64_saturating(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+        )
     }
 
     pub(in crate::domains::stream::store) fn event_size_bytes(event: &EventPayload) -> u64 {
-        (event.body.len()
-            + event.metadata.as_ref().map_or(0, |m| m.len())
+        let total_bytes = event.body.len()
+            + event.metadata.as_ref().map_or(0, Bytes::len)
             + event
                 .discriminator
                 .as_ref()
-                .map_or(0, |discriminator| discriminator.as_str().len())) as u64
+                .map_or(0, |discriminator| discriminator.as_str().len());
+        usize_to_u64_saturating(total_bytes)
     }
 
     pub(super) fn load_optional_discriminator(
@@ -116,7 +136,7 @@ impl StreamStore {
                 continue;
             };
 
-            let index = index as u64;
+            let index = usize_to_u64_saturating(index);
             let discriminator_bytes = discriminator.as_str().as_bytes().to_vec();
 
             txn.put(
@@ -158,10 +178,10 @@ impl StreamStore {
 
     pub(in crate::domains::stream::store) fn record_matches_filter(
         filter: Option<&StreamFilterSet>,
-        discriminator: Option<String>,
+        discriminator: Option<&str>,
     ) -> bool {
         match filter {
-            Some(filter) => filter.matches(discriminator.as_deref()),
+            Some(filter) => filter.matches(discriminator),
             None => true,
         }
     }
@@ -208,9 +228,9 @@ impl StreamStore {
         if let Some((key, value)) = results.last() {
             let page_start = decode_area_offset_from_key(key)?;
             let page = CompactAreaPageValue::try_decode(value).map_err(|error| {
-                Self::invalid_compact_area_page_error(realm, area, page_start, error)
+                Self::invalid_compact_area_page_error(realm, area, page_start, &error)
             })?;
-            Ok(page_start.saturating_add(page.records.len() as u64))
+            Ok(page_start.saturating_add(usize_to_u64_saturating(page.records.len())))
         } else {
             Ok(0)
         }
@@ -279,9 +299,9 @@ impl StreamStore {
         if let Some((key, value)) = results.last() {
             let page_start_offset = decode_realm_offset_from_key(key)?;
             let page = CompressedCompactRealmPageValue::try_decode(value)
-                .map_err(|error| Self::invalid_compact_realm_page_error(page_start_offset, error))?
+                .map_err(|error| Self::invalid_compact_realm_page_error(page_start_offset, &error))?
                 .into_compact_realm_page();
-            Ok(page_start_offset.saturating_add(page.records.len() as u64))
+            Ok(page_start_offset.saturating_add(usize_to_u64_saturating(page.records.len())))
         } else {
             Ok(0)
         }
@@ -395,7 +415,10 @@ impl StreamStore {
         ));
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
@@ -405,13 +428,15 @@ impl StreamStore {
         for (key_bytes, value_bytes) in results {
             let page_start = decode_resource_offset_from_key(&key_bytes)?;
             let page = CompactResourcePageValue::try_decode(&value_bytes).map_err(|error| {
-                Self::invalid_compact_resource_page_error(realm, area, resource, page_start, error)
+                Self::invalid_compact_resource_page_error(realm, area, resource, page_start, &error)
             })?;
-            next_offset = next_offset.max(page_start.saturating_add(page.records.len() as u64));
+            next_offset = next_offset
+                .max(page_start.saturating_add(usize_to_u64_saturating(page.records.len())));
             for record in page.records {
-                committed_size_bytes = committed_size_bytes
-                    .saturating_add(record.body.len() as u64)
-                    .saturating_add(record.metadata.as_ref().map_or(0, |m| m.len()) as u64);
+                let record_bytes = usize_to_u64_saturating(record.body.len()).saturating_add(
+                    usize_to_u64_saturating(record.metadata.as_ref().map_or(0, Bytes::len)),
+                );
+                committed_size_bytes = committed_size_bytes.saturating_add(record_bytes);
             }
         }
 
@@ -429,7 +454,10 @@ impl StreamStore {
         ));
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
@@ -437,9 +465,9 @@ impl StreamStore {
         if let Some((key, value)) = results.last() {
             let page_start = decode_area_offset_from_key(key)?;
             let page = CompactAreaPageValue::try_decode(value).map_err(|error| {
-                Self::invalid_compact_area_page_error(realm, area, page_start, error)
+                Self::invalid_compact_area_page_error(realm, area, page_start, &error)
             })?;
-            Ok(page_start.saturating_add(page.records.len() as u64))
+            Ok(page_start.saturating_add(usize_to_u64_saturating(page.records.len())))
         } else {
             Ok(0)
         }
@@ -451,7 +479,10 @@ impl StreamStore {
         ));
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
@@ -459,9 +490,9 @@ impl StreamStore {
         if let Some((key, value)) = results.last() {
             let page_start_offset = decode_realm_offset_from_key(key)?;
             let page = CompressedCompactRealmPageValue::try_decode(value)
-                .map_err(|error| Self::invalid_compact_realm_page_error(page_start_offset, error))?
+                .map_err(|error| Self::invalid_compact_realm_page_error(page_start_offset, &error))?
                 .into_compact_realm_page();
-            Ok(page_start_offset.saturating_add(page.records.len() as u64))
+            Ok(page_start_offset.saturating_add(usize_to_u64_saturating(page.records.len())))
         } else {
             Ok(0)
         }
@@ -479,7 +510,10 @@ impl StreamStore {
         ));
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
@@ -487,9 +521,9 @@ impl StreamStore {
         if let Some((key, value)) = results.last() {
             let page_start = decode_resource_offset_from_key(key)?;
             let page = CompactResourcePageValue::try_decode(value).map_err(|error| {
-                Self::invalid_compact_resource_page_error(realm, area, resource, page_start, error)
+                Self::invalid_compact_resource_page_error(realm, area, resource, page_start, &error)
             })?;
-            Ok(page_start.saturating_add(page.records.len() as u64))
+            Ok(page_start.saturating_add(usize_to_u64_saturating(page.records.len())))
         } else {
             Ok(0)
         }
@@ -505,25 +539,27 @@ impl StreamStore {
         let meta_key = encode_resource_meta_key(realm, area, resource);
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
-        match txn
+        if let Some(bytes) = txn
             .get(&meta_key)
             .map_err(|e| format!("get error: {e:?}"))?
         {
-            Some(bytes) => Ok((ResourceMetaValue::decode(&bytes)?, false)),
-            None => {
-                let (next_offset, committed_size_bytes) =
-                    self.scan_resource_stats(family, realm, area, resource)?;
-                Ok((
-                    ResourceMetaValue {
-                        next_offset,
-                        committed_size_bytes,
-                    },
-                    true,
-                ))
-            }
+            Ok((ResourceMetaValue::decode(&bytes)?, false))
+        } else {
+            let (next_offset, committed_size_bytes) =
+                self.scan_resource_stats(family, realm, area, resource)?;
+            Ok((
+                ResourceMetaValue {
+                    next_offset,
+                    committed_size_bytes,
+                },
+                true,
+            ))
         }
     }
 
@@ -555,7 +591,10 @@ impl StreamStore {
         let key = encode_area_counter_key(realm, area);
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
         match txn.get(&key).map_err(|e| format!("get error: {e:?}"))? {
@@ -572,7 +611,10 @@ impl StreamStore {
         let key = encode_realm_counter_key(realm);
         let txn = self
             .db
-            .begin_tx(family as u32, cntryl_midge::TransactionMode::ReadOnly)
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
         match txn.get(&key).map_err(|e| format!("get error: {e:?}"))? {

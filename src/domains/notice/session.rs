@@ -7,14 +7,14 @@ use crate::runtime::routing::RouteFamily;
 use crate::session::permissions::SessionPermissions;
 use crate::session::session::SessionId;
 
-/// Lightweight SessionActor helpers for the notice domain.
+/// Lightweight `SessionActor` helpers for the notice domain.
 ///
 /// Responsibilities:
 /// - Enforce session-level authorization for subscribe/publish operations
-/// - Forward authorized operations to the NoticeRouteActor
+/// - Forward authorized operations to the `NoticeRouteActor`
 ///
 /// This is intentionally small: a full actor system is out-of-scope for this change,
-/// but tests rely on the SessionActor's semantic enforcement.
+/// but tests rely on the `SessionActor`'s semantic enforcement.
 pub struct SessionActor {
     pub session_id: SessionId,
     pub permissions: SessionPermissions,
@@ -29,7 +29,11 @@ impl SessionActor {
         }
     }
 
-    /// Attempt to subscribe. Returns Err if authorization fails.
+    /// Attempt to subscribe.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session lacks read access for the requested pattern.
     pub fn subscribe(
         &self,
         family: RouteFamily,
@@ -50,7 +54,11 @@ impl SessionActor {
         Ok(())
     }
 
-    /// Attempt to publish; returns Err if authorization fails.
+    /// Attempt to publish.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session lacks write access for the requested route.
     pub fn publish(
         &self,
         family: RouteFamily,

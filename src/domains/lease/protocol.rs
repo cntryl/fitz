@@ -2,12 +2,12 @@
 //!
 //! Defines the message types for ephemeral lease operations inside one broker
 //! process:
-//! - **Acquire**: Request exclusive ownership
-//! - **Extend**: Extend lease expiration
-//! - **Release**: Relinquish ownership
-//! - **Query**: Inspect lease status (debugging)
-//! - **Subscribe / Unsubscribe**: Watch concrete lease routes for change notifications
-//! - **Tick**: Runtime-driven expiration (scheduler)
+//! - **`Acquire`**: Request exclusive ownership
+//! - **`Extend`**: Extend lease expiration
+//! - **`Release`**: Relinquish ownership
+//! - **`Query`**: Inspect lease status (debugging)
+//! - **`Subscribe / Unsubscribe`**: Watch concrete lease routes for change notifications
+//! - **`Tick`**: Runtime-driven expiration (scheduler)
 
 use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
@@ -15,8 +15,8 @@ use bytes::Bytes;
 
 /// Parsed lease identity
 ///
-/// Leases are uniquely identified by (RouteFamily, realm, area, resource):
-/// - RouteFamily: Routing isolation boundary (opaque u64)
+/// Leases are uniquely identified by (`RouteFamily`, realm, area, resource):
+/// - `RouteFamily`: Routing isolation boundary (opaque u64)
 /// - realm/area/resource: Logical identity within the family
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LeaseKey {
@@ -146,16 +146,16 @@ pub enum LeaseMessage {
     /// Acquire a lease
     ///
     /// Route format: `lease://{realm}/{area}/{resource}`
-    /// Lease identity: (family_id, realm, area, resource)
+    /// Lease identity: (`family_id`, realm, area, resource)
     /// If the lease is unowned or expired, grants it to the owner.
     /// If already owned by this owner, returns the existing token (idempotent).
-    /// If owned by another owner and wait_seconds > 0, queues the request.
-    /// If owned by another owner and wait_seconds = 0, fails immediately.
+    /// If owned by another owner and `wait_seconds` > 0, queues the request.
+    /// If owned by another owner and `wait_seconds` = 0, fails immediately.
     ///
-    /// wait_seconds: Maximum time to wait for lease to become available.
-    /// If 0, returns immediately with HeldByOther if unavailable.
+    /// `wait_seconds`: Maximum time to wait for lease to become available.
+    /// If 0, returns immediately with `HeldByOther` if unavailable.
     /// If > 0, client waits up to this duration for the lease.
-    /// Must not exceed max_wait_seconds (default 30).
+    /// Must not exceed `max_wait_seconds` (default 30).
     Acquire {
         family_id: RouteFamily,
         route: Route,
@@ -167,7 +167,7 @@ pub enum LeaseMessage {
     /// Extend a lease
     ///
     /// Route format: `lease://{realm}/{area}/{resource}`
-    /// Lease identity: (family_id, realm, area, resource)
+    /// Lease identity: (`family_id`, realm, area, resource)
     /// Extends the lease expiration if the fencing token matches.
     /// Fails if the token is outdated or the lease is no longer held.
     Extend {
@@ -181,7 +181,7 @@ pub enum LeaseMessage {
     /// Release a lease
     ///
     /// Route format: `lease://{realm}/{area}/{resource}`
-    /// Lease identity: (family_id, realm, area, resource)
+    /// Lease identity: (`family_id`, realm, area, resource)
     /// Releases the lease if the fencing token matches.
     /// Fails if the token is outdated or the lease is not held.
     Release {
@@ -194,7 +194,7 @@ pub enum LeaseMessage {
     /// Query lease status (for testing/debugging)
     ///
     /// Route format: `lease://{realm}/{area}/{resource}`
-    /// Lease identity: (family_id, realm, area, resource)
+    /// Lease identity: (`family_id`, realm, area, resource)
     Query {
         family_id: RouteFamily,
         route: Route,
@@ -209,7 +209,7 @@ pub enum LeaseMessage {
     Tick,
 }
 
-/// Lease watch messages handled by LeaseDomainSink before actor dispatch.
+/// Lease watch messages handled by `LeaseDomainSink` before actor dispatch.
 #[derive(Debug, Clone)]
 pub enum LeaseSubscriptionMessage {
     /// Subscribe to lease change notifications for an exact route or wildcard pattern.
@@ -304,10 +304,10 @@ pub enum LeaseResponse {
     /// Acquire request queued and waiting for lease to become available
     ///
     /// The client should wait for a response with either Acquired, Timeout, or error.
-    /// The fencing_token is provisional and will be confirmed when the lease is granted.
+    /// The `fencing_token` is provisional and will be confirmed when the lease is granted.
     Queued { fencing_token: u64 },
 
-    /// Already waiting for this lease with the same owner_id
+    /// Already waiting for this lease with the same `owner_id`
     ///
     /// A second Acquire(wait) from the same owner while one is already pending.
     /// Returns the existing queued state rather than queuing twice.
@@ -315,13 +315,13 @@ pub enum LeaseResponse {
 
     /// Acquire request timed out before lease became available
     ///
-    /// The client waited the full wait_seconds duration but the lease
+    /// The client waited the full `wait_seconds` duration but the lease
     /// remained unavailable (held by another owner).
     Timeout,
 
     /// Too many waiters queued for this lease
     ///
-    /// The pending queue depth has reached max_queue_depth.
+    /// The pending queue depth has reached `max_queue_depth`.
     /// Reject this acquire to prevent unbounded memory growth.
     /// The client should back off and retry later.
     QueueFull { pending_count: usize },

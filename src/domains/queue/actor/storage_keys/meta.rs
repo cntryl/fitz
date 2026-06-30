@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{DecodedIndexMeta, IndexMetaSnapshot, QueueActor, QueueMetaSnapshot};
 
 impl QueueActor {
     #[allow(dead_code)]

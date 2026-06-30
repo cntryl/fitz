@@ -239,7 +239,7 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
         .expect("past instant");
 
     // Act
-    let response = sink.handle_extend(key.clone(), "owner1".to_string(), holder_token, 30);
+    let response = sink.handle_extend(&key, "owner1", holder_token, 30);
     let leases = admin_read_model.leases(None);
     let waiter_delivery = waiter_mailbox
         .receiver()

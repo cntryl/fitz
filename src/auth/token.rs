@@ -22,7 +22,13 @@ fn signature_only_validation(alg: Algorithm) -> Validation {
     validation
 }
 
-/// Verify the JWT signature using the provided RSA public key (PEM) and return the decoded payload as JSON.
+/// Verify the JWT signature using the provided RSA public key (PEM) and return
+/// the decoded payload as JSON.
+///
+/// # Errors
+///
+/// Returns an error when the header cannot be decoded, the public key is
+/// invalid, or signature verification fails.
 pub fn verify_jwt_with_rsa_pem(token: &str, public_pem: &[u8]) -> Result<Value, String> {
     // Determine algorithm from header
     let header = decode_header(token).map_err(|e| format!("invalid jwt header: {e}"))?;
@@ -39,7 +45,13 @@ pub fn verify_jwt_with_rsa_pem(token: &str, public_pem: &[u8]) -> Result<Value, 
     Ok(token_data.claims)
 }
 
-/// Verify the JWT signature using an HMAC secret (HS256) and return the decoded payload as JSON.
+/// Verify the JWT signature using an HMAC secret (`HS256`) and return the
+/// decoded payload as JSON.
+///
+/// # Errors
+///
+/// Returns an error when the header cannot be decoded, the algorithm is not
+/// `HS256`, or signature verification fails.
 pub fn verify_jwt_with_hmac_secret(token: &str, secret: &[u8]) -> Result<Value, String> {
     let header = decode_header(token).map_err(|e| format!("invalid jwt header: {e}"))?;
     let alg = header.alg;

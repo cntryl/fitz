@@ -10,14 +10,14 @@
 ///
 /// **Hot paths (0.1% sampling):**
 /// - routing (route matching)
-/// - tlv_codec (TLV encode/decode)
-/// - frame_processing (TCP/WS frame I/O)
+/// - `tlv_codec` (TLV encode/decode)
+/// - `frame_processing` (TCP/WS frame I/O)
 ///
-/// **AlwaysSample (100%):**
+/// **`AlwaysSample` (100%):**
 /// - request (top-level request boundaries)
 /// - session (session lifecycle)
-/// - domain_operation (domain::Actor::receive)
-/// - permission_check (authorization)
+/// - `domain_operation` (`domain::Actor::receive`)
+/// - `permission_check` (authorization)
 ///
 /// **Debug level (typically filtered):**
 /// - scheduler (actor scheduling)

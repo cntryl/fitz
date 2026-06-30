@@ -2,8 +2,8 @@
 //!
 //! # Architecture
 //!
-//! - **RpcRouteActor** ([actor]): Manages worker pool and request queue per route
-//! - **SessionActor**: Enforces authentication/authorization before forwarding to RpcRouteActor
+//! - **`RpcRouteActor`** ([actor]): Manages worker pool and request queue per route
+//! - **`SessionActor`**: Enforces authentication/authorization before forwarding to `RpcRouteActor`
 //! - Workers register with routes and receive requests via round-robin assignment
 //!
 //! # Performance Characteristics (Hardened v2)

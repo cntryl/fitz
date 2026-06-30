@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    DlqReason, MessageId, QueueActor, QueueAdminSnapshot, QueueDeadLetterSnapshot,
+    QueueInflightSnapshot, QueueState,
+};
+use crate::control::admin::QueueAgeBuckets;
 
 impl QueueActor {
     #[must_use]
@@ -74,12 +78,15 @@ impl QueueActor {
                 inflight_token: inflight.token,
                 session_id: inflight.owner_session_id,
                 expires_at_epoch_ms: now_epoch_ms.saturating_add(
-                    inflight
-                        .expires_at
-                        .saturating_duration_since(now_instant)
-                        .as_millis() as u64,
+                    u64::try_from(
+                        inflight
+                            .expires_at
+                            .saturating_duration_since(now_instant)
+                            .as_millis(),
+                    )
+                    .unwrap_or(u64::MAX),
                 ),
-                attempts: inflight.attempts as usize,
+                attempts: usize::try_from(inflight.attempts).unwrap_or(usize::MAX),
             })
             .collect()
     }

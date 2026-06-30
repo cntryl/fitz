@@ -1,6 +1,4 @@
 pub(super) use crate::domains::schedule::ScheduleMetrics;
-#[cfg(test)]
-pub(super) use crate::protocol::frame_context::FrameContext;
 pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 pub(super) use parking_lot::Mutex;
 pub(super) use std::collections::hash_map::Entry;
@@ -15,10 +13,13 @@ pub(super) const SCHEDULE_PENDING_CLAIM_TTL_MS: u64 = 24 * 60 * 60 * 1000;
 pub(super) const SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS: u64 = 60_000;
 
 pub(super) fn now_epoch_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
 }
 
 pub(super) type PendingFireKey = (u64, String);

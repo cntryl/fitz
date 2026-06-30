@@ -61,11 +61,21 @@ fn is_cache_entry_stale(entry: &CachedJwksEntry, now: u64) -> bool {
 
 /// Parse JWKS JSON and insert into the in-memory cache under the supplied `jwks_url` key.
 /// This allows tests to inject JWKS without running an HTTP server.
+///
+/// # Errors
+///
+/// Returns an error when the provided JWKS JSON cannot be parsed or contains
+/// invalid key material for a supported key type.
 pub fn cache_jwks_from_json(jwks_url: &str, jwks_json: &str) -> Result<(), String> {
     cache_jwks_from_json_with_ttl(jwks_url, jwks_json, 3600)
 }
 
-/// Parse JWKS JSON and cache with explicit TTL (seconds)
+/// Parse JWKS JSON and cache with explicit TTL (seconds).
+///
+/// # Errors
+///
+/// Returns an error when the provided JWKS JSON cannot be parsed or contains
+/// invalid key material for a supported key type.
 pub fn cache_jwks_from_json_with_ttl(
     jwks_url: &str,
     jwks_json: &str,
@@ -75,8 +85,8 @@ pub fn cache_jwks_from_json_with_ttl(
         serde_json::from_str(jwks_json).map_err(|e| format!("jwks json parse error: {e}"))?;
 
     let mut map: HashMap<String, CachedJwk> = HashMap::new();
-    for k in jwks.keys.into_iter() {
-        let kid = k.kid.clone().unwrap_or_else(|| "".to_string());
+    for k in jwks.keys {
+        let kid = k.kid.clone().unwrap_or_else(String::new);
         match k.kty.as_str() {
             "oct" => {
                 if let Some(kval) = k.k {
@@ -123,7 +133,8 @@ pub fn is_jwks_stale(jwks_url: &str) -> bool {
     true
 }
 
-/// Try to get a `jsonwebtoken::DecodingKey` for the given jwks_url and kid from cache.
+/// Try to get a `jsonwebtoken::DecodingKey` for the given `jwks_url` and kid
+/// from cache.
 pub fn get_decoding_key_from_cache(jwks_url: &str, kid: &str) -> Option<jsonwebtoken::DecodingKey> {
     use jsonwebtoken::DecodingKey;
 
@@ -136,10 +147,10 @@ pub fn get_decoding_key_from_cache(jwks_url: &str, kid: &str) -> Option<jsonwebt
     let m = &guard.keys;
 
     // If a specific kid requested, try it; otherwise, fall back to the first available key.
-    let entry = if !kid.is_empty() {
-        m.get(kid).or_else(|| m.get(""))
-    } else {
+    let entry = if kid.is_empty() {
         m.values().next()
+    } else {
+        m.get(kid).or_else(|| m.get(""))
     }?;
 
     match entry {
@@ -151,7 +162,13 @@ pub fn get_decoding_key_from_cache(jwks_url: &str, kid: &str) -> Option<jsonwebt
     }
 }
 
-/// Async fetch JWKS from a well-known jwks URL and cache the result.
+/// Async fetch JWKS from a well-known JWKS URL and cache the result.
+///
+/// # Errors
+///
+/// Returns an error when the URL is invalid, when the HTTP fetch fails, when a
+/// redirect or non-success response is returned, or when the body cannot be
+/// read or parsed into supported JWKS key material.
 pub async fn fetch_and_cache_jwks(jwks_url: &str) -> Result<(), String> {
     super::validate_jwks_url(jwks_url, super::allow_insecure_jwks_http())
         .map_err(|error| format!("invalid JWKS URL: {error}"))?;
@@ -189,7 +206,13 @@ pub async fn fetch_and_cache_jwks(jwks_url: &str) -> Result<(), String> {
     cache_jwks_from_json_with_ttl(jwks_url, &text, 3600)
 }
 
-/// Attempt to ensure JWKS is cached for `jwks_url`; if missing or stale, fetch and cache.
+/// Attempt to ensure JWKS is cached for `jwks_url`; if missing or stale, fetch
+/// and cache.
+///
+/// # Errors
+///
+/// Returns an error when cache refresh is required and the JWKS fetch or parse
+/// path fails.
 pub async fn ensure_jwks_cached(jwks_url: &str) -> Result<(), String> {
     if is_jwks_stale(jwks_url) {
         fetch_and_cache_jwks(jwks_url).await
@@ -198,7 +221,14 @@ pub async fn ensure_jwks_cached(jwks_url: &str) -> Result<(), String> {
     }
 }
 
-/// Derive a default JWKS URL from issuer (e.g. "https://idp.example" -> "https://idp.example/.well-known/jwks.json")
+/// Derive a default JWKS URL from issuer.
+///
+/// Example: `<https://idp.example>` becomes
+/// `<https://idp.example/.well-known/jwks.json>`.
+///
+/// # Errors
+///
+/// Returns an error when `iss` is not a valid URL.
 pub fn derive_jwks_url_from_issuer(iss: &str) -> Result<String, String> {
     let base = iss.trim_end_matches('/');
     // validate url

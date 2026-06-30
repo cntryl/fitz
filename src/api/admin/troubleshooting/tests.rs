@@ -299,7 +299,7 @@ fn should_summarize_rpc_worker_latency_buckets() {
     let summary = summarize_rpc_worker_latency(workers.iter());
 
     // Assert
-    assert_eq!(summary.slowest_worker_average_latency_ms, 125.0);
+    assert!((summary.slowest_worker_average_latency_ms - 125.0).abs() < f64::EPSILON);
     assert_eq!(summary.worker_latency_buckets.under_5ms, 1);
     assert_eq!(summary.worker_latency_buckets.under_25ms, 1);
     assert_eq!(summary.worker_latency_buckets.under_100ms, 1);

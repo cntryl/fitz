@@ -6,8 +6,6 @@ pub(super) use crate::domains::stream::{
     StreamStore,
 };
 pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
-#[cfg(test)]
-pub(super) use crate::protocol::frame_context::FrameContext;
 pub(super) use crate::protocol::payload_codec::PayloadEncoder;
 pub(super) use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
 pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};

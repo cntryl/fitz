@@ -1,5 +1,22 @@
 use serde::{Deserialize, Serialize};
 
+fn saturating_usize(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn usize_to_f64(value: usize) -> f64 {
+    value as f64
+}
+
+fn histogram_tail_ratio(slow_tail_count: usize, total: usize) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        usize_to_f64(slow_tail_count) / usize_to_f64(total)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QueueAgeBuckets {
     pub under_1m: usize,
@@ -163,15 +180,15 @@ pub struct StreamLatencyBuckets {
 impl StreamLatencyBuckets {
     pub(crate) fn from_histogram(buckets: [u64; 9]) -> Self {
         Self {
-            under_1ms: buckets[0] as usize,
-            under_5ms: buckets[1] as usize,
-            under_10ms: buckets[2] as usize,
-            under_50ms: buckets[3] as usize,
-            under_100ms: buckets[4] as usize,
-            under_500ms: buckets[5] as usize,
-            under_1s: buckets[6] as usize,
-            under_5s: buckets[7] as usize,
-            over_5s: buckets[8] as usize,
+            under_1ms: saturating_usize(buckets[0]),
+            under_5ms: saturating_usize(buckets[1]),
+            under_10ms: saturating_usize(buckets[2]),
+            under_50ms: saturating_usize(buckets[3]),
+            under_100ms: saturating_usize(buckets[4]),
+            under_500ms: saturating_usize(buckets[5]),
+            under_1s: saturating_usize(buckets[6]),
+            under_5s: saturating_usize(buckets[7]),
+            over_5s: saturating_usize(buckets[8]),
         }
     }
 
@@ -192,12 +209,7 @@ impl StreamLatencyBuckets {
     }
 
     pub(crate) fn slow_tail_ratio(&self) -> f64 {
-        let total = self.total();
-        if total == 0 {
-            0.0
-        } else {
-            self.slow_tail_count() as f64 / total as f64
-        }
+        histogram_tail_ratio(self.slow_tail_count(), self.total())
     }
 }
 
@@ -217,15 +229,15 @@ pub struct ScheduleLatencyBuckets {
 impl ScheduleLatencyBuckets {
     pub(crate) fn from_histogram(buckets: [u64; 9]) -> Self {
         Self {
-            under_1ms: buckets[0] as usize,
-            under_5ms: buckets[1] as usize,
-            under_10ms: buckets[2] as usize,
-            under_50ms: buckets[3] as usize,
-            under_100ms: buckets[4] as usize,
-            under_500ms: buckets[5] as usize,
-            under_1s: buckets[6] as usize,
-            under_5s: buckets[7] as usize,
-            over_5s: buckets[8] as usize,
+            under_1ms: saturating_usize(buckets[0]),
+            under_5ms: saturating_usize(buckets[1]),
+            under_10ms: saturating_usize(buckets[2]),
+            under_50ms: saturating_usize(buckets[3]),
+            under_100ms: saturating_usize(buckets[4]),
+            under_500ms: saturating_usize(buckets[5]),
+            under_1s: saturating_usize(buckets[6]),
+            under_5s: saturating_usize(buckets[7]),
+            over_5s: saturating_usize(buckets[8]),
         }
     }
 
@@ -246,12 +258,7 @@ impl ScheduleLatencyBuckets {
     }
 
     pub(crate) fn slow_tail_ratio(&self) -> f64 {
-        let total = self.total();
-        if total == 0 {
-            0.0
-        } else {
-            self.slow_tail_count() as f64 / total as f64
-        }
+        histogram_tail_ratio(self.slow_tail_count(), self.total())
     }
 }
 
@@ -351,6 +358,7 @@ pub struct QueueDeadLetter {
     pub reason: String,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct QueueInflightSnapshot<'a> {
     pub(crate) message_id: u64,
     pub(crate) family: u64,
@@ -363,6 +371,7 @@ pub(crate) struct QueueInflightSnapshot<'a> {
     pub(crate) attempts: usize,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct QueueInfoSnapshot<'a> {
     pub(crate) family: u64,
     pub(crate) realm: &'a str,
@@ -384,6 +393,7 @@ pub(crate) struct QueueInfoSnapshot<'a> {
     pub(crate) out_rate_per_second: f64,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct QueueDeadLetterSnapshot<'a> {
     pub(crate) message_id: u64,
     pub(crate) family: u64,
@@ -507,6 +517,7 @@ pub struct SessionInfo {
     pub remote_addr: String,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct StreamInfoSnapshot<'a> {
     pub route_family: u64,
     pub realm: &'a str,
@@ -635,7 +646,7 @@ impl StreamAreaWatermark {
 }
 
 impl QueueInfo {
-    pub(crate) fn snapshot(snapshot: QueueInfoSnapshot<'_>) -> Self {
+    pub(crate) fn snapshot(snapshot: &QueueInfoSnapshot<'_>) -> Self {
         let QueueInfoSnapshot {
             family,
             realm,
@@ -655,7 +666,7 @@ impl QueueInfo {
             complete_success_total,
             in_rate_per_second,
             out_rate_per_second,
-        } = snapshot;
+        } = *snapshot;
         let status = queue_status_label(
             messages_ready,
             messages_delayed,
@@ -690,7 +701,7 @@ impl QueueInfo {
 }
 
 impl QueueInflight {
-    pub(crate) fn snapshot(snapshot: QueueInflightSnapshot<'_>) -> Self {
+    pub(crate) fn snapshot(snapshot: &QueueInflightSnapshot<'_>) -> Self {
         let QueueInflightSnapshot {
             message_id,
             family,
@@ -701,7 +712,7 @@ impl QueueInflight {
             session_id,
             expires_at,
             attempts,
-        } = snapshot;
+        } = *snapshot;
 
         Self {
             message_id,
@@ -718,7 +729,7 @@ impl QueueInflight {
 }
 
 impl QueueDeadLetter {
-    pub(crate) fn snapshot(snapshot: QueueDeadLetterSnapshot<'_>) -> Self {
+    pub(crate) fn snapshot(snapshot: &QueueDeadLetterSnapshot<'_>) -> Self {
         let QueueDeadLetterSnapshot {
             message_id,
             family,
@@ -728,7 +739,7 @@ impl QueueDeadLetter {
             dead_lettered_at,
             attempts,
             reason,
-        } = snapshot;
+        } = *snapshot;
 
         Self {
             message_id,
@@ -770,7 +781,7 @@ impl RpcPendingRequest {
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(crate) fn snapshot(
         route_family: u64,
-        correlation_id: String,
+        correlation_id: &impl ToString,
         route: &str,
         submitted_at: &str,
         age_seconds: u64,
@@ -778,7 +789,7 @@ impl RpcPendingRequest {
     ) -> Self {
         Self {
             route_family,
-            correlation_id,
+            correlation_id: correlation_id.to_string(),
             route: route.to_string(),
             submitted_at: submitted_at.to_string(),
             age_seconds,

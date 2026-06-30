@@ -1,4 +1,4 @@
-//! RpcRouteActor: manages the worker pool and request queue for one exact RPC
+//! `RpcRouteActor`: manages the worker pool and request queue for one exact RPC
 //! route inside the current broker process.
 //!
 //! Each route key (for example, `rpc://acme/auth/user/create`) has a dedicated
@@ -29,7 +29,7 @@
 //!
 //!    Correlation IDs are used only to match live in-flight responses in this
 //!    process; they are not durable deduplication or replay tokens.
-//! 6. **Correlation tracking**: Maps correlation_id → worker for proper cleanup
+//! 6. **Correlation tracking**: Maps `correlation_id` → worker for proper cleanup
 
 use super::errors::RpcError;
 use super::protocol::{RpcMessage, RpcRequest, RpcResponse, RpcWorkItem};
@@ -75,7 +75,7 @@ impl PartialOrd for ExpiringAssignment {
 /// Tracks a live worker assignment for a request
 ///
 /// Optimized for minimal allocation:
-/// - Stores a stable worker slot instead of RouteAddress (no clone)
+/// - Stores a stable worker slot instead of `RouteAddress` (no clone)
 /// - Does not retain reply routing state while reply forwarding is a no-op
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -128,7 +128,7 @@ pub struct RpcRouteActor {
     /// Maximum queue size
     capacity: usize,
 
-    /// Active assignments (correlation_id → worker slot)
+    /// Active assignments (`correlation_id` → worker slot)
     assignments: FastMap<Uuid, WorkerAssignment>,
 
     /// Expiration queue for O(K) expired assignment detection (min-heap)
@@ -197,7 +197,7 @@ impl RpcRouteActor {
     }
 
     fn allocate_worker_slot(&mut self, worker_addr: RouteAddress) -> usize {
-        if let Some(worker_slot) = self.workers.iter().position(|worker| worker.is_none()) {
+        if let Some(worker_slot) = self.workers.iter().position(Option::is_none) {
             self.workers[worker_slot] = Some(WorkerRegistration::new(worker_addr));
             worker_slot
         } else {
@@ -222,7 +222,7 @@ impl RpcRouteActor {
                 .workers
                 .get(worker_slot)
                 .and_then(|worker| worker.as_ref())
-                .is_some_and(|worker| worker.is_available())
+                .is_some_and(WorkerRegistration::is_available)
             {
                 return Some(worker_slot);
             }
@@ -282,7 +282,7 @@ impl RpcRouteActor {
                     request.family_id, self.family
                 ),
             );
-            self.send_error(error);
+            Self::send_error(error);
             return;
         }
 
@@ -293,7 +293,7 @@ impl RpcRouteActor {
         if self.pending.len() >= self.capacity {
             // Send backpressure error to client
             let error = RpcError::backpressure(request.correlation_id);
-            self.send_error(error);
+            Self::send_error(error);
             return;
         }
 
@@ -301,7 +301,7 @@ impl RpcRouteActor {
     }
 
     /// Handle response from worker
-    fn handle_response(&mut self, response: RpcResponse, ctx: &mut Context<Self>) {
+    fn handle_response(&mut self, response: &RpcResponse, ctx: &mut Context<Self>) {
         // Terminal responses release the worker lease. Late responses naturally no-op.
         if response.stream_end {
             self.release_lease(&response.correlation_id, ctx);
@@ -319,7 +319,7 @@ impl RpcRouteActor {
     /// Optimized for zero-allocation hot path:
     /// - No request clone (already has ownership)
     /// - Stable worker slot avoids index-shift bugs during unregister
-    /// - Arc for reply_route (shared ownership)
+    /// - Arc for `reply_route` (shared ownership)
     #[inline]
     fn dispatch_to_worker(&mut self, request: RpcRequest, ctx: &mut Context<Self>) {
         if let Some(worker_slot) = self.pop_ready_worker_slot() {
@@ -402,7 +402,7 @@ impl RpcRouteActor {
                 // Timeout is currently observed only through lease release.
                 // Error forwarding remains a no-op until reply inbox routing lands.
                 let error = RpcError::timeout(correlation_id);
-                self.send_error(error);
+                Self::send_error(error);
 
                 // NOTE: We don't re-enqueue for retry since we don't have the original request
                 // (removed request clone for performance). Client should retry if needed.
@@ -416,7 +416,7 @@ impl RpcRouteActor {
     }
 
     /// Send error to client inbox
-    fn send_error(&self, _error: RpcError) {
+    fn send_error(_error: RpcError) {
         // NOTE: This actor is a semantics reference used in tests and benchmarks.
         // Production RPC reply and error forwarding happens in RpcDomainSink,
         // which still treats all worker and pending-request state as ephemeral.
@@ -431,13 +431,13 @@ impl RpcRouteActor {
         }
     }
 
-    /// Check if any worker is available (O(1) with ready_queue)
+    /// Check if any worker is available (O(1) with `ready_queue`)
     fn has_available_worker(&self) -> bool {
         self.ready_queue.iter().copied().any(|worker_slot| {
             self.workers
                 .get(worker_slot)
                 .and_then(|worker| worker.as_ref())
-                .is_some_and(|worker| worker.is_available())
+                .is_some_and(WorkerRegistration::is_available)
         })
     }
 }
@@ -457,7 +457,7 @@ impl Actor for RpcRouteActor {
                 self.handle_request(request, ctx);
             }
             RpcMessage::Response(response) => {
-                self.handle_response(response, ctx);
+                self.handle_response(&response, ctx);
             }
             RpcMessage::Ack { correlation_id } => {
                 self.handle_ack(correlation_id, ctx);
@@ -645,7 +645,7 @@ mod tests {
 
         // Act
         let response = RpcResponse::single(corr, Bytes::from("result"));
-        actor.handle_response(response, &mut ctx);
+        actor.handle_response(&response, &mut ctx);
 
         // Assert
         assert_eq!(actor.active_leases(), 0);
@@ -663,7 +663,7 @@ mod tests {
 
         // Act — intermediate streaming chunk (not terminal)
         let chunk = RpcResponse::chunk(corr, 0, Bytes::from("partial"), false);
-        actor.handle_response(chunk, &mut ctx);
+        actor.handle_response(&chunk, &mut ctx);
 
         // Assert
         assert_eq!(actor.active_leases(), 1);

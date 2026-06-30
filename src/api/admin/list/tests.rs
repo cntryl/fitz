@@ -171,7 +171,7 @@ fn should_match_operation_route_given_matching_path() {
 #[test]
 fn should_collect_resource_refs_given_resource_items() {
     // Arrange
-    let items = vec![QueueInfo::snapshot(QueueInfoSnapshot {
+    let items = vec![QueueInfo::snapshot(&QueueInfoSnapshot {
         family: 1,
         realm: "acme",
         area: "billing",
@@ -206,7 +206,7 @@ fn should_collect_resource_refs_given_resource_items() {
 fn should_collect_queue_rollups_given_queue_rows() {
     // Arrange
     let queues = vec![
-        QueueInfo::snapshot(QueueInfoSnapshot {
+        QueueInfo::snapshot(&QueueInfoSnapshot {
             family: 1,
             realm: "prod",
             area: "jobs",
@@ -226,7 +226,7 @@ fn should_collect_queue_rollups_given_queue_rows() {
             in_rate_per_second: 2.0,
             out_rate_per_second: 1.0,
         }),
-        QueueInfo::snapshot(QueueInfoSnapshot {
+        QueueInfo::snapshot(&QueueInfoSnapshot {
             family: 2,
             realm: "prod",
             area: "jobs",

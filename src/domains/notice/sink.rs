@@ -54,12 +54,12 @@ impl NoticeRouteStats {
 
     fn publishes_per_minute(&mut self, now: Instant) -> f64 {
         self.prune_recent_publishes(now);
-        self.recent_publishes.len() as f64
+        usize_to_f64(self.recent_publishes.len())
     }
 
     fn prune_recent_publishes(&mut self, now: Instant) {
         while let Some(oldest) = self.recent_publishes.front().copied() {
-            if now.saturating_duration_since(oldest) <= Duration::from_secs(60) {
+            if now.saturating_duration_since(oldest) <= Duration::from_mins(1) {
                 break;
             }
             self.recent_publishes.pop_front();
@@ -103,6 +103,14 @@ fn notice_route_realm(route: &str) -> Option<&str> {
     path.trim_start_matches('/')
         .split('/')
         .find(|segment| !segment.is_empty())
+}
+
+fn usize_to_f64(value: usize) -> f64 {
+    f64::from(u32::try_from(value).unwrap_or(u32::MAX))
+}
+
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
 }
 
 /// Live notice pub/sub state for the current broker process.
@@ -323,7 +331,6 @@ impl NoticeDomainSink {
                     if attempt < MAX_RETRIES =>
                 {
                     std::thread::yield_now();
-                    continue;
                 }
                 Err(_) => {
                     crate::observability::counter_inc("fitz_notice_delivery_drops_total");
@@ -375,12 +382,8 @@ impl NoticeDomainSink {
         self.publish_route_payload(event.family_id, &event.route, &event.payload);
     }
 
-    fn handle_domain_publish(
-        &self,
-        event: &crate::runtime::DomainPublishEvent,
-    ) -> Result<(), DeliveryError> {
+    fn handle_domain_publish(&self, event: &crate::runtime::DomainPublishEvent) {
         self.publish_event(event);
-        Ok(())
     }
 
     pub fn unsubscribe_all_for_session(&self, session_id: u64) -> usize {
@@ -400,7 +403,7 @@ impl NoticeDomainSink {
         );
         drop(families);
         if removed > 0 {
-            self.counter_add("fitz_notice_unsubscribes_total", removed as u64);
+            self.counter_add("fitz_notice_unsubscribes_total", usize_to_u64(removed));
             self.mark_admin_snapshot_dirty();
         }
         removed
@@ -410,12 +413,11 @@ impl NoticeDomainSink {
         let families = self.families.lock();
         families
             .values()
-            .map(|state| state.subscription_count())
+            .map(RoutedSubscriptionSet::subscription_count)
             .sum()
     }
 
     fn wildcard_subscription_limit_reached(
-        &self,
         state: &RoutedSubscriptionSet<NoticeSubscription>,
         session_id: u64,
         pattern: &str,
@@ -433,19 +435,19 @@ impl MailboxSink for NoticeDomainSink {
         }
         self.ensure_active()?;
 
-        if self.handle_domain_publish_envelope(&envelope)? {
+        if self.handle_domain_publish_envelope(&envelope) {
             return Ok(());
         }
 
-        self.log_delivery(&envelope);
+        Self::log_delivery(&envelope);
 
-        let Some(request) = self.extract_request(&envelope)? else {
+        let Some(request) = Self::extract_request(&envelope)? else {
             return Ok(());
         };
         let meta = request.meta;
         let request_started = self.record_request_start();
 
-        self.log_parse_start(meta);
+        Self::log_parse_start(meta);
 
         let notice_msg = self.parse_notice_message(request.message, request_started)?;
 
@@ -486,16 +488,16 @@ impl NoticeDomainSink {
         Ok(())
     }
 
-    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> Result<bool, DeliveryError> {
+    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
-            self.handle_domain_publish(event)?;
-            return Ok(true);
+            self.handle_domain_publish(event);
+            return true;
         }
 
-        Ok(false)
+        false
     }
 
-    fn log_delivery(&self, envelope: &Envelope) {
+    fn log_delivery(envelope: &Envelope) {
         tracing::debug!(
             domain = "notice",
             destination = %envelope.destination(),
@@ -505,28 +507,26 @@ impl NoticeDomainSink {
     }
 
     fn extract_request(
-        &self,
         envelope: &Envelope,
     ) -> Result<Option<crate::domains::notice::NoticeClientRequest>, DeliveryError> {
-        match Self::request_from_envelope(envelope) {
-            Some(request) => Ok(Some(request)),
-            None => {
-                tracing::warn!(
-                    domain = "notice",
-                    "Envelope payload was not NoticeClientRequest"
-                );
-                Err(DeliveryError::ActorStopped)
-            }
+        if let Some(request) = Self::request_from_envelope(envelope) {
+            Ok(Some(request))
+        } else {
+            tracing::warn!(
+                domain = "notice",
+                "Envelope payload was not NoticeClientRequest"
+            );
+            Err(DeliveryError::ActorStopped)
         }
     }
 
     fn record_request_start(&self) -> Option<Instant> {
         self.metrics
             .as_ref()
-            .map(|metrics| metrics.record_request_start())
+            .map(NoticeMetrics::record_request_start)
     }
 
-    fn log_parse_start(&self, meta: crate::runtime::ClientFrameMeta) {
+    fn log_parse_start(meta: crate::runtime::ClientFrameMeta) {
         tracing::debug!(
             domain = "notice",
             session = meta.session_id,
@@ -565,7 +565,7 @@ impl NoticeDomainSink {
                 self.publish_route_payload(pub_msg.family_id, &pub_msg.route, &pub_msg.payload);
                 (None, false)
             }
-            NotificationMessage::Subscribe(sub_msg) => self.handle_subscribe_message(sub_msg),
+            NotificationMessage::Subscribe(sub_msg) => self.handle_subscribe_message(&sub_msg),
             NotificationMessage::Unsubscribe(unsub_msg) => {
                 let family_id = unsub_msg.family_id.as_u64();
                 let mut families = self.families.lock();
@@ -603,7 +603,7 @@ impl NoticeDomainSink {
 
     fn handle_subscribe_message(
         &self,
-        sub_msg: crate::domains::notice::protocol::SubscribeMessage,
+        sub_msg: &crate::domains::notice::protocol::SubscribeMessage,
     ) -> (Option<crate::domains::notice::NoticeResponse>, bool) {
         use crate::domains::notice::NoticeResponse;
 
@@ -641,7 +641,7 @@ impl NoticeDomainSink {
                 },
                 false,
             )
-        } else if self.wildcard_subscription_limit_reached(
+        } else if Self::wildcard_subscription_limit_reached(
             state,
             sub_msg.session_id.0,
             sub_msg.pattern.as_str(),

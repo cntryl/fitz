@@ -1,8 +1,15 @@
-use super::model::*;
+use super::model::{
+    parse_concrete_schedule_route, Arc, BTreeMap, BinaryHeap, Clock, CronSchedule, FxBuildHasher,
+    HashMap, Instant, PendingClaim, PersistedSchedule, Reverse, RouteFamily, ScheduleActor,
+    ScheduleDef, ScheduleStore, SystemClock,
+};
 
 impl ScheduleActor {
     pub(super) const READY_HEAP_REBUILD_SLACK: usize = 32;
 
+    /// # Errors
+    ///
+    /// Returns an error when schedule storage initialization or preload fails.
     pub fn try_new(
         family: RouteFamily,
         db: Arc<cntryl_midge::Engine>,
@@ -23,6 +30,9 @@ impl ScheduleActor {
         Self::try_new_with_storage_clock(family, db, write_options, Arc::new(SystemClock))
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when schedule storage initialization or preload fails.
     pub fn try_new_with_clock(
         family: RouteFamily,
         db: Arc<cntryl_midge::Engine>,
@@ -47,6 +57,9 @@ impl ScheduleActor {
         Self::try_new_at_with_storage_clock(family, db, write_options, clock, now)
     }
 
+    /// # Panics
+    ///
+    /// Panics when schedule actor startup fails.
     pub fn new(
         family: RouteFamily,
         db: Arc<cntryl_midge::Engine>,
@@ -55,6 +68,9 @@ impl ScheduleActor {
         Self::try_new(family, db, write_options).expect("schedule actor startup should succeed")
     }
 
+    /// # Panics
+    ///
+    /// Panics when schedule actor startup fails.
     pub fn new_with_clock(
         family: RouteFamily,
         db: Arc<cntryl_midge::Engine>,
@@ -120,98 +136,194 @@ impl ScheduleActor {
         Ok(actor)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when persisted schedules cannot be loaded, parsed, or
+    /// normalized, or when pending claimed occurrences cannot be loaded.
     pub(super) fn preload_from_store_at(&mut self, now: Instant) -> Result<(), String> {
         let now_ms = Self::instant_to_ms_at_with_clock(now, now, self.clock.as_ref());
         let entries = self
             .store
             .load_all(self.family.as_u64(), self.write_options)?;
+        let normalization_batch = self.preload_persisted_schedules(entries, now, now_ms)?;
+        self.persist_normalization_batch(&normalization_batch)?;
+        self.preload_pending_fire_claims()?;
+
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn admin_snapshot(&self) -> Vec<crate::control::admin::ScheduleInfo> {
+        let mut snapshot: Vec<_> = self
+            .schedules
+            .values()
+            .filter_map(|schedule| {
+                parse_concrete_schedule_route(&schedule.route)
+                    .ok()
+                    .map(|route| crate::control::admin::ScheduleInfo {
+                        route_family: self.family.as_u64(),
+                        realm: route.realm,
+                        area: route.area,
+                        resource: route.resource,
+                        operation: route.operation,
+                        cron: schedule.cron.clone(),
+                        next_run: chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+                            Self::u64_to_i64_saturating(schedule.next_fire_ms),
+                        )
+                        .map(|timestamp| timestamp.to_rfc3339())
+                        .unwrap_or_default(),
+                        last_run: schedule.last_fire_ms.and_then(|timestamp_ms| {
+                            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+                                Self::u64_to_i64_saturating(timestamp_ms),
+                            )
+                            .map(|timestamp| timestamp.to_rfc3339())
+                        }),
+                        executions_total: schedule.executions_total,
+                        enabled: true,
+                    })
+            })
+            .collect();
+
+        snapshot.sort_by(|left, right| {
+            (&left.realm, &left.area, &left.resource, &left.operation).cmp(&(
+                &right.realm,
+                &right.area,
+                &right.resource,
+                &right.operation,
+            ))
+        });
+
+        snapshot
+    }
+
+    fn u64_to_i64_saturating(value: u64) -> i64 {
+        i64::try_from(value).unwrap_or(i64::MAX)
+    }
+
+    fn preload_persisted_schedules(
+        &mut self,
+        entries: Vec<PersistedSchedule>,
+        now: Instant,
+        now_ms: u64,
+    ) -> Result<Vec<crate::domains::schedule::store::ScheduleBatchInsert>, String> {
         let mut normalization_batch = Vec::new();
 
-        for PersistedSchedule {
+        for entry in entries {
+            self.preload_schedule_entry(entry, now, now_ms, &mut normalization_batch)?;
+        }
+
+        Ok(normalization_batch)
+    }
+
+    fn preload_schedule_entry(
+        &mut self,
+        entry: PersistedSchedule,
+        now: Instant,
+        now_ms: u64,
+        normalization_batch: &mut Vec<crate::domains::schedule::store::ScheduleBatchInsert>,
+    ) -> Result<(), String> {
+        let PersistedSchedule {
             route,
             cron,
             payload,
             next_fire_ms,
             last_fire_ms,
             executions_total,
-        } in entries
-        {
-            match CronSchedule::parse(&cron) {
-                Ok(parsed_cron) => {
-                    self.cron_cache.insert(cron.clone(), parsed_cron.clone());
+        } = entry;
+        let parsed_cron = CronSchedule::parse(&cron).map_err(|error| {
+            format!("parse persisted schedule cron failed for {route}: {error}")
+        })?;
+        self.cron_cache.insert(cron.clone(), parsed_cron.clone());
 
-                    let (effective_next_fire_time, effective_next_fire_ms, previous_fire_ms) =
-                        if next_fire_ms <= now_ms {
-                            let normalized_next_fire_time =
-                                parsed_cron.next_fire_time_with_clock(now, self.clock.as_ref());
-                            let normalized_next_fire_ms = Self::instant_to_ms_at_with_clock(
-                                normalized_next_fire_time,
-                                now,
-                                self.clock.as_ref(),
-                            );
-                            normalization_batch.push(
-                                crate::domains::schedule::store::ScheduleBatchInsert {
-                                    route: route.clone(),
-                                    cron: cron.clone(),
-                                    payload: payload.clone(),
-                                    next_fire_ms: normalized_next_fire_ms,
-                                    previous_fire_ms: Some(next_fire_ms),
-                                    last_fire_ms,
-                                    executions_total,
-                                },
-                            );
-                            (
-                                normalized_next_fire_time,
-                                normalized_next_fire_ms,
-                                Some(next_fire_ms),
-                            )
-                        } else {
-                            (
-                                Self::ms_to_instant_at_with_clock(
-                                    next_fire_ms,
-                                    now,
-                                    self.clock.as_ref(),
-                                ),
-                                next_fire_ms,
-                                None,
-                            )
-                        };
+        let (effective_next_fire_time, effective_next_fire_ms) = self.resolve_preloaded_fire_time(
+            &route,
+            &cron,
+            &payload,
+            next_fire_ms,
+            last_fire_ms,
+            executions_total,
+            &parsed_cron,
+            now,
+            now_ms,
+            normalization_batch,
+        );
+        let list_index = self.push_list_entry(route.as_str(), cron.as_str(), &payload);
+        let def = ScheduleDef {
+            route: route.clone(),
+            cron,
+            parsed_cron,
+            payload,
+            next_fire_time: effective_next_fire_time,
+            next_fire_ms: effective_next_fire_ms,
+            last_fire_ms,
+            executions_total,
+            list_index,
+        };
 
-                    let _ = previous_fire_ms;
-                    let list_index = self.push_list_entry(route.as_str(), cron.as_str(), &payload);
-                    let def = ScheduleDef {
-                        route: route.clone(),
-                        cron,
-                        parsed_cron,
-                        payload,
-                        next_fire_time: effective_next_fire_time,
-                        next_fire_ms: effective_next_fire_ms,
-                        last_fire_ms,
-                        executions_total,
-                        list_index,
-                    };
+        self.schedules.insert(route.clone(), def);
+        self.ready_heap
+            .push((Reverse(effective_next_fire_ms), route));
+        Ok(())
+    }
 
-                    self.schedules.insert(route.clone(), def);
-                    self.ready_heap
-                        .push((Reverse(effective_next_fire_ms), route.clone()));
-                }
-                Err(error) => {
-                    return Err(format!(
-                        "parse persisted schedule cron failed for {route}: {error}"
-                    ));
-                }
-            }
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_preloaded_fire_time(
+        &self,
+        route: &str,
+        cron: &str,
+        payload: &bytes::Bytes,
+        next_fire_ms: u64,
+        last_fire_ms: Option<u64>,
+        executions_total: u64,
+        parsed_cron: &CronSchedule,
+        now: Instant,
+        now_ms: u64,
+        normalization_batch: &mut Vec<crate::domains::schedule::store::ScheduleBatchInsert>,
+    ) -> (Instant, u64) {
+        if next_fire_ms <= now_ms {
+            let normalized_next_fire_time =
+                parsed_cron.next_fire_time_with_clock(now, self.clock.as_ref());
+            let normalized_next_fire_ms = Self::instant_to_ms_at_with_clock(
+                normalized_next_fire_time,
+                now,
+                self.clock.as_ref(),
+            );
+            normalization_batch.push(crate::domains::schedule::store::ScheduleBatchInsert {
+                route: route.to_string(),
+                cron: cron.to_string(),
+                payload: payload.clone(),
+                next_fire_ms: normalized_next_fire_ms,
+                previous_fire_ms: Some(next_fire_ms),
+                last_fire_ms,
+                executions_total,
+            });
+            (normalized_next_fire_time, normalized_next_fire_ms)
+        } else {
+            (
+                Self::ms_to_instant_at_with_clock(next_fire_ms, now, self.clock.as_ref()),
+                next_fire_ms,
+            )
+        }
+    }
+
+    fn persist_normalization_batch(
+        &mut self,
+        normalization_batch: &[crate::domains::schedule::store::ScheduleBatchInsert],
+    ) -> Result<(), String> {
+        if normalization_batch.is_empty() {
+            return Ok(());
         }
 
-        if !normalization_batch.is_empty() {
-            self.overdue_normalizations = normalization_batch.len() as u64;
-            self.store.insert_batch(
-                self.family.as_u64(),
-                &normalization_batch,
-                self.write_options,
-            )?;
-        }
+        self.overdue_normalizations = normalization_batch.len() as u64;
+        self.store.insert_batch(
+            self.family.as_u64(),
+            normalization_batch,
+            self.write_options,
+        )?;
+        Ok(())
+    }
 
+    fn preload_pending_fire_claims(&mut self) -> Result<(), String> {
         for pending_claimed_occurrence in
             self.store.load_pending_fire_claims(self.family.as_u64())?
         {
@@ -233,49 +345,5 @@ impl ScheduleActor {
         }
 
         Ok(())
-    }
-
-    #[must_use]
-    pub fn admin_snapshot(&self) -> Vec<crate::control::admin::ScheduleInfo> {
-        let mut snapshot: Vec<_> = self
-            .schedules
-            .values()
-            .filter_map(|schedule| {
-                parse_concrete_schedule_route(&schedule.route)
-                    .ok()
-                    .map(|route| crate::control::admin::ScheduleInfo {
-                        route_family: self.family.as_u64(),
-                        realm: route.realm,
-                        area: route.area,
-                        resource: route.resource,
-                        operation: route.operation,
-                        cron: schedule.cron.clone(),
-                        next_run: chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
-                            schedule.next_fire_ms as i64,
-                        )
-                        .map(|timestamp| timestamp.to_rfc3339())
-                        .unwrap_or_default(),
-                        last_run: schedule.last_fire_ms.and_then(|timestamp_ms| {
-                            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
-                                timestamp_ms as i64,
-                            )
-                            .map(|timestamp| timestamp.to_rfc3339())
-                        }),
-                        executions_total: schedule.executions_total,
-                        enabled: true,
-                    })
-            })
-            .collect();
-
-        snapshot.sort_by(|left, right| {
-            (&left.realm, &left.area, &left.resource, &left.operation).cmp(&(
-                &right.realm,
-                &right.area,
-                &right.resource,
-                &right.operation,
-            ))
-        });
-
-        snapshot
     }
 }

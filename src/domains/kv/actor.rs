@@ -25,7 +25,7 @@
 //!
 //! 1. All KV ops require an active transaction
 //! 2. Transactions are scoped to a single resource
-//! 3. RouteFamily -> ColumnFamily mapping is explicit (no default CF)
+//! 3. `RouteFamily` -> `ColumnFamily` mapping is explicit (no default CF)
 //! 4. No buffering, retries, or caching - direct Midge passthrough
 
 use bytes::Bytes;
@@ -163,40 +163,40 @@ impl KvActor {
                 route_family,
                 resource,
                 key,
-            } => self.handle_get(tx_id, route_family, resource, key),
+            } => self.handle_get(tx_id, route_family, &resource, &key),
             KvMessage::Put {
                 tx_id,
                 route_family,
                 resource,
                 key,
                 value,
-            } => self.handle_put(tx_id, route_family, resource, key, value),
+            } => self.handle_put(tx_id, route_family, &resource, &key, &value),
             KvMessage::Insert {
                 tx_id,
                 route_family,
                 resource,
                 key,
                 value,
-            } => self.handle_insert(tx_id, route_family, resource, key, value),
+            } => self.handle_insert(tx_id, route_family, &resource, &key, &value),
             KvMessage::Delete {
                 tx_id,
                 route_family,
                 resource,
                 key,
-            } => self.handle_delete(tx_id, route_family, resource, key),
+            } => self.handle_delete(tx_id, route_family, &resource, &key),
             KvMessage::DeleteRange {
                 tx_id,
                 route_family,
                 resource,
                 start,
                 end,
-            } => self.handle_delete_range(tx_id, route_family, resource, start, end),
+            } => self.handle_delete_range(tx_id, route_family, &resource, &start, &end),
             KvMessage::Scan {
                 tx_id,
                 route_family,
                 resource,
                 query,
-            } => self.handle_scan(tx_id, route_family, resource, query),
+            } => self.handle_scan(tx_id, route_family, &resource, &query),
         }
     }
 
@@ -218,13 +218,10 @@ impl KvActor {
         }
 
         // Resolve column family from RouteFamily + resource
-        let cf = match Self::resolve_column_family(route_family, &resource) {
-            Ok(cf) => cf,
-            Err(_) => {
-                return KvResponse::Error {
-                    error: KvError::InvalidRouteFamily,
-                };
-            }
+        let Ok(cf) = Self::resolve_column_family(route_family, &resource) else {
+            return KvResponse::Error {
+                error: KvError::InvalidRouteFamily,
+            };
         };
 
         // Create Midge transaction
@@ -306,19 +303,19 @@ impl KvActor {
         &mut self,
         tx_id: u64,
         route_family: RouteFamily,
-        resource: String,
-        key: Bytes,
+        resource: &str,
+        key: &Bytes,
     ) -> KvResponse {
         let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
 
-        if let Err(response) = Self::validate_operation_scope(active, route_family, &resource) {
+        if let Err(response) = Self::validate_operation_scope(active, route_family, resource) {
             return response;
         }
 
-        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
+        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
 
         match active.tx.get(&scoped_key) {
             Ok(Some(value)) => KvResponse::GetResult {
@@ -340,20 +337,20 @@ impl KvActor {
         &mut self,
         tx_id: u64,
         route_family: RouteFamily,
-        resource: String,
-        key: Bytes,
-        value: Bytes,
+        resource: &str,
+        key: &Bytes,
+        value: &Bytes,
     ) -> KvResponse {
         let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
 
-        if let Err(response) = Self::validate_operation_scope(active, route_family, &resource) {
+        if let Err(response) = Self::validate_operation_scope(active, route_family, resource) {
             return response;
         }
 
-        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
+        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
         let before_bytes = match active.tx.get(&scoped_key) {
             Ok(value) => value.as_ref().map(|value| key.len() + value.len()),
             Err(e) => {
@@ -369,7 +366,7 @@ impl KvActor {
                 active.mutation_count += 1;
                 active
                     .inventory_delta
-                    .record_key_change(&key, before_bytes, after_bytes);
+                    .record_key_change(key, before_bytes, after_bytes);
                 KvResponse::PutOk
             }
             Err(e) => KvResponse::Error {
@@ -383,21 +380,21 @@ impl KvActor {
         &mut self,
         tx_id: u64,
         route_family: RouteFamily,
-        resource: String,
-        key: Bytes,
-        value: Bytes,
+        resource: &str,
+        key: &Bytes,
+        value: &Bytes,
     ) -> KvResponse {
         let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
 
-        if let Err(response) = Self::validate_operation_scope(active, route_family, &resource) {
+        if let Err(response) = Self::validate_operation_scope(active, route_family, resource) {
             return response;
         }
 
         // Check if key exists first
-        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
+        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
 
         match active.tx.get(&scoped_key) {
             Ok(Some(_)) => {
@@ -412,7 +409,7 @@ impl KvActor {
                     Ok(()) => {
                         active.mutation_count += 1;
                         active.inventory_delta.record_key_change(
-                            &key,
+                            key,
                             None,
                             Some(key.len() + value.len()),
                         );
@@ -434,19 +431,19 @@ impl KvActor {
         &mut self,
         tx_id: u64,
         route_family: RouteFamily,
-        resource: String,
-        key: Bytes,
+        resource: &str,
+        key: &Bytes,
     ) -> KvResponse {
         let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
 
-        if let Err(response) = Self::validate_operation_scope(active, route_family, &resource) {
+        if let Err(response) = Self::validate_operation_scope(active, route_family, resource) {
             return response;
         }
 
-        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, &key);
+        let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
         let before_bytes = match active.tx.get(&scoped_key) {
             Ok(value) => value.as_ref().map(|value| key.len() + value.len()),
             Err(e) => {
@@ -461,7 +458,7 @@ impl KvActor {
                 active.mutation_count += 1;
                 active
                     .inventory_delta
-                    .record_key_change(&key, before_bytes, None);
+                    .record_key_change(key, before_bytes, None);
                 KvResponse::DeleteOk
             }
             Err(e) => KvResponse::Error {
@@ -475,16 +472,16 @@ impl KvActor {
         &mut self,
         tx_id: u64,
         route_family: RouteFamily,
-        resource: String,
-        start: Bytes,
-        end: Bytes,
+        resource: &str,
+        start: &Bytes,
+        end: &Bytes,
     ) -> KvResponse {
         let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
 
-        if let Err(response) = Self::validate_operation_scope(active, route_family, &resource) {
+        if let Err(response) = Self::validate_operation_scope(active, route_family, resource) {
             return response;
         }
 
@@ -495,8 +492,8 @@ impl KvActor {
             };
         }
 
-        let scoped_start = Self::encode_scoped_key(&active.scoped_prefix, &start);
-        let scoped_end = Self::encode_scoped_key(&active.scoped_prefix, &end);
+        let scoped_start = Self::encode_scoped_key(&active.scoped_prefix, start);
+        let scoped_end = Self::encode_scoped_key(&active.scoped_prefix, end);
 
         match active.tx.delete_range(scoped_start, scoped_end) {
             Ok(()) => {
@@ -515,15 +512,15 @@ impl KvActor {
         &mut self,
         tx_id: u64,
         route_family: RouteFamily,
-        resource: String,
-        query: ScanQuery,
+        resource: &str,
+        query: &ScanQuery,
     ) -> KvResponse {
         let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
 
-        if let Err(response) = Self::validate_operation_scope(active, route_family, &resource) {
+        if let Err(response) = Self::validate_operation_scope(active, route_family, resource) {
             return response;
         }
 
@@ -556,9 +553,8 @@ impl KvActor {
                 let mut items = Vec::new();
 
                 while let Some((key, value)) = iterator.next() {
-                    let user_key = match Self::strip_scoped_prefix(&prefix, &key) {
-                        Some(k) => k,
-                        None => continue,
+                    let Some(user_key) = Self::strip_scoped_prefix(&prefix, &key) else {
+                        continue;
                     };
                     items.push(KvPair {
                         key: Bytes::from(user_key),
@@ -595,7 +591,7 @@ impl KvActor {
     pub fn resource_scope_for_tx(&self, tx_id: u64) -> Option<(u64, String, String, String)> {
         self.transactions.get(&tx_id).map(|tx| {
             (
-                tx.column_family as u64,
+                u64::from(tx.column_family),
                 tx.bound_realm.clone(),
                 tx.bound_area.clone(),
                 tx.bound_resource.clone(),
@@ -772,14 +768,14 @@ impl KvActor {
             .map_err(Self::map_midge_error)
     }
 
-    /// Resolve column family from RouteFamily and resource
+    /// Resolve column family from `RouteFamily` and resource.
     ///
-    /// Uses explicit mapping: ColumnFamilyId = RouteFamily.id
+    /// Uses explicit mapping: `ColumnFamilyId` = `RouteFamily`.id.
     /// This ensures data isolation per route family.
     ///
     /// # Errors
     ///
-    /// Returns an error if RouteFamily is 0 (would map to default CF).
+    /// Returns an error if `RouteFamily` is 0 (would map to the default CF).
     pub(crate) fn resolve_column_family(
         route_family: RouteFamily,
         _resource: &str,
@@ -800,7 +796,7 @@ impl KvActor {
     }
 
     pub(crate) fn strip_scoped_prefix(prefix: &[u8], scoped_key: &[u8]) -> Option<Vec<u8>> {
-        scoped_key.strip_prefix(prefix).map(|rest| rest.to_vec())
+        scoped_key.strip_prefix(prefix).map(<[u8]>::to_vec)
     }
 
     pub(crate) fn prefix_range_end(prefix: &[u8]) -> Vec<u8> {
@@ -808,6 +804,7 @@ impl KvActor {
     }
 
     /// Map Midge error to KV domain error
+    #[allow(clippy::needless_pass_by_value)]
     fn map_midge_error(err: cntryl_midge::MidgeError) -> KvError {
         // Midge errors are currently opaque from this crate's perspective.
         // Preserve retryability distinctions using message heuristics.

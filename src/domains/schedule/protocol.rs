@@ -16,6 +16,10 @@ pub struct ConcreteScheduleRoute {
     pub operation: String,
 }
 
+/// # Errors
+///
+/// Returns an error when `route` is not a concrete `schedule://` route with
+/// non-empty realm, area, resource, and operation segments.
 pub fn parse_concrete_schedule_route(route: &str) -> Result<ConcreteScheduleRoute, String> {
     let Some(scheme) = route_scheme(route) else {
         return Err(
@@ -54,6 +58,9 @@ pub fn parse_concrete_schedule_route(route: &str) -> Result<ConcreteScheduleRout
     })
 }
 
+/// # Errors
+///
+/// Returns an error when `route` is not a valid concrete `schedule://` route.
 pub fn validate_concrete_schedule_route(route: &str) -> Result<(), String> {
     parse_concrete_schedule_route(route).map(|_| ())
 }
@@ -161,9 +168,9 @@ pub struct ScheduleCreateEntry {
 /// Response from schedule operations
 #[derive(Debug, Clone)]
 pub enum ScheduleResponse {
-    /// Operation succeeded (no schedule_id returned - route is identity)
+    /// Operation succeeded (no `schedule_id` returned; route is identity).
     Ok,
-    /// SUBSCRIBE succeeded with the logical subscription_id used for NOTIFY fanout
+    /// SUBSCRIBE succeeded with the logical `subscription_id` used for NOTIFY fanout.
     SubscribeOk { subscription_id: u64 },
     /// LIST operation: returns paginated schedules with total count
     ListDefs {
@@ -277,7 +284,12 @@ impl FieldMatcher {
 }
 
 impl CronSchedule {
-    /// Parse a 5-field cron expression (minute hour day month day_of_week)
+    /// Parse a 5-field cron expression (minute hour day month `day_of_week`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the expression does not contain exactly five
+    /// fields or any field is invalid for its allowed range.
     pub fn parse(expr: &str) -> Result<Self, String> {
         let fields: Vec<&str> = expr.split_whitespace().collect();
         if fields.len() != 5 {
@@ -385,7 +397,7 @@ impl CronSchedule {
 
         // Fallback: if no match found in 4 years, return 1 hour from now
         // This should never happen with valid cron expressions
-        from + Duration::from_secs(3600)
+        from + Duration::from_hours(1)
     }
 
     fn simple_candidate_seconds(&self, current_secs: u64) -> Option<u64> {
@@ -394,7 +406,7 @@ impl CronSchedule {
         }
 
         if self.hour.is_any() {
-            let target_minute = self.minute.as_single()? as u64;
+            let target_minute = u64::from(self.minute.as_single()?);
             let hour_start = current_secs - (current_secs % 3_600);
             let target = hour_start + (target_minute * 60);
             return Some(if target > current_secs {
@@ -404,8 +416,8 @@ impl CronSchedule {
             });
         }
 
-        let target_hour = self.hour.as_single()? as u64;
-        let target_minute = self.minute.as_single()? as u64;
+        let target_hour = u64::from(self.hour.as_single()?);
+        let target_minute = u64::from(self.minute.as_single()?);
         let day_start = current_secs - (current_secs % 86_400);
         let target = day_start + (target_hour * 3_600) + (target_minute * 60);
 
@@ -473,18 +485,18 @@ fn matches_field(field: &CronField, value: u32) -> bool {
 }
 
 /// Convert Unix timestamp (seconds) to calendar components
-/// Returns (year, month (1-12), day (1-31), hour (0-23), minute (0-59), day_of_week (0-6, 0=Sunday))
+/// Returns (year, month (1-12), day (1-31), hour (0-23), minute (0-59), `day_of_week` (0-6, 0=Sunday))
 fn seconds_to_datetime(seconds: u64) -> (u32, u32, u32, u32, u32, u32) {
     // Days since Unix epoch
-    let mut days = (seconds / 86400) as i32;
+    let mut days = i32::try_from(seconds / 86_400).unwrap_or(i32::MAX);
 
     // Calculate time of day
-    let seconds_in_day = seconds % 86400;
-    let hour = (seconds_in_day / 3600) as u32;
-    let minute = ((seconds_in_day % 3600) / 60) as u32;
+    let seconds_in_day = seconds % 86_400;
+    let hour = u32::try_from(seconds_in_day / 3_600).unwrap_or(u32::MAX);
+    let minute = u32::try_from((seconds_in_day % 3_600) / 60).unwrap_or(u32::MAX);
 
     // Day of week (1970-01-01 was Thursday, so add 4)
-    let day_of_week = ((days + 4) % 7) as u32;
+    let day_of_week = ((days + 4) % 7).cast_unsigned();
 
     // Calculate year
     let mut year = 1970;
@@ -522,7 +534,7 @@ fn seconds_to_datetime(seconds: u64) -> (u32, u32, u32, u32, u32, u32) {
         month += 1;
     }
 
-    let day = (days + 1) as u32;
+    let day = (days + 1).cast_unsigned();
 
     (year, month, day, hour, minute, day_of_week)
 }
@@ -531,21 +543,25 @@ fn datetime_to_seconds(year: u32, month: u32, day: u32, hour: u32, minute: u32) 
     let mut days = 0_u64;
 
     for current_year in 1970..year {
-        days += if is_leap_year(current_year) { 366 } else { 365 } as u64;
+        days += u64::from(if is_leap_year(current_year) {
+            366_u32
+        } else {
+            365_u32
+        });
     }
 
     for current_month in 1..month {
-        days += days_in_month(year, current_month) as u64;
+        days += u64::from(days_in_month(year, current_month));
     }
 
-    days += day.saturating_sub(1) as u64;
+    days += u64::from(day.saturating_sub(1));
 
-    (days * 86_400) + (hour as u64 * 3_600) + (minute as u64 * 60)
+    (days * 86_400) + (u64::from(hour) * 3_600) + (u64::from(minute) * 60)
 }
 
 fn days_in_month(year: u32, month: u32) -> u32 {
     match month {
-        1 => 31,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         2 => {
             if is_leap_year(year) {
                 29
@@ -553,17 +569,8 @@ fn days_in_month(year: u32, month: u32) -> u32 {
                 28
             }
         }
-        3 => 31,
-        4 => 30,
-        5 => 31,
-        6 => 30,
-        7 => 31,
-        8 => 31,
-        9 => 30,
-        10 => 31,
-        11 => 30,
-        12 => 31,
-        _ => 31,
+        4 | 6 | 9 | 11 => 30,
+        _ => unreachable!("month should be in 1..=12"),
     }
 }
 

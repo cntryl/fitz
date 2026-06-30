@@ -8,8 +8,8 @@
 //!
 //! # Queue Identity
 //!
-//! Queues are uniquely identified by (RouteFamily, realm, area, resource):
-//! - RouteFamily: Routing isolation boundary (opaque u64)
+//! Queues are uniquely identified by (`RouteFamily`, realm, area, resource):
+//! - `RouteFamily`: Routing isolation boundary (opaque u64)
 //! - realm/area/resource: Logical identity within the family
 //!
 //! # Inflight Semantics
@@ -29,8 +29,8 @@
 //! # Queue Watches
 //!
 //! Queue availability is surfaced through explicit watch notifications:
-//! - QueueActor always returns immediately (never blocks)
-//! - QueueDomainSink owns ephemeral watch state for the current broker process
+//! - `QueueActor` always returns immediately (never blocks)
+//! - `QueueDomainSink` owns ephemeral watch state for the current broker process
 //! - Watches target `queue://{realm}/{area}/{resource}/ready`
 //! - Notifications are readiness signals only; they never carry queue message bodies
 
@@ -53,8 +53,8 @@ pub enum QueueMessage {
     ///
     /// Writes the message body according to the configured queue write policy and
     /// adds it to the ready queue.
-    /// If delay_seconds is provided, message won't be visible until delay elapses.
-    /// Returns the MessageId for tracking.
+    /// If `delay_seconds` is provided, message won't be visible until delay elapses.
+    /// Returns the `MessageId` for tracking.
     Send {
         family_id: RouteFamily,
         route: Route,
@@ -115,7 +115,7 @@ pub enum QueueMessage {
     InflightExpired { id: MessageId },
 }
 
-/// Queue watch messages handled by QueueDomainSink before actor dispatch.
+/// Queue watch messages handled by `QueueDomainSink` before actor dispatch.
 #[derive(Debug, Clone)]
 pub enum QueueSubscriptionMessage {
     Watch {

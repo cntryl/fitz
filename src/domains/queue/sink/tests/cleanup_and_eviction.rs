@@ -1,5 +1,147 @@
 use super::*;
 
+struct QueueRequestContext<'a> {
+    sink: &'a QueueDomainSink,
+    queue_address: RouteAddress,
+    queue_route: &'a str,
+    family: RouteFamily,
+}
+
+impl QueueRequestContext<'_> {
+    fn deliver_send(&self, sender_address: RouteAddress, session_id: u64) {
+        self.sink
+            .deliver(Envelope::from_route(
+                sender_address,
+                self.queue_address.clone(),
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Pub,
+                    MessageType::new(200),
+                    encode_queue_send(self.queue_route, b"email"),
+                    self.family,
+                ),
+            ))
+            .expect("enqueue queue message");
+    }
+
+    fn deliver_reserve(&self, worker_address: RouteAddress, session_id: u64) {
+        self.sink
+            .deliver(Envelope::from_route(
+                worker_address,
+                self.queue_address.clone(),
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Pub,
+                    MessageType::new(202),
+                    encode_queue_reserve(self.queue_route, 30, 1),
+                    self.family,
+                ),
+            ))
+            .expect("reserve queue message");
+    }
+
+    fn deliver_extend(
+        &self,
+        address: RouteAddress,
+        session_id: u64,
+        id: u64,
+        token: u64,
+        label: &str,
+    ) {
+        self.sink
+            .deliver(Envelope::from_route(
+                address,
+                self.queue_address.clone(),
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Pub,
+                    MessageType::new(203),
+                    encode_queue_extend(self.queue_route, id, token, 60),
+                    self.family,
+                ),
+            ))
+            .expect(label);
+    }
+
+    fn deliver_ack(
+        &self,
+        address: RouteAddress,
+        session_id: u64,
+        id: u64,
+        token: u64,
+        label: &str,
+    ) {
+        self.sink
+            .deliver(Envelope::from_route(
+                address,
+                self.queue_address.clone(),
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Pub,
+                    MessageType::new(204),
+                    encode_queue_ack(self.queue_route, id, token),
+                    self.family,
+                ),
+            ))
+            .expect(label);
+    }
+}
+
+fn assert_not_found(frame: &FrameContext) {
+    assert_eq!(
+        queue_simple_error_code(frame),
+        crate::protocol::error_codes::queue::ERR_MESSAGE_NOT_FOUND
+    );
+}
+
+fn assert_success(frame: &FrameContext) {
+    assert_eq!(frame.payload[0], 0);
+}
+
+fn deliver_send(
+    sink: &QueueDomainSink,
+    sender_address: RouteAddress,
+    queue_address: RouteAddress,
+    session_id: u64,
+    queue_route: &str,
+    family: RouteFamily,
+) {
+    sink.deliver(Envelope::from_route(
+        sender_address,
+        queue_address,
+        FrameContext::new(
+            session_id,
+            ChannelId::Pub,
+            MessageType::new(200),
+            encode_queue_send(queue_route, b"email"),
+            family,
+        ),
+    ))
+    .expect("enqueue queue message");
+}
+
+fn deliver_reserve(
+    sink: &QueueDomainSink,
+    worker_address: RouteAddress,
+    queue_address: RouteAddress,
+    session_id: u64,
+    queue_route: &str,
+    family: RouteFamily,
+) {
+    sink.deliver(Envelope::from_route(
+        worker_address,
+        queue_address,
+        FrameContext::new(
+            session_id,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve(queue_route, 30, 1),
+            family,
+        ),
+    ))
+    .expect("reserve queue message");
+}
+
 #[test]
 fn should_cleanup_queue_inflight_for_disconnected_session() {
     // Arrange
@@ -25,35 +167,27 @@ fn should_cleanup_queue_inflight_for_disconnected_session() {
     );
 
     // Act
-    sink.deliver(Envelope::from_route(
+    deliver_send(
+        &sink,
         sender_address,
         queue_address.clone(),
-        FrameContext::new(
-            sender_session_id,
-            ChannelId::Pub,
-            MessageType::new(200),
-            encode_queue_send(queue_route, b"email"),
-            family,
-        ),
-    ))
-    .expect("enqueue queue message");
+        sender_session_id,
+        queue_route,
+        family,
+    );
     let _send_ack = sender_mailbox
         .receiver()
         .try_recv()
         .expect("enqueue response");
 
-    sink.deliver(Envelope::from_route(
+    deliver_reserve(
+        &sink,
         worker_address,
         queue_address.clone(),
-        FrameContext::new(
-            worker_session_id,
-            ChannelId::Pub,
-            MessageType::new(202),
-            encode_queue_reserve(queue_route, 30, 1),
-            family,
-        ),
-    ))
-    .expect("reserve queue message");
+        worker_session_id,
+        queue_route,
+        family,
+    );
     let _reserve_ack = worker_mailbox
         .receiver()
         .try_recv()
@@ -110,141 +244,86 @@ fn should_reject_queue_inflight_followups_from_non_owner_session() {
         admin_read_model,
         cntryl_midge::WriteOptions::buffered(),
     );
+    let request_ctx = QueueRequestContext {
+        sink: &sink,
+        queue_address: queue_address.clone(),
+        queue_route,
+        family,
+    };
 
     // Act
-    sink.deliver(Envelope::from_route(
-        sender_address,
-        queue_address.clone(),
-        FrameContext::new(
-            sender_session_id,
-            ChannelId::Pub,
-            MessageType::new(200),
-            encode_queue_send(queue_route, b"email"),
-            family,
-        ),
-    ))
-    .expect("enqueue queue message");
+    request_ctx.deliver_send(sender_address, sender_session_id);
     let _send_ack = sender_mailbox
         .receiver()
         .try_recv()
         .expect("enqueue response");
 
-    sink.deliver(Envelope::from_route(
-        worker_address.clone(),
-        queue_address.clone(),
-        FrameContext::new(
-            worker_session_id,
-            ChannelId::Pub,
-            MessageType::new(202),
-            encode_queue_reserve(queue_route, 30, 1),
-            family,
-        ),
-    ))
-    .expect("reserve queue message");
+    request_ctx.deliver_reserve(worker_address.clone(), worker_session_id);
     let reserve_frame = receive_queue_frame(&worker_mailbox, "reserve response");
     let (id, token) = receive_response_first_message(&reserve_frame);
 
-    sink.deliver(Envelope::from_route(
+    request_ctx.deliver_extend(
         other_address.clone(),
-        queue_address.clone(),
-        FrameContext::new(
-            other_session_id,
-            ChannelId::Pub,
-            MessageType::new(203),
-            encode_queue_extend(queue_route, id, token, 60),
-            family,
-        ),
-    ))
-    .expect("non-owner extend");
+        other_session_id,
+        id,
+        token,
+        "non-owner extend",
+    );
     let other_extend = receive_queue_frame(&other_mailbox, "non-owner extend response");
 
-    sink.deliver(Envelope::from_route(
+    request_ctx.deliver_extend(
         worker_address.clone(),
-        queue_address.clone(),
-        FrameContext::new(
-            worker_session_id,
-            ChannelId::Pub,
-            MessageType::new(203),
-            encode_queue_extend(queue_route, id, token, 60),
-            family,
-        ),
-    ))
-    .expect("owner extend");
+        worker_session_id,
+        id,
+        token,
+        "owner extend",
+    );
     let owner_extend = receive_queue_frame(&worker_mailbox, "owner extend response");
 
-    sink.deliver(Envelope::from_route(
+    request_ctx.deliver_ack(
         other_address.clone(),
-        queue_address.clone(),
-        FrameContext::new(
-            other_session_id,
-            ChannelId::Pub,
-            MessageType::new(204),
-            encode_queue_ack(queue_route, id, token),
-            family,
-        ),
-    ))
-    .expect("non-owner complete");
+        other_session_id,
+        id,
+        token,
+        "non-owner complete",
+    );
     let other_complete = receive_queue_frame(&other_mailbox, "non-owner complete response");
 
-    sink.deliver(Envelope::from_route(
+    request_ctx.deliver_ack(
         worker_address.clone(),
-        queue_address.clone(),
-        FrameContext::new(
-            worker_session_id,
-            ChannelId::Pub,
-            MessageType::new(204),
-            encode_queue_ack(queue_route, id, token),
-            family,
-        ),
-    ))
-    .expect("owner complete");
+        worker_session_id,
+        id,
+        token,
+        "owner complete",
+    );
     let owner_complete = receive_queue_frame(&worker_mailbox, "owner complete response");
 
-    sink.deliver(Envelope::from_route(
+    request_ctx.deliver_ack(
         other_address,
-        queue_address.clone(),
-        FrameContext::new(
-            other_session_id,
-            ChannelId::Pub,
-            MessageType::new(204),
-            encode_queue_ack(queue_route, id, token),
-            family,
-        ),
-    ))
-    .expect("non-owner complete after owner cached success");
+        other_session_id,
+        id,
+        token,
+        "non-owner complete after owner cached success",
+    );
     let other_complete_after_owner =
         receive_queue_frame(&other_mailbox, "non-owner cached complete response");
 
-    sink.deliver(Envelope::from_route(
+    request_ctx.deliver_ack(
         worker_address,
-        queue_address,
-        FrameContext::new(
-            worker_session_id,
-            ChannelId::Pub,
-            MessageType::new(204),
-            encode_queue_ack(queue_route, id, token),
-            family,
-        ),
-    ))
-    .expect("owner complete retry");
+        worker_session_id,
+        id,
+        token,
+        "owner complete retry",
+    );
     let owner_complete_retry = receive_queue_frame(&worker_mailbox, "owner complete retry");
 
     // Assert
-    assert_eq!(
-        queue_simple_error_code(&other_extend),
-        crate::protocol::error_codes::queue::ERR_MESSAGE_NOT_FOUND
-    );
-    assert_eq!(owner_extend.payload[0], 0);
-    assert_eq!(
-        queue_simple_error_code(&other_complete),
-        crate::protocol::error_codes::queue::ERR_MESSAGE_NOT_FOUND
-    );
-    assert_eq!(owner_complete.payload[0], 0);
-    assert_eq!(
-        queue_simple_error_code(&other_complete_after_owner),
-        crate::protocol::error_codes::queue::ERR_MESSAGE_NOT_FOUND
-    );
-    assert_eq!(owner_complete_retry.payload[0], 0);
+    assert_not_found(&other_extend);
+    assert_success(&owner_extend);
+    assert_not_found(&other_complete);
+    assert_success(&owner_complete);
+    assert_not_found(&other_complete_after_owner);
+    assert_success(&owner_complete_retry);
 }
 
 #[test]

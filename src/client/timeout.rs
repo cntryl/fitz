@@ -46,8 +46,8 @@ impl Default for TimeoutConfig {
         Self {
             operation_timeout: Duration::from_secs(30),
             partial_frame_timeout: Duration::from_secs(5),
-            transaction_timeout: Duration::from_secs(3600), // 1 hour
-            session_timeout: Duration::from_secs(3600),     // 1 hour
+            transaction_timeout: Duration::from_hours(1),
+            session_timeout: Duration::from_hours(1),
         }
     }
 }
@@ -97,7 +97,7 @@ impl TimeoutTracker {
     }
 }
 
-/// Partial frame buffer for multi-packet frames
+/// Partial frame buffer for multi-packet frames.
 #[derive(Clone, Debug)]
 pub struct FrameBuffer {
     /// Accumulated data
@@ -106,7 +106,7 @@ pub struct FrameBuffer {
     /// Last activity time
     last_activity: Instant,
 
-    /// Maximum buffer size (DoS protection)
+    /// Maximum buffer size (`DoS` protection)
     max_size: usize,
 
     /// Timeout configuration
@@ -114,7 +114,7 @@ pub struct FrameBuffer {
 }
 
 impl FrameBuffer {
-    /// Create new frame buffer
+    /// Create a new frame buffer.
     #[must_use]
     pub fn new(max_size: usize, timeout_config: TimeoutConfig) -> Self {
         Self {
@@ -125,8 +125,11 @@ impl FrameBuffer {
         }
     }
 
-    /// Add data to buffer
-    /// Returns error if buffer would exceed max size
+    /// Add data to the buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when adding `chunk` would exceed `max_size`.
     pub fn add(&mut self, chunk: &[u8]) -> Result<(), String> {
         if self.data.len() + chunk.len() > self.max_size {
             return Err(format!(
@@ -238,8 +241,8 @@ mod tests {
         let config = TimeoutConfig {
             operation_timeout: Duration::from_secs(30),
             partial_frame_timeout: Duration::from_millis(10),
-            transaction_timeout: Duration::from_secs(3600),
-            session_timeout: Duration::from_secs(3600),
+            transaction_timeout: Duration::from_hours(1),
+            session_timeout: Duration::from_hours(1),
         };
         let mut buffer = FrameBuffer::new(1000, config);
         buffer.add(b"data").unwrap();

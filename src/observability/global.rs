@@ -23,6 +23,10 @@ use uuid::Uuid;
 static METRICS_COLLECTOR: OnceCell<Arc<MetricsCollector>> = OnceCell::new();
 static HOT_PATH_METRICS_ENABLED: OnceCell<bool> = OnceCell::new();
 
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
 /// Get the global metrics collector.
 ///
 /// If observability has not been initialized yet, this lazily creates
@@ -120,7 +124,7 @@ impl Drop for ScopedHistogramUs {
             return;
         };
 
-        let elapsed_us = start.elapsed().as_micros().min(u64::MAX as u128) as u64;
+        let elapsed_us = u128_to_u64_saturating(start.elapsed().as_micros());
         histogram_observe_us(self.name, elapsed_us);
     }
 }
@@ -129,6 +133,10 @@ impl Drop for ScopedHistogramUs {
 ///
 /// This is safe to call multiple times (useful for tests).
 /// Returns the existing collector if already initialized, or creates a new one.
+///
+/// # Errors
+///
+/// Returns an error if full observability initialization fails.
 pub fn try_init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
     // Check if already initialized
     if let Some(existing) = METRICS_COLLECTOR.get() {
@@ -146,13 +154,17 @@ pub fn try_init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::er
 /// - `FITZ_LOG_FORMAT` (text|json): Logging format. Default: text
 /// - `FITZ_LOG_LEVEL` (trace|debug|info|warn): Log level. Default: info
 /// - `OTEL_ENABLED` (true|false): Enable OTLP export. Default: true
-/// - `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP collector endpoint. Default: http://localhost:4317
+/// - `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP collector endpoint. Default: <http://localhost:4317>
 /// - `FITZ_METRICS_PORT`: HTTP metrics port. Default: 9090
 /// - `RUST_LOG`: Legacy env var for log filtering (takes precedence if set)
 ///
 /// # Returns
 ///
 /// Arc<MetricsCollector> that can be used throughout the application
+///
+/// # Errors
+///
+/// Returns an error if the OpenTelemetry exporter cannot be initialized.
 pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
     // Detect logging format
     let log_format = std::env::var("FITZ_LOG_FORMAT")

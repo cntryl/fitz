@@ -1,4 +1,10 @@
-use super::model::*;
+use super::model::{
+    AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult, Arc, AtomicBool, AtomicU64,
+    Bytes, DeliveryError, Envelope, HashMap, KvDomainSink, KvResourceLockKey, Mutex, Ordering,
+    RoutedSubscriptionSet, Router, Utc, ADMIN_INVENTORY_REFRESH_LIMIT,
+};
+#[cfg(test)]
+use crate::protocol::frame_context::FrameContext;
 
 impl KvDomainSink {
     pub fn new(
@@ -42,6 +48,11 @@ impl KvDomainSink {
         self.active.store(false, Ordering::Relaxed);
     }
 
+    /// Build an admin inventory snapshot for the requested route family scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying storage inventory scan fails.
     pub fn admin_inventory(
         &self,
         family: Option<crate::runtime::routing::RouteFamily>,
@@ -60,7 +71,7 @@ impl KvDomainSink {
 
         let mut entries = Vec::new();
         for family_id in families {
-            entries.extend(self.admin_inventory_for_family(family_id as u64)?);
+            entries.extend(self.admin_inventory_for_family(u64::from(family_id))?);
         }
         entries.sort_by(|left, right| {
             (
@@ -79,6 +90,12 @@ impl KvDomainSink {
         Ok(entries)
     }
 
+    /// Read one admin inventory entry for a specific KV resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when storage reads, estimate refreshes, or estimate
+    /// decoding fails.
     pub fn admin_inventory_resource(
         &self,
         route_family: crate::runtime::routing::RouteFamily,
@@ -95,16 +112,15 @@ impl KvDomainSink {
             .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| error.to_string())?;
 
-        let estimate = match tx.get(&key).map_err(|error| error.to_string())? {
-            Some(value) => crate::domains::kv::KvActor::decode_inventory_estimate(&value)?,
-            None => {
-                let refreshed =
-                    self.refresh_inventory_estimate(family_id, realm, area, resource, false)?;
-                if refreshed.estimated_record_count == 0 && refreshed.estimate_complete {
-                    return Ok(None);
-                }
-                refreshed
+        let estimate = if let Some(value) = tx.get(&key).map_err(|error| error.to_string())? {
+            crate::domains::kv::KvActor::decode_inventory_estimate(&value)?
+        } else {
+            let refreshed =
+                self.refresh_inventory_estimate(family_id, realm, area, resource, false)?;
+            if refreshed.estimated_record_count == 0 && refreshed.estimate_complete {
+                return Ok(None);
             }
+            refreshed
         };
         let estimate = if estimate.estimate_complete {
             estimate
@@ -117,6 +133,11 @@ impl KvDomainSink {
         )))
     }
 
+    /// Read one committed KV value directly from storage for admin inspection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the storage transaction or read fails.
     pub fn admin_get_committed_value(
         &self,
         route_family: crate::runtime::routing::RouteFamily,
@@ -136,7 +157,7 @@ impl KvDomainSink {
         let scoped_key = crate::domains::kv::KvActor::encode_scoped_key(&prefix, key);
         let value = tx
             .get(&scoped_key)
-            .map(|value| value.map(|value| value.to_vec()))
+            .map(|value| value.map(|value| value.as_ref().to_vec()))
             .map_err(|error| error.to_string())?;
         self.record_read_latency(
             &KvResourceLockKey::new(route_family.as_u64(), realm, area, resource),
@@ -145,6 +166,11 @@ impl KvDomainSink {
         Ok(value)
     }
 
+    /// Scan a committed KV prefix directly from storage for admin inspection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the storage transaction or scan fails.
     pub fn admin_scan_committed_prefix(
         &self,
         route_family: crate::runtime::routing::RouteFamily,
@@ -182,7 +208,7 @@ impl KvDomainSink {
             else {
                 continue;
             };
-            rows.push((user_key, value.to_vec()));
+            rows.push((user_key, value.clone()));
         }
 
         let has_more = rows.len() > limit;
@@ -194,9 +220,14 @@ impl KvDomainSink {
         Ok((rows, has_more))
     }
 
+    /// Scan committed KV rows with an optional pagination cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when cursor validation fails or the storage scan fails.
     pub fn admin_scan_committed_rows(
         &self,
-        request: AdminKvRowsRequest<'_>,
+        request: &AdminKvRowsRequest<'_>,
     ) -> Result<AdminKvRowsResult, String> {
         let started_at = std::time::Instant::now();
         if let Some(cursor) = request.cursor {
@@ -247,7 +278,7 @@ impl KvDomainSink {
             {
                 continue;
             }
-            rows.push((user_key, value.to_vec()));
+            rows.push((user_key, value.clone()));
         }
 
         let has_more = rows.len() > request.limit;
@@ -342,7 +373,7 @@ impl KvDomainSink {
         let mut has_more = false;
 
         while let Some((scoped_key, value)) = iterator.next() {
-            if count as usize >= ADMIN_INVENTORY_REFRESH_LIMIT {
+            if count >= u64::try_from(ADMIN_INVENTORY_REFRESH_LIMIT).unwrap_or(u64::MAX) {
                 has_more = true;
                 break;
             }
@@ -637,28 +668,24 @@ impl KvDomainSink {
         #[cfg(not(test))]
         let response_ctx = crate::domains::kv::KvClientResponse::new(meta, response.clone());
 
-        let response_envelope = match envelope.try_reply_to(response_ctx) {
-            Some(env) => env,
-            None => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
-                {
-                    if matches!(response, crate::domains::kv::KvResponse::Error { .. }) {
-                        metrics.record_failure(started_at);
-                    } else {
-                        metrics.record_success(started_at);
-                    }
+        let Some(response_envelope) = envelope.try_reply_to(response_ctx) else {
+            if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                if matches!(response, crate::domains::kv::KvResponse::Error { .. }) {
+                    metrics.record_failure(started_at);
+                } else {
+                    metrics.record_success(started_at);
                 }
-                tracing::warn!(
-                    domain = "kv",
-                    session = meta.session_id,
-                    "Cannot route response: envelope has no source address"
-                );
-                return Ok(());
             }
+            tracing::warn!(
+                domain = "kv",
+                session = meta.session_id,
+                "Cannot route response: envelope has no source address"
+            );
+            return Ok(());
         };
 
         match self.router.route(response_envelope) {
-            Ok(_) => {
+            Ok(()) => {
                 if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
                 {
                     if matches!(response, crate::domains::kv::KvResponse::Error { .. }) {

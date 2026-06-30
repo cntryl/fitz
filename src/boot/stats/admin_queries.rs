@@ -49,6 +49,12 @@ impl Runtime {
         self.admin_read_model.kv_transactions(realm)
     }
 
+    /// List KV inventory entries, optionally filtered to one route family.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the KV domain is not initialized or the admin
+    /// inventory query fails.
     pub fn kv_inventory_entries(
         &self,
         family: Option<u64>,
@@ -63,6 +69,12 @@ impl Runtime {
             .admin_inventory(family.map(crate::runtime::routing::RouteFamily::new))
     }
 
+    /// Read the KV inventory entry for one resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the KV domain is not initialized or the admin
+    /// inventory query fails.
     pub fn kv_inventory_resource(
         &self,
         family: u64,
@@ -83,6 +95,12 @@ impl Runtime {
         )
     }
 
+    /// Read the committed value for a KV key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the KV domain is not initialized or the admin
+    /// read fails.
     pub fn kv_get_committed_value(
         &self,
         family: RouteFamily,
@@ -101,6 +119,12 @@ impl Runtime {
             .admin_get_committed_value(family, realm, area, resource, key)
     }
 
+    /// Scan committed KV rows for a key prefix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the KV domain is not initialized or the admin
+    /// prefix scan fails.
     pub fn kv_scan_committed_prefix(
         &self,
         family: RouteFamily,
@@ -120,9 +144,15 @@ impl Runtime {
             .admin_scan_committed_prefix(family, realm, area, resource, key_prefix, limit)
     }
 
+    /// Scan committed KV rows using an admin rows request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the KV domain is not initialized or the admin row
+    /// scan fails.
     pub fn kv_scan_committed_rows(
         &self,
-        request: AdminKvRowsRequest<'_>,
+        request: &AdminKvRowsRequest<'_>,
     ) -> Result<AdminKvRowsResult, String> {
         let domains = self
             .domains
@@ -141,6 +171,12 @@ impl Runtime {
         self.admin_read_model.streams(realm)
     }
 
+    /// Read committed stream records for one resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the stream domain is not initialized or the admin
+    /// read fails.
     pub fn stream_read_resource_records(
         &self,
         request: AdminStreamReadRequest<'_>,
@@ -255,6 +291,12 @@ impl Runtime {
         self.admin_read_model.queue_dead_letters(realm)
     }
 
+    /// Replay a dead-lettered queue message back into live delivery.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the queue domain is not initialized or the replay
+    /// request fails.
     pub fn queue_replay_dead_letter(
         &self,
         family: RouteFamily,
@@ -268,17 +310,23 @@ impl Runtime {
             .read()
             .clone()
             .ok_or_else(|| "Queue domain is not initialized".to_string())?;
-        domains.queue.replay_dead_letter(
-            QueueKey {
-                family,
-                realm: realm.to_string(),
-                area: area.to_string(),
-                resource: resource.to_string(),
-            },
-            MessageId::new(message_id),
-        )
+        let key = QueueKey {
+            family,
+            realm: realm.to_string(),
+            area: area.to_string(),
+            resource: resource.to_string(),
+        };
+        domains
+            .queue
+            .replay_dead_letter(&key, MessageId::new(message_id))
     }
 
+    /// Permanently purge a dead-lettered queue message.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the queue domain is not initialized or the purge
+    /// request fails.
     pub fn queue_purge_dead_letter(
         &self,
         family: RouteFamily,
@@ -292,15 +340,15 @@ impl Runtime {
             .read()
             .clone()
             .ok_or_else(|| "Queue domain is not initialized".to_string())?;
-        domains.queue.purge_dead_letter(
-            QueueKey {
-                family,
-                realm: realm.to_string(),
-                area: area.to_string(),
-                resource: resource.to_string(),
-            },
-            MessageId::new(message_id),
-        )
+        let key = QueueKey {
+            family,
+            realm: realm.to_string(),
+            area: area.to_string(),
+            resource: resource.to_string(),
+        };
+        domains
+            .queue
+            .purge_dead_letter(&key, MessageId::new(message_id))
     }
 
     #[must_use]

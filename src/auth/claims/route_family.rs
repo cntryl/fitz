@@ -73,6 +73,13 @@ impl RouteFamilyResolverConfig {
         }
     }
 
+    /// Validate route-family resolver configuration against provisioned families.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when configured claim names are empty, when auth is
+    /// required but no mappings exist, or when a mapping targets route family
+    /// `0` or an unprovisioned family.
     pub fn validate(
         &self,
         provisioned_families: &[u32],
@@ -115,6 +122,13 @@ impl RouteFamilyResolverConfig {
         Ok(())
     }
 
+    /// Resolve the configured route-family identity claim to a provisioned
+    /// route family.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the configured identity claim is missing,
+    /// malformed, or does not map to any configured route family.
     pub fn resolve(&self, raw_claims: &RawClaims) -> Result<u32, String> {
         if let Some(org_claim) = self.org_claim_override.as_deref() {
             if let Some(identity_value) = raw_claims.identity_claim_value(org_claim)? {

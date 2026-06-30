@@ -9,6 +9,14 @@ use super::mutation_parsers::{
     parse_delete, parse_delete_range, parse_get, parse_insert, parse_put, parse_scan,
 };
 
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn u32_to_usize(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
 /// KV domain message type IDs
 pub mod msg_type {
     pub const BEGIN: u16 = 100;
@@ -31,6 +39,9 @@ pub enum ParsedKvFrame {
     Sub(KvSubscriptionMessage),
 }
 
+/// # Errors
+///
+/// Returns an error if the frame payload is malformed for the given KV message type.
 pub fn parse_frame(
     ctx: &FrameContext,
     payload: &[u8],
@@ -61,9 +72,13 @@ pub fn parse_frame(
     }
 }
 
-/// Parse KV request from bytes
-/// Per CLIENT_SPEC: All operations now include full route on wire.
-/// RouteFamily is assigned by the session and must be provided by the caller.
+/// Parse KV request from bytes.
+/// Per `CLIENT_SPEC`: all operations now include the full route on wire.
+/// `RouteFamily` is assigned by the session and must be provided by the caller.
+///
+/// # Errors
+///
+/// Returns an error if the wire payload is malformed or the route is invalid.
 pub fn parse_request(
     msg_type: u16,
     route_family: RouteFamily,
@@ -110,9 +125,9 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
         }
         KvResponse::GetResult { found, value } => {
             buf.put_u8(0); // status: success
-            buf.put_u8(if *found { 1 } else { 0 });
+            buf.put_u8(u8::from(*found));
             if let Some(v) = value {
-                buf.put_u32(v.len() as u32);
+                buf.put_u32(usize_to_u32_saturating(v.len()));
                 buf.put_slice(v);
             } else {
                 buf.put_u32(0);
@@ -136,14 +151,14 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
         }
         KvResponse::ScanResult { items, has_more } => {
             buf.put_u8(0); // status: success
-            buf.put_u32(items.len() as u32);
+            buf.put_u32(usize_to_u32_saturating(items.len()));
             for item in items {
-                buf.put_u32(item.key.len() as u32);
+                buf.put_u32(usize_to_u32_saturating(item.key.len()));
                 buf.put_slice(&item.key);
-                buf.put_u32(item.value.len() as u32);
+                buf.put_u32(usize_to_u32_saturating(item.value.len()));
                 buf.put_slice(&item.value);
             }
-            buf.put_u8(if *has_more { 1 } else { 0 });
+            buf.put_u8(u8::from(*has_more));
         }
         KvResponse::Error { error } => {
             return crate::protocol::error_codes::encode_error_body(
@@ -176,8 +191,8 @@ fn kv_error_code(error: &KvError) -> u16 {
 
 // ===== Parsers =====
 
-/// Parse route string into realm, area, resource components
-/// Expected format: "kv://realm/area/resource" or just "realm/area/resource"
+/// Parse route string into realm, area, resource components.
+/// Expected format: `kv://realm/area/resource` or `realm/area/resource`.
 fn split_route(route_str: &str) -> Option<(&str, &str, &str)> {
     let parts = route_exact_triplet(route_str)?;
 
@@ -203,12 +218,12 @@ fn read_route_str<'a>(
     if *offset + 4 > payload.len() {
         return Err(format!("{op_name} route length overflow"));
     }
-    let route_len = u32::from_be_bytes([
+    let route_len = u32_to_usize(u32::from_be_bytes([
         payload[*offset],
         payload[*offset + 1],
         payload[*offset + 2],
         payload[*offset + 3],
-    ]) as usize;
+    ]));
     *offset += 4;
 
     if *offset + route_len > payload.len() {
@@ -250,6 +265,10 @@ fn validate_route(route_str: &str) -> Result<(), String> {
 }
 
 /// Extract the KV route needed for authorization without constructing a full request message.
+///
+/// # Errors
+///
+/// Returns an error if the payload is malformed for the given KV message type.
 pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>, String> {
     match msg_type {
         msg_type::BEGIN => {
@@ -299,7 +318,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
 }
 
 fn parse_commit(payload: &[u8]) -> Result<KvMessage, String> {
-    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route]
+    // Wire format per `CLIENT_SPEC`: [u64 tx_id][u32 route_len][route]
     if payload.len() < 12 {
         return Err("COMMIT payload too short".to_string());
     }
@@ -323,12 +342,12 @@ fn parse_commit(payload: &[u8]) -> Result<KvMessage, String> {
     if offset + 4 > payload.len() {
         return Err("COMMIT route length overflow".to_string());
     }
-    let route_len = u32::from_be_bytes([
+    let route_len = u32_to_usize(u32::from_be_bytes([
         payload[offset],
         payload[offset + 1],
         payload[offset + 2],
         payload[offset + 3],
-    ]) as usize;
+    ]));
     offset += 4;
 
     // Read route
@@ -344,7 +363,7 @@ fn parse_commit(payload: &[u8]) -> Result<KvMessage, String> {
 }
 
 fn parse_rollback(payload: &[u8]) -> Result<KvMessage, String> {
-    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route]
+    // Wire format per `CLIENT_SPEC`: [u64 tx_id][u32 route_len][route]
     if payload.len() < 12 {
         return Err("ROLLBACK payload too short".to_string());
     }
@@ -368,12 +387,12 @@ fn parse_rollback(payload: &[u8]) -> Result<KvMessage, String> {
     if offset + 4 > payload.len() {
         return Err("ROLLBACK route length overflow".to_string());
     }
-    let route_len = u32::from_be_bytes([
+    let route_len = u32_to_usize(u32::from_be_bytes([
         payload[offset],
         payload[offset + 1],
         payload[offset + 2],
         payload[offset + 3],
-    ]) as usize;
+    ]));
     offset += 4;
 
     // Read route
@@ -389,7 +408,7 @@ fn parse_rollback(payload: &[u8]) -> Result<KvMessage, String> {
 }
 
 fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    // Wire format per CLIENT_SPEC: [u32 route_len][route][u8 mode][u8 durability]
+    // Wire format per `CLIENT_SPEC`: [u32 route_len][route][u8 mode][u8 durability]
     if payload.len() < 6 {
         return Err("BEGIN payload too short".to_string());
     }
@@ -397,12 +416,12 @@ fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, S
     let mut offset = 0;
 
     // Read route length (u32)
-    let route_len = u32::from_be_bytes([
+    let route_len = u32_to_usize(u32::from_be_bytes([
         payload[offset],
         payload[offset + 1],
         payload[offset + 2],
         payload[offset + 3],
-    ]) as usize;
+    ]));
     offset += 4;
 
     // Read route
@@ -426,7 +445,7 @@ fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, S
     };
     offset += 1;
 
-    // Read durability (u8): 0=buffered, 1=sync (per CLIENT_SPEC)
+    // Read durability (u8): 0=buffered, 1=sync (per `CLIENT_SPEC`)
     if offset >= payload.len() {
         return Err("BEGIN durability byte missing".to_string());
     }

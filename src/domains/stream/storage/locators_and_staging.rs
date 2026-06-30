@@ -1,7 +1,22 @@
 use super::super::store::EventPayload;
-use super::*;
+use super::{
+    decode_single_u64_value, decode_two_u64_value, encode_single_u64_value, encode_two_u64_value,
+    AreaCounterValue, AreaLocatorValue, CanonicalResourceValue, CompactRealmPageValue,
+    CompressedCompactRealmPageValue, KeyPrefix, OffsetCounterValue, RealmCounterValue,
+    RealmLocatorValue, ResourceMetaValue, WatermarkValue, AREA_LOCATOR_VALUE_V1_MARKER,
+    CANONICAL_RESOURCE_VALUE_V1_MARKER, COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER,
+    OPTIONAL_BYTES_ABSENT, REALM_LOCATOR_VALUE_V1_MARKER,
+};
 use bytes::Bytes;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
+
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn u32_to_usize(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
 
 impl CompressedCompactRealmPageValue {
     #[must_use]
@@ -22,6 +37,10 @@ impl CompressedCompactRealmPageValue {
         bytes
     }
 
+    /// # Panics
+    ///
+    /// Panics if `bytes` do not contain a valid compressed compact realm page
+    /// encoding.
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize compressed compact realm page value")
@@ -34,6 +53,11 @@ impl CompressedCompactRealmPageValue {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the marker is missing, the compressed payload is
+    /// absent, decompression fails, or the decoded compact realm page is
+    /// invalid.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         if !Self::is_encoded(bytes) {
             return Err("decode compressed compact realm page value: missing marker".to_string());
@@ -59,6 +83,9 @@ impl WatermarkValue {
         encode_single_u64_value(0x01, self.watermark)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if `bytes` are not a valid encoded watermark value.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         Ok(Self {
             watermark: decode_single_u64_value(bytes, 0x01, "decode watermark value")?,
@@ -72,6 +99,10 @@ impl OffsetCounterValue {
         encode_single_u64_value(0x02, self.next_offset)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if `bytes` are not a valid encoded offset counter
+    /// value.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         Ok(Self {
             next_offset: decode_single_u64_value(bytes, 0x02, "decode offset counter value")?,
@@ -85,6 +116,10 @@ impl ResourceMetaValue {
         encode_two_u64_value(0x03, self.next_offset, self.committed_size_bytes)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if `bytes` are not a valid encoded resource metadata
+    /// value.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         let (next_offset, committed_size_bytes) =
             decode_two_u64_value(bytes, 0x03, "decode resource metadata value")?;
@@ -101,6 +136,9 @@ impl AreaCounterValue {
         encode_single_u64_value(0x04, self.next_offset)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if `bytes` are not a valid encoded area counter value.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         Ok(Self {
             next_offset: decode_single_u64_value(bytes, 0x04, "decode area counter value")?,
@@ -114,6 +152,10 @@ impl RealmCounterValue {
         encode_single_u64_value(0x05, self.next_offset)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if `bytes` are not a valid encoded realm counter
+    /// value.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         Ok(Self {
             next_offset: decode_single_u64_value(bytes, 0x05, "decode realm counter value")?,
@@ -123,18 +165,18 @@ impl RealmCounterValue {
 
 impl CanonicalResourceValue {
     pub fn encode(&self) -> Vec<u8> {
-        let metadata_len = self.metadata.as_ref().map_or(0, |m| m.len());
+        let metadata_len = self.metadata.as_ref().map_or(0, Bytes::len);
         let mut buf = Vec::with_capacity(34 + self.body.len() + metadata_len);
         buf.extend_from_slice(&CANONICAL_RESOURCE_VALUE_V1_MARKER);
         buf.extend_from_slice(&self.area_offset.to_le_bytes());
         buf.extend_from_slice(&self.realm_offset.to_le_bytes());
         buf.extend_from_slice(&self.created_at.to_le_bytes());
-        buf.extend_from_slice(&(self.body.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&usize_to_u32_saturating(self.body.len()).to_le_bytes());
         buf.extend_from_slice(
             &self
                 .metadata
                 .as_ref()
-                .map_or(OPTIONAL_BYTES_ABSENT, |m| m.len() as u32)
+                .map_or(OPTIONAL_BYTES_ABSENT, |m| usize_to_u32_saturating(m.len()))
                 .to_le_bytes(),
         );
         buf.extend_from_slice(&self.body);
@@ -144,11 +186,19 @@ impl CanonicalResourceValue {
         buf
     }
 
+    /// # Panics
+    ///
+    /// Panics if `bytes` do not contain a valid canonical resource value
+    /// encoding.
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize canonical resource value")
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the canonical resource value is malformed,
+    /// truncated, or has trailing bytes.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         Self::decode_v1(bytes)
     }
@@ -164,12 +214,12 @@ impl CanonicalResourceValue {
         let area_offset = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
         let realm_offset = u64::from_le_bytes(bytes[10..18].try_into().unwrap());
         let created_at = u64::from_le_bytes(bytes[18..26].try_into().unwrap());
-        let body_len = u32::from_le_bytes(bytes[26..30].try_into().unwrap()) as usize;
+        let body_len = u32_to_usize(u32::from_le_bytes(bytes[26..30].try_into().unwrap()));
         let metadata_len_raw = u32::from_le_bytes(bytes[30..34].try_into().unwrap());
         let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
             None
         } else {
-            Some(metadata_len_raw as usize)
+            Some(u32_to_usize(metadata_len_raw))
         };
 
         let mut offset = 34;
@@ -216,11 +266,18 @@ impl AreaLocatorValue {
         buf
     }
 
+    /// # Panics
+    ///
+    /// Panics if `bytes` do not contain a valid area locator value encoding.
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize area locator value")
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the area locator value is malformed or has an
+    /// invalid marker or length.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         Self::decode_v1(bytes)
     }
@@ -251,11 +308,18 @@ impl RealmLocatorValue {
         buf
     }
 
+    /// # Panics
+    ///
+    /// Panics if `bytes` do not contain a valid realm locator value encoding.
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize realm locator value")
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the realm locator value is malformed or has an
+    /// invalid marker or length.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
         Self::decode_v1(bytes)
     }
@@ -279,6 +343,9 @@ impl RealmLocatorValue {
 /// Create an in-memory Midge database for tests
 #[cfg(test)]
 #[must_use]
+/// # Panics
+///
+/// Panics if the in-memory test database cannot be created.
 pub fn create_test_db() -> std::sync::Arc<cntryl_midge::Engine> {
     use cntryl_midge::testkit::MidgeOptions;
     use std::sync::Arc;
@@ -295,19 +362,19 @@ pub fn encode_staging_key(session_id: u64, event_index: usize) -> Vec<u8> {
     encoder.push_byte(KeyPrefix::Staging as u8);
     encoder.encode_u64_into(session_id);
     encoder.push_separator();
-    encoder.encode_u64_into(event_index as u64);
+    encoder.encode_u64_into(u64::try_from(event_index).unwrap_or(u64::MAX));
     encoder.into_vec()
 }
 
 pub fn encode_staging_value(event: &EventPayload) -> Vec<u8> {
-    let metadata_len = event.metadata.as_ref().map_or(0, |m| m.len());
+    let metadata_len = event.metadata.as_ref().map_or(0, Bytes::len);
     let mut buf = Vec::with_capacity(8 + event.body.len() + metadata_len);
-    buf.extend_from_slice(&(event.body.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&usize_to_u32_saturating(event.body.len()).to_le_bytes());
     buf.extend_from_slice(
         &event
             .metadata
             .as_ref()
-            .map_or(u32::MAX, |m| m.len() as u32)
+            .map_or(u32::MAX, |m| usize_to_u32_saturating(m.len()))
             .to_le_bytes(),
     );
     buf.extend_from_slice(&event.body);
@@ -317,17 +384,26 @@ pub fn encode_staging_value(event: &EventPayload) -> Vec<u8> {
     buf
 }
 
+/// # Errors
+///
+/// Returns an error if the staging payload is truncated or contains trailing
+/// bytes after decoding.
+///
+/// # Panics
+///
+/// Panics if fixed-width header slices fail to convert into arrays after the
+/// preceding length checks.
 pub fn decode_staging_value(data: &[u8]) -> Result<EventPayload, String> {
     if data.len() < 8 {
         return Err("decode_staging_value: header too short".to_string());
     }
 
-    let body_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+    let body_len = u32_to_usize(u32::from_le_bytes(data[0..4].try_into().unwrap()));
     let metadata_len_raw = u32::from_le_bytes(data[4..8].try_into().unwrap());
     let metadata_len = if metadata_len_raw == u32::MAX {
         None
     } else {
-        Some(metadata_len_raw as usize)
+        Some(u32_to_usize(metadata_len_raw))
     };
 
     let mut offset = 8;

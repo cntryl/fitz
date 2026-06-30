@@ -256,8 +256,7 @@ fn bench_publish_fanout(c: &mut Criterion) {
             |b| {
                 let (sink, event) = create_publish_case(subscriber_count);
                 b.iter(|| {
-                    sink.bench_publish_event(black_box(&event))
-                        .expect("publish event");
+                    sink.bench_publish_event(black_box(&event));
                     black_box(());
                 })
             },

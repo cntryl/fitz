@@ -3,7 +3,7 @@ use crate::api::admin::auth::{AdminPrincipal, AdminRouteFamilyAccess};
 use crate::api::admin::{QueueDeadLetter, QueueInfo, RpcPendingRequest, ScheduleInfo};
 use crate::boot::Runtime;
 use crate::control::admin::read_model::AdminReadModel;
-use crate::control::admin::{QueueDeadLetterSnapshot, QueueInfoSnapshot};
+use crate::control::admin::{QueueAgeBuckets, QueueDeadLetterSnapshot, QueueInfoSnapshot};
 use crate::runtime::Router;
 use hyper::StatusCode;
 use std::sync::Arc;
@@ -23,13 +23,13 @@ fn explicit_access(route_families: &[&str]) -> AdminRouteFamilyAccess {
     AdminRouteFamilyAccess::Explicit(
         route_families
             .iter()
-            .map(|route_family| route_family.to_string())
+            .map(std::string::ToString::to_string)
             .collect(),
     )
 }
 
 fn queue_snapshot(family: u64, realm: &str, resource: &str) -> QueueInfo {
-    QueueInfo::snapshot(QueueInfoSnapshot {
+    QueueInfo::snapshot(&QueueInfoSnapshot {
         family,
         realm,
         area: "payments",
@@ -42,8 +42,8 @@ fn queue_snapshot(family: u64, realm: &str, resource: &str) -> QueueInfo {
         messages_total: 4,
         oldest_message_age_seconds: 5,
         oldest_backlog_age_seconds: 5,
-        backlog_age_buckets: Default::default(),
-        delay_age_buckets: Default::default(),
+        backlog_age_buckets: QueueAgeBuckets::default(),
+        delay_age_buckets: QueueAgeBuckets::default(),
         enqueue_success_total: 4,
         complete_success_total: 0,
         in_rate_per_second: 0.0,
@@ -56,7 +56,7 @@ fn should_search_queue_dead_letters_by_message_id() {
     // Arrange
     let read_model = AdminReadModel::new();
     read_model.replace_queue_dead_letters(vec![QueueDeadLetter::snapshot(
-        QueueDeadLetterSnapshot {
+        &QueueDeadLetterSnapshot {
             message_id: 42,
             family: 2,
             realm: "billing",
@@ -132,7 +132,7 @@ fn should_search_rpc_pending_by_correlation_id() {
     let read_model = AdminReadModel::new();
     read_model.replace_rpc_pending(vec![RpcPendingRequest::snapshot(
         1,
-        "corr-123".to_string(),
+        &"corr-123",
         "rpc://billing/payments/settlement/run",
         "2026-06-23T00:00:00Z",
         7,

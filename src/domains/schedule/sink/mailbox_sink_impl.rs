@@ -1,4 +1,9 @@
-use super::model::*;
+use super::model::{
+    DeliveryError, Envelope, MailboxSink, Ordering, ScheduleDomainSink, ScheduleSubscription,
+    ScheduleSubscriptionSet,
+};
+#[cfg(test)]
+use crate::protocol::frame_context::FrameContext;
 
 impl MailboxSink for ScheduleDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
@@ -7,13 +12,13 @@ impl MailboxSink for ScheduleDomainSink {
         }
         self.ensure_active()?;
 
-        if self.handle_domain_publish_envelope(&envelope)? {
+        if self.handle_domain_publish_envelope(&envelope) {
             return Ok(());
         }
 
-        self.log_delivery(&envelope);
+        Self::log_delivery(&envelope);
 
-        let Some(request) = self.extract_request(&envelope)? else {
+        let Some(request) = Self::extract_request(&envelope)? else {
             return Ok(());
         };
         let meta = request.meta;
@@ -30,8 +35,7 @@ impl MailboxSink for ScheduleDomainSink {
             request_started,
             route_family,
             schedule_msg,
-        )?
-        else {
+        ) else {
             return Ok(());
         };
 
@@ -67,16 +71,16 @@ impl ScheduleDomainSink {
         Ok(())
     }
 
-    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> Result<bool, DeliveryError> {
+    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
-            self.handle_domain_publish(event)?;
-            return Ok(true);
+            self.handle_domain_publish(event);
+            return true;
         }
 
-        Ok(false)
+        false
     }
 
-    fn log_delivery(&self, envelope: &Envelope) {
+    fn log_delivery(envelope: &Envelope) {
         tracing::debug!(
             domain = "schedule",
             destination = %envelope.destination(),
@@ -86,25 +90,23 @@ impl ScheduleDomainSink {
     }
 
     fn extract_request(
-        &self,
         envelope: &Envelope,
     ) -> Result<Option<crate::domains::schedule::ScheduleClientRequest>, DeliveryError> {
-        match Self::request_from_envelope(envelope) {
-            Some(request) => Ok(Some(request)),
-            None => {
-                tracing::warn!(
-                    domain = "schedule",
-                    "Envelope payload was not ScheduleClientRequest"
-                );
-                Err(DeliveryError::ActorStopped)
-            }
+        if let Some(request) = Self::request_from_envelope(envelope) {
+            Ok(Some(request))
+        } else {
+            tracing::warn!(
+                domain = "schedule",
+                "Envelope payload was not ScheduleClientRequest"
+            );
+            Err(DeliveryError::ActorStopped)
         }
     }
 
     fn record_request_start(&self) -> Option<std::time::Instant> {
         self.metrics
             .as_ref()
-            .map(|metrics| metrics.record_request_start())
+            .map(crate::domains::schedule::ScheduleMetrics::record_request_start)
     }
 
     fn parse_request_message(
@@ -136,7 +138,7 @@ impl ScheduleDomainSink {
         request_started: Option<std::time::Instant>,
         route_family: crate::runtime::routing::RouteFamily,
         schedule_msg: crate::domains::schedule::ScheduleMessage,
-    ) -> Result<Option<(crate::domains::schedule::ScheduleResponse, bool)>, DeliveryError> {
+    ) -> Option<(crate::domains::schedule::ScheduleResponse, bool)> {
         use crate::domains::schedule::ScheduleResponse;
 
         let mut actors = self.actors.lock();
@@ -145,11 +147,11 @@ impl ScheduleDomainSink {
             Err(error) => {
                 let response = ScheduleResponse::Error(error);
                 self.route_schedule_response(envelope, meta, &response, request_started);
-                return Ok(None);
+                return None;
             }
         };
 
-        Ok(Some(self.apply_schedule_message(actor, schedule_msg)))
+        Some(self.apply_schedule_message(actor, schedule_msg))
     }
 
     fn apply_schedule_message(
@@ -183,7 +185,7 @@ impl ScheduleDomainSink {
                 }
                 Err(e) => ScheduleResponse::Error(e),
             },
-            ScheduleMessage::Cancel { route } => match actor.delete_schedule(route) {
+            ScheduleMessage::Cancel { route } => match actor.delete_schedule(&route) {
                 Ok(removed) => {
                     if removed {
                         schedule_snapshot_dirty = true;
@@ -205,83 +207,13 @@ impl ScheduleDomainSink {
                 route,
                 session_id,
                 subscriber,
-            } => {
-                if let Err(error) =
-                    crate::domains::schedule::protocol::validate_concrete_schedule_route(
-                        route.as_str(),
-                    )
-                {
-                    ScheduleResponse::Error(error)
-                } else {
-                    let fam_id = family_id.as_u64();
-
-                    let mut families = self.sub_families.lock();
-                    let state = families
-                        .entry(fam_id)
-                        .or_insert_with(ScheduleSubscriptionSet::new);
-
-                    let existing_sub_id = state.find_existing_id(session_id, route.as_str());
-
-                    let sub_id = if let Some(id) = existing_sub_id {
-                        tracing::debug!(
-                            domain = "schedule",
-                            session = session_id,
-                            subscription_id = id,
-                            route = route.as_str(),
-                            "Schedule subscription already exists (idempotent)"
-                        );
-                        id
-                    } else {
-                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                        state.insert(ScheduleSubscription {
-                            route: route.as_str().to_string(),
-                            session_id,
-                            subscription_id: new_id,
-                            subscriber,
-                        });
-
-                        tracing::debug!(
-                            domain = "schedule",
-                            session = session_id,
-                            subscription_id = new_id,
-                            route = route.as_str(),
-                            "Schedule subscription added"
-                        );
-                        new_id
-                    };
-
-                    ScheduleResponse::SubscribeOk {
-                        subscription_id: sub_id,
-                    }
-                }
-            }
+            } => self.apply_subscribe_message(family_id, &route, session_id, subscriber),
             ScheduleMessage::Unsubscribe {
                 family_id,
                 route,
                 session_id,
                 ..
-            } => {
-                if let Err(error) =
-                    crate::domains::schedule::protocol::validate_concrete_schedule_route(
-                        route.as_str(),
-                    )
-                {
-                    ScheduleResponse::Error(error)
-                } else {
-                    let fam_id = family_id.as_u64();
-                    let mut families = self.sub_families.lock();
-                    let remove_family = if let Some(state) = families.get_mut(&fam_id) {
-                        state.remove_session_route(session_id, route.as_str());
-                        state.is_empty()
-                    } else {
-                        false
-                    };
-                    if remove_family {
-                        families.remove(&fam_id);
-                    }
-                    ScheduleResponse::Ok
-                }
-            }
+            } => self.apply_unsubscribe_message(family_id, &route, session_id),
             ScheduleMessage::UnsubscribeAll { session_id, .. } => {
                 self.unsubscribe_all(session_id);
                 ScheduleResponse::Ok
@@ -289,6 +221,88 @@ impl ScheduleDomainSink {
         };
 
         (response, schedule_snapshot_dirty)
+    }
+
+    fn apply_subscribe_message(
+        &self,
+        family_id: crate::runtime::routing::RouteFamily,
+        route: &crate::runtime::routing::Route,
+        session_id: u64,
+        subscriber: crate::runtime::routing::RouteAddress,
+    ) -> crate::domains::schedule::ScheduleResponse {
+        use crate::domains::schedule::ScheduleResponse;
+
+        if let Err(error) =
+            crate::domains::schedule::protocol::validate_concrete_schedule_route(route.as_str())
+        {
+            return ScheduleResponse::Error(error);
+        }
+
+        let fam_id = family_id.as_u64();
+        let mut families = self.sub_families.lock();
+        let state = families
+            .entry(fam_id)
+            .or_insert_with(ScheduleSubscriptionSet::new);
+
+        let sub_id = if let Some(id) = state.find_existing_id(session_id, route.as_str()) {
+            tracing::debug!(
+                domain = "schedule",
+                session = session_id,
+                subscription_id = id,
+                route = route.as_str(),
+                "Schedule subscription already exists (idempotent)"
+            );
+            id
+        } else {
+            let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+            state.insert(ScheduleSubscription {
+                route: route.as_str().to_string(),
+                session_id,
+                subscription_id: new_id,
+                subscriber,
+            });
+
+            tracing::debug!(
+                domain = "schedule",
+                session = session_id,
+                subscription_id = new_id,
+                route = route.as_str(),
+                "Schedule subscription added"
+            );
+            new_id
+        };
+
+        ScheduleResponse::SubscribeOk {
+            subscription_id: sub_id,
+        }
+    }
+
+    fn apply_unsubscribe_message(
+        &self,
+        family_id: crate::runtime::routing::RouteFamily,
+        route: &crate::runtime::routing::Route,
+        session_id: u64,
+    ) -> crate::domains::schedule::ScheduleResponse {
+        use crate::domains::schedule::ScheduleResponse;
+
+        if let Err(error) =
+            crate::domains::schedule::protocol::validate_concrete_schedule_route(route.as_str())
+        {
+            return ScheduleResponse::Error(error);
+        }
+
+        let fam_id = family_id.as_u64();
+        let mut families = self.sub_families.lock();
+        let remove_family = if let Some(state) = families.get_mut(&fam_id) {
+            state.remove_session_route(session_id, route.as_str());
+            state.is_empty()
+        } else {
+            false
+        };
+        if remove_family {
+            families.remove(&fam_id);
+        }
+        ScheduleResponse::Ok
     }
 
     fn request_from_envelope(
