@@ -1,8 +1,8 @@
 use crate::api::admin::list::StreamInfo;
 use crate::api::admin::stats;
 use crate::api::admin::topology::helpers::{
-    add_broker_domain_flow, counter, domain_node_id, scope_for_resource, scoped_resource,
-    top_resources, topology_connection, topology_lane, topology_state,
+    add_broker_domain_flow, count_u64, count_usize, domain_node_id, scope_for_resource,
+    scoped_resource, top_resources, topology_connection, topology_lane, topology_state,
 };
 use crate::api::admin::topology::types::{
     TopologyConnectionBuilder, TopologyConnectionKind, TopologyLane, TopologyScopedResource,
@@ -21,28 +21,20 @@ pub(in crate::api::admin::topology) fn stream_lane(
         || stats.append_sessions_active > 0;
     let lane_state = topology_state(&stats.diagnostics, pressure > 0, activity);
     let counters = vec![
-        counter("streams", "Streams", stats.streams_active as f64),
-        counter("events", "Events", stats.events_total as f64),
-        counter(
+        count_usize("streams", "Streams", stats.streams_active),
+        count_usize("events", "Events", stats.events_total),
+        count_usize(
             "append_sessions",
             "Append sessions",
-            stats.append_sessions_active as f64,
+            stats.append_sessions_active,
         ),
-        counter(
-            "subscriptions",
-            "Subscriptions",
-            stats.subscriptions_active as f64,
-        ),
-        counter(
+        count_usize("subscriptions", "Subscriptions", stats.subscriptions_active),
+        count_u64(
             "append_conflicts",
             "Append conflicts",
-            stats.append_conflicts_total as f64,
+            stats.append_conflicts_total,
         ),
-        counter(
-            "notify_drops",
-            "Notify drops",
-            stats.notify_drops_total as f64,
-        ),
+        count_u64("notify_drops", "Notify drops", stats.notify_drops_total),
     ];
 
     add_broker_domain_flow(
@@ -71,9 +63,9 @@ pub(in crate::api::admin::topology) fn stream_lane(
             TopologyState::Flowing,
             scope_for_resource(&stream.realm, &stream.area, &stream.resource, None),
             vec![
-                counter("sessions", "Sessions", stream.sessions_active as f64),
-                counter("offset", "Offset", stream.offset as f64),
-                counter("watermark", "Watermark", stream.watermark as f64),
+                count_usize("sessions", "Sessions", stream.sessions_active),
+                count_u64("offset", "Offset", stream.offset),
+                count_u64("watermark", "Watermark", stream.watermark),
             ],
         ));
     }
@@ -94,10 +86,10 @@ fn top_stream_resources(streams: &[StreamInfo]) -> Vec<TopologyScopedResource> {
         .iter()
         .map(|stream| {
             let counters = vec![
-                counter("offset", "Offset", stream.offset as f64),
-                counter("watermark", "Watermark", stream.watermark as f64),
-                counter("size_bytes", "Size bytes", stream.size_bytes as f64),
-                counter("sessions", "Sessions", stream.sessions_active as f64),
+                count_u64("offset", "Offset", stream.offset),
+                count_u64("watermark", "Watermark", stream.watermark),
+                count_u64("size_bytes", "Size bytes", stream.size_bytes),
+                count_usize("sessions", "Sessions", stream.sessions_active),
             ];
             scoped_resource(
                 "stream",

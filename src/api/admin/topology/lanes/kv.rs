@@ -1,9 +1,9 @@
 use crate::api::admin::list::KvTransaction;
 use crate::api::admin::stats;
 use crate::api::admin::topology::helpers::{
-    add_broker_domain_flow, counter, domain_node_id, scope_for_resource, scope_with_session,
-    scoped_resource, session_node_id, top_resources, topology_connection, topology_lane,
-    topology_state,
+    add_broker_domain_flow, count_u64, count_usize, domain_node_id, scope_for_resource,
+    scope_with_session, scoped_resource, session_node_id, top_resources, topology_connection,
+    topology_lane, topology_state,
 };
 use crate::api::admin::topology::types::{
     TopologyConnectionBuilder, TopologyConnectionKind, TopologyLane, TopologyScopedResource,
@@ -21,21 +21,17 @@ pub(in crate::api::admin::topology) fn kv_lane(
         stats.operations_per_second > 0.0 || stats.transactions_active > 0 || stats.keys_total > 0;
     let lane_state = topology_state(&stats.diagnostics, pressure > 0, activity);
     let counters = vec![
-        counter("keys", "Keys", stats.keys_total as f64),
-        counter(
-            "transactions",
-            "Transactions",
-            stats.transactions_active as f64,
-        ),
-        counter(
+        count_usize("keys", "Keys", stats.keys_total),
+        count_usize("transactions", "Transactions", stats.transactions_active),
+        count_u64(
             "failed_commits",
             "Failed commits",
-            stats.commits_failed_total as f64,
+            stats.commits_failed_total,
         ),
-        counter(
+        count_u64(
             "invalid_rejects",
             "Invalid rejects",
-            stats.invalid_transaction_rejects_total as f64,
+            stats.invalid_transaction_rejects_total,
         ),
     ];
 
@@ -86,12 +82,8 @@ pub(in crate::api::admin::topology) fn kv_lane(
             TopologyState::Flowing,
             scope,
             vec![
-                counter(
-                    "operations",
-                    "Operations",
-                    transaction.operations_count as f64,
-                ),
-                counter("idle_seconds", "Idle", transaction.idle_seconds as f64),
+                count_usize("operations", "Operations", transaction.operations_count),
+                count_u64("idle_seconds", "Idle", transaction.idle_seconds),
             ],
         ));
     }
@@ -134,9 +126,9 @@ fn top_kv_resources(transactions: &[KvTransaction]) -> Vec<TopologyScopedResourc
             transaction.resource.clone(),
         );
         let rollup = rollups.entry(key).or_default();
-        rollup.realm = transaction.realm.clone();
-        rollup.area = transaction.area.clone();
-        rollup.resource = transaction.resource.clone();
+        rollup.realm.clone_from(&transaction.realm);
+        rollup.area.clone_from(&transaction.area);
+        rollup.resource.clone_from(&transaction.resource);
         rollup.transactions += 1;
         rollup.operations += transaction.operations_count;
         rollup.max_idle_seconds = rollup.max_idle_seconds.max(transaction.idle_seconds);
@@ -146,13 +138,9 @@ fn top_kv_resources(transactions: &[KvTransaction]) -> Vec<TopologyScopedResourc
         .into_values()
         .map(|rollup| {
             let counters = vec![
-                counter("transactions", "Transactions", rollup.transactions as f64),
-                counter("operations", "Operations", rollup.operations as f64),
-                counter(
-                    "max_idle_seconds",
-                    "Max idle",
-                    rollup.max_idle_seconds as f64,
-                ),
+                count_usize("transactions", "Transactions", rollup.transactions),
+                count_usize("operations", "Operations", rollup.operations),
+                count_u64("max_idle_seconds", "Max idle", rollup.max_idle_seconds),
             ];
             scoped_resource(
                 "kv",

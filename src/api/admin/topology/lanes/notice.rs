@@ -1,8 +1,9 @@
 use crate::api::admin::list::NoticeSubscription;
 use crate::api::admin::stats;
 use crate::api::admin::topology::helpers::{
-    add_broker_domain_flow, counter, domain_node_id, scope_for_pattern, scoped_resource,
-    session_node_id, top_resources, topology_connection, topology_lane, topology_state,
+    add_broker_domain_flow, count_u64, count_usize, domain_node_id, scope_for_pattern,
+    scoped_resource, session_node_id, top_resources, topology_connection, topology_lane,
+    topology_state,
 };
 use crate::api::admin::topology::types::{
     TopologyConnectionBuilder, TopologyConnectionKind, TopologyLane, TopologyScopedResource,
@@ -22,22 +23,18 @@ pub(in crate::api::admin::topology) fn notice_lane(
     let activity = stats.publishes_per_second > 0.0 || stats.subscriptions_active > 0;
     let lane_state = topology_state(&stats.diagnostics, pressure > 0, activity);
     let counters = vec![
-        counter(
-            "subscriptions",
-            "Subscriptions",
-            stats.subscriptions_active as f64,
-        ),
-        counter("routes", "Routes", stats.routes_active as f64),
-        counter(
+        count_usize("subscriptions", "Subscriptions", stats.subscriptions_active),
+        count_usize("routes", "Routes", stats.routes_active),
+        count_usize(
             "max_route_subscribers",
             "Max route subscribers",
-            stats.max_route_subscribers as f64,
+            stats.max_route_subscribers,
         ),
-        counter("delivery_drops", "Drops", stats.delivery_drops_total as f64),
-        counter(
+        count_u64("delivery_drops", "Drops", stats.delivery_drops_total),
+        count_u64(
             "wildcard_rejects",
             "Wildcard rejects",
-            stats.wildcard_limit_rejects_total as f64,
+            stats.wildcard_limit_rejects_total,
         ),
     ];
 
@@ -67,10 +64,10 @@ pub(in crate::api::admin::topology) fn notice_lane(
                 &subscription.realm,
                 Some(subscription.session_id.clone()),
             ),
-            vec![counter(
+            vec![count_u64(
                 "notifications_received",
                 "Notifications",
-                subscription.notifications_received as f64,
+                subscription.notifications_received,
             )],
         ));
     }
@@ -98,8 +95,8 @@ fn top_notice_resources(subscriptions: &[NoticeSubscription]) -> Vec<TopologySco
     let mut rollups: BTreeMap<String, Rollup> = BTreeMap::new();
     for subscription in subscriptions {
         let rollup = rollups.entry(subscription.pattern.clone()).or_default();
-        rollup.realm = subscription.realm.clone();
-        rollup.pattern = subscription.pattern.clone();
+        rollup.realm.clone_from(&subscription.realm);
+        rollup.pattern.clone_from(&subscription.pattern);
         rollup.subscriptions += 1;
         rollup.notifications += subscription.notifications_received;
     }
@@ -108,16 +105,8 @@ fn top_notice_resources(subscriptions: &[NoticeSubscription]) -> Vec<TopologySco
         .into_values()
         .map(|rollup| {
             let counters = vec![
-                counter(
-                    "subscriptions",
-                    "Subscriptions",
-                    rollup.subscriptions as f64,
-                ),
-                counter(
-                    "notifications",
-                    "Notifications",
-                    rollup.notifications as f64,
-                ),
+                count_usize("subscriptions", "Subscriptions", rollup.subscriptions),
+                count_u64("notifications", "Notifications", rollup.notifications),
             ];
             scoped_resource(
                 "notice",

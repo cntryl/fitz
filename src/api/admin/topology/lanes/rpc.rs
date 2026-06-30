@@ -1,9 +1,9 @@
 use crate::api::admin::list::{RpcPendingRequest, RpcWorker};
 use crate::api::admin::stats;
 use crate::api::admin::topology::helpers::{
-    add_broker_domain_flow, counter, domain_node_id, scope_for_route, scoped_resource,
-    scoped_state, session_node_id, top_resources, topology_connection, topology_lane,
-    topology_state,
+    add_broker_domain_flow, count_u64, count_usize, counter, domain_node_id, saturating_usize,
+    scope_for_route, scoped_resource, scoped_state, session_node_id, top_resources,
+    topology_connection, topology_lane, topology_state,
 };
 use crate::api::admin::topology::types::{
     TopologyConnectionBuilder, TopologyConnectionKind, TopologyLane, TopologyScopedResource,
@@ -18,20 +18,20 @@ pub(in crate::api::admin::topology) fn rpc_lane(
     connections: &mut TopologyConnectionBuilder,
 ) -> TopologyLane {
     let pressure = stats.requests_pending
-        + stats.request_timeouts_total as usize
-        + stats.backpressure_rejects_total as usize
-        + stats.failure_total as usize
-        + stats.responses_missing_pending_total as usize;
+        + saturating_usize(stats.request_timeouts_total)
+        + saturating_usize(stats.backpressure_rejects_total)
+        + saturating_usize(stats.failure_total)
+        + saturating_usize(stats.responses_missing_pending_total);
     let activity = stats.operations_per_second > 0.0 || stats.workers_registered > 0;
     let lane_state = topology_state(&stats.diagnostics, pressure > 0, activity);
     let counters = vec![
-        counter("workers", "Workers", stats.workers_registered as f64),
-        counter("pending", "Pending", stats.requests_pending as f64),
-        counter("timeouts", "Timeouts", stats.request_timeouts_total as f64),
-        counter(
+        count_usize("workers", "Workers", stats.workers_registered),
+        count_usize("pending", "Pending", stats.requests_pending),
+        count_u64("timeouts", "Timeouts", stats.request_timeouts_total),
+        count_u64(
             "backpressure",
             "Backpressure",
-            stats.backpressure_rejects_total as f64,
+            stats.backpressure_rejects_total,
         ),
         counter(
             "slowest_worker_average_latency_ms",
@@ -60,11 +60,7 @@ pub(in crate::api::admin::topology) fn rpc_lane(
             TopologyState::Flowing,
             scope_for_route(&worker.route, Some(worker.session_id.clone())),
             vec![
-                counter(
-                    "requests_handled",
-                    "Handled",
-                    worker.requests_handled as f64,
-                ),
+                count_u64("requests_handled", "Handled", worker.requests_handled),
                 counter(
                     "average_latency_ms",
                     "Avg latency",
@@ -95,7 +91,7 @@ pub(in crate::api::admin::topology) fn rpc_lane(
             request.route.clone(),
             request_state,
             scope_for_route(&request.route, request.worker_session_id.clone()),
-            vec![counter("age_seconds", "Age", request.age_seconds as f64)],
+            vec![count_u64("age_seconds", "Age", request.age_seconds)],
         ));
     }
 
@@ -127,7 +123,7 @@ fn top_rpc_resources(
     let mut rollups: BTreeMap<String, Rollup> = BTreeMap::new();
     for worker in workers {
         let rollup = rollups.entry(worker.route.clone()).or_default();
-        rollup.route = worker.route.clone();
+        rollup.route.clone_from(&worker.route);
         rollup.workers += 1;
         rollup.handled += worker.requests_handled;
         rollup.slowest_latency_ms = rollup.slowest_latency_ms.max(worker.average_latency_ms);
@@ -135,7 +131,7 @@ fn top_rpc_resources(
 
     for request in pending {
         let rollup = rollups.entry(request.route.clone()).or_default();
-        rollup.route = request.route.clone();
+        rollup.route.clone_from(&request.route);
         rollup.pending += 1;
         rollup.oldest_pending_age_seconds =
             rollup.oldest_pending_age_seconds.max(request.age_seconds);
@@ -145,18 +141,18 @@ fn top_rpc_resources(
         .into_values()
         .map(|rollup| {
             let counters = vec![
-                counter("workers", "Workers", rollup.workers as f64),
-                counter("pending", "Pending", rollup.pending as f64),
-                counter("handled", "Handled", rollup.handled as f64),
+                count_usize("workers", "Workers", rollup.workers),
+                count_usize("pending", "Pending", rollup.pending),
+                count_u64("handled", "Handled", rollup.handled),
                 counter(
                     "slowest_latency_ms",
                     "Slowest latency",
                     rollup.slowest_latency_ms,
                 ),
-                counter(
+                count_u64(
                     "oldest_pending_age_seconds",
                     "Oldest pending age",
-                    rollup.oldest_pending_age_seconds as f64,
+                    rollup.oldest_pending_age_seconds,
                 ),
             ];
             let state = scoped_state(

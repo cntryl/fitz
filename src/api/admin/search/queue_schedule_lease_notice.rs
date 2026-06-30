@@ -1,4 +1,6 @@
-use super::{candidate, resource_href, route_triplet, AdminSearchResult, Candidate, Runtime, SearchOptions};
+use super::{
+    candidate, resource_href, route_triplet, AdminSearchResult, Candidate, Runtime, SearchOptions,
+};
 use std::collections::BTreeMap;
 
 pub(crate) fn collect_queue_candidates(

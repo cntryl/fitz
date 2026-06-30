@@ -1,5 +1,6 @@
 use crate::api::admin::troubleshooting;
 use crate::runtime::routing::{route_quad, route_triplet};
+use num_traits::ToPrimitive;
 use std::cmp::Ordering;
 
 use super::types::{
@@ -15,6 +16,26 @@ pub(super) fn counter(key: &str, label: &str, value: impl Into<f64>) -> Topology
         label: label.to_string(),
         value: value.into(),
     }
+}
+
+pub(super) fn count_usize(key: &str, label: &str, value: usize) -> TopologyCounter {
+    TopologyCounter {
+        key: key.to_string(),
+        label: label.to_string(),
+        value: value.to_f64().unwrap_or(f64::MAX),
+    }
+}
+
+pub(super) fn count_u64(key: &str, label: &str, value: u64) -> TopologyCounter {
+    TopologyCounter {
+        key: key.to_string(),
+        label: label.to_string(),
+        value: value.to_f64().unwrap_or(f64::MAX),
+    }
+}
+
+pub(super) fn saturating_usize(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
 }
 
 fn resource_id(domain: &str, scope: &TopologyScope) -> String {

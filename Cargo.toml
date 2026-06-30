@@ -60,6 +60,7 @@ parking_lot = "0.12"
 smallvec = "1.15"
 tempfile = "3"
 lz4_flex = "0.13.1"
+num-traits = "0.2"
 cntryl-midge = { git = "https://github.com/cntryl/midge", features = ["testkit"] }
 cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "9e75be255d73261b88dfd1d273a55fb9eb177e40" }
 

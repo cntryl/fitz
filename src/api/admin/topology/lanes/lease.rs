@@ -1,9 +1,9 @@
 use crate::api::admin::list::LeaseInfo;
 use crate::api::admin::stats;
 use crate::api::admin::topology::helpers::{
-    add_broker_domain_flow, counter, domain_node_id, scope_for_resource, scope_with_session,
-    scoped_resource, session_node_id, top_resources, topology_connection, topology_lane,
-    topology_state,
+    add_broker_domain_flow, count_u64, count_usize, domain_node_id, saturating_usize,
+    scope_for_resource, scope_with_session, scoped_resource, session_node_id, top_resources,
+    topology_connection, topology_lane, topology_state,
 };
 use crate::api::admin::topology::types::{
     TopologyConnectionBuilder, TopologyConnectionKind, TopologyLane, TopologyScopedResource,
@@ -15,23 +15,24 @@ pub(in crate::api::admin::topology) fn lease_lane(
     leases: &[LeaseInfo],
     connections: &mut TopologyConnectionBuilder,
 ) -> TopologyLane {
-    let pressure =
-        stats.waiter_depth + stats.acquire_timeouts_total as usize + stats.failure_total as usize;
+    let pressure = stats.waiter_depth
+        + saturating_usize(stats.acquire_timeouts_total)
+        + saturating_usize(stats.failure_total);
     let activity = stats.operations_per_second > 0.0 || stats.leases_active > 0;
     let lane_state = topology_state(&stats.diagnostics, pressure > 0, activity);
     let counters = vec![
-        counter("leases", "Leases", stats.leases_active as f64),
-        counter("waiters", "Waiters", stats.waiter_depth as f64),
-        counter("timeouts", "Timeouts", stats.acquire_timeouts_total as f64),
-        counter(
+        count_usize("leases", "Leases", stats.leases_active),
+        count_usize("waiters", "Waiters", stats.waiter_depth),
+        count_u64("timeouts", "Timeouts", stats.acquire_timeouts_total),
+        count_u64(
             "forced_releases",
             "Forced releases",
-            stats.forced_releases_total as f64,
+            stats.forced_releases_total,
         ),
-        counter(
+        count_u64(
             "oldest_lease_age_seconds",
             "Oldest lease age",
-            stats.oldest_lease_age_seconds as f64,
+            stats.oldest_lease_age_seconds,
         ),
     ];
 
@@ -61,8 +62,8 @@ pub(in crate::api::admin::topology) fn lease_lane(
                 lease.owner_session_id.clone(),
             ),
             vec![
-                counter("renewals", "Renewals", lease.renewals as f64),
-                counter("fencing_token", "Fencing token", lease.fencing_token as f64),
+                count_usize("renewals", "Renewals", lease.renewals),
+                count_u64("fencing_token", "Fencing token", lease.fencing_token),
             ],
         ));
     }
@@ -83,8 +84,8 @@ fn top_lease_resources(leases: &[LeaseInfo]) -> Vec<TopologyScopedResource> {
         .iter()
         .map(|lease| {
             let counters = vec![
-                counter("renewals", "Renewals", lease.renewals as f64),
-                counter("fencing_token", "Fencing token", lease.fencing_token as f64),
+                count_usize("renewals", "Renewals", lease.renewals),
+                count_u64("fencing_token", "Fencing token", lease.fencing_token),
             ];
             scoped_resource(
                 "lease",
