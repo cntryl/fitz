@@ -10,7 +10,10 @@ fn encode_frame(records: usize, size: usize) -> bytes::Bytes {
     let mut encoder = TlvEncoder::with_capacity(1024 * 8);
     let payload = vec![0u8; size];
     for i in 0..records {
-        encoder.encode(MessageType::new(i as u16), &payload);
+        encoder.encode(
+            MessageType::new(u16::try_from(i).unwrap_or(u16::MAX)),
+            &payload,
+        );
     }
     encoder.finish()
 }
@@ -35,7 +38,7 @@ fn bench_pipeline_decode_only(c: &mut Criterion) {
                     .decode_refs_into(black_box(&data), &mut refs)
                     .unwrap();
                 black_box(&refs);
-            })
+            });
         });
     }
 
@@ -68,7 +71,7 @@ fn bench_pipeline_mux_route_ref_only(c: &mut Criterion) {
                     let cref = mux.route_ref(tlv_ref.ty, black_box(tlv_ref.value)).unwrap();
                     mux.release(cref.channel);
                 }
-            })
+            });
         });
     }
 
@@ -107,7 +110,7 @@ fn bench_pipeline_decode_then_mux_route_ref(c: &mut Criterion) {
                     let cref = mux.route_ref(tlv_ref.ty, tlv_ref.value).unwrap();
                     mux.release(cref.channel);
                 }
-            })
+            });
         });
     }
 

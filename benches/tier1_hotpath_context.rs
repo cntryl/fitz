@@ -242,7 +242,7 @@ fn bench_timer_manager_clear(c: &mut Criterion) {
                 tm.clear();
             },
             BatchSize::LargeInput,
-        )
+        );
     });
 
     group.finish();

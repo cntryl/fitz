@@ -30,9 +30,8 @@ fn write_committed_value_for_family(
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Begin failed"),
+    let KvResponse::BeginOk { tx_id } = begin else {
+        panic!("Begin failed");
     };
 
     let put = actor.handle(KvMessage::Put {
@@ -57,9 +56,8 @@ fn read_committed_value_for_family(actor: &mut KvActor, family: RouteFamily) -> 
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Begin failed"),
+    let KvResponse::BeginOk { tx_id } = begin else {
+        panic!("Begin failed");
     };
 
     let response = actor.handle(KvMessage::Get {
@@ -95,9 +93,8 @@ fn should_show_committed_value_before_restart() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::sync(),
     });
-    let tx_id = match begin {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Begin failed"),
+    let KvResponse::BeginOk { tx_id } = begin else {
+        panic!("Begin failed");
     };
 
     actor.handle(KvMessage::Put {
@@ -119,9 +116,8 @@ fn should_show_committed_value_before_restart() {
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_read = match b_read {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id: tx_read } = b_read else {
+        panic!("Expected BeginOk");
     };
 
     // Assert
@@ -159,9 +155,8 @@ fn should_commit_durable_kv_transaction() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::sync(),
     });
-    let tx_id = match begin {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Begin failed"),
+    let KvResponse::BeginOk { tx_id } = begin else {
+        panic!("Begin failed");
     };
 
     actor.handle(KvMessage::Put {
@@ -194,9 +189,8 @@ fn should_restore_committed_kv_value_on_engine_restart() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::sync(),
     });
-    let tx_id = match begin {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Begin failed"),
+    let KvResponse::BeginOk { tx_id } = begin else {
+        panic!("Begin failed");
     };
 
     actor.handle(KvMessage::Put {
@@ -231,9 +225,8 @@ fn should_restore_committed_kv_value_on_engine_restart() {
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx2 = match b2 {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id: tx2 } = b2 else {
+        panic!("Expected BeginOk");
     };
 
     // Assert - Read value after restart
@@ -284,9 +277,8 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::sync(),
     });
-    let tx_id = match begin {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Begin failed"),
+    let KvResponse::BeginOk { tx_id } = begin else {
+        panic!("Begin failed");
     };
 
     let put = actor.handle(KvMessage::Put {
@@ -311,9 +303,8 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx2 = match begin2 {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id: tx2 } = begin2 else {
+        panic!("Expected BeginOk");
     };
 
     // Act
@@ -445,9 +436,8 @@ fn should_handle_high_throughput_batch_puts() {
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
-        let tx_id = match begin {
-            KvResponse::BeginOk { tx_id } => tx_id,
-            _ => panic!("Begin failed"),
+        let KvResponse::BeginOk { tx_id } = begin else {
+            panic!("Begin failed");
         };
 
         let key = Bytes::from(format!("k{i:04}"));
@@ -472,9 +462,8 @@ fn should_handle_high_throughput_batch_puts() {
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx = match b {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Begin failed"),
+    let KvResponse::BeginOk { tx_id: tx } = b else {
+        panic!("Begin failed");
     };
 
     let get = actor.handle(KvMessage::Get {
