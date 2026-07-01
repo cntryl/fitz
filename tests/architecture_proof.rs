@@ -11,6 +11,11 @@ struct DomainProof {
     sink_type: &'static str,
     actor_file: &'static str,
     actor_marker: &'static str,
+    managed_actor_file: &'static str,
+    managed_actor_type: &'static str,
+    managed_command_type: &'static str,
+    managed_actor_impl_file: &'static str,
+    managed_actor_spawn_file: &'static str,
     doc_heading: &'static str,
     doc_phrases: &'static [&'static str],
 }
@@ -23,6 +28,11 @@ const DOMAIN_PROOFS: &[DomainProof] = &[
         sink_type: "KvDomainSink",
         actor_file: "src/domains/kv/actor.rs",
         actor_marker: "pub struct KvActor",
+        managed_actor_file: "src/domains/kv/sink/model.rs",
+        managed_actor_type: "KvDomainActor",
+        managed_command_type: "KvDomainCommand",
+        managed_actor_impl_file: "src/domains/kv/sink/mailbox_sink_impl.rs",
+        managed_actor_spawn_file: "src/domains/kv/sink/domain_sink_impl.rs",
         doc_heading: "#### KV",
         doc_phrases: &[
             "Actor owner:",
@@ -40,6 +50,11 @@ const DOMAIN_PROOFS: &[DomainProof] = &[
         sink_type: "QueueDomainSink",
         actor_file: "src/domains/queue/sink/model.rs",
         actor_marker: "pub(super) struct QueueDomainActor",
+        managed_actor_file: "src/domains/queue/sink/model.rs",
+        managed_actor_type: "QueueDomainActor",
+        managed_command_type: "QueueDomainCommand",
+        managed_actor_impl_file: "src/domains/queue/sink/mailbox_sink_impl.rs",
+        managed_actor_spawn_file: "src/domains/queue/sink/domain_sink_impl.rs",
         doc_heading: "#### Queue",
         doc_phrases: &[
             "Actor owner:",
@@ -57,6 +72,11 @@ const DOMAIN_PROOFS: &[DomainProof] = &[
         sink_type: "NoticeDomainSink",
         actor_file: "src/domains/notice/sink/actor_runtime.rs",
         actor_marker: "pub(super) struct NoticeDomainActor",
+        managed_actor_file: "src/domains/notice/sink/actor_runtime.rs",
+        managed_actor_type: "NoticeDomainActor",
+        managed_command_type: "NoticeDomainCommand",
+        managed_actor_impl_file: "src/domains/notice/sink/actor_runtime.rs",
+        managed_actor_spawn_file: "src/domains/notice/sink.rs",
         doc_heading: "#### Notice",
         doc_phrases: &[
             "Actor owner:",
@@ -74,6 +94,11 @@ const DOMAIN_PROOFS: &[DomainProof] = &[
         sink_type: "StreamDomainSink",
         actor_file: "src/domains/stream/actor.rs",
         actor_marker: "pub struct StreamActor",
+        managed_actor_file: "src/domains/stream/sink/model.rs",
+        managed_actor_type: "StreamDomainActor",
+        managed_command_type: "StreamDomainCommand",
+        managed_actor_impl_file: "src/domains/stream/sink/mailbox_sink_impl.rs",
+        managed_actor_spawn_file: "src/domains/stream/sink/domain_sink_impl.rs",
         doc_heading: "#### Stream",
         doc_phrases: &[
             "Actor owner:",
@@ -91,6 +116,11 @@ const DOMAIN_PROOFS: &[DomainProof] = &[
         sink_type: "RpcDomainSink",
         actor_file: "src/domains/rpc/actor.rs",
         actor_marker: "pub struct RpcRouteActor",
+        managed_actor_file: "src/domains/rpc/sink/state_model/sink.rs",
+        managed_actor_type: "RpcDomainActor",
+        managed_command_type: "RpcDomainCommand",
+        managed_actor_impl_file: "src/domains/rpc/sink/mailbox_sink_impl.rs",
+        managed_actor_spawn_file: "src/domains/rpc/sink/domain_sink_impl.rs",
         doc_heading: "#### RPC",
         doc_phrases: &[
             "Actor owner:",
@@ -108,6 +138,11 @@ const DOMAIN_PROOFS: &[DomainProof] = &[
         sink_type: "LeaseDomainSink",
         actor_file: "src/domains/lease/actor.rs",
         actor_marker: "pub struct LeaseActor",
+        managed_actor_file: "src/domains/lease/sink/model.rs",
+        managed_actor_type: "LeaseDomainActor",
+        managed_command_type: "LeaseDomainCommand",
+        managed_actor_impl_file: "src/domains/lease/sink/mailbox_sink_impl.rs",
+        managed_actor_spawn_file: "src/domains/lease/sink/lifecycle_and_admin.rs",
         doc_heading: "#### Lease",
         doc_phrases: &[
             "Actor owner:",
@@ -125,6 +160,11 @@ const DOMAIN_PROOFS: &[DomainProof] = &[
         sink_type: "ScheduleDomainSink",
         actor_file: "src/domains/schedule/actor/model.rs",
         actor_marker: "pub struct ScheduleActor",
+        managed_actor_file: "src/domains/schedule/sink/model.rs",
+        managed_actor_type: "ScheduleDomainActor",
+        managed_command_type: "ScheduleDomainCommand",
+        managed_actor_impl_file: "src/domains/schedule/sink/mailbox_sink_impl.rs",
+        managed_actor_spawn_file: "src/domains/schedule/sink/domain_sink_impl.rs",
         doc_heading: "#### Schedule",
         doc_phrases: &[
             "Actor owner:",
@@ -241,6 +281,9 @@ fn should_prove_domain_runtime_contract_for_every_domain_kind() {
     for proof in DOMAIN_PROOFS {
         let descriptor = proof.kind.descriptor();
         let actor_source = read_repo_file(proof.actor_file);
+        let managed_actor_source = read_repo_file(proof.managed_actor_file);
+        let managed_actor_impl_source = read_repo_file(proof.managed_actor_impl_file);
+        let managed_actor_spawn_source = read_repo_file(proof.managed_actor_spawn_file);
 
         // Assert
         assert_eq!(descriptor.scheme, proof.scheme);
@@ -262,6 +305,36 @@ fn should_prove_domain_runtime_contract_for_every_domain_kind() {
             "missing actor marker {} in {}",
             proof.actor_marker,
             proof.actor_file
+        );
+        assert!(
+            managed_actor_source.contains(&format!("struct {}", proof.managed_actor_type)),
+            "missing managed actor {} in {}",
+            proof.managed_actor_type,
+            proof.managed_actor_file
+        );
+        assert!(
+            managed_actor_source.contains(&format!("enum {}", proof.managed_command_type)),
+            "missing managed command {} in {}",
+            proof.managed_command_type,
+            proof.managed_actor_file
+        );
+        assert!(
+            managed_actor_impl_source
+                .contains(&format!("impl Actor for {}", proof.managed_actor_type))
+                && managed_actor_impl_source
+                    .contains(&format!("type Message = {}", proof.managed_command_type)),
+            "missing managed Actor impl for {} using {} in {}",
+            proof.managed_actor_type,
+            proof.managed_command_type,
+            proof.managed_actor_impl_file
+        );
+        assert!(
+            managed_actor_spawn_source
+                .contains(&format!("ManagedActor<{}>", proof.managed_command_type))
+                && managed_actor_spawn_source.contains("ManagedActor::spawn"),
+            "missing managed actor spawn for {} in {}",
+            proof.managed_actor_type,
+            proof.managed_actor_spawn_file
         );
         let result = router.route(Envelope::new(
             RouteAddress::new(RouteFamily::new(1), proof.kind.cleanup_route()),
