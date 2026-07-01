@@ -481,13 +481,13 @@ fn should_maintain_request_order_in_queue() {
     let mut ctx = make_semantics_ctx();
 
     // Enqueue three requests
-    for _i in 0..3 {
+    for i in 0_u8..3 {
         let request = RpcRequest {
             family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/auth/user/authenticate"),
             reply_route: Route::new("inbox://session/123"),
-            body: Bytes::from(vec![_i as u8]),
+            body: Bytes::from(vec![i]),
         };
         actor.receive(RpcMessage::Request(request), &mut ctx);
     }
@@ -537,7 +537,7 @@ fn should_handle_streaming_response_with_multiple_chunks() {
         let response = RpcResponse {
             correlation_id: Uuid::new_v4(),
             seq,
-            body: Bytes::from(vec![seq as u8]),
+            body: Bytes::from(vec![u8::try_from(seq).unwrap_or(u8::MAX)]),
             stream_end: seq == 2,
         };
         actor.receive(RpcMessage::Response(response), &mut ctx);
@@ -681,8 +681,6 @@ mod protocol_spec {
     fn should_echo_correlation_id_in_response() {
         // Arrange
         let correlation_id = Uuid::new_v4();
-        let _seq = 0u64;
-        let _stream_end = true;
         let body = Bytes::from("response payload");
 
         // Act

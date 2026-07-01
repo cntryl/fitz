@@ -25,7 +25,7 @@ fn bench_tlv_encode_sizes(c: &mut Criterion) {
                 encoder.clear();
                 encoder.encode(MessageType::new(42), black_box(&payload));
                 black_box(&encoder);
-            })
+            });
         });
 
         // include finish() cost — finish consumes the encoder, so allocate per-iteration
@@ -37,14 +37,14 @@ fn bench_tlv_encode_sizes(c: &mut Criterion) {
                 e.encode(MessageType::new(42), black_box(&payload));
                 let out: Bytes = e.finish();
                 black_box(out);
-            })
+            });
         });
     }
 
     group.finish();
 }
 
-/// Decode benches: decode_all (batch), decode-iterator with preallocated Vec.
+/// Decode benches: `decode_all` (batch), decode-iterator with preallocated Vec.
 /// Batch size 64 keeps each iteration under the tier1 target (<10 µs per op).
 fn bench_tlv_decode_sizes(c: &mut Criterion) {
     let sizes = [0usize, 16, 64, 256];
@@ -58,7 +58,10 @@ fn bench_tlv_decode_sizes(c: &mut Criterion) {
         let mut encoder = TlvEncoder::with_capacity(1024 * 8);
         let payload = vec![0u8; size];
         for i in 0..records {
-            encoder.encode(MessageType::new(i as u16), &payload);
+            encoder.encode(
+                MessageType::new(u16::try_from(i).unwrap_or(u16::MAX)),
+                &payload,
+            );
         }
         let data = encoder.finish();
 
@@ -69,7 +72,7 @@ fn bench_tlv_decode_sizes(c: &mut Criterion) {
             b.iter(|| {
                 // Ensure result escapes to black_box so it can't be optimized away
                 black_box(decoder.decode_all(&data).unwrap());
-            })
+            });
         });
 
         // decode-by-iter-loop but reuse a preallocated Vec to avoid Vec growth allocations
@@ -88,7 +91,7 @@ fn bench_tlv_decode_sizes(c: &mut Criterion) {
                     offset += consumed;
                 }
                 black_box(&out);
-            })
+            });
         });
     }
 
@@ -114,7 +117,7 @@ fn bench_tlv_decode_single_record(c: &mut Criterion) {
             let decoder = TlvDecoder::new();
             b.iter(|| {
                 black_box(decoder.decode_one(black_box(&data)).unwrap());
-            })
+            });
         });
     }
 

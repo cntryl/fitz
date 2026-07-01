@@ -168,6 +168,11 @@ fn usize_to_u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
+#[inline]
+fn u64_to_u32_saturating(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
 impl CompactPagedRealmValue {
     fn encode(&self) -> Vec<u8> {
         let mut total_len = 4;
@@ -454,7 +459,7 @@ fn build_ascii_fill(len: usize, seed: u64) -> Vec<u8> {
     while bytes.len() < len {
         state = next_deterministic_state(state);
         let token = ASCII_TOKEN_BANK[(state as usize) % ASCII_TOKEN_BANK.len()].as_bytes();
-        let hex = format!("{:08x}", state as u32);
+        let hex = format!("{:08x}", u64_to_u32_saturating(state));
 
         for chunk in [token, b" ", hex.as_bytes(), b" "] {
             for byte in chunk {
@@ -559,7 +564,7 @@ fn build_record_payload(
                 build_padded_text(
                     format!(
                         "ts={:08x} lvl=info stream={stream_index} seq={record_index} msg=",
-                        body_seed as u32
+                        u64_to_u32_saturating(body_seed)
                     ),
                     PRODUCTION_LIKE_LOG_BODY_BYTES,
                     body_seed ^ 0xDE_AD_BE_EF,
