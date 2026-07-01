@@ -1,8 +1,8 @@
 use super::model::{
     obs, DeliveryError, Duration, Envelope, Instant, MailboxSink, Ordering, QueueClientFrame,
     QueueClientRequest, QueueDomainActor, QueueDomainCommand, QueueDomainCore, QueueDomainRuntime,
-    QueueDomainSink, QueueReadyNotification, QueueSubscription, QueueSubscriptionMessage,
-    RoutedSubscriptionSet,
+    QueueDomainSink, QueueLiveCounts, QueueReadyNotification, QueueSubscription,
+    QueueSubscriptionMessage, RoutedSubscriptionSet,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
@@ -60,6 +60,13 @@ impl Actor for QueueDomainActor {
             QueueDomainCommand::Deliver(envelope, reply) => {
                 let _ = reply.send(runtime.deliver_envelope(&envelope));
             }
+            QueueDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
+                runtime.refresh_admin_snapshot_if_dirty();
+                let _ = reply.send(());
+            }
+            QueueDomainCommand::ReadLiveCounts(reply) => {
+                let _ = reply.send(runtime.live_counts());
+            }
         }
     }
 }
@@ -88,6 +95,20 @@ impl QueueDomainSink {
 impl QueueDomainRuntime<'_> {
     fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
         self.core.deliver_envelope(envelope)
+    }
+
+    fn refresh_admin_snapshot_if_dirty(&self) {
+        self.core.refresh_admin_snapshot_if_dirty();
+    }
+
+    fn live_counts(&self) -> QueueLiveCounts {
+        QueueLiveCounts {
+            pending: self.core.pending_message_count(),
+            ready: self.core.ready_message_count(),
+            delayed: self.core.delayed_message_count(),
+            inflight: self.core.active_inflight_count(),
+            dead_letters: self.core.dead_letter_count(),
+        }
     }
 }
 

@@ -1,9 +1,9 @@
 use super::model::{
     AtomicBool, AtomicU64, Duration, Envelope, HashMap, HashSet, Instant, Mutex, Ordering,
     QueueAdminProjection, QueueAdminSnapshot, QueueDomainActor, QueueDomainCommand,
-    QueueDomainCore, QueueDomainRuntime, QueueDomainSink, QueueMetrics, QueueNotification,
-    QueueProjectionEntry, QueueProjectionState, QueueReadyNotification, Router, WarmQueueActor,
-    QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_INTERVAL,
+    QueueDomainCore, QueueDomainRuntime, QueueDomainSink, QueueLiveCounts, QueueMetrics,
+    QueueNotification, QueueProjectionEntry, QueueProjectionState, QueueReadyNotification, Router,
+    WarmQueueActor, QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_INTERVAL,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
@@ -170,6 +170,56 @@ impl QueueDomainSink {
     #[cfg(test)]
     pub(super) fn stop_actor_for_tests(&self) {
         self.actor.stop();
+    }
+
+    pub fn refresh_admin_snapshot_if_dirty(&self) {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(QueueDomainCommand::RefreshAdminSnapshotIfDirty(reply_tx))
+        {
+            tracing::warn!(domain = "queue", error = %error, "Queue admin snapshot refresh enqueue failed");
+            return;
+        }
+
+        if let Err(error) = reply_rx.recv_timeout(Duration::from_secs(1)) {
+            tracing::warn!(domain = "queue", error = %error, "Queue admin snapshot refresh reply failed");
+        }
+    }
+
+    fn live_counts(&self) -> QueueLiveCounts {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(QueueDomainCommand::ReadLiveCounts(reply_tx))
+        {
+            tracing::warn!(domain = "queue", error = %error, "Queue live-count query enqueue failed");
+            return QueueLiveCounts::default();
+        }
+
+        reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default()
+    }
+
+    pub fn pending_message_count(&self) -> usize {
+        self.live_counts().pending
+    }
+
+    pub fn ready_message_count(&self) -> usize {
+        self.live_counts().ready
+    }
+
+    pub fn delayed_message_count(&self) -> usize {
+        self.live_counts().delayed
+    }
+
+    pub fn active_inflight_count(&self) -> usize {
+        self.live_counts().inflight
+    }
+
+    pub fn dead_letter_count(&self) -> usize {
+        self.live_counts().dead_letters
     }
 }
 

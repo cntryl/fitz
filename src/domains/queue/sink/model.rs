@@ -89,6 +89,17 @@ pub(super) enum QueueDomainCommand {
         Envelope,
         crossbeam_channel::Sender<Result<(), DeliveryError>>,
     ),
+    RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
+    ReadLiveCounts(crossbeam_channel::Sender<QueueLiveCounts>),
+}
+
+#[derive(Default)]
+pub(super) struct QueueLiveCounts {
+    pub(super) pending: usize,
+    pub(super) ready: usize,
+    pub(super) delayed: usize,
+    pub(super) inflight: usize,
+    pub(super) dead_letters: usize,
 }
 
 pub(super) struct QueueDomainActor {
