@@ -1,10 +1,11 @@
 use super::state_model::{
     route_quad, rpc_admin_snapshot_due, rpc_timeout_sweep_interval, Arc, AtomicBool, AtomicU64,
     DeliveryError, Duration, Envelope, Instant, Mutex, Ordering, Route, RouteAddress, Router,
-    RpcDomainCore, RpcDomainSink, RpcPendingErrorDelivery, RpcPendingRequest, RpcRouteState,
-    RpcSessionCleanupResult, RpcState, RpcWorker, RpcWorkerCleanupResult, RPC_BACKPRESSURE_ERROR,
-    RPC_DEFAULT_REQUEST_TIMEOUT, RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
-    RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
+    RpcDomainActor, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime, RpcDomainSink,
+    RpcPendingErrorDelivery, RpcPendingRequest, RpcRouteState, RpcSessionCleanupResult, RpcState,
+    RpcWorker, RpcWorkerCleanupResult, RPC_BACKPRESSURE_ERROR, RPC_DEFAULT_REQUEST_TIMEOUT,
+    RPC_DEFAULT_ROUTE_PENDING_CAPACITY, RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_TIMEOUT_ERROR,
+    RPC_WORKER_NOT_FOUND_ERROR,
 };
 #[cfg(not(test))]
 use crate::domains::rpc::{
@@ -12,50 +13,96 @@ use crate::domains::rpc::{
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
+use crate::runtime::routing::RouteFamily;
+
+impl RpcDomainActor {
+    pub(super) fn new(core: Arc<RpcDomainCore>, active: Arc<AtomicBool>) -> Self {
+        Self { core, active }
+    }
+
+    pub(super) fn route_address() -> RouteAddress {
+        RouteAddress::new(RouteFamily::new(0), Route::new("internal://domain/rpc"))
+    }
+
+    pub(super) fn runtime(&self) -> RpcDomainRuntime<'_> {
+        RpcDomainRuntime {
+            core: &self.core,
+            active: &self.active,
+        }
+    }
+}
 
 impl RpcDomainSink {
-    fn u64_to_usize_saturating(value: u64) -> usize {
-        usize::try_from(value).unwrap_or(usize::MAX)
-    }
-
-    fn elapsed_us_saturating(start: Instant) -> u64 {
-        start.elapsed().as_micros().try_into().unwrap_or(u64::MAX)
-    }
-
     pub fn new(
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
+        let core = Arc::new(RpcDomainCore {
+            state: Mutex::new(RpcState::new()),
+            router,
+            admin_read_model,
+            request_timeout: RPC_DEFAULT_REQUEST_TIMEOUT,
+            route_pending_capacity: RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
+            snapshot_dirty: AtomicBool::new(false),
+            snapshot_syncing: AtomicBool::new(false),
+            last_snapshot_elapsed_us: AtomicU64::new(0),
+            snapshot_epoch: Instant::now(),
+            metrics: None,
+        });
+        let active = Arc::new(AtomicBool::new(true));
+        let actor = Self::spawn_actor(core.clone(), active.clone());
         Self {
-            core: RpcDomainCore {
-                state: Mutex::new(RpcState::new()),
-                router,
-                admin_read_model,
-                request_timeout: RPC_DEFAULT_REQUEST_TIMEOUT,
-                route_pending_capacity: RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
-                snapshot_dirty: AtomicBool::new(false),
-                snapshot_syncing: AtomicBool::new(false),
-                last_snapshot_elapsed_us: AtomicU64::new(0),
-                snapshot_epoch: Instant::now(),
-                metrics: None,
-            },
-            active: AtomicBool::new(true),
+            core,
+            active,
+            actor,
+        }
+    }
+
+    fn spawn_actor(
+        core: Arc<RpcDomainCore>,
+        active: Arc<AtomicBool>,
+    ) -> crate::runtime::ManagedActor<RpcDomainCommand> {
+        crate::runtime::ManagedActor::spawn(
+            core.router.clone(),
+            RpcDomainActor::route_address(),
+            RpcDomainActor::new(core, active),
+            1024,
+        )
+    }
+
+    fn rebuild_actor(&mut self) {
+        self.actor.stop();
+        self.actor = Self::spawn_actor(self.core.clone(), self.active.clone());
+    }
+
+    fn core_for_builder(&mut self) -> &mut RpcDomainCore {
+        Arc::get_mut(&mut self.core).expect("RPC sink builders must run before sharing the sink")
+    }
+
+    fn runtime(&self) -> RpcDomainRuntime<'_> {
+        RpcDomainRuntime {
+            core: &self.core,
+            active: &self.active,
         }
     }
 
     #[must_use]
     pub fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
-        self.request_timeout = if request_timeout.is_zero() {
+        self.actor.stop();
+        self.core_for_builder().request_timeout = if request_timeout.is_zero() {
             RPC_MIN_TIMEOUT_SWEEP_INTERVAL
         } else {
             request_timeout
         };
+        self.rebuild_actor();
         self
     }
 
     #[must_use]
     pub fn with_route_pending_capacity(mut self, route_pending_capacity: usize) -> Self {
-        self.route_pending_capacity = route_pending_capacity.max(1);
+        self.actor.stop();
+        self.core_for_builder().route_pending_capacity = route_pending_capacity.max(1);
+        self.rebuild_actor();
         self
     }
 
@@ -64,24 +111,119 @@ impl RpcDomainSink {
         mut self,
         metrics: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.metrics = Some(crate::domains::rpc::RpcMetrics::new(metrics));
-        self.refresh_metrics_gauges();
+        self.actor.stop();
+        self.core_for_builder().metrics = Some(crate::domains::rpc::RpcMetrics::new(metrics));
+        self.runtime().refresh_metrics_gauges();
+        self.rebuild_actor();
         self
     }
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+        self.actor.stop();
     }
 
-    /// Run the best-effort timeout sweep for in-memory pending RPC requests.
-    ///
-    /// Expired requests are removed from the current process, timeout counters are
-    /// updated, and terminal errors are forwarded only if the caller inbox is still
-    /// registered. Correlation IDs here only match live in-flight work; there is
-    /// no replay, broker-side deduplication, or restart recovery path behind this
-    /// loop.
     pub(crate) fn is_active(&self) -> bool {
         self.active.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn timeout_sweep_interval(&self) -> Duration {
+        self.runtime().timeout_sweep_interval()
+    }
+
+    pub(crate) fn expire_timed_out_requests(&self) {
+        if let Err(error) =
+            self.actor
+                .try_send_high_priority(RpcDomainCommand::ExpireTimedOutRequestsAt(
+                    Instant::now(),
+                    None,
+                ))
+        {
+            tracing::warn!(domain = "rpc", error = %error, "RPC timeout sweep enqueue failed");
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn expire_timed_out_requests_at(&self, now: Instant) {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) =
+            self.actor
+                .try_send_high_priority(RpcDomainCommand::ExpireTimedOutRequestsAt(
+                    now,
+                    Some(reply_tx),
+                ))
+        {
+            tracing::warn!(domain = "rpc", error = %error, "RPC timeout sweep enqueue failed");
+            return;
+        }
+
+        let _ = reply_rx.recv_timeout(Duration::from_secs(1));
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_actor_running(&self) -> bool {
+        self.actor.is_running()
+    }
+
+    #[cfg(test)]
+    pub(super) fn stop_actor_for_tests(&self) {
+        self.actor.stop();
+    }
+
+    pub fn worker_count(&self) -> usize {
+        self.runtime().worker_count()
+    }
+
+    pub fn pending_request_count(&self) -> usize {
+        self.runtime().pending_request_count()
+    }
+
+    #[cfg(test)]
+    pub(super) fn sync_admin_snapshot(&self) {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(RpcDomainCommand::SyncAdminSnapshot(Some(reply_tx)))
+        {
+            tracing::warn!(domain = "rpc", error = %error, "RPC admin snapshot enqueue failed");
+            return;
+        }
+
+        let _ = reply_rx.recv_timeout(Duration::from_secs(1));
+    }
+
+    pub fn refresh_admin_snapshot_if_dirty(&self) {
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(RpcDomainCommand::RefreshAdminSnapshotIfDirty(None))
+        {
+            tracing::warn!(domain = "rpc", error = %error, "RPC admin snapshot refresh enqueue failed");
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn apply_session_cleanup(&self, session_id: u64) -> RpcSessionCleanupResult {
+        self.runtime().apply_session_cleanup(session_id)
+    }
+
+    #[cfg(test)]
+    pub(super) fn apply_worker_unsubscribe(
+        &self,
+        worker_addr: &RouteAddress,
+        session_id: u64,
+    ) -> RpcWorkerCleanupResult {
+        self.runtime()
+            .apply_worker_unsubscribe(worker_addr, session_id)
+    }
+}
+
+impl RpcDomainRuntime<'_> {
+    fn u64_to_usize_saturating(value: u64) -> usize {
+        usize::try_from(value).unwrap_or(usize::MAX)
+    }
+
+    fn elapsed_us_saturating(start: Instant) -> u64 {
+        start.elapsed().as_micros().try_into().unwrap_or(u64::MAX)
     }
 
     pub(crate) fn timeout_sweep_interval(&self) -> Duration {

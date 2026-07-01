@@ -1,6 +1,6 @@
 use super::state_model::{
     session_inbox_address, Envelope, Instant, RouteFamily, RpcDeliveryOutcome as DeliveryOutcome,
-    RpcDomainSink, RpcPendingErrorDelivery, RpcPendingRequest, RpcPendingResponseDisposition,
+    RpcDomainRuntime, RpcPendingErrorDelivery, RpcPendingRequest, RpcPendingResponseDisposition,
     RpcState, RPC_CORRELATION_NOT_FOUND_ERROR, RPC_INVALID_SEQUENCE_ERROR, RPC_WRONG_WORKER_ERROR,
 };
 use crate::domains::rpc::protocol::RpcResponse;
@@ -32,7 +32,7 @@ fn elapsed_micros_u64(start: Instant) -> u64 {
     start.elapsed().as_micros().try_into().unwrap_or(u64::MAX)
 }
 
-impl RpcDomainSink {
+impl RpcDomainRuntime<'_> {
     pub(super) fn handle_response_message(
         &self,
         envelope: &Envelope,

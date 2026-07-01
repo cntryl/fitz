@@ -1,4 +1,7 @@
-use super::{Arc, AtomicBool, AtomicU64, Duration, Instant, Mutex, Router, RpcState};
+use super::{
+    Arc, AtomicBool, AtomicU64, DeliveryError, Duration, Envelope, Instant, ManagedActor, Mutex,
+    Router, RpcState,
+};
 
 pub struct RpcDomainCore {
     pub(in crate::domains::rpc::sink) state: Mutex<RpcState>,
@@ -18,9 +21,31 @@ pub struct RpcDomainCore {
     pub(in crate::domains::rpc::sink) metrics: Option<crate::domains::rpc::RpcMetrics>,
 }
 
+pub(in crate::domains::rpc::sink) enum RpcDomainCommand {
+    Deliver(
+        Envelope,
+        crossbeam_channel::Sender<Result<(), DeliveryError>>,
+    ),
+    ExpireTimedOutRequestsAt(Instant, Option<crossbeam_channel::Sender<()>>),
+    #[cfg(test)]
+    SyncAdminSnapshot(Option<crossbeam_channel::Sender<()>>),
+    RefreshAdminSnapshotIfDirty(Option<crossbeam_channel::Sender<()>>),
+}
+
+pub(in crate::domains::rpc::sink) struct RpcDomainActor {
+    pub(in crate::domains::rpc::sink) core: Arc<RpcDomainCore>,
+    pub(in crate::domains::rpc::sink) active: Arc<AtomicBool>,
+}
+
+pub(in crate::domains::rpc::sink) struct RpcDomainRuntime<'a> {
+    pub(in crate::domains::rpc::sink) core: &'a RpcDomainCore,
+    pub(in crate::domains::rpc::sink) active: &'a AtomicBool,
+}
+
 pub struct RpcDomainSink {
-    pub(in crate::domains::rpc::sink) core: RpcDomainCore,
-    pub(in crate::domains::rpc::sink) active: AtomicBool,
+    pub(in crate::domains::rpc::sink) core: Arc<RpcDomainCore>,
+    pub(in crate::domains::rpc::sink) active: Arc<AtomicBool>,
+    pub(in crate::domains::rpc::sink) actor: ManagedActor<RpcDomainCommand>,
 }
 
 impl std::ops::Deref for RpcDomainSink {
@@ -33,6 +58,14 @@ impl std::ops::Deref for RpcDomainSink {
 
 impl std::ops::DerefMut for RpcDomainSink {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.core
+        Arc::get_mut(&mut self.core).expect("RPC sink builders must run before sharing the sink")
+    }
+}
+
+impl std::ops::Deref for RpcDomainRuntime<'_> {
+    type Target = RpcDomainCore;
+
+    fn deref(&self) -> &Self::Target {
+        self.core
     }
 }

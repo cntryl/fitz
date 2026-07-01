@@ -1,31 +1,95 @@
 use super::state_model::{
     session_inbox_address, DeliveryError, Envelope, Instant, MailboxSink, Ordering,
-    RpcClientRequest, RpcClientResponseBody, RpcDeliveryOutcome as DeliveryOutcome, RpcDomainSink,
-    RpcPendingRequest, RpcQueuedRequest, RpcState, RpcWorker, RPC_BACKPRESSURE_ERROR,
-    RPC_DUPLICATE_CORRELATION_ERROR, RPC_MAX_PENDING_REQUESTS, RPC_NO_WORKERS_ERROR,
-    RPC_WORKER_NOT_FOUND_ERROR,
+    RpcClientRequest, RpcClientResponseBody, RpcDeliveryOutcome as DeliveryOutcome, RpcDomainActor,
+    RpcDomainCommand, RpcDomainRuntime, RpcDomainSink, RpcPendingRequest, RpcQueuedRequest,
+    RpcState, RpcWorker, RPC_BACKPRESSURE_ERROR, RPC_DUPLICATE_CORRELATION_ERROR,
+    RPC_MAX_PENDING_REQUESTS, RPC_NO_WORKERS_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
 };
 use crate::domains::rpc::protocol::{RpcMessage, RpcRequest};
+use crate::runtime::{Actor, Context};
 
 impl MailboxSink for RpcDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if self.handle_cleanup_envelope(&envelope) {
+        self.deliver_to_actor(envelope, false)
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver_to_actor(envelope, true)
+    }
+}
+
+impl Actor for RpcDomainActor {
+    type Message = RpcDomainCommand;
+
+    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
+        let runtime = self.runtime();
+        match msg {
+            RpcDomainCommand::Deliver(envelope, reply) => {
+                let _ = reply.send(runtime.deliver_envelope(&envelope));
+            }
+            RpcDomainCommand::ExpireTimedOutRequestsAt(now, reply) => {
+                runtime.expire_timed_out_requests_at(now);
+                if let Some(reply) = reply {
+                    let _ = reply.send(());
+                }
+            }
+            #[cfg(test)]
+            RpcDomainCommand::SyncAdminSnapshot(reply) => {
+                runtime.sync_admin_snapshot();
+                if let Some(reply) = reply {
+                    let _ = reply.send(());
+                }
+            }
+            RpcDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
+                runtime.refresh_admin_snapshot_if_dirty();
+                if let Some(reply) = reply {
+                    let _ = reply.send(());
+                }
+            }
+        }
+    }
+}
+
+impl RpcDomainSink {
+    fn deliver_to_actor(
+        &self,
+        envelope: Envelope,
+        high_priority: bool,
+    ) -> Result<(), DeliveryError> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let command = RpcDomainCommand::Deliver(envelope, reply_tx);
+        let enqueue_result = if high_priority {
+            self.actor.try_send_high_priority(command)
+        } else {
+            self.actor.try_send(command)
+        };
+        enqueue_result?;
+
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or(Err(DeliveryError::ActorStopped))
+    }
+}
+
+impl RpcDomainRuntime<'_> {
+    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
         self.ensure_active()?;
-        Self::log_delivery(&envelope);
+        Self::log_delivery(envelope);
 
-        let request = Self::extract_request(&envelope)?;
+        let request = Self::extract_request(envelope)?;
         let meta = request.meta;
         let request_started = self.record_request_start();
         Self::log_parse_start(meta);
 
         let rpc_msg = self.parse_request_message(request.message, request_started)?;
         let (response, snapshot_policy, request_failed) =
-            self.handle_rpc_message(&envelope, &meta, rpc_msg);
+            self.handle_rpc_message(envelope, &meta, rpc_msg);
 
         self.complete_request(
-            &envelope,
+            envelope,
             meta,
             response,
             snapshot_policy,
@@ -36,12 +100,6 @@ impl MailboxSink for RpcDomainSink {
         Ok(())
     }
 
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
-
-impl RpcDomainSink {
     fn handle_rpc_message(
         &self,
         envelope: &Envelope,

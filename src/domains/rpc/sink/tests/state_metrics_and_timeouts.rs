@@ -81,6 +81,27 @@ pub(super) fn should_create_rpc_domain_sink() {
 }
 
 #[test]
+pub(super) fn should_reject_rpc_delivery_when_managed_actor_is_stopped() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = RpcDomainSink::new(router, admin_read_model);
+    let destination = RouteAddress::new(
+        RouteFamily::new(1),
+        Route::new("rpc://prod/system/resource/op"),
+    );
+    let envelope = Envelope::new(destination, 42_u64);
+
+    // Act
+    sink.stop_actor_for_tests();
+    let result = sink.deliver(envelope);
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert!(matches!(result, Err(DeliveryError::ActorStopped)));
+}
+
+#[test]
 pub(super) fn should_keep_rpc_mailbox_sink_impl_below_file_size_limit() {
     // Arrange
     let line_count = include_str!("../mailbox_sink_impl.rs").lines().count();

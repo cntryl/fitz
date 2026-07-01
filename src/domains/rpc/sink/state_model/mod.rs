@@ -5,7 +5,7 @@ pub(super) use crate::protocol::frame_context::FrameContext;
 pub(super) use crate::runtime::routing::{
     route_quad, session_inbox_address, Route, RouteAddress, RouteFamily,
 };
-pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
+pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
 pub(super) use chrono::Utc;
 pub(super) use fxhash::FxBuildHasher;
 pub(super) use parking_lot::Mutex;
@@ -42,8 +42,8 @@ pub(super) use requests::{
     RpcWorkerCleanupResult,
 };
 pub(super) use route_state::RpcRouteState;
-pub(super) use sink::RpcDomainCore;
 pub use sink::RpcDomainSink;
+pub(super) use sink::{RpcDomainActor, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime};
 pub(super) use snapshot::rpc_admin_snapshot_due;
 pub(super) use state::RpcState;
 pub(super) use worker::RpcWorker;

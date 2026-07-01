@@ -525,8 +525,8 @@ Current Notice behavior is intentionally ephemeral:
 - Admin path: read-model projections and watermark views flow through `Runtime::stream_list_*`; committed record inspection uses `Runtime::stream_read_resource_records()`.
 
 #### RPC
-- Actor owner: `RpcRouteActor` and `ReplyInboxActor` own live worker registration, pending call state, reply sequencing, and timeout handling.
-- Current production boundary: `RpcDomainSink` is the mailbox adapter and `RpcDomainCore` holds live route workers, pending calls, reply forwarding, timeout sweep state, metrics, and admin projection coordination until the managed actor handoff is completed.
+- Actor owner: `RpcDomainActor` is the managed production actor for delivery, cleanup, timeout sweeps, and admin snapshot sync; `RpcRouteActor` and `ReplyInboxActor` remain focused state-machine models for worker assignment and reply sequencing.
+- Current production boundary: `RpcDomainSink` is the mailbox adapter, and `RpcDomainRuntime` executes against `RpcDomainCore` inside the managed actor mailbox.
 - Persistence: worker registrations, pending calls, and reply assembly are ephemeral; RPC does not provide restart-safe backlog durability.
 - Cleanup: disconnect unregisters workers, expires pending session state, and never restores inflight calls or subscriptions.
 - `RouteFamily`/`realm`: dispatch and replies stay within the exact `RouteFamily`; `realm` remains an application-defined route component for operation naming and filters.

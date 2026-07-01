@@ -1,10 +1,10 @@
-use super::state_model::{Envelope, RpcClientRequest, RpcClientResponseBody, RpcDomainSink};
+use super::state_model::{Envelope, RpcClientRequest, RpcClientResponseBody, RpcDomainRuntime};
 #[cfg(not(test))]
 use crate::domains::rpc::RpcClientResponse;
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
 
-impl RpcDomainSink {
+impl RpcDomainRuntime<'_> {
     pub(super) fn request_from_envelope(envelope: &Envelope) -> Option<RpcClientRequest> {
         if let Some(request) = envelope.payload::<RpcClientRequest>() {
             return Some(request.clone());
