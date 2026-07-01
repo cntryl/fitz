@@ -27,21 +27,22 @@ fn test_address(family: u64, route: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(family), Route::new(route))
 }
 
-fn make_exact_router(count: usize, sink: Arc<dyn MailboxSink>) -> (Router, Vec<RouteAddress>) {
+fn make_exact_router(count: usize, sink: &Arc<dyn MailboxSink>) -> (Router, Vec<RouteAddress>) {
     let router = Router::new();
     let addresses: Vec<_> = (0..count)
         .map(|i| test_address(1, &format!("rpc://acme/router/exact/{i}")))
         .collect();
 
     for address in &addresses {
-        router.register(address.clone(), Arc::clone(&sink));
+        router.register(address.clone(), Arc::clone(sink));
     }
 
     (router, addresses)
 }
 
 fn bench_route_exact_primary(c: &mut Criterion) {
-    let (router, addresses) = make_exact_router(1, Arc::new(NoopSink));
+    let sink: Arc<dyn MailboxSink> = Arc::new(NoopSink);
+    let (router, addresses) = make_exact_router(1, &sink);
     let address = addresses[0].clone();
 
     let mut group = c.benchmark_group("subsystem_router");
@@ -55,7 +56,7 @@ fn bench_route_exact_primary(c: &mut Criterion) {
                 .route(Envelope::new(black_box(address.clone()), black_box(seq)))
                 .expect("exact route should succeed");
             seq = seq.wrapping_add(1);
-        })
+        });
     });
 
     group.finish();
@@ -77,7 +78,7 @@ fn bench_route_domain_fallback_primary(c: &mut Criterion) {
                 .route(Envelope::new(black_box(address.clone()), black_box(seq)))
                 .expect("domain fallback route should succeed");
             seq = seq.wrapping_add(1);
-        })
+        });
     });
 
     group.finish();
@@ -88,7 +89,8 @@ fn bench_route_batch_exact_primary(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
 
     for route_count in [1usize, 64usize, 1024usize] {
-        let (router, addresses) = make_exact_router(route_count, Arc::new(NoopSink));
+        let sink: Arc<dyn MailboxSink> = Arc::new(NoopSink);
+        let (router, addresses) = make_exact_router(route_count, &sink);
         group.throughput(Throughput::Elements(route_count as u64));
 
         group.bench_function(
@@ -102,7 +104,7 @@ fn bench_route_batch_exact_primary(c: &mut Criterion) {
                             .expect("batched exact route should succeed");
                         seq = seq.wrapping_add(1);
                     }
-                })
+                });
             },
         );
     }
@@ -129,7 +131,7 @@ fn bench_route_mailbox_primary(c: &mut Criterion) {
                     .expect("mailbox route should succeed");
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.finish();
@@ -161,7 +163,7 @@ fn bench_route_backpressure_primary(c: &mut Criterion) {
                 other => panic!("expected MailboxFull, got {other:?}"),
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.finish();

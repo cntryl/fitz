@@ -85,7 +85,7 @@ fn bench_cancel_churn(c: &mut Criterion) {
                     black_box(actor.schedule_count());
                 },
                 BatchSize::SmallInput,
-            )
+            );
         });
     }
 
@@ -119,7 +119,7 @@ fn bench_shared_full_list_cache(c: &mut Criterion) {
                         black_box((entries.len(), total_count));
                     },
                     BatchSize::SmallInput,
-                )
+                );
             },
         );
 
@@ -145,7 +145,7 @@ fn bench_shared_full_list_cache(c: &mut Criterion) {
                         black_box((entries.len(), total_count));
                     },
                     BatchSize::SmallInput,
-                )
+                );
             },
         );
     }
