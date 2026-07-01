@@ -173,6 +173,81 @@ fn u64_to_u32_saturating(value: u64) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
+#[inline]
+fn usize_to_u8_saturating(value: usize) -> u8 {
+    u8::try_from(value).unwrap_or(u8::MAX)
+}
+
+#[inline]
+fn usize_to_u16_saturating(value: usize) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
+
+#[inline]
+fn u64_to_u16_saturating(value: u64) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
+
+#[inline]
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+#[inline]
+fn usize_ratio_to_f64(numerator: usize, denominator: usize) -> f64 {
+    f64::from(usize_to_u32_saturating(numerator)) / f64::from(usize_to_u32_saturating(denominator))
+}
+
+#[inline]
+const fn realm_page_record_limit_u64() -> u64 {
+    REALM_PAGE_RECORD_LIMIT as u64
+}
+
+#[inline]
+fn area_page_start_offset(area_offset: u64) -> u64 {
+    area_offset / realm_page_record_limit_u64() * realm_page_record_limit_u64()
+}
+
+#[inline]
+fn area_page_slot(area_offset: u64) -> u16 {
+    u64_to_u16_saturating(area_offset % realm_page_record_limit_u64())
+}
+
+#[inline]
+fn low_byte(value: u64) -> u8 {
+    u8::try_from(value & 0xFF).unwrap_or(u8::MAX)
+}
+
+#[inline]
+fn fold_page_run_refs(
+    page_runs: impl Iterator<Item = (u32, u16)>,
+) -> Vec<CompactRealmPageRunRefRecord> {
+    page_runs.fold(
+        Vec::<CompactRealmPageRunRefRecord>::new(),
+        |mut runs, (page_id, slot)| {
+            if let Some(last_run) = runs.last_mut() {
+                let expected_slot = last_run.start_slot + last_run.len;
+                if last_run.page_id == page_id && expected_slot == slot {
+                    last_run.len += 1;
+                    return runs;
+                }
+            }
+
+            runs.push(CompactRealmPageRunRefRecord {
+                page_id,
+                start_slot: slot,
+                len: 1,
+            });
+            runs
+        },
+    )
+}
+
+#[inline]
+fn percent_reduction(candidate_total_bytes: usize, baseline_total_bytes: usize) -> f64 {
+    100.0 * (1.0 - usize_ratio_to_f64(candidate_total_bytes, baseline_total_bytes))
+}
+
 impl CompactPagedRealmValue {
     fn encode(&self) -> Vec<u8> {
         let mut total_len = 4;
@@ -425,7 +500,9 @@ fn parse_area_index(area: &str) -> u16 {
 }
 
 fn deterministic_seed(stream_index: usize, record_index: usize, salt: u64) -> u64 {
-    let base = ((stream_index as u64) << 32) ^ record_index as u64 ^ salt;
+    let base = (u64::try_from(stream_index).unwrap_or(u64::MAX) << 32)
+        ^ u64::try_from(record_index).unwrap_or(u64::MAX)
+        ^ salt;
     base | 1
 }
 
@@ -437,7 +514,7 @@ fn next_deterministic_state(mut state: u64) -> u64 {
 }
 
 fn build_low_entropy_bytes(len: usize, seed: u64) -> Bytes {
-    Bytes::from(vec![(seed & 0xFF) as u8; len])
+    Bytes::from(vec![low_byte(seed); len])
 }
 
 fn build_high_entropy_bytes(len: usize, seed: u64) -> Bytes {
@@ -446,7 +523,7 @@ fn build_high_entropy_bytes(len: usize, seed: u64) -> Bytes {
 
     while bytes.len() < len {
         state = next_deterministic_state(state);
-        bytes.push((state & 0xFF) as u8);
+        bytes.push(low_byte(state));
     }
 
     Bytes::from(bytes)
@@ -458,7 +535,8 @@ fn build_ascii_fill(len: usize, seed: u64) -> Vec<u8> {
 
     while bytes.len() < len {
         state = next_deterministic_state(state);
-        let token = ASCII_TOKEN_BANK[(state as usize) % ASCII_TOKEN_BANK.len()].as_bytes();
+        let token_index = u64_to_usize_saturating(state) % ASCII_TOKEN_BANK.len();
+        let token = ASCII_TOKEN_BANK[token_index].as_bytes();
         let hex = format!("{:08x}", u64_to_u32_saturating(state));
 
         for chunk in [token, b" ", hex.as_bytes(), b" "] {
@@ -514,11 +592,16 @@ fn build_record_payload(
     record_index: usize,
     profile: PayloadProfile,
 ) -> (Bytes, Option<Bytes>) {
-    let body_seed = ((stream_index as u8).wrapping_mul(17)).wrapping_add(record_index as u8);
+    let body_seed = usize_to_u8_saturating(stream_index)
+        .wrapping_mul(17)
+        .wrapping_add(usize_to_u8_saturating(record_index));
     let metadata_seed = body_seed.wrapping_add(53);
-    let body_seed = deterministic_seed(stream_index, record_index, body_seed as u64);
-    let metadata_seed =
-        deterministic_seed(stream_index, record_index, metadata_seed as u64 ^ 0xA5A5);
+    let body_seed = deterministic_seed(stream_index, record_index, u64::from(body_seed));
+    let metadata_seed = deterministic_seed(
+        stream_index,
+        record_index,
+        u64::from(metadata_seed) ^ 0xA5A5,
+    );
 
     match profile {
         PayloadProfile::LowEntropy => (
@@ -598,12 +681,13 @@ fn build_records(profile: PayloadProfile) -> Vec<LayoutRecord> {
                 records.push(LayoutRecord {
                     area: area.clone(),
                     resource: format!("resource-{area_index}-{stream_index}"),
-                    resource_offset: record_index as u64,
+                    resource_offset: u64::try_from(record_index).unwrap_or(u64::MAX),
                     area_offset,
                     realm_offset: next_realm_offset,
                     body,
                     metadata,
-                    created_at: ((global_stream_index as u64) << 32) | record_index as u64,
+                    created_at: (u64::try_from(global_stream_index).unwrap_or(u64::MAX) << 32)
+                        | u64::try_from(record_index).unwrap_or(u64::MAX),
                 });
                 next_realm_offset += 1;
             }
@@ -665,7 +749,7 @@ fn summarize_current_layout(records: &[LayoutRecord]) -> LayoutSummary {
         resource_plane_bytes,
         area_plane_bytes,
         realm_plane_bytes,
-        bytes_per_event: total_bytes as f64 / records.len() as f64,
+        bytes_per_event: usize_ratio_to_f64(total_bytes, records.len()),
     }
 }
 
@@ -728,7 +812,7 @@ fn summarize_hybrid_layout(records: &[LayoutRecord]) -> LayoutSummary {
         resource_plane_bytes,
         area_plane_bytes,
         realm_plane_bytes,
-        bytes_per_event: total_bytes as f64 / records.len() as f64,
+        bytes_per_event: usize_ratio_to_f64(total_bytes, records.len()),
     }
 }
 
@@ -759,7 +843,7 @@ fn summarize_area_paged_realm_body_hybrid_layout(records: &[LayoutRecord]) -> La
 
     let mut area_records = vec![Vec::new(); AREA_COUNT];
     for record in records {
-        area_records[parse_area_index(&record.area) as usize].push(record);
+        area_records[usize::from(parse_area_index(&record.area))].push(record);
     }
 
     for (area_index, records_for_area) in area_records.iter().enumerate() {
@@ -807,7 +891,7 @@ fn summarize_area_paged_realm_body_hybrid_layout(records: &[LayoutRecord]) -> La
         resource_plane_bytes,
         area_plane_bytes,
         realm_plane_bytes,
-        bytes_per_event: total_bytes as f64 / records.len() as f64,
+        bytes_per_event: usize_ratio_to_f64(total_bytes, records.len()),
     }
 }
 
@@ -871,7 +955,7 @@ fn summarize_two_body_hybrid_layout(records: &[LayoutRecord]) -> LayoutSummary {
         resource_plane_bytes,
         area_plane_bytes,
         realm_plane_bytes,
-        bytes_per_event: total_bytes as f64 / records.len() as f64,
+        bytes_per_event: usize_ratio_to_f64(total_bytes, records.len()),
     }
 }
 
@@ -902,7 +986,7 @@ fn summarize_area_page_ref_layout(records: &[LayoutRecord]) -> LayoutSummary {
 
     let mut area_records = vec![Vec::new(); AREA_COUNT];
     for record in records {
-        area_records[parse_area_index(&record.area) as usize].push(record);
+        area_records[usize::from(parse_area_index(&record.area))].push(record);
     }
 
     for (area_index, records_for_area) in area_records.iter().enumerate() {
@@ -934,9 +1018,8 @@ fn summarize_area_page_ref_layout(records: &[LayoutRecord]) -> LayoutSummary {
                 .iter()
                 .map(|record| CompactRealmAreaPageRefRecord {
                     area_index: parse_area_index(&record.area),
-                    area_page_start_offset: record.area_offset / REALM_PAGE_RECORD_LIMIT as u64
-                        * REALM_PAGE_RECORD_LIMIT as u64,
-                    slot: (record.area_offset % REALM_PAGE_RECORD_LIMIT as u64) as u16,
+                    area_page_start_offset: area_page_start_offset(record.area_offset),
+                    slot: area_page_slot(record.area_offset),
                 })
                 .collect(),
         }
@@ -950,7 +1033,7 @@ fn summarize_area_page_ref_layout(records: &[LayoutRecord]) -> LayoutSummary {
         resource_plane_bytes,
         area_plane_bytes,
         realm_plane_bytes,
-        bytes_per_event: total_bytes as f64 / records.len() as f64,
+        bytes_per_event: usize_ratio_to_f64(total_bytes, records.len()),
     }
 }
 
@@ -981,7 +1064,7 @@ fn summarize_area_page_id_ref_layout(records: &[LayoutRecord]) -> LayoutSummary 
 
     let mut area_records = vec![Vec::new(); AREA_COUNT];
     for record in records {
-        area_records[parse_area_index(&record.area) as usize].push(record);
+        area_records[usize::from(parse_area_index(&record.area))].push(record);
     }
 
     let mut area_page_ids = HashMap::<(u16, u64), u32>::new();
@@ -992,7 +1075,7 @@ fn summarize_area_page_id_ref_layout(records: &[LayoutRecord]) -> LayoutSummary 
         for page in records_for_area.chunks(REALM_PAGE_RECORD_LIMIT) {
             let page_start_area_offset = page[0].area_offset;
             area_page_ids.insert(
-                (area_index as u16, page_start_area_offset),
+                (usize_to_u16_saturating(area_index), page_start_area_offset),
                 next_area_page_id,
             );
             next_area_page_id += 1;
@@ -1023,16 +1106,14 @@ fn summarize_area_page_id_ref_layout(records: &[LayoutRecord]) -> LayoutSummary 
                 .iter()
                 .map(|record| {
                     let area_index = parse_area_index(&record.area);
-                    let area_page_start_offset = record.area_offset
-                        / REALM_PAGE_RECORD_LIMIT as u64
-                        * REALM_PAGE_RECORD_LIMIT as u64;
+                    let area_page_start_offset = area_page_start_offset(record.area_offset);
                     let page_id = area_page_ids
                         .get(&(area_index, area_page_start_offset))
                         .copied()
                         .expect("missing area page id for write-shape layout");
                     CompactRealmPageIdRefRecord {
                         page_id,
-                        slot: (record.area_offset % REALM_PAGE_RECORD_LIMIT as u64) as u16,
+                        slot: area_page_slot(record.area_offset),
                     }
                 })
                 .collect(),
@@ -1047,7 +1128,7 @@ fn summarize_area_page_id_ref_layout(records: &[LayoutRecord]) -> LayoutSummary 
         resource_plane_bytes,
         area_plane_bytes,
         realm_plane_bytes,
-        bytes_per_event: total_bytes as f64 / records.len() as f64,
+        bytes_per_event: usize_ratio_to_f64(total_bytes, records.len()),
     }
 }
 
@@ -1078,7 +1159,7 @@ fn summarize_area_page_run_ref_layout(records: &[LayoutRecord]) -> LayoutSummary
 
     let mut area_records = vec![Vec::new(); AREA_COUNT];
     for record in records {
-        area_records[parse_area_index(&record.area) as usize].push(record);
+        area_records[usize::from(parse_area_index(&record.area))].push(record);
     }
 
     let mut area_page_ids = HashMap::<(u16, u64), u32>::new();
@@ -1089,7 +1170,7 @@ fn summarize_area_page_run_ref_layout(records: &[LayoutRecord]) -> LayoutSummary
         for page in records_for_area.chunks(REALM_PAGE_RECORD_LIMIT) {
             let page_start_area_offset = page[0].area_offset;
             area_page_ids.insert(
-                (area_index as u16, page_start_area_offset),
+                (usize_to_u16_saturating(area_index), page_start_area_offset),
                 next_area_page_id,
             );
             next_area_page_id += 1;
@@ -1116,41 +1197,15 @@ fn summarize_area_page_run_ref_layout(records: &[LayoutRecord]) -> LayoutSummary
         realm_plane_bytes +=
             encode_compact_realm_page_run_ref_key(REALM, page[0].realm_offset).len();
         realm_plane_bytes += CompactRealmPageRunRefValue {
-            runs: page
-                .iter()
-                .map(|record| {
-                    let area_index = parse_area_index(&record.area);
-                    let area_page_start_offset = record.area_offset
-                        / REALM_PAGE_RECORD_LIMIT as u64
-                        * REALM_PAGE_RECORD_LIMIT as u64;
-                    let page_id = area_page_ids
-                        .get(&(area_index, area_page_start_offset))
-                        .copied()
-                        .expect("missing area page id for run-ref layout");
-                    (
-                        page_id,
-                        (record.area_offset % REALM_PAGE_RECORD_LIMIT as u64) as u16,
-                    )
-                })
-                .fold(
-                    Vec::<CompactRealmPageRunRefRecord>::new(),
-                    |mut runs, (page_id, slot)| {
-                        if let Some(last_run) = runs.last_mut() {
-                            let expected_slot = last_run.start_slot + last_run.len;
-                            if last_run.page_id == page_id && expected_slot == slot {
-                                last_run.len += 1;
-                                return runs;
-                            }
-                        }
-
-                        runs.push(CompactRealmPageRunRefRecord {
-                            page_id,
-                            start_slot: slot,
-                            len: 1,
-                        });
-                        runs
-                    },
-                ),
+            runs: fold_page_run_refs(page.iter().map(|record| {
+                let area_index = parse_area_index(&record.area);
+                let area_page_start = area_page_start_offset(record.area_offset);
+                let page_id = area_page_ids
+                    .get(&(area_index, area_page_start))
+                    .copied()
+                    .expect("missing area page id for run-ref layout");
+                (page_id, area_page_slot(record.area_offset))
+            })),
         }
         .encode()
         .len();
@@ -1162,7 +1217,7 @@ fn summarize_area_page_run_ref_layout(records: &[LayoutRecord]) -> LayoutSummary
         resource_plane_bytes,
         area_plane_bytes,
         realm_plane_bytes,
-        bytes_per_event: total_bytes as f64 / records.len() as f64,
+        bytes_per_event: usize_ratio_to_f64(total_bytes, records.len()),
     }
 }
 
@@ -1173,7 +1228,7 @@ fn summarize_area_body_canonical_layout(records: &[LayoutRecord]) -> LayoutSumma
 
     let mut area_records = vec![Vec::new(); AREA_COUNT];
     for record in records {
-        area_records[parse_area_index(&record.area) as usize].push(record);
+        area_records[usize::from(parse_area_index(&record.area))].push(record);
     }
 
     let mut area_page_ids = HashMap::<(u16, u64), u32>::new();
@@ -1184,7 +1239,7 @@ fn summarize_area_body_canonical_layout(records: &[LayoutRecord]) -> LayoutSumma
         for page in records_for_area.chunks(REALM_PAGE_RECORD_LIMIT) {
             let page_start_area_offset = page[0].area_offset;
             area_page_ids.insert(
-                (area_index as u16, page_start_area_offset),
+                (usize_to_u16_saturating(area_index), page_start_area_offset),
                 next_area_page_id,
             );
             next_area_page_id += 1;
@@ -1228,10 +1283,8 @@ fn summarize_area_body_canonical_layout(records: &[LayoutRecord]) -> LayoutSumma
                     records: page
                         .iter()
                         .map(|record| CompactResourceAreaPageRefRecord {
-                            area_page_start_offset: record.area_offset
-                                / REALM_PAGE_RECORD_LIMIT as u64
-                                * REALM_PAGE_RECORD_LIMIT as u64,
-                            slot: (record.area_offset % REALM_PAGE_RECORD_LIMIT as u64) as u16,
+                            area_page_start_offset: area_page_start_offset(record.area_offset),
+                            slot: area_page_slot(record.area_offset),
                             realm_offset: record.realm_offset,
                         })
                         .collect(),
@@ -1246,41 +1299,15 @@ fn summarize_area_body_canonical_layout(records: &[LayoutRecord]) -> LayoutSumma
         realm_plane_bytes +=
             encode_compact_realm_page_run_ref_key(REALM, page[0].realm_offset).len();
         realm_plane_bytes += CompactRealmPageRunRefValue {
-            runs: page
-                .iter()
-                .map(|record| {
-                    let area_index = parse_area_index(&record.area);
-                    let area_page_start_offset = record.area_offset
-                        / REALM_PAGE_RECORD_LIMIT as u64
-                        * REALM_PAGE_RECORD_LIMIT as u64;
-                    let page_id = area_page_ids
-                        .get(&(area_index, area_page_start_offset))
-                        .copied()
-                        .expect("missing area page id for area-body canonical layout");
-                    (
-                        page_id,
-                        (record.area_offset % REALM_PAGE_RECORD_LIMIT as u64) as u16,
-                    )
-                })
-                .fold(
-                    Vec::<CompactRealmPageRunRefRecord>::new(),
-                    |mut runs, (page_id, slot)| {
-                        if let Some(last_run) = runs.last_mut() {
-                            let expected_slot = last_run.start_slot + last_run.len;
-                            if last_run.page_id == page_id && expected_slot == slot {
-                                last_run.len += 1;
-                                return runs;
-                            }
-                        }
-
-                        runs.push(CompactRealmPageRunRefRecord {
-                            page_id,
-                            start_slot: slot,
-                            len: 1,
-                        });
-                        runs
-                    },
-                ),
+            runs: fold_page_run_refs(page.iter().map(|record| {
+                let area_index = parse_area_index(&record.area);
+                let area_page_start = area_page_start_offset(record.area_offset);
+                let page_id = area_page_ids
+                    .get(&(area_index, area_page_start))
+                    .copied()
+                    .expect("missing area page id for area-body canonical layout");
+                (page_id, area_page_slot(record.area_offset))
+            })),
         }
         .encode()
         .len();
@@ -1292,7 +1319,7 @@ fn summarize_area_body_canonical_layout(records: &[LayoutRecord]) -> LayoutSumma
         resource_plane_bytes,
         area_plane_bytes,
         realm_plane_bytes,
-        bytes_per_event: total_bytes as f64 / records.len() as f64,
+        bytes_per_event: usize_ratio_to_f64(total_bytes, records.len()),
     }
 }
 
@@ -1303,7 +1330,7 @@ fn summarize_resource_mini_page_layout(records: &[LayoutRecord]) -> LayoutSummar
 
     let mut area_records = vec![Vec::new(); AREA_COUNT];
     for record in records {
-        area_records[parse_area_index(&record.area) as usize].push(record);
+        area_records[usize::from(parse_area_index(&record.area))].push(record);
     }
 
     let mut area_page_ids = HashMap::<(u16, u64), u32>::new();
@@ -1314,7 +1341,7 @@ fn summarize_resource_mini_page_layout(records: &[LayoutRecord]) -> LayoutSummar
         for page in records_for_area.chunks(REALM_PAGE_RECORD_LIMIT) {
             let page_start_area_offset = page[0].area_offset;
             area_page_ids.insert(
-                (area_index as u16, page_start_area_offset),
+                (usize_to_u16_saturating(area_index), page_start_area_offset),
                 next_area_page_id,
             );
             next_area_page_id += 1;
@@ -1376,41 +1403,15 @@ fn summarize_resource_mini_page_layout(records: &[LayoutRecord]) -> LayoutSummar
         realm_plane_bytes +=
             encode_compact_realm_page_run_ref_key(REALM, page[0].realm_offset).len();
         realm_plane_bytes += CompactRealmPageRunRefValue {
-            runs: page
-                .iter()
-                .map(|record| {
-                    let area_index = parse_area_index(&record.area);
-                    let area_page_start_offset = record.area_offset
-                        / REALM_PAGE_RECORD_LIMIT as u64
-                        * REALM_PAGE_RECORD_LIMIT as u64;
-                    let page_id = area_page_ids
-                        .get(&(area_index, area_page_start_offset))
-                        .copied()
-                        .expect("missing area page id for resource mini-page layout");
-                    (
-                        page_id,
-                        (record.area_offset % REALM_PAGE_RECORD_LIMIT as u64) as u16,
-                    )
-                })
-                .fold(
-                    Vec::<CompactRealmPageRunRefRecord>::new(),
-                    |mut runs, (page_id, slot)| {
-                        if let Some(last_run) = runs.last_mut() {
-                            let expected_slot = last_run.start_slot + last_run.len;
-                            if last_run.page_id == page_id && expected_slot == slot {
-                                last_run.len += 1;
-                                return runs;
-                            }
-                        }
-
-                        runs.push(CompactRealmPageRunRefRecord {
-                            page_id,
-                            start_slot: slot,
-                            len: 1,
-                        });
-                        runs
-                    },
-                ),
+            runs: fold_page_run_refs(page.iter().map(|record| {
+                let area_index = parse_area_index(&record.area);
+                let area_page_start = area_page_start_offset(record.area_offset);
+                let page_id = area_page_ids
+                    .get(&(area_index, area_page_start))
+                    .copied()
+                    .expect("missing area page id for resource mini-page layout");
+                (page_id, area_page_slot(record.area_offset))
+            })),
         }
         .encode()
         .len();
@@ -1422,7 +1423,7 @@ fn summarize_resource_mini_page_layout(records: &[LayoutRecord]) -> LayoutSummar
         resource_plane_bytes,
         area_plane_bytes,
         realm_plane_bytes,
-        bytes_per_event: total_bytes as f64 / records.len() as f64,
+        bytes_per_event: usize_ratio_to_f64(total_bytes, records.len()),
     }
 }
 
@@ -1444,7 +1445,7 @@ fn summarize_resource_mini_page_compressed_realm_layout(records: &[LayoutRecord]
         resource_plane_bytes: resource_mini_page.resource_plane_bytes,
         area_plane_bytes: resource_mini_page.area_plane_bytes,
         realm_plane_bytes: compressed_realm.realm_plane_bytes,
-        bytes_per_event: total_bytes as f64 / records.len() as f64,
+        bytes_per_event: usize_ratio_to_f64(total_bytes, records.len()),
     }
 }
 
@@ -1475,7 +1476,7 @@ fn summarize_area_paged_compressed_realm_body_layout(records: &[LayoutRecord]) -
 
     let mut area_records = vec![Vec::new(); AREA_COUNT];
     for record in records {
-        area_records[parse_area_index(&record.area) as usize].push(record);
+        area_records[usize::from(parse_area_index(&record.area))].push(record);
     }
 
     for (area_index, records_for_area) in area_records.iter().enumerate() {
@@ -1525,7 +1526,7 @@ fn summarize_area_paged_compressed_realm_body_layout(records: &[LayoutRecord]) -
         resource_plane_bytes,
         area_plane_bytes,
         realm_plane_bytes,
-        bytes_per_event: total_bytes as f64 / records.len() as f64,
+        bytes_per_event: usize_ratio_to_f64(total_bytes, records.len()),
     }
 }
 
@@ -1555,41 +1556,40 @@ fn bench_stream_write_shape(c: &mut Criterion) {
     let area_page_ref = summarize_area_page_ref_layout(&records);
     let area_page_id_ref = summarize_area_page_id_ref_layout(&records);
     let area_page_run_ref = summarize_area_page_run_ref_layout(&records);
-    let reduction = 100.0 * (1.0 - (hybrid.total_bytes as f64 / current.total_bytes as f64));
+    let reduction = percent_reduction(hybrid.total_bytes, current.total_bytes);
     let area_paged_realm_body_reduction =
-        100.0 * (1.0 - (area_paged_realm_body.total_bytes as f64 / current.total_bytes as f64));
-    let area_paged_compressed_realm_body_reduction = 100.0
-        * (1.0
-            - (area_paged_compressed_realm_body.total_bytes as f64 / current.total_bytes as f64));
-    let two_body_reduction =
-        100.0 * (1.0 - (two_body_hybrid.total_bytes as f64 / current.total_bytes as f64));
-    let area_page_ref_reduction =
-        100.0 * (1.0 - (area_page_ref.total_bytes as f64 / current.total_bytes as f64));
+        percent_reduction(area_paged_realm_body.total_bytes, current.total_bytes);
+    let area_paged_compressed_realm_body_reduction = percent_reduction(
+        area_paged_compressed_realm_body.total_bytes,
+        current.total_bytes,
+    );
+    let two_body_reduction = percent_reduction(two_body_hybrid.total_bytes, current.total_bytes);
+    let area_page_ref_reduction = percent_reduction(area_page_ref.total_bytes, current.total_bytes);
     let area_page_id_ref_reduction =
-        100.0 * (1.0 - (area_page_id_ref.total_bytes as f64 / current.total_bytes as f64));
+        percent_reduction(area_page_id_ref.total_bytes, current.total_bytes);
     let area_page_run_ref_reduction =
-        100.0 * (1.0 - (area_page_run_ref.total_bytes as f64 / current.total_bytes as f64));
+        percent_reduction(area_page_run_ref.total_bytes, current.total_bytes);
     let area_body_canonical_reduction =
-        100.0 * (1.0 - (area_body_canonical.total_bytes as f64 / current.total_bytes as f64));
+        percent_reduction(area_body_canonical.total_bytes, current.total_bytes);
     let resource_mini_page_reduction =
-        100.0 * (1.0 - (resource_mini_page.total_bytes as f64 / current.total_bytes as f64));
-    let resource_mini_page_compressed_realm_reduction = 100.0
-        * (1.0
-            - (resource_mini_page_compressed_realm.total_bytes as f64
-                / current.total_bytes as f64));
-    let production_like_reduction = 100.0
-        * (1.0
-            - (production_like_area_paged_compressed_realm_body.total_bytes as f64
-                / production_like_current.total_bytes as f64));
-    let production_like_vs_uncompressed_reduction = 100.0
-        * (1.0
-            - (production_like_area_paged_compressed_realm_body.total_bytes as f64
-                / production_like_area_paged_realm_body.total_bytes as f64));
-    let production_like_resource_mini_page_compressed_realm_reduction = 100.0
-        * (1.0
-            - (production_like_resource_mini_page_compressed_realm.total_bytes as f64
-                / production_like_current.total_bytes as f64));
-    let event_count = records.len() as u64;
+        percent_reduction(resource_mini_page.total_bytes, current.total_bytes);
+    let resource_mini_page_compressed_realm_reduction = percent_reduction(
+        resource_mini_page_compressed_realm.total_bytes,
+        current.total_bytes,
+    );
+    let production_like_reduction = percent_reduction(
+        production_like_area_paged_compressed_realm_body.total_bytes,
+        production_like_current.total_bytes,
+    );
+    let production_like_vs_uncompressed_reduction = percent_reduction(
+        production_like_area_paged_compressed_realm_body.total_bytes,
+        production_like_area_paged_realm_body.total_bytes,
+    );
+    let production_like_resource_mini_page_compressed_realm_reduction = percent_reduction(
+        production_like_resource_mini_page_compressed_realm.total_bytes,
+        production_like_current.total_bytes,
+    );
+    let event_count = u64::try_from(records.len()).unwrap_or(u64::MAX);
 
     eprintln!(
         "stream write-shape economics: current {:.2} B/event (resource {} area {} realm {}), hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, area-paged realm-body hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, area-paged compressed realm-body hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, two-body hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, area-page-ref hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, area-page-id-ref hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, area-page-run-ref hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, area-body canonical {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, resource mini-page {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, resource mini-page + compressed realm {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%",
