@@ -1530,6 +1530,7 @@ fn summarize_area_paged_compressed_realm_body_layout(records: &[LayoutRecord]) -
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn bench_stream_write_shape(c: &mut Criterion) {
     let records = build_records(PayloadProfile::LowEntropy);
     let high_entropy_records = build_records(PayloadProfile::HighEntropy);
@@ -1726,11 +1727,11 @@ fn bench_stream_write_shape(c: &mut Criterion) {
     group.throughput(Throughput::Elements(event_count));
 
     group.bench_function("assemble_current_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_current_layout(black_box(&records))))
+        b.iter(|| black_box(summarize_current_layout(black_box(&records))));
     });
 
     group.bench_function("assemble_hybrid_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_hybrid_layout(black_box(&records))))
+        b.iter(|| black_box(summarize_hybrid_layout(black_box(&records))));
     });
 
     group.bench_function(
@@ -1739,8 +1740,8 @@ fn bench_stream_write_shape(c: &mut Criterion) {
             b.iter(|| {
                 black_box(summarize_area_paged_realm_body_hybrid_layout(black_box(
                     &records,
-                )))
-            })
+                )));
+            });
         },
     );
 
@@ -1750,8 +1751,8 @@ fn bench_stream_write_shape(c: &mut Criterion) {
             b.iter(|| {
                 black_box(summarize_area_paged_compressed_realm_body_layout(
                     black_box(&records),
-                ))
-            })
+                ));
+            });
         },
     );
     group.bench_function(
@@ -1760,8 +1761,8 @@ fn bench_stream_write_shape(c: &mut Criterion) {
             b.iter(|| {
                 black_box(summarize_area_paged_compressed_realm_body_layout(
                     black_box(&high_entropy_records),
-                ))
-            })
+                ));
+            });
         },
     );
     group.bench_function(
@@ -1770,8 +1771,8 @@ fn bench_stream_write_shape(c: &mut Criterion) {
             b.iter(|| {
                 black_box(summarize_area_paged_realm_body_hybrid_layout(black_box(
                     &production_like_records,
-                )))
-            })
+                )));
+            });
         },
     );
     group.bench_function(
@@ -1780,33 +1781,33 @@ fn bench_stream_write_shape(c: &mut Criterion) {
             b.iter(|| {
                 black_box(summarize_area_paged_compressed_realm_body_layout(
                     black_box(&production_like_records),
-                ))
-            })
+                ));
+            });
         },
     );
 
     group.bench_function("assemble_two_body_hybrid_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_two_body_hybrid_layout(black_box(&records))))
+        b.iter(|| black_box(summarize_two_body_hybrid_layout(black_box(&records))));
     });
 
     group.bench_function("assemble_area_page_ref_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_area_page_ref_layout(black_box(&records))))
+        b.iter(|| black_box(summarize_area_page_ref_layout(black_box(&records))));
     });
 
     group.bench_function("assemble_area_page_id_ref_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_area_page_id_ref_layout(black_box(&records))))
+        b.iter(|| black_box(summarize_area_page_id_ref_layout(black_box(&records))));
     });
 
     group.bench_function("assemble_area_page_run_ref_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_area_page_run_ref_layout(black_box(&records))))
+        b.iter(|| black_box(summarize_area_page_run_ref_layout(black_box(&records))));
     });
 
     group.bench_function("assemble_area_body_canonical_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_area_body_canonical_layout(black_box(&records))))
+        b.iter(|| black_box(summarize_area_body_canonical_layout(black_box(&records))));
     });
 
     group.bench_function("assemble_resource_mini_page_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_resource_mini_page_layout(black_box(&records))))
+        b.iter(|| black_box(summarize_resource_mini_page_layout(black_box(&records))));
     });
 
     group.bench_function(
@@ -1815,8 +1816,8 @@ fn bench_stream_write_shape(c: &mut Criterion) {
             b.iter(|| {
                 black_box(summarize_resource_mini_page_compressed_realm_layout(
                     black_box(&records),
-                ))
-            })
+                ));
+            });
         },
     );
     group.bench_function(
@@ -1825,8 +1826,8 @@ fn bench_stream_write_shape(c: &mut Criterion) {
             b.iter(|| {
                 black_box(summarize_resource_mini_page_compressed_realm_layout(
                     black_box(&production_like_records),
-                ))
-            })
+                ));
+            });
         },
     );
 

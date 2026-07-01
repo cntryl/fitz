@@ -345,18 +345,20 @@ impl CompactPagedRealmValue {
 
         let mut bytes = Vec::with_capacity(total_len);
         bytes.extend_from_slice(&COMPACT_REALM_PAGE_VALUE_V1_MARKER);
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
 
         for record in &self.records {
             bytes.extend_from_slice(&record.area_offset.to_le_bytes());
             bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
             bytes.extend_from_slice(
                 &record
                     .metadata
                     .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
+                        usize_to_u32_saturating(metadata.len())
+                    })
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -390,19 +392,19 @@ impl CompactPagedRealmValue {
             value
         };
 
-        let record_count = read_u32(bytes, &mut offset) as usize;
+        let record_count = u32_to_usize_saturating(read_u32(bytes, &mut offset));
         let mut records = Vec::with_capacity(record_count);
 
         for _ in 0..record_count {
             let area_offset = read_u64(bytes, &mut offset);
             let resource_offset = read_u64(bytes, &mut offset);
             let created_at = read_u64(bytes, &mut offset);
-            let body_len = read_u32(bytes, &mut offset) as usize;
+            let body_len = u32_to_usize_saturating(read_u32(bytes, &mut offset));
             let metadata_len_raw = read_u32(bytes, &mut offset);
             let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
                 None
             } else {
-                Some(metadata_len_raw as usize)
+                Some(u32_to_usize_saturating(metadata_len_raw))
             };
 
             let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
@@ -429,7 +431,9 @@ impl CompactPagedRealmValue {
 }
 
 fn deterministic_seed(stream_index: usize, record_index: usize, salt: u64) -> u64 {
-    let base = ((stream_index as u64) << 32) ^ record_index as u64 ^ salt;
+    let base = (u64::try_from(stream_index).unwrap_or(u64::MAX) << 32)
+        ^ u64::try_from(record_index).unwrap_or(u64::MAX)
+        ^ salt;
     base | 1
 }
 
@@ -446,8 +450,12 @@ fn build_ascii_fill(len: usize, seed: u64) -> Vec<u8> {
 
     while bytes.len() < len {
         state = next_deterministic_state(state);
-        let token = ASCII_TOKEN_BANK[(state as usize) % ASCII_TOKEN_BANK.len()].as_bytes();
-        let hex = format!("{:08x}", state as u32);
+        let token =
+            ASCII_TOKEN_BANK[u64_to_usize_saturating(state) % ASCII_TOKEN_BANK.len()].as_bytes();
+        let hex = format!(
+            "{:08x}",
+            usize_to_u32_saturating(u64_to_usize_saturating(state))
+        );
 
         for chunk in [token, b" ", hex.as_bytes(), b" "] {
             for byte in chunk {
@@ -552,7 +560,7 @@ fn build_production_like_payload(stream_index: usize, record_index: usize) -> Ev
             body: build_padded_text(
                 format!(
                     "ts={:08x} lvl=info stream={stream_index} seq={record_index} msg=",
-                    body_seed as u32
+                    usize_to_u32_saturating(u64_to_usize_saturating(body_seed))
                 ),
                 PRODUCTION_LIKE_LOG_BODY_BYTES,
                 body_seed ^ 0xDE_AD_BE_EF,
@@ -645,7 +653,10 @@ fn persist_prototype_rows(
     writes: &[PrototypeRowWrite],
 ) -> Result<(), String> {
     let mut txn = db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadWrite)
+        .begin_tx(
+            usize_to_u32_saturating(u64_to_usize_saturating(FAMILY)),
+            cntryl_midge::TransactionMode::ReadWrite,
+        )
         .map_err(|error| format!("begin_tx failed: {error:?}"))?;
 
     for row in writes {
@@ -657,10 +668,7 @@ fn persist_prototype_rows(
         .map_err(|error| format!("txn commit failed: {error:?}"))
 }
 
-fn seed_replay_case(streams: &[PrototypeStream]) -> ReplayCase {
-    let (db, temp_dir) = create_local_bench_store();
-    let store = StreamStore::new(db.clone());
-    let mut prototype_rows = Vec::new();
+fn build_seed_records(store: &StreamStore, streams: &[PrototypeStream]) -> Vec<SeedRecord> {
     let mut seed_records = Vec::new();
 
     for (stream_index, stream) in streams.iter().enumerate() {
@@ -672,7 +680,7 @@ fn seed_replay_case(streams: &[PrototypeStream]) -> ReplayCase {
                     realm: REALM,
                     area: &stream.area,
                     resource: &stream.resource,
-                    expected_resource_next_offset: record_index as u64,
+                    expected_resource_next_offset: u64::try_from(record_index).unwrap_or(u64::MAX),
                     events: std::slice::from_ref(&event),
                     ingest_metadata: None,
                     mode: StreamWriteMode::Buffered,
@@ -687,10 +695,20 @@ fn seed_replay_case(streams: &[PrototypeStream]) -> ReplayCase {
                 realm_offset: commit.first_realm_offset,
                 body: event.body.clone(),
                 metadata: event.metadata.clone(),
-                created_at: ((stream_index as u64) << 32) | record_index as u64,
+                created_at: (u64::try_from(stream_index).unwrap_or(u64::MAX) << 32)
+                    | u64::try_from(record_index).unwrap_or(u64::MAX),
             });
         }
     }
+
+    seed_records
+}
+
+fn seed_replay_case(streams: &[PrototypeStream]) -> ReplayCase {
+    let (db, temp_dir) = create_local_bench_store();
+    let store = StreamStore::new(db.clone());
+    let mut prototype_rows = Vec::new();
+    let seed_records = build_seed_records(&store, streams);
 
     let mut area_names = streams
         .iter()
@@ -818,7 +836,10 @@ fn read_resource_compact_paged(
 ) -> Result<Vec<StreamRecord>, String> {
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            usize_to_u32_saturating(u64_to_usize_saturating(FAMILY)),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -851,7 +872,8 @@ fn read_resource_compact_paged(
             }
 
             records.push(StreamRecord {
-                resource_offset: resource_page_start + resource_page_slot as u64,
+                resource_offset: resource_page_start
+                    + u64::try_from(resource_page_slot).unwrap_or(u64::MAX),
                 area_offset: Some(record.area_offset),
                 realm_offset: Some(record.realm_offset),
                 body: record.body.clone(),
@@ -869,9 +891,14 @@ fn read_area_covering(
     area: &str,
     limit: usize,
 ) -> Result<Vec<StreamRecord>, String> {
-    let (records, _) = case
-        .store
-        .read_area(FAMILY, REALM, area, 0, limit as u64, None)?;
+    let (records, _) = case.store.read_area(
+        FAMILY,
+        REALM,
+        area,
+        0,
+        u64::try_from(limit).unwrap_or(u64::MAX),
+        None,
+    )?;
     Ok(event_records(records))
 }
 
@@ -883,7 +910,10 @@ fn read_area_compact_paged(
     let watermark = case.store.get_watermark(FAMILY, REALM, area)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            usize_to_u32_saturating(u64_to_usize_saturating(FAMILY)),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -902,7 +932,7 @@ fn read_area_compact_paged(
         let page = CompactAreaPageValue::decode(&value);
 
         for (slot, page_record) in page.records.iter().enumerate() {
-            let area_offset = page_start + slot as u64;
+            let area_offset = page_start + u64::try_from(slot).unwrap_or(u64::MAX);
             if area_offset > watermark {
                 return Ok(records);
             }
@@ -925,9 +955,13 @@ fn read_area_compact_paged(
 }
 
 fn read_realm_covering(case: &ReplayCase, limit: usize) -> Result<Vec<StreamRecord>, String> {
-    let (records, _) = case
-        .store
-        .read_realm(FAMILY, REALM, 0, limit as u64, None)?;
+    let (records, _) = case.store.read_realm(
+        FAMILY,
+        REALM,
+        0,
+        u64::try_from(limit).unwrap_or(u64::MAX),
+        None,
+    )?;
     Ok(event_records(records))
 }
 
@@ -938,7 +972,10 @@ fn read_realm_compressed_compact_paged(
     let watermark = case.store.get_realm_watermark(FAMILY, REALM)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            usize_to_u32_saturating(u64_to_usize_saturating(FAMILY)),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -967,7 +1004,7 @@ fn read_realm_compressed_compact_paged(
         let page = CompactPagedRealmValue::decode(&decompressed);
 
         for (slot, page_record) in page.records.iter().enumerate() {
-            let realm_offset = page_start + slot as u64;
+            let realm_offset = page_start + u64::try_from(slot).unwrap_or(u64::MAX);
             if realm_offset > watermark {
                 return Ok(records);
             }
@@ -1045,7 +1082,7 @@ fn encode_stream_read_data(
         .iter()
         .filter(|record| record.resource_offset >= from_offset)
     {
-        if selected.len() >= limit as usize {
+        if selected.len() >= u64_to_usize_saturating(limit) {
             has_more = true;
             break;
         }
@@ -1071,7 +1108,7 @@ fn encode_stream_read_data(
     let last_realm_offset = selected.last().and_then(|record| record.realm_offset);
 
     let mut encoder = PayloadEncoder::new();
-    encoder.put_u32(selected.len() as u32);
+    encoder.put_u32(usize_to_u32_saturating(selected.len()));
     for record in selected {
         encoder.put_u8(0); // StreamReadItem::Event
         encode_stream_record(&mut encoder, record);
@@ -1144,12 +1181,12 @@ impl PrototypeStreamReadSink {
         }
 
         let records = if area == "*" && resource == "*" {
-            read_realm_compressed_compact_paged(&self.case, limit as usize)?
+            read_realm_compressed_compact_paged(&self.case, u64_to_usize_saturating(limit))?
         } else if resource == "*" {
-            read_area_compact_paged(&self.case, &area, limit as usize)?
+            read_area_compact_paged(&self.case, &area, u64_to_usize_saturating(limit))?
         } else {
             let stream = find_stream(&self.case, &area, &resource)?;
-            read_resource_compact_paged(&self.case, stream, limit as usize)?
+            read_resource_compact_paged(&self.case, stream, u64_to_usize_saturating(limit))?
         };
 
         Ok(encode_stream_read_data(

@@ -1,9 +1,9 @@
 //! Consolidated notice advanced tests
 //!
 //! Combines:
-//! - notice_scale_shape.rs: Scale and shape invariants
-//! - notice_e2e_fanout.rs: Fanout correctness with overlapping subscriptions
-//! - notice_e2e_scale.rs: End-to-end scale tests
+//! - `notice_scale_shape.rs`: Scale and shape invariants
+//! - `notice_e2e_fanout.rs`: Fanout correctness with overlapping subscriptions
+//! - `notice_e2e_scale.rs`: End-to-end scale tests
 
 use bytes::Bytes;
 use fitz::domains::notice::protocol::{
