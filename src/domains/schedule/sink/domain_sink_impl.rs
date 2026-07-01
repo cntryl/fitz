@@ -220,7 +220,21 @@ impl ScheduleDomainSink {
         &self,
         route_family: crate::runtime::routing::RouteFamily,
     ) -> Vec<crate::control::admin::SchedulePendingClaimInfo> {
-        self.state.runtime().admin_pending_claims(route_family)
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) =
+            self.actor
+                .try_send_high_priority(ScheduleDomainCommand::ReadPendingClaims(
+                    route_family,
+                    reply_tx,
+                ))
+        {
+            tracing::warn!(domain = "schedule", error = %error, "Schedule pending claim read enqueue failed");
+            return Vec::new();
+        }
+
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_default()
     }
 
     pub fn oldest_pending_claim_age_seconds(&self) -> u64 {

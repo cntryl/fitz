@@ -528,6 +528,38 @@ fn should_increment_expired_pending_claim_metric_when_cleanup_removes_orphans() 
 }
 
 #[test]
+fn should_read_admin_pending_claims_through_actor_command() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = ScheduleDomainSink::new(store.clone(), router, admin_read_model);
+    let mut actor = crate::domains::schedule::ScheduleActor::new(
+        family,
+        store,
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    actor
+        .create_schedule(
+            "schedule://acme/jobs/nightly/run".to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"nightly"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    assert_eq!(actor.bench_claim_due_fires().len(), 1);
+    sink.state.core.actors.lock().insert(family, actor);
+
+    // Act
+    sink.stop();
+    let claims = sink.admin_pending_claims(family);
+
+    // Assert
+    assert!(claims.is_empty());
+}
+
+#[test]
 fn should_remove_schedule_subscriptions_given_session_cleanup() {
     // Arrange
     let family = RouteFamily::new(1);

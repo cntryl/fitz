@@ -545,7 +545,7 @@ Current Notice behavior is intentionally ephemeral:
 - Persistence: schedule definitions, next-fire state, and pending claims are durable timing intent; subscriber watches and transient handoff coordination are ephemeral.
 - Cleanup: disconnect removes live watches but does not erase persisted schedule intent or imply replay of every missed interval after downtime.
 - `RouteFamily`/`realm`: schedules stay partitioned by exact `RouteFamily`, while `realm` remains an application-defined route label that is never derived from the family.
-- Admin path: schedule projections flow through `Runtime::schedule_list_schedules()`; pending claim inspection uses `Runtime::schedule_list_pending_claims()`.
+- Admin path: schedule projections flow through `Runtime::schedule_list_schedules()`; pending claim inspection uses `Runtime::schedule_list_pending_claims()`, which sends a command/reply read to `ScheduleDomainActor`.
 
 **Historical sketch (outdated shape, not the current implementation):**
 ```rust

@@ -209,6 +209,10 @@ pub(super) struct ScheduleDomainRuntime<'a> {
 pub(super) enum ScheduleDomainCommand {
     Deliver(Envelope),
     CleanupSession(u64),
+    ReadPendingClaims(
+        crate::runtime::routing::RouteFamily,
+        crossbeam_channel::Sender<Vec<crate::control::admin::SchedulePendingClaimInfo>>,
+    ),
     ScanDueSchedules,
 }
 
