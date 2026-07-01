@@ -40,7 +40,7 @@ struct DirectPrototypeContext {
 fn start_server_with_promotion_frontier(case: &PrototypeReadCase) -> TestServer {
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
-    install_stream_read_prototype_sink(server.runtime.router(), case.replay_case.clone());
+    install_stream_read_prototype_sink(&server.runtime.router(), case.replay_case.clone());
     server
 }
 

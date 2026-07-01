@@ -1,6 +1,9 @@
 use bytes::Bytes;
 use fitz::benchkit::create_local_bench_store;
-use fitz::domains::stream::protocol::{StreamRecord, StreamWriteMode};
+use fitz::domains::stream::protocol::{
+    StreamClientFrame, StreamClientResponse, StreamClientResponseBody, StreamMessage, StreamRecord,
+    StreamWriteMode,
+};
 use fitz::domains::stream::storage::{decode_area_offset_from_key, decode_realm_offset_from_key};
 use fitz::domains::stream::store::{
     CommitRecordsParams, EventPayload, ReadResourceParams, StreamStore,
@@ -1212,13 +1215,9 @@ impl MailboxSink for PrototypeStreamReadSink {
             return Ok(());
         }
 
-        let request = self.request_from_envelope(&envelope)?;
+        let request = Self::request_from_envelope(&envelope)?;
         let meta = request.meta;
         let parsed = request.frame.map_err(|_| DeliveryError::ActorStopped)?;
-
-        use fitz::domains::stream::protocol::{
-            StreamClientFrame, StreamClientResponse, StreamClientResponseBody, StreamMessage,
-        };
 
         let response = match parsed {
             StreamClientFrame::Op(StreamMessage::Read {
@@ -1255,7 +1254,6 @@ impl MailboxSink for PrototypeStreamReadSink {
 
 impl PrototypeStreamReadSink {
     fn request_from_envelope(
-        &self,
         envelope: &Envelope,
     ) -> Result<fitz::domains::stream::protocol::StreamClientRequest, DeliveryError> {
         if let Some(request) =
@@ -1393,7 +1391,7 @@ pub fn prepare_realm_read_case() -> PrototypeReadCase {
     }
 }
 
-pub fn install_stream_read_prototype_sink(router: Arc<Router>, case: Arc<ReplayCase>) {
+pub fn install_stream_read_prototype_sink(router: &Arc<Router>, case: Arc<ReplayCase>) {
     let sink = Arc::new(PrototypeStreamReadSink::new(router.clone(), case));
     router.register_domain_pattern("stream", sink as Arc<dyn MailboxSink>);
 }
