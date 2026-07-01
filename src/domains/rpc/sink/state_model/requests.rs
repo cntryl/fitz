@@ -126,6 +126,7 @@ pub(in crate::domains::rpc::sink) struct RpcPendingCleanupResult {
     pub(in crate::domains::rpc::sink) disconnect_deliveries: Vec<RpcPendingErrorDelivery>,
 }
 
+#[derive(Default)]
 pub(in crate::domains::rpc::sink) struct RpcSessionCleanupResult {
     pub(in crate::domains::rpc::sink) removed_workers: usize,
     pub(in crate::domains::rpc::sink) detached_callers: usize,
@@ -134,6 +135,7 @@ pub(in crate::domains::rpc::sink) struct RpcSessionCleanupResult {
     pub(in crate::domains::rpc::sink) disconnect_deliveries: Vec<RpcPendingErrorDelivery>,
 }
 
+#[derive(Default)]
 pub(in crate::domains::rpc::sink) struct RpcWorkerCleanupResult {
     pub(in crate::domains::rpc::sink) removed_workers: usize,
     pub(in crate::domains::rpc::sink) removed_pending: usize,

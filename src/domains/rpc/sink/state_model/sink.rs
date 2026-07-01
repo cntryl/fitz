@@ -2,6 +2,8 @@ use super::{
     Arc, AtomicBool, AtomicU64, DeliveryError, Duration, Envelope, Instant, ManagedActor, Mutex,
     Router, RpcState,
 };
+#[cfg(test)]
+use super::{RouteAddress, RpcSessionCleanupResult, RpcWorkerCleanupResult};
 
 pub struct RpcDomainCore {
     pub(in crate::domains::rpc::sink) state: Mutex<RpcState>,
@@ -31,6 +33,14 @@ pub(in crate::domains::rpc::sink) enum RpcDomainCommand {
     #[cfg(test)]
     SyncAdminSnapshot(Option<crossbeam_channel::Sender<()>>),
     RefreshAdminSnapshotIfDirty(Option<crossbeam_channel::Sender<()>>),
+    #[cfg(test)]
+    ApplySessionCleanupForTests(u64, crossbeam_channel::Sender<RpcSessionCleanupResult>),
+    #[cfg(test)]
+    ApplyWorkerUnsubscribeForTests(
+        RouteAddress,
+        u64,
+        crossbeam_channel::Sender<RpcWorkerCleanupResult>,
+    ),
 }
 
 #[derive(Default)]

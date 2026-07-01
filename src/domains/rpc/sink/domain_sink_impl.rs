@@ -218,7 +218,20 @@ impl RpcDomainSink {
 
     #[cfg(test)]
     pub(super) fn apply_session_cleanup(&self, session_id: u64) -> RpcSessionCleanupResult {
-        self.runtime().apply_session_cleanup(session_id)
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) =
+            self.actor
+                .try_send_high_priority(RpcDomainCommand::ApplySessionCleanupForTests(
+                    session_id, reply_tx,
+                ))
+        {
+            tracing::warn!(domain = "rpc", error = %error, "RPC session cleanup enqueue failed");
+            return RpcSessionCleanupResult::default();
+        }
+
+        reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -227,8 +240,22 @@ impl RpcDomainSink {
         worker_addr: &RouteAddress,
         session_id: u64,
     ) -> RpcWorkerCleanupResult {
-        self.runtime()
-            .apply_worker_unsubscribe(worker_addr, session_id)
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) =
+            self.actor
+                .try_send_high_priority(RpcDomainCommand::ApplyWorkerUnsubscribeForTests(
+                    worker_addr.clone(),
+                    session_id,
+                    reply_tx,
+                ))
+        {
+            tracing::warn!(domain = "rpc", error = %error, "RPC worker unsubscribe enqueue failed");
+            return RpcWorkerCleanupResult::default();
+        }
+
+        reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default()
     }
 }
 

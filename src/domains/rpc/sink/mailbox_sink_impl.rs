@@ -49,6 +49,14 @@ impl Actor for RpcDomainActor {
                     let _ = reply.send(());
                 }
             }
+            #[cfg(test)]
+            RpcDomainCommand::ApplySessionCleanupForTests(session_id, reply) => {
+                let _ = reply.send(runtime.apply_session_cleanup(session_id));
+            }
+            #[cfg(test)]
+            RpcDomainCommand::ApplyWorkerUnsubscribeForTests(worker_addr, session_id, reply) => {
+                let _ = reply.send(runtime.apply_worker_unsubscribe(&worker_addr, session_id));
+            }
         }
     }
 }

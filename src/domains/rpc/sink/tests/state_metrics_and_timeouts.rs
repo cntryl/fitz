@@ -139,6 +139,90 @@ pub(super) fn should_route_rpc_live_count_queries_through_managed_actor() {
 }
 
 #[test]
+pub(super) fn should_route_rpc_session_cleanup_helper_through_managed_actor() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let metrics = crate::observability::metrics::MetricsCollector::new();
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = RpcDomainSink::new(router, admin_read_model).with_metrics(metrics.clone());
+    let route = Route::new("rpc://prod/system/resource/cleanup");
+    {
+        let mut state = sink.core.state.lock();
+        state
+            .ensure_route_state(&route)
+            .register_worker(test_rpc_worker(family, &route, 42));
+        state.pending.track_pending(
+            uuid::Uuid::new_v4(),
+            test_pending_request(
+                family,
+                &route,
+                7,
+                42,
+                Instant::now() + Duration::from_secs(30),
+            ),
+        );
+    }
+
+    // Act
+    sink.stop_actor_for_tests();
+    let cleanup = sink.apply_session_cleanup(42);
+    let pending_count = sink.core.state.lock().live_request_count();
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert_eq!(cleanup.removed_workers, 0);
+    assert_eq!(cleanup.detached_callers, 0);
+    assert_eq!(cleanup.removed_pending, 0);
+    assert_eq!(cleanup.pending_len, 0);
+    assert_eq!(pending_count, 1);
+    assert_eq!(metrics.counter_get("rpc_cleanup_workers_removed_total"), 0);
+    assert_eq!(metrics.counter_get("rpc_cleanup_pending_removed_total"), 0);
+}
+
+#[test]
+pub(super) fn should_route_rpc_worker_unsubscribe_helper_through_managed_actor() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let metrics = crate::observability::metrics::MetricsCollector::new();
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = RpcDomainSink::new(router, admin_read_model).with_metrics(metrics.clone());
+    let route = Route::new("rpc://prod/system/resource/unsubscribe");
+    let worker_addr = RouteAddress::new(family, route.clone());
+    {
+        let mut state = sink.core.state.lock();
+        state
+            .ensure_route_state(&route)
+            .register_worker(test_rpc_worker(family, &route, 42));
+        state.pending.track_pending(
+            uuid::Uuid::new_v4(),
+            test_pending_request(
+                family,
+                &route,
+                7,
+                42,
+                Instant::now() + Duration::from_secs(30),
+            ),
+        );
+    }
+
+    // Act
+    sink.stop_actor_for_tests();
+    let cleanup = sink.apply_worker_unsubscribe(&worker_addr, 42);
+    let pending_count = sink.core.state.lock().live_request_count();
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert_eq!(cleanup.removed_workers, 0);
+    assert_eq!(cleanup.removed_pending, 0);
+    assert_eq!(cleanup.pending_len, 0);
+    assert_eq!(pending_count, 1);
+    assert_eq!(metrics.counter_get("rpc_cleanup_workers_removed_total"), 0);
+    assert_eq!(metrics.counter_get("rpc_cleanup_pending_removed_total"), 0);
+}
+
+#[test]
 pub(super) fn should_keep_rpc_mailbox_sink_impl_below_file_size_limit() {
     // Arrange
     let line_count = include_str!("../mailbox_sink_impl.rs").lines().count();
