@@ -261,6 +261,50 @@ fn read_u64_le(bytes: &[u8], offset: &mut usize, context: &str) -> u64 {
     u64::from_le_bytes(read_exact(bytes, offset, context))
 }
 
+fn usize_to_u8_saturating(value: usize) -> u8 {
+    u8::try_from(value).unwrap_or(u8::MAX)
+}
+
+fn usize_to_u16_saturating(value: usize) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
+
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn usize_to_u64_saturating(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn u16_to_usize(value: u16) -> usize {
+    usize::from(value)
+}
+
+fn u32_to_usize_saturating(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+fn u64_to_u16_saturating(value: u64) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
+
+fn u64_to_u32_saturating(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+fn replay_page_record_limit_u64() -> u64 {
+    usize_to_u64_saturating(REPLAY_PAGE_RECORD_LIMIT)
+}
+
+fn page_slot(offset: u64) -> u16 {
+    u64_to_u16_saturating(offset % replay_page_record_limit_u64())
+}
+
 impl PagedRealmValue {
     fn encode(&self) -> Vec<u8> {
         let mut total_len = PAGED_REALM_PAGE_VALUE_V1_MARKER.len() + 4;
@@ -272,18 +316,20 @@ impl PagedRealmValue {
 
         let mut bytes = Vec::with_capacity(total_len);
         bytes.extend_from_slice(&PAGED_REALM_PAGE_VALUE_V1_MARKER);
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(usize_to_u32_saturating(self.records.len())).to_le_bytes());
 
         for record in &self.records {
             bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
             bytes.extend_from_slice(&record.area_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&(usize_to_u32_saturating(record.body.len())).to_le_bytes());
             bytes.extend_from_slice(
                 &record
                     .metadata
                     .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
+                        usize_to_u32_saturating(metadata.len())
+                    })
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -306,21 +352,27 @@ impl PagedRealmValue {
         );
 
         let mut offset = PAGED_REALM_PAGE_VALUE_V1_MARKER.len();
-        let record_count =
-            read_u32_le(bytes, &mut offset, "deserialize paged realm value") as usize;
+        let record_count = u32_to_usize_saturating(read_u32_le(
+            bytes,
+            &mut offset,
+            "deserialize paged realm value",
+        ));
         let mut records = Vec::with_capacity(record_count);
 
         for _ in 0..record_count {
             let resource_offset = read_u64_le(bytes, &mut offset, "deserialize paged realm value");
             let area_offset = read_u64_le(bytes, &mut offset, "deserialize paged realm value");
             let created_at = read_u64_le(bytes, &mut offset, "deserialize paged realm value");
-            let body_len =
-                read_u32_le(bytes, &mut offset, "deserialize paged realm value") as usize;
+            let body_len = u32_to_usize_saturating(read_u32_le(
+                bytes,
+                &mut offset,
+                "deserialize paged realm value",
+            ));
             let metadata_len_raw = read_u32_le(bytes, &mut offset, "deserialize paged realm value");
             let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
                 None
             } else {
-                Some(metadata_len_raw as usize)
+                Some(u32_to_usize_saturating(metadata_len_raw))
             };
 
             let body_end = offset
@@ -415,18 +467,20 @@ impl CompactPagedRealmValue {
 
         let mut bytes = Vec::with_capacity(total_len);
         bytes.extend_from_slice(&COMPACT_REALM_PAGE_VALUE_V1_MARKER);
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(usize_to_u32_saturating(self.records.len())).to_le_bytes());
 
         for record in &self.records {
             bytes.extend_from_slice(&record.area_offset.to_le_bytes());
             bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&(usize_to_u32_saturating(record.body.len())).to_le_bytes());
             bytes.extend_from_slice(
                 &record
                     .metadata
                     .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
+                        usize_to_u32_saturating(metadata.len())
+                    })
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -460,19 +514,19 @@ impl CompactPagedRealmValue {
             value
         };
 
-        let record_count = read_u32(bytes, &mut offset) as usize;
+        let record_count = u32_to_usize_saturating(read_u32(bytes, &mut offset));
         let mut records = Vec::with_capacity(record_count);
 
         for _ in 0..record_count {
             let area_offset = read_u64(bytes, &mut offset);
             let resource_offset = read_u64(bytes, &mut offset);
             let created_at = read_u64(bytes, &mut offset);
-            let body_len = read_u32(bytes, &mut offset) as usize;
+            let body_len = u32_to_usize_saturating(read_u32(bytes, &mut offset));
             let metadata_len_raw = read_u32(bytes, &mut offset);
             let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
                 None
             } else {
-                Some(metadata_len_raw as usize)
+                Some(u32_to_usize_saturating(metadata_len_raw))
             };
 
             let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
@@ -501,7 +555,7 @@ impl CompactPagedRealmValue {
 impl CompactRealmAreaRefPageValue {
     fn encode(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(4 + (self.records.len() * (2 + 8)));
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(usize_to_u32_saturating(self.records.len())).to_le_bytes());
         for record in &self.records {
             bytes.extend_from_slice(&record.area_index.to_le_bytes());
             bytes.extend_from_slice(&record.area_offset.to_le_bytes());
@@ -527,7 +581,7 @@ impl CompactRealmAreaRefPageValue {
             value
         };
 
-        let count = read_u32(bytes, &mut offset) as usize;
+        let count = u32_to_usize_saturating(read_u32(bytes, &mut offset));
         let mut records = Vec::with_capacity(count);
         for _ in 0..count {
             records.push(CompactRealmAreaRefRecord {
@@ -549,17 +603,19 @@ impl CompactAreaPageValue {
 
         let mut bytes = Vec::with_capacity(total_len);
         bytes.extend_from_slice(&COMPACT_AREA_PAGE_VALUE_V1_MARKER);
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(usize_to_u32_saturating(self.records.len())).to_le_bytes());
 
         for record in &self.records {
             bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&(usize_to_u32_saturating(record.body.len())).to_le_bytes());
             bytes.extend_from_slice(
                 &record
                     .metadata
                     .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
+                        usize_to_u32_saturating(metadata.len())
+                    })
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -593,18 +649,18 @@ impl CompactAreaPageValue {
             value
         };
 
-        let record_count = read_u32(bytes, &mut offset) as usize;
+        let record_count = u32_to_usize_saturating(read_u32(bytes, &mut offset));
         let mut records = Vec::with_capacity(record_count);
 
         for _ in 0..record_count {
             let resource_offset = read_u64(bytes, &mut offset);
             let created_at = read_u64(bytes, &mut offset);
-            let body_len = read_u32(bytes, &mut offset) as usize;
+            let body_len = u32_to_usize_saturating(read_u32(bytes, &mut offset));
             let metadata_len_raw = read_u32(bytes, &mut offset);
             let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
                 None
             } else {
-                Some(metadata_len_raw as usize)
+                Some(u32_to_usize_saturating(metadata_len_raw))
             };
 
             let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
@@ -632,7 +688,7 @@ impl CompactAreaPageValue {
 impl CompactRealmAreaPageRefValue {
     fn encode(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(4 + (self.records.len() * (2 + 8 + 2)));
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(usize_to_u32_saturating(self.records.len())).to_le_bytes());
         for record in &self.records {
             bytes.extend_from_slice(&record.area_index.to_le_bytes());
             bytes.extend_from_slice(&record.area_page_start_offset.to_le_bytes());
@@ -659,7 +715,7 @@ impl CompactRealmAreaPageRefValue {
             value
         };
 
-        let record_count = read_u32(bytes, &mut offset) as usize;
+        let record_count = u32_to_usize_saturating(read_u32(bytes, &mut offset));
         let mut records = Vec::with_capacity(record_count);
 
         for _ in 0..record_count {
@@ -677,7 +733,7 @@ impl CompactRealmAreaPageRefValue {
 impl CompactRealmPageIdRefValue {
     fn encode(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(4 + (self.records.len() * (4 + 2)));
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(usize_to_u32_saturating(self.records.len())).to_le_bytes());
         for record in &self.records {
             bytes.extend_from_slice(&record.page_id.to_le_bytes());
             bytes.extend_from_slice(&record.slot.to_le_bytes());
@@ -698,7 +754,7 @@ impl CompactRealmPageIdRefValue {
             value
         };
 
-        let record_count = read_u32(bytes, &mut offset) as usize;
+        let record_count = u32_to_usize_saturating(read_u32(bytes, &mut offset));
         let mut records = Vec::with_capacity(record_count);
 
         for _ in 0..record_count {
@@ -715,7 +771,7 @@ impl CompactRealmPageIdRefValue {
 impl CompactRealmPageRunRefValue {
     fn encode(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(4 + (self.runs.len() * (4 + 2 + 2)));
-        bytes.extend_from_slice(&(self.runs.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(usize_to_u32_saturating(self.runs.len())).to_le_bytes());
         for run in &self.runs {
             bytes.extend_from_slice(&run.page_id.to_le_bytes());
             bytes.extend_from_slice(&run.start_slot.to_le_bytes());
@@ -737,7 +793,7 @@ impl CompactRealmPageRunRefValue {
             value
         };
 
-        let run_count = read_u32(bytes, &mut offset) as usize;
+        let run_count = u32_to_usize_saturating(read_u32(bytes, &mut offset));
         let mut runs = Vec::with_capacity(run_count);
 
         for _ in 0..run_count {
@@ -755,7 +811,7 @@ impl CompactRealmPageRunRefValue {
 impl CompactResourceAreaPageRefValue {
     fn encode(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(4 + (self.records.len() * (8 + 2 + 8)));
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(usize_to_u32_saturating(self.records.len())).to_le_bytes());
         for record in &self.records {
             bytes.extend_from_slice(&record.area_page_start_offset.to_le_bytes());
             bytes.extend_from_slice(&record.slot.to_le_bytes());
@@ -782,7 +838,7 @@ impl CompactResourceAreaPageRefValue {
             value
         };
 
-        let record_count = read_u32(bytes, &mut offset) as usize;
+        let record_count = u32_to_usize_saturating(read_u32(bytes, &mut offset));
         let mut records = Vec::with_capacity(record_count);
 
         for _ in 0..record_count {
@@ -807,18 +863,20 @@ impl CompactResourcePageValue {
 
         let mut bytes = Vec::with_capacity(total_len);
         bytes.extend_from_slice(&COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER);
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(usize_to_u32_saturating(self.records.len())).to_le_bytes());
 
         for record in &self.records {
             bytes.extend_from_slice(&record.area_offset.to_le_bytes());
             bytes.extend_from_slice(&record.realm_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&(usize_to_u32_saturating(record.body.len())).to_le_bytes());
             bytes.extend_from_slice(
                 &record
                     .metadata
                     .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
+                        usize_to_u32_saturating(metadata.len())
+                    })
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -852,19 +910,19 @@ impl CompactResourcePageValue {
             value
         };
 
-        let record_count = read_u32(bytes, &mut offset) as usize;
+        let record_count = u32_to_usize_saturating(read_u32(bytes, &mut offset));
         let mut records = Vec::with_capacity(record_count);
 
         for _ in 0..record_count {
             let area_offset = read_u64(bytes, &mut offset);
             let realm_offset = read_u64(bytes, &mut offset);
             let created_at = read_u64(bytes, &mut offset);
-            let body_len = read_u32(bytes, &mut offset) as usize;
+            let body_len = u32_to_usize_saturating(read_u32(bytes, &mut offset));
             let metadata_len_raw = read_u32(bytes, &mut offset);
             let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
                 None
             } else {
-                Some(metadata_len_raw as usize)
+                Some(u32_to_usize_saturating(metadata_len_raw))
             };
 
             let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
@@ -891,7 +949,9 @@ impl CompactResourcePageValue {
 }
 
 fn deterministic_seed(stream_index: usize, record_index: usize, salt: u64) -> u64 {
-    let base = ((stream_index as u64) << 32) ^ record_index as u64 ^ salt;
+    let base = ((usize_to_u64_saturating(stream_index)) << 32)
+        ^ usize_to_u64_saturating(record_index)
+        ^ salt;
     base | 1
 }
 
@@ -924,8 +984,9 @@ fn build_ascii_fill(len: usize, seed: u64) -> Vec<u8> {
 
     while bytes.len() < len {
         state = next_deterministic_state(state);
-        let token = ASCII_TOKEN_BANK[(state as usize) % ASCII_TOKEN_BANK.len()].as_bytes();
-        let hex = format!("{:08x}", state as u32);
+        let token =
+            ASCII_TOKEN_BANK[(u64_to_usize_saturating(state)) % ASCII_TOKEN_BANK.len()].as_bytes();
+        let hex = format!("{:08x}", u64_to_u32_saturating(state));
 
         for chunk in [token, b" ", hex.as_bytes(), b" "] {
             for byte in chunk {
@@ -1017,7 +1078,7 @@ fn build_production_like_payload(stream_index: usize, record_index: usize) -> Ev
             body: build_padded_text(
                 format!(
                     "ts={:08x} lvl=info stream={stream_index} seq={record_index} msg=",
-                    body_seed as u32
+                    u64_to_u32_saturating(body_seed)
                 ),
                 PRODUCTION_LIKE_LOG_BODY_BYTES,
                 body_seed ^ 0xDE_AD_BE_EF,
@@ -1038,29 +1099,38 @@ fn build_event_payload(
     record_index: usize,
     profile: PayloadProfile,
 ) -> EventPayload {
-    let body_seed = ((stream_index as u8).wrapping_mul(17)).wrapping_add(record_index as u8);
+    let body_seed = ((usize_to_u8_saturating(stream_index)).wrapping_mul(17))
+        .wrapping_add(usize_to_u8_saturating(record_index));
     let metadata_seed = body_seed.wrapping_add(53);
 
     match profile {
         PayloadProfile::LowEntropy => EventPayload {
             body: build_low_entropy_bytes(
                 BODY_BYTES,
-                deterministic_seed(stream_index, record_index, body_seed as u64),
+                deterministic_seed(stream_index, record_index, u64::from(body_seed)),
             ),
             metadata: Some(build_low_entropy_bytes(
                 METADATA_BYTES,
-                deterministic_seed(stream_index, record_index, metadata_seed as u64 ^ 0xA5A5),
+                deterministic_seed(
+                    stream_index,
+                    record_index,
+                    u64::from(metadata_seed) ^ 0xA5A5,
+                ),
             )),
             discriminator: None,
         },
         PayloadProfile::HighEntropy => EventPayload {
             body: build_high_entropy_bytes(
                 BODY_BYTES,
-                deterministic_seed(stream_index, record_index, body_seed as u64),
+                deterministic_seed(stream_index, record_index, u64::from(body_seed)),
             ),
             metadata: Some(build_high_entropy_bytes(
                 METADATA_BYTES,
-                deterministic_seed(stream_index, record_index, metadata_seed as u64 ^ 0xA5A5),
+                deterministic_seed(
+                    stream_index,
+                    record_index,
+                    u64::from(metadata_seed) ^ 0xA5A5,
+                ),
             )),
             discriminator: None,
         },
@@ -1289,7 +1359,10 @@ fn persist_prototype_rows(
     writes: &[PrototypeRowWrite],
 ) -> Result<(), String> {
     let mut txn = db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadWrite)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadWrite,
+        )
         .map_err(|error| format!("begin_tx failed: {error:?}"))?;
 
     for row in writes {
@@ -1301,6 +1374,7 @@ fn persist_prototype_rows(
         .map_err(|error| format!("txn commit failed: {error:?}"))
 }
 
+#[allow(clippy::too_many_lines)]
 fn seed_replay_case(
     area_count: usize,
     streams_per_area: usize,
@@ -1317,7 +1391,7 @@ fn seed_replay_case(
     for (area_index, area) in areas.iter().cloned().enumerate() {
         for resource_index in 0..streams_per_area {
             streams.push(PrototypeStream {
-                stream_id: (streams.len() + 1) as u64,
+                stream_id: usize_to_u64_saturating(streams.len().saturating_add(1)),
                 area_index,
                 area: area.clone(),
                 resource: format!("resource-{area_index}-{resource_index}"),
@@ -1351,7 +1425,8 @@ fn seed_replay_case(
                 .expect("seed stream commit");
             next_resource_offsets[stream_index] += 1;
 
-            let created_at = ((stream_index as u64) << 32) | record_index as u64;
+            let created_at = ((usize_to_u64_saturating(stream_index)) << 32)
+                | usize_to_u64_saturating(record_index);
             prototype_rows.push(PrototypeRowWrite {
                 key: encode_canonical_resource_key(stream.stream_id, commit.first_resource_offset),
                 value: CanonicalResourceValue {
@@ -1456,9 +1531,9 @@ fn seed_replay_case(
                         .iter()
                         .map(|record| CompactResourceAreaPageRefRecord {
                             area_page_start_offset: record.area_offset
-                                / REPLAY_PAGE_RECORD_LIMIT as u64
-                                * REPLAY_PAGE_RECORD_LIMIT as u64,
-                            slot: (record.area_offset % REPLAY_PAGE_RECORD_LIMIT as u64) as u16,
+                                / replay_page_record_limit_u64()
+                                * replay_page_record_limit_u64(),
+                            slot: page_slot(record.area_offset),
                             realm_offset: record.realm_offset,
                         })
                         .collect(),
@@ -1547,7 +1622,7 @@ fn seed_replay_case(
                 records: page
                     .iter()
                     .map(|record| CompactRealmAreaRefRecord {
-                        area_index: record.area_index as u16,
+                        area_index: usize_to_u16_saturating(record.area_index),
                         area_offset: record.area_offset,
                     })
                     .collect(),
@@ -1560,11 +1635,10 @@ fn seed_replay_case(
                 records: page
                     .iter()
                     .map(|record| CompactRealmAreaPageRefRecord {
-                        area_index: record.area_index as u16,
-                        area_page_start_offset: record.area_offset
-                            / REPLAY_PAGE_RECORD_LIMIT as u64
-                            * REPLAY_PAGE_RECORD_LIMIT as u64,
-                        slot: (record.area_offset % REPLAY_PAGE_RECORD_LIMIT as u64) as u16,
+                        area_index: usize_to_u16_saturating(record.area_index),
+                        area_page_start_offset: record.area_offset / replay_page_record_limit_u64()
+                            * replay_page_record_limit_u64(),
+                        slot: page_slot(record.area_offset),
                     })
                     .collect(),
             }
@@ -1577,15 +1651,15 @@ fn seed_replay_case(
                     .iter()
                     .map(|record| {
                         let page_start_area_offset = record.area_offset
-                            / REPLAY_PAGE_RECORD_LIMIT as u64
-                            * REPLAY_PAGE_RECORD_LIMIT as u64;
+                            / replay_page_record_limit_u64()
+                            * replay_page_record_limit_u64();
                         let page_id = area_page_ids
                             .get(&(record.area_index, page_start_area_offset))
                             .copied()
                             .expect("missing compact area page id");
                         CompactRealmPageIdRefRecord {
                             page_id,
-                            slot: (record.area_offset % REPLAY_PAGE_RECORD_LIMIT as u64) as u16,
+                            slot: page_slot(record.area_offset),
                         }
                     })
                     .collect(),
@@ -1599,16 +1673,13 @@ fn seed_replay_case(
                     .iter()
                     .map(|record| {
                         let page_start_area_offset = record.area_offset
-                            / REPLAY_PAGE_RECORD_LIMIT as u64
-                            * REPLAY_PAGE_RECORD_LIMIT as u64;
+                            / replay_page_record_limit_u64()
+                            * replay_page_record_limit_u64();
                         let page_id = area_page_ids
                             .get(&(record.area_index, page_start_area_offset))
                             .copied()
                             .expect("missing compact area page id");
-                        (
-                            page_id,
-                            (record.area_offset % REPLAY_PAGE_RECORD_LIMIT as u64) as u16,
-                        )
+                        (page_id, page_slot(record.area_offset))
                     })
                     .fold(
                         Vec::<CompactRealmPageRunRefRecord>::new(),
@@ -1638,7 +1709,7 @@ fn seed_replay_case(
                 key: encode_paged_area_locator_key(REALM, &record.area, record.area_offset),
                 value: PagedAreaLocatorValue {
                     page_start_realm_offset,
-                    slot: slot as u16,
+                    slot: usize_to_u16_saturating(slot),
                 }
                 .encode(),
             });
@@ -1689,7 +1760,7 @@ fn hydrate_area_batches(
         let query = cntryl_midge::Query::new()
             .start_key(Bytes::from(encode_area_key(REALM, area, first_offset)))
             .prefix(Bytes::from(prefix_key))
-            .limit((last_offset - first_offset + 1) as usize);
+            .limit(u64_to_usize_saturating(last_offset - first_offset + 1));
         let mut iter = txn
             .scan(&query)
             .map_err(|error| format!("scan error: {error:?}"))?;
@@ -1729,7 +1800,7 @@ fn load_area_page_cached<'a>(
 ) -> Result<&'a CompactAreaPageValue, String> {
     let cache_key = (area_index, page_start_offset);
     if let std::collections::hash_map::Entry::Vacant(entry) = cache.entry(cache_key) {
-        let area_name = &case.areas[area_index as usize];
+        let area_name = &case.areas[u16_to_usize(area_index)];
         let page_key = encode_compact_area_page_key(REALM, area_name, page_start_offset);
         let page_bytes = txn
             .get(&page_key)
@@ -1763,7 +1834,7 @@ fn scan_compact_area_pages(
         for (key, value) in iter.collect_all() {
             let page_start = decode_area_offset_from_key(&key)?;
             pages.insert(
-                (area_index as u16, page_start),
+                (usize_to_u16_saturating(area_index), page_start),
                 CompactAreaPageValue::decode(&value),
             );
         }
@@ -1857,7 +1928,7 @@ fn read_resource_covering(
         area: &stream.area,
         resource: &stream.resource,
         from_offset: 0,
-        limit: limit as u64,
+        limit: usize_to_u64_saturating(limit),
         max_bytes: None,
     })?;
 
@@ -1871,7 +1942,10 @@ fn read_resource_compact_paged(
 ) -> Result<Vec<StreamRecord>, String> {
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -1904,7 +1978,7 @@ fn read_resource_compact_paged(
             }
 
             records.push(StreamRecord {
-                resource_offset: resource_page_start + resource_page_slot as u64,
+                resource_offset: resource_page_start + usize_to_u64_saturating(resource_page_slot),
                 area_offset: Some(record.area_offset),
                 realm_offset: Some(record.realm_offset),
                 body: record.body.clone(),
@@ -1924,7 +1998,10 @@ fn read_resource_area_page_ref(
 ) -> Result<Vec<StreamRecord>, String> {
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -1961,17 +2038,17 @@ fn read_resource_area_page_ref(
                 &txn,
                 case,
                 &mut page_cache,
-                stream.area_index as u16,
+                usize_to_u16_saturating(stream.area_index),
                 record.area_page_start_offset,
             )?;
             let area_record = area_page
                 .records
-                .get(record.slot as usize)
+                .get(u16_to_usize(record.slot))
                 .ok_or_else(|| format!("invalid compact area page slot {}", record.slot))?;
-            let area_offset = record.area_page_start_offset + record.slot as u64;
+            let area_offset = record.area_page_start_offset + u64::from(record.slot);
 
             records.push(StreamRecord {
-                resource_offset: resource_page_start + resource_page_slot as u64,
+                resource_offset: resource_page_start + usize_to_u64_saturating(resource_page_slot),
                 area_offset: Some(area_offset),
                 realm_offset: Some(record.realm_offset),
                 body: area_record.body.clone(),
@@ -1991,7 +2068,10 @@ fn read_resource_area_page_ref_scanned(
 ) -> Result<Vec<StreamRecord>, String> {
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -2025,7 +2105,10 @@ fn read_resource_area_page_ref_scanned(
             }
 
             let area_page = page_cache
-                .get(&(stream.area_index as u16, record.area_page_start_offset))
+                .get(&(
+                    usize_to_u16_saturating(stream.area_index),
+                    record.area_page_start_offset,
+                ))
                 .ok_or_else(|| {
                     format!(
                         "missing scanned compact area page for area {} page {}",
@@ -2034,12 +2117,12 @@ fn read_resource_area_page_ref_scanned(
                 })?;
             let area_record = area_page
                 .records
-                .get(record.slot as usize)
+                .get(u16_to_usize(record.slot))
                 .ok_or_else(|| format!("invalid compact area page slot {}", record.slot))?;
-            let area_offset = record.area_page_start_offset + record.slot as u64;
+            let area_offset = record.area_page_start_offset + u64::from(record.slot);
 
             records.push(StreamRecord {
-                resource_offset: resource_page_start + resource_page_slot as u64,
+                resource_offset: resource_page_start + usize_to_u64_saturating(resource_page_slot),
                 area_offset: Some(area_offset),
                 realm_offset: Some(record.realm_offset),
                 body: area_record.body.clone(),
@@ -2056,7 +2139,10 @@ fn read_area_hydrated(case: &ReplayCase, area: &str) -> Result<Vec<StreamRecord>
     let watermark = case.store.get_watermark(FAMILY, REALM, area)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let mut prefix_key = encode_area_locator_key(REALM, area, 0);
@@ -2119,7 +2205,10 @@ fn read_realm_hydrated(case: &ReplayCase) -> Result<Vec<StreamRecord>, String> {
     let watermark = case.store.get_realm_watermark(FAMILY, REALM)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let mut prefix_key = encode_realm_locator_key(REALM, 0);
@@ -2182,7 +2271,10 @@ fn read_area_paged(case: &ReplayCase, area: &str) -> Result<Vec<StreamRecord>, S
     let watermark = case.store.get_watermark(FAMILY, REALM, area)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -2225,7 +2317,7 @@ fn read_area_paged(case: &ReplayCase, area: &str) -> Result<Vec<StreamRecord>, S
         };
         let page_record = page
             .records
-            .get(locator.slot as usize)
+            .get(u16_to_usize(locator.slot))
             .ok_or_else(|| format!("invalid page slot {}", locator.slot))?;
 
         records.push(StreamRecord {
@@ -2245,7 +2337,10 @@ fn read_area_compact_paged(case: &ReplayCase, area: &str) -> Result<Vec<StreamRe
     let watermark = case.store.get_watermark(FAMILY, REALM, area)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -2264,7 +2359,7 @@ fn read_area_compact_paged(case: &ReplayCase, area: &str) -> Result<Vec<StreamRe
         let page = CompactAreaPageValue::decode(&value);
 
         for (slot, page_record) in page.records.iter().enumerate() {
-            let area_offset = page_start + slot as u64;
+            let area_offset = page_start + usize_to_u64_saturating(slot);
             if area_offset > watermark {
                 return Ok(records);
             }
@@ -2287,7 +2382,10 @@ fn read_realm_paged(case: &ReplayCase) -> Result<Vec<StreamRecord>, String> {
     let watermark = case.store.get_realm_watermark(FAMILY, REALM)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -2306,7 +2404,7 @@ fn read_realm_paged(case: &ReplayCase) -> Result<Vec<StreamRecord>, String> {
         let page = PagedRealmValue::decode(&value);
 
         for (slot, page_record) in page.records.iter().enumerate() {
-            let realm_offset = page_start + slot as u64;
+            let realm_offset = page_start + usize_to_u64_saturating(slot);
             if realm_offset > watermark {
                 return Ok(records);
             }
@@ -2329,7 +2427,10 @@ fn read_realm_compact_paged(case: &ReplayCase) -> Result<Vec<StreamRecord>, Stri
     let watermark = case.store.get_realm_watermark(FAMILY, REALM)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -2348,7 +2449,7 @@ fn read_realm_compact_paged(case: &ReplayCase) -> Result<Vec<StreamRecord>, Stri
         let page = CompactPagedRealmValue::decode(&value);
 
         for (slot, page_record) in page.records.iter().enumerate() {
-            let realm_offset = page_start + slot as u64;
+            let realm_offset = page_start + usize_to_u64_saturating(slot);
             if realm_offset > watermark {
                 return Ok(records);
             }
@@ -2371,7 +2472,10 @@ fn read_realm_compressed_compact_paged(case: &ReplayCase) -> Result<Vec<StreamRe
     let watermark = case.store.get_realm_watermark(FAMILY, REALM)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -2400,7 +2504,7 @@ fn read_realm_compressed_compact_paged(case: &ReplayCase) -> Result<Vec<StreamRe
         let page = CompactPagedRealmValue::decode(&decompressed);
 
         for (slot, page_record) in page.records.iter().enumerate() {
-            let realm_offset = page_start + slot as u64;
+            let realm_offset = page_start + usize_to_u64_saturating(slot);
             if realm_offset > watermark {
                 return Ok(records);
             }
@@ -2423,7 +2527,10 @@ fn read_realm_area_ref_paged(case: &ReplayCase) -> Result<Vec<StreamRecord>, Str
     let watermark = case.store.get_realm_watermark(FAMILY, REALM)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -2443,18 +2550,18 @@ fn read_realm_area_ref_paged(case: &ReplayCase) -> Result<Vec<StreamRecord>, Str
         let mut requested_offsets = vec![Vec::new(); case.areas.len()];
 
         for record in &page.records {
-            requested_offsets[record.area_index as usize].push(record.area_offset);
+            requested_offsets[u16_to_usize(record.area_index)].push(record.area_offset);
         }
 
         let hydrated = hydrate_area_batches(&txn, case, &requested_offsets)?;
 
         for (slot, record) in page.records.iter().enumerate() {
-            let realm_offset = page_start + slot as u64;
+            let realm_offset = page_start + usize_to_u64_saturating(slot);
             if realm_offset > watermark {
                 return Ok(records);
             }
 
-            let area_record = hydrated[record.area_index as usize]
+            let area_record = hydrated[u16_to_usize(record.area_index)]
                 .get(&record.area_offset)
                 .ok_or_else(|| {
                     format!(
@@ -2481,7 +2588,10 @@ fn read_realm_area_page_ref_paged(case: &ReplayCase) -> Result<Vec<StreamRecord>
     let watermark = case.store.get_realm_watermark(FAMILY, REALM)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -2503,7 +2613,7 @@ fn read_realm_area_page_ref_paged(case: &ReplayCase) -> Result<Vec<StreamRecord>
         let page = CompactRealmAreaPageRefValue::decode(&value);
 
         for (slot, record) in page.records.iter().enumerate() {
-            let realm_offset = page_start + slot as u64;
+            let realm_offset = page_start + usize_to_u64_saturating(slot);
             if realm_offset > watermark {
                 return Ok(records);
             }
@@ -2517,9 +2627,9 @@ fn read_realm_area_page_ref_paged(case: &ReplayCase) -> Result<Vec<StreamRecord>
             )?;
             let area_record = area_page
                 .records
-                .get(record.slot as usize)
+                .get(u16_to_usize(record.slot))
                 .ok_or_else(|| format!("invalid compact area page slot {}", record.slot))?;
-            let area_offset = record.area_page_start_offset + record.slot as u64;
+            let area_offset = record.area_page_start_offset + u64::from(record.slot);
 
             records.push(StreamRecord {
                 resource_offset: area_record.resource_offset,
@@ -2539,7 +2649,10 @@ fn read_realm_area_page_ref_scanned(case: &ReplayCase) -> Result<Vec<StreamRecor
     let watermark = case.store.get_realm_watermark(FAMILY, REALM)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -2561,7 +2674,7 @@ fn read_realm_area_page_ref_scanned(case: &ReplayCase) -> Result<Vec<StreamRecor
         let page = CompactRealmAreaPageRefValue::decode(&value);
 
         for (slot, record) in page.records.iter().enumerate() {
-            let realm_offset = page_start + slot as u64;
+            let realm_offset = page_start + usize_to_u64_saturating(slot);
             if realm_offset > watermark {
                 return Ok(records);
             }
@@ -2576,9 +2689,9 @@ fn read_realm_area_page_ref_scanned(case: &ReplayCase) -> Result<Vec<StreamRecor
                 })?;
             let area_record = area_page
                 .records
-                .get(record.slot as usize)
+                .get(u16_to_usize(record.slot))
                 .ok_or_else(|| format!("invalid compact area page slot {}", record.slot))?;
-            let area_offset = record.area_page_start_offset + record.slot as u64;
+            let area_offset = record.area_page_start_offset + u64::from(record.slot);
 
             records.push(StreamRecord {
                 resource_offset: area_record.resource_offset,
@@ -2598,7 +2711,10 @@ fn read_realm_page_id_ref_scanned(case: &ReplayCase) -> Result<Vec<StreamRecord>
     let watermark = case.store.get_realm_watermark(FAMILY, REALM)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -2618,20 +2734,22 @@ fn read_realm_page_id_ref_scanned(case: &ReplayCase) -> Result<Vec<StreamRecord>
         let page = CompactRealmPageIdRefValue::decode(&value);
 
         for (slot, record) in page.records.iter().enumerate() {
-            let realm_offset = page_start + slot as u64;
+            let realm_offset = page_start + usize_to_u64_saturating(slot);
             if realm_offset > watermark {
                 return Ok(records);
             }
 
-            let area_page = page_cache.get(record.page_id as usize).ok_or_else(|| {
-                format!("missing compact area page for page id {}", record.page_id)
-            })?;
+            let area_page = page_cache
+                .get(u32_to_usize_saturating(record.page_id))
+                .ok_or_else(|| {
+                    format!("missing compact area page for page id {}", record.page_id)
+                })?;
             let area_record = area_page
                 .value
                 .records
-                .get(record.slot as usize)
+                .get(u16_to_usize(record.slot))
                 .ok_or_else(|| format!("invalid compact area page slot {}", record.slot))?;
-            let area_offset = area_page.page_start_offset + record.slot as u64;
+            let area_offset = area_page.page_start_offset + u64::from(record.slot);
 
             records.push(StreamRecord {
                 resource_offset: area_record.resource_offset,
@@ -2651,7 +2769,10 @@ fn read_realm_page_run_ref_scanned(case: &ReplayCase) -> Result<Vec<StreamRecord
     let watermark = case.store.get_realm_watermark(FAMILY, REALM)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -2673,10 +2794,10 @@ fn read_realm_page_run_ref_scanned(case: &ReplayCase) -> Result<Vec<StreamRecord
 
         for run in page.runs {
             let area_page = page_cache
-                .get(run.page_id as usize)
+                .get(u32_to_usize_saturating(run.page_id))
                 .ok_or_else(|| format!("missing compact area page for page id {}", run.page_id))?;
-            let start_slot = run.start_slot as usize;
-            let end_slot = start_slot + run.len as usize;
+            let start_slot = u16_to_usize(run.start_slot);
+            let end_slot = start_slot + u16_to_usize(run.len);
 
             if end_slot > area_page.value.records.len() {
                 return Err(format!(
@@ -2694,7 +2815,8 @@ fn read_realm_page_run_ref_scanned(case: &ReplayCase) -> Result<Vec<StreamRecord
                 }
 
                 let absolute_slot = start_slot + slot;
-                let area_offset = area_page.page_start_offset + absolute_slot as u64;
+                let area_offset =
+                    area_page.page_start_offset + usize_to_u64_saturating(absolute_slot);
 
                 records.push(StreamRecord {
                     resource_offset: area_record.resource_offset,
@@ -2716,7 +2838,10 @@ fn read_realm_page_run_ref_clustered(case: &ReplayCase) -> Result<Vec<StreamReco
     let watermark = case.store.get_realm_watermark(FAMILY, REALM)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -2728,13 +2853,13 @@ fn read_realm_page_run_ref_clustered(case: &ReplayCase) -> Result<Vec<StreamReco
         .map_err(|error| format!("scan error: {error:?}"))?;
     let raw_rows = iter.collect_all();
     let page_cache = scan_compact_area_pages_flat(&txn, case)?;
-    let output_len = (watermark as usize)
+    let output_len = (u64_to_usize_saturating(watermark))
         .saturating_add(1)
         .min(case.expected_records);
     let mut assignments_by_page = vec![Vec::<PageRunAssignment>::new(); page_cache.len()];
 
     for (key, value) in raw_rows {
-        let page_start = decode_realm_offset_from_key(&key)? as usize;
+        let page_start = u64_to_usize_saturating(decode_realm_offset_from_key(&key)?);
         if page_start >= output_len {
             break;
         }
@@ -2747,7 +2872,7 @@ fn read_realm_page_run_ref_clustered(case: &ReplayCase) -> Result<Vec<StreamReco
                 break;
             }
 
-            let page_id = run.page_id as usize;
+            let page_id = u32_to_usize_saturating(run.page_id);
             if page_id >= assignments_by_page.len() {
                 return Err(format!(
                     "missing compact area page for page id {}",
@@ -2756,10 +2881,10 @@ fn read_realm_page_run_ref_clustered(case: &ReplayCase) -> Result<Vec<StreamReco
             }
 
             let available_len = output_len - next_realm_output;
-            let assignment_len = available_len.min(run.len as usize);
+            let assignment_len = available_len.min(u16_to_usize(run.len));
             assignments_by_page[page_id].push(PageRunAssignment {
                 realm_output_start: next_realm_output,
-                area_start_slot: run.start_slot as usize,
+                area_start_slot: u16_to_usize(run.start_slot),
                 len: assignment_len,
             });
             next_realm_output += assignment_len;
@@ -2790,12 +2915,13 @@ fn read_realm_page_run_ref_clustered(case: &ReplayCase) -> Result<Vec<StreamReco
             {
                 let output_index = assignment.realm_output_start + slot_delta;
                 let absolute_slot = assignment.area_start_slot + slot_delta;
-                let area_offset = area_page.page_start_offset + absolute_slot as u64;
+                let area_offset =
+                    area_page.page_start_offset + usize_to_u64_saturating(absolute_slot);
 
                 output[output_index] = Some(StreamRecord {
                     resource_offset: area_record.resource_offset,
                     area_offset: Some(area_offset),
-                    realm_offset: Some(output_index as u64),
+                    realm_offset: Some(usize_to_u64_saturating(output_index)),
                     body: area_record.body.clone(),
                     metadata: area_record.metadata.clone(),
                     created_at: area_record.created_at,
@@ -2868,7 +2994,14 @@ fn validate_resource_case(case: &ReplayCase, stream: &PrototypeStream, expected_
 fn validate_area_case(case: &ReplayCase, area: &str) {
     let (covering_records, _) = case
         .store
-        .read_area(FAMILY, REALM, area, 0, case.expected_records as u64, None)
+        .read_area(
+            FAMILY,
+            REALM,
+            area,
+            0,
+            usize_to_u64_saturating(case.expected_records),
+            None,
+        )
         .expect("covering area replay");
     let covering_records = event_records(covering_records);
     let hydrated_records = read_area_hydrated(case, area).expect("hydrated area replay");
@@ -2892,7 +3025,13 @@ fn validate_area_case(case: &ReplayCase, area: &str) {
 fn validate_realm_case(case: &ReplayCase) {
     let (covering_records, _) = case
         .store
-        .read_realm(FAMILY, REALM, 0, case.expected_records as u64, None)
+        .read_realm(
+            FAMILY,
+            REALM,
+            0,
+            usize_to_u64_saturating(case.expected_records),
+            None,
+        )
         .expect("covering realm replay");
     let covering_records = event_records(covering_records);
     let hydrated_records = read_realm_hydrated(case).expect("hydrated realm replay");
@@ -2956,7 +3095,13 @@ fn validate_realm_case(case: &ReplayCase) {
 fn validate_realm_local_body_case(case: &ReplayCase) {
     let (covering_records, _) = case
         .store
-        .read_realm(FAMILY, REALM, 0, case.expected_records as u64, None)
+        .read_realm(
+            FAMILY,
+            REALM,
+            0,
+            usize_to_u64_saturating(case.expected_records),
+            None,
+        )
         .expect("covering realm replay");
     let covering_records = event_records(covering_records);
     let compact_paged_records = read_realm_compact_paged(case).expect("compact paged realm replay");
@@ -2979,6 +3124,7 @@ fn validate_realm_local_body_case(case: &ReplayCase) {
     assert_matching_records(&covering_records, &compressed_compact_paged_records);
 }
 
+#[allow(clippy::too_many_lines)]
 fn bench_stream_replay_hydration(c: &mut Criterion) {
     let area_case = seed_replay_case(1, 16, 128, PayloadProfile::LowEntropy);
     let area_name = area_case.streams[0].area.clone();
@@ -3008,14 +3154,16 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_stream_replay");
     group.sampling_mode(SamplingMode::Flat);
 
-    group.throughput(Throughput::Elements(resource_expected_records as u64));
+    group.throughput(Throughput::Elements(usize_to_u64_saturating(
+        resource_expected_records,
+    )));
     group.bench_function("covering_resource_replay_128_records_1_stream", |b| {
         b.iter(|| {
             black_box(
                 read_resource_covering(&area_case, &resource_stream, resource_expected_records)
                     .expect("covering resource replay"),
             );
-        })
+        });
     });
     group.bench_function("resource_mini_page_replay_128_records_1_stream", |b| {
         b.iter(|| {
@@ -3027,7 +3175,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                 )
                 .expect("resource mini-page replay"),
             );
-        })
+        });
     });
     group.bench_function("area_page_ref_resource_replay_128_records_1_stream", |b| {
         b.iter(|| {
@@ -3039,7 +3187,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                 )
                 .expect("resource area-page-ref replay"),
             );
-        })
+        });
     });
     group.bench_function(
         "area_page_ref_scanned_resource_replay_128_records_1_stream",
@@ -3053,7 +3201,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     )
                     .expect("resource area-page-ref scanned replay"),
                 );
-            })
+            });
         },
     );
     group.bench_function(
@@ -3068,7 +3216,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     )
                     .expect("covering resource replay production-like"),
                 );
-            })
+            });
         },
     );
     group.bench_function(
@@ -3083,11 +3231,13 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     )
                     .expect("resource mini-page replay production-like"),
                 );
-            })
+            });
         },
     );
 
-    group.throughput(Throughput::Elements(area_case.expected_records as u64));
+    group.throughput(Throughput::Elements(usize_to_u64_saturating(
+        area_case.expected_records,
+    )));
     group.bench_function("covering_area_replay_2048_records_16_streams", |b| {
         b.iter(|| {
             black_box(
@@ -3098,56 +3248,64 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                         REALM,
                         &area_name,
                         0,
-                        area_case.expected_records as u64,
+                        usize_to_u64_saturating(area_case.expected_records),
                         None,
                     )
                     .expect("covering area replay"),
             );
-        })
+        });
     });
     group.bench_function("hydrated_area_replay_2048_records_16_streams", |b| {
         b.iter(|| {
             black_box(read_area_hydrated(&area_case, &area_name).expect("hydrated area replay"));
-        })
+        });
     });
     group.bench_function("paged_area_replay_2048_records_16_streams", |b| {
         b.iter(|| {
             black_box(read_area_paged(&area_case, &area_name).expect("paged area replay"));
-        })
+        });
     });
     group.bench_function("compact_paged_area_replay_2048_records_16_streams", |b| {
         b.iter(|| {
             black_box(
                 read_area_compact_paged(&area_case, &area_name).expect("compact paged area replay"),
             );
-        })
+        });
     });
 
-    group.throughput(Throughput::Elements(realm_case.expected_records as u64));
+    group.throughput(Throughput::Elements(usize_to_u64_saturating(
+        realm_case.expected_records,
+    )));
     group.bench_function("covering_realm_replay_2048_records_32_streams", |b| {
         b.iter(|| {
             black_box(
                 realm_case
                     .store
-                    .read_realm(FAMILY, REALM, 0, realm_case.expected_records as u64, None)
+                    .read_realm(
+                        FAMILY,
+                        REALM,
+                        0,
+                        usize_to_u64_saturating(realm_case.expected_records),
+                        None,
+                    )
                     .expect("covering realm replay"),
             );
-        })
+        });
     });
     group.bench_function("hydrated_realm_replay_2048_records_32_streams", |b| {
         b.iter(|| {
             black_box(read_realm_hydrated(&realm_case).expect("hydrated realm replay"));
-        })
+        });
     });
     group.bench_function("paged_realm_replay_2048_records_32_streams", |b| {
         b.iter(|| {
             black_box(read_realm_paged(&realm_case).expect("paged realm replay"));
-        })
+        });
     });
     group.bench_function("compact_paged_realm_replay_2048_records_32_streams", |b| {
         b.iter(|| {
             black_box(read_realm_compact_paged(&realm_case).expect("compact paged realm replay"));
-        })
+        });
     });
     group.bench_function(
         "compressed_compact_paged_realm_replay_2048_records_32_streams",
@@ -3157,7 +3315,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     read_realm_compressed_compact_paged(&realm_case)
                         .expect("compressed compact paged realm replay"),
                 );
-            })
+            });
         },
     );
     group.bench_function(
@@ -3171,12 +3329,12 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                             FAMILY,
                             REALM,
                             0,
-                            high_entropy_realm_case.expected_records as u64,
+                            usize_to_u64_saturating(high_entropy_realm_case.expected_records),
                             None,
                         )
                         .expect("covering realm replay"),
                 );
-            })
+            });
         },
     );
     group.bench_function(
@@ -3187,7 +3345,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     read_realm_compact_paged(&high_entropy_realm_case)
                         .expect("compact paged realm replay"),
                 );
-            })
+            });
         },
     );
     group.bench_function(
@@ -3198,7 +3356,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     read_realm_compressed_compact_paged(&high_entropy_realm_case)
                         .expect("compressed compact paged realm replay"),
                 );
-            })
+            });
         },
     );
     group.bench_function(
@@ -3212,12 +3370,12 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                             FAMILY,
                             REALM,
                             0,
-                            production_like_realm_case.expected_records as u64,
+                            usize_to_u64_saturating(production_like_realm_case.expected_records),
                             None,
                         )
                         .expect("covering realm replay"),
                 );
-            })
+            });
         },
     );
     group.bench_function(
@@ -3228,7 +3386,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     read_realm_compact_paged(&production_like_realm_case)
                         .expect("compact paged realm replay"),
                 );
-            })
+            });
         },
     );
     group.bench_function(
@@ -3239,13 +3397,13 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     read_realm_compressed_compact_paged(&production_like_realm_case)
                         .expect("compressed compact paged realm replay"),
                 );
-            })
+            });
         },
     );
     group.bench_function("area_ref_paged_realm_replay_2048_records_32_streams", |b| {
         b.iter(|| {
             black_box(read_realm_area_ref_paged(&realm_case).expect("area-ref paged realm replay"));
-        })
+        });
     });
     group.bench_function(
         "area_page_ref_paged_realm_replay_2048_records_32_streams",
@@ -3255,7 +3413,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     read_realm_area_page_ref_paged(&realm_case)
                         .expect("area-page-ref paged realm replay"),
                 );
-            })
+            });
         },
     );
     group.bench_function(
@@ -3266,7 +3424,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     read_realm_area_page_ref_scanned(&realm_case)
                         .expect("area-page-ref scanned realm replay"),
                 );
-            })
+            });
         },
     );
     group.bench_function(
@@ -3277,7 +3435,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     read_realm_page_id_ref_scanned(&realm_case)
                         .expect("page-id-ref scanned realm replay"),
                 );
-            })
+            });
         },
     );
     group.bench_function(
@@ -3288,7 +3446,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     read_realm_page_run_ref_scanned(&realm_case)
                         .expect("page-run-ref scanned realm replay"),
                 );
-            })
+            });
         },
     );
     group.bench_function(
@@ -3299,7 +3457,7 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
                     read_realm_page_run_ref_clustered(&realm_case)
                         .expect("page-run-ref clustered realm replay"),
                 );
-            })
+            });
         },
     );
 

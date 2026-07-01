@@ -289,7 +289,7 @@ mod tests {
         let always_ratio = obs::SAMPLING_RATIO_ALWAYS;
 
         // Assert
-        assert_eq!(hot_path_ratio, 0.001);
-        assert_eq!(always_ratio, 1.0);
+        assert!((hot_path_ratio - 0.001).abs() <= f64::EPSILON);
+        assert!((always_ratio - 1.0).abs() <= f64::EPSILON);
     }
 }

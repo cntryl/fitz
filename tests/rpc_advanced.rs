@@ -71,7 +71,7 @@ fn create_response(correlation_id: Uuid, seq: u64, stream_end: bool) -> RpcRespo
     RpcResponseMsg::chunk(
         correlation_id,
         seq,
-        Bytes::from(vec![seq as u8]),
+        Bytes::from(vec![u8::try_from(seq).unwrap_or(u8::MAX)]),
         stream_end,
     )
 }
