@@ -1,6 +1,8 @@
 use super::*;
 use crate::api::admin::auth::{AdminPrincipal, AdminRouteFamilyAccess};
-use crate::api::admin::{QueueDeadLetter, QueueInfo, RpcPendingRequest, ScheduleInfo};
+use crate::api::admin::{
+    KvTransaction, QueueDeadLetter, QueueInfo, RpcPendingRequest, ScheduleInfo,
+};
 use crate::boot::Runtime;
 use crate::control::admin::read_model::AdminReadModel;
 use crate::control::admin::{QueueAgeBuckets, QueueDeadLetterSnapshot, QueueInfoSnapshot};
@@ -289,6 +291,99 @@ fn should_keep_unknown_route_family_candidates_visible_to_wildcard_access() {
     // Assert
     assert_eq!(response.total, 1);
     assert_eq!(response.results[0].route_family.as_deref(), Some("2"));
+}
+
+#[test]
+fn should_filter_kv_transaction_search_by_route_family() {
+    // Arrange
+    let read_model = AdminReadModel::new();
+    read_model.replace_kv_transactions(vec![
+        KvTransaction::snapshot(
+            1,
+            41,
+            10,
+            "billing",
+            "payments",
+            "settlement",
+            "2026-06-23T00:00:00Z",
+        ),
+        KvTransaction::snapshot(
+            2,
+            41,
+            11,
+            "billing",
+            "payments",
+            "settlement",
+            "2026-06-23T00:00:00Z",
+        ),
+    ]);
+    let runtime = runtime_with_read_model(read_model);
+    let options = SearchOptions {
+        query: String::new(),
+        route_family: Some("2".to_string()),
+        domain: Some("kv".to_string()),
+        realm: None,
+        area: None,
+        resource: None,
+        operation: None,
+        limit: 50,
+    };
+
+    // Act
+    let response = search_runtime(runtime.as_ref(), &options, &wildcard_access());
+
+    // Assert
+    assert_eq!(response.total, 1);
+    assert_eq!(response.results[0].route_family.as_deref(), Some("2"));
+    assert_eq!(
+        response.results[0].id,
+        "kv:transaction:2:billing:payments:settlement:41"
+    );
+}
+
+#[test]
+fn should_hide_kv_transaction_search_results_outside_explicit_route_family_access() {
+    // Arrange
+    let read_model = AdminReadModel::new();
+    read_model.replace_kv_transactions(vec![
+        KvTransaction::snapshot(
+            1,
+            41,
+            10,
+            "billing",
+            "payments",
+            "settlement",
+            "2026-06-23T00:00:00Z",
+        ),
+        KvTransaction::snapshot(
+            2,
+            42,
+            11,
+            "billing",
+            "payments",
+            "settlement",
+            "2026-06-23T00:00:00Z",
+        ),
+    ]);
+    let runtime = runtime_with_read_model(read_model);
+    let options = SearchOptions {
+        query: String::new(),
+        route_family: None,
+        domain: Some("kv".to_string()),
+        realm: None,
+        area: None,
+        resource: None,
+        operation: None,
+        limit: 50,
+    };
+
+    // Act
+    let response = search_runtime(runtime.as_ref(), &options, &explicit_access(&["2"]));
+
+    // Assert
+    assert_eq!(response.total, 1);
+    assert_eq!(response.results[0].route_family.as_deref(), Some("2"));
+    assert_eq!(response.results[0].metadata.get("tx_id").unwrap(), "42");
 }
 
 #[tokio::test]

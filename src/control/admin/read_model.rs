@@ -3,6 +3,7 @@ use super::{
     QueueInfo, RpcPendingRequest, RpcWorker, ScheduleInfo, SessionInfo, StreamAreaWatermarkDetail,
     StreamInfo, StreamRealmWatermarkDetail,
 };
+use crate::runtime::routing::{route_quad, route_triplet};
 use crate::session::session::SessionInfo as RuntimeSessionInfo;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
@@ -85,8 +86,12 @@ fn matches_substring(filter: Option<&str>, value: &str) -> bool {
     filter.is_none_or(|needle| value.contains(needle))
 }
 
-fn matches_route_realm(realm: Option<&str>, route: &str) -> bool {
-    realm.is_none_or(|needle| route.contains(&format!("{needle}/")))
+fn matches_notice_route_realm(realm: Option<&str>, route: &str) -> bool {
+    realm.is_none_or(|needle| route_triplet(route).is_some_and(|parts| parts.realm == needle))
+}
+
+fn matches_rpc_route_realm(realm: Option<&str>, route: &str) -> bool {
+    realm.is_none_or(|needle| route_quad(route).is_some_and(|parts| parts.realm == needle))
 }
 
 fn collect_slice_matches<T: Clone>(items: &[T], include: impl Fn(&T) -> bool) -> Vec<T> {
@@ -220,7 +225,9 @@ impl AdminReadModel {
 
     pub fn notice_routes(&self, realm: Option<&str>) -> Vec<NoticeRouteInfo> {
         let routes = self.notice_routes.read();
-        collect_slice_matches(&routes, |item| matches_route_realm(realm, &item.route))
+        collect_slice_matches(&routes, |item| {
+            matches_notice_route_realm(realm, &item.route)
+        })
     }
 
     pub fn replace_queues(&self, queues: Vec<QueueInfo>) {
@@ -265,7 +272,7 @@ impl AdminReadModel {
 
     pub fn rpc_pending(&self, realm: Option<&str>) -> Vec<RpcPendingRequest> {
         let pending = self.rpc_pending.read();
-        collect_slice_matches(&pending, |item| matches_route_realm(realm, &item.route))
+        collect_slice_matches(&pending, |item| matches_rpc_route_realm(realm, &item.route))
     }
 
     pub fn replace_leases(&self, leases: Vec<LeaseInfo>) {
@@ -527,6 +534,63 @@ mod tests {
         // Assert
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].route, "notice://acme/app/orders");
+    }
+
+    #[test]
+    fn should_filter_notice_routes_by_exact_route_realm() {
+        // Arrange
+        let read_model = AdminReadModel::default();
+        read_model.replace_notice_routes(vec![
+            NoticeRouteInfo::snapshot(1, "notice://acme/app/orders".to_string(), 1),
+            NoticeRouteInfo::snapshot(1, "notice://globex/acme/orders".to_string(), 2),
+            NoticeRouteInfo::snapshot(1, "notice://globex/app/acme/events".to_string(), 3),
+        ]);
+
+        // Act
+        let routes = read_model.notice_routes(Some("acme"));
+
+        // Assert
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].route, "notice://acme/app/orders");
+    }
+
+    #[test]
+    fn should_filter_rpc_pending_by_exact_route_realm() {
+        // Arrange
+        let read_model = AdminReadModel::default();
+        read_model.replace_rpc_pending(vec![
+            RpcPendingRequest::snapshot(
+                1,
+                &"corr-acme",
+                "rpc://acme/payments/settlement/run",
+                "2026-03-31T00:00:00Z",
+                1,
+                None,
+            ),
+            RpcPendingRequest::snapshot(
+                1,
+                &"corr-area",
+                "rpc://globex/acme/settlement/run",
+                "2026-03-31T00:00:00Z",
+                1,
+                None,
+            ),
+            RpcPendingRequest::snapshot(
+                1,
+                &"corr-resource",
+                "rpc://globex/payments/acme/run",
+                "2026-03-31T00:00:00Z",
+                1,
+                None,
+            ),
+        ]);
+
+        // Act
+        let requests = read_model.rpc_pending(Some("acme"));
+
+        // Assert
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].correlation_id, "corr-acme");
     }
 
     #[test]

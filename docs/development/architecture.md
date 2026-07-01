@@ -13,16 +13,18 @@
 ## Overview
 Fitz is a **layered, synchronous-core broker** designed for:
 - **Low-latency domain operations** (KV, queues, pub/sub, streams, RPC, leases, scheduling)
-- **Isolation via realms** (application-defined resource partitioning)
+- **Two-axis isolation:** hard broker isolation by `RouteFamily`, plus app-visible namespace by `realm`
 - **Deterministic message routing** (no async jitter in hot paths)
 - **High fanout** (pub/sub with wildcard patterns)
 
 For the strict internal contract that defines what each domain is allowed to do, what it must not do, and how domains compose safely, see [domain-boundaries-spec.md](domain-boundaries-spec.md).
 
+`RouteFamily` and `realm` are orthogonal identifiers. `RouteFamily` is the broker-internal routing and isolation key for session assignment, delivery partitioning, and storage partitioning. `realm` is the opaque application-visible namespace label used in Fitz routes, permissions, and admin/API payloads. `realm` and `RouteFamily` are separate axes and must never be inferred, aliased, substituted, or used as fallback values for each other.
+
 The server is implemented in **async I/O boundaries** (transport) with a **100% synchronous core** (routing, domains). This separation ensures:
 - Clean transport abstraction (WebSocket, TCP, HTTP)
 - Predictable domain latency (no async scheduling variability)
-- Efficient realm-based isolation
+- Efficient enforcement of RouteFamily and realm boundaries
 ## System Architecture
 ### Layered Design
 ```
@@ -148,6 +150,7 @@ On reconnect with new CONNECT:
 - No transaction persistence exists.
 - No worker registration persistence exists.
 - No lease ownership persistence exists beyond normal lease expiry or explicit reacquire.
+- Disconnect cleanup may create cleanup retry tickets; cleanup retry tickets complete cleanup dispatch only and never restore sessions, ownership, subscriptions, transactions, workers, leases, or inflight state.
 
 **Client requirements:**
 - Clients **MUST** re-authenticate after reconnect.
@@ -262,7 +265,9 @@ impl Engine {
 - **KV:** `{realm}/{area}/{resource}/{key}` → `{value}`
 - **Stream:** `{realm}/{area}/{resource}/offset:{offset}` → `{record}` plus durable resource metadata / area indexes / realm indexes for committed sequencing state
 - **Queue:** `{realm}/{area}/{resource}/msg:{message_id}` → `{body}`
-- **Lease:** `{realm}/{area}/{resource}` → `{owner, ttl, token}`
+- **Schedule:** persisted definitions, next-fire state, and pending fire claims for durable timing intent
+
+Lease has no Layer 5 persistent storage schema. Lease ownership, waiters, TTL state, and fencing tokens are live broker coordination state only.
 ## Wire Protocol Implementation
 ### Payload encoding (domain message bodies)
 **Location:** `src/protocol/payload_codec.rs`
@@ -489,6 +494,56 @@ Current Notice behavior is intentionally ephemeral:
 - Admin views describe only current in-memory subscriptions and route counters
 - Wildcard subscriptions are capped per session to keep matcher cost bounded
 - `NoticeRouteActor` remains a focused sync actor and test model for matching and fanout invariants
+
+### Domain Actor, Data, And Admin Contracts
+#### KV
+- Actor owner: `KvActor` owns live transaction state, session-scoped locks, and subscription fanout decisions for one route family.
+- Persistence: committed values are durable according to the selected write policy; open transactions and watcher state are ephemeral.
+- Cleanup: disconnect rolls back live transactions, releases session-owned locks, and drops subscriptions without implying transaction recovery.
+- `RouteFamily`/`realm`: committed rows stay partitioned by exact `RouteFamily`; `realm` remains an opaque route label and is never inferred from the family.
+- Admin path: live transaction views flow through `AdminReadModel`; committed value and inventory reads go through `Runtime::kv_*` query facades.
+
+#### Queue
+- Actor owner: `QueueActor` owns live reservation state, retry bookkeeping, watcher state, and dead-letter mutations for one queue resource.
+- Persistence: durable backlog and dead-letter records live in storage; inflight reservations, watch subscriptions, and fast-flush state are ephemeral.
+- Cleanup: disconnect clears worker reservations and watch state, but it does not imply durable ownership continuity or hidden worker recovery.
+- `RouteFamily`/`realm`: queue data is isolated by exact `RouteFamily`, while `realm` remains an application-defined namespace inside the queue route.
+- Admin path: live queue snapshots flow through `Runtime::queue_list_*`; dead-letter replay and purge use explicit `Runtime::queue_*_dead_letter` commands.
+
+#### Notice
+- Actor owner: `NoticeDomainSink` owns the live in-memory subscription index and route counters for the current broker process.
+- Persistence: Notice delivery, subscriptions, and counters are ephemeral only; there is no durable replay or broker-side subscriber recovery.
+- Cleanup: disconnect removes session subscriptions immediately, and broker restart starts from an empty Notice state.
+- `RouteFamily`/`realm`: fanout matches only within the exact `RouteFamily`; `realm` stays an opaque route segment used for filtering and admin presentation.
+- Admin path: admin reads use `Runtime::notice_list_subscriptions()` and `Runtime::notice_list_routes()` backed by the passive `AdminReadModel`.
+
+#### Stream
+- Actor owner: `StreamActor`, `AreaActor`, and `RealmActor` coordinate live append sessions, subscription overlays, and committed watermark projection.
+- Persistence: committed records, metadata, and watermarks are durable; live append sessions and subscriptions are ephemeral.
+- Cleanup: disconnect aborts append sessions and drops live subscriptions without restoring them on reconnect.
+- `RouteFamily`/`realm`: committed history is partitioned by exact `RouteFamily`, while realm and area indexes stay explicit storage keys rather than family aliases.
+- Admin path: read-model projections and watermark views flow through `Runtime::stream_list_*`; committed record inspection uses `Runtime::stream_read_resource_records()`.
+
+#### RPC
+- Actor owner: `RpcRouteActor` and `ReplyInboxActor` own live worker registration, pending call state, reply sequencing, and timeout handling.
+- Persistence: worker registrations, pending calls, and reply assembly are ephemeral; RPC does not provide restart-safe backlog durability.
+- Cleanup: disconnect unregisters workers, expires pending session state, and never restores inflight calls or subscriptions.
+- `RouteFamily`/`realm`: dispatch and replies stay within the exact `RouteFamily`; `realm` remains an application-defined route component for operation naming and filters.
+- Admin path: worker and pending-call views flow through `Runtime::rpc_list_workers()` and `Runtime::rpc_list_pending()` backed by the read model.
+
+#### Lease
+- Actor owner: `LeaseActor` owns live ownership, waiters, expiry, and fencing token progression inside one running broker.
+- Persistence: leases, waiters, and fencing tokens are ephemeral broker-local coordination state only; there is no durable lease history or restart recovery.
+- Cleanup: disconnect releases session-owned leases, clears waiters, and never implies cross-restart ownership continuity.
+- `RouteFamily`/`realm`: lease coordination is isolated by exact `RouteFamily`; `realm` stays an opaque application namespace carried by the route, not a family synonym.
+- Admin path: lease snapshots flow through `AdminReadModel`; waiter inspection uses the explicit `Runtime::lease_list_waiters()` facade.
+
+#### Schedule
+- Actor owner: `ScheduleActor` owns durable definition state, next-fire tracking, pending claims, and due-scan normalization for one route family.
+- Persistence: schedule definitions, next-fire state, and pending claims are durable timing intent; subscriber watches and transient handoff coordination are ephemeral.
+- Cleanup: disconnect removes live watches but does not erase persisted schedule intent or imply replay of every missed interval after downtime.
+- `RouteFamily`/`realm`: schedules stay partitioned by exact `RouteFamily`, while `realm` remains an application-defined route label that is never derived from the family.
+- Admin path: schedule projections flow through `Runtime::schedule_list_schedules()`; pending claim inspection uses `Runtime::schedule_list_pending_claims()`.
 
 **Historical sketch (outdated shape, not the current implementation):**
 ```rust

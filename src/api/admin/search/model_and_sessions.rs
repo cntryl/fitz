@@ -298,8 +298,9 @@ pub(crate) fn collect_kv_candidates(
     }
 
     for tx in runtime.kv_list_transactions(options.realm.as_deref()) {
+        let route_family = tx.route_family.to_string();
         if !options.matches_scope(
-            None,
+            Some(&route_family),
             Some(&tx.realm),
             Some(&tx.area),
             Some(&tx.resource),
@@ -318,12 +319,12 @@ pub(crate) fn collect_kv_candidates(
         candidates.push(candidate(
             AdminSearchResult {
                 id: format!(
-                    "kv:transaction:{}:{}:{}:{}",
-                    tx.realm, tx.area, tx.resource, tx.tx_id
+                    "kv:transaction:{}:{}:{}:{}:{}",
+                    route_family, tx.realm, tx.area, tx.resource, tx.tx_id
                 ),
                 domain: "kv".to_string(),
                 kind: "transaction".to_string(),
-                route_family: None,
+                route_family: Some(route_family.clone()),
                 realm: Some(tx.realm.clone()),
                 area: Some(tx.area.clone()),
                 resource: Some(tx.resource.clone()),
@@ -343,6 +344,7 @@ pub(crate) fn collect_kv_candidates(
                 metadata,
             },
             vec![
+                ("route_family", route_family),
                 ("tx_id", tx.tx_id.to_string()),
                 ("realm", tx.realm),
                 ("area", tx.area),
