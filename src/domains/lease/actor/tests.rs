@@ -679,13 +679,11 @@ fn should_promote_next_waiter_when_current_holder_releases() {
     let q2 = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 10, None, &mut ctx);
     let q3 = actor.handle_acquire(key.clone(), "owner3".to_string(), 30, 10, None, &mut ctx);
 
-    let t2 = match q2 {
-        LeaseResponse::Queued { fencing_token } => fencing_token,
-        _ => panic!("expected queued"),
+    let LeaseResponse::Queued { fencing_token: t2 } = q2 else {
+        panic!("expected queued");
     };
-    let t3 = match q3 {
-        LeaseResponse::Queued { fencing_token } => fencing_token,
-        _ => panic!("expected queued"),
+    let LeaseResponse::Queued { fencing_token: t3 } = q3 else {
+        panic!("expected queued");
     };
 
     // First release: owner1 -> owner2 is promoted
@@ -784,14 +782,18 @@ fn should_promote_waiter_when_extend_observes_expired_holder() {
     let key = test_key("race", "locks", "extend-expired");
 
     let acquired = actor.handle_acquire(key.clone(), "owner1".to_string(), 5, 0, None, &mut ctx);
-    let holder_token = match acquired {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("expected holder acquire"),
+    let LeaseResponse::Acquired {
+        fencing_token: holder_token,
+    } = acquired
+    else {
+        panic!("expected holder acquire");
     };
     let queued = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 10, None, &mut ctx);
-    let waiter_token = match queued {
-        LeaseResponse::Queued { fencing_token } => fencing_token,
-        _ => panic!("expected queued waiter"),
+    let LeaseResponse::Queued {
+        fencing_token: waiter_token,
+    } = queued
+    else {
+        panic!("expected queued waiter");
     };
     clock_ref.advance(Duration::from_secs(10));
 

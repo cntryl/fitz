@@ -215,9 +215,11 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
         channel: ClientChannel::Sub,
         route_family: family,
     });
-    let holder_token = match holder_response {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("expected holder acquire"),
+    let LeaseResponse::Acquired {
+        fencing_token: holder_token,
+    } = holder_response
+    else {
+        panic!("expected holder acquire");
     };
     let waiter_response = sink.handle_acquire(LeaseAcquireRequest {
         key: key.clone(),
@@ -230,9 +232,11 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
         channel: ClientChannel::Sub,
         route_family: family,
     });
-    let waiter_token = match waiter_response {
-        LeaseResponse::Queued { fencing_token } => fencing_token,
-        _ => panic!("expected queued waiter"),
+    let LeaseResponse::Queued {
+        fencing_token: waiter_token,
+    } = waiter_response
+    else {
+        panic!("expected queued waiter");
     };
     sink.leases.lock().get_mut(&key).expect("lease").expiry = Instant::now()
         .checked_sub(Duration::from_millis(1))

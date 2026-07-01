@@ -110,7 +110,7 @@ fn bench_scheduler_register_primary(c: &mut Criterion) {
                 );
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.throughput(Throughput::Elements(batch_addresses.len() as u64));
@@ -121,7 +121,7 @@ fn bench_scheduler_register_primary(c: &mut Criterion) {
                 register_all(&scheduler, &batch_addresses, &batch_sinks);
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.bench_function("register_64_replace_primary", |b| {
@@ -135,7 +135,7 @@ fn bench_scheduler_register_primary(c: &mut Criterion) {
                 register_all(&scheduler, &batch_addresses, &batch_sinks);
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.finish();
@@ -164,7 +164,7 @@ fn bench_scheduler_spawn_cross_family_smoke(c: &mut Criterion) {
                 100,
             );
             idx = (idx + 1) % addresses.len();
-        })
+        });
     });
 
     group.finish();
