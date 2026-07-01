@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::error_codes;
 use crate::protocol::frame::ChannelId;
 use crate::protocol::tlv::MessageType;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -80,6 +81,12 @@ fn decode_kv_watch_delivery(frame: &FrameContext) -> (u64, String, u64) {
             .unwrap(),
     );
     (subscription_id, route, mutation_count)
+}
+
+fn decode_error_code(payload: &[u8]) -> u16 {
+    error_codes::decode_error_body(payload)
+        .expect("error payload")
+        .0
 }
 
 fn drain_mailbox(mailbox: &Mailbox) {
@@ -287,7 +294,6 @@ fn should_release_resource_lock_given_session_cleanup() {
     assert_eq!(first_begin_frame.payload[0], 0);
     assert!(first_tx_id > 0);
     assert_eq!(sink.active_transaction_count(), 1);
-    assert_eq!(sink.resource_locks.lock().len(), 1);
     drain_mailbox(&first_mailbox);
 
     // Act
@@ -299,7 +305,6 @@ fn should_release_resource_lock_given_session_cleanup() {
     ))
     .expect("cleanup first KV session");
     assert_eq!(sink.active_transaction_count(), 0);
-    assert!(sink.resource_locks.lock().is_empty());
 
     sink.deliver(Envelope::from_route(
         second_address,
@@ -326,8 +331,71 @@ fn should_release_resource_lock_given_session_cleanup() {
     assert_eq!(second_begin_frame.payload[0], 0);
     assert!(second_tx_id > 0);
     assert_eq!(sink.active_transaction_count(), 1);
-    assert_eq!(sink.resource_locks.lock().len(), 1);
     assert!(first_mailbox.receiver().try_recv().is_err());
+}
+
+#[test]
+fn should_reject_conflicting_read_write_begin_given_active_transaction_in_other_session() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let first_session_id = 7;
+    let second_session_id = 8;
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let first_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let second_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let first_mailbox = Arc::new(Mailbox::new(8));
+    let second_mailbox = Arc::new(Mailbox::new(8));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(first_address.clone(), first_mailbox.clone());
+    router.register(second_address.clone(), second_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model);
+
+    sink.deliver(Envelope::from_route(
+        first_address,
+        kv_address.clone(),
+        FrameContext::new(
+            first_session_id,
+            ChannelId::Sub,
+            MessageType::new(100),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin first KV transaction");
+    let _ = first_mailbox
+        .receiver()
+        .try_recv()
+        .expect("first begin ack envelope");
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        second_address,
+        kv_address,
+        FrameContext::new(
+            second_session_id,
+            ChannelId::Sub,
+            MessageType::new(100),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin second KV transaction");
+
+    // Assert
+    let second_begin_frame = second_mailbox
+        .receiver()
+        .try_recv()
+        .expect("second begin response envelope")
+        .into_payload::<FrameContext>()
+        .expect("second begin response frame");
+    assert_eq!(
+        decode_error_code(&second_begin_frame.payload),
+        error_codes::kv::ERR_ISOLATION_CONFLICT
+    );
+    assert_eq!(sink.active_transaction_count(), 1);
 }
 
 #[test]

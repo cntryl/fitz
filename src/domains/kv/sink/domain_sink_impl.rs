@@ -15,7 +15,6 @@ impl KvDomainSink {
         Self {
             store,
             actors: Arc::new(Mutex::new(HashMap::new())),
-            resource_locks: Mutex::new(HashMap::new()),
             families: Mutex::new(HashMap::new()),
             latencies: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
@@ -500,6 +499,31 @@ impl KvDomainSink {
             .count()
     }
 
+    pub(super) fn conflicting_session_for_resource(
+        &self,
+        session_id: u64,
+        resource_key: &KvResourceLockKey,
+    ) -> Option<u64> {
+        self.actors
+            .lock()
+            .iter()
+            .find_map(|(active_session_id, actor)| {
+                if *active_session_id == session_id {
+                    return None;
+                }
+
+                actor.active_transaction_scopes().into_iter().find_map(
+                    |(_tx_id, family_id, realm, area, resource)| {
+                        (family_id == resource_key.family_id
+                            && realm == resource_key.realm
+                            && area == resource_key.area
+                            && resource == resource_key.resource)
+                            .then_some(*active_session_id)
+                    },
+                )
+            })
+    }
+
     pub(super) fn latency_snapshots(
         &self,
         resource_key: &KvResourceLockKey,
@@ -724,11 +748,6 @@ impl KvDomainSink {
     /// model is refreshed so no durable recovery is implied.
     pub fn cleanup_session(&self, session_id: u64) {
         self.actors.lock().remove(&session_id);
-
-        {
-            let mut locks = self.resource_locks.lock();
-            locks.retain(|_key, holder_id| *holder_id != session_id);
-        }
 
         {
             let mut families = self.families.lock();

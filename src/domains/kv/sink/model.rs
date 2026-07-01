@@ -126,7 +126,6 @@ impl RoutedSubscription for KvSubscription {
 pub struct KvDomainSink {
     pub(super) store: Arc<cntryl_midge::Engine>,
     pub(super) actors: Arc<Mutex<HashMap<u64, crate::domains::kv::KvActor>>>,
-    pub(super) resource_locks: Mutex<HashMap<KvResourceLockKey, u64>>,
     pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<KvSubscription>>>,
     pub(super) latencies: Mutex<HashMap<KvResourceLockKey, KvResourceLatency>>,
     pub(super) next_sub_id: AtomicU64,

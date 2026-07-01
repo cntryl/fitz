@@ -308,24 +308,19 @@ impl KvDomainSink {
         use crate::domains::kv::{KvError, KvResponse};
 
         let lock_key = KvResourceLockKey::new(family_id, realm, area, resource);
-        let held_by_same_session = {
-            let locks = self.resource_locks.lock();
-            match locks.get(&lock_key).copied() {
-                Some(holder) if holder == session_id => true,
-                Some(_) => {
-                    return (
-                        KvResponse::Error {
-                            error: KvError::Conflict(
-                                "resource locked by another session".to_string(),
-                            ),
-                        },
-                        false,
-                        None,
-                    );
-                }
-                None => false,
-            }
-        };
+        let held_by_same_session = self.active_transactions_for_resource(&lock_key) > 0;
+        if self
+            .conflicting_session_for_resource(session_id, &lock_key)
+            .is_some()
+        {
+            return (
+                KvResponse::Error {
+                    error: KvError::Conflict("resource locked by another session".to_string()),
+                },
+                false,
+                None,
+            );
+        }
 
         let log_context = if held_by_same_session {
             "BEGIN (ReadWrite)"
@@ -344,11 +339,8 @@ impl KvDomainSink {
                 domain = "kv",
                 session_id = session_id,
                 tx_id = tx_id,
-                "BEGIN succeeded, storing resource lock"
+                "BEGIN succeeded with actor-owned transaction scope"
             );
-            self.resource_locks
-                .lock()
-                .insert(lock_key.clone(), session_id);
             (response, true, None)
         } else {
             (response, false, None)
@@ -384,7 +376,6 @@ impl KvDomainSink {
         let response = actor.handle(kv_message.clone());
         if let KvResponse::CommitOk = response {
             if let Some(lock_key) = lock_key {
-                self.resource_locks.lock().remove(&lock_key);
                 let notify = (mutation_count > 0).then_some((lock_key, mutation_count));
                 (response, true, notify)
             } else {
@@ -415,17 +406,8 @@ impl KvDomainSink {
             tx_id = tx_id,
             "Calling actor.handle() for ROLLBACK"
         );
-        let lock_key =
-            actor
-                .resource_scope_for_tx(tx_id)
-                .map(|(family_id, realm, area, resource)| {
-                    KvResourceLockKey::new(family_id, &realm, &area, &resource)
-                });
         let response = actor.handle(kv_message.clone());
         if let KvResponse::RollbackOk = response {
-            if let Some(lock_key) = lock_key {
-                self.resource_locks.lock().remove(&lock_key);
-            }
             crate::observability::counter_inc("fitz_kv_rollbacks_total");
             (response, true, None)
         } else {
