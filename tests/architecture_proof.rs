@@ -543,6 +543,39 @@ fn should_keep_stream_live_core_helpers_private() {
     );
 }
 
+fn notice_live_core_public_helper_violations() -> Vec<&'static str> {
+    let source = read_repo_file("src/domains/notice/sink.rs");
+    let core_impl = section_between(
+        &source,
+        "impl NoticeDomainCore {",
+        "impl MailboxSink for NoticeDomainSink {",
+    );
+    let forbidden_public_helpers = [
+        "pub fn refresh_admin_snapshot_if_dirty(&self)",
+        "pub fn unsubscribe_all_for_session(&self",
+        "pub fn subscription_count(&self)",
+    ];
+
+    forbidden_public_helpers
+        .into_iter()
+        .filter(|helper| core_impl.contains(helper))
+        .collect::<Vec<_>>()
+}
+
+#[test]
+fn should_keep_notice_live_core_helpers_private() {
+    // Arrange
+
+    // Act
+    let violations = notice_live_core_public_helper_violations();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "NoticeDomainCore exposes live state helpers outside the mailbox facade: {violations:?}"
+    );
+}
+
 #[test]
 fn should_keep_sync_core_free_of_transport_dependencies() {
     // Arrange

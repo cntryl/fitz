@@ -377,7 +377,7 @@ impl NoticeDomainCore {
         matches!(response, crate::domains::notice::NoticeResponse::Error(_))
     }
 
-    pub fn refresh_admin_snapshot_if_dirty(&self) {
+    pub(super) fn refresh_admin_snapshot_if_dirty(&self) {
         if self.admin_snapshot_dirty.swap(false, Ordering::AcqRel) {
             self.sync_admin_snapshot();
         }
@@ -520,7 +520,7 @@ impl NoticeDomainCore {
         self.publish_event(event);
     }
 
-    pub fn unsubscribe_all_for_session(&self, session_id: u64) -> usize {
+    pub(super) fn unsubscribe_all_for_session(&self, session_id: u64) -> usize {
         let mut families = self.families.lock();
         let mut removed = 0;
         for (family_id, state) in families.iter_mut() {
@@ -543,7 +543,7 @@ impl NoticeDomainCore {
         removed
     }
 
-    pub fn subscription_count(&self) -> usize {
+    pub(super) fn subscription_count(&self) -> usize {
         let families = self.families.lock();
         families
             .values()
