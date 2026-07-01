@@ -32,6 +32,9 @@ impl Actor for ScheduleDomainActor {
             ScheduleDomainCommand::CleanupSession(session_id) => {
                 runtime.unsubscribe_all(session_id);
             }
+            ScheduleDomainCommand::ReadLiveCounts(reply) => {
+                let _ = reply.send(runtime.live_counts());
+            }
             ScheduleDomainCommand::ReadPendingClaims(route_family, reply) => {
                 let _ = reply.send(runtime.admin_pending_claims(route_family));
             }

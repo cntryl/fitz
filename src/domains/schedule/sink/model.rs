@@ -206,9 +206,23 @@ pub(super) struct ScheduleDomainRuntime<'a> {
     pub(super) active: &'a AtomicBool,
 }
 
+#[derive(Default)]
+pub(super) struct ScheduleLiveCounts {
+    pub(super) subscriptions: usize,
+    pub(super) schedules: usize,
+    pub(super) pending_fires: usize,
+    pub(super) executions_per_minute: f64,
+    pub(super) notify_failures: u64,
+    pub(super) ack_failures: u64,
+    pub(super) pending_ack_retries: usize,
+    pub(super) oldest_pending_claim_age_seconds: u64,
+    pub(super) overdue_normalizations: u64,
+}
+
 pub(super) enum ScheduleDomainCommand {
     Deliver(Envelope),
     CleanupSession(u64),
+    ReadLiveCounts(crossbeam_channel::Sender<ScheduleLiveCounts>),
     ReadPendingClaims(
         crate::runtime::routing::RouteFamily,
         crossbeam_channel::Sender<Vec<crate::control::admin::SchedulePendingClaimInfo>>,

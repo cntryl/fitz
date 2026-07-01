@@ -2,7 +2,7 @@ use super::model::{
     now_epoch_ms, schedule_admin_snapshot_due, Arc, AtomicBool, AtomicU64, Entry, Envelope,
     HashMap, HashSet, Instant, Mutex, Ordering, PendingFireKey, Router, ScheduleDomainActor,
     ScheduleDomainCommand, ScheduleDomainCore, ScheduleDomainRuntime, ScheduleDomainSink,
-    ScheduleDomainState, ScheduleMetrics, ScheduleSubscription, VecDeque,
+    ScheduleDomainState, ScheduleLiveCounts, ScheduleMetrics, ScheduleSubscription, VecDeque,
     SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS, SCHEDULE_PENDING_CLAIM_TTL_MS,
 };
 #[cfg(test)]
@@ -194,31 +194,31 @@ impl ScheduleDomainSink {
     }
 
     pub fn subscription_count(&self) -> usize {
-        self.state.runtime().subscription_count()
+        self.live_counts().subscriptions
     }
 
     pub fn schedule_count(&self) -> usize {
-        self.state.runtime().schedule_count()
+        self.live_counts().schedules
     }
 
     pub fn pending_fire_count(&self) -> usize {
-        self.state.runtime().pending_fire_count()
+        self.live_counts().pending_fires
     }
 
     pub fn executions_per_minute(&self) -> f64 {
-        self.state.runtime().executions_per_minute()
+        self.live_counts().executions_per_minute
     }
 
     pub fn notify_failure_count(&self) -> u64 {
-        self.state.runtime().notify_failure_count()
+        self.live_counts().notify_failures
     }
 
     pub fn ack_failure_count(&self) -> u64 {
-        self.state.runtime().ack_failure_count()
+        self.live_counts().ack_failures
     }
 
     pub fn pending_ack_retry_count(&self) -> usize {
-        self.state.runtime().pending_ack_retry_count()
+        self.live_counts().pending_ack_retries
     }
 
     pub fn admin_pending_claims(
@@ -243,11 +243,26 @@ impl ScheduleDomainSink {
     }
 
     pub fn oldest_pending_claim_age_seconds(&self) -> u64 {
-        self.state.runtime().oldest_pending_claim_age_seconds()
+        self.live_counts().oldest_pending_claim_age_seconds
     }
 
     pub fn overdue_normalization_count(&self) -> u64 {
-        self.state.runtime().overdue_normalization_count()
+        self.live_counts().overdue_normalizations
+    }
+
+    fn live_counts(&self) -> ScheduleLiveCounts {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(ScheduleDomainCommand::ReadLiveCounts(reply_tx))
+        {
+            tracing::warn!(domain = "schedule", error = %error, "Schedule live-count query enqueue failed");
+            return ScheduleLiveCounts::default();
+        }
+
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_default()
     }
 
     pub(crate) fn refresh_admin_snapshot_if_dirty(&self) {
@@ -740,6 +755,20 @@ impl ScheduleDomainRuntime<'_> {
             .values()
             .map(crate::domains::schedule::ScheduleActor::overdue_normalization_count)
             .sum()
+    }
+
+    pub(super) fn live_counts(&self) -> ScheduleLiveCounts {
+        ScheduleLiveCounts {
+            subscriptions: self.subscription_count(),
+            schedules: self.schedule_count(),
+            pending_fires: self.pending_fire_count(),
+            executions_per_minute: self.executions_per_minute(),
+            notify_failures: self.notify_failure_count(),
+            ack_failures: self.ack_failure_count(),
+            pending_ack_retries: self.pending_ack_retry_count(),
+            oldest_pending_claim_age_seconds: self.oldest_pending_claim_age_seconds(),
+            overdue_normalizations: self.overdue_normalization_count(),
+        }
     }
 
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
