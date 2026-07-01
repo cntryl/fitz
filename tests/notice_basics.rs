@@ -1,9 +1,9 @@
 //! Consolidated notice basic/unit tests
 //!
 //! Combines:
-//! - notice_auth.rs: Authorization and permission checks
-//! - notice_semantics.rs: Delivery semantics and subscription matching
-//! - notice_fanout_math.rs: Fanout delivery count verification
+//! - `notice_auth.rs`: Authorization and permission checks
+//! - `notice_semantics.rs`: Delivery semantics and subscription matching
+//! - `notice_fanout_math.rs`: Fanout delivery count verification
 
 use bytes::Bytes;
 use fitz::auth::Permission;
@@ -347,7 +347,7 @@ fn should_fan_out_one_notification_to_many_subscriptions() {
     let mut sinks = Vec::new();
     let family = *addr("notice://realm/area/one/0").family();
 
-    for i in 0..5 {
+    for i in 0_u64..5 {
         let sink = Arc::new(TestSink::new());
         let sub = addr(&format!("notice://realm/area/one/sink{i}"));
         router.register(sub.clone(), sink.clone());
@@ -355,7 +355,7 @@ fn should_fan_out_one_notification_to_many_subscriptions() {
         let subscribe = SubscribeMessage::new(
             family,
             route("notice://realm/area/one/*"),
-            session_id(i as u64 + 1),
+            session_id(i + 1),
             sub.clone(),
         );
         actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
@@ -375,7 +375,7 @@ fn should_fan_out_one_notification_to_many_subscriptions() {
     actor.receive(NotificationMessage::Publish(pubmsg), &mut pubctx);
 
     // Assert
-    for s in sinks.iter() {
+    for s in &sinks {
         assert_delivered_payloads(s.as_ref(), 1, b"payload");
     }
 }
@@ -389,7 +389,7 @@ fn should_fan_out_many_notifications_to_many_subscriptions() {
     let mut sinks = Vec::new();
     let family = *addr("notice://realm/area/many/0").family();
 
-    for i in 0..3 {
+    for i in 0_u64..3 {
         let sink = Arc::new(TestSink::new());
         let sub = addr(&format!("notice://realm/area/many/sink{i}"));
         router.register(sub.clone(), sink.clone());
@@ -397,7 +397,7 @@ fn should_fan_out_many_notifications_to_many_subscriptions() {
         let subscribe = SubscribeMessage::new(
             family,
             route("notice://realm/area/many/*"),
-            session_id(i as u64 + 1),
+            session_id(i + 1),
             sub.clone(),
         );
         actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
@@ -419,7 +419,7 @@ fn should_fan_out_many_notifications_to_many_subscriptions() {
     }
 
     // Assert
-    for s in sinks.iter() {
+    for s in &sinks {
         assert_delivered_payloads(s.as_ref(), 4, b"p");
     }
 }
@@ -467,7 +467,7 @@ fn should_produce_exactly_n_deliveries_for_n_matching_subscriptions() {
         let subscribe = SubscribeMessage::new(
             family,
             route("notice://realm/area/exact/*"),
-            session_id(i as u64 + 1),
+            session_id(u64::try_from(i).unwrap_or(u64::MAX) + 1),
             sub.clone(),
         );
         actor.receive(NotificationMessage::Subscribe(subscribe), &mut ctx);
@@ -487,7 +487,7 @@ fn should_produce_exactly_n_deliveries_for_n_matching_subscriptions() {
     actor.receive(NotificationMessage::Publish(pubmsg), &mut pubctx);
 
     // Assert
-    for s in sinks.iter() {
+    for s in &sinks {
         assert_delivered_payloads(s.as_ref(), 1, b"x");
     }
 }

@@ -1,6 +1,6 @@
 #![allow(deprecated)]
 //! Criterion benchmark for schedule due-occurrence collection on the production scan path.
-//! This intentionally measures only collect_due_occurrences_for_publish and avoids
+//! This intentionally measures only `collect_due_occurrences_for_publish` and avoids
 //! benchmark-only shortcut paths.
 
 use bytes::Bytes;
@@ -151,7 +151,7 @@ fn bench_scan_shapes(c: &mut Criterion) {
                             black_box(actor.collect_due_occurrences_for_publish());
                         },
                     )
-                })
+                });
             });
         }
     }
