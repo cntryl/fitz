@@ -4,6 +4,10 @@ use chrono::TimeZone;
 use serial_test::serial;
 use std::sync::Mutex;
 
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
 #[derive(Clone)]
 struct MockClock {
     state: Arc<Mutex<MockClockState>>,
@@ -28,7 +32,9 @@ impl MockClock {
     fn advance(&self, duration: Duration) {
         let mut state = self.state.lock().expect("lock mock clock");
         state.instant += duration;
-        state.epoch_ms = state.epoch_ms.saturating_add(duration.as_millis() as u64);
+        state.epoch_ms = state
+            .epoch_ms
+            .saturating_add(u128_to_u64_saturating(duration.as_millis()));
     }
 }
 
@@ -43,11 +49,12 @@ impl Clock for MockClock {
 }
 
 fn epoch_ms(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> u64 {
-    chrono::Utc
+    let millis = chrono::Utc
         .with_ymd_and_hms(year, month, day, hour, minute, second)
         .single()
         .expect("valid datetime")
-        .timestamp_millis() as u64
+        .timestamp_millis();
+    u64::try_from(millis).expect("test datetime should be after unix epoch")
 }
 
 fn make_actor() -> ScheduleActor {
@@ -122,7 +129,7 @@ fn should_skip_missed_execution_given_overdue_schedule_on_preload() {
     let route = "schedule://acme/jobs/skip/run";
     let payload = Bytes::from_static(b"payload");
     let now = Instant::now();
-    let overdue_at = now.checked_sub(Duration::from_secs(120)).unwrap();
+    let overdue_at = now.checked_sub(Duration::from_mins(2)).unwrap();
     let overdue_ms = ScheduleActor::instant_to_ms_at(overdue_at, now);
 
     store
@@ -433,11 +440,11 @@ fn should_ignore_stale_heap_entries_left_by_upsert() {
     let now = Instant::now();
     let stale_fire_ms = ScheduleActor::instant_to_ms_at(now, now).saturating_sub(1);
     let current_fire_ms =
-        ScheduleActor::instant_to_ms_at(now.checked_add(Duration::from_secs(60)).unwrap(), now);
+        ScheduleActor::instant_to_ms_at(now.checked_add(Duration::from_mins(1)).unwrap(), now);
 
     {
         let schedule = actor.schedules.get_mut(route).expect("schedule");
-        schedule.next_fire_time = now.checked_add(Duration::from_secs(60)).unwrap();
+        schedule.next_fire_time = now.checked_add(Duration::from_mins(1)).unwrap();
         schedule.next_fire_ms = current_fire_ms;
     }
     actor.ready_heap.clear();

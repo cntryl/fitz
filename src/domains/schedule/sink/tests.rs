@@ -12,6 +12,10 @@ use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Duration;
 
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
 #[derive(Clone)]
 struct MockClock {
     state: Arc<std::sync::Mutex<MockClockState>>,
@@ -36,7 +40,9 @@ impl MockClock {
     fn advance(&self, duration: Duration) {
         let mut state = self.state.lock().expect("lock mock clock");
         state.instant += duration;
-        state.epoch_ms = state.epoch_ms.saturating_add(duration.as_millis() as u64);
+        state.epoch_ms = state
+            .epoch_ms
+            .saturating_add(u128_to_u64_saturating(duration.as_millis()));
     }
 }
 
@@ -416,7 +422,7 @@ fn should_increment_expired_pending_claim_metric_when_cleanup_removes_orphans() 
     assert_eq!(claimed.len(), 1);
     clock.advance(Duration::from_millis(11));
     sink.pending_claim_ttl_ms = 10;
-    let now_elapsed_ms = sink.snapshot_epoch.elapsed().as_millis() as u64;
+    let now_elapsed_ms = u128_to_u64_saturating(sink.snapshot_epoch.elapsed().as_millis());
     sink.last_pending_claim_cleanup_elapsed_ms.store(
         now_elapsed_ms.saturating_sub(SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS),
         Ordering::Relaxed,
@@ -505,6 +511,7 @@ fn should_remove_schedule_subscriptions_given_session_cleanup() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session() {
     // Arrange
     let family = RouteFamily::new(1);

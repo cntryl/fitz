@@ -6,6 +6,14 @@ fn make_store() -> (ScheduleStore, Arc<cntryl_midge::Engine>) {
     (ScheduleStore::new(db.clone()), db)
 }
 
+fn u64_to_u32_saturating(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
 fn put_raw(
     db: &Arc<cntryl_midge::Engine>,
     cf_id: u64,
@@ -13,7 +21,10 @@ fn put_raw(
     value: Vec<u8>,
 ) -> Result<(), String> {
     let mut txn = db
-        .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadWrite)
+        .begin_tx(
+            u64_to_u32_saturating(cf_id),
+            cntryl_midge::TransactionMode::ReadWrite,
+        )
         .map_err(|e| format!("begin_tx failed: {e:?}"))?;
     txn.put(key, value, None)
         .map_err(|e| format!("put failed: {e:?}"))?;
@@ -23,7 +34,10 @@ fn put_raw(
 
 fn read_raw_value(db: &Arc<cntryl_midge::Engine>, cf_id: u64, key: &[u8]) -> Option<Vec<u8>> {
     let txn = db
-        .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(cf_id),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .expect("begin read tx");
 
     txn.get(key)
@@ -33,7 +47,10 @@ fn read_raw_value(db: &Arc<cntryl_midge::Engine>, cf_id: u64, key: &[u8]) -> Opt
 
 fn count_prefix(db: &Arc<cntryl_midge::Engine>, cf_id: u64, prefix: &'static [u8]) -> usize {
     let txn = db
-        .begin_tx(cf_id as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(cf_id),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .expect("begin read tx");
     ScheduleStore::scan_schedule_rows(&txn, prefix)
         .expect("scan prefix")
@@ -85,9 +102,9 @@ fn encode_inline_definition_value_v2(
     value.extend_from_slice(&next_fire_ms.to_be_bytes());
     value.extend_from_slice(&last_fire_ms.unwrap_or(0).to_be_bytes());
     value.extend_from_slice(&executions_total.to_be_bytes());
-    value.extend_from_slice(&(cron.len() as u32).to_be_bytes());
+    value.extend_from_slice(&usize_to_u32_saturating(cron.len()).to_be_bytes());
     value.extend_from_slice(cron.as_bytes());
-    value.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    value.extend_from_slice(&usize_to_u32_saturating(payload.len()).to_be_bytes());
     value.extend_from_slice(payload);
     value
 }

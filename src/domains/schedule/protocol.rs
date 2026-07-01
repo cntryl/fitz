@@ -780,11 +780,14 @@ mod tests {
         // Arrange
         let clock = MockClock {
             instant: Instant::now(),
-            epoch_ms: chrono::Utc
-                .with_ymd_and_hms(2026, 3, 31, 5, 30, 0)
-                .single()
-                .expect("valid datetime")
-                .timestamp_millis() as u64,
+            epoch_ms: u64::try_from(
+                chrono::Utc
+                    .with_ymd_and_hms(2026, 3, 31, 5, 30, 0)
+                    .single()
+                    .expect("valid datetime")
+                    .timestamp_millis(),
+            )
+            .expect("test datetime should be after unix epoch"),
         };
         let cron = CronSchedule::parse("0 6 * * *").expect("valid cron");
 
@@ -794,7 +797,7 @@ mod tests {
         // Assert
         assert_eq!(
             next_fire.duration_since(clock.now_instant()),
-            Duration::from_secs(30 * 60)
+            Duration::from_mins(30)
         );
     }
 }
