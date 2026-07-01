@@ -9,6 +9,8 @@ use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 use std::sync::Arc;
 
+mod cleanup;
+
 fn encode_notice_subscribe(pattern: &str) -> Bytes {
     let mut encoder = PayloadEncoder::new();
     encoder.put_string(pattern);

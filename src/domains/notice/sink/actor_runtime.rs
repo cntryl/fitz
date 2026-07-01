@@ -10,6 +10,7 @@ pub(super) enum NoticeDomainCommand {
     ),
     ReadSubscriptionCount(crossbeam_channel::Sender<usize>),
     RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
+    UnsubscribeAllForSession(u64, crossbeam_channel::Sender<usize>),
 }
 
 pub(super) struct NoticeDomainActor {
@@ -50,6 +51,9 @@ impl Actor for NoticeDomainActor {
                 runtime.refresh_admin_snapshot_if_dirty();
                 let _ = reply.send(());
             }
+            NoticeDomainCommand::UnsubscribeAllForSession(session_id, reply) => {
+                let _ = reply.send(runtime.unsubscribe_all_for_session(session_id));
+            }
         }
     }
 }
@@ -65,5 +69,9 @@ impl NoticeDomainRuntime<'_> {
 
     fn refresh_admin_snapshot_if_dirty(&self) {
         self.core.refresh_admin_snapshot_if_dirty();
+    }
+
+    fn unsubscribe_all_for_session(&self, session_id: u64) -> usize {
+        self.core.unsubscribe_all_for_session(session_id)
     }
 }

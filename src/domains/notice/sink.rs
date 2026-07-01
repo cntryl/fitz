@@ -254,6 +254,25 @@ impl NoticeDomainSink {
         reply_rx.recv_timeout(Duration::from_secs(1)).unwrap_or(0)
     }
 
+    pub fn unsubscribe_all_for_session(&self, session_id: u64) -> usize {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) =
+            self.actor
+                .try_send_high_priority(NoticeDomainCommand::UnsubscribeAllForSession(
+                    session_id, reply_tx,
+                ))
+        {
+            tracing::warn!(
+                domain = "notice",
+                error = %error,
+                "Notice session cleanup command enqueue failed"
+            );
+            return 0;
+        }
+
+        reply_rx.recv_timeout(Duration::from_secs(1)).unwrap_or(0)
+    }
+
     fn deliver_to_actor(
         &self,
         envelope: Envelope,
