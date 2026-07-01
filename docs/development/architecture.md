@@ -197,6 +197,8 @@ Per-domain inbox (MPSC channel):
 - Receives incoming messages
 - Queued by scheduler
 - Domain handler processes one message at a time
+#### Domain Handles
+`DomainHandles` owns the concrete domain sinks but keeps those fields private. Boot, background maintenance, metrics, and admin query code must use explicit handle or `Runtime::*` facade methods so concrete sink internals do not become a public mutable API.
 #### Scheduler
 Thread pool with priority lanes:
 - Multiple worker threads

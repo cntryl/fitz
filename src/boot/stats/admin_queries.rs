@@ -9,35 +9,35 @@ impl Runtime {
     fn refresh_queue_admin_snapshot(&self) {
         let domains = self.domains.read().clone();
         if let Some(domains) = domains {
-            domains.queue.refresh_admin_snapshot_if_dirty();
+            domains.refresh_queue_admin_snapshot();
         }
     }
 
     fn refresh_rpc_admin_snapshot(&self) {
         let domains = self.domains.read().clone();
         if let Some(domains) = domains {
-            domains.rpc.refresh_admin_snapshot_if_dirty();
+            domains.refresh_rpc_admin_snapshot();
         }
     }
 
     fn refresh_notice_admin_snapshot(&self) {
         let domains = self.domains.read().clone();
         if let Some(domains) = domains {
-            domains.notice.refresh_admin_snapshot_if_dirty();
+            domains.refresh_notice_admin_snapshot();
         }
     }
 
     fn refresh_schedule_admin_snapshot(&self) {
         let domains = self.domains.read().clone();
         if let Some(domains) = domains {
-            domains.schedule.refresh_admin_snapshot_if_dirty();
+            domains.refresh_schedule_admin_snapshot();
         }
     }
 
     pub(crate) fn refresh_stream_admin_snapshot(&self) {
         let domains = self.domains.read().clone();
         if let Some(domains) = domains {
-            domains.stream.refresh_admin_snapshot_if_dirty();
+            domains.refresh_stream_admin_snapshot();
         }
     }
 
@@ -64,9 +64,7 @@ impl Runtime {
             .read()
             .clone()
             .ok_or_else(|| "KV domain is not initialized".to_string())?;
-        domains
-            .kv
-            .admin_inventory(family.map(crate::runtime::routing::RouteFamily::new))
+        domains.kv_admin_inventory(family.map(crate::runtime::routing::RouteFamily::new))
     }
 
     /// Read the KV inventory entry for one resource.
@@ -87,7 +85,7 @@ impl Runtime {
             .read()
             .clone()
             .ok_or_else(|| "KV domain is not initialized".to_string())?;
-        domains.kv.admin_inventory_resource(
+        domains.kv_admin_inventory_resource(
             crate::runtime::routing::RouteFamily::new(family),
             realm,
             area,
@@ -114,9 +112,7 @@ impl Runtime {
             .read()
             .clone()
             .ok_or_else(|| "KV domain is not initialized".to_string())?;
-        domains
-            .kv
-            .admin_get_committed_value(family, realm, area, resource, key)
+        domains.kv_admin_get_committed_value(family, realm, area, resource, key)
     }
 
     /// Scan committed KV rows for a key prefix.
@@ -139,9 +135,7 @@ impl Runtime {
             .read()
             .clone()
             .ok_or_else(|| "KV domain is not initialized".to_string())?;
-        domains
-            .kv
-            .admin_scan_committed_prefix(family, realm, area, resource, key_prefix, limit)
+        domains.kv_admin_scan_committed_prefix(family, realm, area, resource, key_prefix, limit)
     }
 
     /// Scan committed KV rows using an admin rows request.
@@ -159,7 +153,7 @@ impl Runtime {
             .read()
             .clone()
             .ok_or_else(|| "KV domain is not initialized".to_string())?;
-        domains.kv.admin_scan_committed_rows(request)
+        domains.kv_admin_scan_committed_rows(request)
     }
 
     #[must_use]
@@ -192,7 +186,7 @@ impl Runtime {
             .read()
             .clone()
             .ok_or_else(|| "Stream domain is not initialized".to_string())?;
-        domains.stream.admin_read_resource_records(request)
+        domains.stream_admin_read_resource_records(request)
     }
 
     pub(crate) fn stream_list_realm_watermark_details(
@@ -316,9 +310,7 @@ impl Runtime {
             area: area.to_string(),
             resource: resource.to_string(),
         };
-        domains
-            .queue
-            .replay_dead_letter(&key, MessageId::new(message_id))
+        domains.queue_replay_dead_letter(&key, MessageId::new(message_id))
     }
 
     /// Permanently purge a dead-lettered queue message.
@@ -346,9 +338,7 @@ impl Runtime {
             area: area.to_string(),
             resource: resource.to_string(),
         };
-        domains
-            .queue
-            .purge_dead_letter(&key, MessageId::new(message_id))
+        domains.queue_purge_dead_letter(&key, MessageId::new(message_id))
     }
 
     #[must_use]
@@ -380,7 +370,7 @@ impl Runtime {
         self.domains
             .read()
             .as_ref()
-            .map(|domains| domains.lease.admin_waiters())
+            .map(|domains| domains.lease_admin_waiters())
             .unwrap_or_default()
     }
 
@@ -401,7 +391,7 @@ impl Runtime {
         self.domains
             .read()
             .as_ref()
-            .map(|domains| domains.schedule.admin_pending_claims(family))
+            .map(|domains| domains.schedule_admin_pending_claims(family))
             .unwrap_or_default()
     }
 

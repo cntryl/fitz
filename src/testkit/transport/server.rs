@@ -335,7 +335,7 @@ impl TestServer {
                 stream_storage_layout: boot_config.stream_storage_layout,
             },
         )?;
-        runtime.attach_domains(Arc::new(domains));
+        runtime.attach_domains(domains);
 
         // Mark domains ready
         runtime.mark_domains_ready();
@@ -577,7 +577,7 @@ impl TestServer {
                 as Box<dyn std::error::Error>
         })?;
 
-        domains.schedule.force_due_scan_for_tests(ready_count);
+        domains.schedule_force_due_scan_for_tests(ready_count);
         Ok(())
     }
 

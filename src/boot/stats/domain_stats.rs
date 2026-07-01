@@ -38,7 +38,7 @@ impl Runtime {
                     .map(|queue| queue.messages_ready)
                     .sum()
             },
-            |domains| domains.queue.ready_message_count(),
+            |domains| domains.queue_ready_message_count(),
         )
     }
 
@@ -52,7 +52,7 @@ impl Runtime {
                     .map(|queue| queue.messages_delayed)
                     .sum()
             },
-            |domains| domains.queue.delayed_message_count(),
+            |domains| domains.queue_delayed_message_count(),
         )
     }
 
@@ -60,7 +60,7 @@ impl Runtime {
     pub fn kv_transactions_active(&self) -> usize {
         self.domains.read().as_ref().map_or_else(
             || self.admin_read_model.kv_transactions(None).len(),
-            |domains| domains.kv.active_transaction_count(),
+            |domains| domains.kv_active_transaction_count(),
         )
     }
 
@@ -114,7 +114,7 @@ impl Runtime {
                     .map(|queue| queue.messages_ready + queue.messages_delayed)
                     .sum()
             },
-            |domains| domains.queue.pending_message_count(),
+            |domains| domains.queue_pending_message_count(),
         )
     }
 
@@ -128,7 +128,7 @@ impl Runtime {
                     .map(|queue| queue.messages_dead_lettered)
                     .sum()
             },
-            |domains| domains.queue.dead_letter_count(),
+            |domains| domains.queue_dead_letter_count(),
         )
     }
 
@@ -196,7 +196,7 @@ impl Runtime {
     pub fn queue_inflight_active(&self) -> usize {
         self.domains.read().as_ref().map_or_else(
             || self.admin_read_model.queue_inflight(None).len(),
-            |domains| domains.queue.active_inflight_count(),
+            |domains| domains.queue_active_inflight_count(),
         )
     }
 
@@ -256,7 +256,7 @@ impl Runtime {
     pub fn rpc_workers_registered(&self) -> usize {
         self.domains.read().as_ref().map_or_else(
             || self.admin_read_model.rpc_workers(None).len(),
-            |domains| domains.rpc.worker_count(),
+            |domains| domains.rpc_worker_count(),
         )
     }
 
@@ -264,7 +264,7 @@ impl Runtime {
     pub fn rpc_requests_pending(&self) -> usize {
         self.domains.read().as_ref().map_or_else(
             || self.rpc_pending_snapshot().len(),
-            |domains| domains.rpc.pending_request_count(),
+            |domains| domains.rpc_pending_request_count(),
         )
     }
 
@@ -304,7 +304,7 @@ impl Runtime {
     pub fn lease_active(&self) -> usize {
         self.domains.read().as_ref().map_or_else(
             || self.admin_read_model.leases(None).len(),
-            |domains| domains.lease.lease_count(),
+            |domains| domains.lease_count(),
         )
     }
 
@@ -312,7 +312,7 @@ impl Runtime {
     pub fn stream_active(&self) -> usize {
         self.domains.read().as_ref().map_or_else(
             || self.admin_read_model.streams(None).len(),
-            |domains| domains.stream.stream_count(),
+            |domains| domains.stream_count(),
         )
     }
 
@@ -326,7 +326,7 @@ impl Runtime {
                     .map(|stream| stream.sessions_active)
                     .sum()
             },
-            |domains| domains.stream.append_session_count(),
+            |domains| domains.stream_append_session_count(),
         )
     }
 
@@ -402,7 +402,7 @@ impl Runtime {
         self.domains
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.stream.subscription_count())
+            .map_or(0, |domains| domains.stream_subscription_count())
     }
 
     #[must_use]
@@ -623,7 +623,7 @@ impl Runtime {
     pub fn schedule_active(&self) -> usize {
         self.domains.read().as_ref().map_or_else(
             || self.admin_read_model.schedules(None).len(),
-            |domains| domains.schedule.schedule_count(),
+            |domains| domains.schedule_count(),
         )
     }
 
@@ -632,7 +632,7 @@ impl Runtime {
         self.domains
             .read()
             .as_ref()
-            .map_or(0.0, |domains| domains.schedule.executions_per_minute())
+            .map_or(0.0, |domains| domains.schedule_executions_per_minute())
     }
 
     #[must_use]
@@ -640,7 +640,7 @@ impl Runtime {
         self.domains
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.schedule.subscription_count())
+            .map_or(0, |domains| domains.schedule_subscription_count())
     }
 
     #[must_use]
@@ -648,7 +648,7 @@ impl Runtime {
         self.domains
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.schedule.pending_fire_count())
+            .map_or(0, |domains| domains.schedule_pending_fire_count())
     }
 
     #[must_use]
@@ -656,7 +656,7 @@ impl Runtime {
         self.domains
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.schedule.pending_ack_retry_count())
+            .map_or(0, |domains| domains.schedule_pending_ack_retry_count())
     }
 
     #[must_use]
@@ -673,7 +673,7 @@ impl Runtime {
     #[must_use]
     pub fn schedule_oldest_pending_claim_age_seconds(&self) -> u64 {
         self.domains.read().as_ref().map_or(0, |domains| {
-            domains.schedule.oldest_pending_claim_age_seconds()
+            domains.schedule_oldest_pending_claim_age_seconds()
         })
     }
 
@@ -682,7 +682,7 @@ impl Runtime {
         self.domains
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.schedule.notify_failure_count())
+            .map_or(0, |domains| domains.schedule_notify_failure_count())
     }
 
     #[must_use]
@@ -690,7 +690,7 @@ impl Runtime {
         self.domains
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.schedule.ack_failure_count())
+            .map_or(0, |domains| domains.schedule_ack_failure_count())
     }
 
     #[must_use]
@@ -698,7 +698,7 @@ impl Runtime {
         self.domains
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.schedule.overdue_normalization_count())
+            .map_or(0, |domains| domains.schedule_overdue_normalization_count())
     }
 
     #[must_use]

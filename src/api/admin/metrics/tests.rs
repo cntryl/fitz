@@ -68,43 +68,42 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
         )
         .expect("claim due schedule");
 
-    let domains = Arc::new(DomainHandles {
-        kv: Arc::new(KvDomainSink::new(
+    let domains = Arc::new(DomainHandles::new(
+        Arc::new(KvDomainSink::new(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
         )),
-        queue: Arc::new(QueueDomainSink::new(
+        Arc::new(QueueDomainSink::new(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
             cntryl_midge::WriteOptions::buffered(),
             crate::utils::idempotency::default_dedup_store(),
         )),
-        notice: Arc::new(NoticeDomainSink::new(
+        Arc::new(NoticeDomainSink::new(
             router.clone(),
             admin_read_model.clone(),
         )),
-        stream: Arc::new(StreamDomainSink::new(
+        Arc::new(StreamDomainSink::new(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
         )),
-        rpc: Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
-        lease: Arc::new(LeaseDomainSink::new(
+        Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
+        Arc::new(LeaseDomainSink::new(
             router.clone(),
             admin_read_model.clone(),
         )),
-        schedule: Arc::new(ScheduleDomainSink::new(
+        Arc::new(ScheduleDomainSink::new(
             store,
             router,
             admin_read_model.clone(),
         )),
-    });
+    ));
 
     domains
-        .schedule
-        .preload_persisted_families()
+        .preload_schedule_families()
         .expect("preload schedules");
     runtime.attach_domains(domains);
     runtime

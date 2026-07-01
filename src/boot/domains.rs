@@ -59,16 +59,37 @@ impl MailboxSink for DomainSink {
 
 #[derive(Clone)]
 pub struct DomainHandles {
-    pub kv: Arc<KvDomainSink>,
-    pub queue: Arc<QueueDomainSink>,
-    pub notice: Arc<NoticeDomainSink>,
-    pub stream: Arc<StreamDomainSink>,
-    pub rpc: Arc<RpcDomainSink>,
-    pub lease: Arc<LeaseDomainSink>,
-    pub schedule: Arc<ScheduleDomainSink>,
+    kv: Arc<KvDomainSink>,
+    queue: Arc<QueueDomainSink>,
+    notice: Arc<NoticeDomainSink>,
+    stream: Arc<StreamDomainSink>,
+    rpc: Arc<RpcDomainSink>,
+    lease: Arc<LeaseDomainSink>,
+    schedule: Arc<ScheduleDomainSink>,
 }
 
 impl DomainHandles {
+    #[must_use]
+    pub fn new(
+        kv: Arc<KvDomainSink>,
+        queue: Arc<QueueDomainSink>,
+        notice: Arc<NoticeDomainSink>,
+        stream: Arc<StreamDomainSink>,
+        rpc: Arc<RpcDomainSink>,
+        lease: Arc<LeaseDomainSink>,
+        schedule: Arc<ScheduleDomainSink>,
+    ) -> Self {
+        Self {
+            kv,
+            queue,
+            notice,
+            stream,
+            rpc,
+            lease,
+            schedule,
+        }
+    }
+
     pub fn stop(&self) {
         self.kv.stop();
         self.queue.stop();
@@ -77,6 +98,250 @@ impl DomainHandles {
         self.rpc.stop();
         self.lease.stop();
         self.schedule.stop();
+    }
+
+    pub(crate) fn queue_is_active(&self) -> bool {
+        self.queue.is_active()
+    }
+
+    pub(crate) fn queue_sweep_runtime_state(&self) {
+        self.queue.sweep_runtime_state();
+    }
+
+    pub(crate) fn rpc_is_active(&self) -> bool {
+        self.rpc.is_active()
+    }
+
+    pub(crate) fn rpc_timeout_sweep_interval(&self) -> std::time::Duration {
+        self.rpc.timeout_sweep_interval()
+    }
+
+    pub(crate) fn rpc_expire_timed_out_requests(&self) {
+        self.rpc.expire_timed_out_requests();
+    }
+
+    pub(crate) fn lease_is_active(&self) -> bool {
+        self.lease.is_active()
+    }
+
+    pub(crate) fn lease_sweep_expired_state(&self) {
+        self.lease.sweep_expired_state();
+    }
+
+    pub(crate) fn schedule_is_active(&self) -> bool {
+        self.schedule.is_active()
+    }
+
+    pub(crate) fn schedule_scan_due_schedules(&self) {
+        self.schedule.scan_due_schedules();
+    }
+
+    pub(crate) fn schedule_force_due_scan_for_tests(&self, ready_count: usize) {
+        self.schedule.force_due_scan_for_tests(ready_count);
+    }
+
+    pub(crate) fn refresh_queue_admin_snapshot(&self) {
+        self.queue.refresh_admin_snapshot_if_dirty();
+    }
+
+    pub(crate) fn refresh_rpc_admin_snapshot(&self) {
+        self.rpc.refresh_admin_snapshot_if_dirty();
+    }
+
+    pub(crate) fn refresh_notice_admin_snapshot(&self) {
+        self.notice.refresh_admin_snapshot_if_dirty();
+    }
+
+    pub(crate) fn refresh_schedule_admin_snapshot(&self) {
+        self.schedule.refresh_admin_snapshot_if_dirty();
+    }
+
+    pub(crate) fn refresh_stream_admin_snapshot(&self) {
+        self.stream.refresh_admin_snapshot_if_dirty();
+    }
+
+    pub(crate) fn kv_active_transaction_count(&self) -> usize {
+        self.kv.active_transaction_count()
+    }
+
+    pub(crate) fn kv_admin_inventory(
+        &self,
+        family: Option<crate::runtime::routing::RouteFamily>,
+    ) -> Result<Vec<crate::control::admin::KvResourceInventoryEntry>, String> {
+        self.kv.admin_inventory(family)
+    }
+
+    pub(crate) fn kv_admin_inventory_resource(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<crate::control::admin::KvResourceInventoryEntry>, String> {
+        self.kv
+            .admin_inventory_resource(family, realm, area, resource)
+    }
+
+    pub(crate) fn kv_admin_get_committed_value(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, String> {
+        self.kv
+            .admin_get_committed_value(family, realm, area, resource, key)
+    }
+
+    pub(crate) fn kv_admin_scan_committed_prefix(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        key_prefix: &[u8],
+        limit: usize,
+    ) -> Result<crate::domains::kv::sink::AdminKvPrefixScanResult, String> {
+        self.kv
+            .admin_scan_committed_prefix(family, realm, area, resource, key_prefix, limit)
+    }
+
+    pub(crate) fn kv_admin_scan_committed_rows(
+        &self,
+        request: &crate::domains::kv::sink::AdminKvRowsRequest<'_>,
+    ) -> Result<crate::domains::kv::sink::AdminKvRowsResult, String> {
+        self.kv.admin_scan_committed_rows(request)
+    }
+
+    pub(crate) fn queue_ready_message_count(&self) -> usize {
+        self.queue.ready_message_count()
+    }
+
+    pub(crate) fn queue_delayed_message_count(&self) -> usize {
+        self.queue.delayed_message_count()
+    }
+
+    pub(crate) fn queue_pending_message_count(&self) -> usize {
+        self.queue.pending_message_count()
+    }
+
+    pub(crate) fn queue_dead_letter_count(&self) -> usize {
+        self.queue.dead_letter_count()
+    }
+
+    pub(crate) fn queue_active_inflight_count(&self) -> usize {
+        self.queue.active_inflight_count()
+    }
+
+    pub(crate) fn queue_replay_dead_letter(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+        message_id: crate::domains::queue::MessageId,
+    ) -> Result<bool, String> {
+        self.queue.replay_dead_letter(key, message_id)
+    }
+
+    pub(crate) fn queue_purge_dead_letter(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+        message_id: crate::domains::queue::MessageId,
+    ) -> Result<bool, String> {
+        self.queue.purge_dead_letter(key, message_id)
+    }
+
+    pub(crate) fn stream_admin_read_resource_records(
+        &self,
+        request: crate::domains::stream::sink::AdminStreamReadRequest<'_>,
+    ) -> Result<
+        (
+            Vec<crate::domains::stream::protocol::StreamReadItem>,
+            crate::domains::stream::protocol::ReadCursor,
+        ),
+        String,
+    > {
+        self.stream.admin_read_resource_records(request)
+    }
+
+    pub(crate) fn stream_count(&self) -> usize {
+        self.stream.stream_count()
+    }
+
+    pub(crate) fn stream_append_session_count(&self) -> usize {
+        self.stream.append_session_count()
+    }
+
+    pub(crate) fn stream_subscription_count(&self) -> usize {
+        self.stream.subscription_count()
+    }
+
+    pub(crate) fn rpc_worker_count(&self) -> usize {
+        self.rpc.worker_count()
+    }
+
+    pub(crate) fn rpc_pending_request_count(&self) -> usize {
+        self.rpc.pending_request_count()
+    }
+
+    pub(crate) fn lease_count(&self) -> usize {
+        self.lease.lease_count()
+    }
+
+    pub(crate) fn lease_admin_waiters(&self) -> Vec<crate::control::admin::LeaseWaiterInfo> {
+        self.lease.admin_waiters()
+    }
+
+    pub(crate) fn schedule_count(&self) -> usize {
+        self.schedule.schedule_count()
+    }
+
+    pub(crate) fn schedule_executions_per_minute(&self) -> f64 {
+        self.schedule.executions_per_minute()
+    }
+
+    pub(crate) fn schedule_subscription_count(&self) -> usize {
+        self.schedule.subscription_count()
+    }
+
+    pub(crate) fn schedule_pending_fire_count(&self) -> usize {
+        self.schedule.pending_fire_count()
+    }
+
+    pub(crate) fn schedule_pending_ack_retry_count(&self) -> usize {
+        self.schedule.pending_ack_retry_count()
+    }
+
+    pub(crate) fn schedule_oldest_pending_claim_age_seconds(&self) -> u64 {
+        self.schedule.oldest_pending_claim_age_seconds()
+    }
+
+    pub(crate) fn schedule_notify_failure_count(&self) -> u64 {
+        self.schedule.notify_failure_count()
+    }
+
+    pub(crate) fn schedule_ack_failure_count(&self) -> u64 {
+        self.schedule.ack_failure_count()
+    }
+
+    pub(crate) fn schedule_overdue_normalization_count(&self) -> u64 {
+        self.schedule.overdue_normalization_count()
+    }
+
+    pub(crate) fn schedule_admin_pending_claims(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+    ) -> Vec<crate::control::admin::SchedulePendingClaimInfo> {
+        self.schedule.admin_pending_claims(family)
+    }
+
+    /// Preload persisted schedule families through the schedule domain handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when persisted schedule state cannot be loaded into the
+    /// schedule actor projection.
+    pub fn preload_schedule_families(&self) -> Result<(), String> {
+        self.schedule.preload_persisted_families()
     }
 }
 
@@ -100,7 +365,7 @@ pub fn setup(
     store: &StdArc<cntryl_midge::Engine>,
     admin_read_model: &Arc<crate::control::admin::read_model::AdminReadModel>,
     options: &DomainSetupOptions,
-) -> BootResult<DomainHandles> {
+) -> BootResult<Arc<DomainHandles>> {
     let metrics = (*crate::observability::metrics()).clone();
     let storage = crate::storage::FitzStorageEngine::new(store.clone());
 
@@ -197,15 +462,15 @@ pub fn setup(
         DomainKind::ALL.len()
     );
 
-    let handles = DomainHandles {
-        kv: kv_sink,
-        queue: queue_sink,
-        notice: notice_sink,
-        stream: stream_sink,
-        rpc: rpc_sink,
-        lease: lease_sink,
-        schedule: schedule_sink,
-    };
+    let handles = Arc::new(DomainHandles::new(
+        kv_sink,
+        queue_sink,
+        notice_sink,
+        stream_sink,
+        rpc_sink,
+        lease_sink,
+        schedule_sink,
+    ));
     crate::api::background::start_domain_background_tasks(&handles);
     Ok(handles)
 }

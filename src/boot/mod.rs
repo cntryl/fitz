@@ -126,7 +126,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         Ok(domains) => domains,
         Err(error) => return abort_startup(ws_shutdown, ws_join, error).await,
     };
-    runtime.attach_domains(std::sync::Arc::new(domains));
+    runtime.attach_domains(domains);
     tracing::info!("Domain actors registered");
 
     // Mark domains ready

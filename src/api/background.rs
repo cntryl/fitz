@@ -1,106 +1,100 @@
 //! Tokio-owned background loops for synchronous domain maintenance.
 
-use crate::boot::domains::{
-    DomainHandles, LeaseDomainSink, QueueDomainSink, RpcDomainSink, ScheduleDomainSink,
-};
-use std::sync::Arc;
+use crate::boot::domains::DomainHandles;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-pub fn start_domain_background_tasks(domains: &DomainHandles) {
-    start_queue_runtime_sweep(&domains.queue);
-    start_rpc_timeout_loop(&domains.rpc);
-    start_lease_timeout_loop(&domains.lease);
-    start_schedule_tick_loop(&domains.schedule);
+pub fn start_domain_background_tasks(domains: &Arc<DomainHandles>) {
+    start_queue_runtime_sweep(Arc::downgrade(domains));
+    start_rpc_timeout_loop(Arc::downgrade(domains));
+    start_lease_timeout_loop(Arc::downgrade(domains));
+    start_schedule_tick_loop(Arc::downgrade(domains));
 }
 
-fn start_queue_runtime_sweep(sink: &Arc<QueueDomainSink>) {
+fn start_queue_runtime_sweep(domains: Weak<DomainHandles>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("Queue runtime sweep not started: no Tokio runtime available");
         return;
     };
-    let weak = Arc::downgrade(sink);
     handle.spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(50));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            let Some(sink) = weak.upgrade() else {
+            let Some(domains) = domains.upgrade() else {
                 break;
             };
-            if !sink.is_active() {
+            if !domains.queue_is_active() {
                 break;
             }
-            sink.sweep_runtime_state();
+            domains.queue_sweep_runtime_state();
         }
     });
 }
 
-pub fn start_rpc_timeout_loop(sink: &Arc<RpcDomainSink>) {
+fn start_rpc_timeout_loop(domains: Weak<DomainHandles>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("RPC timeout loop not started: no Tokio runtime available");
         return;
     };
-    let weak = Arc::downgrade(sink);
     handle.spawn(async move {
         loop {
-            let Some(sink) = weak.upgrade() else {
+            let Some(domain_handles) = domains.upgrade() else {
                 break;
             };
-            if !sink.is_active() {
+            if !domain_handles.rpc_is_active() {
                 break;
             }
-            tokio::time::sleep(sink.timeout_sweep_interval()).await;
-            let Some(sink) = weak.upgrade() else {
+            tokio::time::sleep(domain_handles.rpc_timeout_sweep_interval()).await;
+            let Some(domain_handles) = domains.upgrade() else {
                 break;
             };
-            if !sink.is_active() {
+            if !domain_handles.rpc_is_active() {
                 break;
             }
-            sink.expire_timed_out_requests();
+            domain_handles.rpc_expire_timed_out_requests();
         }
     });
 }
 
-fn start_lease_timeout_loop(sink: &Arc<LeaseDomainSink>) {
+fn start_lease_timeout_loop(domains: Weak<DomainHandles>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("Lease timeout loop not started: no Tokio runtime available");
         return;
     };
-    let weak = Arc::downgrade(sink);
     handle.spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(50));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            let Some(sink) = weak.upgrade() else {
+            let Some(domains) = domains.upgrade() else {
                 break;
             };
-            if !sink.is_active() {
+            if !domains.lease_is_active() {
                 break;
             }
-            sink.sweep_expired_state();
+            domains.lease_sweep_expired_state();
         }
     });
 }
 
-fn start_schedule_tick_loop(sink: &Arc<ScheduleDomainSink>) {
+fn start_schedule_tick_loop(domains: Weak<DomainHandles>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("Schedule tick loop not started: no Tokio runtime available");
         return;
     };
-    let weak = Arc::downgrade(sink);
     handle.spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(250));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            let Some(sink) = weak.upgrade() else {
+            let Some(domains) = domains.upgrade() else {
                 break;
             };
-            if !sink.is_active() {
+            if !domains.schedule_is_active() {
                 break;
             }
-            sink.scan_due_schedules();
+            domains.schedule_scan_due_schedules();
         }
     });
 }

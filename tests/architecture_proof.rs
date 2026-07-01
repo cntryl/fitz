@@ -371,6 +371,33 @@ fn should_keep_admin_surface_on_runtime_facades() {
 }
 
 #[test]
+fn should_keep_domain_handles_from_exposing_concrete_sinks() {
+    // Arrange
+    let source = read_repo_file("src/boot/domains.rs");
+    let forbidden_fields = [
+        "pub kv:",
+        "pub queue:",
+        "pub notice:",
+        "pub stream:",
+        "pub rpc:",
+        "pub lease:",
+        "pub schedule:",
+    ];
+
+    // Act
+    let violations = forbidden_fields
+        .into_iter()
+        .filter(|field| source.contains(field))
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "DomainHandles exposes concrete sink fields: {violations:?}"
+    );
+}
+
+#[test]
 fn should_keep_sync_core_free_of_transport_dependencies() {
     // Arrange
     let mut files = Vec::new();

@@ -146,39 +146,39 @@ fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::Engine>) {
     let admin_read_model = runtime.admin_read_model();
     let store = fitz::testkit::create_test_engine_with_cfs(vec![1]);
 
-    let domains = Arc::new(DomainHandles {
-        kv: Arc::new(KvDomainSink::new(
+    let domains = Arc::new(DomainHandles::new(
+        Arc::new(KvDomainSink::new(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
         )),
-        queue: Arc::new(QueueDomainSink::new(
+        Arc::new(QueueDomainSink::new(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
             cntryl_midge::WriteOptions::buffered(),
             fitz::utils::idempotency::default_dedup_store(),
         )),
-        notice: Arc::new(NoticeDomainSink::new(
+        Arc::new(NoticeDomainSink::new(
             router.clone(),
             admin_read_model.clone(),
         )),
-        stream: Arc::new(StreamDomainSink::new(
+        Arc::new(StreamDomainSink::new(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
         )),
-        rpc: Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
-        lease: Arc::new(LeaseDomainSink::new(
+        Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
+        Arc::new(LeaseDomainSink::new(
             router.clone(),
             admin_read_model.clone(),
         )),
-        schedule: Arc::new(ScheduleDomainSink::new(
+        Arc::new(ScheduleDomainSink::new(
             store.clone(),
             router,
             admin_read_model.clone(),
         )),
-    });
+    ));
 
     runtime.attach_domains(domains);
     mark_runtime_ready(runtime.as_ref());
@@ -201,38 +201,38 @@ fn schedule_runtime_with_domains() -> (
         admin_read_model.clone(),
     ));
 
-    let domains = Arc::new(DomainHandles {
-        kv: Arc::new(KvDomainSink::new(
+    let domains = Arc::new(DomainHandles::new(
+        Arc::new(KvDomainSink::new(
             store.clone(),
             runtime.router(),
             admin_read_model.clone(),
         )),
-        queue: Arc::new(QueueDomainSink::new(
+        Arc::new(QueueDomainSink::new(
             store.clone(),
             runtime.router(),
             admin_read_model.clone(),
             cntryl_midge::WriteOptions::buffered(),
             fitz::utils::idempotency::default_dedup_store(),
         )),
-        notice: Arc::new(NoticeDomainSink::new(
+        Arc::new(NoticeDomainSink::new(
             runtime.router(),
             admin_read_model.clone(),
         )),
-        stream: Arc::new(StreamDomainSink::new(
+        Arc::new(StreamDomainSink::new(
             store.clone(),
             runtime.router(),
             admin_read_model.clone(),
         )),
-        rpc: Arc::new(RpcDomainSink::new(
+        Arc::new(RpcDomainSink::new(
             runtime.router(),
             admin_read_model.clone(),
         )),
-        lease: Arc::new(LeaseDomainSink::new(
+        Arc::new(LeaseDomainSink::new(
             runtime.router(),
             admin_read_model.clone(),
         )),
-        schedule: schedule.clone(),
-    });
+        schedule.clone(),
+    ));
 
     runtime.attach_domains(domains);
     mark_runtime_ready(runtime.as_ref());

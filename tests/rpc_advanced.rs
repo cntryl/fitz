@@ -13,7 +13,10 @@ use fitz::benchkit::{
     create_bench_rpc_sink, create_bench_rpc_sink_with_route_pending_capacity,
     create_bench_rpc_sink_with_timeout, extract_single_tlv_field,
 };
-use fitz::boot::domains::RpcDomainSink;
+use fitz::boot::domains::{
+    DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
+    ScheduleDomainSink, StreamDomainSink,
+};
 use fitz::domains::rpc::{
     InboxMessage, ReplyInboxActor, RpcError, RpcErrorCode, RpcRequest,
     RpcResponse as RpcResponseMsg, RpcRouteActor,
@@ -268,6 +271,49 @@ async fn wait_for_pending_requests_to_clear(sink: &RpcDomainSink) {
     })
     .await
     .expect("pending requests should clear");
+}
+
+fn domain_handles_with_rpc_sink(
+    router: Arc<Router>,
+    rpc: Arc<RpcDomainSink>,
+) -> Arc<DomainHandles> {
+    let admin_runtime = fitz::boot::Runtime::new(router.clone());
+    let admin_read_model = admin_runtime.admin_read_model();
+    let store = fitz::testkit::create_test_engine_with_cfs(vec![1]);
+
+    Arc::new(DomainHandles::new(
+        Arc::new(KvDomainSink::new(
+            store.clone(),
+            router.clone(),
+            admin_read_model.clone(),
+        )),
+        Arc::new(QueueDomainSink::new(
+            store.clone(),
+            router.clone(),
+            admin_read_model.clone(),
+            cntryl_midge::WriteOptions::buffered(),
+            fitz::utils::idempotency::default_dedup_store(),
+        )),
+        Arc::new(NoticeDomainSink::new(
+            router.clone(),
+            admin_read_model.clone(),
+        )),
+        Arc::new(StreamDomainSink::new(
+            store.clone(),
+            router.clone(),
+            admin_read_model.clone(),
+        )),
+        rpc,
+        Arc::new(LeaseDomainSink::new(
+            router.clone(),
+            admin_read_model.clone(),
+        )),
+        Arc::new(ScheduleDomainSink::new(
+            store,
+            router,
+            admin_read_model.clone(),
+        )),
+    ))
 }
 
 // ============================================================================
@@ -638,7 +684,8 @@ async fn should_reject_late_worker_response_after_timeout_given_rpc_sink() {
     let caller_sink = register_capture_sink(&router, caller_addr.clone());
     let worker_sink = register_capture_sink(&router, worker_addr.clone());
 
-    fitz::api::background::start_rpc_timeout_loop(&sink.clone());
+    let domains = domain_handles_with_rpc_sink(router.clone(), sink.clone());
+    fitz::api::background::start_domain_background_tasks(&domains);
     deliver_rpc_frame(
         sink.as_ref(),
         worker_addr.clone(),
@@ -718,7 +765,7 @@ async fn should_reject_late_worker_response_after_timeout_given_rpc_sink() {
         delivered_request.correlation_id
     );
 
-    sink.stop();
+    domains.stop();
 }
 
 // ============================================================================
