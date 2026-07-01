@@ -164,6 +164,7 @@ fn should_apply_cloud_throughput_defaults_when_memtable_is_auto() {
 #[test]
 fn should_respect_cloud_memtable_override_before_tuning() {
     // Arrange
+    let tempdir = TempDir::new().expect("tempdir");
     let memtable_bytes = 8 * 1024 * 1024;
     let config = BootConfig::default()
         .with_storage_memtable_bytes(memtable_bytes)
@@ -171,11 +172,11 @@ fn should_respect_cloud_memtable_override_before_tuning() {
             provider_name: "peas-s3".to_string(),
             provider_config: cntryl_midge::CloudProviderConfig::peas_s3("fitz-cost-tuning"),
             prefix: Some("tests".to_string()),
-            local_cache_path: "./.fitz-cloud-cache".to_string(),
+            local_cache_path: tempdir.path().join("cache").to_string_lossy().to_string(),
         })));
 
     let open_options = cntryl_midge::OpenOptions::cloud_simulated(
-        "./target/tmp/fitz-cloud-cost-override",
+        tempdir.path().join("override"),
         "fitz-cost-tuning",
         "tests",
     )

@@ -45,6 +45,9 @@ impl Actor for ScheduleDomainActor {
             ScheduleDomainCommand::ScanDueSchedules => {
                 runtime.scan_due_schedules();
             }
+            ScheduleDomainCommand::PreloadPersistedFamilies(reply) => {
+                let _ = reply.send(runtime.preload_persisted_families());
+            }
             ScheduleDomainCommand::ForceDueScanForTests(ready_count, reply) => {
                 runtime.force_due_scan_for_tests(ready_count);
                 let _ = reply.send(());

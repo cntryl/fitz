@@ -164,7 +164,17 @@ impl ScheduleDomainSink {
     /// Returns an error when listing column families or preloading a persisted
     /// schedule actor fails.
     pub fn preload_persisted_families(&self) -> Result<(), String> {
-        self.state.runtime().preload_persisted_families()
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(ScheduleDomainCommand::PreloadPersistedFamilies(reply_tx))
+        {
+            return Err(format!("schedule preload enqueue failed: {error}"));
+        }
+
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|error| format!("schedule preload reply failed: {error}"))?
     }
 
     pub(crate) fn is_active(&self) -> bool {
