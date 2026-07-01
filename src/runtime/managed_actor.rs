@@ -5,7 +5,7 @@ use crate::observability as obs;
 use crate::runtime::actor::{Actor, ActorError, ActorMetrics, ActorRef, Context};
 use crate::runtime::envelope::Envelope;
 use crate::runtime::mailbox::Mailbox;
-use crate::runtime::router::{MailboxSink, Router};
+use crate::runtime::router::{DeliveryError, MailboxSink, RouteError, Router};
 use crate::runtime::routing::RouteAddress;
 use parking_lot::Mutex;
 use std::any::Any;
@@ -197,6 +197,43 @@ impl<M: Send + 'static> ManagedActor<M> {
         self.actor_ref.clone()
     }
 
+    fn map_route_error(error: RouteError) -> DeliveryError {
+        match error {
+            RouteError::RouteNotFound(_) => DeliveryError::ActorStopped,
+            RouteError::DeliveryFailed(_, error) => error,
+        }
+    }
+
+    /// Enqueue a message to the actor's normal mailbox lane.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DeliveryError` when the actor route has stopped or the mailbox
+    /// rejects the message due to backpressure.
+    pub fn try_send(&self, msg: M) -> Result<(), DeliveryError>
+    where
+        M: Send + Sync + 'static,
+    {
+        self.router
+            .route(Envelope::new(self.address.clone(), msg))
+            .map_err(Self::map_route_error)
+    }
+
+    /// Enqueue a message to the actor's high-priority mailbox lane.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DeliveryError` when the actor route has stopped or the
+    /// high-priority lane rejects the message due to backpressure.
+    pub fn try_send_high_priority(&self, msg: M) -> Result<(), DeliveryError>
+    where
+        M: Send + Sync + 'static,
+    {
+        self.router
+            .route_high_priority(Envelope::new(self.address.clone(), msg))
+            .map_err(Self::map_route_error)
+    }
+
     #[must_use]
     pub fn address(&self) -> &RouteAddress {
         &self.address
@@ -209,8 +246,10 @@ impl<M: Send + 'static> ManagedActor<M> {
 
     /// Stop the actor, unregister its route, and join the worker thread.
     pub fn stop(&self) {
-        self.running.store(false, Ordering::SeqCst);
-        self.router.unregister(&self.address);
+        let was_running = self.running.swap(false, Ordering::SeqCst);
+        if was_running {
+            self.router.unregister(&self.address);
+        }
 
         if let Some(join_handle) = self.join_handle.lock().take() {
             if let Err(error) = join_handle.join() {
@@ -304,6 +343,29 @@ mod tests {
     }
 
     #[test]
+    fn should_enqueue_managed_actor_message_through_delivery_api() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let (stopped_tx, _stopped_rx) = crossbeam_channel::bounded(1);
+        let managed = ManagedActor::spawn(router, test_address(), CounterActor::new(stopped_tx), 8);
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+
+        // Act
+        managed
+            .try_send(TestManagedMessage::Increment)
+            .expect("increment should enqueue");
+        managed
+            .try_send_high_priority(TestManagedMessage::Read(reply_tx))
+            .expect("read should enqueue");
+        let count = reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor should reply");
+
+        // Assert
+        assert_eq!(count, 1);
+    }
+
+    #[test]
     fn should_unregister_managed_actor_route_when_stopped() {
         // Arrange
         let router = Arc::new(Router::new());
@@ -338,6 +400,36 @@ mod tests {
         // Assert
         assert!(stopped.is_ok());
         assert!(!managed.is_running());
+    }
+
+    #[test]
+    fn should_not_unregister_replacement_route_when_stopped_handle_drops() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let address = test_address();
+        let (first_stopped_tx, _first_stopped_rx) = crossbeam_channel::bounded(1);
+        let first = ManagedActor::spawn(
+            router.clone(),
+            address.clone(),
+            CounterActor::new(first_stopped_tx),
+            8,
+        );
+        first.stop();
+        let (second_stopped_tx, _second_stopped_rx) = crossbeam_channel::bounded(1);
+        let second = ManagedActor::spawn(router, address, CounterActor::new(second_stopped_tx), 8);
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+
+        // Act
+        drop(first);
+        second
+            .try_send(TestManagedMessage::Read(reply_tx))
+            .expect("replacement actor route should remain registered");
+        let count = reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("replacement actor should reply");
+
+        // Assert
+        assert_eq!(count, 0);
     }
 
     #[test]

@@ -6,6 +6,7 @@ use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::Mailbox;
 use bytes::{BufMut, Bytes};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 #[inline]
 fn usize_to_u32_saturating(value: usize) -> u32 {
@@ -93,6 +94,37 @@ fn drain_mailbox(mailbox: &Mailbox) {
     while mailbox.receiver().try_recv().is_ok() {}
 }
 
+fn receive_envelope(mailbox: &Mailbox, label: &str) -> Envelope {
+    mailbox
+        .receiver()
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_else(|_| panic!("{label}"))
+}
+
+fn receive_frame(mailbox: &Mailbox, label: &str) -> FrameContext {
+    receive_envelope(mailbox, label)
+        .into_payload::<FrameContext>()
+        .unwrap_or_else(|| panic!("{label} frame"))
+}
+
+fn assert_no_envelope(mailbox: &Mailbox) {
+    assert!(mailbox
+        .receiver()
+        .recv_timeout(Duration::from_millis(50))
+        .is_err());
+}
+
+fn wait_for_active_transaction_count(sink: &KvDomainSink, expected: usize) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if sink.active_transaction_count() == expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sink.active_transaction_count(), expected);
+}
+
 #[test]
 fn should_create_kv_domain_sink() {
     // Arrange
@@ -104,7 +136,8 @@ fn should_create_kv_domain_sink() {
     let sink = KvDomainSink::new(store, router, admin_read_model);
 
     // Assert
-    assert!(sink.active.load(Ordering::Relaxed));
+    assert!(sink.state.active.load(Ordering::Relaxed));
+    assert!(sink.is_actor_running());
 }
 
 #[test]
@@ -134,12 +167,7 @@ fn should_record_kv_latency_samples_by_operation_kind() {
         ),
     ))
     .expect("begin KV transaction");
-    let begin_frame = mailbox
-        .receiver()
-        .try_recv()
-        .expect("begin ack envelope")
-        .into_payload::<FrameContext>()
-        .expect("begin ack frame");
+    let begin_frame = receive_frame(&mailbox, "begin ack envelope");
     let tx_id = decode_kv_begin_tx_id(&begin_frame.payload);
 
     sink.deliver(Envelope::from_route(
@@ -154,7 +182,7 @@ fn should_record_kv_latency_samples_by_operation_kind() {
         ),
     ))
     .expect("put KV value");
-    let _ = mailbox.receiver().try_recv().expect("put ack envelope");
+    let _ = receive_envelope(&mailbox, "put ack envelope");
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -169,7 +197,7 @@ fn should_record_kv_latency_samples_by_operation_kind() {
         ),
     ))
     .expect("commit KV transaction");
-    let _ = mailbox.receiver().try_recv().expect("commit ack envelope");
+    let _ = receive_envelope(&mailbox, "commit ack envelope");
     let resource_key = KvResourceLockKey::new(1, "acme", "app", "users");
     let (reads_before, writes_before) = sink.latency_snapshots(&resource_key);
     assert!(reads_before.avg_ms.abs() < f64::EPSILON);
@@ -275,13 +303,7 @@ fn should_release_resource_lock_given_session_cleanup() {
         ),
     ))
     .expect("begin first KV transaction");
-    let first_begin_envelope = first_mailbox
-        .receiver()
-        .try_recv()
-        .expect("first begin ack envelope");
-    let first_begin_frame = first_begin_envelope
-        .into_payload::<FrameContext>()
-        .expect("first begin ack frame");
+    let first_begin_frame = receive_frame(&first_mailbox, "first begin ack envelope");
     let first_tx_id = decode_kv_begin_tx_id(&first_begin_frame.payload);
     assert_eq!(first_begin_frame.payload[0], 0);
     assert!(first_tx_id > 0);
@@ -296,7 +318,7 @@ fn should_release_resource_lock_given_session_cleanup() {
         },
     ))
     .expect("cleanup first KV session");
-    assert_eq!(sink.active_transaction_count(), 0);
+    wait_for_active_transaction_count(&sink, 0);
 
     sink.deliver(Envelope::from_route(
         second_address,
@@ -312,18 +334,12 @@ fn should_release_resource_lock_given_session_cleanup() {
     .expect("begin second KV transaction");
 
     // Assert
-    let second_begin_envelope = second_mailbox
-        .receiver()
-        .try_recv()
-        .expect("second begin ack envelope");
-    let second_begin_frame = second_begin_envelope
-        .into_payload::<FrameContext>()
-        .expect("second begin ack frame");
+    let second_begin_frame = receive_frame(&second_mailbox, "second begin ack envelope");
     let second_tx_id = decode_kv_begin_tx_id(&second_begin_frame.payload);
     assert_eq!(second_begin_frame.payload[0], 0);
     assert!(second_tx_id > 0);
     assert_eq!(sink.active_transaction_count(), 1);
-    assert!(first_mailbox.receiver().try_recv().is_err());
+    assert_no_envelope(&first_mailbox);
 }
 
 #[test]
@@ -357,10 +373,7 @@ fn should_reject_conflicting_read_write_begin_given_active_transaction_in_other_
         ),
     ))
     .expect("begin first KV transaction");
-    let _ = first_mailbox
-        .receiver()
-        .try_recv()
-        .expect("first begin ack envelope");
+    let _ = receive_envelope(&first_mailbox, "first begin ack envelope");
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -377,12 +390,7 @@ fn should_reject_conflicting_read_write_begin_given_active_transaction_in_other_
     .expect("begin second KV transaction");
 
     // Assert
-    let second_begin_frame = second_mailbox
-        .receiver()
-        .try_recv()
-        .expect("second begin response envelope")
-        .into_payload::<FrameContext>()
-        .expect("second begin response frame");
+    let second_begin_frame = receive_frame(&second_mailbox, "second begin response envelope");
     assert_eq!(
         decode_error_code(&second_begin_frame.payload),
         error_codes::kv::ERR_ISOLATION_CONFLICT
@@ -401,7 +409,7 @@ fn should_rebuild_kv_admin_transactions_from_actor_state() {
     let mailbox = Arc::new(Mailbox::new(8));
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
-    router.register(source_address.clone(), mailbox);
+    router.register(source_address.clone(), mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = KvDomainSink::new(store, router, admin_read_model.clone());
 
@@ -417,6 +425,7 @@ fn should_rebuild_kv_admin_transactions_from_actor_state() {
         ),
     ))
     .expect("begin KV transaction");
+    let _ = receive_envelope(&mailbox, "begin ack envelope");
 
     // Act
     sink.sync_admin_snapshot();
@@ -465,12 +474,7 @@ fn should_notify_kv_subscriber_given_committed_put() {
         ),
     ))
     .expect("subscribe to KV route");
-    let subscribe_frame = watcher_mailbox
-        .receiver()
-        .try_recv()
-        .expect("subscribe ack envelope")
-        .into_payload::<FrameContext>()
-        .expect("subscribe ack frame");
+    let subscribe_frame = receive_frame(&watcher_mailbox, "subscribe ack envelope");
     let subscription_id = decode_kv_subscription_id(&subscribe_frame.payload);
 
     sink.deliver(Envelope::from_route(
@@ -485,12 +489,7 @@ fn should_notify_kv_subscriber_given_committed_put() {
         ),
     ))
     .expect("begin KV transaction");
-    let begin_frame = writer_mailbox
-        .receiver()
-        .try_recv()
-        .expect("begin ack envelope")
-        .into_payload::<FrameContext>()
-        .expect("begin ack frame");
+    let begin_frame = receive_frame(&writer_mailbox, "begin ack envelope");
     let tx_id = decode_kv_begin_tx_id(&begin_frame.payload);
 
     sink.deliver(Envelope::from_route(
@@ -505,10 +504,7 @@ fn should_notify_kv_subscriber_given_committed_put() {
         ),
     ))
     .expect("put KV value");
-    let _ = writer_mailbox
-        .receiver()
-        .try_recv()
-        .expect("put ack envelope");
+    let _ = receive_envelope(&writer_mailbox, "put ack envelope");
 
     sink.deliver(Envelope::from_route(
         writer_address,
@@ -522,18 +518,10 @@ fn should_notify_kv_subscriber_given_committed_put() {
         ),
     ))
     .expect("commit KV transaction");
-    let _ = writer_mailbox
-        .receiver()
-        .try_recv()
-        .expect("commit ack envelope");
+    let _ = receive_envelope(&writer_mailbox, "commit ack envelope");
 
     // Assert
-    let notify_frame = watcher_mailbox
-        .receiver()
-        .try_recv()
-        .expect("KV notify envelope")
-        .into_payload::<FrameContext>()
-        .expect("KV notify frame");
+    let notify_frame = receive_frame(&watcher_mailbox, "KV notify envelope");
     assert_eq!(
         notify_frame.msg_type.as_u16(),
         crate::protocol::kv::msg_type::NOTIFY
@@ -576,10 +564,7 @@ fn should_not_notify_kv_subscriber_given_empty_commit() {
         ),
     ))
     .expect("subscribe to KV route");
-    let _ = watcher_mailbox
-        .receiver()
-        .try_recv()
-        .expect("subscribe ack envelope");
+    let _ = receive_envelope(&watcher_mailbox, "subscribe ack envelope");
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -594,12 +579,7 @@ fn should_not_notify_kv_subscriber_given_empty_commit() {
         ),
     ))
     .expect("begin KV transaction");
-    let begin_frame = writer_mailbox
-        .receiver()
-        .try_recv()
-        .expect("begin ack envelope")
-        .into_payload::<FrameContext>()
-        .expect("begin ack frame");
+    let begin_frame = receive_frame(&writer_mailbox, "begin ack envelope");
     let tx_id = decode_kv_begin_tx_id(&begin_frame.payload);
 
     sink.deliver(Envelope::from_route(
@@ -614,13 +594,10 @@ fn should_not_notify_kv_subscriber_given_empty_commit() {
         ),
     ))
     .expect("commit empty KV transaction");
-    let _ = writer_mailbox
-        .receiver()
-        .try_recv()
-        .expect("commit ack envelope");
+    let _ = receive_envelope(&writer_mailbox, "commit ack envelope");
 
     // Assert
-    assert!(watcher_mailbox.receiver().try_recv().is_err());
+    assert_no_envelope(&watcher_mailbox);
 }
 
 #[test]
@@ -654,10 +631,7 @@ fn should_remove_kv_subscription_given_unsubscribe() {
         ),
     ))
     .expect("subscribe to KV route");
-    let _ = watcher_mailbox
-        .receiver()
-        .try_recv()
-        .expect("subscribe ack envelope");
+    let _ = receive_envelope(&watcher_mailbox, "subscribe ack envelope");
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -672,10 +646,7 @@ fn should_remove_kv_subscription_given_unsubscribe() {
         ),
     ))
     .expect("unsubscribe from KV route");
-    let _ = watcher_mailbox
-        .receiver()
-        .try_recv()
-        .expect("unsubscribe ack envelope");
+    let _ = receive_envelope(&watcher_mailbox, "unsubscribe ack envelope");
 
     sink.deliver(Envelope::from_route(
         writer_address.clone(),
@@ -689,12 +660,7 @@ fn should_remove_kv_subscription_given_unsubscribe() {
         ),
     ))
     .expect("begin KV transaction");
-    let begin_frame = writer_mailbox
-        .receiver()
-        .try_recv()
-        .expect("begin ack envelope")
-        .into_payload::<FrameContext>()
-        .expect("begin ack frame");
+    let begin_frame = receive_frame(&writer_mailbox, "begin ack envelope");
     let tx_id = decode_kv_begin_tx_id(&begin_frame.payload);
 
     sink.deliver(Envelope::from_route(
@@ -709,10 +675,7 @@ fn should_remove_kv_subscription_given_unsubscribe() {
         ),
     ))
     .expect("put KV value");
-    let _ = writer_mailbox
-        .receiver()
-        .try_recv()
-        .expect("put ack envelope");
+    let _ = receive_envelope(&writer_mailbox, "put ack envelope");
 
     sink.deliver(Envelope::from_route(
         writer_address,
@@ -726,12 +689,9 @@ fn should_remove_kv_subscription_given_unsubscribe() {
         ),
     ))
     .expect("commit KV transaction");
-    let _ = writer_mailbox
-        .receiver()
-        .try_recv()
-        .expect("commit ack envelope");
+    let _ = receive_envelope(&writer_mailbox, "commit ack envelope");
 
     // Assert
-    assert!(watcher_mailbox.receiver().try_recv().is_err());
-    assert!(sink.core.watch_actors.lock().is_empty());
+    assert_no_envelope(&watcher_mailbox);
+    assert!(sink.state.core.watch_actors.lock().is_empty());
 }

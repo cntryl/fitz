@@ -54,6 +54,26 @@ fn assert_rpc_disconnect_response(caller_mailbox: &Mailbox, correlation_id: uuid
     );
 }
 
+fn receive_frame(mailbox: &Mailbox, label: &str) -> FrameContext {
+    mailbox
+        .receiver()
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap_or_else(|_| panic!("{label}"))
+        .into_payload::<FrameContext>()
+        .unwrap_or_else(|| panic!("{label} frame"))
+}
+
+fn wait_for_kv_active_transaction_count(kv_sink: &KvDomainSink, expected: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while std::time::Instant::now() < deadline {
+        if kv_sink.active_transaction_count() == expected {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(kv_sink.active_transaction_count(), expected);
+}
+
 #[tokio::test]
 async fn should_cleanup_real_rpc_pending_request_on_close() {
     // Arrange
@@ -430,18 +450,13 @@ async fn should_cleanup_real_kv_transaction_on_close() {
         ))
         .expect("begin first KV transaction");
 
-    let first_begin_response = first_mailbox
-        .receiver()
-        .try_recv()
-        .expect("first begin response")
-        .into_payload::<FrameContext>()
-        .expect("first begin response frame");
+    let first_begin_response = receive_frame(&first_mailbox, "first begin response");
     let first_tx_id = crate::benchkit::parse_kv_tx_id(first_begin_response.payload.as_ref())
         .expect("first tx id");
 
     assert_eq!(first_begin_response.payload[0], 0);
     assert!(first_tx_id > 0);
-    assert_eq!(kv_sink.active_transaction_count(), 1);
+    wait_for_kv_active_transaction_count(&kv_sink, 1);
 
     // Act
     ingress
@@ -449,7 +464,7 @@ async fn should_cleanup_real_kv_transaction_on_close() {
         .await;
 
     // Assert
-    assert_eq!(kv_sink.active_transaction_count(), 0);
+    wait_for_kv_active_transaction_count(&kv_sink, 0);
 
     let second_begin = crate::benchkit::build_kv_begin(kv_route, 1, 0);
     let (second_begin_msg_type, second_begin_payload) =
@@ -468,18 +483,13 @@ async fn should_cleanup_real_kv_transaction_on_close() {
         ))
         .expect("begin second KV transaction");
 
-    let second_begin_response = second_mailbox
-        .receiver()
-        .try_recv()
-        .expect("second begin response")
-        .into_payload::<FrameContext>()
-        .expect("second begin response frame");
+    let second_begin_response = receive_frame(&second_mailbox, "second begin response");
     let second_tx_id = crate::benchkit::parse_kv_tx_id(second_begin_response.payload.as_ref())
         .expect("second tx id");
 
     assert_eq!(second_begin_response.payload[0], 0);
     assert!(second_tx_id > 0);
-    assert_eq!(kv_sink.active_transaction_count(), 1);
+    wait_for_kv_active_transaction_count(&kv_sink, 1);
     assert!(first_mailbox.receiver().try_recv().is_err());
 }
 

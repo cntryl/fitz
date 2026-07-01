@@ -11,7 +11,7 @@ pub(super) use crate::domains::kv::{KvClientFrame, KvClientRequest};
 #[cfg(test)]
 pub(super) use crate::protocol::frame_context::FrameContext;
 pub(super) use crate::runtime::routing::RouteFamily;
-pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
+pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
 pub(super) use bytes::Bytes;
 pub(super) use chrono::Utc;
 pub(super) use parking_lot::Mutex;
@@ -64,7 +64,25 @@ pub(super) struct KvDomainCore {
     pub(super) sync_write_options: cntryl_midge::WriteOptions,
 }
 
-pub struct KvDomainSink {
+pub(super) struct KvDomainState {
     pub(super) core: KvDomainCore,
     pub(super) active: AtomicBool,
+}
+
+pub(super) struct KvDomainRuntime<'a> {
+    pub(super) core: &'a KvDomainCore,
+    pub(super) active: &'a AtomicBool,
+}
+
+pub(super) enum KvDomainCommand {
+    Deliver(Envelope),
+}
+
+pub(super) struct KvDomainActor {
+    pub(super) state: Arc<KvDomainState>,
+}
+
+pub struct KvDomainSink {
+    pub(super) state: Arc<KvDomainState>,
+    pub(super) actor: ManagedActor<KvDomainCommand>,
 }

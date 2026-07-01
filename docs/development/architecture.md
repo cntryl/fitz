@@ -497,11 +497,11 @@ Current Notice behavior is intentionally ephemeral:
 
 ### Domain Actor, Data, And Admin Contracts
 #### KV
-- Actor owner: `KvActor` owns live transaction state, session-scoped locks, and subscription fanout decisions for one route family.
+- Actor owner: `KvDomainSink` is a thin mailbox adapter; `KvDomainActor` is the managed production actor that processes KV delivery, cleanup, session `KvActor` state, watch fanout, and admin projection updates.
 - Persistence: committed values are durable according to the selected write policy; open transactions and watcher state are ephemeral.
-- Cleanup: disconnect rolls back live transactions, releases session-owned locks, and drops subscriptions without implying transaction recovery.
+- Cleanup: disconnect cleanup is enqueued to the KV actor mailbox, which rolls back live transactions, releases session-owned locks, and drops subscriptions without implying transaction recovery.
 - `RouteFamily`/`realm`: committed rows stay partitioned by exact `RouteFamily`; `realm` remains an opaque route label and is never inferred from the family.
-- Admin path: live transaction views flow through `AdminReadModel`; committed value and inventory reads go through `Runtime::kv_*` query facades.
+- Admin path: live transaction views flow through the actor-maintained `AdminReadModel`; committed value and inventory reads go through `Runtime::kv_*` query facades.
 
 #### Queue
 - Actor owner: `QueueActor` owns live reservation state, retry bookkeeping, watcher state, and dead-letter mutations for one queue resource.

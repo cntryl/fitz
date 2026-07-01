@@ -1,19 +1,45 @@
 use super::model::{
-    DeliveryError, Envelope, KvClientFrame, KvClientRequest, KvDomainSink, KvResourceLockKey,
-    MailboxSink, Ordering,
+    DeliveryError, Envelope, KvClientFrame, KvClientRequest, KvDomainActor, KvDomainCommand,
+    KvDomainRuntime, KvDomainSink, KvResourceLockKey, MailboxSink, Ordering,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
+use crate::runtime::{Actor, Context};
 
 impl MailboxSink for KvDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if self.handle_cleanup_envelope(&envelope) {
+        self.actor.try_send(KvDomainCommand::Deliver(envelope))
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.actor
+            .try_send_high_priority(KvDomainCommand::Deliver(envelope))
+    }
+}
+
+impl Actor for KvDomainActor {
+    type Message = KvDomainCommand;
+
+    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
+        match msg {
+            KvDomainCommand::Deliver(envelope) => {
+                if let Err(error) = self.state.runtime().deliver_envelope(&envelope) {
+                    tracing::warn!(domain = "kv", error = %error, "KV actor delivery failed");
+                }
+            }
+        }
+    }
+}
+
+impl KvDomainRuntime<'_> {
+    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
         self.ensure_active()?;
-        Self::log_delivery(&envelope);
+        Self::log_delivery(envelope);
 
-        let request = Self::extract_request(&envelope)?;
+        let request = Self::extract_request(envelope)?;
         let meta = request.meta;
         let operation_started = Self::record_operation_start();
         let request_started = self.record_request_start();
@@ -21,10 +47,10 @@ impl MailboxSink for KvDomainSink {
 
         match parsed_frame {
             KvClientFrame::Sub(sub_msg) => {
-                self.handle_subscription_frame(&envelope, meta, request_started, sub_msg)
+                self.handle_subscription_frame(envelope, meta, request_started, sub_msg)
             }
             KvClientFrame::Op(kv_message) => self.handle_actor_operation_frame(
-                &envelope,
+                envelope,
                 meta,
                 request_started,
                 operation_started,
@@ -33,12 +59,6 @@ impl MailboxSink for KvDomainSink {
         }
     }
 
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
-
-impl KvDomainSink {
     fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.cleanup_session(cleanup.session_id);

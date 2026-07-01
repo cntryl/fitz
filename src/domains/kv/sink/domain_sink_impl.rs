@@ -1,13 +1,15 @@
 use super::model::{
     AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult, Arc, AtomicBool, Bytes,
-    DeliveryError, Envelope, HashMap, KvDomainCore, KvDomainSink, KvResourceLockKey, Mutex,
-    Ordering, Router, Utc, ADMIN_INVENTORY_REFRESH_LIMIT,
+    DeliveryError, Envelope, HashMap, KvDomainActor, KvDomainCommand, KvDomainCore,
+    KvDomainRuntime, KvDomainSink, KvDomainState, KvResourceLockKey, Mutex, Ordering, Router, Utc,
+    ADMIN_INVENTORY_REFRESH_LIMIT,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
-impl KvDomainSink {
-    pub fn new(
+impl KvDomainState {
+    fn new(
         store: Arc<cntryl_midge::Engine>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
@@ -28,9 +30,58 @@ impl KvDomainSink {
         }
     }
 
+    pub(super) fn runtime(&self) -> KvDomainRuntime<'_> {
+        KvDomainRuntime {
+            core: &self.core,
+            active: &self.active,
+        }
+    }
+}
+
+impl KvDomainActor {
+    pub(super) fn new(state: Arc<KvDomainState>) -> Self {
+        Self { state }
+    }
+
+    pub(super) fn route_address() -> RouteAddress {
+        RouteAddress::new(RouteFamily::new(0), Route::new("internal://domain/kv"))
+    }
+}
+
+impl KvDomainSink {
+    pub fn new(
+        store: Arc<cntryl_midge::Engine>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    ) -> Self {
+        let state = Arc::new(KvDomainState::new(store, router, admin_read_model));
+        let actor = Self::spawn_actor(state.clone());
+        Self { state, actor }
+    }
+
+    fn spawn_actor(state: Arc<KvDomainState>) -> crate::runtime::ManagedActor<KvDomainCommand> {
+        crate::runtime::ManagedActor::spawn(
+            state.core.router.clone(),
+            KvDomainActor::route_address(),
+            KvDomainActor::new(state),
+            1024,
+        )
+    }
+
+    fn rebuild_actor(&mut self) {
+        self.actor.stop();
+        self.actor = Self::spawn_actor(self.state.clone());
+    }
+
+    fn state_for_builder(&mut self) -> &mut KvDomainState {
+        Arc::get_mut(&mut self.state).expect("KV sink builders must run before sharing the sink")
+    }
+
     #[must_use]
     pub fn with_sync_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
-        self.core.sync_write_options = write_options;
+        self.actor.stop();
+        self.state_for_builder().core.sync_write_options = write_options;
+        self.rebuild_actor();
         self
     }
 
@@ -39,15 +90,142 @@ impl KvDomainSink {
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.core.metrics = Some(crate::domains::kv::KvMetrics::new(collector));
-        self.refresh_metrics_gauges();
+        self.actor.stop();
+        let state = self.state_for_builder();
+        state.core.metrics = Some(crate::domains::kv::KvMetrics::new(collector));
+        state.runtime().refresh_metrics_gauges();
+        self.rebuild_actor();
         self
     }
 
     pub fn stop(&self) {
-        self.active.store(false, Ordering::Relaxed);
+        self.state.active.store(false, Ordering::Relaxed);
+        self.actor.stop();
     }
 
+    #[cfg(test)]
+    pub(super) fn is_actor_running(&self) -> bool {
+        self.actor.is_running()
+    }
+
+    /// Build an admin inventory snapshot for the requested route family scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying storage inventory scan fails.
+    pub fn admin_inventory(
+        &self,
+        family: Option<crate::runtime::routing::RouteFamily>,
+    ) -> Result<Vec<crate::control::admin::KvResourceInventoryEntry>, String> {
+        self.state.runtime().admin_inventory(family)
+    }
+
+    /// Read one admin inventory entry for a specific KV resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when storage reads, estimate refreshes, or estimate
+    /// decoding fails.
+    pub fn admin_inventory_resource(
+        &self,
+        route_family: crate::runtime::routing::RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<Option<crate::control::admin::KvResourceInventoryEntry>, String> {
+        self.state
+            .runtime()
+            .admin_inventory_resource(route_family, realm, area, resource)
+    }
+
+    /// Read one committed KV value directly from storage for admin inspection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the storage transaction or read fails.
+    pub fn admin_get_committed_value(
+        &self,
+        route_family: crate::runtime::routing::RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, String> {
+        self.state
+            .runtime()
+            .admin_get_committed_value(route_family, realm, area, resource, key)
+    }
+
+    /// Scan a committed KV prefix directly from storage for admin inspection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the storage transaction or scan fails.
+    pub fn admin_scan_committed_prefix(
+        &self,
+        route_family: crate::runtime::routing::RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        key_prefix: &[u8],
+        limit: usize,
+    ) -> Result<AdminKvPrefixScanResult, String> {
+        self.state.runtime().admin_scan_committed_prefix(
+            route_family,
+            realm,
+            area,
+            resource,
+            key_prefix,
+            limit,
+        )
+    }
+
+    /// Scan committed KV rows with an optional pagination cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when cursor validation fails or the storage scan fails.
+    pub fn admin_scan_committed_rows(
+        &self,
+        request: &AdminKvRowsRequest<'_>,
+    ) -> Result<AdminKvRowsResult, String> {
+        self.state.runtime().admin_scan_committed_rows(request)
+    }
+
+    pub fn cleanup_session(&self, session_id: u64) {
+        self.state.runtime().cleanup_session(session_id);
+    }
+
+    pub fn active_transaction_count(&self) -> usize {
+        self.state.runtime().active_transaction_count()
+    }
+
+    #[cfg(test)]
+    pub(super) fn sync_admin_snapshot(&self) {
+        self.state.runtime().sync_admin_snapshot();
+    }
+
+    #[cfg(test)]
+    pub(super) fn latency_snapshots(
+        &self,
+        resource_key: &KvResourceLockKey,
+    ) -> (
+        crate::control::admin::KvLatencySnapshot,
+        crate::control::admin::KvLatencySnapshot,
+    ) {
+        self.state.runtime().latency_snapshots(resource_key)
+    }
+
+    #[cfg(test)]
+    pub(super) fn apply_sync_write_options(
+        &self,
+        message: crate::domains::kv::KvMessage,
+    ) -> crate::domains::kv::KvMessage {
+        self.state.runtime().apply_sync_write_options(message)
+    }
+}
+
+impl KvDomainRuntime<'_> {
     /// Build an admin inventory snapshot for the requested route family scope.
     ///
     /// # Errors
