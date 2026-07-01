@@ -148,6 +148,11 @@ fn u32_to_usize_saturating(value: u32) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
 }
 
+#[inline]
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
 impl CompactAreaPageValue {
     fn encode(&self) -> Vec<u8> {
         let mut total_len = 6;
