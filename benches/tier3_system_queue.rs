@@ -21,6 +21,26 @@ use std::time::{Duration, Instant};
 const CLIENT_SESSION_ID: u64 = 1;
 const RECEIVE_BATCH_SIZE: usize = 50;
 
+#[inline]
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+#[inline]
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+#[inline]
+fn u64_to_u32_saturating(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+#[inline]
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
 #[derive(Clone)]
 struct BenchClock {
     start_instant: Instant,
@@ -38,8 +58,10 @@ impl BenchClock {
     }
 
     fn advance(&self, duration: Duration) {
-        self.elapsed_ns
-            .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+        self.elapsed_ns.fetch_add(
+            u128_to_u64_saturating(duration.as_nanos()),
+            Ordering::Relaxed,
+        );
     }
 }
 
@@ -603,7 +625,8 @@ fn should_complete_routed_receive_batch_cleanup(ctx: &mut StressContext) {
     let route = "queue://bench/system/receive";
     let enqueue_frame = build_queue_enqueue(route, b"routed receive payload");
     let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
-    let receive_frame = build_queue_dequeue_batch(route, RECEIVE_BATCH_SIZE as u32);
+    let receive_frame =
+        build_queue_dequeue_batch(route, usize_to_u32_saturating(RECEIVE_BATCH_SIZE));
     let (receive_msg_type, receive_payload) = extract_single_tlv_field(&receive_frame);
 
     let iterations = ctx.measure_for(
@@ -726,7 +749,7 @@ fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
     let (router, family, sender_source, sender_inbox) = setup_queue_request_sink();
     let enqueue_frame = build_queue_enqueue(route, b"queue wait wake payload");
     let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
-    let dequeue_frame = build_queue_dequeue_batch(route, waiter_count as u32);
+    let dequeue_frame = build_queue_dequeue_batch(route, u64_to_u32_saturating(waiter_count));
     let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
     let waiters: Vec<(u64, RouteAddress, Arc<CountingSink>)> = (0..waiter_count)
         .map(|index| {
@@ -763,7 +786,8 @@ fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
 
             let deliveries: usize = waiters.iter().map(|(_, _, sink)| sink.count()).sum();
             assert_eq!(
-                deliveries, waiter_count as usize,
+                deliveries,
+                u64_to_usize_saturating(waiter_count),
                 "expected queue sends to wake all waiting receivers"
             );
 
@@ -779,7 +803,7 @@ fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
             let reserved_messages = parse_received_messages(&dequeue_response);
             assert_eq!(
                 reserved_messages.len(),
-                waiter_count as usize,
+                u64_to_usize_saturating(waiter_count),
                 "expected cleanup receive to drain the ready queue"
             );
 

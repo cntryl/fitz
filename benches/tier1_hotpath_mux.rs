@@ -32,7 +32,7 @@ fn bench_mux_route_reuse(c: &mut Criterion) {
                 let msg = mux.route(record.clone()).unwrap();
                 mux.release(msg.channel);
                 black_box(&msg);
-            })
+            });
         });
 
         let mut mux2 = Mux::new(1024);
@@ -43,7 +43,7 @@ fn bench_mux_route_reuse(c: &mut Criterion) {
                 let cref = mux2.route_ref(mt, black_box(slice)).unwrap();
                 mux2.release(cref.channel);
                 black_box(&cref);
-            })
+            });
         });
     }
 
@@ -74,7 +74,7 @@ fn bench_mux_route_decode_each(c: &mut Criterion) {
                 let msg = mux.route(record).unwrap();
                 mux.release(msg.channel);
                 black_box(&msg);
-            })
+            });
         });
     }
 
@@ -109,7 +109,7 @@ fn bench_mux_release_and_backpressure(c: &mut Criterion) {
                     black_box(mux.occupancy(channel));
                 },
                 BatchSize::SmallInput,
-            )
+            );
         });
 
         group.bench_function(format!("route_ref_channel_full_{size}B"), |b| {
@@ -126,7 +126,7 @@ fn bench_mux_release_and_backpressure(c: &mut Criterion) {
                     _ => panic!("expected ChannelFull"),
                 },
                 BatchSize::SmallInput,
-            )
+            );
         });
     }
 

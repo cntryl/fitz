@@ -47,7 +47,7 @@ impl Actor for SpawnActor {
     }
 }
 
-/// Full spawn cost (mailbox + router register + thread::spawn). Keep as a smoke baseline only.
+/// Full spawn cost (mailbox + router register + `thread::spawn`). Keep as a smoke baseline only.
 fn bench_scheduler_spawn_smoke(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_scheduler");
     group.sampling_mode(SamplingMode::Flat);
@@ -66,7 +66,7 @@ fn bench_scheduler_spawn_smoke(c: &mut Criterion) {
             let address = addresses[idx % addresses.len()].clone();
             idx = (idx + 1) % addresses.len();
             scheduler.spawn(SpawnActor, black_box(address), 100);
-        })
+        });
     });
 
     group.finish();
@@ -91,7 +91,7 @@ fn bench_scheduler_register_primary(c: &mut Criterion) {
                 );
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.bench_function("register_single_replace_primary", |b| {
