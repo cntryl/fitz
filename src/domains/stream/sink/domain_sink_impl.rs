@@ -345,15 +345,11 @@ impl StreamDomainCore {
         }
     }
 
-    pub fn append_session_count(&self) -> usize {
-        self.live_counts().append_sessions
-    }
-
     pub(super) fn stream_response_is_failure(response: &StreamClientResponseBody) -> bool {
         matches!(response, StreamClientResponseBody::Error(_))
     }
 
-    pub fn refresh_admin_snapshot_if_dirty(&self) {
+    pub(super) fn refresh_admin_snapshot_if_dirty(&self) {
         if self.admin_snapshot_dirty.swap(false, Ordering::AcqRel) {
             self.sync_admin_snapshot();
         }
@@ -906,7 +902,7 @@ impl StreamDomainCore {
         }
     }
 
-    pub fn unsubscribe_all(&self, session_id: u64) {
+    pub(super) fn unsubscribe_all(&self, session_id: u64) {
         let mut families = self.families.lock();
         for (family_id, state) in families.iter_mut() {
             state.remove_session(RouteFamily::new(*family_id), session_id);
@@ -936,14 +932,6 @@ impl StreamDomainCore {
             self.counter_add("fitz_stream_append_sessions_ended_total", removed_count);
             self.admin_snapshot_dirty.store(true, Ordering::Relaxed);
         }
-    }
-
-    pub fn subscription_count(&self) -> usize {
-        self.live_counts().subscriptions
-    }
-
-    pub fn stream_count(&self) -> usize {
-        self.live_counts().streams
     }
 
     pub(super) fn live_counts(&self) -> StreamLiveCounts {

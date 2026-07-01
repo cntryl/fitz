@@ -508,6 +508,41 @@ fn should_keep_boot_domains_from_reexporting_concrete_sinks() {
     );
 }
 
+fn stream_live_core_public_helper_violations() -> Vec<&'static str> {
+    let source = read_repo_file("src/domains/stream/sink/domain_sink_impl.rs");
+    let core_impl = section_between(
+        &source,
+        "impl StreamDomainCore {",
+        "impl StreamDomainRuntime<'_> {",
+    );
+    let forbidden_public_helpers = [
+        "pub fn append_session_count(&self)",
+        "pub fn refresh_admin_snapshot_if_dirty(&self)",
+        "pub fn unsubscribe_all(&self",
+        "pub fn subscription_count(&self)",
+        "pub fn stream_count(&self)",
+    ];
+
+    forbidden_public_helpers
+        .into_iter()
+        .filter(|helper| core_impl.contains(helper))
+        .collect::<Vec<_>>()
+}
+
+#[test]
+fn should_keep_stream_live_core_helpers_private() {
+    // Arrange
+
+    // Act
+    let violations = stream_live_core_public_helper_violations();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "StreamDomainCore exposes live state helpers outside the mailbox facade: {violations:?}"
+    );
+}
+
 #[test]
 fn should_keep_sync_core_free_of_transport_dependencies() {
     // Arrange
