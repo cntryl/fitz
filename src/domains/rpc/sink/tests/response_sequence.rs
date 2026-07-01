@@ -193,6 +193,7 @@ fn should_reject_out_of_order_worker_response_given_rpc_sink() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());

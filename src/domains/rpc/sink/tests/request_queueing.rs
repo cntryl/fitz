@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn should_reject_duplicate_live_correlation_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());
@@ -117,6 +118,7 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());
@@ -239,6 +241,7 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());
@@ -379,6 +382,7 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());

@@ -162,6 +162,7 @@ fn should_forward_worker_disconnect_error_given_rpc_unsubscribe() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
     // Arrange
     let router = Arc::new(Router::new());
@@ -464,6 +465,7 @@ fn should_reject_worker_response_when_correlation_missing_given_rpc_sink() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());
@@ -596,6 +598,7 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn should_reject_worker_ack_from_non_owner_session_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());

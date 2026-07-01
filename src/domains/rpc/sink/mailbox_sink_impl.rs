@@ -761,11 +761,14 @@ impl RpcDomainSink {
 
     fn forward_response_to_requester(
         &self,
-        _meta: &crate::runtime::ClientFrameMeta,
+        meta: &crate::runtime::ClientFrameMeta,
         resp: &RpcResponse,
         caller_info: &RpcPendingRequest,
     ) {
         let response_forward_start = Instant::now();
+        #[cfg(not(test))]
+        let _ = meta;
+
         if let Some(caller_inbox_addr) = caller_info.caller_inbox_addr.as_ref() {
             #[cfg(test)]
             let forward_envelope = {
@@ -777,7 +780,7 @@ impl RpcDomainSink {
                 );
                 let forward_ctx = FrameContext::new(
                     caller_info.caller_session_id,
-                    super::mailbox_adapter::test_protocol_channel_from_client(_meta.channel),
+                    super::mailbox_adapter::test_protocol_channel_from_client(meta.channel),
                     crate::protocol::tlv::MessageType::new(303),
                     bytes::Bytes::from(encoded_response),
                     *caller_inbox_addr.family(),

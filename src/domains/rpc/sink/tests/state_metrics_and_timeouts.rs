@@ -180,7 +180,7 @@ pub(super) fn should_snapshot_live_pending_request_details_given_rpc_admin_snaps
                 worker_addr: RouteAddress::new(family, route.clone()),
                 worker_session_id: 42,
                 submitted_at: "2026-03-14T12:00:00Z".to_string(),
-                submitted_at_instant: Instant::now() - Duration::from_secs(9),
+                submitted_at_instant: Instant::now().checked_sub(Duration::from_secs(9)).unwrap(),
                 expires_at: Instant::now() + Duration::from_secs(30),
             }),
         );
@@ -269,7 +269,9 @@ pub(super) fn should_snapshot_live_worker_metrics_after_terminal_response_given_
                 worker_addr: request_addr.clone(),
                 worker_session_id: 42,
                 submitted_at: "2026-03-14T12:00:00Z".to_string(),
-                submitted_at_instant: Instant::now() - Duration::from_millis(50),
+                submitted_at_instant: Instant::now()
+                    .checked_sub(Duration::from_millis(50))
+                    .unwrap(),
                 expires_at: Instant::now() + Duration::from_secs(30),
             }),
         );
