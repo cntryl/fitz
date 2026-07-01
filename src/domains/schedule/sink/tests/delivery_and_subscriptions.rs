@@ -315,6 +315,38 @@ fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session()
 }
 
 #[test]
+fn should_route_schedule_bench_publish_event_through_actor_command() {
+    // Arrange
+    let fixture = create_unsubscribe_fixture();
+    subscribe_fixture_route(
+        &fixture,
+        &fixture.retained_address,
+        fixture.retained_route,
+        "retained subscribe ack envelope",
+    );
+    wait_for_subscription_count(&fixture.sink, 1);
+    drain_mailbox(&fixture.subscriber_mailbox);
+
+    // Act
+    fixture.sink.stop_actor_for_tests();
+    fixture
+        .sink
+        .bench_publish_event(&crate::runtime::DomainPublishEvent::new(
+            fixture.family,
+            Route::new(fixture.retained_route),
+            Bytes::from_static(b"weekly"),
+        ));
+    let notification = fixture
+        .subscriber_mailbox
+        .receiver()
+        .recv_timeout(Duration::from_millis(50));
+
+    // Assert
+    assert!(!fixture.sink.is_actor_running());
+    assert!(notification.is_err());
+}
+
+#[test]
 fn should_count_live_publish_failure_given_domain_routing_error() {
     // Arrange
     let family = RouteFamily::new(1);

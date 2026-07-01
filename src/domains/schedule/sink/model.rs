@@ -230,6 +230,10 @@ pub(super) enum ScheduleDomainCommand {
     RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
     ScanDueSchedules,
     PreloadPersistedFamilies(crossbeam_channel::Sender<Result<(), String>>),
+    BenchPublishEvent(
+        crate::runtime::DomainPublishEvent,
+        crossbeam_channel::Sender<()>,
+    ),
     ForceDueScanForTests(usize, crossbeam_channel::Sender<()>),
 }
 

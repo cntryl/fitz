@@ -306,7 +306,21 @@ impl ScheduleDomainSink {
 
     #[doc(hidden)]
     pub fn bench_publish_event(&self, event: &crate::runtime::DomainPublishEvent) {
-        self.state.runtime().bench_publish_event(event);
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) =
+            self.actor
+                .try_send_high_priority(ScheduleDomainCommand::BenchPublishEvent(
+                    event.clone(),
+                    reply_tx,
+                ))
+        {
+            tracing::warn!(domain = "schedule", error = %error, "Schedule bench publish enqueue failed");
+            return;
+        }
+
+        if let Err(error) = reply_rx.recv_timeout(std::time::Duration::from_secs(1)) {
+            tracing::warn!(domain = "schedule", error = %error, "Schedule bench publish reply failed");
+        }
     }
 }
 
