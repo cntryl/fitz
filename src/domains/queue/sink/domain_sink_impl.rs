@@ -704,7 +704,7 @@ impl QueueDomainCore {
         )
     }
 
-    pub fn refresh_admin_snapshot_if_dirty(&self) {
+    pub(super) fn refresh_admin_snapshot_if_dirty(&self) {
         self.sweep_idle_actors();
         self.projection
             .refresh_if_dirty(|| self.collect_projection_state());
@@ -803,7 +803,7 @@ impl QueueDomainCore {
     /// Drop all live queue inflight entries owned by the disconnected session and return
     /// those accepted messages to the ready queue. Inflight ownership is
     /// broker-local runtime state only.
-    pub fn cleanup_session(&self, session_id: u64) {
+    pub(super) fn cleanup_session(&self, session_id: u64) {
         let mut released_any = false;
         let mut notifications = Vec::new();
         let mut actors = self.actors.lock();
@@ -843,7 +843,7 @@ impl QueueDomainCore {
         );
     }
 
-    pub fn pending_message_count(&self) -> usize {
+    pub(super) fn pending_message_count(&self) -> usize {
         let actors = self.actors.lock();
         actors
             .values()
@@ -854,7 +854,7 @@ impl QueueDomainCore {
             .sum()
     }
 
-    pub fn ready_message_count(&self) -> usize {
+    pub(super) fn ready_message_count(&self) -> usize {
         let actors = self.actors.lock();
         actors
             .values()
@@ -862,7 +862,7 @@ impl QueueDomainCore {
             .sum()
     }
 
-    pub fn delayed_message_count(&self) -> usize {
+    pub(super) fn delayed_message_count(&self) -> usize {
         let actors = self.actors.lock();
         actors
             .values()
@@ -870,7 +870,7 @@ impl QueueDomainCore {
             .sum()
     }
 
-    pub fn active_inflight_count(&self) -> usize {
+    pub(super) fn active_inflight_count(&self) -> usize {
         let actors = self.actors.lock();
         actors
             .values()
@@ -878,7 +878,7 @@ impl QueueDomainCore {
             .sum()
     }
 
-    pub fn dead_letter_count(&self) -> usize {
+    pub(super) fn dead_letter_count(&self) -> usize {
         let actors = self.actors.lock();
         actors
             .values()
@@ -897,7 +897,7 @@ impl QueueDomainCore {
     /// # Errors
     ///
     /// Returns an error when the warm queue actor cannot be recovered or the replay fails.
-    pub fn replay_dead_letter(
+    pub(super) fn replay_dead_letter(
         &self,
         key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
@@ -938,7 +938,7 @@ impl QueueDomainCore {
     /// # Errors
     ///
     /// Returns an error when the warm queue actor cannot be recovered or the purge fails.
-    pub fn purge_dead_letter(
+    pub(super) fn purge_dead_letter(
         &self,
         key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,

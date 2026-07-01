@@ -576,6 +576,45 @@ fn should_keep_notice_live_core_helpers_private() {
     );
 }
 
+fn queue_live_core_public_helper_violations() -> Vec<&'static str> {
+    let source = read_repo_file("src/domains/queue/sink/domain_sink_impl.rs");
+    let core_impl = section_between(
+        &source,
+        "impl QueueDomainCore {",
+        "\n#[cfg(test)]\nfn test_protocol_channel_from_client",
+    );
+    let forbidden_public_helpers = [
+        "pub fn refresh_admin_snapshot_if_dirty(&self)",
+        "pub fn cleanup_session(&self",
+        "pub fn pending_message_count(&self)",
+        "pub fn ready_message_count(&self)",
+        "pub fn delayed_message_count(&self)",
+        "pub fn active_inflight_count(&self)",
+        "pub fn dead_letter_count(&self)",
+        "pub fn replay_dead_letter(",
+        "pub fn purge_dead_letter(",
+    ];
+
+    forbidden_public_helpers
+        .into_iter()
+        .filter(|helper| core_impl.contains(helper))
+        .collect::<Vec<_>>()
+}
+
+#[test]
+fn should_keep_queue_live_core_helpers_private() {
+    // Arrange
+
+    // Act
+    let violations = queue_live_core_public_helper_violations();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "QueueDomainCore exposes live state helpers outside the mailbox facade: {violations:?}"
+    );
+}
+
 #[test]
 fn should_keep_sync_core_free_of_transport_dependencies() {
     // Arrange
