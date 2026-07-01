@@ -35,6 +35,15 @@ impl Actor for StreamDomainActor {
             StreamDomainCommand::ReadLiveCounts(reply) => {
                 let _ = reply.send(runtime.live_counts());
             }
+            StreamDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
+                runtime.refresh_admin_snapshot_if_dirty();
+                let _ = reply.send(());
+            }
+            #[cfg(test)]
+            StreamDomainCommand::SyncAdminSnapshot(reply) => {
+                runtime.sync_admin_snapshot();
+                let _ = reply.send(());
+            }
             #[cfg(test)]
             StreamDomainCommand::InjectNextPromotionFrontierCommitFailure(reply) => {
                 StreamStore::fail_next_promotion_frontier_commit_for_tests();

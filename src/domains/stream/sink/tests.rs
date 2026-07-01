@@ -319,6 +319,42 @@ fn should_route_stream_live_count_queries_through_managed_actor() {
 }
 
 #[test]
+fn should_route_stream_admin_snapshot_sync_through_managed_actor() {
+    // Arrange
+    let context = setup_test_context();
+    seed_committed_stream_route(&context, "stream://bench/events/orders", 1, b"persisted");
+
+    // Act
+    context.sink.stop_actor_for_tests();
+    context.sink.sync_admin_snapshot();
+    let streams = context.sink.admin_read_model.streams(None);
+    let events_total = context.sink.admin_read_model.stream_events_total();
+
+    // Assert
+    assert!(!context.sink.is_actor_running());
+    assert!(streams.is_empty());
+    assert_eq!(events_total, 0);
+}
+
+#[test]
+fn should_route_stream_admin_dirty_refresh_through_managed_actor() {
+    // Arrange
+    let context = setup_test_context();
+    seed_committed_stream_route(&context, "stream://bench/events/orders", 1, b"persisted");
+
+    // Act
+    context.sink.stop_actor_for_tests();
+    context.sink.refresh_admin_snapshot_if_dirty();
+    let streams = context.sink.admin_read_model.streams(None);
+    let events_total = context.sink.admin_read_model.stream_events_total();
+
+    // Assert
+    assert!(!context.sink.is_actor_running());
+    assert!(streams.is_empty());
+    assert_eq!(events_total, 0);
+}
+
+#[test]
 fn should_reject_append_session_followups_from_non_owner_session() {
     // Arrange
     let context = setup_test_context();

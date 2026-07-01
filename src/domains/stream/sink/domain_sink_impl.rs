@@ -190,6 +190,44 @@ impl StreamDomainSink {
         let _ = reply_rx.recv_timeout(std::time::Duration::from_secs(1));
     }
 
+    pub fn refresh_admin_snapshot_if_dirty(&self) {
+        self.send_admin_snapshot_command(
+            StreamDomainCommand::RefreshAdminSnapshotIfDirty,
+            "refresh_if_dirty",
+        );
+    }
+
+    #[cfg(test)]
+    pub(super) fn sync_admin_snapshot(&self) {
+        self.send_admin_snapshot_command(StreamDomainCommand::SyncAdminSnapshot, "sync");
+    }
+
+    fn send_admin_snapshot_command(
+        &self,
+        build_command: fn(crossbeam_channel::Sender<()>) -> StreamDomainCommand,
+        operation: &'static str,
+    ) {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self.actor.try_send_high_priority(build_command(reply_tx)) {
+            tracing::warn!(
+                domain = "stream",
+                error = %error,
+                operation,
+                "Stream admin snapshot command enqueue failed"
+            );
+            return;
+        }
+
+        if let Err(error) = reply_rx.recv_timeout(std::time::Duration::from_secs(1)) {
+            tracing::warn!(
+                domain = "stream",
+                error = %error,
+                operation,
+                "Stream admin snapshot command reply failed"
+            );
+        }
+    }
+
     pub fn append_session_count(&self) -> usize {
         self.live_counts().append_sessions
     }
@@ -925,6 +963,15 @@ impl StreamDomainCore {
 }
 
 impl StreamDomainRuntime<'_> {
+    pub(super) fn refresh_admin_snapshot_if_dirty(&self) {
+        self.core.refresh_admin_snapshot_if_dirty();
+    }
+
+    #[cfg(test)]
+    pub(super) fn sync_admin_snapshot(&self) {
+        self.core.sync_admin_snapshot();
+    }
+
     pub(super) fn live_counts(&self) -> StreamLiveCounts {
         self.core.live_counts()
     }
