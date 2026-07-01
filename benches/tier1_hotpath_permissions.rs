@@ -53,7 +53,7 @@ fn bench_permission_compilation(c: &mut Criterion) {
                 black_box(SessionPermissions::from_permissions(perms));
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.bench_function("compile_wildcard_3_rules", |b| {
@@ -63,7 +63,7 @@ fn bench_permission_compilation(c: &mut Criterion) {
                 black_box(SessionPermissions::from_permissions(perms));
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.bench_function("compile_doublestar_3_rules", |b| {
@@ -73,7 +73,7 @@ fn bench_permission_compilation(c: &mut Criterion) {
                 black_box(SessionPermissions::from_permissions(perms));
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.finish();
@@ -110,13 +110,13 @@ fn bench_permission_allows_cache_hit(c: &mut Criterion) {
     group.bench_function("allows_exact_granted_cache_hit", |b| {
         b.iter(|| {
             black_box(exact_perms.allows(black_box(&exact_route), black_box(Access::Write)));
-        })
+        });
     });
 
     group.bench_function("allows_wildcard_granted_cache_hit", |b| {
         b.iter(|| {
             black_box(wildcard_perms.allows(black_box(&wildcard_route), black_box(Access::Write)));
-        })
+        });
     });
 
     group.bench_function("allows_doublestar_deep_cache_hit", |b| {
@@ -124,25 +124,25 @@ fn bench_permission_allows_cache_hit(c: &mut Criterion) {
             black_box(
                 doublestar_perms.allows(black_box(&doublestar_route), black_box(Access::Write)),
             );
-        })
+        });
     });
 
     group.bench_function("allows_large_set_last_match_cache_hit", |b| {
         b.iter(|| {
             black_box(large_perms.allows(black_box(&late_match_route), black_box(Access::Write)));
-        })
+        });
     });
 
     group.bench_function("allows_allow_all_cache_hit", |b| {
         b.iter(|| {
             black_box(allow_all.allows(black_box(&exact_route), black_box(Access::Write)));
-        })
+        });
     });
 
     group.bench_function("allows_deny_by_default_cache_hit", |b| {
         b.iter(|| {
             black_box(deny_all.allows(black_box(&exact_route), black_box(Access::Read)));
-        })
+        });
     });
 
     group.finish();
@@ -165,7 +165,7 @@ fn bench_permission_allows_cache_miss(c: &mut Criterion) {
                 black_box(perms.allows(black_box(&exact_route), black_box(Access::Write)));
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.bench_function("allows_wildcard_granted_cache_miss", |b| {
@@ -175,7 +175,7 @@ fn bench_permission_allows_cache_miss(c: &mut Criterion) {
                 black_box(perms.allows(black_box(&wildcard_route), black_box(Access::Write)));
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.bench_function("allows_doublestar_deep_cache_miss", |b| {
@@ -185,7 +185,7 @@ fn bench_permission_allows_cache_miss(c: &mut Criterion) {
                 black_box(perms.allows(black_box(&doublestar_route), black_box(Access::Write)));
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.bench_function("allows_large_set_last_match_cache_miss", |b| {
@@ -195,7 +195,7 @@ fn bench_permission_allows_cache_miss(c: &mut Criterion) {
                 black_box(perms.allows(black_box(&late_match_route), black_box(Access::Write)));
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.finish();

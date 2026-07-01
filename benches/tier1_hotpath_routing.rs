@@ -49,7 +49,7 @@ fn bench_route_parsing(c: &mut Criterion) {
             let route_str = &routes_2_segments[idx % routes_2_segments.len()];
             let _route = Route::new(black_box(route_str));
             idx += 1;
-        })
+        });
     });
 
     group.bench_function("route_new_3_segments", |b| {
@@ -58,7 +58,7 @@ fn bench_route_parsing(c: &mut Criterion) {
             let route_str = &routes_3_segments[idx % routes_3_segments.len()];
             let _route = Route::new(black_box(route_str));
             idx += 1;
-        })
+        });
     });
 
     group.bench_function("route_new_4_segments", |b| {
@@ -67,7 +67,7 @@ fn bench_route_parsing(c: &mut Criterion) {
             let route_str = &routes_4_segments[idx % routes_4_segments.len()];
             let _route = Route::new(black_box(route_str));
             idx += 1;
-        })
+        });
     });
 
     group.bench_function("route_new_5_segments", |b| {
@@ -76,7 +76,7 @@ fn bench_route_parsing(c: &mut Criterion) {
             let route_str = &routes_5_segments[idx % routes_5_segments.len()];
             let _route = Route::new(black_box(route_str));
             idx += 1;
-        })
+        });
     });
 
     group.bench_function("route_new_6_segments", |b| {
@@ -85,7 +85,7 @@ fn bench_route_parsing(c: &mut Criterion) {
             let route_str = &routes_6_segments[idx % routes_6_segments.len()];
             let _route = Route::new(black_box(route_str));
             idx += 1;
-        })
+        });
     });
 
     group.finish();
@@ -104,7 +104,7 @@ fn bench_route_address_creation(c: &mut Criterion) {
         b.iter(|| {
             // ONLY hot path - RouteAddress construction
             let _address = RouteAddress::new(black_box(family), black_box(route.clone()));
-        })
+        });
     });
 
     group.finish();
