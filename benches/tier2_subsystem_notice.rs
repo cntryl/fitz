@@ -132,7 +132,7 @@ fn bench_notice_publish_fanout(c: &mut Criterion) {
                     b.iter(|| {
                         case.publish_once();
                         black_box(());
-                    })
+                    });
                 },
             );
         }

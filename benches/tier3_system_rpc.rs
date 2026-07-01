@@ -157,9 +157,9 @@ fn route_worker_frame_to_route(
     worker_session_id: u64,
     worker_source: &RouteAddress,
     route: &str,
-    frame: Vec<u8>,
+    frame: &[u8],
 ) {
-    let (msg_type, payload) = extract_single_tlv_field(&frame);
+    let (msg_type, payload) = extract_single_tlv_field(frame);
     route_frame(
         router.as_ref(),
         worker_source,
@@ -203,12 +203,14 @@ fn service_worker_for_route(
                             worker_session_id,
                             worker_source,
                             route,
-                            build_rpc_response_frame(request.correlation_id, request.body.as_ref()),
+                            &build_rpc_response_frame(
+                                request.correlation_id,
+                                request.body.as_ref(),
+                            ),
                         );
                         responses += 1;
                     }
                 }
-                304 => {}
                 _ => {}
             }
         }
@@ -260,7 +262,6 @@ fn cleanup_expected_worker_request_for_route(
                 Ok(RpcMessage::Request(request)) => Some(request.correlation_id),
                 _ => None,
             },
-            304 => None,
             _ => None,
         })
         .expect("rpc dispatched request");
@@ -271,7 +272,7 @@ fn cleanup_expected_worker_request_for_route(
         *worker_session_id,
         worker_source,
         route,
-        build_rpc_ack_frame(correlation_id),
+        &build_rpc_ack_frame(correlation_id),
     );
 }
 
@@ -281,7 +282,13 @@ fn cleanup_expected_worker_request(
     workers: &[WorkerHandle],
     next_worker_index: &mut usize,
 ) {
-    cleanup_expected_worker_request_for_route(router, family, ROUTE_STR, workers, next_worker_index)
+    cleanup_expected_worker_request_for_route(
+        router,
+        family,
+        ROUTE_STR,
+        workers,
+        next_worker_index,
+    );
 }
 
 fn cleanup_worker_request_on_route(
@@ -299,7 +306,6 @@ fn cleanup_worker_request_on_route(
                 Ok(RpcMessage::Request(request)) => Some(request.correlation_id),
                 _ => None,
             },
-            304 => None,
             _ => None,
         })
         .expect("rpc dispatched request");
@@ -310,7 +316,7 @@ fn cleanup_worker_request_on_route(
         *worker_session_id,
         worker_source,
         route,
-        build_rpc_ack_frame(correlation_id),
+        &build_rpc_ack_frame(correlation_id),
     );
 }
 
@@ -326,7 +332,6 @@ fn drain_request_correlation(
                 Ok(RpcMessage::Request(request)) => Some(request.correlation_id),
                 _ => None,
             },
-            304 => None,
             _ => None,
         })
         .expect("rpc dispatched request")

@@ -95,7 +95,7 @@ fn commit_for_owner(actor: &mut StreamActor, owner_session_id: u64, stream_sessi
 
 fn build_stream_last(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(usize_to_u32_saturating(route.len()));
     buf.put_slice(route.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -105,7 +105,7 @@ fn build_stream_last(route: &str) -> Vec<u8> {
 
 fn build_stream_get_metadata(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(usize_to_u32_saturating(route.len()));
     buf.put_slice(route.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
@@ -129,7 +129,7 @@ fn build_stream_read_with_options(
     max_bytes: Option<u64>,
 ) -> Vec<u8> {
     let mut buf = Vec::new();
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(usize_to_u32_saturating(route.len()));
     buf.put_slice(route.as_bytes());
     buf.put_u64(start_offset);
     buf.put_u64(limit);
@@ -154,7 +154,7 @@ fn build_stream_read_with_raw_filter(
     filter: &[u8],
 ) -> Vec<u8> {
     let mut buf = Vec::new();
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(usize_to_u32_saturating(route.len()));
     buf.put_slice(route.as_bytes());
     buf.put_u64(start_offset);
     buf.put_u64(limit);
@@ -166,7 +166,7 @@ fn build_stream_read_with_raw_filter(
         None => buf.put_u8(0),
     }
     buf.put_u8(1);
-    buf.put_u32(filter.len() as u32);
+    buf.put_u32(usize_to_u32_saturating(filter.len()));
     buf.put_slice(filter);
 
     let mut builder = TlvFrameBuilder::new();
@@ -822,7 +822,8 @@ where
     // Act - Append 5 events
     for i in 1..=5 {
         let data = format!("event-{i}").into_bytes();
-        commit_stream_record_with_offset(&mut client, route, (i - 1) as u64, &data).await;
+        commit_stream_record_with_offset(&mut client, route, i32_to_u64_nonnegative(i - 1), &data)
+            .await;
     }
 
     // Act
@@ -2262,3 +2263,12 @@ define_transport_tests!(
     should_not_treat_stream_subscription_as_replay_cursor_given_shared_route_tcp / should_not_treat_stream_subscription_as_replay_cursor_given_shared_route_ws => should_not_treat_stream_subscription_as_replay_cursor_given_shared_route,
     should_retain_other_stream_subscription_after_unsubscribe_tcp / should_retain_other_stream_subscription_after_unsubscribe_ws => should_retain_other_stream_subscription_after_unsubscribe,
 );
+#[inline]
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+#[inline]
+fn i32_to_u64_nonnegative(value: i32) -> u64 {
+    u64::try_from(value).unwrap_or_default()
+}
