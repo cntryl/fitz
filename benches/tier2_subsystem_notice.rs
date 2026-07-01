@@ -5,7 +5,7 @@ use fitz::benchkit::{
     build_notice_subscribe, create_bench_notice_sink, extract_single_tlv_field,
     register_session_counting_sink, route_frame, CountingSink,
 };
-use fitz::boot::domains::NoticeDomainSink;
+use fitz::domains::notice::sink::NoticeDomainSink;
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::domain_event::DomainPublishEvent;
 use fitz::runtime::envelope::Envelope;

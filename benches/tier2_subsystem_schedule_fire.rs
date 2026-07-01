@@ -2,8 +2,8 @@
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::{create_bench_schedule_sink, register_session_counting_sink, route_frame};
-use fitz::boot::domains::ScheduleDomainSink;
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
+use fitz::domains::schedule::sink::ScheduleDomainSink;
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::payload_codec::PayloadEncoder;

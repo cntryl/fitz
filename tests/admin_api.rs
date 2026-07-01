@@ -11,15 +11,19 @@ use fitz::api::admin::{
     StreamAreaWatermark, StreamAreaWatermarkDetail, StreamInfo,
 };
 use fitz::api::http::Body;
-use fitz::boot::domains::{
-    DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
-    ScheduleDomainSink, StreamDomainSink,
-};
+use fitz::boot::domains::DomainHandles;
 use fitz::boot::{BootConfig, Runtime};
+use fitz::domains::kv::sink::KvDomainSink;
 use fitz::domains::kv::{KvActor, KvMessage, KvResponse, TxMode};
+use fitz::domains::lease::sink::LeaseDomainSink;
+use fitz::domains::notice::sink::NoticeDomainSink;
+use fitz::domains::queue::sink::QueueDomainSink;
 use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
+use fitz::domains::rpc::sink::RpcDomainSink;
+use fitz::domains::schedule::sink::ScheduleDomainSink;
 use fitz::domains::schedule::store::{ScheduleFireClaim, ScheduleInsert, ScheduleStore};
 use fitz::domains::stream::protocol::StreamWriteMode;
+use fitz::domains::stream::sink::StreamDomainSink;
 use fitz::domains::stream::store::{CommitRecordsParams, EventPayload, StreamStore};
 use fitz::runtime::routing::RouteFamily;
 use fitz::runtime::Router;

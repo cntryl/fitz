@@ -13,14 +13,18 @@ use fitz::benchkit::{
     create_bench_rpc_sink, create_bench_rpc_sink_with_route_pending_capacity,
     create_bench_rpc_sink_with_timeout, extract_single_tlv_field,
 };
-use fitz::boot::domains::{
-    DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
-    ScheduleDomainSink, StreamDomainSink,
-};
+use fitz::boot::domains::DomainHandles;
+use fitz::domains::kv::sink::KvDomainSink;
+use fitz::domains::lease::sink::LeaseDomainSink;
+use fitz::domains::notice::sink::NoticeDomainSink;
+use fitz::domains::queue::sink::QueueDomainSink;
+use fitz::domains::rpc::sink::RpcDomainSink;
 use fitz::domains::rpc::{
     InboxMessage, ReplyInboxActor, RpcError, RpcErrorCode, RpcRequest,
     RpcResponse as RpcResponseMsg, RpcRouteActor,
 };
+use fitz::domains::schedule::sink::ScheduleDomainSink;
+use fitz::domains::stream::sink::StreamDomainSink;
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::tlv::MessageType;
 use fitz::protocol::FrameContext;

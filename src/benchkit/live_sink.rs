@@ -4,10 +4,12 @@
 //! DomainSink` path that the live server uses, without standing up TCP/WS transport.
 
 use super::create_bench_store;
-use crate::boot::domains::{
-    LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink, ScheduleDomainSink,
-    StreamDomainSink,
-};
+use crate::domains::lease::sink::LeaseDomainSink;
+use crate::domains::notice::sink::NoticeDomainSink;
+use crate::domains::queue::sink::QueueDomainSink;
+use crate::domains::rpc::sink::RpcDomainSink;
+use crate::domains::schedule::sink::ScheduleDomainSink;
+use crate::domains::stream::sink::StreamDomainSink;
 use crate::observability::metrics::MetricsCollector;
 use crate::protocol::frame::ChannelId;
 use crate::protocol::frame_context::FrameContext;

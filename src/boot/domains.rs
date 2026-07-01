@@ -9,13 +9,13 @@ use std::sync::Arc as StdArc;
 #[cfg(test)]
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
-pub use crate::domains::kv::sink::KvDomainSink;
-pub use crate::domains::lease::sink::LeaseDomainSink;
-pub use crate::domains::notice::sink::NoticeDomainSink;
-pub use crate::domains::queue::sink::QueueDomainSink;
-pub use crate::domains::rpc::sink::RpcDomainSink;
-pub use crate::domains::schedule::sink::ScheduleDomainSink;
-pub use crate::domains::stream::sink::StreamDomainSink;
+use crate::domains::kv::sink::KvDomainSink;
+use crate::domains::lease::sink::LeaseDomainSink;
+use crate::domains::notice::sink::NoticeDomainSink;
+use crate::domains::queue::sink::QueueDomainSink;
+use crate::domains::rpc::sink::RpcDomainSink;
+use crate::domains::schedule::sink::ScheduleDomainSink;
+use crate::domains::stream::sink::StreamDomainSink;
 
 /// Generic domain sink: Forwards envelopes to domain actors.
 pub struct DomainSink {

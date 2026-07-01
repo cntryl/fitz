@@ -1,11 +1,15 @@
 use super::*;
-use crate::boot::domains::{
-    DomainHandles, KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
-    ScheduleDomainSink, StreamDomainSink,
-};
+use crate::boot::domains::DomainHandles;
 use crate::boot::Runtime;
 use crate::control::admin::QueueInfoSnapshot;
+use crate::domains::kv::sink::KvDomainSink;
+use crate::domains::lease::sink::LeaseDomainSink;
+use crate::domains::notice::sink::NoticeDomainSink;
+use crate::domains::queue::sink::QueueDomainSink;
+use crate::domains::rpc::sink::RpcDomainSink;
+use crate::domains::schedule::sink::ScheduleDomainSink;
 use crate::domains::schedule::store::{ScheduleInsert, ScheduleStore};
+use crate::domains::stream::sink::StreamDomainSink;
 use crate::runtime::Router;
 use bytes::Bytes;
 use std::sync::Arc;

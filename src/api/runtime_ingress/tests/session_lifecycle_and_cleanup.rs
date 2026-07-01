@@ -1,10 +1,13 @@
 use super::*;
 pub(super) use crate::auth::Access;
-pub(super) use crate::boot::domains::{
-    KvDomainSink, LeaseDomainSink, NoticeDomainSink, QueueDomainSink, RpcDomainSink,
-    ScheduleDomainSink, StreamDomainSink,
-};
 pub(super) use crate::control::admin::read_model::AdminReadModel;
+pub(super) use crate::domains::kv::sink::KvDomainSink;
+pub(super) use crate::domains::lease::sink::LeaseDomainSink;
+pub(super) use crate::domains::notice::sink::NoticeDomainSink;
+pub(super) use crate::domains::queue::sink::QueueDomainSink;
+pub(super) use crate::domains::rpc::sink::RpcDomainSink;
+pub(super) use crate::domains::schedule::sink::ScheduleDomainSink;
+pub(super) use crate::domains::stream::sink::StreamDomainSink;
 pub(super) use crate::protocol::frame::ChannelId;
 pub(super) use crate::protocol::payload_codec::PayloadEncoder;
 pub(super) use crate::protocol::tlv::MessageType;

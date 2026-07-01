@@ -8,6 +8,7 @@ use fitz::benchkit::{
     register_session_counting_sink, register_session_queue_sink, route_frame, CountingSink,
     FrameQueueSink,
 };
+use fitz::domains::stream::sink::StreamDomainSink;
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::domain_event::DomainPublishEvent;
 use fitz::runtime::envelope::Envelope;
@@ -30,7 +31,7 @@ struct StreamPatternCase {
 }
 
 struct PreparedStreamNotifyCase {
-    sink: Arc<fitz::boot::domains::StreamDomainSink>,
+    sink: Arc<StreamDomainSink>,
     destination: RouteAddress,
     event: DomainPublishEvent,
     subscriber_sinks: Vec<Arc<CountingSink>>,

@@ -398,6 +398,33 @@ fn should_keep_domain_handles_from_exposing_concrete_sinks() {
 }
 
 #[test]
+fn should_keep_boot_domains_from_reexporting_concrete_sinks() {
+    // Arrange
+    let source = read_repo_file("src/boot/domains.rs");
+    let forbidden_reexports = [
+        "pub use crate::domains::kv::sink::KvDomainSink",
+        "pub use crate::domains::queue::sink::QueueDomainSink",
+        "pub use crate::domains::notice::sink::NoticeDomainSink",
+        "pub use crate::domains::stream::sink::StreamDomainSink",
+        "pub use crate::domains::rpc::sink::RpcDomainSink",
+        "pub use crate::domains::lease::sink::LeaseDomainSink",
+        "pub use crate::domains::schedule::sink::ScheduleDomainSink",
+    ];
+
+    // Act
+    let violations = forbidden_reexports
+        .into_iter()
+        .filter(|reexport| source.contains(reexport))
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "boot::domains reexports concrete sinks: {violations:?}"
+    );
+}
+
+#[test]
 fn should_keep_sync_core_free_of_transport_dependencies() {
     // Arrange
     let mut files = Vec::new();

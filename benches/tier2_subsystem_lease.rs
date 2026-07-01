@@ -4,6 +4,7 @@ use fitz::benchkit::{
     create_bench_lease_sink, register_session_counting_sink, register_session_queue_sink,
     route_frame, CountingSink,
 };
+use fitz::domains::lease::sink::LeaseDomainSink;
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::lease_codec::msg_type;
 use fitz::protocol::payload_codec::PayloadEncoder;
@@ -25,7 +26,7 @@ struct LeasePatternCase {
 }
 
 struct PreparedLeaseNotifyCase {
-    sink: Arc<fitz::boot::domains::LeaseDomainSink>,
+    sink: Arc<LeaseDomainSink>,
     destination: RouteAddress,
     event: DomainPublishEvent,
     watcher_sinks: Vec<Arc<CountingSink>>,
