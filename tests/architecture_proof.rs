@@ -209,6 +209,17 @@ const SYNC_CORE_TRANSPORT_FORBIDDEN: &[&str] = &[
     "crate::api::admin::",
 ];
 
+const SYNC_CORE_ASYNC_FORBIDDEN: &[&str] = &[
+    "async fn",
+    "async move",
+    "async {",
+    ".await",
+    "tokio::",
+    "async_trait",
+    "futures::",
+    "futures_util",
+];
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -501,7 +512,7 @@ fn should_keep_boot_domains_from_reexporting_concrete_sinks() {
 fn should_keep_sync_core_free_of_transport_dependencies() {
     // Arrange
     let mut files = Vec::new();
-    for directory in ["src/runtime", "src/protocol", "src/domains"] {
+    for directory in ["src/runtime", "src/protocol", "src/session", "src/domains"] {
         collect_rs_files(&repo_root().join(directory), &mut files);
     }
     files.sort();
@@ -542,5 +553,53 @@ fn should_keep_sync_core_free_of_transport_dependencies() {
     assert!(
         report.is_empty(),
         "sync core dependency violations:\n{report}"
+    );
+}
+
+#[test]
+fn should_keep_sync_core_free_of_async_runtime_dependencies() {
+    // Arrange
+    let mut files = Vec::new();
+    for directory in ["src/runtime", "src/protocol", "src/session", "src/domains"] {
+        collect_rs_files(&repo_root().join(directory), &mut files);
+    }
+    files.sort();
+
+    let violations = files
+        .into_iter()
+        .flat_map(|path| {
+            let content = fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+            let relative_path = relative_display(&path);
+            content
+                .lines()
+                .enumerate()
+                .flat_map(|(index, line)| {
+                    SYNC_CORE_ASYNC_FORBIDDEN
+                        .iter()
+                        .filter(move |needle| line.contains(**needle))
+                        .map({
+                            let relative_path = relative_path.clone();
+                            move |needle| {
+                                format!(
+                                    "{}:{} contains forbidden async dependency {}",
+                                    relative_path,
+                                    index + 1,
+                                    needle
+                                )
+                            }
+                        })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    // Act
+    let report = violations.join("\n");
+
+    // Assert
+    assert!(
+        report.is_empty(),
+        "sync core async dependency violations:\n{report}"
     );
 }
