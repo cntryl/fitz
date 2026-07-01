@@ -172,19 +172,27 @@ impl QueueDomainSink {
         self.actor.stop();
     }
 
-    pub fn refresh_admin_snapshot_if_dirty(&self) {
+    fn send_unit_actor_command(
+        &self,
+        operation: &'static str,
+        build_command: impl FnOnce(crossbeam_channel::Sender<()>) -> QueueDomainCommand,
+    ) {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        if let Err(error) = self
-            .actor
-            .try_send_high_priority(QueueDomainCommand::RefreshAdminSnapshotIfDirty(reply_tx))
-        {
-            tracing::warn!(domain = "queue", error = %error, "Queue admin snapshot refresh enqueue failed");
+        if let Err(error) = self.actor.try_send_high_priority(build_command(reply_tx)) {
+            tracing::warn!(domain = "queue", operation, error = %error, "Queue actor command enqueue failed");
             return;
         }
 
         if let Err(error) = reply_rx.recv_timeout(Duration::from_secs(1)) {
-            tracing::warn!(domain = "queue", error = %error, "Queue admin snapshot refresh reply failed");
+            tracing::warn!(domain = "queue", operation, error = %error, "Queue actor command reply failed");
         }
+    }
+
+    pub fn refresh_admin_snapshot_if_dirty(&self) {
+        self.send_unit_actor_command(
+            "refresh_admin_snapshot_if_dirty",
+            QueueDomainCommand::RefreshAdminSnapshotIfDirty,
+        );
     }
 
     fn live_counts(&self) -> QueueLiveCounts {
@@ -220,6 +228,22 @@ impl QueueDomainSink {
 
     pub fn dead_letter_count(&self) -> usize {
         self.live_counts().dead_letters
+    }
+
+    pub fn cleanup_session(&self, session_id: u64) {
+        self.send_unit_actor_command("cleanup_session", |reply| {
+            QueueDomainCommand::CleanupSession(session_id, reply)
+        });
+    }
+
+    pub(crate) fn sweep_runtime_state(&self) {
+        self.sweep_runtime_state_at(Instant::now());
+    }
+
+    pub(super) fn sweep_runtime_state_at(&self, now: Instant) {
+        self.send_unit_actor_command("sweep_runtime_state", |reply| {
+            QueueDomainCommand::SweepRuntimeStateAt(now, reply)
+        });
     }
 }
 
@@ -448,10 +472,6 @@ impl QueueDomainCore {
                 snapshot,
             );
         }
-    }
-
-    pub(crate) fn sweep_runtime_state(&self) {
-        self.sweep_runtime_state_at(Instant::now());
     }
 
     pub(super) fn sweep_runtime_state_at(&self, now: Instant) {

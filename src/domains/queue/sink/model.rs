@@ -91,6 +91,8 @@ pub(super) enum QueueDomainCommand {
     ),
     RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
     ReadLiveCounts(crossbeam_channel::Sender<QueueLiveCounts>),
+    CleanupSession(u64, crossbeam_channel::Sender<()>),
+    SweepRuntimeStateAt(Instant, crossbeam_channel::Sender<()>),
 }
 
 #[derive(Default)]

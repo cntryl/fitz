@@ -67,6 +67,14 @@ impl Actor for QueueDomainActor {
             QueueDomainCommand::ReadLiveCounts(reply) => {
                 let _ = reply.send(runtime.live_counts());
             }
+            QueueDomainCommand::CleanupSession(session_id, reply) => {
+                runtime.cleanup_session(session_id);
+                let _ = reply.send(());
+            }
+            QueueDomainCommand::SweepRuntimeStateAt(now, reply) => {
+                runtime.sweep_runtime_state_at(now);
+                let _ = reply.send(());
+            }
         }
     }
 }
@@ -109,6 +117,14 @@ impl QueueDomainRuntime<'_> {
             inflight: self.core.active_inflight_count(),
             dead_letters: self.core.dead_letter_count(),
         }
+    }
+
+    fn cleanup_session(&self, session_id: u64) {
+        self.core.cleanup_session(session_id);
+    }
+
+    fn sweep_runtime_state_at(&self, now: Instant) {
+        self.core.sweep_runtime_state_at(now);
     }
 }
 
