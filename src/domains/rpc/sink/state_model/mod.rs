@@ -1,4 +1,5 @@
 pub(super) use crate::domains::rpc::{RpcClientRequest, RpcClientResponseBody};
+pub(super) type RpcDeliveryOutcome = (Option<RpcClientResponseBody>, Option<bool>, bool);
 #[cfg(test)]
 pub(super) use crate::protocol::frame_context::FrameContext;
 pub(super) use crate::runtime::routing::{

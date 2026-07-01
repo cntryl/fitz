@@ -81,6 +81,21 @@ pub(super) fn should_create_rpc_domain_sink() {
 }
 
 #[test]
+pub(super) fn should_keep_rpc_mailbox_sink_impl_below_file_size_limit() {
+    // Arrange
+    let line_count = include_str!("../mailbox_sink_impl.rs").lines().count();
+
+    // Act
+    let within_limit = line_count < 1_000;
+
+    // Assert
+    assert!(
+        within_limit,
+        "rpc mailbox sink impl has {line_count} lines; split before adding behavior"
+    );
+}
+
+#[test]
 pub(super) fn should_claim_workers_in_registration_order_given_route_local_rpc_state() {
     // Arrange
     let family = RouteFamily::new(1);
