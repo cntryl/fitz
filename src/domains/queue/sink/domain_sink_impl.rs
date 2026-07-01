@@ -188,6 +188,27 @@ impl QueueDomainSink {
         }
     }
 
+    fn send_bool_actor_command(
+        &self,
+        operation: &'static str,
+        build_command: impl FnOnce(
+            crossbeam_channel::Sender<Result<bool, String>>,
+        ) -> QueueDomainCommand,
+    ) -> Result<bool, String> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self.actor.try_send_high_priority(build_command(reply_tx)) {
+            tracing::warn!(domain = "queue", operation, error = %error, "Queue actor command enqueue failed");
+            return Err(format!(
+                "Queue actor command enqueue failed for {operation}: {error}"
+            ));
+        }
+
+        reply_rx.recv_timeout(Duration::from_secs(1)).map_err(|error| {
+            tracing::warn!(domain = "queue", operation, error = %error, "Queue actor command reply failed");
+            format!("Queue actor command reply failed for {operation}: {error}")
+        })?
+    }
+
     pub fn refresh_admin_snapshot_if_dirty(&self) {
         self.send_unit_actor_command(
             "refresh_admin_snapshot_if_dirty",
@@ -244,6 +265,38 @@ impl QueueDomainSink {
         self.send_unit_actor_command("sweep_runtime_state", |reply| {
             QueueDomainCommand::SweepRuntimeStateAt(now, reply)
         });
+    }
+
+    /// Replays a dead-lettered message back into its queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the queue domain actor cannot process the command or
+    /// the replay fails.
+    pub fn replay_dead_letter(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+        id: crate::domains::queue::MessageId,
+    ) -> Result<bool, String> {
+        self.send_bool_actor_command("replay_dead_letter", |reply| {
+            QueueDomainCommand::ReplayDeadLetter(key.clone(), id, reply)
+        })
+    }
+
+    /// Permanently removes a dead-lettered message from its queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the queue domain actor cannot process the command or
+    /// the purge fails.
+    pub fn purge_dead_letter(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+        id: crate::domains::queue::MessageId,
+    ) -> Result<bool, String> {
+        self.send_bool_actor_command("purge_dead_letter", |reply| {
+            QueueDomainCommand::PurgeDeadLetter(key.clone(), id, reply)
+        })
     }
 }
 

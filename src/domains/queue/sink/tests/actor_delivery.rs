@@ -1,6 +1,46 @@
 use super::routing_watch_and_admin::{encode_queue_send, new_queue_domain_sink};
 use super::*;
 
+#[derive(Clone)]
+struct DlqSeedClock {
+    state: Arc<std::sync::Mutex<DlqSeedClockState>>,
+}
+
+#[derive(Clone, Copy)]
+struct DlqSeedClockState {
+    instant: Instant,
+    epoch_ms: u64,
+}
+
+impl DlqSeedClock {
+    fn new() -> Self {
+        Self {
+            state: Arc::new(std::sync::Mutex::new(DlqSeedClockState {
+                instant: Instant::now(),
+                epoch_ms: 1_700_000_000_000,
+            })),
+        }
+    }
+
+    fn advance(&self, duration: Duration) {
+        let mut state = self.state.lock().expect("clock state");
+        state.instant += duration;
+        state.epoch_ms = state
+            .epoch_ms
+            .saturating_add(u64::try_from(duration.as_millis()).unwrap_or(u64::MAX));
+    }
+}
+
+impl crate::runtime::clock::Clock for DlqSeedClock {
+    fn now_instant(&self) -> Instant {
+        self.state.lock().expect("clock state").instant
+    }
+
+    fn now_epoch_ms(&self) -> u64 {
+        self.state.lock().expect("clock state").epoch_ms
+    }
+}
+
 fn queue_send_envelope(family: RouteFamily, queue_route: &str) -> Envelope {
     let client_address = RouteAddress::new(family, Route::new("inbox://session/7"));
     let queue_address = RouteAddress::new(family, Route::new(queue_route));
@@ -32,6 +72,51 @@ fn queue_snapshot(
         .lock()
         .admin_snapshot();
     snapshot
+}
+
+fn seed_dead_letter(
+    store: Arc<cntryl_midge::Engine>,
+    key: &crate::domains::queue::QueueKey,
+) -> crate::domains::queue::MessageId {
+    let clock = DlqSeedClock::new();
+    let mut actor = crate::domains::queue::QueueActor::with_clock(
+        key.family,
+        key.clone(),
+        store,
+        Box::new(clock.clone()),
+        Some(1),
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let msg_id = match actor.handle_send(bytes::Bytes::from_static(b"email"), None) {
+        crate::domains::queue::QueueResponse::Sent { id } => id,
+        other => panic!("expected queue send to succeed, found {other:?}"),
+    };
+    match actor.handle_receive_for_session(7, 1, Some(1)) {
+        crate::domains::queue::QueueResponse::Received { messages } => {
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].id, msg_id);
+        }
+        other => panic!("expected queue receive to succeed, found {other:?}"),
+    }
+    clock.advance(Duration::from_secs(2));
+    actor.process_expired_timers();
+    assert_eq!(actor.admin_dead_letters().len(), 1);
+    msg_id
+}
+
+fn persisted_dead_letter_count(
+    store: Arc<cntryl_midge::Engine>,
+    key: &crate::domains::queue::QueueKey,
+) -> usize {
+    crate::domains::queue::QueueActor::new(
+        key.family,
+        key.clone(),
+        store,
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    )
+    .admin_dead_letters()
+    .len()
 }
 
 #[test]
@@ -219,4 +304,70 @@ fn should_route_queue_runtime_sweep_through_managed_actor() {
     // Assert
     assert!(!sink.is_actor_running());
     assert!(sink.dirty_fast_flush_families.lock().contains(&1));
+}
+
+#[test]
+fn should_route_queue_dead_letter_replay_through_managed_actor() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let key = crate::domains::queue::QueueKey {
+        family,
+        realm: "acme".to_string(),
+        area: "jobs".to_string(),
+        resource: "emails".to_string(),
+    };
+    let msg_id = seed_dead_letter(store.clone(), &key);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = new_queue_domain_sink(
+        store.clone(),
+        router,
+        admin_read_model,
+        cntryl_midge::WriteOptions::buffered(),
+    );
+
+    // Act
+    sink.stop_actor_for_tests();
+    let replayed = sink.replay_dead_letter(&key, msg_id);
+    let dead_letters = persisted_dead_letter_count(store, &key);
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert!(replayed.is_err());
+    assert_eq!(dead_letters, 1);
+    assert!(sink.actors.lock().is_empty());
+}
+
+#[test]
+fn should_route_queue_dead_letter_purge_through_managed_actor() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let key = crate::domains::queue::QueueKey {
+        family,
+        realm: "acme".to_string(),
+        area: "jobs".to_string(),
+        resource: "emails".to_string(),
+    };
+    let msg_id = seed_dead_letter(store.clone(), &key);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = new_queue_domain_sink(
+        store.clone(),
+        router,
+        admin_read_model,
+        cntryl_midge::WriteOptions::buffered(),
+    );
+
+    // Act
+    sink.stop_actor_for_tests();
+    let purged = sink.purge_dead_letter(&key, msg_id);
+    let dead_letters = persisted_dead_letter_count(store, &key);
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert!(purged.is_err());
+    assert_eq!(dead_letters, 1);
+    assert!(sink.actors.lock().is_empty());
 }

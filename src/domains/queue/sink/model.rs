@@ -1,7 +1,7 @@
 pub(super) use crate::domains::queue::{
     projection::{QueueAdminProjection, QueueProjectionEntry, QueueProjectionState},
-    QueueAdminSnapshot, QueueClientFrame, QueueClientRequest, QueueMetrics, QueueNotification,
-    QueueSubscriptionMessage,
+    MessageId, QueueAdminSnapshot, QueueClientFrame, QueueClientRequest, QueueKey, QueueMetrics,
+    QueueNotification, QueueSubscriptionMessage,
 };
 pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 pub(super) use crate::observability as obs;
@@ -93,6 +93,16 @@ pub(super) enum QueueDomainCommand {
     ReadLiveCounts(crossbeam_channel::Sender<QueueLiveCounts>),
     CleanupSession(u64, crossbeam_channel::Sender<()>),
     SweepRuntimeStateAt(Instant, crossbeam_channel::Sender<()>),
+    ReplayDeadLetter(
+        QueueKey,
+        MessageId,
+        crossbeam_channel::Sender<Result<bool, String>>,
+    ),
+    PurgeDeadLetter(
+        QueueKey,
+        MessageId,
+        crossbeam_channel::Sender<Result<bool, String>>,
+    ),
 }
 
 #[derive(Default)]

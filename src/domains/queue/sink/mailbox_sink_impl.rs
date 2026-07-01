@@ -75,6 +75,12 @@ impl Actor for QueueDomainActor {
                 runtime.sweep_runtime_state_at(now);
                 let _ = reply.send(());
             }
+            QueueDomainCommand::ReplayDeadLetter(key, id, reply) => {
+                let _ = reply.send(runtime.replay_dead_letter(&key, id));
+            }
+            QueueDomainCommand::PurgeDeadLetter(key, id, reply) => {
+                let _ = reply.send(runtime.purge_dead_letter(&key, id));
+            }
         }
     }
 }
@@ -125,6 +131,22 @@ impl QueueDomainRuntime<'_> {
 
     fn sweep_runtime_state_at(&self, now: Instant) {
         self.core.sweep_runtime_state_at(now);
+    }
+
+    fn replay_dead_letter(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+        id: crate::domains::queue::MessageId,
+    ) -> Result<bool, String> {
+        self.core.replay_dead_letter(key, id)
+    }
+
+    fn purge_dead_letter(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+        id: crate::domains::queue::MessageId,
+    ) -> Result<bool, String> {
+        self.core.purge_dead_letter(key, id)
     }
 }
 
