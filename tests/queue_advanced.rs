@@ -95,35 +95,15 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     }
 
     // Act
-    let mut consumer_a_msgs = Vec::new();
-    let mut consumer_b_msgs = Vec::new();
-    let mut consumer_c_msgs = Vec::new();
-
-    // Consumer A reserves 10 messages
-    match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(10)) {
-        QueueResponse::Received { messages } => {
-            assert_eq!(messages.len(), 10);
-            consumer_a_msgs = messages;
+    let mut reservation_batches = Vec::new();
+    for _ in 0..3 {
+        match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(10)) {
+            QueueResponse::Received { messages } => {
+                assert_eq!(messages.len(), 10);
+                reservation_batches.push(messages);
+            }
+            _ => panic!("Expected Reserved"),
         }
-        _ => panic!("Expected Reserved"),
-    }
-
-    // Consumer B reserves 10 messages
-    match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(10)) {
-        QueueResponse::Received { messages } => {
-            assert_eq!(messages.len(), 10);
-            consumer_b_msgs = messages;
-        }
-        _ => panic!("Expected Reserved"),
-    }
-
-    // Consumer C reserves remaining 10 messages
-    match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(10)) {
-        QueueResponse::Received { messages } => {
-            assert_eq!(messages.len(), 10);
-            consumer_c_msgs = messages;
-        }
-        _ => panic!("Expected Reserved"),
     }
 
     // Assert
@@ -131,10 +111,10 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     assert!(!actor.inflight.is_empty(), "Should have in-flight messages");
 
     // Verify no message was reserved twice
-    let mut all_ids: Vec<_> = consumer_a_msgs
+    let mut all_ids: Vec<_> = reservation_batches[0]
         .iter()
-        .chain(consumer_b_msgs.iter())
-        .chain(consumer_c_msgs.iter())
+        .chain(reservation_batches[1].iter())
+        .chain(reservation_batches[2].iter())
         .map(|m| m.id)
         .collect();
     all_ids.sort_by_key(fitz::domains::queue::MessageId::as_u64);
