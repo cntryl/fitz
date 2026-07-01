@@ -32,6 +32,9 @@ impl Actor for StreamDomainActor {
             StreamDomainCommand::Deliver(envelope, reply) => {
                 let _ = reply.send(runtime.deliver_envelope(&envelope));
             }
+            StreamDomainCommand::ReadLiveCounts(reply) => {
+                let _ = reply.send(runtime.live_counts());
+            }
             #[cfg(test)]
             StreamDomainCommand::InjectNextPromotionFrontierCommitFailure(reply) => {
                 StreamStore::fail_next_promotion_frontier_commit_for_tests();

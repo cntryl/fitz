@@ -104,8 +104,16 @@ pub(super) enum StreamDomainCommand {
         Envelope,
         crossbeam_channel::Sender<Result<(), DeliveryError>>,
     ),
+    ReadLiveCounts(crossbeam_channel::Sender<StreamLiveCounts>),
     #[cfg(test)]
     InjectNextPromotionFrontierCommitFailure(crossbeam_channel::Sender<()>),
+}
+
+#[derive(Default)]
+pub(super) struct StreamLiveCounts {
+    pub(super) streams: usize,
+    pub(super) append_sessions: usize,
+    pub(super) subscriptions: usize,
 }
 
 pub(super) struct StreamDomainActor {

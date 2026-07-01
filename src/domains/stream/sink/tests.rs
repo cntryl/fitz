@@ -293,6 +293,32 @@ fn should_reject_stream_delivery_when_managed_actor_is_stopped() {
 }
 
 #[test]
+fn should_route_stream_live_count_queries_through_managed_actor() {
+    // Arrange
+    let context = setup_test_context();
+    let route = "stream://bench/events/orders";
+    let subscribe_frame = build_stream_subscribe(route);
+    let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
+    let _subscribe_response = request(&context, route, subscribe_msg_type, subscribe_payload);
+    let _stream_session_id = begin_stream(&context, route);
+    assert_eq!(context.sink.stream_count(), 1);
+    assert_eq!(context.sink.append_session_count(), 1);
+    assert_eq!(context.sink.subscription_count(), 1);
+
+    // Act
+    context.sink.stop_actor_for_tests();
+    let stream_count = context.sink.stream_count();
+    let append_session_count = context.sink.append_session_count();
+    let subscription_count = context.sink.subscription_count();
+
+    // Assert
+    assert!(!context.sink.is_actor_running());
+    assert_eq!(stream_count, 0);
+    assert_eq!(append_session_count, 0);
+    assert_eq!(subscription_count, 0);
+}
+
+#[test]
 fn should_reject_append_session_followups_from_non_owner_session() {
     // Arrange
     let context = setup_test_context();

@@ -3,8 +3,9 @@ use super::model::{
     Mutex, Ordering, PayloadEncoder, ReadResponse, Route, RouteAddress, RouteFamily, Router,
     StreamActor, StreamActorKey, StreamAdminRecord, StreamAreaSnapshot, StreamClientResponseBody,
     StreamDomainActor, StreamDomainCommand, StreamDomainCore, StreamDomainRuntime,
-    StreamDomainSink, StreamFilteredReason, StreamMetadata, StreamMetrics, StreamReadItem,
-    StreamRealmSnapshot, StreamRecord, StreamStorageLayout, StreamStore, StreamSubscription,
+    StreamDomainSink, StreamFilteredReason, StreamLiveCounts, StreamMetadata, StreamMetrics,
+    StreamReadItem, StreamRealmSnapshot, StreamRecord, StreamStorageLayout, StreamStore,
+    StreamSubscription,
 };
 #[cfg(test)]
 use crate::protocol::FrameContext;
@@ -188,6 +189,33 @@ impl StreamDomainSink {
 
         let _ = reply_rx.recv_timeout(std::time::Duration::from_secs(1));
     }
+
+    pub fn append_session_count(&self) -> usize {
+        self.live_counts().append_sessions
+    }
+
+    pub fn subscription_count(&self) -> usize {
+        self.live_counts().subscriptions
+    }
+
+    pub fn stream_count(&self) -> usize {
+        self.live_counts().streams
+    }
+
+    fn live_counts(&self) -> StreamLiveCounts {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(StreamDomainCommand::ReadLiveCounts(reply_tx))
+        {
+            tracing::warn!(domain = "stream", error = %error, "Stream live-count query enqueue failed");
+            return StreamLiveCounts::default();
+        }
+
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_default()
+    }
 }
 
 impl StreamDomainCore {
@@ -244,23 +272,21 @@ impl StreamDomainCore {
     }
 
     pub(super) fn refresh_metrics_gauges(&self) {
-        let stream_count = self.stream_count();
-        let subscription_count = self.subscription_count();
-        let append_session_count = self.append_session_count();
+        let counts = self.live_counts();
 
         if let Some(metrics) = &self.metrics {
-            metrics.set_stream_count(stream_count);
-            metrics.set_subscription_count(subscription_count);
-            metrics.set_append_session_count(append_session_count);
+            metrics.set_stream_count(counts.streams);
+            metrics.set_subscription_count(counts.subscriptions);
+            metrics.set_append_session_count(counts.append_sessions);
         } else {
-            crate::observability::gauge_set("fitz_stream_active_gauge", stream_count as u64);
+            crate::observability::gauge_set("fitz_stream_active_gauge", counts.streams as u64);
             crate::observability::gauge_set(
                 "fitz_stream_subscriptions_gauge",
-                subscription_count as u64,
+                counts.subscriptions as u64,
             );
             crate::observability::gauge_set(
                 "fitz_stream_append_sessions_active",
-                append_session_count as u64,
+                counts.append_sessions as u64,
             );
         }
     }
@@ -282,7 +308,7 @@ impl StreamDomainCore {
     }
 
     pub fn append_session_count(&self) -> usize {
-        self.session_owners.lock().len()
+        self.live_counts().append_sessions
     }
 
     pub(super) fn stream_response_is_failure(response: &StreamClientResponseBody) -> bool {
@@ -875,14 +901,31 @@ impl StreamDomainCore {
     }
 
     pub fn subscription_count(&self) -> usize {
-        let families = self.families.lock();
-        families
-            .values()
-            .map(crate::domains::subscription_state::RoutedSubscriptionSet::subscription_count)
-            .sum()
+        self.live_counts().subscriptions
     }
 
     pub fn stream_count(&self) -> usize {
-        self.actors.lock().len()
+        self.live_counts().streams
+    }
+
+    pub(super) fn live_counts(&self) -> StreamLiveCounts {
+        let subscriptions = self
+            .families
+            .lock()
+            .values()
+            .map(crate::domains::subscription_state::RoutedSubscriptionSet::subscription_count)
+            .sum();
+
+        StreamLiveCounts {
+            streams: self.actors.lock().len(),
+            append_sessions: self.session_owners.lock().len(),
+            subscriptions,
+        }
+    }
+}
+
+impl StreamDomainRuntime<'_> {
+    pub(super) fn live_counts(&self) -> StreamLiveCounts {
+        self.core.live_counts()
     }
 }
