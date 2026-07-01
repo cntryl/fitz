@@ -119,6 +119,29 @@ pub(super) enum LeaseDomainCommand {
     ReadLiveCounts(crossbeam_channel::Sender<LeaseLiveCounts>),
     ReadWaiters(crossbeam_channel::Sender<Vec<crate::control::admin::LeaseWaiterInfo>>),
     SweepExpiredState,
+    #[cfg(test)]
+    ApplyAcquireForTests(
+        LeaseAcquireRequest,
+        crossbeam_channel::Sender<crate::domains::lease::protocol::LeaseResponse>,
+    ),
+    #[cfg(test)]
+    ApplyExtendForTests(
+        crate::domains::lease::protocol::LeaseKey,
+        String,
+        u64,
+        u64,
+        crossbeam_channel::Sender<crate::domains::lease::protocol::LeaseResponse>,
+    ),
+    #[cfg(test)]
+    ExpireLeaseForTests(
+        crate::domains::lease::protocol::LeaseKey,
+        crossbeam_channel::Sender<bool>,
+    ),
+    #[cfg(test)]
+    ReadPendingWaiterCountForTests(
+        crate::domains::lease::protocol::LeaseKey,
+        crossbeam_channel::Sender<usize>,
+    ),
 }
 
 pub(super) struct LeaseDomainActor {

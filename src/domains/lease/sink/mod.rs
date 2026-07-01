@@ -2,6 +2,8 @@ mod domain_sink_impl;
 mod lifecycle_and_admin;
 mod mailbox_sink_impl;
 mod model;
+#[cfg(test)]
+mod test_actor_commands;
 
 pub use model::LeaseDomainSink;
 

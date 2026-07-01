@@ -259,7 +259,7 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = LeaseDomainSink::new(router, admin_read_model.clone());
 
-    let holder_response = sink.state.runtime().handle_acquire(LeaseAcquireRequest {
+    let holder_response = sink.acquire_for_tests(LeaseAcquireRequest {
         key: key.clone(),
         owner_session_id: session_id,
         owner_id: "owner1".to_string(),
@@ -276,7 +276,7 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
     else {
         panic!("expected holder acquire");
     };
-    let waiter_response = sink.state.runtime().handle_acquire(LeaseAcquireRequest {
+    let waiter_response = sink.acquire_for_tests(LeaseAcquireRequest {
         key: key.clone(),
         owner_session_id: waiter_session_id,
         owner_id: "owner2".to_string(),
@@ -293,28 +293,17 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
     else {
         panic!("expected queued waiter");
     };
-    sink.state
-        .core
-        .leases
-        .lock()
-        .get_mut(&key)
-        .expect("lease")
-        .expiry = Instant::now()
-        .checked_sub(Duration::from_millis(1))
-        .expect("past instant");
+    assert!(sink.expire_lease_for_tests(&key));
 
     // Act
-    let response = sink
-        .state
-        .runtime()
-        .handle_extend(&key, "owner1", holder_token, 30);
+    let response = sink.extend_for_tests(&key, "owner1", holder_token, 30);
     let leases = admin_read_model.leases(None);
     let waiter_delivery = receive_envelope(&waiter_mailbox, "waiter acquired response");
 
     // Assert
     assert_eq!(response, LeaseResponse::Expired);
     assert_eq!(sink.lease_count(), 1);
-    assert_eq!(sink.state.runtime().pending_waiter_count(&key), 0);
+    assert_eq!(sink.pending_waiter_count_for_tests(&key), 0);
     assert_eq!(leases.len(), 1);
     assert_eq!(leases[0].owner_session_id, "owner2");
     assert_eq!(leases[0].fencing_token, waiter_token);
@@ -346,7 +335,7 @@ fn should_read_admin_waiters_through_actor_command() {
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = LeaseDomainSink::new(router, admin_read_model);
-    let holder_response = sink.state.runtime().handle_acquire(LeaseAcquireRequest {
+    let holder_response = sink.acquire_for_tests(LeaseAcquireRequest {
         key: key.clone(),
         owner_session_id: 7,
         owner_id: "owner1".to_string(),
@@ -358,8 +347,8 @@ fn should_read_admin_waiters_through_actor_command() {
         route_family: family,
     });
     assert!(matches!(holder_response, LeaseResponse::Acquired { .. }));
-    let waiter_response = sink.state.runtime().handle_acquire(LeaseAcquireRequest {
-        key,
+    let waiter_response = sink.acquire_for_tests(LeaseAcquireRequest {
+        key: key.clone(),
         owner_session_id: 8,
         owner_id: "owner2".to_string(),
         ttl_secs: 30,
@@ -375,11 +364,17 @@ fn should_read_admin_waiters_through_actor_command() {
     // Act
     sink.stop();
     let command_waiters_after_stop = sink.admin_waiters();
-    let direct_waiters_after_stop = sink.state.runtime().admin_waiters();
+    let queued_waiter_count_after_stop = sink
+        .state
+        .core
+        .pending_acquires
+        .lock()
+        .get(&key)
+        .map_or(0, std::collections::VecDeque::len);
 
     // Assert
     assert!(command_waiters_after_stop.is_empty());
-    assert_eq!(direct_waiters_after_stop.len(), 1);
+    assert_eq!(queued_waiter_count_after_stop, 1);
 }
 
 #[test]
@@ -396,7 +391,7 @@ fn should_read_lease_live_counts_through_actor_command() {
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = LeaseDomainSink::new(router, admin_read_model);
-    let holder_response = sink.state.runtime().handle_acquire(LeaseAcquireRequest {
+    let holder_response = sink.acquire_for_tests(LeaseAcquireRequest {
         key,
         owner_session_id: session_id,
         owner_id: "owner1".to_string(),

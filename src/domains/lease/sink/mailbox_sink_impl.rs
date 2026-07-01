@@ -41,6 +41,41 @@ impl Actor for LeaseDomainActor {
             LeaseDomainCommand::SweepExpiredState => {
                 runtime.sweep_expired_state();
             }
+            #[cfg(test)]
+            LeaseDomainCommand::ApplyAcquireForTests(request, reply) => {
+                let _ = reply.send(runtime.handle_acquire(request));
+            }
+            #[cfg(test)]
+            LeaseDomainCommand::ApplyExtendForTests(
+                key,
+                owner_id,
+                fencing_token,
+                ttl_secs,
+                reply,
+            ) => {
+                let _ = reply.send(runtime.handle_extend(
+                    &key,
+                    owner_id.as_str(),
+                    fencing_token,
+                    ttl_secs,
+                ));
+            }
+            #[cfg(test)]
+            LeaseDomainCommand::ExpireLeaseForTests(key, reply) => {
+                let expired = if let Some(lease) = runtime.core.leases.lock().get_mut(&key) {
+                    lease.expiry = std::time::Instant::now()
+                        .checked_sub(std::time::Duration::from_millis(1))
+                        .expect("past instant");
+                    true
+                } else {
+                    false
+                };
+                let _ = reply.send(expired);
+            }
+            #[cfg(test)]
+            LeaseDomainCommand::ReadPendingWaiterCountForTests(key, reply) => {
+                let _ = reply.send(runtime.pending_waiter_count(&key));
+            }
         }
     }
 }
