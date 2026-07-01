@@ -38,8 +38,8 @@ const DOMAIN_PROOFS: &[DomainProof] = &[
         variant: "Queue",
         scheme: "queue",
         sink_type: "QueueDomainSink",
-        actor_file: "src/domains/queue/actor/mod.rs",
-        actor_marker: "pub struct QueueActor",
+        actor_file: "src/domains/queue/sink/model.rs",
+        actor_marker: "pub(super) struct QueueDomainActor",
         doc_heading: "#### Queue",
         doc_phrases: &[
             "Actor owner:",

@@ -504,7 +504,7 @@ Current Notice behavior is intentionally ephemeral:
 - Admin path: live transaction views flow through the actor-maintained `AdminReadModel`; committed value and inventory reads go through `Runtime::kv_*` query facades.
 
 #### Queue
-- Actor owner: `QueueActor` owns live reservation state, retry bookkeeping, watcher state, and dead-letter mutations for one queue resource.
+- Actor owner: `QueueDomainActor` is the managed production actor for delivery into `QueueActor` instances; `QueueActor` owns live reservation state, retry bookkeeping, and dead-letter mutations for one queue resource, while `QueueDomainCore` owns broker-local watch state and projections.
 - Persistence: durable backlog and dead-letter records live in storage; inflight reservations, watch subscriptions, and fast-flush state are ephemeral.
 - Cleanup: disconnect clears worker reservations and watch state, but it does not imply durable ownership continuity or hidden worker recovery.
 - `RouteFamily`/`realm`: queue data is isolated by exact `RouteFamily`, while `realm` remains an application-defined namespace inside the queue route.

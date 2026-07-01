@@ -129,7 +129,8 @@
 //!
 //! Queue consumers can watch readiness routes instead of parking reserve requests:
 //! - `QueueActor` always returns immediately (never blocks)
-//! - `QueueDomainSink` owns ephemeral watch state for the current broker process
+//! - `QueueDomainActor` is the managed production actor for delivery into `QueueActor` instances
+//! - `QueueDomainCore` owns ephemeral watch state for the current broker process
 //! - Watches target `queue://{realm}/{area}/{resource}/ready`
 //! - Notifications signal availability and never carry queue message bodies
 //! - Delayed visibility and inflight-expiry transitions are surfaced through queue-local runtime sweeps

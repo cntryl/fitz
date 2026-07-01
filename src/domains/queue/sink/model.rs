@@ -7,7 +7,7 @@ pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSu
 pub(super) use crate::observability as obs;
 #[cfg(test)]
 pub(super) use crate::protocol::frame_context::FrameContext;
-pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
+pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
 pub(super) use parking_lot::Mutex;
 pub(super) use std::collections::{HashMap, HashSet};
 pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -50,16 +50,16 @@ pub(super) const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_mins(5);
 pub(super) const QUEUE_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 pub(super) const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Queue domain sink with per-queue `QueueActor` instances
+/// Queue domain runtime core with per-queue `QueueActor` instances.
 ///
-/// This sink:
+/// This core:
 /// - Maintains per-queue `QueueActor` instances keyed by `QueueKey`
 /// - Parses TLV frames to `QueueMessage`
 /// - Dispatches to the correct actor based on route
 /// - Returns responses
 /// - Tracks queue-local watch subscriptions for the current broker process
 /// - Exposes only warm in-memory queue/admin state for the current broker process
-pub struct QueueDomainSink {
+pub struct QueueDomainCore {
     /// Fitz storage facade over the current Midge engine.
     pub(super) store: crate::storage::FitzStorageEngine,
     /// Commit policy for queue persistence on this runtime.
@@ -82,4 +82,47 @@ pub struct QueueDomainSink {
     pub(super) dirty_fast_flush_families: Mutex<HashSet<u32>>,
     pub(super) fast_flush_interval: Option<Duration>,
     pub(super) next_fast_flush_at: Mutex<Instant>,
+}
+
+pub(super) enum QueueDomainCommand {
+    Deliver(
+        Envelope,
+        crossbeam_channel::Sender<Result<(), DeliveryError>>,
+    ),
+}
+
+pub(super) struct QueueDomainActor {
+    pub(super) core: Arc<QueueDomainCore>,
+}
+
+pub(super) struct QueueDomainRuntime<'a> {
+    pub(super) core: &'a QueueDomainCore,
+}
+
+/// Queue domain sink with a managed actor mailbox in front of queue runtime state.
+pub struct QueueDomainSink {
+    pub(super) core: Arc<QueueDomainCore>,
+    pub(super) actor: ManagedActor<QueueDomainCommand>,
+}
+
+impl std::ops::Deref for QueueDomainSink {
+    type Target = QueueDomainCore;
+
+    fn deref(&self) -> &Self::Target {
+        &self.core
+    }
+}
+
+impl std::ops::DerefMut for QueueDomainSink {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::get_mut(&mut self.core).expect("Queue sink builders must run before sharing the sink")
+    }
+}
+
+impl std::ops::Deref for QueueDomainRuntime<'_> {
+    type Target = QueueDomainCore;
+
+    fn deref(&self) -> &Self::Target {
+        self.core
+    }
 }

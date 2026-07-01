@@ -1,12 +1,30 @@
 use super::model::{
     AtomicBool, AtomicU64, Duration, Envelope, HashMap, HashSet, Instant, Mutex, Ordering,
-    QueueAdminProjection, QueueAdminSnapshot, QueueDomainSink, QueueMetrics, QueueNotification,
+    QueueAdminProjection, QueueAdminSnapshot, QueueDomainActor, QueueDomainCommand,
+    QueueDomainCore, QueueDomainRuntime, QueueDomainSink, QueueMetrics, QueueNotification,
     QueueProjectionEntry, QueueProjectionState, QueueReadyNotification, Router, WarmQueueActor,
     QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_INTERVAL,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
 use std::sync::Arc;
+
+impl QueueDomainActor {
+    pub(super) fn new(core: Arc<QueueDomainCore>) -> Self {
+        Self { core }
+    }
+
+    pub(super) fn route_address() -> crate::runtime::routing::RouteAddress {
+        crate::runtime::routing::RouteAddress::new(
+            crate::runtime::routing::RouteFamily::new(0),
+            crate::runtime::routing::Route::new("internal://domain/queue"),
+        )
+    }
+
+    pub(super) fn runtime(&self) -> QueueDomainRuntime<'_> {
+        QueueDomainRuntime { core: &self.core }
+    }
+}
 
 impl QueueDomainSink {
     /// Constructs a queue sink over a raw Midge engine after validating persisted queue state.
@@ -72,7 +90,7 @@ impl QueueDomainSink {
         queue_write_options: cntryl_midge::WriteOptions,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
-        Self {
+        let core = Arc::new(QueueDomainCore {
             store,
             queue_write_options,
             dedup_store,
@@ -89,7 +107,27 @@ impl QueueDomainSink {
             dirty_fast_flush_families: Mutex::new(HashSet::new()),
             fast_flush_interval: None,
             next_fast_flush_at: Mutex::new(Instant::now()),
-        }
+        });
+        let actor = Self::spawn_actor(core.clone());
+        Self { core, actor }
+    }
+
+    fn spawn_actor(core: Arc<QueueDomainCore>) -> crate::runtime::ManagedActor<QueueDomainCommand> {
+        crate::runtime::ManagedActor::spawn(
+            core.router.clone(),
+            QueueDomainActor::route_address(),
+            QueueDomainActor::new(core),
+            1024,
+        )
+    }
+
+    fn rebuild_actor(&mut self) {
+        self.actor.stop();
+        self.actor = Self::spawn_actor(self.core.clone());
+    }
+
+    fn core_for_builder(&mut self) -> &mut QueueDomainCore {
+        Arc::get_mut(&mut self.core).expect("Queue sink builders must run before sharing the sink")
     }
 
     #[must_use]
@@ -97,28 +135,45 @@ impl QueueDomainSink {
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.metrics = Some(QueueMetrics::new(collector));
+        self.actor.stop();
+        self.core_for_builder().metrics = Some(QueueMetrics::new(collector));
         self.refresh_metrics_gauges();
+        self.rebuild_actor();
         self
     }
 
     #[must_use]
     pub fn with_fast_flush_interval(mut self, interval: Option<Duration>) -> Self {
-        self.fast_flush_interval = interval;
+        self.actor.stop();
+        self.core_for_builder().fast_flush_interval = interval;
         if let Some(interval) = interval {
             *self.next_fast_flush_at.lock() = Instant::now() + interval;
         }
+        self.rebuild_actor();
         self
     }
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+        self.actor.stop();
     }
 
     pub(crate) fn is_active(&self) -> bool {
         self.active.load(Ordering::Relaxed)
     }
 
+    #[cfg(test)]
+    pub(super) fn is_actor_running(&self) -> bool {
+        self.actor.is_running()
+    }
+
+    #[cfg(test)]
+    pub(super) fn stop_actor_for_tests(&self) {
+        self.actor.stop();
+    }
+}
+
+impl QueueDomainCore {
     pub(super) fn queue_key_for_route(
         family_id: crate::runtime::routing::RouteFamily,
         route: &crate::runtime::routing::Route,

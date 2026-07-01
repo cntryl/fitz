@@ -1,11 +1,13 @@
 use super::model::{
-    obs, DeliveryError, Envelope, Instant, MailboxSink, Ordering, QueueClientFrame,
-    QueueClientRequest, QueueDomainSink, QueueReadyNotification, QueueSubscription,
-    QueueSubscriptionMessage, RoutedSubscriptionSet,
+    obs, DeliveryError, Duration, Envelope, Instant, MailboxSink, Ordering, QueueClientFrame,
+    QueueClientRequest, QueueDomainActor, QueueDomainCommand, QueueDomainCore, QueueDomainRuntime,
+    QueueDomainSink, QueueReadyNotification, QueueSubscription, QueueSubscriptionMessage,
+    RoutedSubscriptionSet,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::routing::RouteFamily;
+use crate::runtime::{Actor, Context};
 
 type ReadyNotificationEvent = (crate::domains::queue::QueueKey, QueueReadyNotification);
 
@@ -41,13 +43,63 @@ enum QueueOpKind {
 
 impl MailboxSink for QueueDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if self.handle_cleanup_envelope(&envelope) {
+        self.deliver_to_actor(envelope, false)
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver_to_actor(envelope, true)
+    }
+}
+
+impl Actor for QueueDomainActor {
+    type Message = QueueDomainCommand;
+
+    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
+        let runtime = self.runtime();
+        match msg {
+            QueueDomainCommand::Deliver(envelope, reply) => {
+                let _ = reply.send(runtime.deliver_envelope(&envelope));
+            }
+        }
+    }
+}
+
+impl QueueDomainSink {
+    fn deliver_to_actor(
+        &self,
+        envelope: Envelope,
+        high_priority: bool,
+    ) -> Result<(), DeliveryError> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let command = QueueDomainCommand::Deliver(envelope, reply_tx);
+        let enqueue_result = if high_priority {
+            self.actor.try_send_high_priority(command)
+        } else {
+            self.actor.try_send(command)
+        };
+        enqueue_result?;
+
+        reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or(Err(DeliveryError::ActorStopped))
+    }
+}
+
+impl QueueDomainRuntime<'_> {
+    fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        self.core.deliver_envelope(envelope)
+    }
+}
+
+impl QueueDomainCore {
+    fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
         self.ensure_active()?;
-        Self::log_delivery(&envelope);
+        Self::log_delivery(envelope);
 
-        let Some(request) = Self::extract_request(&envelope)? else {
+        let Some(request) = Self::extract_request(envelope)? else {
             return Ok(());
         };
         let meta = request.meta;
@@ -55,7 +107,7 @@ impl MailboxSink for QueueDomainSink {
         let request_started = self.record_request_start();
 
         let Some(parsed_frame) =
-            self.parse_request_frame(&envelope, meta, request.frame, request_started)
+            self.parse_request_frame(envelope, meta, request.frame, request_started)
         else {
             return Ok(());
         };
@@ -64,12 +116,12 @@ impl MailboxSink for QueueDomainSink {
 
         match parsed_frame {
             QueueClientFrame::Sub(sub_msg) => {
-                self.handle_subscription_frame(&envelope, meta, request_started, sub_msg);
+                self.handle_subscription_frame(envelope, meta, request_started, sub_msg);
                 Ok(())
             }
             QueueClientFrame::Op(queue_msg) => {
                 self.handle_actor_operation_frame(
-                    &envelope,
+                    envelope,
                     meta,
                     request_started,
                     route_family,
@@ -80,12 +132,6 @@ impl MailboxSink for QueueDomainSink {
         }
     }
 
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
-
-impl QueueDomainSink {
     fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.cleanup_session(cleanup.session_id);
