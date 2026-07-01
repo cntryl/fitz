@@ -1,6 +1,6 @@
 use super::model::{
     DeliveryError, Envelope, KvClientFrame, KvClientRequest, KvDomainSink, KvResourceLockKey,
-    KvSubscription, MailboxSink, Ordering, RoutedSubscriptionSet,
+    MailboxSink, Ordering,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
@@ -135,32 +135,12 @@ impl KvDomainSink {
                 session_id,
                 subscriber,
             } => {
-                let pattern_str = pattern.as_str().to_string();
                 let subscription_id = {
-                    let mut families = self.families.lock();
-                    let state = families
+                    let mut watch_actors = self.watch_actors.lock();
+                    let actor = watch_actors
                         .entry(family_id.as_u64())
-                        .or_insert_with(RoutedSubscriptionSet::new);
-
-                    if let Some(existing_id) =
-                        state.find_existing_id(session_id, pattern_str.as_str())
-                    {
-                        existing_id
-                    } else {
-                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                        state.insert(
-                            family_id,
-                            KvSubscription {
-                                pattern: crate::runtime::matcher::Pattern::new(
-                                    pattern_str.as_str(),
-                                ),
-                                session_id,
-                                subscription_id: new_id,
-                                subscriber,
-                            },
-                        );
-                        new_id
-                    }
+                        .or_insert_with(|| crate::domains::kv::watch::KvWatchActor::new(family_id));
+                    actor.subscribe(session_id, pattern.as_str(), subscriber)
                 };
                 crate::domains::kv::KvResponse::SubscribeOk { subscription_id }
             }
@@ -170,15 +150,15 @@ impl KvDomainSink {
                 session_id,
                 ..
             } => {
-                let mut families = self.families.lock();
-                let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
-                    state.remove_session_pattern(family_id, session_id, pattern.as_str());
-                    state.is_empty()
+                let mut watch_actors = self.watch_actors.lock();
+                let remove_family = if let Some(actor) = watch_actors.get_mut(&family_id.as_u64()) {
+                    actor.unsubscribe(session_id, pattern.as_str());
+                    actor.is_empty()
                 } else {
                     false
                 };
                 if remove_family {
-                    families.remove(&family_id.as_u64());
+                    watch_actors.remove(&family_id.as_u64());
                 }
                 crate::domains::kv::KvResponse::UnsubscribeOk
             }

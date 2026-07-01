@@ -1,7 +1,7 @@
 use super::model::{
-    AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult, Arc, AtomicBool, AtomicU64,
-    Bytes, DeliveryError, Envelope, HashMap, KvDomainSink, KvResourceLockKey, Mutex, Ordering,
-    RoutedSubscriptionSet, Router, Utc, ADMIN_INVENTORY_REFRESH_LIMIT,
+    AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult, Arc, AtomicBool, Bytes,
+    DeliveryError, Envelope, HashMap, KvDomainSink, KvResourceLockKey, Mutex, Ordering, Router,
+    Utc, ADMIN_INVENTORY_REFRESH_LIMIT,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
@@ -15,8 +15,7 @@ impl KvDomainSink {
         Self {
             store,
             actors: Arc::new(Mutex::new(HashMap::new())),
-            families: Mutex::new(HashMap::new()),
-            next_sub_id: AtomicU64::new(1),
+            watch_actors: Mutex::new(HashMap::new()),
             router,
             projection: crate::domains::kv::projection::KvAdminProjection::new(admin_read_model),
             metrics: None,
@@ -475,10 +474,10 @@ impl KvDomainSink {
     }
 
     pub(super) fn subscription_count(&self) -> usize {
-        self.families
+        self.watch_actors
             .lock()
             .values()
-            .map(RoutedSubscriptionSet::subscription_count)
+            .map(crate::domains::kv::watch::KvWatchActor::subscription_count)
             .sum()
     }
 
@@ -635,19 +634,21 @@ impl KvDomainSink {
         resource_key: &KvResourceLockKey,
         mutation_count: u64,
     ) {
-        let family_id = crate::runtime::routing::RouteFamily::new(resource_key.family_id);
         let route = Self::kv_route_for_lock(resource_key);
-        let families = self.families.lock();
-        if let Some(state) = families.get(&resource_key.family_id) {
-            state.for_each_matching_route(family_id, route.as_str(), |subscription| {
-                self.route_kv_notify_to_subscription(
-                    subscription.session_id,
-                    subscription.subscription_id,
-                    &subscription.subscriber,
-                    &route,
-                    mutation_count,
-                );
-            });
+        let watch_targets = {
+            let watch_actors = self.watch_actors.lock();
+            watch_actors
+                .get(&resource_key.family_id)
+                .map_or_else(Vec::new, |actor| actor.matching_targets(&route))
+        };
+        for target in watch_targets {
+            self.route_kv_notify_to_subscription(
+                target.session_id,
+                target.subscription_id,
+                &target.subscriber,
+                &route,
+                mutation_count,
+            );
         }
     }
 
@@ -738,14 +739,11 @@ impl KvDomainSink {
         self.actors.lock().remove(&session_id);
 
         {
-            let mut families = self.families.lock();
-            for (family_id, state) in families.iter_mut() {
-                state.remove_session(
-                    crate::runtime::routing::RouteFamily::new(*family_id),
-                    session_id,
-                );
+            let mut watch_actors = self.watch_actors.lock();
+            for actor in watch_actors.values_mut() {
+                actor.remove_session(session_id);
             }
-            families.retain(|_, state| !state.is_empty());
+            watch_actors.retain(|_, actor| !actor.is_empty());
         }
 
         tracing::debug!(

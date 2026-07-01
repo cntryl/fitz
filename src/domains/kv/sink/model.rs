@@ -8,7 +8,6 @@
 // it wholesale instead of attempting transaction recovery.
 
 pub(super) use crate::domains::kv::{KvClientFrame, KvClientRequest};
-pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 #[cfg(test)]
 pub(super) use crate::protocol::frame_context::FrameContext;
 pub(super) use crate::runtime::routing::RouteFamily;
@@ -17,7 +16,7 @@ pub(super) use bytes::Bytes;
 pub(super) use chrono::Utc;
 pub(super) use parking_lot::Mutex;
 pub(super) use std::collections::HashMap;
-pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+pub(super) use std::sync::atomic::{AtomicBool, Ordering};
 pub(super) use std::sync::Arc;
 
 pub type AdminKvCommittedPair = (Vec<u8>, Vec<u8>);
@@ -55,32 +54,10 @@ impl KvResourceLockKey {
     }
 }
 
-pub(super) struct KvSubscription {
-    pub(super) pattern: crate::runtime::matcher::Pattern,
-    pub(super) session_id: u64,
-    pub(super) subscription_id: u64,
-    pub(super) subscriber: crate::runtime::routing::RouteAddress,
-}
-
-impl RoutedSubscription for KvSubscription {
-    fn pattern(&self) -> &crate::runtime::matcher::Pattern {
-        &self.pattern
-    }
-
-    fn session_id(&self) -> u64 {
-        self.session_id
-    }
-
-    fn subscription_id(&self) -> u64 {
-        self.subscription_id
-    }
-}
-
 pub struct KvDomainSink {
     pub(super) store: Arc<cntryl_midge::Engine>,
     pub(super) actors: Arc<Mutex<HashMap<u64, crate::domains::kv::KvActor>>>,
-    pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<KvSubscription>>>,
-    pub(super) next_sub_id: AtomicU64,
+    pub(super) watch_actors: Mutex<HashMap<u64, crate::domains::kv::watch::KvWatchActor>>,
     pub(super) router: Arc<Router>,
     pub(super) projection: crate::domains::kv::projection::KvAdminProjection<KvResourceLockKey>,
     pub(super) metrics: Option<crate::domains::kv::KvMetrics>,
