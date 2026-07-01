@@ -220,6 +220,74 @@ fn should_reject_notice_delivery_when_managed_actor_is_stopped() {
 }
 
 #[test]
+fn should_route_notice_live_count_queries_through_managed_actor() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let notice_route = "notice://acme/events";
+    let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let notice_address = RouteAddress::new(family, Route::new("notice://acme/inbound"));
+    let router = Arc::new(Router::new());
+    let subscriber_mailbox = Arc::new(Mailbox::new(8));
+    router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = NoticeDomainSink::new(router, admin_read_model);
+    subscribe_notice_pattern(
+        &sink,
+        &subscriber_address,
+        &notice_address,
+        7,
+        notice_route,
+        family,
+    );
+    let subscribe_response = decode_notice_response(&subscriber_mailbox);
+    assert_eq!(subscribe_response.status, 0);
+    assert_eq!(sink.subscription_count(), 1);
+
+    // Act
+    sink.stop_actor_for_tests();
+    let subscription_count = sink.subscription_count();
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert_eq!(subscription_count, 0);
+}
+
+#[test]
+fn should_route_notice_admin_dirty_refresh_through_managed_actor() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let notice_route = "notice://acme/events";
+    let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let notice_address = RouteAddress::new(family, Route::new("notice://acme/inbound"));
+    let router = Arc::new(Router::new());
+    let subscriber_mailbox = Arc::new(Mailbox::new(8));
+    router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+    subscribe_notice_pattern(
+        &sink,
+        &subscriber_address,
+        &notice_address,
+        7,
+        notice_route,
+        family,
+    );
+    let subscribe_response = decode_notice_response(&subscriber_mailbox);
+    assert_eq!(subscribe_response.status, 0);
+
+    // Act
+    sink.stop_actor_for_tests();
+    sink.refresh_admin_snapshot_if_dirty();
+    let subscriptions = admin_read_model.notice_subscriptions(None, None);
+    let notice_routes = admin_read_model.notice_routes(None);
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert!(subscriptions.is_empty());
+    assert!(notice_routes.is_empty());
+}
+
+#[test]
 fn should_include_notice_subscription_given_flexible_route_shape() {
     // Arrange
     let family = RouteFamily::new(1);

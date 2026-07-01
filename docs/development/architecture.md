@@ -511,7 +511,7 @@ Current Notice behavior is intentionally ephemeral:
 - Admin path: live queue snapshots flow through `Runtime::queue_list_*`; dead-letter replay and purge use explicit `Runtime::queue_*_dead_letter` commands.
 
 #### Notice
-- Actor owner: `NoticeDomainActor` is the managed production actor for delivery, cleanup, live subscriptions, route counters, fanout, and admin snapshot refresh; `NoticeDomainSink` is the mailbox adapter, and `NoticeRouteActor` remains a focused matching/fanout state-machine model.
+- Actor owner: `NoticeDomainActor` is the managed production actor for delivery, cleanup, live subscriptions, live count queries, route counters, fanout, and admin snapshot refresh; `NoticeDomainSink` is the mailbox adapter, and `NoticeRouteActor` remains a focused matching/fanout state-machine model.
 - Persistence: Notice delivery, subscriptions, and counters are ephemeral only; there is no durable replay or broker-side subscriber recovery.
 - Cleanup: disconnect removes session subscriptions immediately, and broker restart starts from an empty Notice state.
 - `RouteFamily`/`realm`: fanout matches only within the exact `RouteFamily`; `realm` stays an opaque route segment used for filtering and admin presentation.

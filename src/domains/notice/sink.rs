@@ -8,9 +8,7 @@ use crate::domains::notice::NoticeMetrics;
 use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
-use crate::runtime::{
-    Actor, Context, DeliveryError, Envelope, MailboxSink, ManagedActor, RouteError, Router,
-};
+use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, RouteError, Router};
 use chrono::Utc;
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -18,6 +16,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+mod actor_runtime;
+
+use actor_runtime::{NoticeDomainActor, NoticeDomainCommand};
 
 /// Per-session wildcard cap used to keep the in-memory matcher bounded.
 const MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION: usize = 128;
@@ -115,22 +117,6 @@ fn usize_to_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
-/// Commands accepted by the managed Notice domain actor.
-pub(super) enum NoticeDomainCommand {
-    Deliver(
-        Envelope,
-        crossbeam_channel::Sender<Result<(), DeliveryError>>,
-    ),
-}
-
-pub(super) struct NoticeDomainActor {
-    core: Arc<NoticeDomainCore>,
-}
-
-pub(super) struct NoticeDomainRuntime<'a> {
-    core: &'a NoticeDomainCore,
-}
-
 /// Live notice pub/sub state for the current broker process.
 ///
 /// This core owns the authoritative in-memory subscription index used for
@@ -163,42 +149,6 @@ impl std::ops::Deref for NoticeDomainSink {
 impl std::ops::DerefMut for NoticeDomainSink {
     fn deref_mut(&mut self) -> &mut Self::Target {
         Arc::get_mut(&mut self.core).expect("Notice sink builders must run before sharing the sink")
-    }
-}
-
-impl NoticeDomainActor {
-    fn new(core: Arc<NoticeDomainCore>) -> Self {
-        Self { core }
-    }
-
-    fn runtime(&self) -> NoticeDomainRuntime<'_> {
-        NoticeDomainRuntime { core: &self.core }
-    }
-
-    fn route_address() -> crate::runtime::routing::RouteAddress {
-        crate::runtime::routing::RouteAddress::new(
-            crate::runtime::routing::RouteFamily::new(0),
-            crate::runtime::routing::Route::new("internal://domain/notice"),
-        )
-    }
-}
-
-impl Actor for NoticeDomainActor {
-    type Message = NoticeDomainCommand;
-
-    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
-        let runtime = self.runtime();
-        match msg {
-            NoticeDomainCommand::Deliver(envelope, reply) => {
-                let _ = reply.send(runtime.deliver_envelope(&envelope));
-            }
-        }
-    }
-}
-
-impl NoticeDomainRuntime<'_> {
-    fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
-        self.core.deliver_envelope(envelope)
     }
 }
 
@@ -266,6 +216,42 @@ impl NoticeDomainSink {
     #[cfg(test)]
     pub(super) fn stop_actor_for_tests(&self) {
         self.actor.stop();
+    }
+
+    pub fn refresh_admin_snapshot_if_dirty(&self) {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(NoticeDomainCommand::RefreshAdminSnapshotIfDirty(reply_tx))
+        {
+            tracing::warn!(
+                domain = "notice",
+                error = %error,
+                "Notice admin snapshot refresh enqueue failed"
+            );
+            return;
+        }
+
+        if let Err(error) = reply_rx.recv_timeout(Duration::from_secs(1)) {
+            tracing::warn!(
+                domain = "notice",
+                error = %error,
+                "Notice admin snapshot refresh reply failed"
+            );
+        }
+    }
+
+    pub fn subscription_count(&self) -> usize {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(NoticeDomainCommand::ReadSubscriptionCount(reply_tx))
+        {
+            tracing::warn!(domain = "notice", error = %error, "Notice subscription-count query enqueue failed");
+            return 0;
+        }
+
+        reply_rx.recv_timeout(Duration::from_secs(1)).unwrap_or(0)
     }
 
     fn deliver_to_actor(

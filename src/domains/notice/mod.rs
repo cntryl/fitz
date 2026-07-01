@@ -3,7 +3,7 @@
 //! # Architecture
 //!
 //! - **`NoticeDomainSink`** (`src/domains/notice/sink.rs`): Mailbox adapter for production Notice delivery
-//! - **`NoticeDomainActor`** (`src/domains/notice/sink.rs`): Managed production actor that owns broker-local subscription state for the current process
+//! - **`NoticeDomainActor`** (`src/domains/notice/sink/actor_runtime.rs`): Managed production actor that owns broker-local subscription state for the current process
 //! - **`NoticeRouteActor`** ([actor]): Sync actor model used for core matching and focused unit tests
 //! - **`SessionActor`**: Enforces authentication/authorization before forwarding notice messages
 //! - Subscriptions are session-scoped and cleaned up on disconnect
