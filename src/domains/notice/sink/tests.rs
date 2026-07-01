@@ -38,6 +38,32 @@ struct NoticeResponsePayload {
     error: Option<String>,
 }
 
+struct FailingSink;
+
+impl MailboxSink for FailingSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        Err(DeliveryError::ActorStopped)
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+struct RetrySink {
+    state: Arc<Mutex<Vec<Result<(), DeliveryError>>>>,
+}
+
+impl MailboxSink for RetrySink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        self.state.lock().remove(0)
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
 fn decode_notice_response(mailbox: &Mailbox) -> NoticeResponsePayload {
     let response_envelope = mailbox
         .receiver()
@@ -246,7 +272,7 @@ fn should_track_notice_publish_activity_given_matching_publish() {
     assert_eq!(notice_routes[0].route, notice_route);
     assert_eq!(notice_routes[0].subscribers, 1);
     assert_eq!(notice_routes[0].publishes_total, 1);
-    assert_eq!(notice_routes[0].publishes_per_minute, 1.0);
+    assert!((notice_routes[0].publishes_per_minute - 1.0).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -418,6 +444,7 @@ fn should_prune_notice_route_stats_after_last_subscription_is_removed() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn should_retain_other_notice_subscription_given_unsubscribe_on_same_session() {
     // Arrange
     let family = RouteFamily::new(1);
@@ -631,18 +658,6 @@ fn should_increment_delivery_drop_counter_given_failing_subscriber_route() {
     let before_drops =
         crate::observability::metrics().counter_get("fitz_notice_delivery_drops_total");
 
-    struct FailingSink;
-
-    impl MailboxSink for FailingSink {
-        fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
-            Err(DeliveryError::ActorStopped)
-        }
-
-        fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-            self.deliver(envelope)
-        }
-    }
-
     router.register(subscriber_address.clone(), Arc::new(FailingSink));
 
     // Act
@@ -707,20 +722,6 @@ fn should_retry_notice_delivery_when_outbound_mailbox_is_temporarily_full() {
         }),
         Ok(()),
     ]));
-
-    struct RetrySink {
-        state: Arc<Mutex<Vec<Result<(), DeliveryError>>>>,
-    }
-
-    impl MailboxSink for RetrySink {
-        fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
-            self.state.lock().remove(0)
-        }
-
-        fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-            self.deliver(envelope)
-        }
-    }
 
     router.register(
         subscriber_address.clone(),
