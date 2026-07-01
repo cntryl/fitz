@@ -16,14 +16,9 @@ pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 pub(super) use bytes::Bytes;
 pub(super) use chrono::Utc;
 pub(super) use parking_lot::Mutex;
-pub(super) use std::collections::{HashMap, VecDeque};
+pub(super) use std::collections::HashMap;
 pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 pub(super) use std::sync::Arc;
-
-#[allow(clippy::cast_precision_loss)]
-fn usize_to_f64(value: usize) -> f64 {
-    value as f64
-}
 
 pub type AdminKvCommittedPair = (Vec<u8>, Vec<u8>);
 pub type AdminKvPrefixScanResult = (Vec<AdminKvCommittedPair>, bool);
@@ -40,7 +35,6 @@ pub struct AdminKvRowsRequest<'a> {
 }
 
 pub(super) const ADMIN_INVENTORY_REFRESH_LIMIT: usize = 10_000;
-pub(super) const KV_LATENCY_SAMPLE_LIMIT: usize = 256;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) struct KvResourceLockKey {
@@ -68,47 +62,6 @@ pub(super) struct KvSubscription {
     pub(super) subscriber: crate::runtime::routing::RouteAddress,
 }
 
-#[derive(Default)]
-pub(super) struct KvRollingLatency {
-    pub(super) samples: VecDeque<f64>,
-}
-
-impl KvRollingLatency {
-    pub(super) fn record(&mut self, latency_ms: f64) {
-        if self.samples.len() >= KV_LATENCY_SAMPLE_LIMIT {
-            self.samples.pop_front();
-        }
-        self.samples.push_back(latency_ms);
-    }
-
-    pub(super) fn snapshot(&self) -> crate::control::admin::KvLatencySnapshot {
-        if self.samples.is_empty() {
-            return crate::control::admin::KvLatencySnapshot::default();
-        }
-
-        let mut samples = self.samples.iter().copied().collect::<Vec<_>>();
-        samples.sort_by(f64::total_cmp);
-        let sum = samples.iter().sum::<f64>();
-        let p95_index = samples
-            .len()
-            .saturating_mul(95)
-            .saturating_add(99)
-            .saturating_div(100)
-            .saturating_sub(1);
-
-        crate::control::admin::KvLatencySnapshot {
-            avg_ms: sum / usize_to_f64(samples.len()),
-            p95_ms: samples[p95_index],
-        }
-    }
-}
-
-#[derive(Default)]
-pub(super) struct KvResourceLatency {
-    pub(super) reads: KvRollingLatency,
-    pub(super) writes: KvRollingLatency,
-}
-
 impl RoutedSubscription for KvSubscription {
     fn pattern(&self) -> &crate::runtime::matcher::Pattern {
         &self.pattern
@@ -127,10 +80,9 @@ pub struct KvDomainSink {
     pub(super) store: Arc<cntryl_midge::Engine>,
     pub(super) actors: Arc<Mutex<HashMap<u64, crate::domains::kv::KvActor>>>,
     pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<KvSubscription>>>,
-    pub(super) latencies: Mutex<HashMap<KvResourceLockKey, KvResourceLatency>>,
     pub(super) next_sub_id: AtomicU64,
     pub(super) router: Arc<Router>,
-    pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    pub(super) projection: crate::domains::kv::projection::KvAdminProjection<KvResourceLockKey>,
     pub(super) metrics: Option<crate::domains::kv::KvMetrics>,
     pub(super) sync_write_options: cntryl_midge::WriteOptions,
     pub(super) active: AtomicBool,

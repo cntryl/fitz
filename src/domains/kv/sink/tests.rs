@@ -171,26 +171,18 @@ fn should_record_kv_latency_samples_by_operation_kind() {
     .expect("commit KV transaction");
     let _ = mailbox.receiver().try_recv().expect("commit ack envelope");
     let resource_key = KvResourceLockKey::new(1, "acme", "app", "users");
-    {
-        let latencies = sink.latencies.lock();
-        let latency = latencies
-            .get(&resource_key)
-            .expect("write latency bucket should exist");
-        assert_eq!(latency.reads.samples.len(), 0);
-        assert_eq!(latency.writes.samples.len(), 1);
-    }
+    let (reads_before, writes_before) = sink.latency_snapshots(&resource_key);
+    assert!(reads_before.avg_ms.abs() < f64::EPSILON);
+    assert!(writes_before.avg_ms > 0.0);
     let value = sink
         .admin_get_committed_value(family, "acme", "app", "users", b"user:1")
         .expect("read committed KV value");
 
     // Assert
     assert_eq!(value.as_deref(), Some(&b"alice"[..]));
-    let latencies = sink.latencies.lock();
-    let latency = latencies
-        .get(&resource_key)
-        .expect("read latency bucket should exist");
-    assert_eq!(latency.reads.samples.len(), 1);
-    assert_eq!(latency.writes.samples.len(), 1);
+    let (reads_after, writes_after) = sink.latency_snapshots(&resource_key);
+    assert!(reads_after.avg_ms > 0.0);
+    assert!(writes_after.avg_ms > 0.0);
 }
 
 #[test]

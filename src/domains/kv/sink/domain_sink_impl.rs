@@ -16,10 +16,9 @@ impl KvDomainSink {
             store,
             actors: Arc::new(Mutex::new(HashMap::new())),
             families: Mutex::new(HashMap::new()),
-            latencies: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
             router,
-            admin_read_model,
+            projection: crate::domains::kv::projection::KvAdminProjection::new(admin_read_model),
             metrics: None,
             sync_write_options: cntryl_midge::WriteOptions::sync(),
             active: AtomicBool::new(true),
@@ -463,7 +462,8 @@ impl KvDomainSink {
                 )
             })
             .collect();
-        self.admin_read_model.replace_kv_transactions(transactions);
+        self.projection.mark_dirty();
+        self.projection.refresh_if_dirty(|| transactions);
         self.refresh_metrics_gauges();
     }
 
@@ -531,11 +531,7 @@ impl KvDomainSink {
         crate::control::admin::KvLatencySnapshot,
         crate::control::admin::KvLatencySnapshot,
     ) {
-        let latencies = self.latencies.lock();
-        latencies
-            .get(resource_key)
-            .map(|latency| (latency.reads.snapshot(), latency.writes.snapshot()))
-            .unwrap_or_default()
+        self.projection.latency_snapshots(resource_key)
     }
 
     pub(super) fn record_read_latency(
@@ -543,12 +539,8 @@ impl KvDomainSink {
         resource_key: &KvResourceLockKey,
         started_at: std::time::Instant,
     ) {
-        self.latencies
-            .lock()
-            .entry(resource_key.clone())
-            .or_default()
-            .reads
-            .record(started_at.elapsed().as_secs_f64() * 1000.0);
+        self.projection
+            .record_read_latency(resource_key, started_at.elapsed().as_secs_f64() * 1000.0);
     }
 
     pub(super) fn record_write_latency(
@@ -556,12 +548,8 @@ impl KvDomainSink {
         resource_key: &KvResourceLockKey,
         started_at: std::time::Instant,
     ) {
-        self.latencies
-            .lock()
-            .entry(resource_key.clone())
-            .or_default()
-            .writes
-            .record(started_at.elapsed().as_secs_f64() * 1000.0);
+        self.projection
+            .record_write_latency(resource_key, started_at.elapsed().as_secs_f64() * 1000.0);
     }
 
     pub(super) fn resource_key_for_tx(
