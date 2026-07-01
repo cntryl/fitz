@@ -335,6 +335,54 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
 }
 
 #[test]
+fn should_read_admin_waiters_through_actor_command() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let lease_route = "lease://acme/locks/admin-waiter";
+    let key = lease_key(family, lease_route);
+    let lease_address = RouteAddress::new(family, Route::new(lease_route));
+    let holder_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let waiter_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = LeaseDomainSink::new(router, admin_read_model);
+    let holder_response = sink.state.runtime().handle_acquire(LeaseAcquireRequest {
+        key: key.clone(),
+        owner_session_id: 7,
+        owner_id: "owner1".to_string(),
+        ttl_secs: 30,
+        wait_seconds: 0,
+        reply_source: lease_address.clone(),
+        reply_destination: Some(holder_address),
+        channel: ClientChannel::Sub,
+        route_family: family,
+    });
+    assert!(matches!(holder_response, LeaseResponse::Acquired { .. }));
+    let waiter_response = sink.state.runtime().handle_acquire(LeaseAcquireRequest {
+        key,
+        owner_session_id: 8,
+        owner_id: "owner2".to_string(),
+        ttl_secs: 30,
+        wait_seconds: 30,
+        reply_source: lease_address,
+        reply_destination: Some(waiter_address),
+        channel: ClientChannel::Sub,
+        route_family: family,
+    });
+    assert!(matches!(waiter_response, LeaseResponse::Queued { .. }));
+    assert_eq!(sink.admin_waiters().len(), 1);
+
+    // Act
+    sink.stop();
+    let command_waiters_after_stop = sink.admin_waiters();
+    let direct_waiters_after_stop = sink.state.runtime().admin_waiters();
+
+    // Assert
+    assert!(command_waiters_after_stop.is_empty());
+    assert_eq!(direct_waiters_after_stop.len(), 1);
+}
+
+#[test]
 fn should_remove_admin_lease_given_release() {
     // Arrange
     let family = RouteFamily::new(1);

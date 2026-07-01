@@ -537,7 +537,7 @@ Current Notice behavior is intentionally ephemeral:
 - Persistence: leases, waiters, and fencing tokens are ephemeral broker-local coordination state only; there is no durable lease history or restart recovery.
 - Cleanup: disconnect releases session-owned leases, clears waiters, and never implies cross-restart ownership continuity.
 - `RouteFamily`/`realm`: lease coordination is isolated by exact `RouteFamily`; `realm` stays an opaque application namespace carried by the route, not a family synonym.
-- Admin path: lease snapshots flow through `AdminReadModel`; waiter inspection uses the explicit `Runtime::lease_list_waiters()` facade.
+- Admin path: lease snapshots flow through `AdminReadModel`; waiter inspection uses the explicit `Runtime::lease_list_waiters()` facade, which sends a command/reply read to `LeaseDomainActor`.
 
 #### Schedule
 - Actor owner: `ScheduleActor` owns durable definition state, next-fire tracking, pending claims, and due-scan normalization for one route family.

@@ -130,7 +130,18 @@ impl LeaseDomainSink {
     }
 
     pub fn admin_waiters(&self) -> Vec<crate::control::admin::LeaseWaiterInfo> {
-        self.state.runtime().admin_waiters()
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(LeaseDomainCommand::ReadWaiters(reply_tx))
+        {
+            tracing::warn!(domain = "lease", error = %error, "Lease waiter read enqueue failed");
+            return Vec::new();
+        }
+
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_default()
     }
 }
 

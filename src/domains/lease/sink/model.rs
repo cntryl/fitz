@@ -110,6 +110,7 @@ pub(super) struct LeaseDomainRuntime<'a> {
 pub(super) enum LeaseDomainCommand {
     Deliver(Envelope),
     CleanupSession(u64),
+    ReadWaiters(crossbeam_channel::Sender<Vec<crate::control::admin::LeaseWaiterInfo>>),
     SweepExpiredState,
 }
 
